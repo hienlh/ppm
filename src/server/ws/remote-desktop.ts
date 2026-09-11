@@ -6,9 +6,11 @@
  * token already travels as `?token=` on every WS URL (`isWsUpgradeAuthorized`,
  * `src/server/index.ts`) and proves nothing beyond "holds the one reusable app token", so a
  * single-use short-TTL nonce (`POST /api/remote-desktop/session`) must be presented as the
- * client's *first* message — `{type:"auth", nonce, displayId?}` — before capture or input
- * starts. `displayId` picks one of `/capabilities`' `displays`; absent/unknown = primary. Kept out
- * of the query string (unlike the coarse token) so it never lands in proxy/tunnel access logs.
+ * client's *first* message — `{type:"auth", nonce, displayId?, cursor?, codec?}` — before
+ * capture or input starts. `displayId` picks one of `/capabilities`' `displays`; absent/unknown = primary.
+ * `cursor` and `codec` carry the client's saved cursor and encoder prefs, because ffmpeg takes
+ * both at startup and applying them afterwards would respawn it on every connect. Kept out of
+ * the query string (unlike the coarse token) so they never land in proxy/tunnel access logs.
  *
  * Both the feature flag and `auth.enabled` are re-checked here even though
  * `src/server/index.ts` already gated the upgrade on them — this handler must never depend on
@@ -58,8 +60,13 @@ async function authenticateFirstMessage(ws: RemoteDesktopWs, text: string): Prom
       getBufferedAmount: ws.getBufferedAmount ? () => ws.getBufferedAmount!() : undefined,
       close: (code, reason) => ws.close(code, reason),
     };
-    const displayId = typeof parsed.displayId === "string" ? parsed.displayId : undefined;
-    ws.data.session = await createRemoteDesktopSession(socket, displayId);
+    ws.data.session = await createRemoteDesktopSession(socket, {
+      displayId: typeof parsed.displayId === "string" ? parsed.displayId : undefined,
+      // Only an explicit `false` hides it: an older client sends no flag at all and must keep
+      // getting the pointer it has always had.
+      showCursor: parsed.cursor !== false,
+      encoder: typeof parsed.codec === "string" ? parsed.codec : undefined,
+    });
   } catch (e) {
     console.error(`[remote-desktop] failed to start capture: ${(e as Error).message}`);
     ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));

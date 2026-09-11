@@ -34,7 +34,7 @@ only the surrounding component is PPM's. The 15 names Fluent has no glyph for st
 
 ## File icons
 
-`src/web/styles/file-icons.generated.css` inlines 224 SVG drawings as data URIs and
+`src/web/styles/file-icons.generated.css` inlines 1193 SVG drawings as data URIs and
 `src/web/lib/file-icons.generated.ts` holds the name-to-glyph tables. Both are emitted by
 `scripts/gen-file-icons.ts` from the packages below: the artwork comes from the icon
 collection, the extension-to-name mapping from `vscode-icons-js`. The drawings are

@@ -1,11 +1,13 @@
 /**
  * Bottom (thumb-zone) toolbar for the mobile remote-desktop viewer: Touch/Mouse mode toggle,
  * virtual keyboard, zoom reset, close. Every button is a 44px+ touch target per
- * `docs/design-guidelines.md`'s Mobile-First UI Rules.
+ * `docs/design-guidelines.md`'s Mobile-First UI Rules — which is also why the three on/off
+ * settings live behind the More button in `remote-desktop-mobile-settings.tsx` instead of as
+ * three more buttons here: the row is `flex-1` per button, and at eight of them each target
+ * falls under 44px on a small phone.
  */
-import { Hand, MousePointer2, Keyboard, ZoomOut, Gauge, Monitor, X } from "@/lib/icons";
+import { Hand, MousePointer2, Keyboard, ZoomOut, Settings2, Monitor, Wifi, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { useSettingsStore } from "@/stores/settings-store";
 import type { RemoteDesktopInputMode } from "./use-remote-desktop-touch";
 
 export interface RemoteDesktopMobileToolbarProps {
@@ -13,10 +15,17 @@ export interface RemoteDesktopMobileToolbarProps {
   displayLabel: string | null;
   /** Cycle to the next display — one tap per hop beats a dropdown in the thumb zone. */
   onNextDisplay: () => void;
+  /** Short name of the rung being streamed ("Auto", "480p"…) for the quality button's label. */
+  qualityLabel: string;
+  /** Cycle auto → tiny → low → balanced → high → auto, same one-tap-per-hop reasoning. */
+  onNextQuality: () => void;
   mode: RemoteDesktopInputMode;
   onToggleMode: () => void;
   onOpenKeyboard: () => void;
   onResetZoom: () => void;
+  /** Show/hide the settings panel above this row (stats, remote cursor, clipboard sync). */
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
   onClose: () => void;
 }
 
@@ -51,15 +60,16 @@ function ToolbarButton({
 export function RemoteDesktopMobileToolbar({
   displayLabel,
   onNextDisplay,
+  qualityLabel,
+  onNextQuality,
   mode,
   onToggleMode,
   onOpenKeyboard,
   onResetZoom,
+  settingsOpen,
+  onToggleSettings,
   onClose,
 }: RemoteDesktopMobileToolbarProps) {
-  const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
-  const toggleStats = useSettingsStore((s) => s.toggleRemoteDesktopStatsVisible);
-
   return (
     <div
       className="flex shrink-0 items-stretch gap-1 border-t border-white/10 bg-black/90 px-2 pb-[max(0.375rem,env(safe-area-inset-bottom))] pt-1.5"
@@ -79,8 +89,11 @@ export function RemoteDesktopMobileToolbar({
           <Monitor className="size-5" />
         </ToolbarButton>
       )}
-      <ToolbarButton onClick={toggleStats} label="Stats" active={statsVisible}>
-        <Gauge className="size-5" />
+      <ToolbarButton onClick={onNextQuality} label={qualityLabel}>
+        <Wifi className="size-5" />
+      </ToolbarButton>
+      <ToolbarButton onClick={onToggleSettings} label="More" active={settingsOpen}>
+        <Settings2 className="size-5" />
       </ToolbarButton>
       <ToolbarButton onClick={onClose} label="Close">
         <X className="size-5" />
