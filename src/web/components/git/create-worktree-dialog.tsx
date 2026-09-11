@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Loader2, X } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,6 +31,7 @@ export function CreateWorktreeDialog({
   projectName,
   onCreated,
 }: CreateWorktreeDialogProps) {
+  const { gitUrl } = useGitRepo(projectName);
   const [worktreePath, setWorktreePath] = useState("");
   const [branchMode, setBranchMode] = useState<BranchMode>("new");
   const [newBranch, setNewBranch] = useState("");
@@ -42,7 +44,7 @@ export function CreateWorktreeDialog({
   useEffect(() => {
     if (!open || !projectName) return;
     api
-      .get<GitBranch[]>(`${projectUrl(projectName)}/git/branches`)
+      .get<GitBranch[]>(gitUrl("/branches"))
       .then((data) => {
         const local = data.filter((b) => !b.remote).map((b) => b.name);
         setBranches(local);
@@ -76,7 +78,7 @@ export function CreateWorktreeDialog({
     setLoading(true);
     setError(null);
     try {
-      await api.post(`${projectUrl(projectName)}/git/worktree/add`, {
+      await api.post(gitUrl("/worktree/add"), {
         path: worktreePath.trim(),
         branch: selectedBranch,
         newBranch: selectedNewBranch,

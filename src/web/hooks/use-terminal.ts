@@ -10,7 +10,7 @@ import { resolveTheme as resolvePpmTheme } from "@/theme/resolve-theme";
 import { getCurrentAppliedTheme, THEME_CHANGE_EVENT } from "@/theme/apply-theme";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import type { PpmTheme } from "@/theme/types";
-import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
+import { TERMINAL_FONT_FAMILY } from "@/lib/editor-font";
 
 /** Current active PpmTheme → xterm ITheme (prefers the live applied theme). */
 function currentXtermTheme(): ITheme {
@@ -348,8 +348,10 @@ export function useTerminal(
       fontSize: 13,
       scrollback: 50000,
       // Explicit terminal-grade stack: the WebGL renderer builds its glyph
-      // atlas via ctx.font and cannot resolve CSS var() values.
-      fontFamily: EDITOR_FONT_FAMILY,
+      // atlas via ctx.font and cannot resolve CSS var() values. Its own stack
+      // rather than the editor's, because a prompt needs the powerline and
+      // devicon glyphs only a patched Nerd Font has.
+      fontFamily: TERMINAL_FONT_FAMILY,
       theme: currentXtermTheme(),
     });
 
@@ -382,6 +384,23 @@ export function useTerminal(
 
     termRef.current = term;
     fitRef.current = fitAddon;
+
+    // A webfont that is still in flight is not in the stack yet: xterm measures
+    // the cell and bakes the glyph atlas from ctx.font at open(), so a terminal
+    // opened during the first paint would keep whatever fallback was resolved
+    // then, for the rest of the session. Re-measuring once the face lands is
+    // the whole fix; the atlas is rebuilt from the new metrics by fit().
+    let fontsSettled = false;
+    document.fonts.ready.then(() => {
+      if (fontsSettled || termRef.current !== term) return;
+      fontsSettled = true;
+      try {
+        term.options.fontFamily = TERMINAL_FONT_FAMILY;
+        fitAddon.fit();
+      } catch {
+        // A terminal disposed between the promise and here; nothing to redraw.
+      }
+    });
 
     // Wire input to WS + track command boundaries
     term.onData((data) => {

@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as MonacoType from "monaco-editor";
-import { api, projectUrl } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
 import {
   formatBlameAnnotation,
   isUncommittedHash,
@@ -27,6 +27,7 @@ import {
 import { buildBlameHoverMarkdown } from "@/lib/blame-hover";
 import { registerBlameHoverCommands } from "@/lib/blame-hover-commands";
 import { registerDiffLanguage } from "@/lib/monaco-diff-language";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import { useProjectStore } from "@/stores/project-store";
 
 const STYLE_ID = "inline-blame-styles";
@@ -103,10 +104,18 @@ export function useInlineBlame({
   // compare a tap against. A ref rather than the `line` state so the handler
   // does not have to be torn down and rebuilt on every cursor move.
   const annotatedLineRef = useRef(0);
-  // The hover's action links address the Git Graph views by absolute project
-  // path, which is what those commands take. Looked up here rather than passed
-  // in, so the three call sites do not each have to find it.
+  // The hover's action links address the Git Graph views by absolute path,
+  // which is what those commands take. Looked up here rather than passed in, so
+  // the three call sites do not each have to find it.
   const projectPath = useProjectStore((s) => s.projects.find((p) => p.name === projectName)?.path);
+  // Which repository the project's git actually lives in: itself, or a subfolder
+  // the user picked. Every path below is expressed relative to *that*, because
+  // that is where git runs.
+  const gitRepo = useGitRepo(projectName);
+  const gitRoot = gitRepo.repo?.path ?? projectPath;
+  // `null` means the open file is outside the chosen repository — there is
+  // nothing to blame, which is a quiet no-annotation rather than an error.
+  const repoFile = filePath ? gitRepo.repoPath(filePath) : null;
 
   const refresh = useCallback(() => setReloadToken((n) => n + 1), []);
 
@@ -123,15 +132,15 @@ export function useInlineBlame({
   // Load the blame. A file with no git history answers with an empty table
   // rather than an error, so there is nothing to special-case here.
   useEffect(() => {
-    if (!enabled || !projectName || !filePath) {
+    if (!enabled || !projectName || !filePath || repoFile == null) {
       setBlame(null);
       return;
     }
     let cancelled = false;
-    const query = new URLSearchParams({ path: filePath });
+    const query = new URLSearchParams({ path: repoFile });
     if (rev) query.set("rev", rev);
     api
-      .get<BlameResult>(`${projectUrl(projectName)}/git/blame?${query}`)
+      .get<BlameResult>(gitRepo.gitUrl(`/blame?${query}`))
       .then((result) => {
         if (cancelled) return;
         setBlame(result);
@@ -144,7 +153,7 @@ export function useInlineBlame({
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectName, filePath, rev, reloadToken]);
+  }, [enabled, projectName, filePath, repoFile, rev, reloadToken, gitRepo]);
 
   // Follow the cursor, and notice edits.
   useEffect(() => {
@@ -214,8 +223,10 @@ export function useInlineBlame({
   // already had once, with the bundled TypeScript worker.
   const detailHash = commit && !isUncommittedHash(commit.hash) ? commit.hash : null;
   // The path *at that commit*: after a rename the current path did not exist
-  // there, and git would report no diff rather than an error.
-  const detailPath = commit?.filename || filePath;
+  // there, and git would report no diff rather than an error. `filename` comes
+  // from the blame git already ran, so it is repository-relative like
+  // `repoFile` — not project-relative like the tab's `filePath`.
+  const detailPath = commit?.filename || repoFile || undefined;
   const detailLine = lineBlame?.origLine ?? 0;
   const detailKey = `${detailHash} ${detailLine} ${detailPath}`;
 
@@ -236,7 +247,7 @@ export function useInlineBlame({
     let cancelled = false;
     const query = new URLSearchParams({ hash: detailHash, path: detailPath, line: String(detailLine) });
     api
-      .get<BlameLineDetail | null>(`${projectUrl(projectName)}/git/commit-line?${query}`)
+      .get<BlameLineDetail | null>(gitRepo.gitUrl(`/commit-line?${query}`))
       .then((result) => {
         if (cancelled) return;
         // Bounded: `tab-pool` keeps editors mounted for the life of the session,
@@ -253,7 +264,7 @@ export function useInlineBlame({
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectName, detailHash, detailPath, detailLine, detailKey]);
+  }, [enabled, projectName, detailHash, detailPath, detailLine, detailKey, gitRepo]);
 
   // Draw it.
   useEffect(() => {
@@ -291,15 +302,15 @@ export function useInlineBlame({
         hoverMessage: buildBlameHoverMarkdown({
           commit,
           detail: detail?.key === detailKey ? detail.value : null,
-          filePath: filePath ?? "",
-          projectPath,
+          filePath: repoFile ?? "",
+          projectPath: gitRoot,
         }),
       },
     };
 
     if (decorationsRef.current) decorationsRef.current.set([decoration]);
     else decorationsRef.current = editor.createDecorationsCollection([decoration]);
-  }, [editor, monaco, enabled, commit, line, detail, detailKey, filePath, projectPath]);
+  }, [editor, monaco, enabled, commit, line, detail, detailKey, repoFile, gitRoot]);
 
   // Take the annotation down when the hook stops being used.
   useEffect(

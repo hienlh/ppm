@@ -8,7 +8,7 @@ import { assertSafeFilePaths, assertValidRef, spawnGit } from "./git-exec.ts";
 import { openPanel } from "./panel-registry.ts";
 import { registerViewCommand } from "./register-view-command.ts";
 import { takePendingTarget } from "./panel-nav.ts";
-import { resolveProjectName } from "./ppm-api.ts";
+import { resolveFileTab } from "./ppm-api.ts";
 import { FILE_HISTORY_FORMAT, parseFileHistory } from "./file-history-parser.ts";
 import type { CompareMode } from "./compare-args.ts";
 import { buildRangeSpec, parseAheadBehind, parseNumstatZ, parseRefList } from "./compare-args.ts";
@@ -79,10 +79,9 @@ export function openCompareView(
             const ref1 = assertValidRef(msg.ref1, "ref1");
             const ref2 = assertValidRef(msg.ref2, "ref2");
             const fileName = filePath.split(/[\\/]/).pop() || filePath;
-            const projectName = await resolveProjectName(projectPath);
-            await vscode.window.openTab("git-diff", `${fileName} (${ref1}→${ref2})`, projectName, {
-              projectName,
-              filePath,
+            const target = await resolveFileTab(projectPath, filePath);
+            await vscode.window.openTab("git-diff", `${fileName} (${ref1}→${ref2})`, target.projectName, {
+              ...target,
               ref1,
               ref2,
             });
