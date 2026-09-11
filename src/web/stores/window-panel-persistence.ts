@@ -41,6 +41,7 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   "git-log": true,
   "ai-resource": true,
   group: true,
+  problems: false,
 };
 
 export function isPoppableTabType(type: unknown): type is TabType {

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { ClipboardPaste, Undo2, Redo2, X } from "lucide-react";
+import { ClipboardPaste, Undo2, Redo2, WrapText, X } from "lucide-react";
 import type * as MonacoType from "monaco-editor";
 
 /** Clipboard API requires secure context (HTTPS / localhost) */
@@ -21,9 +21,12 @@ const divider = "w-px h-5 bg-border mx-0.5 shrink-0";
 interface EditorMobileToolbarProps {
   editorRef: React.RefObject<MonacoType.editor.IStandaloneCodeEditor | null>;
   readOnly?: boolean;
+  /** Wrap state for this device — the desktop toolbar that toggles it is hidden here. */
+  wrapOn: boolean;
+  onToggleWrap: () => void;
 }
 
-export function EditorMobileToolbar({ editorRef, readOnly }: EditorMobileToolbarProps) {
+export function EditorMobileToolbar({ editorRef, readOnly, wrapOn, onToggleWrap }: EditorMobileToolbarProps) {
   const getEditor = useCallback(() => editorRef.current, [editorRef]);
 
   /** Insert text at cursor position in Monaco */
@@ -123,6 +126,14 @@ export function EditorMobileToolbar({ editorRef, readOnly }: EditorMobileToolbar
         </button>
         <button type="button" onClick={handleRedo} className={btnBase} title="Redo">
           <Redo2 size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleWrap}
+          className={`${btnBase} ${wrapOn ? "text-primary" : ""}`}
+          title={wrapOn ? "Wrapping long lines — tap to scroll sideways instead" : "Wrap long lines"}
+        >
+          <WrapText size={14} />
         </button>
 
         <div className={divider} />

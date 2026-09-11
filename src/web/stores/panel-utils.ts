@@ -27,7 +27,7 @@ export const DOCK_PANEL_ID = "__dock__";
  * Enforced at load-time to prevent a crafted persisted blob from placing
  * arbitrary tab types in the privileged dock slot.
  */
-export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor"]);
+export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor", "problems"]);
 
 // ---------------------------------------------------------------------------
 // Floating-window panels
@@ -42,7 +42,7 @@ export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-moni
  * context-menu item that offers it. Split across two files, adding a window kind meant
  * remembering both, and one of them was always the one that got forgotten.
  */
-export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings"]);
+export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems"]);
 
 /**
  * Prefix of the reserved panel IDs that host tabs detached into a floating window.
@@ -222,6 +222,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":
       return "settings";
+    // One list of every problem, so a second open focuses the first.
+    case "problems":
+      return "problems";
     case "group":
       return `group:${metadata?.groupId ?? "unknown"}`;
     default:

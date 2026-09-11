@@ -31,6 +31,8 @@ import { extensionWebSocket } from "./ws/extensions.ts";
 import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
+import { lspWebSocket } from "./ws/lsp.ts";
+import { lspManager } from "../services/lsp/lsp-manager.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
 import { ok, err } from "../types/api.ts";
 
@@ -912,6 +914,14 @@ if (process.argv.includes("__serve__")) {
           if (upgraded) return undefined;
           return new Response("WebSocket upgrade failed", { status: 400 });
         }
+
+        if (wsType === "lsp") {
+          const upgraded = server.upgrade(req, {
+            data: { type: "lsp", projectName },
+          });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
       }
 
       return app.fetch(req, server);
@@ -928,6 +938,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "global") globalWebSocket.open(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.open(ws);
         else if (t === "terminal") terminalWebSocket.open(ws);
+        else if (t === "lsp") lspWebSocket.open(ws);
         else ws.close(1008, "unknown socket type");
       },
       message(ws: any, msg: any) {
@@ -938,6 +949,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "global") globalWebSocket.message(ws, msg);
         else if (t === "remote-desktop") remoteDesktopWebSocket.message(ws, msg);
         else if (t === "terminal") terminalWebSocket.message(ws, msg);
+        else if (t === "lsp") lspWebSocket.message(ws, msg);
       },
       close(ws: any) {
         const t = ws.data?.type;
@@ -947,6 +959,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "global") globalWebSocket.close(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.close(ws);
         else if (t === "terminal") terminalWebSocket.close(ws);
+        else if (t === "lsp") lspWebSocket.close(ws);
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
@@ -997,6 +1010,10 @@ if (process.argv.includes("__serve__")) {
   const gracefulShutdown = () => {
     try { schedulerStop?.(); } catch {}
     try { codexCleanupRef?.(); } catch {}
+    // Language servers are long-lived children; most exit on stdin EOF, but a
+    // resident rust-analyzer holding a crate graph is too expensive to leave
+    // to chance. Synchronous because process.exit follows immediately.
+    try { lspManager.killAllSync(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

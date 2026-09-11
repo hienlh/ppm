@@ -42,6 +42,7 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   "git-log": lazy(() => import("@/components/git/git-log-panel").then((m) => ({ default: m.GitLogPanel }))),
   "ai-resource": lazy(() => import("@/components/ai-resources/ai-resource-editor").then((m) => ({ default: m.AiResourceEditor }))),
   group: lazy(() => import("@/components/group-chat/group-chat-tab").then((m) => ({ default: m.GroupChatTab }))),
+  problems: lazy(() => import("@/components/problems/problems-panel").then((m) => ({ default: m.ProblemsPanel }))),
 };
 
 const HIDDEN_CONTAINER_STYLE: React.CSSProperties = {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { parseBlamePorcelain } from "../../../../src/services/git-blame/blame-porcelain.ts";
 import {
+  formatAbsoluteTime,
   formatBlameAnnotation,
   formatRelativeTime,
   UNCOMMITTED_HASH,
@@ -150,5 +151,41 @@ describe("formatBlameAnnotation", () => {
   it("is empty for no commit at all", () => {
     expect(formatBlameAnnotation(undefined, now)).toBe("");
     expect(formatBlameAnnotation(null, now)).toBe("");
+  });
+});
+
+describe("formatAbsoluteTime", () => {
+  // Built by hand rather than with `toLocaleString`, whose output depends on
+  // the host's locale — so the format is the same on the machine serving PPM
+  // and the phone reading it, and testable at all.
+  const at = (...args: [number, number, number, number, number]) =>
+    formatAbsoluteTime(new Date(args[0], args[1], args[2], args[3], args[4]).getTime());
+
+  it("reads the way GitLens' hover does", () => {
+    expect(at(2025, 11, 2, 16, 17)).toBe("December 2nd, 2025 4:17 PM");
+  });
+
+  it("uses the right ordinal suffix", () => {
+    expect(at(2025, 0, 1, 9, 5)).toContain("January 1st,");
+    expect(at(2025, 0, 2, 9, 5)).toContain("January 2nd,");
+    expect(at(2025, 0, 3, 9, 5)).toContain("January 3rd,");
+    expect(at(2025, 0, 4, 9, 5)).toContain("January 4th,");
+    expect(at(2025, 0, 21, 9, 5)).toContain("January 21st,");
+    expect(at(2025, 0, 22, 9, 5)).toContain("January 22nd,");
+  });
+
+  it("uses th for the teens, which break the last-digit rule", () => {
+    expect(at(2025, 0, 11, 9, 5)).toContain("January 11th,");
+    expect(at(2025, 0, 12, 9, 5)).toContain("January 12th,");
+    expect(at(2025, 0, 13, 9, 5)).toContain("January 13th,");
+  });
+
+  it("writes midnight and noon as 12, not 0", () => {
+    expect(at(2025, 5, 5, 0, 30)).toContain("12:30 AM");
+    expect(at(2025, 5, 5, 12, 30)).toContain("12:30 PM");
+  });
+
+  it("pads the minutes", () => {
+    expect(at(2025, 5, 5, 9, 5)).toContain("9:05 AM");
   });
 });
