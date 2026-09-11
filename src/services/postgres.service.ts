@@ -27,6 +27,39 @@ export interface PgQueryResult {
 /** Auto-close idle connections after 5 minutes */
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
+/** Seconds allowed for DNS + TCP + TLS + auth before postgres.js gives up.
+ *  A healthy connect to a remote host over a VPN measures ~1s, so this only has to
+ *  cover the *first* attempt on a cold network path — the retry below is what
+ *  actually rescues that case, which is why this stays well under the library
+ *  default of 30 (a longer value just makes a genuinely dead host take longer to
+ *  report). */
+const CONNECT_TIMEOUT_SEC = 15;
+
+/** Extra attempts after a first attempt that failed before reaching the server. */
+const CONNECT_RETRIES = 1;
+
+/** Pause before re-attempting a connect-phase failure. */
+const RETRY_DELAY_MS = 250;
+
+/** Seconds to wait for a pool to drain before abandoning it, so evicting a wedged
+ *  connection can never hang the caller. */
+const END_TIMEOUT_SEC = 5;
+
+/** Error codes that prove the statement never reached the server, so replaying it
+ *  cannot double-apply a write. postgres.js holds a query until the startup
+ *  handshake completes, so all of these are raised before any SQL is written to the
+ *  socket. Ambiguous mid-query failures (CONNECTION_CLOSED, ECONNRESET) are
+ *  deliberately excluded — retrying those could re-run an INSERT or UPDATE. */
+const RETRYABLE_CONNECT_ERRORS = new Set([
+  "CONNECT_TIMEOUT",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+]);
+
 interface CachedConn {
   sql: postgres.Sql;
   timer: ReturnType<typeof setTimeout>;
@@ -49,7 +82,12 @@ class PostgresService {
     const sslOpts = sslmode === "no-verify" || sslmode === "require"
       ? { rejectUnauthorized: false }
       : sslmode === "disable" ? false : undefined;
-    const sql = postgres(connectionString, { max: 3, idle_timeout: 60, connect_timeout: 10, ssl: sslOpts as any });
+    const sql = postgres(connectionString, {
+      max: 3,
+      idle_timeout: 60,
+      connect_timeout: CONNECT_TIMEOUT_SEC,
+      ssl: sslOpts as any,
+    });
     const timer = setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS);
     this.cache.set(connectionString, { sql, timer });
     return sql;
@@ -60,15 +98,45 @@ class PostgresService {
     const cached = this.cache.get(connectionString);
     if (!cached) return;
     clearTimeout(cached.timer);
-    try { await cached.sql.end(); } catch { /* already closed */ }
+    // Drop the cache entry first: end() on a pool whose socket never came up can
+    // stall for the full drain timeout, and callers must not see it again meanwhile.
     this.cache.delete(connectionString);
+    try { await cached.sql.end({ timeout: END_TIMEOUT_SEC }); } catch { /* already closed */ }
+  }
+
+  /** True when the error happened before the query was written to the socket. */
+  private isRetryableConnectError(e: unknown): boolean {
+    const code = (e as { code?: unknown } | null)?.code;
+    return typeof code === "string" && RETRYABLE_CONNECT_ERRORS.has(code);
+  }
+
+  /** Run an operation against the cached pool, retrying if the connection never
+   *  got established. The first connect over a cold VPN path can burn ~20s on TCP
+   *  SYN retransmits and then fail outright, while an immediate second attempt
+   *  succeeds in about a second — without this, that first failure surfaces to the
+   *  user as a hard error. Only connect-phase failures are replayed, so a retried
+   *  write cannot be applied twice. */
+  private async withConnection<T>(
+    connectionString: string,
+    fn: (sql: postgres.Sql) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      const sql = this.connect(connectionString);
+      try {
+        return await fn(sql);
+      } catch (e) {
+        if (attempt >= CONNECT_RETRIES || !this.isRetryableConnectError(e)) throw e;
+        // Discard the pool that failed to connect so the retry starts clean.
+        await this.disconnect(connectionString);
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      }
+    }
   }
 
   /** Test connection */
   async testConnection(connectionString: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      const sql = this.connect(connectionString);
-      await sql`SELECT 1`;
+      await this.withConnection(connectionString, (sql) => sql`SELECT 1`);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
@@ -77,15 +145,14 @@ class PostgresService {
 
   /** List all user tables with row counts */
   async getTables(connectionString: string): Promise<PgTableInfo[]> {
-    const sql = this.connect(connectionString);
-    const tables = await sql`
+    const tables = await this.withConnection(connectionString, (sql) => sql`
       SELECT t.schemaname as schema, t.tablename as name,
              COALESCE(s.n_live_tup, 0)::int as row_count
       FROM pg_tables t
       LEFT JOIN pg_stat_user_tables s ON t.schemaname = s.schemaname AND t.tablename = s.relname
       WHERE t.schemaname NOT IN ('pg_catalog', 'information_schema')
       ORDER BY t.schemaname, t.tablename
-    `;
+    `);
     return tables.map((t) => ({
       name: t.name as string, schema: t.schema as string, rowCount: t.row_count as number,
     }));
@@ -93,33 +160,36 @@ class PostgresService {
 
   /** Get column schema for a table (with FK metadata) */
   async getTableSchema(connectionString: string, table: string, schema = "public"): Promise<PgColumnInfo[]> {
-    const sql = this.connect(connectionString);
-    const cols = await sql`
-      SELECT c.column_name as name, c.data_type as type,
-             c.is_nullable = 'YES' as nullable, c.column_default as default_value,
-             COALESCE(tc.constraint_type = 'PRIMARY KEY', false) as pk
-      FROM information_schema.columns c
-      LEFT JOIN information_schema.key_column_usage kcu
-        ON c.table_schema = kcu.table_schema AND c.table_name = kcu.table_name AND c.column_name = kcu.column_name
-      LEFT JOIN information_schema.table_constraints tc
-        ON kcu.constraint_name = tc.constraint_name AND tc.constraint_type = 'PRIMARY KEY'
-      WHERE c.table_schema = ${schema} AND c.table_name = ${table}
-      ORDER BY c.ordinal_position
-    `;
+    const { cols, fkRows } = await this.withConnection(connectionString, async (sql) => {
+      const cols = await sql`
+        SELECT c.column_name as name, c.data_type as type,
+               c.is_nullable = 'YES' as nullable, c.column_default as default_value,
+               COALESCE(tc.constraint_type = 'PRIMARY KEY', false) as pk
+        FROM information_schema.columns c
+        LEFT JOIN information_schema.key_column_usage kcu
+          ON c.table_schema = kcu.table_schema AND c.table_name = kcu.table_name AND c.column_name = kcu.column_name
+        LEFT JOIN information_schema.table_constraints tc
+          ON kcu.constraint_name = tc.constraint_name AND tc.constraint_type = 'PRIMARY KEY'
+        WHERE c.table_schema = ${schema} AND c.table_name = ${table}
+        ORDER BY c.ordinal_position
+      `;
 
-    // Query FK references
-    const fkRows = await sql`
-      SELECT kcu.column_name as from_col,
-             ccu.table_name as ref_table,
-             ccu.column_name as ref_col
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-      JOIN information_schema.constraint_column_usage ccu
-        ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
-      WHERE tc.constraint_type = 'FOREIGN KEY'
-        AND tc.table_schema = ${schema} AND tc.table_name = ${table}
-    `;
+      // Query FK references
+      const fkRows = await sql`
+        SELECT kcu.column_name as from_col,
+               ccu.table_name as ref_table,
+               ccu.column_name as ref_col
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = ${schema} AND tc.table_name = ${table}
+      `;
+      return { cols, fkRows };
+    });
+
     const fkMap = new Map<string, { table: string; column: string }>();
     for (const fk of fkRows) {
       fkMap.set(fk.from_col as string, { table: fk.ref_table as string, column: fk.ref_col as string });
@@ -140,22 +210,24 @@ class PostgresService {
     connectionString: string, table: string, schema = "public",
     page = 1, limit = 100, orderBy?: string, orderDir: "ASC" | "DESC" = "ASC",
   ): Promise<{ columns: string[]; rows: Record<string, unknown>[]; total: number; page: number; limit: number }> {
-    const sql = this.connect(connectionString);
-    const fullTable = sql(`${schema}.${table}`);
-
-    const [countRow] = await sql`SELECT COUNT(*)::int as cnt FROM ${fullTable}`;
-    const total = (countRow?.cnt as number) ?? 0;
     const offset = (page - 1) * limit;
+    const { rows, total } = await this.withConnection(connectionString, async (sql) => {
+      const fullTable = sql(`${schema}.${table}`);
 
-    let rows: postgres.RowList<postgres.Row[]>;
-    if (orderBy) {
-      const orderCol = sql(orderBy);
-      rows = orderDir === "DESC"
-        ? await sql`SELECT * FROM ${fullTable} ORDER BY ${orderCol} DESC LIMIT ${limit} OFFSET ${offset}`
-        : await sql`SELECT * FROM ${fullTable} ORDER BY ${orderCol} ASC LIMIT ${limit} OFFSET ${offset}`;
-    } else {
-      rows = await sql`SELECT * FROM ${fullTable} LIMIT ${limit} OFFSET ${offset}`;
-    }
+      const [countRow] = await sql`SELECT COUNT(*)::int as cnt FROM ${fullTable}`;
+      const total = (countRow?.cnt as number) ?? 0;
+
+      let rows: postgres.RowList<postgres.Row[]>;
+      if (orderBy) {
+        const orderCol = sql(orderBy);
+        rows = orderDir === "DESC"
+          ? await sql`SELECT * FROM ${fullTable} ORDER BY ${orderCol} DESC LIMIT ${limit} OFFSET ${offset}`
+          : await sql`SELECT * FROM ${fullTable} ORDER BY ${orderCol} ASC LIMIT ${limit} OFFSET ${offset}`;
+      } else {
+        rows = await sql`SELECT * FROM ${fullTable} LIMIT ${limit} OFFSET ${offset}`;
+      }
+      return { rows, total };
+    });
 
     const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
     return { columns, rows: rows as unknown as Record<string, unknown>[], total, page, limit };
@@ -163,7 +235,6 @@ class PostgresService {
 
   /** Execute arbitrary SQL */
   async executeQuery(connectionString: string, sqlText: string): Promise<PgQueryResult> {
-    const sql = this.connect(connectionString);
     const trimmed = sqlText.trim();
     const upper = trimmed.toUpperCase();
 
@@ -187,34 +258,37 @@ class PostgresService {
     const isSelect = upper.startsWith("SELECT") || upper.startsWith("WITH") ||
       upper.startsWith("EXPLAIN") || upper.startsWith("SHOW") || upper.startsWith("\\D");
 
-    const start = performance.now();
-    if (isSelect) {
-      const rows = await sql.unsafe(sqlText);
-      const executionTimeMs = Math.round(performance.now() - start);
-      const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
-      return { columns, rows: rows as unknown as Record<string, unknown>[], rowsAffected: 0, changeType: "select", executionTimeMs };
-    }
+    return this.withConnection(connectionString, async (sql) => {
+      const start = performance.now();
+      if (isSelect) {
+        const rows = await sql.unsafe(sqlText);
+        const executionTimeMs = Math.round(performance.now() - start);
+        const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
+        return { columns, rows: rows as unknown as Record<string, unknown>[], rowsAffected: 0, changeType: "select" as const, executionTimeMs };
+      }
 
-    const result = await sql.unsafe(sqlText);
-    const executionTimeMs = Math.round(performance.now() - start);
-    return { columns: [], rows: [], rowsAffected: result.count ?? 0, changeType: "modify", executionTimeMs };
+      const result = await sql.unsafe(sqlText);
+      const executionTimeMs = Math.round(performance.now() - start);
+      return { columns: [], rows: [], rowsAffected: result.count ?? 0, changeType: "modify" as const, executionTimeMs };
+    });
   }
 
   /** Execute multi-statement SQL script inside a transaction via sql.begin().
    *  Strips user-supplied BEGIN/COMMIT/ROLLBACK since sql.begin() manages the transaction. */
   async executeScript(connectionString: string, scriptText: string): Promise<{ statementsRun: number; executionTimeMs: number }> {
-    const sql = this.connect(connectionString);
     const txControl = /^(BEGIN|COMMIT|ROLLBACK|END)(;|\s|$)/i;
     const statements = splitSqlStatements(scriptText).filter((s) => !txControl.test(s));
     if (statements.length === 0) return { statementsRun: 0, executionTimeMs: 0 };
 
-    const start = performance.now();
-    await sql.begin(async (tx) => {
-      for (const stmt of statements) {
-        await tx.unsafe(stmt);
-      }
+    return this.withConnection(connectionString, async (sql) => {
+      const start = performance.now();
+      await sql.begin(async (tx) => {
+        for (const stmt of statements) {
+          await tx.unsafe(stmt);
+        }
+      });
+      return { statementsRun: statements.length, executionTimeMs: Math.round(performance.now() - start) };
     });
-    return { statementsRun: statements.length, executionTimeMs: Math.round(performance.now() - start) };
   }
 
   /** Update a single cell value */
@@ -222,11 +296,10 @@ class PostgresService {
     connectionString: string, table: string, schema = "public",
     pkColumn: string, pkValue: unknown, column: string, value: unknown,
   ): Promise<void> {
-    const sql = this.connect(connectionString);
-    await sql.unsafe(
+    await this.withConnection(connectionString, (sql) => sql.unsafe(
       `UPDATE "${schema}"."${table}" SET "${column}" = $1 WHERE "${pkColumn}" = $2`,
       [value as never, pkValue as never],
-    );
+    ));
   }
 
   /** Delete a row by primary key */
@@ -234,11 +307,10 @@ class PostgresService {
     connectionString: string, table: string, schema = "public",
     pkColumn: string, pkValue: unknown,
   ): Promise<void> {
-    const sql = this.connect(connectionString);
-    await sql.unsafe(
+    await this.withConnection(connectionString, (sql) => sql.unsafe(
       `DELETE FROM "${schema}"."${table}" WHERE "${pkColumn}" = $1`,
       [pkValue as never],
-    );
+    ));
   }
 
   /** Close all cached connections */
