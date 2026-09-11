@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.19.3] - 2026-09-11
+
+### Added
+- **Codex skills show up in the slash picker** — picking one sends it the way codex activates it, so it no longer arrives as plain text that does nothing.
+- **Images codex generates appear as pictures in the chat** — with the prompt above them, instead of a file path.
 
 ### Changed
 - **Settings opens as its own window instead of squeezing into the sidebar** — a category list on the left, the settings themselves on the right, so panes have room to grow. On a phone it opens as a tab you drill into, and the duplicate gear icon in the sidebar rail is gone (there was one in the tab list and one in the footer).
@@ -11,6 +15,11 @@
 - **A settings tab can no longer be detached into a second window** — it has a window of its own, so detaching only produced a duplicate with its own remembered position.
 
 ### Fixed
+- **Codex conversations open with their contents again** — reopening one showed an empty chat while the transcript sat on disk. Existing conversations are relinked on upgrade.
+- **Codex usage shows next to Claude's** — quota polling was Claude-only, so the Codex chip stayed blank.
+- **The chat toolbar names the Codex account before the first message** — it was blank until a turn started, wherever that account is knowable in advance.
+- **Signing in to Codex survives a dropped connection** — the browser could see an error for an account that had in fact been created, and retrying said there was no sign-in to finish.
+- **A database connection that fails on a cold network now retries** — connecting over a VPN could fail once and report the database as unreachable.
 - **The mobile menu button is now labelled for screen readers** — it was an icon with no accessible name.
 
 ## [0.19.2] - 2026-09-10
