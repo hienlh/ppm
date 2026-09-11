@@ -325,7 +325,16 @@ export function ChatHistoryBar({
             >
               <Activity className="size-3" />
               {usageInfo.activeAccountLabel && (
-                <span className="text-text-secondary font-normal truncate max-w-[60px]">[{usageInfo.activeAccountLabel}]</span>
+                // Which account is serving this session, per provider. An email
+                // label is unreadable cut to 60px ("hienlh1298@…"), and the
+                // account is the thing a multi-account user checks here, so it
+                // gets the room and the full string on hover.
+                <span
+                  className="text-text-secondary font-normal truncate max-w-[110px]"
+                  title={usageInfo.activeAccountLabel}
+                >
+                  [{usageInfo.activeAccountLabel}]
+                </span>
               )}
               <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
               <span className="text-text-subtle">·</span>

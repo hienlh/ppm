@@ -35,6 +35,21 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [sessionId, setSessionId] = useState<string | null>(
     (metadata?.sessionId as string) ?? null,
   );
+
+  /**
+   * Follow the session id when the provider adopts its own.
+   *
+   * PPM creates a session under a uuid it mints, then codex (or the Claude SDK)
+   * reports the real id and the server re-keys to it. Everything written from
+   * that point — transcript, title, account binding — lands under the new id, so
+   * a tab left holding the original would reopen into an empty conversation even
+   * though the history is on disk. Setting it here also persists it to the tab's
+   * metadata through the effect below, which is what makes the fix survive a
+   * reload rather than only lasting the turn.
+   */
+  const handleSessionMigrated = useCallback((newSessionId: string) => {
+    setSessionId(newSessionId);
+  }, []);
   const [providerId, setProviderId] = useState<string>(
     (metadata?.providerId as string) ?? "claude",
   );
@@ -133,7 +148,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     bashPartialOutput,
     backgroundShells,
     killBackgroundShell,
-  } = useChat(sessionId, providerId, projectName);
+  } = useChat(sessionId, providerId, projectName, handleSessionMigrated);
 
   // Teammates keep working long after their spawn card scrolled away — a resume
   // arrives by SendMessage and writes no card at all. Poll the roster whenever this
@@ -754,6 +769,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             permissionMode={permissionMode}
             onModeChange={setPermissionMode}
             providerId={providerId}
+            sessionId={sessionId ?? undefined}
             onProviderChange={!sessionId ? setProviderId : undefined}
             model={model}
             onModelChange={setModel}

@@ -51,8 +51,14 @@ export interface AIProvider {
   markAsResumed?(sessionId: string): void;
   isAvailable?(): Promise<boolean>;
   listModels?(): Promise<ModelOption[]>;
+  /**
+   * Skills the provider's own runtime would resolve for this session, for
+   * providers that own a skill system PPM cannot read off disk. Implemented by
+   * codex; absent for Claude, whose skills come from the shared disk discovery.
+   */
+  listSkills?(sessionId?: string): Promise<import("../providers/codex-app-server/codex-protocol").CodexSkill[]>;
   /** Provider-specific usage/quota (rate limits). Used by GET /chat/usage. */
-  getUsage?(): Promise<UsageInfo>;
+  getUsage?(sessionId?: string): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
   /** Prompt-cache lifetime for this session, in ms — how long holding its subprocess pays. */

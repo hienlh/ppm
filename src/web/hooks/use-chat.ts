@@ -109,7 +109,21 @@ function isSessionTabActive(sid: string): boolean {
   return false;
 }
 
-export function useChat(sessionId: string | null, providerId = "claude", projectName = ""): UseChatReturn {
+export function useChat(
+  sessionId: string | null,
+  providerId = "claude",
+  projectName = "",
+  /**
+   * Called when the provider replaces the session id mid-turn.
+   *
+   * Codex and the Claude SDK both mint their own id and adopt it: PPM creates
+   * the session under a uuid of its own, then the provider reports the real one.
+   * The server re-keys itself, but the tab keeps whatever id it created with
+   * unless it is told — and that stale id owns no transcript, so the tab reloads
+   * empty even though the conversation is on disk under the new id.
+   */
+  onSessionMigrated?: (newSessionId: string) => void,
+): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   /** Map of compactMessageId → pre-compact messages (already ID-prefixed). Ephemeral. */
   const [expansions, setExpansions] = useState<Map<string, ChatMessage[]>>(new Map());
@@ -173,6 +187,10 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const historyLoadedAtRef = useRef(0);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  // Held in a ref so the socket handler always calls the latest callback without
+  // the socket effect having to re-run (and reconnect) when it changes identity.
+  const onSessionMigratedRef = useRef(onSessionMigrated);
+  onSessionMigratedRef.current = onSessionMigrated;
   // Mirror of `messages` for synchronous reads (e.g. snapshotting the previous
   // session's messages when sessionId changes, without adding `messages` to
   // effect deps).
@@ -744,6 +762,18 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       return;
     }
 
+    // The provider adopted its own session id for this conversation. Tell the
+    // owner so the tab follows: the server has already re-keyed itself, and the
+    // transcript from here on is written under the new id, so a tab still
+    // holding the old one would reload into an empty conversation.
+    if ((data as any).type === "session_migrated") {
+      const migratedTo = (data as any).newSessionId as string | undefined;
+      if (migratedTo && migratedTo !== sessionIdRef.current) {
+        onSessionMigratedRef.current?.(migratedTo);
+      }
+      return;
+    }
+
     // Handle compact status events
     if ((data as any).type === "compact_status") {
       const status = (data as any).status;
@@ -1001,6 +1031,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           const payload = Array.isArray(data) ? { messages: data, versionMap: {} } : data;
           let history: ChatMessage[] = Array.isArray(payload?.messages) ? payload.messages : [];
           if (payload?.versionMap) setVersionMap(payload.versionMap);
+          // The server served this transcript from a different id than the one
+          // asked for: the provider had renamed the session and this tab kept the
+          // original. Adopt the real id, so the next turn continues the
+          // conversation instead of starting a fresh one beside it.
+          if (payload?.canonicalSessionId && payload.canonicalSessionId !== sessionIdRef.current) {
+            onSessionMigratedRef.current?.(payload.canonicalSessionId);
+          }
           // If a live turn_events replay already owns the active (unfinished) turn,
           // the REST history still contains that same turn — trim it (from its last
           // user message onward) so it isn't rendered twice.

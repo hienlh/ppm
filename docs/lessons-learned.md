@@ -4,6 +4,17 @@ Knowledge and gotchas discovered during PPM development.
 
 ---
 
+## Chat usage must stay scoped to its provider and session
+
+Usage API responses are snapshots: replace them instead of merging into previous
+state. Clear data when project/provider/session changes and ignore outstanding
+requests from the previous scope, otherwise a Codex badge can retain Claude's
+account label and utilization. Codex quota reads must use the session's bound
+managed account home; polling must not select or rotate accounts. With managed
+accounts but no session binding, show unknown usage until a chat binds an account.
+
+---
+
 ## Claude Agent SDK
 
 ### .env poisoning via project cwd

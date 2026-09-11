@@ -14,7 +14,7 @@ import { getDb, getSessionCodexAccount } from "./db.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { configService } from "./config.service.ts";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
-import { fetchCodexUsage } from "../providers/codex-app-server/codex-usage-fetch.ts";
+import { getOrFetchUsage } from "./provider-usage/usage-registry.ts";
 import type { UsageInfo } from "../providers/provider.interface.ts";
 
 export type CodexStrategy = "round-robin" | "fill-first" | "lowest-usage";
@@ -145,6 +145,27 @@ export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: 
   return pick;
 }
 
+/**
+ * The account that WILL serve a session with no binding yet, when that is
+ * knowable without side effects — otherwise null.
+ *
+ * Exists so the chat toolbar can name the account before the first message
+ * instead of showing a blank where the account belongs. It deliberately does
+ * not call `selectCodexAccount`: round-robin advances a cursor, so asking it
+ * merely to draw a label would change which account the next real turn gets.
+ *
+ * Certain in exactly two cases — a single account, and `fill-first`, which
+ * always takes the oldest. Round-robin and lowest-usage across several
+ * accounts are genuinely undecided until the turn starts, and this returns
+ * null rather than guessing at one.
+ */
+export function peekCodexAccount(): CodexAccount | null {
+  const accts = listCodexAccounts();
+  if (accts.length === 0) return null;
+  if (accts.length === 1) return accts[0]!;
+  return getCodexStrategy() === "fill-first" ? accts[0]! : null;
+}
+
 /** Sticky account for a session → else strategy pick → else null (default ~/.codex). */
 export async function resolveCodexAccountForSession(sessionId: string): Promise<CodexAccount | null> {
   const sticky = getSessionCodexAccount(sessionId);
@@ -159,13 +180,15 @@ export async function resolveCodexAccountForSession(sessionId: string): Promise<
 }
 
 // ── Usage (per account) ──
+// Both read through the shared provider-usage layer, so the accounts screen is
+// served from the same cache and snapshot store as the chat toolbar and cannot
+// spawn one app-server per listed account on every render.
 export async function getCodexAccountUsage(id: string): Promise<UsageInfo> {
-  const a = getCodexAccount(id);
-  return a ? fetchCodexUsage(a.home) : {};
+  return getCodexAccount(id) ? getOrFetchUsage("codex", id) : {};
 }
 
 export async function getAllCodexUsages(): Promise<Record<string, UsageInfo>> {
   const accts = listCodexAccounts();
-  const entries = await Promise.all(accts.map(async (a) => [a.id, await fetchCodexUsage(a.home)] as const));
+  const entries = await Promise.all(accts.map(async (a) => [a.id, await getOrFetchUsage("codex", a.id)] as const));
   return Object.fromEntries(entries);
 }
