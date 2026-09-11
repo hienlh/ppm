@@ -1,4 +1,4 @@
-import { Save, Undo2 } from "lucide-react";
+import { Save, Undo2 } from "@/lib/icons";
 
 interface SaveBarProps {
   pendingCount: number;

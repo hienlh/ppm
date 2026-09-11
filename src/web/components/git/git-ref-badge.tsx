@@ -1,4 +1,4 @@
-import { Cloud, CloudOff, Tag, ArrowUp, ArrowDown } from "lucide-react";
+import { Cloud, CloudOff, Tag, ArrowUp, ArrowDown } from "@/lib/icons";
 import type { GitBranch } from "../../../types/git";
 import { cn } from "@/lib/utils";
 

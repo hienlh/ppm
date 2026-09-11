@@ -4,7 +4,7 @@
  * Blur or Enter confirms, Escape cancels.
  */
 import { useState, useRef, useEffect, useCallback } from "react";
-import { File, Folder } from "lucide-react";
+import { File, Folder } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 
 interface InlineTreeInputProps {

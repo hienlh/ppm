@@ -11,7 +11,7 @@
  * nothing here instead of claiming a long-finished teammate is still running.
  */
 
-import { Users } from "lucide-react";
+import { Users } from "@/lib/icons";
 import type { TeamMemberActivity } from "@/hooks/use-team-activity-feed";
 import { currentStep, formatDuration, shortAgentType } from "./team-member-activity-format";
 import { useOpenTeamMember } from "./use-open-team-member";

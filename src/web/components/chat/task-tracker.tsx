@@ -4,7 +4,7 @@
  * default; auto-hides once every task is finished (completed/stopped).
  */
 import { useState, useMemo } from "react";
-import { ChevronDown, ChevronRight, ListTodo } from "lucide-react";
+import { ChevronDown, ChevronRight, ListTodo } from "@/lib/icons";
 import type { ChatMessage } from "../../../types/chat";
 import type { TaskItem, TaskStatus } from "../../../services/task-status-aggregator";
 import { useTasks } from "@/hooks/use-tasks";

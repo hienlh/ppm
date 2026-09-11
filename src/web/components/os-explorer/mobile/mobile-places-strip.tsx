@@ -9,7 +9,7 @@
  */
 
 import { useState, type ComponentType } from "react";
-import { HardDrive, MoreHorizontal, Network, Pin, Usb } from "lucide-react";
+import { HardDrive, MoreHorizontal, Network, Pin, Usb } from "@/lib/icons";
 import type { Drive, HostInfo } from "../../../../types/system";
 import { cn } from "@/lib/utils";
 import { useExplorerPinsStore } from "../explorer-pins-store";

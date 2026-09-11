@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "@/lib/icons";
 import {
   getQueryAuditSettings,
   updateQueryAuditSettings,

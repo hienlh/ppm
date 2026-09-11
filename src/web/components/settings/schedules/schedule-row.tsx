@@ -1,6 +1,6 @@
 /** One schedule row — tap to expand runs, long-press/right-click for actions. */
 import { useState } from "react";
-import { Play, Pencil, Trash2, Power, ChevronDown, ChevronRight } from "lucide-react";
+import { Play, Pencil, Trash2, Power, ChevronDown, ChevronRight } from "@/lib/icons";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api-client";

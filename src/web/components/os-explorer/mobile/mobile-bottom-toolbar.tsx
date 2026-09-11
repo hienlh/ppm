@@ -10,7 +10,7 @@ import { useState } from "react";
 import {
   ArrowLeft, Check, ClipboardPaste, Copy, Download, FilePlus, FolderPlus, Info, MoreHorizontal, Plus, Scissors,
   Trash2, Upload, X,
-} from "lucide-react";
+} from "@/lib/icons";
 import type { FsEntry } from "@/lib/fs-api";
 import { BottomSheet, BottomSheetItem } from "@/components/ui/mobile-bottom-sheet";
 import type { ExplorerActions } from "../actions/use-explorer-actions";

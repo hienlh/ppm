@@ -4,7 +4,7 @@
  * `views/list-view.tsx`). Backed by the same `prefs.sort` every view already reads.
  */
 
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown } from "@/lib/icons";
 import {
   DropdownMenu,
   DropdownMenuContent,

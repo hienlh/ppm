@@ -1,7 +1,7 @@
 /**
  * Context menu items for a tree node (file or folder).
  */
-import { Download, FolderOpen, TerminalSquare } from "lucide-react";
+import { Download, FolderOpen, TerminalSquare } from "@/lib/icons";
 import type { FileNode, ClipboardState } from "@/stores/file-store";
 import {
   ContextMenuContent,

@@ -15,7 +15,7 @@
  * whole panel: a picker tucked into a header is a picker nobody finds, and
  * until it is answered there is nothing else for the panel to show.
  */
-import { FolderGit2, GitBranch, ChevronsUpDown, RefreshCw } from "lucide-react";
+import { FolderGit2, GitBranch, ChevronsUpDown, RefreshCw } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

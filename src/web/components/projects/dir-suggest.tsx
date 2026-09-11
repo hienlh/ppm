@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { FolderGit2, Loader2 } from "lucide-react";
+import { FolderGit2, Loader2 } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { Input } from "@/components/ui/input";
 import { BrowseButton } from "@/components/ui/browse-button";

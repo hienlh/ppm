@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Users, Loader2, Trash2 } from "lucide-react";
+import { Plus, Users, Loader2, Trash2 } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import { useProjectStore } from "@/stores/project-store";

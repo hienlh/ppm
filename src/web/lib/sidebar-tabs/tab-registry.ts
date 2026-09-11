@@ -1,6 +1,15 @@
 import {
-  FolderOpen, GitBranch, Database, Search, Puzzle, Bug, Sparkles, BotMessageSquare, Globe, Users,
-} from "lucide-react";
+  FolderOpen,
+  GitBranch,
+  Database,
+  Search,
+  Puzzle,
+  Bug,
+  Sparkles,
+  BotMessageSquare,
+  Globe,
+  Users,
+} from "@/lib/icons";
 import type { SidebarActiveTab } from "@/stores/settings-store";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import type { ExtensionContributes } from "../../../types/extension";

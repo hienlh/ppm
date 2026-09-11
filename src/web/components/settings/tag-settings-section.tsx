@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Pencil, Check, X, RotateCcw } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, RotateCcw } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import type { ProjectTag } from "../../../types/chat";
 

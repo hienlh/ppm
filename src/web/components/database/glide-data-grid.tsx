@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import DataEditor, { type GridColumn, type Item } from "@glideapps/glide-data-grid";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import type { GlideGridProps } from "./glide-grid-types";
 import { useGlideTheme } from "./glide-grid-theme";
 import { useGlideColumns } from "./use-glide-columns";

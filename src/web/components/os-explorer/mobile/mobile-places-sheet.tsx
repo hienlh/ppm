@@ -5,7 +5,7 @@
  */
 
 import type { ReactNode } from "react";
-import { HardDrive, Network, Pin, Usb } from "lucide-react";
+import { HardDrive, Network, Pin, Usb } from "@/lib/icons";
 import type { Drive, HostInfo } from "../../../../types/system";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useExplorerPinsStore } from "../explorer-pins-store";

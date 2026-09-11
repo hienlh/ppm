@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { RotateCcw, AlertTriangle, Lock, Puzzle } from "lucide-react";
+import { RotateCcw, AlertTriangle, Lock, Puzzle } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import {
   KEY_ACTIONS,

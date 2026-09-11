@@ -8,7 +8,7 @@
  */
 
 import { Suspense, lazy, type ComponentType, type LazyExoticComponent } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import type { SettingsCategoryId } from "./settings-categories";
 
 const SECTIONS: Record<SettingsCategoryId, LazyExoticComponent<ComponentType>> = {

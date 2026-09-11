@@ -562,9 +562,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   async listSessionsByDir(dir?: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]> {
     try {
-      const limit = opts?.limit ?? 50;
       const offset = opts?.offset ?? 0;
-      const sdkSessions = await sdkListSessions({ dir, limit, offset });
+      // A dir-scoped call with no explicit limit means "every session in this
+      // project" — chat search and the search-index backfill both ask that way.
+      // It has to be answered by paging the SDK, not by taking its first page:
+      // everything past that page fell through to the recovery scan below,
+      // which can only reconstruct a title from the transcript's first 512
+      // bytes. So 165 of 228 sessions here were listed under their opening
+      // prompt ("/recap") instead of the name they had been given, and no
+      // search for that name could match them.
+      const sdkSessions = dir !== undefined && opts?.limit === undefined
+        ? await listAllSdkSessions(dir)
+        : await sdkListSessions({ dir, limit: opts?.limit ?? 50, offset });
       // Overlay DB titles (user-set) over SDK titles
       const ids = sdkSessions.map((s) => s.sessionId);
       const dbTitles = getSessionTitles(ids);
@@ -2149,6 +2158,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return [];
     }
   }
+}
+
+const SDK_SESSION_PAGE = 200;
+/** Hard stop so a pathological directory cannot spin here. */
+const SDK_SESSION_MAX_PAGES = 100;
+
+/** Every session the SDK can parse in `dir`, paged until exhausted. */
+async function listAllSdkSessions(
+  dir: string,
+): Promise<Awaited<ReturnType<typeof sdkListSessions>>> {
+  const all: Awaited<ReturnType<typeof sdkListSessions>> = [];
+  for (let page = 0; page < SDK_SESSION_MAX_PAGES; page++) {
+    const batch = await sdkListSessions({
+      dir,
+      limit: SDK_SESSION_PAGE,
+      offset: page * SDK_SESSION_PAGE,
+    });
+    all.push(...batch);
+    if (batch.length < SDK_SESSION_PAGE) break;
+  }
+  return all;
 }
 
 /**

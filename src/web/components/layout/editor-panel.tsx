@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Terminal, MessageSquare, FilePlus, X } from "lucide-react";
+import { Terminal, MessageSquare, FilePlus, X } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";

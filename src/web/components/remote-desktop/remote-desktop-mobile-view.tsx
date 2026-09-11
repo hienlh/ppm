@@ -7,7 +7,7 @@
  * parallel connection implementation.
  */
 import { useRef, useState, useCallback } from "react";
-import { RotateCw, MonitorX } from "lucide-react";
+import { RotateCw, MonitorX } from "@/lib/icons";
 import { useVisualViewport } from "@/hooks/use-visual-viewport";
 import { useRemoteDesktopConnection } from "./use-remote-desktop-connection";
 import { useRemoteDesktopTouch, type RemoteDesktopInputMode } from "./use-remote-desktop-touch";

@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Lock } from "lucide-react";
+import { Loader2, Lock } from "@/lib/icons";
 import { importAccounts } from "../../../lib/api-settings";
 import { DEFAULT_PASSWORD } from "./account-backup-format";
 

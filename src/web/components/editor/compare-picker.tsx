@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Columns2, FileCode, X } from "lucide-react";
+import { Columns2, FileCode, X } from "@/lib/icons";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTabStore } from "@/stores/tab-store";
 import { useFileStore } from "@/stores/file-store";

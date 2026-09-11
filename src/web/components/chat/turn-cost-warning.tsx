@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, TriangleAlert } from "lucide-react";
+import { ChevronDown, TriangleAlert } from "@/lib/icons";
 import type { TurnUsage } from "../../../shared/turn-usage";
 import {
   assessTurnCost,

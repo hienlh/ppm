@@ -7,7 +7,7 @@
  * point, so nothing is lost.
  */
 import { useState } from "react";
-import { X } from "lucide-react";
+import { X } from "@/lib/icons";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useNamedTunnelSetup } from "./use-named-tunnel-setup";

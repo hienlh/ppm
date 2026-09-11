@@ -9,7 +9,7 @@
  * client). Same dark chrome and ≥44px targets as the warning gate, both surfaces.
  */
 import { useState, type ReactNode } from "react";
-import { CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmartphone, TerminalSquare } from "lucide-react";
+import { CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmartphone, TerminalSquare } from "@/lib/icons";
 import { runInTerminal } from "@/lib/run-in-terminal";
 import { useRemoteDesktopReadiness, type RemoteDesktopRequirement, type RequirementAction } from "./use-remote-desktop-readiness";
 

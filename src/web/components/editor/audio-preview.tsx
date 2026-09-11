@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileWarning, Music } from "lucide-react";
+import { FileWarning, Music } from "@/lib/icons";
 import { basename } from "@/lib/utils";
 import { rawMediaUrl } from "@/lib/media-url";
 

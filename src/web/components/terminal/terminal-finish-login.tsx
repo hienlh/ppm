@@ -8,7 +8,7 @@
  * makes the call on the browser's behalf.
  */
 import { useState } from "react";
-import { Loader2, LogIn } from "lucide-react";
+import { Loader2, LogIn } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { isDeliverableCallback } from "@/lib/oauth-loopback-url";
 import { toast } from "sonner";

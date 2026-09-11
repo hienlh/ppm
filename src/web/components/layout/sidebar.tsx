@@ -1,5 +1,5 @@
 import { useCallback, useRef, memo } from "react";
-import { PanelLeftOpen } from "lucide-react";
+import { PanelLeftOpen } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";

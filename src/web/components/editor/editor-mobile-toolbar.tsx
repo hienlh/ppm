@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { ClipboardPaste, Undo2, Redo2, WrapText, X } from "lucide-react";
+import { ClipboardPaste, Undo2, Redo2, WrapText, X } from "@/lib/icons";
 import type * as MonacoType from "monaco-editor";
 
 /** Clipboard API requires secure context (HTTPS / localhost) */

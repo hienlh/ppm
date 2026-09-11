@@ -10,7 +10,7 @@
  */
 import { getSearchIndexDb } from "./search-index-db.service.ts";
 import { chatService } from "./chat.service.ts";
-import type { ChatMessage } from "../types/chat.ts";
+import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 
 export interface ChatSearchHit {
   sessionId: string;
@@ -42,6 +42,70 @@ export function toFtsQuery(raw: string): string {
   return parts.join(" ");
 }
 
+/**
+ * Bump whenever `messageSearchText` changes what it emits. Stored per session in
+ * `session_meta.indexer_version`; `isStale` compares it, so a session indexed by
+ * an older, thinner indexer is re-read rather than left stamped as fresh.
+ */
+export const INDEXER_VERSION = 1;
+
+/** Per-event cap on indexed tool output. A single `Read`/`grep` result can be
+ *  hundreds of KB; indexing all of it bloats the FTS store far more than it
+ *  helps, since matches that deep are rarely what someone is looking for. */
+const EVENT_TEXT_CAP = 4000;
+
+function stringifyToolInput(input: unknown): string {
+  if (input == null) return "";
+  if (typeof input === "string") return input.slice(0, EVENT_TEXT_CAP);
+  try {
+    return JSON.stringify(input).slice(0, EVENT_TEXT_CAP);
+  } catch {
+    return "";
+  }
+}
+
+function collectEventText(events: ChatEvent[] | undefined, out: string[]): void {
+  if (!events) return;
+  for (const ev of events) {
+    switch (ev.type) {
+      case "text":
+        out.push(ev.content);
+        break;
+      case "tool_use":
+        // The tool name and its arguments are what a search for "the commit
+        // where I opened PR 10232" actually has to match.
+        out.push(ev.tool, stringifyToolInput(ev.input));
+        collectEventText(ev.children, out);
+        break;
+      case "tool_result":
+        out.push(ev.output.slice(0, EVENT_TEXT_CAP));
+        break;
+      case "error":
+        out.push(ev.message);
+        break;
+      // `thinking` is deliberately skipped: it is the model's scratch work, it
+      // is bulky, and a snippet drawn from it reads as noise in the results.
+      default:
+        break;
+    }
+  }
+}
+
+/**
+ * All searchable text for one normalized message.
+ *
+ * `content` alone misses most of a transcript: `getMessages` merges tool calls
+ * and their results into `events` and leaves `content` empty for any turn that
+ * only used tools — the commit-and-open-a-PR turns are exactly those, so they
+ * were the least searchable part of the history rather than the most.
+ */
+export function messageSearchText(msg: ChatMessage): string {
+  const parts: string[] = [];
+  if (msg.content) parts.push(msg.content);
+  collectEventText(msg.events, parts);
+  return parts.filter((p) => p && p.trim()).join("\n").trim();
+}
+
 /** Index a concrete set of normalized messages (core, provider-agnostic). */
 export function indexMessages(
   sessionId: string,
@@ -55,25 +119,26 @@ export function indexMessages(
     "INSERT INTO messages_fts (text, session_id, project_path, message_id, role, ts) VALUES (?, ?, ?, ?, ?, ?)",
   );
   const upsertMeta = db.query(`
-    INSERT INTO session_meta (session_id, project_path, jsonl_mtime, indexed_at, msg_count)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO session_meta (session_id, project_path, jsonl_mtime, indexed_at, msg_count, indexer_version)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET
-      project_path = excluded.project_path,
-      jsonl_mtime  = excluded.jsonl_mtime,
-      indexed_at   = excluded.indexed_at,
-      msg_count    = excluded.msg_count
+      project_path    = excluded.project_path,
+      jsonl_mtime     = excluded.jsonl_mtime,
+      indexed_at      = excluded.indexed_at,
+      msg_count       = excluded.msg_count,
+      indexer_version = excluded.indexer_version
   `);
 
   const tx = db.transaction(() => {
     del.run(sessionId);
     let count = 0;
     for (const msg of messages) {
-      const text = (msg.content ?? "").trim();
+      const text = messageSearchText(msg);
       if (!text) continue;
       ins.run(text, sessionId, projectPath, msg.id, msg.role, msg.timestamp ?? "");
       count++;
     }
-    upsertMeta.run(sessionId, projectPath, jsonlMtime, Date.now(), count);
+    upsertMeta.run(sessionId, projectPath, jsonlMtime, Date.now(), count, INDEXER_VERSION);
   });
   tx();
 }
@@ -89,12 +154,18 @@ export async function indexSession(
   indexMessages(sessionId, projectPath, messages, jsonlMtime);
 }
 
-/** True when the stored index for a session is missing or older than the JSONL. */
+/**
+ * True when the stored index for a session is missing, older than the JSONL, or
+ * was written by an earlier indexer. Without the version check, widening what
+ * gets indexed would never reach the sessions already on disk: their
+ * `jsonl_mtime` still matches, so they stay stamped as fresh forever.
+ */
 export function isStale(sessionId: string, jsonlMtime: number): boolean {
   const row = getSearchIndexDb()
-    .query("SELECT jsonl_mtime FROM session_meta WHERE session_id = ?")
-    .get(sessionId) as { jsonl_mtime: number } | null;
+    .query("SELECT jsonl_mtime, indexer_version FROM session_meta WHERE session_id = ?")
+    .get(sessionId) as { jsonl_mtime: number; indexer_version: number } | null;
   if (!row) return true;
+  if (row.indexer_version !== INDEXER_VERSION) return true;
   return row.jsonl_mtime !== jsonlMtime;
 }
 

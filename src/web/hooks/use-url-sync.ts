@@ -26,6 +26,20 @@ const VALID_TAB_TYPES: TabType[] = [
 // ---------------------------------------------------------------------------
 
 /**
+ * `decodeURIComponent` throws `URIError` on a percent that is not an escape —
+ * a hand-edited address, a truncated share link, a `%` in a branch name that
+ * was never encoded. Thrown from here it reaches the root and unmounts the app,
+ * so a mistyped URL would blank the page instead of just not resolving to a tab.
+ */
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+/**
  * Parse the current URL to extract project name and tab info.
  * Format: /project/{name}/{tabType}/{...identifier}
  */
@@ -37,7 +51,7 @@ export function parseUrlState(): UrlState {
   const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);
   if (!match) return { projectName: null, tabType: null, tabIdentifier: null, openChat };
 
-  const projectName = decodeURIComponent(match[1]!);
+  const projectName = decodePathSegment(match[1]!);
   const rawType = match[2] ?? null;
   const rawIdentifier = match[3] ? match[3].slice(1) : null; // strip leading /
 

@@ -1,4 +1,4 @@
-import { Clock, ArrowDownUp, ArrowDownAZ } from "lucide-react";
+import { Clock, ArrowDownUp, ArrowDownAZ } from "@/lib/icons";
 import { resolveOrder, sortByRecent, type ProjectInfo, type SortMode } from "@/stores/project-store";
 
 // Sort modes for the project list, shared by the desktop flyout and the

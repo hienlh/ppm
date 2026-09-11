@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import type { ChatEvent } from "../../../types/chat";

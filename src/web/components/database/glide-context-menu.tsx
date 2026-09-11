@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Eye, Pin, PinOff, Trash2, ExternalLink } from "lucide-react";
+import { Eye, Pin, PinOff, Trash2, ExternalLink } from "@/lib/icons";
 
 interface ContextMenuProps {
   position: { x: number; y: number };

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { FolderOpen, GitBranch, Circle, Plus, Pencil, Trash2 } from "lucide-react";
+import { FolderOpen, GitBranch, Circle, Plus, Pencil, Trash2 } from "@/lib/icons";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { api } from "@/lib/api-client";

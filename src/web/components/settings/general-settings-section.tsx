@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { Check } from "lucide-react";
+import { Check } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

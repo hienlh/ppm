@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Download } from "lucide-react";
+import { Download } from "@/lib/icons";
 import { serializeCsv } from "@/lib/csv-parser";
 import { copyToClipboard } from "@/lib/clipboard";
 

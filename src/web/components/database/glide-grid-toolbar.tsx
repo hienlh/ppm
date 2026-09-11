@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Search, X, Trash2, Plus, Columns } from "lucide-react";
+import { Search, X, Trash2, Plus, Columns } from "@/lib/icons";
 import { ExportButton } from "./export-button";
 import { GlideColumnSearch } from "./glide-column-search";
 

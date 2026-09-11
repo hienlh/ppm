@@ -5,7 +5,7 @@
  * light/dark within it, and System follows the OS.
  */
 
-import { WrapText, Zap } from "lucide-react";
+import { WrapText, Zap } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";

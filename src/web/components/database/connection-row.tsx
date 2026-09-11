@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, RefreshCw, Pencil, Trash2, Lock, Search } from "lucide-react";
+import { ChevronRight, ChevronDown, RefreshCw, Pencil, Trash2, Lock, Search } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { Connection, CachedTable } from "./use-connections";
 import { SchemaTableTree, type ColumnInfo } from "./schema-table-tree";

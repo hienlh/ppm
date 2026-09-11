@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Download } from "lucide-react";
+import { X, Download, MessageCircle } from "@/lib/icons";
 import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { isDarkColor } from "@/lib/color-utils";
@@ -36,6 +36,12 @@ interface DraggableTabProps {
   onTouchStart?: (e: React.TouchEvent) => void;
   onTouchMove?: (e: React.TouchEvent) => void;
   onTouchEnd?: (e: React.TouchEvent) => void;
+  /**
+   * Forwarded like the others and easy to leave out, which is what happened.
+   * The press that arms a tab drag lives in `use-touch-tab-drag`, so a cancel
+   * that never reaches this element leaves that timer to fire into a scroll.
+   */
+  onTouchCancel?: (e: React.TouchEvent) => void;
   tabRef: (el: HTMLButtonElement | null) => void;
   /** If provided, double-clicking the title enters inline rename mode */
   onRename?: (newTitle: string) => void;
@@ -49,7 +55,7 @@ interface DraggableTabProps {
 
 export function DraggableTab({
   tab, isActive, icon: Icon, showDropBefore, notificationType, notificationManual, isStreaming, onSelect, onClose,
-  onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd, tabRef, onRename, onContextAction,
+  onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel, tabRef, onRename, onContextAction,
   tagColor, extraMenuContent,
 }: DraggableTabProps) {
   const [editing, setEditing] = useState(false);
@@ -96,6 +102,7 @@ export function DraggableTab({
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchCancel}
       style={colorStyle}
       className={tabButtonClass(editorTabStyle, isActive, !!colorStyle)}
     >
@@ -105,7 +112,17 @@ export function DraggableTab({
         // Tag identity is now shown as a separate left-edge bar (see wrapper div below), not icon color.
         className={cn("relative", isStreaming && "text-warning")}
       >
-        <Icon className="size-4" />
+        {/*
+         * The empty bubble while streaming, because the dots go *inside* it. Fluent's
+         * `chat` glyph draws two message lines of its own, so at 16px the dots landed
+         * on top of them in the same colour and the three of them read as one bar —
+         * an indicator that looked broken rather than animated. `MessageCircle` is
+         * `chat-empty`: the same bubble, nothing in it. Safe to swap unconditionally
+         * because `isStreaming` is only ever set for a chat tab (both tab-bar.tsx and
+         * mobile-tab-switcher-sheet.tsx read `sessionId` only when `type === "chat"`),
+         * whose icon is that same bubble.
+         */}
+        {isStreaming ? <MessageCircle className="size-4" /> : <Icon className="size-4" />}
         {isStreaming ? (
           // Messenger-style typing dots inside chat bubble — inherits current icon color (amber while streaming)
           <span aria-hidden className="absolute inset-0 flex items-center justify-center gap-[1.5px]">

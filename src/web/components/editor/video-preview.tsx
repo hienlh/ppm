@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, FileWarning, Loader2 } from "lucide-react";
+import { Download, FileWarning, Loader2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { extensionOf } from "@/components/os-explorer/can-open-in-ppm";
 import { probeMedia, rawMediaUrl, type MediaProbeInfo } from "@/lib/media-url";

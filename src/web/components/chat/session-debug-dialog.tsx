@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bug, ClipboardCheck, Copy, ImageOff, Loader2, TriangleAlert } from "lucide-react";
+import { Bug, ClipboardCheck, Copy, ImageOff, Loader2, TriangleAlert } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";

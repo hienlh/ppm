@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Check, Copy, ExternalLink, Globe, Loader2, Lock, RefreshCw, Square } from "lucide-react";
+import { Check, Copy, ExternalLink, Globe, Loader2, Lock, RefreshCw, Square } from "@/lib/icons";
 import { tunnelsApi, type TunnelEntry } from "@/lib/api-tunnels";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "sonner";

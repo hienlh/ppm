@@ -6,8 +6,8 @@
  * Usage: import from this file instead of "@/components/ui/context-menu".
  * Same component names, same API — behavior adapts automatically.
  */
-import React, { useState, useRef, useCallback, type ReactNode } from "react";
-import { CircleIcon } from "lucide-react";
+import React, { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
+import { CircleIcon } from "@/lib/icons";
 import * as Radix from "./context-menu";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
@@ -92,6 +92,12 @@ function ContextMenuTrigger({
     clearTimeout(timerRef.current);
   }, []);
 
+  // Same timer, and the reason it has to be disarmed on three events rather than
+  // two: a scroll that takes the gesture over fires `touchcancel` and then stops
+  // delivering `touchmove`/`touchend` here, leaving the press to complete on its
+  // own and open a sheet nobody asked for.
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
   const handleClickCapture = useCallback((e: React.MouseEvent) => {
     if (suppressRef.current) {
       e.preventDefault();
@@ -110,6 +116,7 @@ function ContextMenuTrigger({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
       onClickCapture={handleClickCapture}
       onContextMenu={handleContextMenu}
       className="contents"

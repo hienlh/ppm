@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { MoreVertical, Download, Upload, Clipboard, ClipboardPaste } from "lucide-react";
+import { MoreVertical, Download, Upload, Clipboard, ClipboardPaste } from "@/lib/icons";
 import { copyToClipboard } from "@/lib/clipboard";
 
 interface Props {

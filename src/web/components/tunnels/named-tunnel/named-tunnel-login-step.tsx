@@ -5,7 +5,7 @@
  * past 60s, so a countdown would wrongly imply an imminent kill.
  */
 import { useState } from "react";
-import { Copy, Check, ExternalLink, Loader2, AlertTriangle } from "lucide-react";
+import { Copy, Check, ExternalLink, Loader2, AlertTriangle } from "@/lib/icons";
 import { copyToClipboard } from "@/lib/clipboard";
 import { namedTunnelCopy } from "./named-tunnel-copy";
 

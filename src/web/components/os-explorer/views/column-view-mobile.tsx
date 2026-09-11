@@ -6,7 +6,7 @@
  */
 
 import type { KeyboardEvent, RefObject } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "@/lib/icons";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import type { FsEntry } from "@/lib/fs-api";
 import type { ExplorerActions } from "../actions/use-explorer-actions";

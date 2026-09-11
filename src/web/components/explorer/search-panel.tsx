@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Search, CaseSensitive, ChevronRight, ChevronDown, FileText, X, Loader2, WholeWord, Regex, ReplaceAll } from "lucide-react";
+import { Search, CaseSensitive, ChevronRight, ChevronDown, X, Loader2, WholeWord, Regex, ReplaceAll } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { projectUrl, api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { FileIcon } from "@/lib/file-icons";
 
 interface SearchMatch {
   lineNum: number;
@@ -284,7 +285,7 @@ export function SearchPanel() {
                 className="w-full flex items-center gap-1 px-2 py-1 hover:bg-muted/50 text-left"
               >
                 {isCollapsed ? <ChevronRight className="size-3 shrink-0 text-text-subtle" /> : <ChevronDown className="size-3 shrink-0 text-text-subtle" />}
-                <FileText className="size-3 shrink-0 text-text-subtle" />
+                <FileIcon name={fileName} className="size-3.5" />
                 <span className="text-xs font-medium text-foreground truncate">{fileName}</span>
                 <span className="text-[10px] text-text-subtle truncate flex-1 min-w-0 ml-1">{dirPath}</span>
                 <span className="text-[10px] text-text-subtle shrink-0 ml-1 bg-muted px-1 rounded">{r.matches.length}</span>

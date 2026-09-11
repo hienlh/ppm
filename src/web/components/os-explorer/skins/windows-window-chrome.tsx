@@ -15,7 +15,7 @@
  * `--x-radius`, `--x-font`) only resolve on an element that itself carries the attribute.
  */
 
-import { Minus, Square, Copy, X } from "lucide-react";
+import { Minus, Square, Copy, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
 import { PipCaptionButton } from "@/components/floating-window/pip/pip-caption-button";

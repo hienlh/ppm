@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Play, Loader2, FlaskConical } from "lucide-react";
+import { Play, Loader2, FlaskConical } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

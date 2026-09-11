@@ -1,5 +1,5 @@
 import { useCallback, useState, useRef, useMemo } from "react";
-import { ChevronRight, ChevronDown, RefreshCw, Pencil, Trash2, Plus, Search } from "lucide-react";
+import { ChevronRight, ChevronDown, RefreshCw, Pencil, Trash2, Plus, Search } from "@/lib/icons";
 import { useExtensionStore, type TreeItemUI, type TreeItemAction } from "@/stores/extension-store";
 import { cn } from "@/lib/utils";
 

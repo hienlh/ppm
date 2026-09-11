@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink, History } from "lucide-react";
+import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink, History } from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 import { fetchRecentChangelog, newestSectionVersion, compareSemver, type ChangelogSection } from "@/lib/changelog";
 import { cn } from "@/lib/utils";

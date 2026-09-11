@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { Database, RefreshCw, GripHorizontal, Loader2, ShieldCheck, ShieldOff } from "lucide-react";
+import { Database, RefreshCw, GripHorizontal, Loader2, ShieldCheck, ShieldOff } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useDatabase, type DbColumnInfo } from "./use-database";

@@ -1,4 +1,4 @@
-import { BellOff, Bug, Circle, MoreHorizontal } from "lucide-react";
+import { BellOff, Bug, Circle, MoreHorizontal } from "@/lib/icons";
 import {
   DropdownMenu,
   DropdownMenuContent,

@@ -5,7 +5,7 @@
  * the two used to share one scroll and the members were pushed out of view.
  */
 
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { TeamMemberActivity } from "@/hooks/use-team-activity-feed";
 import { TeamMemberActivityRow } from "./team-member-activity-row";

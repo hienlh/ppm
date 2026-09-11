@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { FileBrowserPicker, type FileBrowserPickerProps } from "./file-browser-picker";
 import { cn } from "@/lib/utils";

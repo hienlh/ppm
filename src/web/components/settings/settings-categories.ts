@@ -7,9 +7,20 @@
  */
 
 import {
-  Settings2, Palette, Bot, KeyRound, BotMessageSquare, BellRing, Bug, Puzzle, Globe,
-  CalendarClock, Keyboard, FolderSearch, DatabaseZap,
-} from "lucide-react";
+  Settings2,
+  Palette,
+  Bot,
+  KeyRound,
+  BotMessageSquare,
+  BellRing,
+  Bug,
+  Puzzle,
+  Globe,
+  CalendarClock,
+  Keyboard,
+  FolderSearch,
+  DatabaseZap,
+} from "@/lib/icons";
 
 /**
  * There is one `accounts` entry, not one per provider: the pane itself carries a sub-tab per

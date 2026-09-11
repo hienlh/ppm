@@ -1,4 +1,4 @@
-import { MessageSquare } from "lucide-react";
+import { MessageSquare } from "@/lib/icons";
 
 export function ChatPlaceholder() {
   return (
