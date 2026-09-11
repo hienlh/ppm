@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { existsSync, statSync } from "node:fs";
 import { resolve, join, extname, dirname } from "node:path";
 import { isCompiledBinary } from "../../services/autostart-generator.ts";
+import { chooseVariant } from "./static-encoding.ts";
 
 export const staticRoutes = new Hono();
 
@@ -53,22 +54,37 @@ staticRoutes.get("*", async (c) => {
     const file = Bun.file(filePath);
     // Only serve if it's actually a file (not directory)
     if (file.size > 0 || extname(filePath)) {
+      // The MIME type is the *original* file's even when a compressed copy is
+      // sent — `Content-Encoding` describes the transfer, `Content-Type` the
+      // content, and swapping them makes the browser download a file instead of
+      // running it.
       const mime = MIME_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream";
+      const variant = chooseVariant(filePath, c.req.header("Accept-Encoding"), existsSync);
       const headers: Record<string, string> = { "Content-Type": mime };
+      if (variant.encoding) {
+        headers["Content-Encoding"] = variant.encoding;
+        // Without this a shared cache would hand a brotli body to a client that
+        // never asked for one.
+        headers["Vary"] = "Accept-Encoding";
+      }
       // Vite emits content-hashed filenames under /assets/ — safe to cache forever.
       // Everything else gets revalidation via ETag so upgrades propagate.
       if (urlPath.startsWith("/assets/")) {
         headers["Cache-Control"] = "public, max-age=31536000, immutable";
       } else {
-        const stat = statSync(filePath);
-        const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+        const stat = statSync(variant.path);
+        // The encoding is part of the identity: two variants of one file are
+        // different bytes, and an ETag they shared would let a cache answer a
+        // gzip request with a brotli body.
+        const suffix = variant.encoding ? `-${variant.encoding}` : "";
+        const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}${suffix}"`;
         headers["Cache-Control"] = "no-cache";
         headers["ETag"] = etag;
         if (c.req.header("If-None-Match") === etag) {
           return new Response(null, { status: 304, headers });
         }
       }
-      return new Response(file, { headers });
+      return new Response(variant.encoding ? Bun.file(variant.path) : file, { headers });
     }
   }
 

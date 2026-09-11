@@ -10,6 +10,7 @@ import { resolveTheme as resolvePpmTheme } from "@/theme/resolve-theme";
 import { getCurrentAppliedTheme, THEME_CHANGE_EVENT } from "@/theme/apply-theme";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import type { PpmTheme } from "@/theme/types";
+import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
 
 /** Current active PpmTheme → xterm ITheme (prefers the live applied theme). */
 function currentXtermTheme(): ITheme {
@@ -348,7 +349,7 @@ export function useTerminal(
       scrollback: 50000,
       // Explicit terminal-grade stack: the WebGL renderer builds its glyph
       // atlas via ctx.font and cannot resolve CSS var() values.
-      fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', 'Courier New', monospace",
+      fontFamily: EDITOR_FONT_FAMILY,
       theme: currentXtermTheme(),
     });
 
