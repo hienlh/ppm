@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Loader2, RefreshCw, GitCommitHorizontal } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import { useProjectStore } from "@/stores/project-store";
 import { useShallow } from "zustand/react/shallow";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -16,6 +17,7 @@ interface GitLogPanelProps {
 export function GitLogPanel({ metadata }: GitLogPanelProps) {
   const projectName = (metadata?.projectName as string) ??
     useProjectStore(useShallow((s) => s.activeProject))?.name;
+  const { gitUrl } = useGitRepo(projectName);
   const [data, setData] = useState<GitGraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -26,7 +28,7 @@ export function GitLogPanel({ metadata }: GitLogPanelProps) {
     setLoading(true);
     try {
       const res = await api.get<GitGraphData>(
-        `${projectUrl(projectName)}/git/graph?max=${PAGE_SIZE}&skip=${skip}`,
+        gitUrl(`/graph?max=${PAGE_SIZE}&skip=${skip}`),
       );
       setData((prev) => {
         if (append && prev) {

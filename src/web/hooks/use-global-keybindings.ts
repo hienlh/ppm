@@ -8,6 +8,7 @@ import { useExtensionStore } from "@/stores/extension-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { openSettings } from "@/components/settings/open-settings";
 import { basename } from "@/lib/utils";
+import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
 
 /** Dispatch this event to open the command palette from anywhere, optionally with initial query */
 export function openCommandPalette(initialQuery?: string) {
@@ -262,12 +263,7 @@ export function useGlobalKeybindings() {
           if (!parsed) { parsed = parseCombo(raw); extParsedCache.set(raw, parsed); }
           if (eventMatchesCombo(e, parsed)) {
             e.preventDefault();
-            const project = useProjectStore.getState().activeProject;
-            const args: unknown[] = [];
-            if (project?.path) args.push(project.path);
-            window.dispatchEvent(new CustomEvent("ext:command:execute", {
-              detail: { command: kb.command, args },
-            }));
+            void dispatchExtCommand(kb.command);
             return;
           }
         }

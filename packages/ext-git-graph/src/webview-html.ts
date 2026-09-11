@@ -2,7 +2,8 @@
  * Generate the complete webview HTML for the git graph panel.
  * All JS + CSS is inlined since webview runs in an iframe sandbox.
  */
-import { AVATAR_JS } from "./webview-shell.ts";
+import { AVATAR_JS, FONT_TOKENS } from "./webview-shell.ts";
+import { COMMIT_MESSAGE_JS } from "./commit-message-html.ts";
 
 export function getWebviewHtml(): string {
   return `<!DOCTYPE html>
@@ -81,10 +82,13 @@ ${getStyles()}
       <button id="find-close" title="Close">&times;</button>
     </div>
     <div id="search-results" class="search-results hidden"></div>
+    <div id="graph-area">
     <div id="graph-container">
       <div id="graph-header" class="commit-row header-row">
+        <div class="col-refs">Branch / Tag</div>
         <div class="col-graph">Graph<div class="graph-resize-handle" id="graph-resize-handle"></div></div>
         <div class="col-message">Message</div>
+        <div class="col-changes">Changes</div>
         <div class="col-author">Author</div>
         <div class="col-date">Date</div>
         <div class="col-hash">Hash</div>
@@ -94,6 +98,8 @@ ${getStyles()}
         <div id="commit-list"></div>
       </div>
       <div id="loading" class="loading hidden">Loading...</div>
+    </div>
+      <div id="scroll-markers" aria-hidden="true"></div>
     </div>
     <div id="detail-panel" class="detail-panel hidden"></div>
     <div id="settings-panel" class="settings-panel">
@@ -161,6 +167,24 @@ ${getScript()}
 </html>`;
 }
 
+/**
+ * Dark values, emitted twice by design.
+ *
+ * The panel is a sandboxed iframe and cannot see the app's theme, so on its own
+ * the only question it can ask is prefers-color-scheme — the *OS* setting,
+ * which is why a light app still showed a dark graph. The host now stamps
+ * data-ppm-theme on this document and injects the app's own tokens
+ * (src/web/components/extensions/webview-theme.ts); the media query is the
+ * fallback for a host that says nothing, and it must not override an explicit
+ * light. Values are a charcoal rather than near-black so the toolbar, the list
+ * and the banded rows read as three surfaces instead of one slab.
+ */
+const DARK_TOKENS = `
+  --bg: #16171c; --surface: #1d1f26; --text: #ecedf0; --subtext: #a2a5b0; --subtle: #6b6f7c;
+  --border: #262932; --border2: #383c48; --selected: #1e293b;
+  --band: color-mix(in srgb, var(--text) 6%, transparent);
+`;
+
 function getStyles(): string {
   return `
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -168,15 +192,28 @@ function getStyles(): string {
   --bg: #ffffff; --surface: #f4f4f5; --text: #09090b; --subtext: #71717a; --subtle: #a1a1aa;
   --border: #e4e4e7; --border2: #d4d4d8; --blue: #3b82f6; --red: #ef4444; --green: #22c55e;
   --yellow: #eab308; --purple: #8b5cf6; --orange: #f97316;
-  --surface-hover: #f4f4f5; --selected: #eff6ff;
+  --selected: #eff6ff;
+  /* Zebra banding. Stronger in dark below, because the same percentage is not
+     equally visible in both directions: a wash of near-black over white shows
+     up where the same lift of near-white over a near-black row does not, which
+     is what left the list looking like one flat slab. */
+  --band: color-mix(in srgb, var(--text) 3.5%, transparent);
+  /* Derived, never injected: the app has no hover token and some of its themes
+     give the same colour to both panel surfaces, which would leave a hovered
+     row looking untouched. A tint of the text colour flips with the mode and
+     stacks on top of the zebra banding instead of replacing it. */
+  --surface-hover: color-mix(in srgb, var(--text) 8%, transparent);
+  /* Width of the branch/tag column. Fixed, because the graph is one SVG overlay
+     drawn on a single grid and it starts where this column ends. */
+  --refs-col-w: 170px;
+
+  ${FONT_TOKENS}
 }
+:root[data-ppm-theme="dark"] { ${DARK_TOKENS} }
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #09090b; --surface: #18181b; --text: #fafafa; --subtext: #a1a1aa; --subtle: #52525b;
-    --border: #27272a; --border2: #3f3f46; --selected: #1e293b; --surface-hover: #27272a;
-  }
+  :root:not([data-ppm-theme="light"]) { ${DARK_TOKENS} }
 }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 12px; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+body { font-family: var(--ui-font); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; background: var(--bg); color: var(--text); font-size: 12px; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
 #app { display: flex; flex-direction: column; height: 100vh; }
 
 /* Toolbar */
@@ -268,25 +305,67 @@ button:active { background: var(--surface); }
 #find-count { font-size: 10px; color: var(--subtext); min-width: 50px; }
 .hidden { display: none !important; }
 
-/* Graph container */
-#graph-container { flex: 1; overflow-y: auto; overflow-x: hidden; }
-.commit-row { display: flex; align-items: center; cursor: pointer; height: 24px; padding: 0 6px; font-size: 12px; box-sizing: border-box; overflow: hidden; }
+/* Graph container. The scroller is wrapped, because the scroll markers have to
+   sit beside it in a box that does not scroll with the rows. */
+#graph-area { position: relative; flex: 1; min-height: 0; display: flex; }
+#graph-container { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; }
+/* Where in the whole history the things worth scrolling to are: the checked-out
+   commit, the selected row, and every search match. Over the scrollbar, like
+   VS Code's own overview ruler, and never clickable — dragging the scrollbar
+   underneath has to keep working. */
+#scroll-markers { position: absolute; right: 0; top: 0; bottom: 0; width: 5px; pointer-events: none; z-index: 3; }
+.scroll-marker { position: absolute; right: 0; width: 5px; height: 2px; border-radius: 1px; transform: translateY(-50%); }
+.sm-search { background: var(--yellow); }
+.sm-head { background: var(--green); height: 3px; }
+.sm-selected { background: var(--blue); height: 3px; }
+.commit-row { display: flex; align-items: center; cursor: pointer; height: 30px; padding: 0 6px; font-size: 12px; box-sizing: border-box; overflow: hidden; }
+/* Banding, before the hover and selected rules on purpose: it has the same
+   specificity as they do, so source order is what decides the winner. Do not
+   qualify it with #commit-list — an id would raise it above both of them and
+   every other row would stop showing hover and selection. The header row is a
+   .commit-row too but is the first child of its own parent, so it is odd. */
+.commit-row:nth-child(even) { background: var(--band); }
 .commit-row:hover { background: var(--surface-hover); }
-.commit-row.selected { background: var(--selected); }
-.commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 10px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--border); min-height: 22px; }
-.commit-row.search-match { background: rgba(234, 179, 8, 0.15); }
+.commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 10px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--border); height: 24px; }
+.commit-row.header-row .col-message::before { display: none; }
+/* A tint and a bar, not a flood: with fifteen rows on screen a 15% yellow
+   wash over half of them buried the list it was meant to annotate. The
+   scroll markers carry where the rest of the matches are. */
+.commit-row.search-match { background: color-mix(in srgb, var(--yellow) 9%, transparent); box-shadow: inset 2px 0 0 var(--yellow); }
+/* After the match rule on purpose: the row you clicked should look selected,
+   even when it is also a match. Which of the two it is stays visible in the
+   find bar's count and in the scroll markers. */
+.commit-row.selected { background: var(--selected); box-shadow: inset 2px 0 0 var(--blue); }
 .commit-row.virtual { opacity: 0.85; font-style: italic; }
 .commit-row.virtual .col-message { color: var(--subtext); }
 .commit-row.stash-row { opacity: 0.75; }
 .commit-row.stash-row .col-message { color: var(--subtext); font-style: italic; }
 .file-clickable { cursor: pointer; border-radius: 3px; padding: 2px 4px; margin: 0 -4px; }
 .file-clickable:hover { background: var(--surface-hover); }
+/* Refs get a column of their own so every message starts at the same x — a
+   branch badge pushing the text right was most of why the list read as ragged.
+   The width has to be fixed rather than content-sized: rows are separate flex
+   containers, so an auto width would put each row's graph at a different x, and
+   the graph is one SVG overlay drawn on a single grid. */
+.col-refs { width: var(--refs-col-w, 170px); min-width: var(--refs-col-w, 170px); flex-shrink: 0; overflow: hidden; white-space: nowrap; display: flex; align-items: center; justify-content: flex-end; gap: 3px; padding-right: 6px; }
+.col-refs .ref-badge { min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-right: 0; }
 .col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; position: relative; }
 .graph-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; background: transparent; }
 .graph-resize-handle:hover, .graph-resize-handle.dragging { background: var(--blue); opacity: 0.5; }
-.col-message { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; }
-.col-author { width: 100px; min-width: 100px; overflow: hidden; white-space: nowrap; color: var(--subtext); font-size: 11px; display: flex; align-items: center; gap: 4px; }
-.col-author .author-name { overflow: hidden; text-overflow: ellipsis; }
+.col-message { flex: 1; min-width: 0; padding: 0 6px 0 12px; position: relative; display: flex; flex-direction: column; justify-content: center; align-self: stretch; overflow: hidden; }
+/* The lane's colour, restated where the eye reads the message. The row centres
+   its cells, so this one has to stretch or the tick has nothing to span. */
+.col-message::before { content: ''; position: absolute; left: 3px; top: 7px; bottom: 7px; width: 2px; border-radius: 1px; background: var(--lane, transparent); opacity: 0.65; }
+.msg-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Author, date and hash again, for the phone layout that has no room for their
+   columns. Hidden until that layout asks for it. */
+.msg-meta { display: none; }
+/* Lines added and removed. Tabular figures so the columns of digits line up
+   down the list rather than jittering with the glyph widths. */
+.col-changes { width: 84px; min-width: 84px; flex-shrink: 0; font-size: 11px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 5px; }
+.col-changes .ch-add { color: var(--green); }
+.col-changes .ch-del { color: var(--red); }
+.col-author { width: 130px; min-width: 130px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--subtext); font-size: 11px; }
 .avatar { width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; color: #fff; flex-shrink: 0; letter-spacing: -0.2px; }
 
 /* Author hover card */
@@ -306,9 +385,9 @@ button:active { background: var(--surface); }
 .sr-item:hover { background: var(--surface-hover); }
 .sr-subject { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sr-meta { font-size: 10px; color: var(--subtext); display: flex; gap: 6px; align-items: center; margin-top: 2px; }
-.sr-hash { font-family: 'SF Mono', 'Fira Code', monospace; }
+.sr-hash { font-family: var(--mono-font); }
 .col-date { width: 80px; min-width: 80px; color: var(--subtext); font-size: 11px; }
-.col-hash { width: 60px; min-width: 60px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; color: var(--subtle); }
+.col-hash { width: 60px; min-width: 60px; font-family: var(--mono-font); font-size: 10px; color: var(--subtle); }
 
 /* Ref badges — border + tinted bg + dark text */
 .ref-badge { display: inline-flex; align-items: center; gap: 3px; padding: 0px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; margin-right: 3px; vertical-align: middle; line-height: 16px; border: 1px solid; color: #1a1a1a; }
@@ -317,26 +396,118 @@ button:active { background: var(--surface); }
 .ref-remote { border-color: var(--purple); background: color-mix(in srgb, var(--purple) 12%, transparent); }
 .ref-tag { border-color: var(--yellow); background: color-mix(in srgb, var(--yellow) 12%, transparent); }
 .ref-stash { border-color: #808080; background: color-mix(in srgb, #808080 12%, transparent); }
+:root[data-ppm-theme="dark"] .ref-badge { color: #e4e4e7; }
 @media (prefers-color-scheme: dark) {
-  .ref-badge { color: #e4e4e7; }
+  :root:not([data-ppm-theme="light"]) .ref-badge { color: #e4e4e7; }
 }
 
 /* SVG graph — single SVG overlay */
 #commit-list-wrapper { position: relative; }
-#graph-svg-container { position: absolute; top: 0; left: 8px; z-index: 1; pointer-events: none; }
+#graph-svg-container { position: absolute; top: 0; left: calc(var(--refs-col-w, 170px) + 8px); z-index: 1; pointer-events: none; }
 #graph-svg-container circle { pointer-events: auto; cursor: pointer; }
 #graph-svg-container .line { stroke-width: 2; fill: none; }
-#graph-svg-container .graphCurrent { fill: var(--bg); stroke-width: 2; }
+/* The checked-out commit wears a thicker ring rather than a different shape,
+   so it still reads as the same kind of thing as every row above it. */
+#graph-svg-container .graphCurrent { stroke-width: 3.5; }
+#graph-svg-container .node-initials { font-size: 8px; font-weight: 700; fill: #fff; pointer-events: none; user-select: none; letter-spacing: -0.3px; }
 .commit-row.graph-hover { background: var(--surface-hover); }
 
-/* Detail panel */
-.detail-panel { border-top: 1px solid var(--border2); background: var(--surface); max-height: 40vh; overflow-y: auto; padding: 8px 12px; flex-shrink: 0; }
+/* Detail panel. The panel itself carries no padding, because the header is a
+   full-width sticky bar and each pane below it pads itself; anything else
+   written into the panel wraps itself in .detail-pad. */
+.detail-panel { border-top: 1px solid var(--border2); background: var(--surface); max-height: 40vh; overflow-y: auto; flex-shrink: 0; }
 .detail-panel h3 { font-size: 13px; margin-bottom: 6px; }
-.detail-field { margin-bottom: 3px; font-size: 11px; }
-.detail-field .label { color: var(--subtext); display: inline-block; width: 80px; }
-.detail-message { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px; margin: 6px 0; font-size: 11px; white-space: pre-wrap; font-family: 'SF Mono', 'Fira Code', monospace; }
-.file-list { margin-top: 8px; }
-.file-item { display: flex; align-items: center; gap: 5px; padding: 1px 0; font-size: 11px; font-family: 'SF Mono', 'Fira Code', monospace; }
+.detail-pad { padding: 8px 12px; }
+
+.detail-head { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 2; flex-shrink: 0; }
+.detail-head .avatar { width: 20px; height: 20px; font-size: 8px; }
+.detail-who { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.detail-author { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail-when { font-size: 11px; color: var(--subtext); white-space: nowrap; }
+.detail-head-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+/* A hash is a chip you can copy, not a 40-character field label. */
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border: 1px solid var(--border2); border-radius: 5px; background: var(--bg); color: var(--subtext); font-family: var(--mono-font); font-size: 10px; }
+.chip-label { font-family: var(--ui-font); font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--subtle); }
+.chip.copyable { cursor: pointer; }
+.chip.copyable:hover { color: var(--text); border-color: var(--blue); }
+.chip.copied { color: var(--green); border-color: var(--green); }
+
+/* Two columns when there is room. A commit message is hard-wrapped by whoever
+   wrote it, so on a wide panel it fills half the width and the rest of the row
+   is empty; the file list goes there instead of below the fold. Each pane pads
+   itself, because above the breakpoint each one also scrolls itself. */
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+.detail-msg { padding: 12px 16px 16px; min-width: 0; }
+.detail-files { padding: 8px 12px 12px; min-width: 0; }
+/* Full hashes, both emails and both dates, in a label/value grid. One rule
+   under it separates the provenance from the message; the subject carries none
+   of its own, because two hairlines in a 360px panel is a lot of furniture and
+   14px semibold against 11.5px monospace already reads as two things. The rule
+   belongs here rather than to the body, which is capped at a readable measure
+   and would stop the border short of the pane for no visible reason. */
+.detail-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; align-items: baseline; font-size: 11.5px; margin-bottom: 14px; padding-bottom: 13px; border-bottom: 1px solid var(--border); }
+.meta-label { color: var(--subtext); font-size: 11.5px; white-space: nowrap; }
+.meta-cells { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 14px; min-width: 0; }
+.meta-value { min-width: 0; overflow-wrap: anywhere; cursor: pointer; }
+.meta-value.mono { font-family: var(--mono-font); font-size: 11.5px; color: var(--subtext); }
+/* The eight characters that identify the commit carry the contrast; the other
+   thirty-two are there to be copied, not read. */
+.hash-lead { color: var(--text); font-weight: 600; }
+.meta-name { color: var(--text); }
+.meta-email { color: var(--subtext); margin-left: 6px; }
+.meta-value:hover .hash-lead, .meta-value:hover .meta-name, .meta-value:hover .meta-email { color: var(--blue); }
+.meta-value:hover { color: var(--blue); }
+.meta-value.copied, .meta-value.copied .hash-lead, .meta-value.copied .meta-name, .meta-value.copied .meta-email { color: var(--green); }
+.meta-when { color: var(--subtext); font-variant-numeric: tabular-nums; }
+.detail-subject { font-size: 15px; font-weight: 600; line-height: 1.4; letter-spacing: -0.1px; }
+
+/* The body. A paragraph its author wrapped at 72 columns is set as prose in the
+   UI font and reflowed to the pane it is actually in — verbatim monospace gave
+   a ragged half-filled column of the wrong width. A list or an aligned block is
+   not reflowable and keeps its breaks and its monospace; splitCommitBody
+   decides which is which. */
+.detail-text { margin-top: 13px; }
+.msg-p { font-size: 13px; line-height: 1.7; max-width: 68ch; }
+.msg-pre { font-family: var(--mono-font); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The reset zeroes every margin, so the space between paragraphs is set here
+   rather than inherited from the browser's default for a p element. */
+.msg-p + .msg-p, .msg-p + .msg-pre, .msg-pre + .msg-p, .msg-pre + .msg-pre { margin-top: 13px; }
+
+/* One scrollbar per pane above the breakpoint. A long message and a long file
+   list are two lists of unrelated length, and scrolling the pair as one means
+   reaching the twentieth file by pushing the message off the screen. Below it
+   they are stacked, and two scrollers inside one short panel is a trap for a
+   thumb — so there the panel scrolls as a whole, as it always did. */
+@media (min-width: 900px) {
+  .detail-panel.split { display: flex; flex-direction: column; overflow: hidden; }
+  .detail-grid.has-files { grid-template-columns: minmax(0, 1fr) minmax(260px, 38%); }
+  .detail-panel.split .detail-grid { flex: 1 1 auto; min-height: 0; }
+  .detail-panel.split .detail-grid > * { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+  .detail-panel.split .detail-files { border-left: 1px solid var(--border); padding-top: 0; }
+  /* The pane's own top padding would sit above a sticky header, leaving a strip
+     for rows to scroll through; the header carries that space instead. */
+  .detail-panel.split .files-head { position: sticky; top: 0; background: var(--surface); z-index: 1; padding: 8px 0 3px; }
+}
+
+.file-list { margin-top: 8px; min-width: 0; }
+.detail-files .file-list { margin-top: 0; }
+.files-head { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--subtext); border-bottom: 1px solid var(--border); margin-bottom: 3px; }
+.files-head .file-view-toggle { margin-bottom: 0; }
+.files-total { margin-left: auto; font-family: var(--mono-font); font-size: 10px; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+.files-total .add { color: var(--green); }
+.files-total .del { color: var(--red); }
+
+.file-item { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; font-size: 11px; font-family: var(--mono-font); min-width: 0; }
+.file-item.file-clickable { cursor: pointer; }
+.file-item.file-clickable:hover { background: var(--surface-hover); }
+/* Name first, then the directory it is in: the column is narrow, so what has
+   to survive the ellipsis is the file name. */
+.file-item .file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; max-width: 60%; }
+/* The directory takes the slack, which is what leaves the stats and the row's
+   buttons together at the right edge instead of both claiming the same auto
+   margin and meeting somewhere in the middle. */
+.file-item .file-dir { color: var(--subtle); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; }
 .file-status { display: inline-block; width: 14px; text-align: center; font-weight: 700; font-size: 10px; }
 .file-status-A { color: var(--green); }
 .file-status-M { color: var(--yellow); }
@@ -355,7 +526,7 @@ button:active { background: var(--surface); }
 .tree-dir-count { font-size: 11px; color: var(--subtle); }
 
 /* File actions */
-.file-actions { display: flex; gap: 2px; margin-left: auto; flex-shrink: 0; }
+.file-actions { display: flex; gap: 2px; margin-left: 6px; flex-shrink: 0; }
 .file-action-btn { min-width: 24px; min-height: 24px; padding: 0 4px; border: none; background: transparent; cursor: pointer; border-radius: 4px; font-size: 12px; color: var(--subtext); display: flex; align-items: center; justify-content: center; }
 .file-action-btn:hover { background: var(--surface-hover); color: var(--text); }
 .file-action-btn[data-action="discard"]:hover { color: var(--red); }
@@ -401,12 +572,12 @@ button:active { background: var(--surface); }
 .remote-item { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 .remote-item:last-child { border-bottom: none; }
 .remote-item .remote-name { font-weight: 600; margin-bottom: 2px; }
-.remote-item .remote-url { color: var(--subtext); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; word-break: break-all; }
+.remote-item .remote-url { color: var(--subtext); font-family: var(--mono-font); font-size: 11px; word-break: break-all; }
 .remote-actions { display: flex; gap: 4px; margin-top: 4px; }
 .add-remote-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .add-remote-form input { background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 4px 6px; font-size: 12px; }
 .issue-rule-row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
-.issue-rule-row input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 11px; font-family: 'SF Mono', 'Fira Code', monospace; }
+.issue-rule-row input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 11px; font-family: var(--mono-font); }
 .issue-rule-row input.rule-error { border-color: var(--red); }
 .issue-rule-row .rule-remove { min-width: 24px; min-height: 24px; padding: 0; font-size: 14px; color: var(--red); border: none; }
 @media (max-width: 768px) { .settings-panel { width: 100%; } }
@@ -444,18 +615,37 @@ button:active { background: var(--surface); }
   #toolbar { order: 10; border-bottom: none; border-top: 1px solid var(--border); padding: 2px 6px; }
   #toolbar button { font-size: 10px; }
   .branch-trigger { font-size: 10px !important; padding: 2px 6px !important; }
-  #graph-container { order: 1; overflow-x: auto; overflow-y: auto; }
+  #graph-area { order: 1; }
+  #graph-container { overflow-x: auto; overflow-y: auto; }
   #find-bar { order: 0; }
   #status-bar { order: 9; }
-  #commit-list-wrapper { min-width: 700px; }
-  #graph-header { min-width: 700px; }
+  /* Enough for every column including the branch one, so a tablet scrolls the
+     table sideways rather than crushing it. */
+  #commit-list-wrapper { min-width: 880px; }
+  #graph-header { min-width: 880px; }
   .commit-row.header-row { min-height: 20px; }
   .detail-panel { order: 8; max-height: 35vh; }
 }
-/* Column hiding on very narrow non-touch containers (e.g. narrow desktop panel) */
-@media (max-width: 500px) and (pointer: fine) {
-  .col-author, .col-hash { display: none; }
-  .col-date { width: 60px; min-width: 60px; }
+/* Phone layout: the graph and the message, with author/date/hash under the
+   subject. Six columns of fragments is not a list of commits, and 44px is the
+   minimum touch target this row has to be anyway. isNarrowLayout() in the
+   script uses this same 640px, because it decides where the ref badges go. */
+@media (max-width: 640px) {
+  :root { --refs-col-w: 0px; }
+  /* The coarse-pointer rules above keep the whole table and scroll it
+     sideways, which is right for a tablet. A phone gets the stacked row
+     instead, so the minimum width that forces that scroll has to go. */
+  #commit-list-wrapper, #graph-header { min-width: 0; }
+  .commit-row { height: 44px; }
+  .commit-row.header-row { height: 24px; }
+  .col-refs, .col-changes, .col-author, .col-date, .col-hash { display: none; }
+  .col-message { gap: 1px; }
+  .msg-meta { display: block; font-size: 10px; color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-message .ref-badge { max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+  /* Two hash chips take half a phone's width and left the author's name as
+     "t." with an ellipsis. They are a convenience, not the only copy of the
+     hash — the metadata grid two lines below has both, in full. */
+  .detail-head-actions { display: none; }
 }
 `;
 }
@@ -468,7 +658,10 @@ const NULL_VERTEX_ID = -1;
 const GRAPH_COLORS = ['#4ec9b0','#569cd6','#c586c0','#ce9178','#dcdcaa','#4fc1ff','#d7ba7d','#9cdcfe','#b5cea8','#d16969'];
 const graphConfig = {
   colours: GRAPH_COLORS,
-  grid: { x: 16, y: 24, offsetX: 8, offsetY: 12, expandY: 60 },
+  // Wide enough apart that two adjacent lanes' author avatars do not touch,
+  // and tall enough that an 18px avatar is the row rather than a dot in it.
+  grid: { x: 22, y: 30, offsetX: 14, offsetY: 15, expandY: 60 },
+  nodeR: 9,
   style: 'rounded'
 };
 
@@ -495,6 +688,8 @@ const state = {
   loading: false,
   uncommitted: null,
   searchMatches: [],
+  /** hash -> {files, insertions, deletions}; arrives after the commits. */
+  stats: {},
   searchIndex: -1,
   settings: { ...DEFAULT_SETTINGS },
   userDetails: { name: '', email: '' },
@@ -549,6 +744,20 @@ document.getElementById('btn-stash').innerHTML = ICONS.archive + ' <span class="
 vscode.postMessage({ command: 'ready' });
 
 // --- Message handler ---
+/*
+ * The row's layout is decided in JS as well as in CSS (the ref badges live in
+ * their own column on a wide screen and inline on a narrow one), so crossing
+ * the breakpoint has to rebuild the rows. Without this, rotating a phone would
+ * leave the badges in a column that CSS has just hidden.
+ */
+let gWasNarrow = null;
+window.addEventListener('resize', () => {
+  const narrow = isNarrowLayout();
+  if (gWasNarrow === narrow) return;
+  gWasNarrow = narrow;
+  if (state.commits.length > 0) renderCommitList();
+});
+
 window.addEventListener('message', (event) => {
   const msg = event.data;
   switch (msg.command) {
@@ -577,6 +786,10 @@ window.addEventListener('message', (event) => {
       updateStatus();
       state.loading = false;
       document.getElementById('loading').classList.add('hidden');
+      break;
+    case 'loadCommitStats':
+      Object.assign(state.stats, msg.data);
+      applyCommitStats();
       break;
     case 'commitDetails':
       renderDetailPanel(msg.data);
@@ -705,6 +918,16 @@ document.getElementById('detail-panel').addEventListener('contextmenu', (e) => {
 
 // --- File click delegation (opens diff tab) ---
 document.getElementById('detail-panel').addEventListener('click', (e) => {
+  // Hash chips and metadata values. The clipboard write is silent, so the
+  // thing clicked says it happened.
+  const copySource = e.target.closest('[data-copy]');
+  if (copySource) {
+    e.stopPropagation();
+    copyText(copySource.dataset.copy);
+    copySource.classList.add('copied');
+    setTimeout(() => copySource.classList.remove('copied'), 900);
+    return;
+  }
   // File-level action buttons (stage/unstage/discard/open)
   const actionBtn = e.target.closest('.file-action-btn');
   if (actionBtn) {
@@ -1387,9 +1610,11 @@ class GBranch {
 }
 
 class GVertex {
-  constructor(id, isStash) {
+  constructor(id, isStash, author) {
     this.id = id;
     this.isStash = isStash;
+    /** {name, email} of the commit's author, or null for a row that has none. */
+    this._author = author || null;
     this._x = 0;
     this._children = [];
     this._parents = [];
@@ -1432,6 +1657,16 @@ class GVertex {
   setNotCommitted() { this._isCommitted = false; }
   setCurrent() { this._isCurrent = true; }
 
+  /*
+   * The node is the author's avatar, ringed in the lane's colour — which is
+   * what makes a graph readable as *who* rather than as a column of identical
+   * dots. Initials, never a fetched image: an avatar service would mean handing
+   * every committer's email address to a third party, which a self-hosted tool
+   * must not do quietly.
+   *
+   * Rows with no author — uncommitted changes, a stash — keep a plain dot,
+   * because inventing initials for them would be a lie.
+   */
   draw(svg, config, expandOffset, overListener, outListener) {
     if (this._onBranch === null) return;
     const STASH_COLOR = '#808080';
@@ -1439,19 +1674,31 @@ class GVertex {
       : this._isCommitted ? config.colours[this._onBranch.getColour() % config.colours.length] : '#808080';
     const cx = (this._x * config.grid.x + config.grid.offsetX).toString();
     const cy = (this.id * config.grid.y + config.grid.offsetY + (expandOffset ? config.grid.expandY : 0)).toString();
+    const named = this._isCommitted && !this.isStash && !!this._author && !!this._author.name;
+    const r = named ? (config.nodeR || 9) : 4.5;
 
     const circle = document.createElementNS(SVG_NS, 'circle');
     circle.dataset.id = this.id.toString();
+    circle.dataset.r = r.toString();
     circle.setAttribute('cx', cx);
     circle.setAttribute('cy', cy);
-    circle.setAttribute('r', '4');
-    if (this._isCurrent) {
-      circle.setAttribute('class', 'graphCurrent');
-      circle.setAttribute('stroke', colour);
-    } else {
-      circle.setAttribute('fill', colour);
-    }
+    circle.setAttribute('r', r.toString());
+    circle.setAttribute('stroke', colour);
+    circle.setAttribute('stroke-width', named ? '2' : '0');
+    circle.setAttribute('fill', named ? authorColor(this._author.email || this._author.name) : colour);
+    if (this._isCurrent) circle.setAttribute('class', 'graphCurrent');
     svg.appendChild(circle);
+
+    if (named) {
+      const label = document.createElementNS(SVG_NS, 'text');
+      label.setAttribute('class', 'node-initials');
+      label.setAttribute('x', cx);
+      label.setAttribute('y', cy);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('dominant-baseline', 'central');
+      label.textContent = authorInitials(this._author.name);
+      svg.appendChild(label);
+    }
 
     circle.addEventListener('mouseover', overListener);
     circle.addEventListener('mouseout', outListener);
@@ -1469,7 +1716,7 @@ function graphLoadCommits(commits) {
   const lookup = {};
   for (let i = 0; i < commits.length; i++) {
     lookup[commits[i].hash] = i;
-    gVertices.push(new GVertex(i, !!commits[i]._isStash));
+    gVertices.push(new GVertex(i, !!commits[i]._isStash, { name: commits[i].author, email: commits[i].authorEmail }));
   }
   gCommitLookup = lookup;
 
@@ -1593,7 +1840,7 @@ function graphVertexOver(e) {
   if (id >= 0 && id < gVertices.length) {
     const rows = document.querySelectorAll('.commit-row:not(.header-row)');
     if (rows[id]) rows[id].classList.add('graph-hover');
-    e.target.setAttribute('r', '5');
+    e.target.setAttribute('r', (Number(e.target.dataset.r || 4.5) + 1.5).toString());
   }
 }
 function graphVertexOut(e) {
@@ -1602,7 +1849,7 @@ function graphVertexOut(e) {
   if (id >= 0) {
     const rows = document.querySelectorAll('.commit-row:not(.header-row)');
     if (rows[id]) rows[id].classList.remove('graph-hover');
-    e.target.setAttribute('r', '4');
+    e.target.setAttribute('r', (e.target.dataset.r || '4.5'));
   }
 }
 
@@ -1663,6 +1910,18 @@ function getDisplayCommits() {
   return commits;
 }
 
+/*
+ * Below this width the row carries the graph and the message only, with the
+ * author, date and hash on a second line under the subject: six columns of
+ * fragments on a phone is not a list of commits, and PPM's layout rules ask for
+ * one column there. The value matches the max-width:640px block in the CSS —
+ * both have to agree, because the JS decides where the ref badges are put and
+ * the CSS decides which columns exist.
+ */
+function isNarrowLayout() {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 640px)').matches;
+}
+
 function renderCommitList() {
   const container = document.getElementById('commit-list');
   container.innerHTML = '';
@@ -1682,11 +1941,17 @@ function renderCommitList() {
     row.className = 'commit-row' + (isVirtual ? ' virtual' : '') + (isStash ? ' stash-row' : '');
     row.dataset.hash = commit.hash;
 
+    // Branch / tag column. Below 640px there is no room for it, so the badges
+    // go inline ahead of the subject instead — one home or the other, never
+    // both, or the second copy's context menu would act on a hidden badge.
+    const narrow = isNarrowLayout();
+    const refsCol = document.createElement('div');
+    refsCol.className = 'col-refs';
+
     // Graph spacer column (SVG overlays this area)
     const graphCol = document.createElement('div');
     graphCol.className = 'col-graph';
 
-    // Message column with ref badges
     const msgCol = document.createElement('div');
     msgCol.className = 'col-message';
     let badges = '';
@@ -1721,10 +1986,23 @@ function renderCommitList() {
         badges += '<span class="ref-badge ref-' + ref.type + '" data-ref="' + escHtml(ref.name) + '">' + syncIcon + escHtml(ref.name) + '</span>';
       });
     }
-    msgCol.innerHTML = badges + formatCommitMessage(commit.message);
+    if (!narrow) refsCol.innerHTML = badges;
+    const meta = isVirtual || isStash ? ''
+      : '<span class="msg-meta">' + escHtml(commit.author) + ' \u00b7 '
+        + escHtml(formatDate(commit.commitDate)) + ' \u00b7 ' + escHtml(commit.hash.substring(0, 7))
+        + '</span>';
+    msgCol.innerHTML = '<span class="msg-subject">' + (narrow ? badges : '')
+      + formatCommitMessage(commit.message) + '</span>' + meta;
+
+    // The lane's colour, for the tick at the start of the message.
+    const vertex = gVertices[idx];
+    if (vertex && !isVirtual && !isStash) {
+      row.style.setProperty('--lane', GRAPH_COLORS[vertex.getColour() % GRAPH_COLORS.length]);
+    }
 
     // Attach context menu and double-click to ref badges
-    msgCol.querySelectorAll('.ref-badge').forEach(badge => {
+    row.appendChild(refsCol);
+    row.querySelectorAll('.ref-badge').forEach(badge => {
       const refName = badge.dataset.ref || badge.textContent.trim();
       const refType = badge.className.includes('ref-head') ? 'head'
                     : badge.className.includes('ref-remote') ? 'remote'
@@ -1751,13 +2029,18 @@ function renderCommitList() {
       }
     });
 
+    const changesCol = document.createElement('div');
+    changesCol.className = 'col-changes';
+    if (!isVirtual && !isStash) fillChangesCell(changesCol, state.stats[commit.hash]);
+
     const authorCol = document.createElement('div');
     authorCol.className = 'col-author';
     if (isVirtual || isStash) {
       authorCol.textContent = '';
     } else {
-      authorCol.innerHTML = avatarHtml(commit.author, commit.authorEmail)
-        + '<span class="author-name">' + escHtml(commit.author) + '</span>';
+      // No avatar here any more — it is the graph node now, and twice on one
+      // row was noise.
+      authorCol.textContent = commit.author;
       authorCol.addEventListener('mouseenter', () => showAuthorCard(authorCol, commit));
       authorCol.addEventListener('mouseleave', hideAuthorCard);
     }
@@ -1765,6 +2048,9 @@ function renderCommitList() {
     const dateCol = document.createElement('div');
     dateCol.className = 'col-date';
     dateCol.textContent = isVirtual ? 'now' : isStash ? '' : formatDate(commit.commitDate);
+    // The column is relative by default, so the exact moment goes in the title
+    // rather than in a wider column.
+    if (!isVirtual && !isStash) dateCol.title = new Date(commit.commitDate * 1000).toLocaleString();
 
     const hashCol = document.createElement('div');
     hashCol.className = 'col-hash';
@@ -1772,6 +2058,7 @@ function renderCommitList() {
 
     row.appendChild(graphCol);
     row.appendChild(msgCol);
+    row.appendChild(changesCol);
     row.appendChild(authorCol);
     row.appendChild(dateCol);
     row.appendChild(hashCol);
@@ -1803,6 +2090,68 @@ function renderCommitList() {
   });
 
   graphRender(-1);
+  renderScrollMarkers();
+}
+
+/*
+ * A merge commit has no diffstat — that is git's default, not a failure — so an
+ * absent entry leaves the cell empty rather than claiming it changed nothing.
+ */
+function fillChangesCell(cell, stat) {
+  cell.textContent = '';
+  if (!stat) return;
+  if (stat.insertions > 0) {
+    const add = document.createElement('span');
+    add.className = 'ch-add';
+    add.textContent = '+' + stat.insertions;
+    cell.appendChild(add);
+  }
+  if (stat.deletions > 0) {
+    const del = document.createElement('span');
+    del.className = 'ch-del';
+    del.textContent = '-' + stat.deletions;
+    cell.appendChild(del);
+  }
+  cell.title = stat.files + (stat.files === 1 ? ' file changed' : ' files changed');
+}
+
+/** Fill the column in place: the rows are already drawn, and rebuilding them
+ *  would throw away the scroll position and the open detail panel. */
+function applyCommitStats() {
+  document.querySelectorAll('#commit-list .commit-row').forEach((row) => {
+    const cell = row.querySelector('.col-changes');
+    const hash = row.dataset.hash;
+    if (cell && hash && hash !== 'uncommitted') fillChangesCell(cell, state.stats[hash]);
+  });
+}
+
+/*
+ * One tick per interesting row, positioned by its index in the whole loaded
+ * history rather than by pixels — the rows are a uniform height, so the two
+ * agree, and an index needs no measuring and survives a resize.
+ *
+ * Search matches are drawn first so that the checked-out and selected ticks sit
+ * on top of them when they land on the same row.
+ */
+function renderScrollMarkers() {
+  const host = document.getElementById('scroll-markers');
+  if (!host) return;
+  host.innerHTML = '';
+  const commits = getDisplayCommits();
+  if (commits.length === 0) return;
+
+  const mark = (idx, kind) => {
+    const el = document.createElement('div');
+    el.className = 'scroll-marker sm-' + kind;
+    el.style.top = ((idx + 0.5) / commits.length * 100) + '%';
+    host.appendChild(el);
+  };
+
+  for (let i = 0; i < state.searchMatches.length; i++) mark(state.searchMatches[i], 'search');
+  for (let i = 0; i < commits.length; i++) {
+    if (commits[i].hash === state.head) mark(i, 'head');
+    if (commits[i].hash === state.selectedCommit) mark(i, 'selected');
+  }
 }
 
 function selectCommit(hash) {
@@ -1813,6 +2162,7 @@ function selectCommit(hash) {
     state.selectedCommit = null;
     state.expandedCommit = null;
     document.getElementById('detail-panel').classList.add('hidden');
+    renderScrollMarkers();
     return;
   }
 
@@ -1820,6 +2170,7 @@ function selectCommit(hash) {
   state.expandedCommit = hash;
   const row = document.querySelector('[data-hash="' + CSS.escape(hash) + '"]');
   if (row) row.classList.add('selected');
+  renderScrollMarkers();
 
   if (hash === 'uncommitted') {
     renderUncommittedDetail();
@@ -1877,14 +2228,27 @@ function renderFileTree(node, depth, hash, parentHash, section) {
   return html;
 }
 
+/* Split so the file name can be shown before the directory it sits in: the
+   list lives in a narrow column, and truncating from the end has to eat the
+   path, not the name. */
+function basename(path) {
+  const i = String(path).lastIndexOf('/');
+  return i === -1 ? String(path) : String(path).slice(i + 1);
+}
+function dirname(path) {
+  const i = String(path).lastIndexOf('/');
+  return i === -1 ? '' : String(path).slice(0, i);
+}
+
 function renderFileListHtml(files, hash, parentHash, section) {
   if (state.fileViewMode === 'tree') {
     return renderFileTree(buildFileTree(files), 0, hash, parentHash, section);
   }
   return files.map(f =>
-    '<div class="file-item file-clickable" data-path="' + escHtml(f.path) + '" data-hash="' + escHtml(hash) + '" data-parent="' + escHtml(parentHash || '') + '">' +
+    '<div class="file-item file-clickable" title="' + escHtml(f.path) + '" data-path="' + escHtml(f.path) + '" data-hash="' + escHtml(hash) + '" data-parent="' + escHtml(parentHash || '') + '">' +
       '<span class="file-status file-status-' + escHtml(f.status) + '">' + escHtml(f.status) + '</span>' +
-      '<span class="file-name">' + escHtml(f.path) + '</span>' +
+      '<span class="file-name">' + escHtml(basename(f.path)) + '</span>' +
+      (dirname(f.path) ? '<span class="file-dir">' + escHtml(dirname(f.path)) + '</span>' : '') +
       '<span class="file-stat">' +
         (f.additions > 0 ? '<span class="add">+' + f.additions + '</span> ' : '') +
         (f.deletions > 0 ? '<span class="del">-' + f.deletions + '</span>' : '') +
@@ -1917,9 +2281,10 @@ function fileViewToggleHtml() {
 function renderUncommittedDetail() {
   const panel = document.getElementById('detail-panel');
   panel.classList.remove('hidden');
+  panel.classList.remove('split');
   const u = state.uncommitted;
   if (!u) { panel.classList.add('hidden'); return; }
-  let html = '<h3>Uncommitted Changes</h3>';
+  let html = '<div class="detail-pad"><h3>Uncommitted Changes</h3>';
   const hasFiles = u.staged.length > 0 || u.unstaged.length > 0 || (u.conflicted && u.conflicted.length > 0);
   if (hasFiles) {
     html += fileViewToggleHtml();
@@ -1957,7 +2322,7 @@ function renderUncommittedDetail() {
   html += '<div class="commit-section">';
   html += '<textarea id="commit-message" placeholder="Commit message..." rows="3"></textarea>';
   html += '<div class="commit-actions"><button id="btn-commit" class="btn-sm btn-commit" disabled>Commit</button></div>';
-  html += '</div>';
+  html += '</div></div>';
   panel.innerHTML = html;
   wireCommitControls();
 }
@@ -1983,30 +2348,133 @@ function wireCommitControls() {
 }
 
 // --- Detail panel ---
+
+/* A value you can read in full and click to copy. Anything with a data-copy
+   attribute is handled by the panel's one click delegate. */
+function copyable(inner, text, cls) {
+  return '<span class="meta-value ' + cls + '" data-copy="' + escHtml(text)
+    + '" title="Click to copy">' + inner + '</span>';
+}
+
+/* Forty hex characters in one run is not text anyone reads. The eight that
+   identify the commit carry the contrast and the other thirty-two go quiet —
+   the whole thing is still there, and still what a click copies. */
+function hashCell(hash) {
+  const lead = String(hash).slice(0, 8);
+  const tail = String(hash).slice(8);
+  return copyable('<span class="hash-lead">' + escHtml(lead) + '</span>' + escHtml(tail), hash, 'mono');
+}
+
+/* Name and email are two things, so they are told apart by weight rather than
+   by angle brackets. What a click copies is still the canonical form, which is
+   what git itself wants back. */
+function personCell(name, email) {
+  return copyable(
+    '<span class="meta-name">' + escHtml(name) + '</span><span class="meta-email">' + escHtml(email) + '</span>',
+    name + ' <' + email + '>',
+    'person',
+  );
+}
+
+/* The timezone is part of the answer: a commit stamped 09:13 means nothing
+   without knowing whose morning that was. Spelled out component by component
+   because dateStyle and timeStyle may not be combined with any other option —
+   asking for those plus timeZoneName is a TypeError, and behind a catch it
+   looks exactly like a locale that has no timezone name to give. */
+const WHEN_FORMAT = {
+  year: 'numeric', month: 'short', day: 'numeric',
+  hour: 'numeric', minute: '2-digit', second: '2-digit',
+  timeZoneName: 'short',
+};
+function whenCell(ts) {
+  const when = new Date(ts * 1000);
+  return '<span class="meta-when">' + escHtml(when.toLocaleString(undefined, WHEN_FORMAT)) + '</span>';
+}
+
+/* One label, one value, every row the same shape. The date used to ride along
+   in a third column so that the two dates lined up — which put it a name's
+   width away from the name it belonged to, and stranded it against the far edge
+   of the pane on any row that had one. A date is a field like the others. */
+function metaRow(label, cells) {
+  return '<div class="meta-label">' + escHtml(label) + '</div>'
+    + '<div class="meta-cells">' + cells.join('') + '</div>';
+}
+
 function renderDetailPanel(detail) {
   state._lastDetail = detail;
   const panel = document.getElementById('detail-panel');
   panel.classList.remove('hidden');
 
-  let html = '<h3>Commit Details</h3>';
-  html += '<div class="detail-field"><span class="label">Hash:</span> ' + escHtml(detail.hash) + '</div>';
-  html += '<div class="detail-field"><span class="label">Author:</span> ' + escHtml(detail.author) + ' &lt;' + escHtml(detail.authorEmail) + '&gt;</div>';
-  html += '<div class="detail-field"><span class="label">Date:</span> ' + new Date(detail.authorDate * 1000).toLocaleString() + '</div>';
+  // Who and when, then the hashes as chips: the glanceable half.
+  let head = '<div class="detail-head">' + avatarHtml(detail.author, detail.authorEmail);
+  head += '<div class="detail-who">';
+  head += '<span class="detail-author" title="' + escHtml(detail.authorEmail) + '">' + escHtml(detail.author) + '</span>';
+  head += '<span class="detail-when" title="' + escHtml(new Date(detail.authorDate * 1000).toLocaleString()) + '">committed ' + escHtml(formatDate(detail.authorDate)) + '</span>';
   if (detail.committer !== detail.author) {
-    html += '<div class="detail-field"><span class="label">Committer:</span> ' + escHtml(detail.committer) + ' &lt;' + escHtml(detail.committerEmail) + '&gt;</div>';
+    head += '<span class="detail-when" title="' + escHtml(detail.committerEmail) + '">via ' + escHtml(detail.committer) + '</span>';
   }
+  head += '</div><div class="detail-head-actions">';
+  head += '<span class="chip copyable" data-copy="' + escHtml(detail.hash) + '" title="Copy ' + escHtml(detail.hash) + '">' + escHtml(detail.hash.substring(0, 8)) + '</span>';
+  for (const parent of detail.parents) {
+    head += '<span class="chip copyable" data-copy="' + escHtml(parent) + '" title="Parent ' + escHtml(parent) + '">'
+      + '<span class="chip-label">parent</span>' + escHtml(parent.substring(0, 7)) + '</span>';
+  }
+  head += '</div></div>';
+
+  // Then the full values. The chips above are what you glance at and copy; a
+  // hash you have to *read* is forty characters. Every row is always here, in
+  // the same order, even when the committer repeats the author: a field that
+  // comes and goes cannot be found by muscle memory, and the two dates only
+  // mean anything next to each other — which is what a rebase or an amend does
+  // to them, and the reason both are separate fields rather than one date.
+  let meta = '<div class="detail-meta">';
+  meta += metaRow('Commit', [hashCell(detail.hash)]);
   if (detail.parents.length > 0) {
-    html += '<div class="detail-field"><span class="label">Parents:</span> ' + detail.parents.map(p => escHtml(p.substring(0, 7))).join(', ') + '</div>';
+    meta += metaRow(detail.parents.length > 1 ? 'Parents' : 'Parent', detail.parents.map(hashCell));
   }
-  html += '<div class="detail-message">' + escHtml(detail.message) + '</div>';
+  meta += metaRow('Author', [personCell(detail.author, detail.authorEmail)]);
+  meta += metaRow('Author date', [whenCell(detail.authorDate)]);
+  meta += metaRow('Committer', [personCell(detail.committer, detail.committerEmail)]);
+  meta += metaRow('Commit date', [whenCell(detail.commitDate)]);
+  meta += '</div>';
 
+  // The subject carries the weight; the body keeps the author's own wrapping.
+  const message = String(detail.message || '');
+  const firstBreak = message.indexOf('\\n');
+  const subject = firstBreak === -1 ? message : message.slice(0, firstBreak);
+  const body = firstBreak === -1 ? '' : message.slice(firstBreak + 1).replace(/^\\n+/, '').replace(/\\s+$/, '');
+  let left = '<div class="detail-msg">' + meta + '<div class="detail-subject">' + formatCommitMessage(subject) + '</div>';
+  if (body) {
+    // A paragraph the author wrapped at 72 columns is reflowed to the pane it
+    // is actually in; a list or an aligned block keeps every break it had.
+    let blocks = '';
+    for (const block of splitCommitBody(body)) {
+      blocks += block.kind === 'prose'
+        ? '<p class="msg-p">' + formatCommitMessage(block.text) + '</p>'
+        : '<pre class="msg-pre">' + formatCommitMessage(block.text) + '</pre>';
+    }
+    left += '<div class="detail-text">' + blocks + '</div>';
+  }
+  left += '</div>';
+
+  let right = '';
   if (detail.fileChanges && detail.fileChanges.length > 0) {
-    html += '<div class="file-list">' + fileViewToggleHtml() + '<strong>Files changed (' + detail.fileChanges.length + '):</strong>';
-    html += renderFileListHtml(detail.fileChanges, detail.hash, detail.parents[0] || '');
-    html += '</div>';
+    let added = 0, removed = 0;
+    for (const f of detail.fileChanges) { added += f.additions || 0; removed += f.deletions || 0; }
+    right = '<div class="detail-files"><div class="file-list"><div class="files-head">'
+      + '<span>' + detail.fileChanges.length + (detail.fileChanges.length === 1 ? ' file' : ' files') + ' changed</span>'
+      + '<span class="files-total">'
+      + (added > 0 ? '<span class="add">+' + added + '</span> ' : '')
+      + (removed > 0 ? '<span class="del">-' + removed + '</span>' : '')
+      + '</span>' + fileViewToggleHtml() + '</div>'
+      + renderFileListHtml(detail.fileChanges, detail.hash, detail.parents[0] || '')
+      + '</div></div>';
   }
 
-  panel.innerHTML = html;
+  // The split panes each own a scrollbar, which means the panel must stop
+  // owning one — and must give it back for any other view written into it.
+  panel.classList.toggle('split', !!right);
+  panel.innerHTML = head + '<div class="detail-grid' + (right ? ' has-files' : '') + '">' + left + right + '</div>';
 }
 
 // --- Context menu ---
@@ -2390,37 +2858,7 @@ function setupLongPress(el, callback) {
 }
 
 // --- Text formatter (URLs, issues, commit hashes) ---
-function formatCommitMessage(msg) {
-  let safe = escHtml(msg);
-  // Apply issue linking rules from settings
-  const rules = state.settings.issueLinkingRules || [];
-  for (const rule of rules) {
-    if (!rule.pattern) continue;
-    if (rule.pattern.length > 200) continue; // ReDoS guard
-    try {
-      const re = new RegExp(rule.pattern, 'g');
-      if (rule.url) {
-        safe = safe.replace(re, function(match) {
-          let href = rule.url;
-          for (let i = 1; i < arguments.length - 2; i++) {
-            if (typeof arguments[i] === 'string') href = href.split('$' + i).join(arguments[i]);
-          }
-          return '<a class="commit-link" href="' + escHtml(href) + '" target="_blank" title="' + escHtml(href) + '">' + match + '</a>';
-        });
-      } else {
-        safe = safe.replace(re, '<span class="commit-link" title="$&">$&</span>');
-      }
-    } catch (e) { /* invalid regex — skip */ }
-  }
-  // Short commit hashes
-  safe = safe.replace(/\\b([0-9a-f]{7,40})\\b/g, '<span class="commit-link" title="$1">$1</span>');
-  // URLs — skip if already inside an <a> tag
-  safe = safe.replace(/(<a[^>]*>.*?<\\/a>)|(https?:\\/\\/[^\\s<]+)/g, (m, linked, url) => {
-    if (linked) return linked;
-    return '<a class="commit-link" href="' + url + '" target="_blank">' + url + '</a>';
-  });
-  return safe;
-}
+${COMMIT_MESSAGE_JS}
 
 // --- Find widget ---
 const findBar = document.getElementById('find-bar');
@@ -2531,6 +2969,7 @@ function doSearch(query) {
     if (match) { state.searchMatches.push(idx); row.classList.add('search-match'); }
   });
   document.getElementById('find-count').textContent = state.searchMatches.length + ' match(es)';
+  renderScrollMarkers();
   if (state.searchMatches.length > 0) navigateSearch(0);
 }
 
@@ -2551,6 +2990,7 @@ function clearSearch() {
   state.searchIndex = -1;
   findInput.value = '';
   document.getElementById('find-count').textContent = '';
+  renderScrollMarkers();
 }
 
 function clearSearchHighlights() {
