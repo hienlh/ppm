@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Sparkles } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 
 interface ModelOption {

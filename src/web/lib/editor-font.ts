@@ -38,13 +38,24 @@ export const GHOST_TEXT_FONT_FAMILY =
 
 /**
  * The terminal. MesloLGM Nerd Font first because a shell prompt is full of
- * powerline separators and devicons that only a patched font has — it is not
- * bundled, because the patched faces are over a megabyte each and a terminal
- * has to open on a phone too. Where it is installed it wins; where it is not,
- * Monaspace Argon is bundled and the glyphs fall back per character.
+ * powerline separators and devicons that only a patched font has, and a fully
+ * patched local face is still the best answer: it draws the icons *and* the
+ * text in one typeface, at metrics that were fitted together.
+ *
+ * `PPM Nerd Symbols` sits behind those three and is bundled — the icons alone,
+ * `scripts/gen-nerd-font.ts`, split so each block is fetched only if drawn. It
+ * has no letters or digits at all, which is what makes its position here safe:
+ * ordinary text falls straight through it to Monaspace Argon, and only the icon
+ * codepoints stop at it. Without it, every prompt on a machine with no Nerd
+ * Font installed was tofu — `↑`/`↓` rendered and the rest did not, because
+ * those two are real Unicode and the segment icons are Private Use Area.
+ *
+ * It is ahead of Monaspace on purpose: the handful of icons in this set that
+ * *are* real Unicode (`⚡`, `♥`, `⏻`) belong with the rest of the prompt at one
+ * cell wide, not as whatever a fallback font draws them as.
  */
 export const TERMINAL_FONT_FAMILY =
-  "'MesloLGM Nerd Font', 'MesloLGS Nerd Font', 'Symbols Nerd Font', 'Monaspace Argon', 'Monaspace Argon Var', Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', 'Courier New', monospace";
+  "'MesloLGM Nerd Font', 'MesloLGS Nerd Font', 'Symbols Nerd Font', 'PPM Nerd Symbols', 'Monaspace Argon', 'Monaspace Argon Var', Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', 'Courier New', monospace";
 
 /**
  * Monaspace's ligatures plus every stylistic set, which is where its texture

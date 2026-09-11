@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, type KeyboardEvent } from "react";
-import { Hand, Code, ClipboardList, ShieldOff, Check } from "lucide-react";
+import { Hand, Code, ClipboardList, ShieldOff, Check } from "@/lib/icons";
 
 const MODES = [
   { id: "default", label: "Ask before edits", icon: Hand, description: "Claude will ask for approval before making each edit" },

@@ -6,7 +6,7 @@
  * user has read the warning.
  */
 import { useCallback, useRef } from "react";
-import { RotateCw, MonitorX, Gauge } from "lucide-react";
+import { RotateCw, MonitorX, Gauge } from "@/lib/icons";
 import type { WindowContentProps } from "@/components/floating-window/window-content-registry";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { useSettingsStore } from "@/stores/settings-store";

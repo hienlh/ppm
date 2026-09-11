@@ -8,7 +8,7 @@
  * learns is there.
  */
 import { memo, useCallback } from "react";
-import { AlertTriangle, CircleX } from "lucide-react";
+import { AlertTriangle, CircleX } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProblemsStore, filesForProject, problemCounts } from "@/stores/problems-store";

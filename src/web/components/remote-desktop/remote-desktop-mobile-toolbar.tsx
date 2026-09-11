@@ -3,7 +3,7 @@
  * virtual keyboard, zoom reset, close. Every button is a 44px+ touch target per
  * `docs/design-guidelines.md`'s Mobile-First UI Rules.
  */
-import { Hand, MousePointer2, Keyboard, ZoomOut, Gauge, Monitor, X } from "lucide-react";
+import { Hand, MousePointer2, Keyboard, ZoomOut, Gauge, Monitor, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { RemoteDesktopInputMode } from "./use-remote-desktop-touch";

@@ -6,7 +6,7 @@
  * for a personal account and should not leave labelled blanks on screen.
  */
 
-import { X } from "lucide-react";
+import { X } from "@/lib/icons";
 import type { OAuthProfileData } from "../../../lib/api-settings";
 import { UsagePatternChart } from "./account-usage-pattern-chart";
 

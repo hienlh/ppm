@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { newMediaSessionId, rawMediaUrl, stopTranscode, transcodeMediaUrl } from "@/lib/media-url";
 import { VideoPlayerControls } from "./video-player-controls";

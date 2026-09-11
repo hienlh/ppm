@@ -1,4 +1,4 @@
-import { ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUp, ArrowDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { SortDir, SortKey } from "../../../types/system-metrics";
 import type { ResizableColumnKey } from "./process-columns-grid";

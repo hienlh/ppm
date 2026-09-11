@@ -1,4 +1,4 @@
-import { Maximize, Minimize, Pause, Play, Volume1, Volume2, VolumeX } from "lucide-react";
+import { Maximize, Minimize, Pause, Play, Volume1, Volume2, VolumeX } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { VideoSettingsMenu } from "./video-settings-menu";
 import type { VideoTransform } from "./video-transform";

@@ -6,7 +6,7 @@
  * Group labels stay as headings so the list is still scannable at a glance.
  */
 
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/lib/icons";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   SETTINGS_GROUPS, settingsCategoriesInGroup,

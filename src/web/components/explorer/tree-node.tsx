@@ -5,12 +5,10 @@
  */
 import { useRef, useEffect, memo } from "react";
 import {
-  Folder,
-  FolderOpen,
   ChevronRight,
   ChevronDown,
   Loader2,
-} from "lucide-react";
+} from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useFileStore, getVisiblePaths, absoluteProjectPath, type FileNode } from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -24,7 +22,7 @@ import {
 } from "@/components/ui/adaptive-context-menu";
 import { DROP_TARGET_CLASS } from "@/components/os-explorer/dnd/drop-target-style";
 import type { DropRunner } from "@/components/os-explorer/dnd/entry-drop-executor";
-import { getFileIcon } from "./file-icon-map";
+import { FileIcon } from "@/lib/file-icons";
 import { TreeNodeContextMenu } from "./tree-node-context-menu";
 import { useTreeRowDnd } from "./use-tree-row-dnd";
 import type { NodeRow } from "./flatten-visible-tree";
@@ -137,10 +135,6 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
     transferRun,
   });
 
-  const { icon: FileIcon, color: fileIconColor } = isDir
-    ? { icon: isExpanded ? FolderOpen : Folder, color: isExpanded ? "text-primary" : "text-text-3" }
-    : getFileIcon(node.name);
-
   return (
     <div {...dnd.containerHandlers}>
       <ContextMenu>
@@ -172,10 +166,9 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
               <span className="w-3.5 shrink-0" />
             )}
             <FileIcon
-              className={cn(
-                "size-4 shrink-0",
-                fileIconColor ?? "text-text-secondary",
-              )}
+              name={node.name}
+              kind={isDir ? "directory" : "file"}
+              open={isExpanded}
             />
             <span
               className={cn(

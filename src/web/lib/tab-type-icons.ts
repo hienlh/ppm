@@ -1,5 +1,5 @@
 /**
- * Shared tab-type → lucide icon map.
+ * Shared tab-type → icon map.
  *
  * Single source of truth so the mobile nav, dock header, and tab bar render the
  * same glyph per tab type. Adding a new panel tab type = one entry here, no
@@ -7,9 +7,12 @@
  */
 import {
   Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Puzzle, Sparkles, Users, CircleX,
+  GitCommitHorizontal,
   type LucideIcon,
-} from "lucide-react";
+} from "@/lib/icons";
+import type { ElementType } from "react";
 import type { TabType } from "@/stores/tab-store";
+import { fileIconElement } from "@/lib/file-icons";
 
 export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   terminal: Terminal,
@@ -24,7 +27,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   "extension-webview": Puzzle,
   "conflict-editor": FileDiff,
   "system-monitor": Settings,
-  "git-log": FileCode,
+  "git-log": GitCommitHorizontal,
   "ai-resource": Sparkles,
   group: Users,
   problems: CircleX,
@@ -33,4 +36,28 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
 /** Resolve the icon for a tab type, falling back to a generic glyph. */
 export function getTabTypeIcon(type: TabType): LucideIcon {
   return TAB_TYPE_ICONS[type] ?? Puzzle;
+}
+
+/** The tab types whose title names a file rather than a kind of panel. */
+const FILE_TAB_TYPES = new Set<TabType>(["editor", "git-diff", "conflict-editor"]);
+
+export interface TabIconSubject {
+  type: TabType;
+  title: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * A tab that holds a file is labelled with *that file's* icon, the way VS Code
+ * does it — a strip of eight identical `FileCode` glyphs tells you nothing about
+ * which tab is which, and that is just as true of the dock header and the mobile
+ * tab switcher as it is of the desktop strip. The tab's own metadata is
+ * preferred over its title, which a rename or a "(hash)" suffix can have edited.
+ */
+export function getTabIcon(tab: TabIconSubject): ElementType {
+  if (FILE_TAB_TYPES.has(tab.type)) {
+    const path = (tab.metadata?.filePath as string | undefined) || tab.title;
+    if (path) return fileIconElement(path);
+  }
+  return getTabTypeIcon(tab.type);
 }

@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot, Tags, CalendarX2, MessageSquare, BotMessageSquare } from "lucide-react";
+import { Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot, Tags, CalendarX2, MessageSquare, BotMessageSquare } from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { cn } from "@/lib/utils";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";

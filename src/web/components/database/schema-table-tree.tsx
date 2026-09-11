@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, Database, Key, Link2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Database, Key, Link2 } from "@/lib/icons";
 import type { CachedTable } from "./use-connections";
 
 export interface ColumnInfo {

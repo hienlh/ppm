@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2, X } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { Button } from "@/components/ui/button";

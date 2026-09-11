@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Image as ImageIcon } from "lucide-react";
+import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Image as ImageIcon } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder, loadRecentTimes, type ProjectInfo } from "@/stores/project-store";
 import { SORT_OPTIONS, applySort } from "@/components/layout/project-sort";

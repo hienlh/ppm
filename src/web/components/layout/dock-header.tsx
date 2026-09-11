@@ -4,12 +4,12 @@
  * icon map; vertical positions collapse inactive pills + show a `+N` overflow
  * dropdown (see resolveDockPills). Position dropdown persists per-user (settings).
  */
-import { PanelLeft, PanelBottom, PanelRight, Maximize2, Minimize2, ChevronDown, Plus, Check, X } from "lucide-react";
+import { PanelLeft, PanelBottom, PanelRight, Maximize2, Minimize2, ChevronDown, Plus, Check, X } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type DockPosition } from "@/stores/settings-store";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
-import { getTabTypeIcon } from "@/lib/tab-type-icons";
+import { getTabIcon } from "@/lib/tab-type-icons";
 import { resolveDockPills } from "./dock-pills";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -62,7 +62,7 @@ export function DockHeader() {
         {display.visible.map((id) => {
           const tab = byId.get(id);
           if (!tab) return null;
-          const Icon = getTabTypeIcon(tab.type);
+          const Icon = getTabIcon(tab);
           const isActive = id === activeTabId;
           const showLabel = !display.iconOnlyInactive || isActive;
           const pill = (
@@ -113,7 +113,7 @@ export function DockHeader() {
               {display.overflow.map((id) => {
                 const tab = byId.get(id);
                 if (!tab) return null;
-                const Icon = getTabTypeIcon(tab.type);
+                const Icon = getTabIcon(tab);
                 return (
                   <DropdownMenuItem key={id} onClick={() => activate(id)}>
                     <Icon className="size-3.5" />

@@ -3,6 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve, join, extname, dirname } from "node:path";
 import { isCompiledBinary } from "../../services/autostart-generator.ts";
 import { chooseVariant } from "./static-encoding.ts";
+import { shouldServeAppShell } from "./static-fallback.ts";
 
 export const staticRoutes = new Hono();
 
@@ -86,6 +87,13 @@ staticRoutes.get("*", async (c) => {
       }
       return new Response(variant.encoding ? Bun.file(variant.path) : file, { headers });
     }
+  }
+
+  // A missing file is answered with the app shell only when the request could
+  // plausibly be a navigation — answering a subresource with HTML is what
+  // empties the screen. See `static-fallback.ts` for why.
+  if (!shouldServeAppShell(urlPath, c.req.header("Sec-Fetch-Dest"))) {
+    return c.text("Not found", 404);
   }
 
   // SPA fallback: serve index.html with revalidation so new asset hashes propagate

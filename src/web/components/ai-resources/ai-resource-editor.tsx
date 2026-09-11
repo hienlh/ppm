@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
-import { Save, Undo2, Loader2, AlertTriangle, Lock } from "lucide-react";
+import { Save, Undo2, Loader2, AlertTriangle, Lock } from "@/lib/icons";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { useAiResourcesStore } from "@/stores/ai-resources-store";
 import { readAiResource, writeAiResource, type AiResourceType, type AiResourceScope } from "@/lib/api-ai-resources";

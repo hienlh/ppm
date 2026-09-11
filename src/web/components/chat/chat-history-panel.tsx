@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { MessageSquare, Loader2, RefreshCw } from "lucide-react";
+import { MessageSquare, Loader2, RefreshCw } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { formatRelativeDate } from "@/lib/format-date";

@@ -13,7 +13,7 @@
  * produces confusing failures.
  */
 
-import { Download, Eye, Trash2 } from "lucide-react";
+import { Download, Eye, Trash2 } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
 import type { AccountInfo, AccountUsageEntry, OAuthProfileData } from "../../../lib/api-settings";
 import { AccountBucketRow } from "./account-bucket-row";

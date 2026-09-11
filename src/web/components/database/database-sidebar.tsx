@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Database, Plus } from "lucide-react";
+import { Database, Plus } from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { useTabStore } from "@/stores/tab-store";
 import { ConnectionList } from "./connection-list";
