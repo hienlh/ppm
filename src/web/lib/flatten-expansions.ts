@@ -27,10 +27,23 @@ export function flattenWithExpansions(
 ): ChatMessage[] {
   if (expansions.size === 0) return messages;
   const out: ChatMessage[] = [];
-  for (const m of messages) {
-    const pre = m.id ? expansions.get(m.id) : undefined;
-    if (pre && pre.length > 0) out.push(...pre);
-    out.push(m);
-  }
+  // Recursive, because each expansion now arrives as one compaction segment
+  // headed by the summary *before* it — so expanding that one puts its messages
+  // under a key that only appears inside another expansion. A flat pass would
+  // fetch them and render nothing, which looks exactly like the load failing.
+  const seen = new Set<string>();
+  const visit = (list: ChatMessage[]): void => {
+    for (const m of list) {
+      const pre = m.id ? expansions.get(m.id) : undefined;
+      // `seen` guards the walk: a key that somehow resolved to a list
+      // containing itself would otherwise recurse until the stack gave out.
+      if (pre && pre.length > 0 && m.id && !seen.has(m.id)) {
+        seen.add(m.id);
+        visit(pre);
+      }
+      out.push(m);
+    }
+  };
+  visit(messages);
   return out;
 }

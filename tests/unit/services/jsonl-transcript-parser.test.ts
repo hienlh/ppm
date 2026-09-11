@@ -258,4 +258,83 @@ describe("parseJsonlTranscript", () => {
     expect(assistant.events?.length).toBe(3);
     expect(assistant.events?.[2]?.type).toBe("tool_result");
   });
+
+  test("history before a compact boundary is still returned", async () => {
+    // Claude Code writes a `compact_boundary` record with `parentUuid: null`
+    // when it compacts a conversation. The SDK's reader walks `parentUuid`
+    // backwards from the newest message, so it stops at that record and every
+    // older message becomes invisible — 179 of 1084 on the session that found
+    // this. This reader is linear on purpose; a compaction must not cut
+    // history, and the boundary itself is not a message.
+    const lines = [
+      JSON.stringify({ uuid: "old1", type: "user", message: { content: "before compaction" } }),
+      JSON.stringify({
+        uuid: "old2", type: "assistant",
+        message: { content: [{ type: "text", text: "old answer" }] },
+      }),
+      JSON.stringify({
+        uuid: "b1", type: "system", subtype: "compact_boundary",
+        parentUuid: null, logicalParentUuid: "old2", content: "Compacted",
+      }),
+      JSON.stringify({ uuid: "new1", parentUuid: null, type: "user", message: { content: "after compaction" } }),
+    ].join("\n");
+    const file = resolve(TEST_DIR, "compacted.jsonl");
+    writeFileSync(file, lines);
+
+    const messages = await parseJsonlTranscript(file);
+    expect(messages.length).toBe(3);
+    expect(messages[0]).toMatchObject({ role: "user", content: "before compaction" });
+    expect(messages[2]).toMatchObject({ role: "user", content: "after compaction" });
+    // The boundary record is a `system` line, not a turn.
+    expect(messages.some((m) => m.content.includes("Compacted"))).toBe(false);
+  });
+
+  test("multi-byte text survives the chunked read, with no trailing newline", async () => {
+    // The reader decodes chunk by chunk, so a character split across a chunk
+    // boundary is corrupted unless the decoder is told the stream continues —
+    // and a file whose last line has no "\n" is dropped unless the tail is
+    // flushed. Both fail on some files only, which is the worst way to fail.
+    const vi = "Tiếng Việt có dấu — 日本語 — 🎉";
+    const lines = [
+      JSON.stringify({ uuid: "u1", type: "user", message: { content: vi } }),
+      JSON.stringify({ uuid: "u2", type: "user", message: { content: "last line, no newline" } }),
+    ].join("\n"); // deliberately no trailing newline
+    const file = resolve(TEST_DIR, "multibyte.jsonl");
+    writeFileSync(file, lines);
+
+    const messages = await parseJsonlTranscript(file);
+    expect(messages.length).toBe(2);
+    expect(messages[0]!.content).toBe(vi);
+    expect(messages[1]!.content).toBe("last line, no newline");
+  });
+
+  test("oneSegment returns only the stretch since the previous compaction", async () => {
+    const rec = (uuid: string, content: string, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ uuid, type: "user", message: { content }, ...extra });
+    const lines = [
+      rec("a1", "oldest turn"),
+      rec("s1", "summary one — read the full transcript at: /x.jsonl", { isCompactSummary: true }),
+      rec("b1", "middle turn"),
+      rec("s2", "summary two — read the full transcript at: /x.jsonl", { isCompactSummary: true }),
+      rec("c1", "newest turn"),
+    ].join("\n");
+    const file = resolve(TEST_DIR, "segments.jsonl");
+    writeFileSync(file, lines);
+
+    // One segment: everything since `s1`, headed by `s1` itself — that head is
+    // what carries the transcript path, so the next scroll can expand further.
+    const seg = await parseJsonlTranscript(file, "s2", { oneSegment: true });
+    expect(seg.map((m) => m.content)).toEqual([
+      "summary one — read the full transcript at: /x.jsonl",
+      "middle turn",
+    ]);
+
+    // Walking one more step back reaches the true beginning.
+    const older = await parseJsonlTranscript(file, "s1", { oneSegment: true });
+    expect(older.map((m) => m.content)).toEqual(["oldest turn"]);
+
+    // Without the option the old behaviour is intact: everything before `s2`.
+    const all = await parseJsonlTranscript(file, "s2");
+    expect(all.length).toBe(3);
+  });
 });

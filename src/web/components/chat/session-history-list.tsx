@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot, Tags, CalendarX2, MessageSquare, BotMessageSquare } from "@/lib/icons";
+import { Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot, Tags, CalendarX2, BotMessageSquare } from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { cn } from "@/lib/utils";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
@@ -34,7 +34,7 @@ function SearchResultsList({ search, onOpen }: { search: ReturnType<typeof useCh
             onClick={() => onOpen(r)}
             className="group relative flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-elevated transition-colors"
           >
-            <MessageSquare className="size-4 shrink-0 text-text-subtle" />
+            <ProviderBadge providerId={r.providerId} />
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5">
                 <span className="truncate text-[13px] font-medium">{r.title || "Untitled"}</span>
