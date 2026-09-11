@@ -7,7 +7,7 @@ const POLL_INTERVAL = 120_000; // read cache every 2min
 interface UseUsageReturn {
   usageInfo: UsageInfo;
   usageLoading: boolean;
-  /** ISO timestamp from BE — when usage was actually fetched from Anthropic API */
+  /** ISO timestamp from BE — when usage was actually fetched. */
   lastFetchedAt: string | null;
   refreshUsage: () => void;
 }
@@ -17,13 +17,15 @@ interface UseUsageReturn {
  * shows whichever account ran last across every open session, which is wrong for all but one.
  */
 export function useUsage(projectName: string, providerId = "claude", sessionId?: string): UseUsageReturn {
-  const [usageInfo, setUsageInfo] = useState<UsageInfo>({});
+  const scope = JSON.stringify([projectName, providerId, sessionId]);
+  const [snapshot, setSnapshot] = useState<{ scope: string; usage: UsageInfo; fetchedAt: string | null } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
-  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestRef = useRef(0);
 
   const doFetch = useCallback((forceRefresh = false) => {
     if (!projectName) return;
+    const request = ++requestRef.current;
     setUsageLoading(true);
     const qs = forceRefresh ? "&refresh=1" : "";
     const sessionQs = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
@@ -34,23 +36,33 @@ export function useUsage(projectName: string, providerId = "claude", sessionId?:
         `${projectUrl(projectName)}/chat/usage?providerId=${providerId}${sessionQs}${qs}`,
       )
       .then((data) => {
-        if (!data) return;
-        setUsageInfo((prev) => ({ ...prev, ...data }));
-        if (data.lastFetchedAt) setLastFetchedAt(data.lastFetchedAt);
+        if (request !== requestRef.current) return;
+        // Each response is a snapshot, not a patch. Missing fields must clear
+        // old account labels/limits, especially when switching providers.
+        setSnapshot({ scope, usage: data ?? {}, fetchedAt: data?.lastFetchedAt ?? null });
       })
       .catch(() => {})
-      .finally(() => setUsageLoading(false));
-  }, [projectName, providerId, sessionId]);
+      .finally(() => {
+        if (request === requestRef.current) setUsageLoading(false);
+      });
+  }, [projectName, providerId, sessionId, scope]);
 
   // Read cache on mount + auto-read every POLL_INTERVAL
   useEffect(() => {
+    setSnapshot(null);
+    setUsageLoading(false);
     doFetch();
     timerRef.current = setInterval(() => doFetch(), POLL_INTERVAL);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      ++requestRef.current;
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, [doFetch]);
 
-  /** Manual refresh — tells BE to fetch fresh from Anthropic API */
+  /** Manual refresh — asks BE for fresh usage. */
   const refreshUsage = useCallback(() => doFetch(true), [doFetch]);
 
-  return { usageInfo, usageLoading, lastFetchedAt, refreshUsage };
+  // Hide the previous scope synchronously, before the new effect runs.
+  const current = snapshot?.scope === scope ? snapshot : null;
+  return { usageInfo: current?.usage ?? {}, usageLoading, lastFetchedAt: current?.fetchedAt ?? null, refreshUsage };
 }

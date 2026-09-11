@@ -2,17 +2,19 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import {
-  insertLimitSnapshot,
   getLatestLimitSnapshot,
   getLatestSnapshotForAccount,
   getAllLatestSnapshots,
-  cleanupOldLimitSnapshots,
-  touchSnapshotTimestamp,
   type LimitSnapshotRow,
 } from "./db.service.ts";
 import { accountService } from "./account.service.ts";
 import { decrypt } from "../lib/account-crypto.ts";
 import { accountSelector } from "./account-selector.service.ts";
+import { registerAllUsageSources } from "./provider-usage/register-usage-sources.ts";
+import { startProviderUsagePolling, stopProviderUsagePolling, sweepUsageSource } from "./provider-usage/usage-scheduler.ts";
+import { refreshUsage as refreshProviderUsage } from "./provider-usage/usage-registry.ts";
+import { claudeUsageSource } from "./claude-usage-source.ts";
+import { resetUsageRuntimeState } from "./provider-usage/index.ts";
 
 export interface LimitBucket {
   utilization: number;
@@ -43,19 +45,7 @@ const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const API_BETA = "oauth-2025-04-20";
 const USER_AGENT = "claude-code/1.0";
 const FETCH_TIMEOUT = 10_000;
-const POLL_INTERVAL = 300_000; // 5min
-const ACCOUNT_STAGGER_MS = 1_000; // 1s between accounts
-
 let inMemoryCostUsd = 0;
-
-// Survive Bun --hot reloads: module-level vars reset on reload, globalThis persists.
-// Without this, each hot-reload creates a NEW polling timer without clearing the old one,
-// leading to N concurrent timers after N reloads (observed: 221 timers → 38k 429 errors/day).
-const HOT_KEY = "__PPM_USAGE_POLL__" as const;
-const hotState = ((globalThis as any)[HOT_KEY] ??= {
-  pollTimer: null as ReturnType<typeof setTimeout> | null,
-  inflightPoll: null as Promise<void> | null,
-}) as { pollTimer: ReturnType<typeof setTimeout> | null; inflightPoll: Promise<void> | null };
 
 // Per-token cooldown map: token prefix → earliest allowed fetch time
 const tokenCooldowns = new Map<string, number>();
@@ -141,73 +131,61 @@ async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
 // Persistence
 // ---------------------------------------------------------------------------
 
-function hasChanged(data: ClaudeUsage, last: LimitSnapshotRow | null): boolean {
-  if (!last) return true;
-  const d = (a: number | null | undefined, b: number | null) =>
-    a != null && (b == null || Math.abs(a - b) > 0.001);
-  if (d(data.session?.utilization, last.five_hour_util)) return true;
-  if (d(data.weekly?.utilization, last.weekly_util)) return true;
-  if (data.session?.resetsAt && data.session.resetsAt !== (last.five_hour_resets_at ?? "")) return true;
-  if (data.weekly?.resetsAt && data.weekly.resetsAt !== (last.weekly_resets_at ?? "")) return true;
-  return false;
-}
-
-function persistIfChanged(data: ClaudeUsage, accountId: string | null): void {
-  const last = accountId ? getLatestSnapshotForAccount(accountId) : getLatestLimitSnapshot();
-  if (!hasChanged(data, last)) {
-    // Data unchanged but still update timestamp so "last fetched" is accurate
-    if (accountId) touchSnapshotTimestamp(accountId);
-    return;
-  }
-  insertLimitSnapshot({
-    account_id: accountId,
-    five_hour_util: data.session?.utilization ?? null,
-    five_hour_resets_at: data.session?.resetsAt ?? null,
-    weekly_util: data.weekly?.utilization ?? null,
-    weekly_resets_at: data.weekly?.resetsAt ?? null,
-    weekly_opus_util: data.weeklyOpus?.utilization ?? null,
-    weekly_opus_resets_at: data.weeklyOpus?.resetsAt ?? null,
-    weekly_sonnet_util: data.weeklySonnet?.utilization ?? null,
-    weekly_sonnet_resets_at: data.weeklySonnet?.resetsAt ?? null,
-  });
-  cleanupOldLimitSnapshots();
-}
-
 // ---------------------------------------------------------------------------
 // Multi-account polling
 // ---------------------------------------------------------------------------
 
-async function fetchAllAccountUsages(): Promise<void> {
-  const accounts = accountService.list();
+/**
+ * Whether a background sweep should pass over this account without calling it.
+ *
+ * Not a failure: an expired login, an API key (no usage endpoint), or a token
+ * still inside its post-429 cooldown all mean "nothing to ask right now", and
+ * the last stored reading stays valid.
+ */
+export async function shouldSkipClaudeAccount(accountId: string): Promise<boolean> {
+  const acc = accountService.list().find((a) => a.id === accountId);
+  if (!acc) return true;
   const nowS = Math.floor(Date.now() / 1000);
-  for (const acc of accounts) {
-    // Disabled accounts still poll usage — disable only removes them from the chat
-    // rotation, it should not stop usage tracking. (GET usage doesn't consume quota.)
-    // Skip expired temporary accounts (no refresh token)
-    if (!accountService.hasRefreshToken(acc.id) && acc.expiresAt && acc.expiresAt < nowS) continue;
-    // Ensure token is fresh before calling usage API (prevents 401 from expired tokens)
-    const withTokens = await accountService.ensureFreshToken(acc.id);
-    if (!withTokens) continue;
-    const token = withTokens.accessToken;
-    // Only OAuth tokens have usage endpoint
-    if (!token.startsWith("sk-ant-oat")) continue;
-    // Check cooldown from previous 429
-    const cooldownKey = token.substring(0, 20);
-    const cooldownUntil = tokenCooldowns.get(cooldownKey);
-    if (cooldownUntil && Date.now() < cooldownUntil) {
-      const secs = Math.ceil((cooldownUntil - Date.now()) / 1000);
-      console.log(`[usage] ${acc.label ?? acc.id}: rate-limited, ${secs}s remaining`);
-      continue;
-    }
-    try {
-      const data = await fetchUsageForToken(token);
-      tokenCooldowns.delete(cooldownKey); // clear cooldown on success
-      persistIfChanged(data, acc.id);
-    } catch (e) {
-      console.error(`[usage] ${acc.label ?? acc.id}:`, (e as Error).message);
-    }
-    if (accounts.length > 1) await new Promise(r => setTimeout(r, ACCOUNT_STAGGER_MS));
+  // Disabled accounts still poll usage — disable only removes them from the chat
+  // rotation, it should not stop usage tracking. (GET usage doesn't consume quota.)
+  // Skip expired temporary accounts (no refresh token).
+  if (!accountService.hasRefreshToken(acc.id) && acc.expiresAt && acc.expiresAt < nowS) return true;
+  const withTokens = await accountService.ensureFreshToken(acc.id);
+  if (!withTokens) return true;
+  // Only OAuth tokens have a usage endpoint.
+  if (!withTokens.accessToken.startsWith("sk-ant-oat")) return true;
+  const cooldownUntil = tokenCooldowns.get(withTokens.accessToken.substring(0, 20));
+  if (cooldownUntil && Date.now() < cooldownUntil) {
+    console.log(`[usage] ${acc.label ?? acc.id}: rate-limited, ${Math.ceil((cooldownUntil - Date.now()) / 1000)}s remaining`);
+    return true;
   }
+  return false;
+}
+
+/**
+ * Read one Claude account's usage live. Throws on failure — the shared layer
+ * needs to tell a failure apart from an account with nothing to report.
+ *
+ * Persisting is deliberately NOT done here: that belongs to the shared layer,
+ * which stores every provider's snapshots through one path.
+ */
+export async function fetchClaudeAccountUsage(accountId: string): Promise<ClaudeUsage> {
+  const withTokens = await accountService.ensureFreshToken(accountId);
+  if (!withTokens) throw new Error(`account ${accountId} has no usable token`);
+  const token = withTokens.accessToken;
+  const data = await fetchUsageForToken(token);
+  tokenCooldowns.delete(token.substring(0, 20)); // cleared on success
+  return data;
+}
+
+/**
+ * Read the ambient Claude login (macOS Keychain or `~/.claude/.credentials.json`),
+ * for installs that never added an account to PPM.
+ */
+export async function fetchLegacyClaudeUsage(): Promise<ClaudeUsage> {
+  const token = getLegacyAccessToken();
+  if (!token) throw new Error("no ambient Claude login");
+  return fetchUsageForToken(token);
 }
 
 // Legacy: Keychain-based single-token fetch (no accounts in DB)
@@ -228,40 +206,6 @@ function getLegacyAccessToken(): string | null {
   if (!token) return null;
   tokenCache = { token, timestamp: Date.now() };
   return token;
-}
-
-async function fetchLegacySingleAccount(): Promise<void> {
-  const token = getLegacyAccessToken();
-  if (!token) return;
-  try {
-    const data = await fetchUsageForToken(token);
-    persistIfChanged(data, null);
-  } catch {}
-}
-
-async function pollOnceInternal(): Promise<void> {
-  try {
-    const hasAccounts = accountService.list().length > 0;
-    if (hasAccounts) {
-      await fetchAllAccountUsages();
-    } else {
-      await fetchLegacySingleAccount();
-    }
-  } catch (e) {
-    console.error("[usage] pollOnce error:", (e as Error).message);
-  }
-}
-
-/** Deduped: concurrent callers share a single in-flight fetch */
-async function pollOnce(): Promise<void> {
-  if (hotState.inflightPoll) return hotState.inflightPoll;
-  const thisPoll = pollOnceInternal().finally(() => {
-    // Only clear if still the current poll — prevents a stale .finally() from
-    // clearing a newer poll after timeout handler force-nulled inflightPoll.
-    if (hotState.inflightPoll === thisPoll) hotState.inflightPoll = null;
-  });
-  hotState.inflightPoll = thisPoll;
-  return thisPoll;
 }
 
 // ---------------------------------------------------------------------------
@@ -323,27 +267,21 @@ export function getCachedUsage(preferredAccountId?: string): ClaudeUsage & { act
   return snapshotToUsage(row);
 }
 
+/**
+ * Start background usage refresh for EVERY provider, not only Claude.
+ *
+ * Kept under its historical name because that is what `server/index.ts` calls,
+ * but the timer, the stagger, the per-fetch timeout, and the persistence now
+ * live in the shared provider-usage layer. Claude reaches them through
+ * `claudeUsageSource` exactly as codex reaches them through its own source.
+ */
 export function startUsagePolling(): void {
-  if (hotState.pollTimer) return;
-  const POLL_TIMEOUT = 60_000; // max 60s per poll iteration
-  const scheduleNext = () => {
-    hotState.pollTimer = setTimeout(async () => {
-      const timeout = new Promise<"timeout">(r => setTimeout(() => r("timeout"), POLL_TIMEOUT));
-      const result = await Promise.race([
-        pollOnce().then(() => "done" as const),
-        timeout,
-      ]).catch(() => "error" as const);
-      // If the poll timed out, force-clear inflightPoll so next scheduled poll
-      // starts a fresh fetch instead of reusing the stale hanging promise.
-      if (result === "timeout") hotState.inflightPoll = null;
-      scheduleNext();
-    }, POLL_INTERVAL);
-  };
-  pollOnce().then(scheduleNext, scheduleNext);
+  registerAllUsageSources();
+  startProviderUsagePolling();
 }
 
 export function stopUsagePolling(): void {
-  if (hotState.pollTimer) { clearTimeout(hotState.pollTimer); hotState.pollTimer = null; }
+  stopProviderUsagePolling();
 }
 
 export function updateFromSdkEvent(_rateLimitType?: string, _utilization?: number, costUsd?: number): void {
@@ -351,35 +289,28 @@ export function updateFromSdkEvent(_rateLimitType?: string, _utilization?: numbe
 }
 
 export async function refreshUsageNow(): Promise<ClaudeUsage & { activeAccountId?: string; activeAccountLabel?: string }> {
-  await pollOnce();
+  // One sweep of Claude's accounts through the shared layer — same code path the
+  // background timer uses, so a manual refresh cannot drift from an automatic one.
+  registerAllUsageSources();
+  await sweepUsageSource(claudeUsageSource);
   return getCachedUsage();
 }
 
 /** Fetch + persist usage for a single account (used right after an account is added). */
 export async function refreshUsageForAccount(accountId: string): Promise<ClaudeUsage> {
-  const withTokens = await accountService.ensureFreshToken(accountId);
-  if (!withTokens) return {};
-  const token = withTokens.accessToken;
-  if (!token.startsWith("sk-ant-oat")) return {};
-  const cooldownKey = token.substring(0, 20);
-  const cooldownUntil = tokenCooldowns.get(cooldownKey);
-  if (cooldownUntil && Date.now() < cooldownUntil) return getUsageForAccount(accountId);
-  try {
-    const data = await fetchUsageForToken(token);
-    tokenCooldowns.delete(cooldownKey);
-    persistIfChanged(data, accountId);
-    return data;
-  } catch (e) {
-    console.error(`[usage] refreshUsageForAccount ${accountId}:`, (e as Error).message);
-    return getUsageForAccount(accountId);
-  }
+  registerAllUsageSources();
+  if (await shouldSkipClaudeAccount(accountId)) return getUsageForAccount(accountId);
+  // The shared layer caches, stores, and swallows the error into the last known
+  // value, so there is nothing left for this wrapper to do but name the account.
+  return refreshProviderUsage("claude", accountId);
 }
 
 /** @internal Test-only: reset module-level state between tests */
 export function _resetForTesting(): void {
   inMemoryCostUsd = 0;
-  if (hotState.pollTimer) { clearTimeout(hotState.pollTimer); hotState.pollTimer = null; }
   tokenCooldowns.clear();
-  hotState.inflightPoll = null;
   tokenCache = null;
+  // The timer, in-flight sweeps, and the usage cache moved to the shared layer,
+  // so the reset has to reach them there or a stuck sweep survives the reset.
+  resetUsageRuntimeState();
 }
