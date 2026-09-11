@@ -185,6 +185,31 @@ gitRoutes.get("/blame", async (c) => {
   }
 });
 
+/**
+ * GET /git/commit-line?hash=&path=&line= — the commit message and the one-line
+ * diff behind a blamed line, for the editor's hover.
+ *
+ * `path` and `line` are the path and line number *at that commit*, which is
+ * what `git blame --porcelain` reports; the browser passes them straight back
+ * from the blame it already has.
+ */
+gitRoutes.get("/commit-line", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const hash = c.req.query("hash");
+    const filePath = c.req.query("path");
+    const line = Number(c.req.query("line"));
+    if (!hash) return c.json(err("Missing: hash"), 400);
+    if (!filePath) return c.json(err("Missing: path"), 400);
+    if (!Number.isInteger(line) || line < 1) return c.json(err("Invalid: line"), 400);
+    const result = await gitBlameService.lineDetail(projectPath, hash, filePath, line);
+    // An unknown hash or a path git never had is "no hover", not an error.
+    return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /git/hunks?path=&scope=worktree|index — the hunks the UI selects from */
 gitRoutes.get("/hunks", async (c) => {
   try {

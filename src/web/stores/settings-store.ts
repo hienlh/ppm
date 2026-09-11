@@ -34,6 +34,15 @@ interface SettingsState {
   /** GitLens-style annotation after the cursor's line in the code editor. */
   inlineBlame: boolean;
   wordWrap: boolean;
+  /** Word wrap on a phone-sized viewport. Device-local — see `persistDevicePref`. */
+  mobileWordWrap: boolean;
+  /**
+   * Run a language server for the open file. Off until asked, and device-local:
+   * one `typescript-language-server` was 854 MB resident, which is a reasonable
+   * thing to spend on a desktop and never a reasonable thing for a phone to
+   * turn on because a desktop did.
+   */
+  lspEnabled: boolean;
   tabWrap: boolean;
   editorTabStyle: EditorTabStyle;
   sidebarActiveTab: SidebarActiveTab;
@@ -67,6 +76,8 @@ interface SettingsState {
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleInlineBlame: () => void;
   toggleWordWrap: () => void;
+  toggleMobileWordWrap: () => void;
+  setLspEnabled: (enabled: boolean) => void;
   toggleTabWrap: () => void;
   setEditorTabStyle: (style: EditorTabStyle) => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
@@ -92,6 +103,8 @@ interface PersistedSettings {
   gitStatusViewMode?: GitStatusViewMode;
   inlineBlame?: boolean;
   wordWrap?: boolean;
+  mobileWordWrap?: boolean;
+  lspEnabled?: boolean;
   tabWrap?: boolean;
   editorTabStyle?: EditorTabStyle;
   sidebarActiveTab?: SidebarActiveTab;
@@ -210,6 +223,20 @@ function persistUiPref(update: Partial<PersistedSettings>) {
 }
 
 /**
+ * Persist a pref to this device only.
+ *
+ * The server round-trip above exists so prefs survive an origin change, but it
+ * also means the last device to write wins everywhere. That is wrong for the
+ * prefs that answer "what can this screen afford": a desktop turning the
+ * language server on must not start one for the phone, and unwrapping lines on
+ * a 27-inch monitor must not unwrap them on a 6-inch one. Those stay local, and
+ * `applyServerUiPrefs` deliberately does not read them back.
+ */
+function persistDevicePref(update: Partial<PersistedSettings>) {
+  persistSettings(update);
+}
+
+/**
  * Push the current theme selection to the dedicated server endpoint.
  * Errors are swallowed, so callers may ignore the promise; awaiting it only
  * matters when a following request must observe the write (see
@@ -277,6 +304,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   inlineBlame: _initial.inlineBlame ?? false,
   wordWrap: _initial.wordWrap ?? false,
+  mobileWordWrap: _initial.mobileWordWrap ?? true,
+  lspEnabled: _initial.lspEnabled ?? false,
   tabWrap: _initial.tabWrap ?? false,
   editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "history",
@@ -398,6 +427,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().wordWrap;
     persistUiPref({ wordWrap: next });
     set({ wordWrap: next });
+  },
+
+  toggleMobileWordWrap: () => {
+    const next = !get().mobileWordWrap;
+    persistDevicePref({ mobileWordWrap: next });
+    set({ mobileWordWrap: next });
+  },
+
+  setLspEnabled: (enabled) => {
+    persistDevicePref({ lspEnabled: enabled });
+    set({ lspEnabled: enabled });
   },
 
   toggleTabWrap: () => {

@@ -5,12 +5,13 @@
  * light/dark within it, and System follows the OS.
  */
 
-import { WrapText } from "lucide-react";
+import { WrapText, Zap } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useSettingsStore, type EditorTabStyle, type ExplorerSkinPref } from "@/stores/settings-store";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 import { THEME_MODE_OPTIONS } from "@/theme/theme-mode-options";
 import { ThemeGrid } from "./theme-grid";
@@ -67,6 +68,14 @@ export function AppearanceSettingsSection() {
       setExplorerSkin: s.setExplorerSkin,
     })),
   );
+  const { wordWrap, toggleWordWrap, mobileWordWrap, toggleMobileWordWrap, lspEnabled, setLspEnabled } = useSettingsStore(
+    useShallow((s) => ({
+      wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap,
+      mobileWordWrap: s.mobileWordWrap, toggleMobileWordWrap: s.toggleMobileWordWrap,
+      lspEnabled: s.lspEnabled, setLspEnabled: s.setLspEnabled,
+    })),
+  );
+  const isMobile = useIsMobile();
 
   return (
     <div className="space-y-6">
@@ -106,6 +115,44 @@ export function AppearanceSettingsSection() {
           </div>
         </div>
         <Switch checked={tabWrap} onCheckedChange={toggleTabWrap} />
+      </section>
+
+      {/* Word wrap in the editor. Two prefs behind one switch: a phone keeps its own
+          answer (and defaults to wrapping) because the desktop one is shared across
+          devices and a 6-inch screen cannot use "no wrap". */}
+      <section className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <WrapText className="size-4 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Word Wrap</p>
+            <p className="text-xs text-muted-foreground">
+              {isMobile
+                ? "Wrap long lines instead of scrolling sideways (this device)"
+                : "Wrap long lines in the editor (Alt+Z)"}
+            </p>
+          </div>
+        </div>
+        <Switch
+          checked={isMobile ? mobileWordWrap : wordWrap}
+          onCheckedChange={() => (isMobile ? toggleMobileWordWrap() : toggleWordWrap())}
+        />
+      </section>
+
+      {/* Language server. Off until asked: it is a real process on the host (one was
+          854 MB resident), and a phone never starts one. */}
+      <section className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <Zap className="size-4 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Language Server</p>
+            <p className="text-xs text-muted-foreground">
+              {isMobile
+                ? "Off on a phone — it runs a server process per project"
+                : "Completions, hover, F12, rename and quick fix (this device)"}
+            </p>
+          </div>
+        </div>
+        <Switch checked={lspEnabled && !isMobile} disabled={isMobile} onCheckedChange={setLspEnabled} />
       </section>
 
       <section className="space-y-2">

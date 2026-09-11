@@ -2,16 +2,12 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
-import monacoEditorPlugin from "vite-plugin-monaco-editor";
 import { resolve } from "path";
 
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    ((monacoEditorPlugin as unknown as { default?: (opts: object) => object }).default ?? (monacoEditorPlugin as unknown as (opts: object) => object))({
-      languages: ["javascript", "typescript", "python", "html", "css", "json", "markdown", "yaml", "shell"],
-    }),
     VitePWA({
       registerType: "autoUpdate",
       strategies: "injectManifest",
@@ -31,8 +27,19 @@ export default defineConfig({
         ],
       },
       injectManifest: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
+        // The shell only. Globbing everything meant a phone's first visit
+        // downloaded 488 files and 33.3 MB before the app was usable; the rest
+        // is content-hashed and immutable, so `sw.ts` caches it on first real
+        // use instead. `index-*` is Vite's entry chunk.
+        // Named individually rather than by extension: a `*.png` glob pulled in
+        // `donate-qr.png`, 104 KB downloaded before first paint by everyone.
+        globPatterns: ["index.html", "manifest.webmanifest", "icon-*.svg", "assets/index-*.{js,css}"],
+        // Belt and braces: the Monaco workers must never come back into the
+        // precache, whatever the patterns above grow into.
+        globIgnores: ["**/monacoeditorwork/**"],
+        // No shell file is anywhere near this. A cap in the megabytes is what
+        // let a 12.7 MB worker in.
+        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
       },
     }),
   ],
@@ -49,7 +56,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id: string) {
-          if (id.includes("node_modules/monaco-editor")) return "vendor-monaco";
           if (id.includes("node_modules/mermaid")) return "vendor-mermaid";
           if (id.includes("node_modules/@xterm")) return "vendor-xterm";
           if (

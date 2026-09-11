@@ -74,6 +74,7 @@
         "concurrently": "^9.2.1",
         "esbuild": "^0.27.4",
         "tailwindcss": "^4.2.1",
+        "typescript-language-server": "^6.0.0",
         "vite": "^8.0.0",
         "vite-plugin-pwa": "^1.2.0",
         "workbox-precaching": "^7.4.0",
@@ -84,7 +85,7 @@
     },
     "packages/ext-git-graph": {
       "name": "@ppm/ext-git-graph",
-      "version": "0.1.0",
+      "version": "0.3.0",
     },
     "packages/vscode-compat": {
       "name": "@ppm/vscode-compat",
@@ -1994,6 +1995,8 @@
     "typed-array-length": ["typed-array-length@1.0.7", "", { "dependencies": { "call-bind": "^1.0.7", "for-each": "^0.3.3", "gopd": "^1.0.1", "is-typed-array": "^1.1.13", "possible-typed-array-names": "^1.0.0", "reflect.getprototypeof": "^1.0.6" } }, "sha512-3KS2b+kL7fsuk/eJZ7EQdnEmQoaho/r6KUef7hxvltNA5DR8NAUM+8wJMbJyZ4G9/7i3v5zPBIMN5aybAh2/Jg=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
+    "typescript-language-server": ["typescript-language-server@6.0.0", "", { "bin": { "typescript-language-server": "lib/cli.mjs" } }, "sha512-LXtzY3UZGfghWA5eRU6/T5j1+YiGRgy14mR3GOKyTKlE1op1TYKQnLVxwBsmnXeDhGLuvzZyIHBAqvrekAITYQ=="],
 
     "ufo": ["ufo@1.6.3", "", {}, "sha512-yDJTmhydvl5lJzBmy/hyOAA0d+aqCBuwl818haVdYCRrWV84o7YyeVm4QlVHStqNrrJSTb6jKuFAVqAFsr+K3Q=="],
 

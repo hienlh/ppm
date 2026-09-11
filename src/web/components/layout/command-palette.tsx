@@ -19,16 +19,21 @@ import {
   Columns2,
   Cloud,
   AppWindow,
+  CircleX,
+  WrapText,
+  Zap,
 } from "lucide-react";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useCompareStore } from "@/stores/compare-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
@@ -140,6 +145,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const getBinding = useKeybindingsStore((s) => s.getBinding);
   const extContributions = useExtensionStore((s) => s.contributions);
+  const isMobile = useIsMobile();
+  const lspEnabled = useSettingsStore((s) => s.lspEnabled);
 
   // Fetch filesystem files when path query changes directory
   const fetchFsFiles = useCallback(async (dir: string) => {
@@ -201,6 +208,20 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },
+      { id: "problems", label: "Problems", icon: CircleX, action: () => { usePanelStore.getState().openInDock({ type: "problems", title: "Problems", projectId: null, closable: true }); onClose(); }, keywords: "errors warnings diagnostics lint typescript", group: "action", shortcut: formatShortcut(getBinding("open-problems")) },
+      {
+        // The editor's own wrap toggle is in the desktop-only breadcrumb bar,
+        // so on a phone this and Settings are the way to reach it.
+        id: "word-wrap", label: "Toggle Word Wrap", icon: WrapText, group: "action",
+        keywords: "wrap unwrap word lines editor soft",
+        action: () => {
+          const settings = useSettingsStore.getState();
+          if (isMobile) settings.toggleMobileWordWrap();
+          else settings.toggleWordWrap();
+          onClose();
+        },
+        shortcut: isMobile ? undefined : "Alt+Z",
+      },
       {
         id: "compare-files",
         label: "Compare Files...",
@@ -224,6 +245,19 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
           onClose();
         },
       },
+      ...(isMobile ? [] : [{
+        id: "language-server",
+        label: lspEnabled ? "Turn Off Language Server" : "Turn On Language Server",
+        icon: Zap,
+        group: "action" as const,
+        keywords: "lsp language server completions intellisense hover definition typescript pyright gopls",
+        hint: "This device",
+        action: () => {
+          const settings = useSettingsStore.getState();
+          settings.setLspEnabled(!settings.lspEnabled);
+          onClose();
+        },
+      }]),
       {
         id: "settings", label: "Settings", icon: Settings,
         action: () => {
@@ -270,7 +304,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     });
 
     return [...builtIn, ...extCmds];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions]);
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, lspEnabled]);
 
   // File commands — from index when ready, fallback to flattened tree
   const fileCommands = useMemo<CommandItem[]>(() => {
