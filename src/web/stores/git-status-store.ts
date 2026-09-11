@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { create } from "zustand";
-import { api, projectUrl } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import type { GitStatus } from "../../types/git";
 
 /** Git status letter for file tree decorations */
@@ -145,23 +146,25 @@ export function useGitChangesPoller(
   const setCount = useGitStatusStore((s) => s.setCount);
   const setFileStatuses = useGitStatusStore((s) => s.setFileStatuses);
   const setMeta = useGitStatusStore((s) => s.setMeta);
+  // The project folder is not always the repository — see `use-git-repo`.
+  const { repo, gitUrl, rebaseStatus } = useGitRepo(projectName);
 
   const poll = useCallback(async () => {
-    if (!projectName) return;
+    if (!projectName || !repo) return;
     try {
-      const data = await api.get<GitStatus>(
-        `${projectUrl(projectName)}/git/status`,
-      );
+      const data = await api.get<GitStatus>(gitUrl("/status"));
       setCount(
         projectName,
         data.staged.length + data.unstaged.length + data.untracked.length,
       );
-      setFileStatuses(projectName, data);
+      // The tree decorates nodes by project-relative path, and git answered in
+      // the repository's terms — which for a subfolder is one directory short.
+      setFileStatuses(projectName, rebaseStatus(data));
       setMeta(projectName, data);
     } catch {
       // Silently ignore — badge just keeps last-known value
     }
-  }, [projectName, setCount, setFileStatuses]);
+  }, [projectName, repo, gitUrl, rebaseStatus, setCount, setFileStatuses, setMeta]);
 
   useEffect(() => {
     if (skip) return;

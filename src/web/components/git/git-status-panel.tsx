@@ -25,9 +25,11 @@ import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import { useExtensionStore } from "@/stores/extension-store";
 import { GitWorktreePanel } from "./git-worktree-panel";
 import { HunkStageDialog, type HunkStageTarget } from "./hunk-stage-dialog";
+import { GitRepoBar, GitRepoChoice, GitNoRepo } from "./git-repo-picker";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -135,17 +137,23 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     s.projects.find((p) => p.name === projectName)?.path,
   );
   const setGitChangesCount = useGitStatusStore((s) => s.setCount);
+  // A project folder is not always the repository: it is often a container
+  // whose children are. This resolves which one every call below talks to.
+  const gitRepo = useGitRepo(projectName);
+  const gitRoot = gitRepo.repo?.path ?? activeProjectPath;
   // Git Graph extension is available when it has registered its command.
   const gitGraphAvailable = useExtensionStore(
     (s) => s.contributions?.commands?.some((c) => c.command === "git-graph.view") ?? false,
   );
 
   const fetchStatus = useCallback(async () => {
-    if (!projectName) return;
+    // No repository resolved yet: the panel is showing the picker, and asking
+    // git in the container folder is what produced the error this replaced.
+    if (!projectName || !gitRepo.repo) return;
     try {
       setLoading(true);
       const data = await api.get<GitStatus>(
-        `${projectUrl(projectName)}/git/status`,
+        gitRepo.gitUrl("/status"),
       );
       setStatus(data);
       setGitChangesCount(
@@ -159,7 +167,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     } finally {
       setLoading(false);
     }
-  }, [projectName, setGitChangesCount]);
+  }, [projectName, gitRepo, setGitChangesCount]);
 
   useEffect(() => {
     fetchStatus();
@@ -172,7 +180,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/stage`, { files });
+      await api.post(gitRepo.gitUrl("/stage"), { files });
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Stage failed");
@@ -185,7 +193,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/unstage`, { files });
+      await api.post(gitRepo.gitUrl("/unstage"), { files });
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unstage failed");
@@ -198,7 +206,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/discard`, { files });
+      await api.post(gitRepo.gitUrl("/discard"), { files });
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Discard failed");
@@ -217,7 +225,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName || !commitMsg.trim() || !status?.staged.length) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/commit`, {
+      await api.post(gitRepo.gitUrl("/commit"), {
         message: commitMsg.trim(),
       });
       setCommitMsg("");
@@ -233,7 +241,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/push`, {});
+      await api.post(gitRepo.gitUrl("/push"), {});
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Push failed");
@@ -246,7 +254,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/pull`, {});
+      await api.post(gitRepo.gitUrl("/pull"), {});
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Pull failed");
@@ -259,7 +267,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/commit`, {
+      await api.post(gitRepo.gitUrl("/commit"), {
         message: commitMsg.trim(),
         amend: true,
       });
@@ -276,7 +284,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/fetch`, {});
+      await api.post(gitRepo.gitUrl("/fetch"), {});
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fetch failed");
@@ -304,7 +312,9 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
       closable: true,
       metadata: {
         projectName,
-        filePath: file.path,
+        // git named this relative to the repository; a tab's filePath is
+        // relative to the project, and one directory up is an empty buffer.
+        filePath: gitRepo.projectFile(file.path),
       },
       projectId: projectName ?? null,
     });
@@ -318,7 +328,9 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
       closable: true,
       metadata: {
         projectName,
-        filePath: file.path,
+        // git named this relative to the repository; a tab's filePath is
+        // relative to the project, and one directory up is an empty buffer.
+        filePath: gitRepo.projectFile(file.path),
       },
       projectId: projectName ?? null,
     });
@@ -343,7 +355,20 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     );
   }
 
-  if (loading && !status) {
+  // Which repository comes first: a container workspace has no status of its
+  // own, and the panel's body renders the chooser. Both spinners below have to
+  // let that through, or the panel sits on "Loading git status..." forever
+  // waiting for a fetch that deliberately never runs.
+  if (!gitRepo.repo && !gitRepo.needsPick && !gitRepo.noRepo) {
+    return (
+      <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
+        <Loader2 className="size-5 animate-spin" />
+        <span className="text-sm">Looking for a repository...</span>
+      </div>
+    );
+  }
+
+  if (loading && !status && gitRepo.repo) {
     return (
       <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
         <Loader2 className="size-5 animate-spin" />
@@ -466,7 +491,9 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
           onClick={() => {
             if (gitGraphAvailable) {
               const args: unknown[] = [];
-              if (activeProjectPath) args.push(activeProjectPath);
+              // The repository, not the project folder: the graph runs git in
+              // whatever path it is handed.
+              if (gitRoot) args.push(gitRoot);
               window.dispatchEvent(
                 new CustomEvent("ext:command:execute", {
                   detail: { command: "git-graph.view", args },
@@ -503,6 +530,18 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
         </div>
       )}
 
+      {/* Which repository, when the project folder is not one itself. */}
+      {gitRepo.isNested && gitRepo.repo && (
+        <GitRepoBar repo={gitRepo.repo} repos={gitRepo.repos} onChoose={gitRepo.choose} />
+      )}
+
+      {/* Until one is chosen there is nothing else this panel can show. */}
+      {gitRepo.needsPick ? (
+        <GitRepoChoice repos={gitRepo.repos} onChoose={gitRepo.choose} />
+      ) : gitRepo.noRepo ? (
+        <GitNoRepo onReload={gitRepo.reload} />
+      ) : (
+        <>
       {/* Commit block — top on web/desktop */}
       <div className="hidden md:block border-b border-border">{commitBox}</div>
 
@@ -510,7 +549,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
       {projectName && (
         <GitWorktreePanel
           projectName={projectName}
-          projectPath={activeProjectPath}
+          projectPath={gitRoot}
         />
       )}
 
@@ -576,6 +615,8 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
 
       {/* Commit block — bottom on mobile */}
       <div className="md:hidden border-t border-border shrink-0">{commitBox}</div>
+        </>
+      )}
 
       {/* Hunk / line picker */}
       <HunkStageDialog

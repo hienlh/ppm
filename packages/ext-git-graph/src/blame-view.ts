@@ -13,7 +13,7 @@ import { assertSafeFilePaths, assertValidHash, assertValidLineNumber, spawnGit }
 import { openPanel } from "./panel-registry.ts";
 import { registerViewCommand } from "./register-view-command.ts";
 import { navigateToPanel, takePendingTarget } from "./panel-nav.ts";
-import { resolveProjectName } from "./ppm-api.ts";
+import { resolveFileTab } from "./ppm-api.ts";
 import { computeAgeWeights, isUncommittedHash, parseBlamePorcelain } from "./blame-parser.ts";
 import { FILE_PICKER_CSS, FILE_PICKER_HTML, FILE_PICKER_JS, shellHtml } from "./webview-shell.ts";
 
@@ -112,11 +112,10 @@ export function openBlameView(
             assertSafeFilePaths([filePath], projectPath);
             const hash = assertValidHash(msg.hash);
             const fileName = filePath.split(/[\\/]/).pop() || filePath;
-            const projectName = await resolveProjectName(projectPath);
+            const target = await resolveFileTab(projectPath, filePath);
             const parent = await spawnGit(vscode, ["rev-parse", `${hash}^`], projectPath);
-            await vscode.window.openTab("git-diff", `${fileName} (${hash.slice(0, 7)})`, projectName, {
-              projectName,
-              filePath,
+            await vscode.window.openTab("git-diff", `${fileName} (${hash.slice(0, 7)})`, target.projectName, {
+              ...target,
               ...(parent.exitCode === 0 ? { ref1: parent.stdout.trim() } : {}),
               ref2: hash,
             });
