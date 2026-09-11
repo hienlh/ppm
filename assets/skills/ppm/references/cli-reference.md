@@ -781,7 +781,7 @@ Show recent runs for a schedule
 Manage and inspect discovered skills & commands
 
 **Options:**
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0192"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 **Usage:** `ppm skills [options] [command]`
 
@@ -791,7 +791,7 @@ List all discovered skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0192"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 ### `ppm skills search`
 
@@ -799,7 +799,7 @@ Fuzzy search skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0192"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 **Usage:** `ppm skills search [options] <query>`
 
@@ -809,7 +809,7 @@ Show detailed info for a specific skill
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0192"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 **Usage:** `ppm skills info [options] <name>`
 
