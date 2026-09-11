@@ -35,6 +35,25 @@ export interface SlashItem {
   tools?: string[];
   /** Built-in only: which layer executes the command */
   handler?: SlashHandler;
+  /**
+   * Sigil the runtime expects when the item is invoked. Absent means `/`, which
+   * is every Claude-side skill and command. Codex resolves its skills from a
+   * `$name` mention inside the prompt instead, so an item carrying `"$"` must be
+   * sent with that prefix or codex treats it as ordinary prose.
+   */
+  invokeSigil?: "/" | "$";
+  /** Pretty label the runtime supplies for itself, when it does (codex system skills). */
+  displayName?: string;
+  /**
+   * Runtime-supplied icon, inlined as a data URI rather than a URL.
+   *
+   * The source files sit inside the codex account home, which the credential
+   * path guard refuses on every generic file route — correctly, since
+   * `auth.json` is a sibling. Inlining keeps that door shut: the icon never
+   * needs a servable path, and the client never sends one back. They are small
+   * enough for this to be cheap (under 3 KB each).
+   */
+  iconDataUri?: string;
 }
 
 export interface SkillRoot {

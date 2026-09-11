@@ -19,6 +19,14 @@ const ENV_ALLOWLIST = [
 /** Prefixes kept (codex/XDG own their auth + config). */
 const ENV_PREFIX_ALLOWLIST = ["CODEX_", "XDG_", "RUST_"];
 
+/**
+ * Bound for short control calls — handshake, model list, skill list, quota read.
+ * These answer in about a second when the app-server is healthy; anything past
+ * this is a subprocess that will never answer, not a slow one. A turn is NOT a
+ * control call and must never be given this bound.
+ */
+export const CONTROL_REQUEST_TIMEOUT_MS = 15_000;
+
 function buildSpawnEnv(): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -120,12 +128,41 @@ export class CodexJsonRpcClient {
     }
   }
 
-  request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  /**
+   * Send a request and wait for its reply.
+   *
+   * `timeoutMs` bounds the wait. It is opt-in because a turn legitimately runs
+   * for many minutes, but every short control call should pass one: the
+   * app-server has been observed to accept a spawn and then never answer even
+   * `initialize`. Without a bound, the promise never settles, so the caller's
+   * `finally` never runs, the subprocess is never closed, and any HTTP route
+   * waiting on it hangs until the client gives up — one orphaned app-server per
+   * attempt, and a blank reading at the other end.
+   *
+   * A timeout rejects and drops the pending entry, so a late reply is ignored
+   * rather than resolving a promise the caller already abandoned.
+   */
+  request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
     if (this.closed) return Promise.reject(new Error("codex client closed"));
     const id = this.nextId++;
     const line = JSON.stringify({ id, method, params }) + "\n";
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settle = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
+        if (timer) clearTimeout(timer);
+        fn(...args);
+      };
+      const wrapped = {
+        resolve: settle(resolve as (v: unknown) => void),
+        reject: settle(reject),
+      };
+      if (timeoutMs != null) {
+        timer = setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error(`codex ${method} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }
+      this.pending.set(id, wrapped);
       this.write(line);
     });
   }

@@ -90,6 +90,30 @@ export interface ModelListResponse {
   nextCursor: string | null;
 }
 
+// ── Skills ──
+/** Presentation block codex ships for its own system skills. All fields optional. */
+export interface CodexSkillInterface {
+  displayName?: string;
+  shortDescription?: string;
+  /** Absolute path to an icon file inside the skill directory, not a URL. */
+  iconSmall?: string;
+  iconLarge?: string;
+  defaultPrompt?: string;
+}
+export interface CodexSkill {
+  name: string;
+  description?: string;
+  /** "system" for codex's built-ins; project/user scopes for authored ones. */
+  scope?: string;
+  path?: string;
+  enabled?: boolean;
+  interface?: CodexSkillInterface;
+}
+/** `skills/list` groups its results by the cwd each set was resolved for. */
+export interface SkillListResponse {
+  data: { cwd?: string; skills?: CodexSkill[] }[];
+}
+
 // ── Account rate limits / usage ──
 export interface RateLimitWindow {
   usedPercent: number;

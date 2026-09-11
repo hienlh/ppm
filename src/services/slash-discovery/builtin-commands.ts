@@ -42,6 +42,19 @@ export function getBuiltinSlashItems(): SlashItem[] {
   }));
 }
 
+/**
+ * Built-ins that work no matter which provider the tab is on.
+ *
+ * `handler: "sdk"` commands (`/compact`, `/cost`, `/model`, …) are passed
+ * straight through to the Claude SDK, so they do nothing in a session driven by
+ * another runtime. The `ppm` and `client` ones are intercepted before any
+ * provider sees them — by the PPM server and the web UI respectively — so they
+ * belong in every picker.
+ */
+export function getHostBuiltinSlashItems(): SlashItem[] {
+  return getBuiltinSlashItems().filter((item) => item.handler !== "sdk");
+}
+
 /** Look up a builtin command by name (or alias) */
 export function getBuiltinByName(name: string): BuiltinSlashCommand | undefined {
   const lower = name.toLowerCase();

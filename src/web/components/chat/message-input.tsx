@@ -107,6 +107,9 @@ interface MessageInputProps {
   onModeChange?: (mode: string) => void;
   /** Current provider ID */
   providerId?: string;
+  /** Live session id, when the tab has one. Scopes the slash list to the session's
+   *  own skill runtime (codex resolves skills per account home + project cwd). */
+  sessionId?: string;
   /** Provider change handler — undefined when session is active (locked) */
   onProviderChange?: (providerId: string) => void;
   /** Current per-session model (null = provider default) */
@@ -147,6 +150,7 @@ export const MessageInput = memo(function MessageInput({
   permissionMode,
   onModeChange,
   providerId,
+  sessionId,
   onProviderChange,
   model,
   onModelChange,
@@ -328,7 +332,7 @@ export const MessageInput = memo(function MessageInput({
       onSlashItemsLoaded?.([], []);
       return;
     }
-    fetchSlashItems(projectName)
+    fetchSlashItems(projectName, providerId, sessionId)
       .then((data) => {
         slashItemsRef.current = data.items;
         onSlashItemsLoaded?.(data.items, data.recentNames);
@@ -337,7 +341,7 @@ export const MessageInput = memo(function MessageInput({
         slashItemsRef.current = [];
         onSlashItemsLoaded?.([], []);
       });
-  }, [projectName, onSlashItemsLoaded]);
+  }, [projectName, providerId, sessionId, onSlashItemsLoaded]);
 
   // Load when projectName changes (cache hit after the first tab in a project)
   useEffect(() => { loadSlashItems(); }, [loadSlashItems]);
@@ -404,10 +408,13 @@ export const MessageInput = memo(function MessageInput({
       return;
     }
 
-    // Find the /query pattern before cursor and replace it with the command name
+    // Find the /query pattern before cursor and replace it with the command name.
+    // The item's own sigil is used, not a hardcoded `/`: a codex skill is invoked
+    // as `$imagegen`, so the composer must show the text that will actually be
+    // sent rather than leaving the server to silently rewrite it.
     const replaced = textBefore.replace(/(?:^|\s)\/\S*$/, (match) => {
       const prefix = stripTrigger(match);
-      return `${prefix}/${slashSelected.name} `;
+      return `${prefix}${slashSelected.invokeSigil ?? "/"}${slashSelected.name} `;
     });
     writeTextareas(replaced + textAfter);
     onSlashStateChange?.(false, "");

@@ -15,6 +15,12 @@ export interface SlashItem {
   model?: string;
   /** Built-in only: which layer executes the command */
   handler?: "ppm" | "sdk" | "client";
+  /** Sigil the runtime needs; absent means `/`. Codex skills carry `$`. */
+  invokeSigil?: "/" | "$";
+  /** Pretty label the runtime supplies for itself (codex system skills). */
+  displayName?: string;
+  /** Runtime-supplied icon, inlined as a data URI by the server. */
+  iconDataUri?: string;
 }
 
 interface SlashCommandPickerProps {
@@ -181,7 +187,11 @@ export function SlashCommandPicker({
                 onClick={() => onSelect(item)}
               >
                 <span className="shrink-0 mt-0.5">
-                  {item.type === "builtin" ? (
+                  {item.iconDataUri ? (
+                    // The runtime shipped its own artwork (codex system skills).
+                    // Decorative: the name beside it already labels the row.
+                    <img src={item.iconDataUri} alt="" className="size-4 object-contain" />
+                  ) : item.type === "builtin" ? (
                     <Zap className="size-4 text-emerald-500" />
                   ) : item.type === "skill" ? (
                     <Sparkles className="size-4 text-warning" />
@@ -193,12 +203,21 @@ export function SlashCommandPicker({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2 min-w-0">
-                    <span className="font-medium text-sm truncate">/{item.name}</span>
+                    {/* Invocation string, shown with the sigil that will actually be
+                        sent — codex resolves its skills from `$name`, not `/name`. */}
+                    <span className="font-medium text-sm truncate">
+                      {item.invokeSigil ?? "/"}{item.name}
+                    </span>
+                    {item.displayName && item.displayName !== item.name && (
+                      <span className="text-xs text-text-2 truncate">{item.displayName}</span>
+                    )}
                     {item.argumentHint && (
                       <span className="text-xs text-text-subtle truncate">{item.argumentHint}</span>
                     )}
                     <span className="text-xs text-text-subtle capitalize ml-auto shrink-0 whitespace-nowrap">
-                      {item.scope === "bundled" ? "PPM" : item.scope === "user" ? "global" : item.type}
+                      {item.invokeSigil === "$"
+                        ? "Codex"
+                        : item.scope === "bundled" ? "PPM" : item.scope === "user" ? "global" : item.type}
                     </span>
                   </div>
                   {item.description && (
