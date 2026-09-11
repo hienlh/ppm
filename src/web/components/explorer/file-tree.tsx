@@ -23,6 +23,7 @@ import {
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useCompareStore } from "@/stores/compare-store";
+import { TreeNodeContextMenu } from "./tree-node-context-menu";
 import { openCompareTab } from "@/lib/open-compare-tab";
 import { toast } from "sonner";
 import { cn, basename } from "@/lib/utils";
@@ -37,7 +38,7 @@ import {
 import { FileActions } from "./file-actions";
 import { TreeRow } from "./tree-node";
 import { InlineTreeInput } from "./inline-tree-input";
-import { flattenVisibleTree, type InputRow } from "./flatten-visible-tree";
+import { flattenVisibleTree, rowKey, type InputRow } from "./flatten-visible-tree";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
 import { api, projectUrl } from "@/lib/api-client";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
@@ -201,157 +202,13 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     }
   }, [activeProject, selectedFiles, clipboard, setClipboard, pasteFiles]);
 
-  const { handleTreeKeyDown } = useTreeKeyboardNav({
-    tree,
-    expandedPaths,
-    focusedPath,
-    setFocusedPath,
-    setExpanded,
-    toggleExpand,
-    projectName: activeProject?.name,
-    onAction: handleAction,
-  });
-
-  // On project switch: reset + restore expanded state + load all visible folders in ONE batch
-  useEffect(() => {
-    if (!activeProject) return;
-    reset();
-    const name = activeProject.name;
-    const persisted = loadPersistedExpanded(name);
-    useFileStore.setState({ expandedPaths: new Set(["", ...persisted]) });
-    if (persisted.length > 0) {
-      useFileStore.getState().loadPathsBatch(name, ["", ...persisted]);
-    } else {
-      loadRoot(name);
-    }
-    loadIndex(name);
-  }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Persist expanded state per project. Reads LIVE store state (not the captured
-  // render value): on project switch the captured set still belongs to the previous
-  // project, while live state was already reset+restored by the mount effect above.
-  useEffect(() => {
-    if (!activeProject) return;
-    savePersistedExpanded(activeProject.name, useFileStore.getState().expandedPaths);
-  }, [expandedPaths, activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Handle WS file:changed → invalidate folder + index
-  useEffect(() => {
-    if (!activeProject) return;
-    const projectName = activeProject.name;
-    let debounceTimer: ReturnType<typeof setTimeout>;
-
-    const handleFileChanged = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail.projectName !== projectName) return;
-
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        const store = useFileStore.getState();
-        const changedPath: string = detail.path ?? "";
-        const parentPath = changedPath.includes("/")
-          ? changedPath.slice(0, changedPath.lastIndexOf("/"))
-          : "";
-        store.invalidateIndex();
-        store.loadIndex(projectName);
-        store.invalidateFolder(projectName, parentPath);
-      }, 300);
-    };
-
-    window.addEventListener("file:changed", handleFileChanged);
-    return () => {
-      clearTimeout(debounceTimer);
-      window.removeEventListener("file:changed", handleFileChanged);
-    };
-  }, [activeProject]);
-
-  // Symmetric with the fsChanged(...) calls this file emits after its own mutations: an
-  // explorer window mutating a directory inside this project must invalidate the matching
-  // tree node too.
-  useEffect(() => {
-    if (!activeProject) return;
-    const projectName = activeProject.name;
-    const root = activeProject.path;
-    return onFsChanged((absoluteDir) => {
-      const relative = relativeProjectPath(root, absoluteDir);
-      if (relative == null) return; // outside this project — not the tree's concern
-      const store = useFileStore.getState();
-      store.invalidateIndex();
-      store.loadIndex(projectName);
-      store.invalidateFolder(projectName, relative);
-    });
-  }, [activeProject]);
-
-  const {
-    uploadFiles, isRootDragOver,
-    handleRootDragEnter, handleRootDragLeave, handleRootDragOver, handleRootDrop,
-  } = useFileUploadDrag({ projectName: activeProject?.name, setExpanded });
-
-  // Cross-surface entry drops (from an explorer window, or another project's tree) onto the
-  // tree's own empty background — the project root. Uses the same collision-prompt transfer
-  // as a paste; separate from `useFileUploadDrag` above, which only ever reacts to OS files.
-  const treeRootSep = activeProject?.path.includes("\\") ? "\\" : "/";
-  const { run: transferRun, prompts: transferPrompts } = useDropTransfer(treeRootSep);
-  const backgroundDrop = usePathDropTarget({
-    targetDir: activeProject?.path ?? null,
-    run: transferRun,
-    disabled: !activeProject,
-  });
-
-  // Virtualized flat rows: only visible rows are mounted (large dirs stay cheap)
-  const rows = useMemo(
-    () => flattenVisibleTree(tree, expandedPaths, inlineAction),
-    [tree, expandedPaths, inlineAction],
-  );
-  const scrollRef = useRef<HTMLDivElement>(null);
-  useDragAutoScroll(scrollRef);
-  const isMobile = useIsMobile();
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => (isMobile ? 32 : 26),
-    overscan: 10,
-    paddingStart: 4,
-    paddingEnd: 4,
-  });
-
-  // Keep focused row in view even when it's not mounted (offscreen)
-  useEffect(() => {
-    if (focusedPath == null) return;
-    const idx = rows.findIndex(
-      (r) => r.kind === "node" && (r.node.path === focusedPath || r.effectiveNode.path === focusedPath),
-    );
-    if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: "auto" });
-  }, [focusedPath]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /** Confirm inline create/rename input rows */
-  const handleInlineConfirm = useCallback(async (row: InputRow, value: string) => {
-    const projectName = activeProject!.name;
-    const store = useFileStore.getState();
-    if (row.inline.type === "rename") {
-      const node = row.inline.existingNode!;
-      if (value === node.name) { clearInlineAction(); return; }
-      const parentPath = node.path.includes("/") ? node.path.slice(0, node.path.lastIndexOf("/")) : "";
-      const newPath = parentPath ? `${parentPath}/${value}` : value;
-      await api.post(`${projectUrl(projectName)}/files/rename`, { oldPath: node.path, newPath });
-      clearInlineAction();
-      store.invalidateIndex();
-      store.loadIndex(projectName);
-      store.invalidateFolder(projectName, parentPath);
-      fsChanged(absoluteProjectPath(activeProject!.path, parentPath));
-    } else {
-      const type = row.inline.type === "new-file" ? "file" : "directory";
-      const fullPath = row.targetPath ? `${row.targetPath}/${value}` : value;
-      await api.post(`${projectUrl(projectName)}/files/create`, { path: fullPath, type });
-      clearInlineAction();
-      store.invalidateIndex();
-      store.loadIndex(projectName);
-      store.invalidateFolder(projectName, row.targetPath);
-      fsChanged(absoluteProjectPath(activeProject!.path, row.targetPath));
-    }
-  }, [activeProject, clearInlineAction]);
-
-  async function handleAction(action: string, node: FileNode) {
+  // Every row is a `memo(TreeRow)` and this is one of its props, so a fresh
+  // identity per render defeats the memo for the whole mounted set. The
+  // selection is read at call time rather than closed over for the same reason:
+  // as a dependency it would rebuild the callback on every click, which is the
+  // commonest thing that happens in this panel.
+  const handleAction = useCallback(async (action: string, node: FileNode) => {
+    const selectedFiles = useFileStore.getState().selectedFiles;
     if (action === "toggle-expand" && node.type === "directory") {
       toggleExpand(activeProject!.name, node.path);
       return;
@@ -462,7 +319,207 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       return;
     }
     setActionState({ action, node });
-  }
+  }, [
+    activeProject, toggleExpand, openTab, onFileOpen,
+    copyToTreeClipboard, pasteFiles, clearSelection, setExpanded, setInlineAction,
+  ]);
+
+  const { handleTreeKeyDown } = useTreeKeyboardNav({
+    tree,
+    expandedPaths,
+    focusedPath,
+    setFocusedPath,
+    setExpanded,
+    toggleExpand,
+    projectName: activeProject?.name,
+    onAction: handleAction,
+  });
+
+  // On project switch: reset + restore expanded state + load all visible folders in ONE batch
+  useEffect(() => {
+    if (!activeProject) return;
+    reset();
+    const name = activeProject.name;
+    const persisted = loadPersistedExpanded(name);
+    useFileStore.setState({ expandedPaths: new Set(["", ...persisted]) });
+    if (persisted.length > 0) {
+      useFileStore.getState().loadPathsBatch(name, ["", ...persisted]);
+    } else {
+      loadRoot(name);
+    }
+    loadIndex(name);
+  }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist expanded state per project. Reads LIVE store state (not the captured
+  // render value): on project switch the captured set still belongs to the previous
+  // project, while live state was already reset+restored by the mount effect above.
+  useEffect(() => {
+    if (!activeProject) return;
+    savePersistedExpanded(activeProject.name, useFileStore.getState().expandedPaths);
+  }, [expandedPaths, activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle WS file:changed → invalidate folder + index
+  useEffect(() => {
+    if (!activeProject) return;
+    const projectName = activeProject.name;
+    let debounceTimer: ReturnType<typeof setTimeout>;
+
+    const handleFileChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail.projectName !== projectName) return;
+
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const store = useFileStore.getState();
+        const changedPath: string = detail.path ?? "";
+        const parentPath = changedPath.includes("/")
+          ? changedPath.slice(0, changedPath.lastIndexOf("/"))
+          : "";
+        store.invalidateIndex();
+        store.loadIndex(projectName);
+        store.invalidateFolder(projectName, parentPath);
+      }, 300);
+    };
+
+    window.addEventListener("file:changed", handleFileChanged);
+    return () => {
+      clearTimeout(debounceTimer);
+      window.removeEventListener("file:changed", handleFileChanged);
+    };
+  }, [activeProject]);
+
+  // Symmetric with the fsChanged(...) calls this file emits after its own mutations: an
+  // explorer window mutating a directory inside this project must invalidate the matching
+  // tree node too.
+  useEffect(() => {
+    if (!activeProject) return;
+    const projectName = activeProject.name;
+    const root = activeProject.path;
+    return onFsChanged((absoluteDir) => {
+      const relative = relativeProjectPath(root, absoluteDir);
+      if (relative == null) return; // outside this project — not the tree's concern
+      const store = useFileStore.getState();
+      store.invalidateIndex();
+      store.loadIndex(projectName);
+      store.invalidateFolder(projectName, relative);
+    });
+  }, [activeProject]);
+
+  const {
+    uploadFiles, isRootDragOver,
+    handleRootDragEnter, handleRootDragLeave, handleRootDragOver, handleRootDrop,
+  } = useFileUploadDrag({ projectName: activeProject?.name, setExpanded });
+
+  // Cross-surface entry drops (from an explorer window, or another project's tree) onto the
+  // tree's own empty background — the project root. Uses the same collision-prompt transfer
+  // as a paste; separate from `useFileUploadDrag` above, which only ever reacts to OS files.
+  const treeRootSep = activeProject?.path.includes("\\") ? "\\" : "/";
+  const { run: transferRun, prompts: transferPrompts } = useDropTransfer(treeRootSep);
+  const backgroundDrop = usePathDropTarget({
+    targetDir: activeProject?.path ?? null,
+    run: transferRun,
+    disabled: !activeProject,
+  });
+
+  // Virtualized flat rows: only visible rows are mounted (large dirs stay cheap)
+  const rows = useMemo(
+    () => flattenVisibleTree(tree, expandedPaths, inlineAction),
+    [tree, expandedPaths, inlineAction],
+  );
+  // One context menu for the whole tree, resolved from whichever row the gesture
+  // landed on — VS Code does the same with a single `tree.onContextMenu`. A menu
+  // per row meant every mounted row built this menu's 39 items on every render.
+  //
+  // The row is read out of the DOM (`data-index` → `rows[i]`) rather than passed
+  // in, because by the time the menu opens there is no row component involved.
+  // `rows` goes through a ref so the handler itself stays stable: it is on the
+  // scroll container, and an unstable one there would be a new listener per render.
+  const [menuNode, setMenuNode] = useState<FileNode | null>(null);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const compareSelection = useCompareStore((s) => s.selection);
+  const rememberMenuTarget = useCallback(
+    (e: React.MouseEvent | React.PointerEvent) => {
+    // A finger fires `pointerdown` before `touchstart`, and the long-press timer
+    // that opens the sheet is armed 400ms later — so this has landed well before
+    // the menu needs it. A mouse opens the menu on `contextmenu` instead; a left
+    // click needs no target and would only cost a render.
+    if (e.type === "pointerdown" && (e as React.PointerEvent).pointerType === "mouse") return;
+    const el = (e.target as HTMLElement | null)?.closest?.("[data-index]");
+    const index = el ? Number(el.getAttribute("data-index")) : -1;
+    const row = Number.isInteger(index) && index >= 0 ? rowsRef.current[index] : undefined;
+    const node = row?.kind === "node" ? row.node : null;
+    setMenuNode((prev) => (prev === node ? prev : node));
+    },
+    [],
+  );
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(scrollRef);
+  const isMobile = useIsMobile();
+  // `directDomUpdates` is what keeps React off the scroll path: without it every
+  // scroll event ends in `flushSync(rerender)`, so the whole mounted row set is
+  // reconciled *inside* the scroll handler — measured at 92ms of a 137ms long
+  // frame on a 6x-throttled CPU. With it on, the virtualizer writes each row's
+  // transform itself and React only renders when the visible range changes.
+  // Three things below are load-bearing and have to stay in step with it: the row
+  // must not set `transform` (the virtualizer owns it), the sizing container must
+  // take `containerRef` and not set its own `height`, and `measureElement` must
+  // stay — `elementsCache`, which direct updates read to find each node, is
+  // populated by that very ref callback.
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => (isMobile ? 32 : 26),
+    // Must match the `key` below. The default is the index, and an index is not
+    // an identity: insert a row and every row under it is cached against the
+    // slot it used to occupy, so `directDomUpdates` positions none of them.
+    // A ResizeObserver can fire for a row React has not unmounted yet, carrying a
+    // `data-index` past the end of a list that just shrank — hence the fallback
+    // rather than a `!`, since throwing here happens inside the observer.
+    getItemKey: (index) => { const r = rows[index]; return r ? rowKey(r) : `#${index}`; },
+    overscan: 10,
+    paddingStart: 4,
+    paddingEnd: 4,
+    directDomUpdates: true,
+  });
+
+  // Keep focused row in view even when it's not mounted (offscreen)
+  useEffect(() => {
+    if (focusedPath == null) return;
+    const idx = rows.findIndex(
+      (r) => r.kind === "node" && r.node.path === focusedPath,
+    );
+    if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: "auto" });
+  }, [focusedPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Confirm inline create/rename input rows */
+  const handleInlineConfirm = useCallback(async (row: InputRow, value: string) => {
+    const projectName = activeProject!.name;
+    const store = useFileStore.getState();
+    if (row.inline.type === "rename") {
+      const node = row.inline.existingNode!;
+      if (value === node.name) { clearInlineAction(); return; }
+      const parentPath = node.path.includes("/") ? node.path.slice(0, node.path.lastIndexOf("/")) : "";
+      const newPath = parentPath ? `${parentPath}/${value}` : value;
+      await api.post(`${projectUrl(projectName)}/files/rename`, { oldPath: node.path, newPath });
+      clearInlineAction();
+      store.invalidateIndex();
+      store.loadIndex(projectName);
+      store.invalidateFolder(projectName, parentPath);
+      fsChanged(absoluteProjectPath(activeProject!.path, parentPath));
+    } else {
+      const type = row.inline.type === "new-file" ? "file" : "directory";
+      const fullPath = row.targetPath ? `${row.targetPath}/${value}` : value;
+      await api.post(`${projectUrl(projectName)}/files/create`, { path: fullPath, type });
+      clearInlineAction();
+      store.invalidateIndex();
+      store.loadIndex(projectName);
+      store.invalidateFolder(projectName, row.targetPath);
+      fsChanged(absoluteProjectPath(activeProject!.path, row.targetPath));
+    }
+  }, [activeProject, clearInlineAction]);
+
 
   if (!activeProject) {
     return (
@@ -529,17 +586,21 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       {/* File tree with blank-area context menu — virtualized flat rows */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto">
-            <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto"
+            onContextMenuCapture={rememberMenuTarget}
+            onPointerDownCapture={rememberMenuTarget}
+          >
+            <div ref={rowVirtualizer.containerRef} className="relative w-full">
               {rowVirtualizer.getVirtualItems().map((vi) => {
                 const row = rows[vi.index]!;
                 return (
                   <div
-                    key={row.kind === "node" ? row.node.path : `input:${row.targetPath}:${row.inline.type}`}
+                    key={rowKey(row)}
                     data-index={vi.index}
                     ref={rowVirtualizer.measureElement}
                     className="absolute left-0 top-0 w-full"
-                    style={{ transform: `translateY(${vi.start}px)` }}
                   >
                     {row.kind === "input" ? (
                       <InlineTreeInput
@@ -576,21 +637,33 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
             </div>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => handleAction("new-file", ROOT_NODE)}>
-            <FilePlus className="size-3.5 mr-2" />
-            New File
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => handleAction("new-folder", ROOT_NODE)}>
-            <FolderPlus className="size-3.5 mr-2" />
-            New Folder
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={reloadTree}>
-            <RefreshCw className="size-3.5 mr-2" />
-            Refresh
-          </ContextMenuItem>
-        </ContextMenuContent>
+        {menuNode ? (
+          <TreeNodeContextMenu
+            node={menuNode}
+            isDir={menuNode.type === "directory"}
+            projectName={activeProject.name}
+            selectedFiles={selectedFiles}
+            compareSelection={compareSelection}
+            clipboard={clipboard}
+            onAction={handleAction}
+          />
+        ) : (
+          <ContextMenuContent>
+            <ContextMenuItem onClick={() => handleAction("new-file", ROOT_NODE)}>
+              <FilePlus className="size-3.5 mr-2" />
+              New File
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => handleAction("new-folder", ROOT_NODE)}>
+              <FolderPlus className="size-3.5 mr-2" />
+              New Folder
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={reloadTree}>
+              <RefreshCw className="size-3.5 mr-2" />
+              Refresh
+            </ContextMenuItem>
+          </ContextMenuContent>
+        )}
       </ContextMenu>
 
       {actionState?.action === "delete" && (

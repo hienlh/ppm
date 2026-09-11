@@ -36,6 +36,8 @@ interface WatchEntry {
   refCount: number;
   timer?: ReturnType<typeof setTimeout>;
   pending: Set<string>;
+  /** Resolves once the first walk has attached its watchers. Never rejects. */
+  ready: Promise<void>;
 }
 
 const watchers = new Map<string, WatchEntry>();
@@ -71,12 +73,20 @@ function queue(entry: WatchEntry, projectName: string, relPath: string): void {
   }, DEBOUNCE_MS);
 }
 
-/** Start watching a project directory (ref-counted — safe to call multiple times) */
-export function startWatching(projectName: string, projectPath: string): void {
+/**
+ * Start watching a project directory (ref-counted — safe to call multiple times).
+ *
+ * The returned promise resolves once the tree's watchers are attached, which is
+ * no longer the moment this returns: covering yields the event loop every few
+ * hundred directories, so a change made in between is not reported. Callers that
+ * act on the filesystem immediately afterwards have to await it. It never
+ * rejects — a failed walk is logged and leaves the project unwatched.
+ */
+export function startWatching(projectName: string, projectPath: string): Promise<void> {
   const existing = watchers.get(projectName);
   if (existing) {
     existing.refCount++;
-    return;
+    return existing.ready;
   }
 
   const maxDirs = Math.max(
@@ -95,28 +105,35 @@ export function startWatching(projectName: string, projectPath: string): void {
     }),
     refCount: 1,
     pending: new Set(),
+    ready: Promise.resolve(),
   };
   watchers.set(projectName, entry);
 
-  try {
-    entry.tree.start();
-  } catch (e) {
-    entry.tree.close(); // release whatever attached before the failure
-    watchers.delete(projectName);
-    console.warn(`[file-watcher] Failed to watch ${projectPath}: ${(e as Error).message}`);
-    return;
-  }
-
-  const { dirs, watchers: handles, truncated } = entry.tree.stats();
-  console.log(
-    `[file-watcher] Started watching: ${projectName} (${dirs} dirs, ${handles} handles${truncated ? ", capped" : ""})`,
-  );
-  if (truncated) {
-    console.warn(
-      `[file-watcher] ${projectName} exceeded the ${maxDirs}-directory budget — ` +
-      `parts of the tree are not watched. Add build/cache directories to the ignore list.`,
-    );
-  }
+  // The entry is already in `watchers`, so a second caller arriving while the
+  // walk is still running finds it and bumps the ref count rather than starting
+  // a second tree. Covering is asynchronous now — it hands the event loop back
+  // every few hundred directories instead of holding it for the whole walk — so
+  // the count and the truncation warning can only be reported once it lands.
+  entry.ready = entry.tree
+    .start()
+    .then(() => {
+      const { dirs, watchers: handles, truncated } = entry.tree.stats();
+      console.log(
+        `[file-watcher] Started watching: ${projectName} (${dirs} dirs, ${handles} handles${truncated ? ", capped" : ""})`,
+      );
+      if (truncated) {
+        console.warn(
+          `[file-watcher] ${projectName} exceeded the ${maxDirs}-directory budget — ` +
+          `parts of the tree are not watched. Add build/cache directories to the ignore list.`,
+        );
+      }
+    })
+    .catch((e) => {
+      entry.tree.close(); // release whatever attached before the failure
+      watchers.delete(projectName);
+      console.warn(`[file-watcher] Failed to watch ${projectPath}: ${(e as Error).message}`);
+    });
+  return entry.ready;
 }
 
 /** Decrement ref count — stops watcher when no clients remain */

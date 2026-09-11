@@ -2,16 +2,31 @@
  * Captures pointer + keyboard on the canvas and forwards them as JSON over the caller's WS.
  * `code` (physical key, layout-independent) is sent for keys, never `key` — the host maps
  * `code` → VK, so a client-side layout mismatch can't inject the wrong character.
+ *
+ * Clipboard is the one exception to "forward every key": Ctrl/Cmd+V is swallowed here and
+ * replaced by the `paste` event, because `preventDefault()` on that keydown is exactly what
+ * cancels the browser's paste default action — so forwarding it would deliver the keystroke to
+ * the host with the host's *old* clipboard and never yield the client's text at all.
  */
 import { useEffect, useCallback } from "react";
 import { fractionFromPoint } from "./remote-desktop-coords";
+import { isCopyCombo, isPasteCombo } from "./remote-desktop-clipboard-client";
 
 type PointerButton = "left" | "right" | null;
+
+export interface RemoteInputClipboardHooks {
+  /** Client text to put on the host clipboard and paste there. `shift` is true for
+   *  Ctrl+Shift+V, which is how a terminal pastes. */
+  onPasteText: (text: string, shift: boolean) => void;
+  /** The user pressed a copy/cut combo on the host — a cue to fetch the host clipboard. */
+  onCopyCombo: () => void;
+}
 
 export function useRemoteInputCapture(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   sendMessage: (msg: Record<string, unknown>) => void,
   enabled: boolean,
+  clipboard?: RemoteInputClipboardHooks,
 ): void {
   const sendPointer = useCallback((clientX: number, clientY: number, button: PointerButton, down: boolean | null) => {
     const canvas = canvasRef.current;
@@ -63,8 +78,28 @@ export function useRemoteInputCapture(
       sendPointer(e.clientX, e.clientY, toButton(e.button), false);
     };
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
-    const onKeyDown = (e: KeyboardEvent) => { e.preventDefault(); sendMessage({ type: "key", code: e.code, down: true }); };
-    const onKeyUp = (e: KeyboardEvent) => { e.preventDefault(); sendMessage({ type: "key", code: e.code, down: false }); };
+    // The `paste` event carries no modifier state, and the distinction matters (Ctrl+V vs a
+    // terminal's Ctrl+Shift+V), so it is taken from the keydown that is about to produce it.
+    let pasteWithShift = false;
+    // Both halves of the paste combo are dropped: the keydown so the browser still fires
+    // `paste`, the keyup so the host never sees a V release it was never given a press for.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (clipboard && isPasteCombo(e)) { pasteWithShift = e.shiftKey; return; }
+      e.preventDefault();
+      sendMessage({ type: "key", code: e.code, down: true });
+      if (clipboard && isCopyCombo(e)) clipboard.onCopyCombo();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (clipboard && isPasteCombo(e)) return;
+      e.preventDefault();
+      sendMessage({ type: "key", code: e.code, down: false });
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      e.preventDefault();
+      const text = e.clipboardData?.getData("text/plain");
+      if (text) clipboard?.onPasteText(text, pasteWithShift);
+      pasteWithShift = false; // a paste from any other route must not inherit it
+    };
     const onVisibilityChange = () => { if (document.hidden) releaseAll(); };
 
     canvas.tabIndex = 0; // focusable so it can receive keydown/keyup at all
@@ -74,6 +109,7 @@ export function useRemoteInputCapture(
     canvas.addEventListener("contextmenu", onContextMenu);
     canvas.addEventListener("keydown", onKeyDown);
     canvas.addEventListener("keyup", onKeyUp);
+    canvas.addEventListener("paste", onPaste);
     canvas.addEventListener("blur", releaseAll);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
@@ -88,5 +124,5 @@ export function useRemoteInputCapture(
       canvas.removeEventListener("blur", releaseAll);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [canvasRef, enabled, sendPointer, sendMessage]);
+  }, [canvasRef, enabled, sendPointer, sendMessage, clipboard]);
 }

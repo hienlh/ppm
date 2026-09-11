@@ -44,6 +44,32 @@ import { RecreatedDirPoller } from "./recreated-dir-poller.ts";
 const REBUILD_DEBOUNCE_MS = 500;
 
 /**
+ * Directories walked between two hand-backs of the event loop.
+ *
+ * Covering a project used to be one synchronous burst: `readdirSync` down the
+ * whole tree, then `fs.watch` on every directory it kept. On a 12,000-directory
+ * project that held the loop for **2.95 seconds** at startup — measured, and
+ * billed to PPM by the lag monitor at ratio 1.38 across two independent
+ * restarts (the ratio is over 1 because Bun runs the `readdirSync` calls on its
+ * file system thread pool while the main thread walks). Nothing else in the
+ * process could run for any of it.
+ *
+ * Picked by measurement on a 13,321-directory tree, against a 5 ms timer whose
+ * fires are counted. The wall time is allowed to get worse — nothing waits on
+ * this walk any more — so the number to read is the worst single pause:
+ *
+ *   sync (before)   2361 ms wall     0 fires    gap = the whole 2361 ms
+ *   every 250 dirs  2653 ms wall    63 fires    worst gap 134 ms
+ *   every  64 dirs  2812 ms wall   183 fires    worst gap  41 ms
+ *   every  32 dirs  4624 ms wall   503 fires    worst gap  23 ms
+ *
+ * 64 is where the curve bends: halving it again buys 18 ms off the worst pause
+ * and costs 1.8 seconds of wall time. The residual ~41 ms is one batch, not
+ * scheduling overhead — it is the same with either yield primitive below.
+ */
+const YIELD_EVERY_DIRS = 64;
+
+/**
  * Whether `{ recursive: true }` is a real subtree watch rather than a per-directory walk.
  * Named platforms rather than `!== "linux"`, so a runtime nobody has measured here —
  * freebsd, say — takes the conservative walk instead of inheriting a promise about
@@ -104,6 +130,16 @@ export class WatchTree {
   private covered = 0;
   private truncated = false;
   private closed = false;
+  private sinceYield = 0;
+  /**
+   * Covers run one at a time, as they did when they were synchronous.
+   *
+   * Each one reads `this.covered` to work out its remaining budget, so two
+   * interleaving would each believe the other's watchers were still unspent and
+   * together overshoot `maxDirs` — which on Linux is the inotify budget, the one
+   * number this class exists to respect.
+   */
+  private coverChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: WatchTreeOptions) {
     // Only Bun on Linux has the stale-watch defect; elsewhere re-watching works
@@ -116,8 +152,8 @@ export class WatchTree {
       : null;
   }
 
-  start(): void {
-    this.cover(this.options.root);
+  start(): Promise<void> {
+    return this.cover(this.options.root);
   }
 
   close(): void {
@@ -144,18 +180,54 @@ export class WatchTree {
   }
 
   /** Walk `absDir` and attach the fewest watchers that cover it without touching ignored dirs. */
-  private cover(absDir: string): void {
+  private cover(absDir: string): Promise<void> {
+    const run = this.coverChain.then(() => this.coverNow(absDir));
+    // The chain must survive a failure — one unreadable subtree cannot stop
+    // every later cover — but the caller still has to be able to see it, so the
+    // swallowing copy and the returned promise are deliberately not the same one.
+    this.coverChain = run.catch(() => {});
+    return run;
+  }
+
+  private async coverNow(absDir: string): Promise<void> {
+    if (this.closed) return;
     const budget = { left: this.options.maxDirs - this.covered };
     if (budget.left <= 0) {
       this.truncated = true;
       return;
     }
-    this.attach(this.scan(absDir, budget));
+    this.sinceYield = 0;
+    await this.attach(await this.scan(absDir, budget));
   }
 
-  private scan(absDir: string, budget: { left: number }): ScanNode {
+  /**
+   * Hand the event loop back every `YIELD_EVERY_DIRS` directories, and say
+   * whether the walk should carry on.
+   *
+   * A **macrotask**, not `await Promise.resolve()`. A microtask queue drains
+   * without ever letting a timer or a socket run, so awaiting one would leave
+   * the loop exactly as blocked while looking asynchronous — the same trap
+   * measured and documented in `file-lines.ts`.
+   *
+   * `close()` can now land in one of these pauses, which is why the answer is
+   * a boolean rather than void: a walk that carries on past it would attach
+   * watchers to a tree nobody is going to close.
+   *
+   * `setImmediate` rather than `setTimeout(…, 0)`: both let timers run, and
+   * both leave the same 41 ms worst pause, but a timer costs a real round trip
+   * per yield — at 208 yields that measured 3.4 s of wall time against 2.8 s.
+   */
+  private async yieldIfDue(): Promise<boolean> {
+    if (++this.sinceYield < YIELD_EVERY_DIRS) return !this.closed;
+    this.sinceYield = 0;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return !this.closed;
+  }
+
+  private async scan(absDir: string, budget: { left: number }): Promise<ScanNode> {
     const node: ScanNode = { path: absDir, dirs: [], hasIgnored: false, size: 1 };
     budget.left--;
+    if (!(await this.yieldIfDue())) return node;
 
     let entries;
     try {
@@ -189,7 +261,7 @@ export class WatchTree {
         this.truncated = true;
         break;
       }
-      const child = this.scan(join(absDir, entry.name), budget);
+      const child = await this.scan(join(absDir, entry.name), budget);
       node.dirs.push(child);
       node.size += child.size;
       if (child.hasIgnored) node.hasIgnored = true;
@@ -198,7 +270,8 @@ export class WatchTree {
     return node;
   }
 
-  private attach(node: ScanNode): void {
+  private async attach(node: ScanNode): Promise<void> {
+    if (this.closed) return;
     const fitsWholeSubtree = this.covered + node.size <= this.options.maxDirs;
 
     // A path we have watched before is being re-attached, so this directory was deleted
@@ -221,10 +294,15 @@ export class WatchTree {
       return;
     }
     this.addWatcher(node.path, false, 1);
-    for (const child of node.dirs) this.attach(child);
+    if (!(await this.yieldIfDue())) return;
+    for (const child of node.dirs) await this.attach(child);
   }
 
   private addWatcher(absDir: string, recursive: boolean, covers: number): boolean {
+    // The tightest guard against a walk that was still running when `close()`
+    // ran: a handle opened after it is one nothing will ever close, because
+    // `close()` has already emptied the map it would have been recorded in.
+    if (this.closed) return false;
     if (this.attached.has(absDir)) return true;
     try {
       const watcher = watch(absDir, { recursive }, (event, filename) => {
@@ -307,7 +385,7 @@ export class WatchTree {
     // A directory we already watch just got created again: the old handle is attached
     // to the deleted inode, so replace the whole subtree rather than trusting it.
     if (this.attached.has(abs)) this.scheduleRebuild(abs);
-    else this.cover(abs);
+    else void this.cover(abs);
   }
 
   private scheduleRebuild(absDir: string): void {
@@ -316,7 +394,7 @@ export class WatchTree {
       this.rebuildTimers.delete(absDir);
       if (this.closed) return;
       this.closeSubtree(absDir);
-      this.cover(absDir);
+      void this.cover(absDir);
     }, REBUILD_DEBOUNCE_MS));
   }
 

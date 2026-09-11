@@ -13,17 +13,11 @@ import { useShallow } from "zustand/react/shallow";
 import { useFileStore, getVisiblePaths, absoluteProjectPath, type FileNode } from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
-import { useCompareStore } from "@/stores/compare-store";
 import { useGitStatusStore, GIT_STATUS_COLORS, type GitFileStatus } from "@/stores/git-status-store";
 import { cn } from "@/lib/utils";
-import {
-  ContextMenu,
-  ContextMenuTrigger,
-} from "@/components/ui/adaptive-context-menu";
 import { DROP_TARGET_CLASS } from "@/components/os-explorer/dnd/drop-target-style";
 import type { DropRunner } from "@/components/os-explorer/dnd/entry-drop-executor";
 import { FileIcon } from "@/lib/file-icons";
-import { TreeNodeContextMenu } from "./tree-node-context-menu";
 import { useTreeRowDnd } from "./use-tree-row-dnd";
 import type { NodeRow } from "./flatten-visible-tree";
 
@@ -39,7 +33,7 @@ export interface TreeRowProps {
 }
 
 export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFileDrop, onFileOpen, transferRun }: TreeRowProps) {
-  const { node, effectiveNode, displayName, depth } = row;
+  const { node, depth } = row;
   const { expandedPaths, loadedPaths, inflight, toggleExpand, selectedFiles, toggleFileSelect, clipboard, focusedPath, setFocusedPath } = useFileStore(
     useShallow((s) => ({
       expandedPaths: s.expandedPaths,
@@ -55,7 +49,6 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
   );
   const openTab = useTabStore((s) => s.openTab);
   const projectRoot = useProjectStore((s) => s.activeProject?.path);
-  const compareSelection = useCompareStore((s) => s.selection);
   const isDir = node.type === "directory";
   // Git decoration: per-file and per-folder status
   const gitStatus: GitFileStatus | undefined = useGitStatusStore((s) => {
@@ -72,8 +65,8 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
     clipboard?.operation === "cut" &&
     projectRoot != null &&
     clipboard.paths.includes(absoluteProjectPath(projectRoot, node.path));
-  const isFocused = focusedPath === node.path || focusedPath === effectiveNode.path;
-  const isLoadingChildren = isDir && isExpanded && !loadedPaths.has(effectiveNode.path) && inflight.has(effectiveNode.path);
+  const isFocused = focusedPath === node.path;
+  const isLoadingChildren = isDir && isExpanded && !loadedPaths.has(node.path) && inflight.has(node.path);
   const rowRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -93,7 +86,7 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
     if (e.shiftKey && focusedPath != null) {
       const paths = getVisiblePaths();
       const fromIdx = paths.indexOf(focusedPath);
-      const toIdx = paths.indexOf(effectiveNode.path);
+      const toIdx = paths.indexOf(node.path);
       if (fromIdx >= 0 && toIdx >= 0) {
         const start = Math.min(fromIdx, toIdx);
         const end = Math.max(fromIdx, toIdx);
@@ -124,7 +117,6 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
     path: node.path,
     name: node.name,
     isDir,
-    effectivePath: effectiveNode.path,
     isSelected,
     selectedFiles,
     isExpanded,
@@ -137,64 +129,72 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
 
   return (
     <div {...dnd.containerHandlers}>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <button
-            ref={rowRef}
-            {...dnd.entrySource}
-            onClick={handleClick}
-            className={cn(
-              "flex items-center w-full gap-1.5 px-2 py-1 rounded-[var(--rad-sm)] text-[13px]",
-              "min-h-[32px] md:min-h-[26px] hover:bg-surface-elevated transition-colors text-left",
-              "select-none",
-              (isIgnored || isCut) && "opacity-40",
-              isFocused && "bg-surface-elevated",
-              isSelected && "bg-accent-wash",
-              dnd.isDragOver && DROP_TARGET_CLASS,
-            )}
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
-          >
-            {isDir ? (
-              isLoadingChildren ? (
-                <Loader2 className="size-3.5 shrink-0 text-text-subtle animate-spin" />
-              ) : isExpanded ? (
-                <ChevronDown className="size-3.5 shrink-0 text-text-subtle" />
-              ) : (
-                <ChevronRight className="size-3.5 shrink-0 text-text-subtle" />
-              )
-            ) : (
-              <span className="w-3.5 shrink-0" />
-            )}
-            <FileIcon
-              name={node.name}
-              kind={isDir ? "directory" : "file"}
-              open={isExpanded}
-            />
-            <span
-              className={cn(
-                "truncate",
-                gitColor ?? (isSelected ? "text-text" : isDir && isExpanded ? "text-text font-medium" : "text-text-2"),
-              )}
-            >
-              {displayName}
-            </span>
-            {gitStatus && !isDir && (
-              <span className={cn("text-[10px] ml-auto shrink-0 font-mono", gitColor)}>
-                {gitStatus}
-              </span>
-            )}
-          </button>
-        </ContextMenuTrigger>
-        <TreeNodeContextMenu
-          node={node}
-          isDir={isDir}
-          projectName={projectName}
-          selectedFiles={selectedFiles}
-          compareSelection={compareSelection}
-          clipboard={clipboard}
-          onAction={onAction}
+      <button
+        ref={rowRef}
+        {...dnd.entrySource}
+        onClick={handleClick}
+        className={cn(
+          // `leading-[18px]` is what makes the row exactly as tall as the
+          // virtualizer's `estimateSize` says it is. Without it the 13px text
+          // inherits line-height 1.5 — a 19.5px line box, so the row measured
+          // 27.5px against an estimate of 26, and every row scrolling into
+          // view corrected the total size underneath the scrollbar.
+          "flex items-center w-full gap-1.5 px-2 py-1 rounded-[var(--rad-sm)] text-[13px] leading-[18px]",
+          "min-h-[32px] md:min-h-[26px] hover:bg-surface-elevated transition-colors text-left",
+          "select-none",
+          // A gitignored row is dimmed by `text-text-dim` on its label, not by
+          // fading the whole row: an alpha blend is not symmetric between light
+          // and dark, and at 40% a gitignored name measured 1.72–1.89:1 against
+          // the panel on the three light themes (2.07–2.23:1 on the dark ones) —
+          // under a 3:1 floor either way, and on light past the point where it
+          // can be read at all. The icon keeps its colours for the same reason:
+          // it is full-colour artwork with no `currentColor`, so an opacity on it
+          // is that same fade to the background. `cut` is a momentary state and
+          // stays a fade.
+          isCut && "opacity-40",
+          isFocused && "bg-surface-elevated",
+          isSelected && "bg-accent-wash",
+          dnd.isDragOver && DROP_TARGET_CLASS,
+        )}
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+      >
+        {isDir ? (
+          isLoadingChildren ? (
+            <Loader2 className="size-3.5 shrink-0 text-text-subtle animate-spin" />
+          ) : isExpanded ? (
+            <ChevronDown className="size-3.5 shrink-0 text-text-subtle" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-text-subtle" />
+          )
+        ) : (
+          <span className="w-3.5 shrink-0" />
+        )}
+        <FileIcon
+          name={node.name}
+          kind={isDir ? "directory" : "file"}
+          open={isExpanded}
         />
-      </ContextMenu>
+        <span
+          className={cn(
+            "truncate",
+            gitColor ??
+              (isSelected
+                ? "text-text"
+                : isIgnored
+                  ? "text-text-dim"
+                  : isDir && isExpanded
+                    ? "text-text font-medium"
+                    : "text-text-2"),
+          )}
+        >
+          {node.name}
+        </span>
+        {gitStatus && !isDir && (
+          <span className={cn("text-[10px] ml-auto shrink-0 font-mono", gitColor)}>
+            {gitStatus}
+          </span>
+        )}
+  </button>
     </div>
   );
 });

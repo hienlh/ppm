@@ -6,6 +6,10 @@
  * - A keydown with a real `code` (hardware keyboard, iOS for many keys) is forwarded as a
  *   layout-independent `key` message and `preventDefault`-ed, exactly like
  *   `use-remote-input-capture.ts` — that also suppresses the `beforeinput` that would follow.
+ * - A paste is taken from the `paste` event rather than `beforeinput`: Chromium reports it as
+ *   `insertFromPaste` with the text in `data` and a *null* `dataTransfer`, which is the opposite
+ *   of what the spec's contenteditable case describes — `clipboardData` is the one place every
+ *   browser agrees on. `preventDefault()` there also stops the `beforeinput` that would follow.
  * - Android soft keyboards send keydown with `code === ""` / keyCode 229 and put the actual
  *   characters in `beforeinput` (`insertText`) or, for predictive/IME entry, in a composition
  *   that only settles at `compositionend`. Those go up as `{ type: "text" }`, which the host
@@ -46,7 +50,12 @@ export function forwardBeforeInput(inputType: string, data: string | null, send:
   }
 }
 
-export function useRemoteDesktopVirtualKeyboard(sendMessage: Send, enabled: boolean): UseRemoteDesktopVirtualKeyboardResult {
+export function useRemoteDesktopVirtualKeyboard(
+  sendMessage: Send,
+  enabled: boolean,
+  /** Text pasted into the hidden input, for the caller to route through the host clipboard. */
+  onPasteText?: (text: string) => void,
+): UseRemoteDesktopVirtualKeyboardResult {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -74,6 +83,12 @@ export function useRemoteDesktopVirtualKeyboard(sendMessage: Send, enabled: bool
       if (e.data) sendMessage({ type: "text", text: e.data });
       input.value = ""; // the composed text landed in the input; the host already has it
     };
+    const onPaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text || !onPasteText) return;
+      e.preventDefault(); // suppresses the `insertFromPaste` beforeinput that would double it
+      onPasteText(text);
+    };
     const onBlur = () => releaseAll();
     const onVisibilityChange = () => { if (document.hidden) releaseAll(); };
 
@@ -81,6 +96,7 @@ export function useRemoteDesktopVirtualKeyboard(sendMessage: Send, enabled: bool
     input.addEventListener("keyup", onKeyUp);
     input.addEventListener("beforeinput", onBeforeInput);
     input.addEventListener("compositionend", onCompositionEnd);
+    input.addEventListener("paste", onPaste);
     input.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
@@ -89,11 +105,12 @@ export function useRemoteDesktopVirtualKeyboard(sendMessage: Send, enabled: bool
       input.removeEventListener("keyup", onKeyUp);
       input.removeEventListener("beforeinput", onBeforeInput);
       input.removeEventListener("compositionend", onCompositionEnd);
+      input.removeEventListener("paste", onPaste);
       input.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       releaseAll();
     };
-  }, [enabled, sendMessage]);
+  }, [enabled, sendMessage, onPasteText]);
 
   const show = useCallback(() => inputRef.current?.focus(), []);
 

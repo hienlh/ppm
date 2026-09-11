@@ -1,66 +1,81 @@
 /**
  * Vendor the vscode-icons file icon theme into a module the browser can use.
  *
- * The icons are the real ones from `vscode-icons-team.vscode-icons`, taken from
- * the Iconify collection generated out of that extension, and the *mapping* is
- * the extension's own (`vscode-icons-js`) rather than a hand-written guess — so
- * `.spec.ts` gets the test glyph, `go.sum` gets the Go one, and a filename with
- * a dedicated icon (`package.json`, `Dockerfile`, `.prettierrc`) gets it.
+ * Both halves come from `vscode-icons-team.vscode-icons` itself: the artwork
+ * from the Iconify collection generated out of that extension, and the
+ * *mapping* from the extension's own `src/iconsManifest/` — pinned, digested
+ * and re-implemented below exactly as `manifestBuilder.ts` builds it.
  *
- * Both of those are **build-time** dependencies. Resolving names at run time
- * would mean shipping the extension's four lookup tables (77 KB of JS) and,
- * worse, the 1595 icon bodies (about 1.3 MB) to draw a tree that shows perhaps
- * forty distinct glyphs. So this script asks the tables which icon each name
- * PPM cares about resolves to, and emits only those bodies.
+ * The mapping used to come from `vscode-icons-js` alone, a third-party
+ * repackaging, and that is the whole reason this file was rewritten. It is
+ * versioned apart from the extension and lags it badly: its table of
+ * *multi-dot* extensions held **41** entries against the real manifest's 1006,
+ * so `app.controller.ts`, `app.module.ts` and `app.service.ts` all drew the
+ * plain TypeScript glyph while the Nest artwork sat unused in the bundle. It
+ * also knows nothing of the manifest's glob form (`babel.config.{js,cjs,mjs,json}`)
+ * or of the presets, so every gap had to be patched by hand in an `OVERRIDES`
+ * table that only ever grew.
  *
- * The coverage list below is deliberately generous but finite: anything not on
- * it falls back to the theme's own `default-file`, which is what the extension
- * itself does for an unknown type. Add a line and re-run:
+ * It is still read, second, and that is not laziness — the two sources are
+ * complementary in a way worth stating. The manifest associates a great many
+ * types by *VS Code language id* and nothing else: the `dotenv` entry has
+ * `extensions: []`, and `.cc`, `.htm`, `.conf`, `.kts` and twenty more reach
+ * their icon only because VS Code already knows which language owns them.
+ * `languages.ts` carries one `knownExtensions` list per language and it is the
+ * short one, so a manifest-only port silently drops those — measured, against
+ * the previous tables: 36 names that had an icon stopped having one. So the
+ * manifest wins wherever it answers, `vscode-icons-js` fills the rest, and
+ * `LANGUAGE_EXTRAS` holds the handful neither knows.
+ *
+ * Both are **build-time** dependencies. Resolving names at run time would mean
+ * shipping the manifest itself (200 KB of TypeScript) and the lookup code with
+ * it, to answer a question whose answer never changes between releases.
+ *
+ * The outputs are committed. Re-run after bumping `MANIFEST_VERSION`:
  *
  *   bun scripts/gen-file-icons.ts
  */
-import { getIconForFile, getIconForFolder, getIconForOpenFolder } from "vscode-icons-js";
-// Reaching past the entry point on purpose: this table is the set of *double*
-// extensions the theme knows (`spec.ts`, `d.ts`, `stories.tsx`, `js.map`), and
-// those are the glyphs a TypeScript repository shows most after `.ts` itself.
-// Hand-listing them would drift; if the path ever moves, this script fails
-// loudly at generation time rather than quietly emitting worse icons.
-import { FileExtensions2ToIcon } from "vscode-icons-js/dist/generated/FileExtensions2ToIcon";
-import { writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 const OUT_TS = resolve(import.meta.dir, "../src/web/lib/file-icons.generated.ts");
 const OUT_CSS = resolve(import.meta.dir, "../src/web/styles/file-icons.generated.css");
 
 /**
- * A glyph bigger than this is dropped, and whatever asked for it falls back to
- * the neutral default.
+ * Pinned, and checked against a digest rather than trusted.
  *
- * The set is extremely skewed — the median body is ~1 KB and `file-type-composer`
+ * These are the three files the extension builds its own icon theme from. A
+ * branch can be force-pushed and a tag moved, so "fetch master" would make the
+ * committed tables unreproducible — and a mapping that changed under us moves
+ * icons all over the tree with nothing to point at. Bump the tag, run the
+ * script, and it will print the digests it actually got.
+ */
+const MANIFEST_VERSION = "v12.19.0";
+const MANIFEST_FILES: Record<string, string> = {
+  supportedExtensions: "277b81ecebe527dea6deedf39b891d9746cc58b14dd2e311bc2da0bf2ff8eee6",
+  supportedFolders: "8b638f423efdcbeabbc5ede863db7d54ee6738da2eece29cf07833a627a12685",
+  languages: "43542118e7438a0c5f31b1c48c085c6b1b8079b2902e241664c4cff1e4c8568e",
+};
+
+/**
+ * A glyph bigger than this is dropped, and whatever asked for it falls back to
+ * the next shorter suffix — `.controller.ts` to `.ts`, and past that to the
+ * neutral default.
+ *
+ * The set is extremely skewed: the median body is ~1 KB and `file-type-composer`
  * alone is 83 KB, because some of these are detailed illustrations rather than
  * icons. At the 16px a file tree draws them at, that detail is invisible; all it
- * costs is download. `KEEP_ANY_SIZE` exempts the few worth paying for anyway.
+ * costs is download.
  *
  * 5000 rather than something tighter because the distribution has no useful gap
  * below it, and a tight budget cuts by weight rather than by worth: at 1800,
  * `.tsx` (`file-type-reactts`, 1833 bytes — 33 over) drew the blank-page default,
  * and so did `.jsx` (1833), `.go` (1825) and `.rs` (3957). Everything above 5000
- * really is an illustration. The 39 extra glyphs cost 25 KiB brotli.
+ * really is an illustration. `KEEP_ANY_SIZE` exempts the few worth paying for.
  */
 const MAX_BODY_BYTES = 5000;
-
-/**
- * Keys the mapping names that the collection spells differently.
- *
- * vscode-icons revises a glyph by publishing it under a numbered name, and the
- * two packages are versioned apart — so the mapping can hand back a name the
- * collection no longer has. The script reports every unresolved key rather than
- * dropping it quietly, and this is where the answer goes. `Makefile` has no
- * glyph in the collection at all and falls back to the default on purpose.
- */
-const ALIASES: Record<string, string> = {
-  "file-type-pdf": "file-type-pdf2",
-};
 
 /** Languages common enough to keep whatever they weigh. */
 const KEEP_ANY_SIZE = new Set(
@@ -71,185 +86,220 @@ const KEEP_ANY_SIZE = new Set(
 );
 
 /**
- * What the mapping should have said.
+ * Keys the manifest names that the collection spells differently.
  *
- * `vscode-icons-js` is versioned apart from the artwork and its tables are the
- * older half: the collection has `file-type-bun`, `file-type-dotenv`,
- * `file-type-bazel` and thirty more that no table points at, so `Dockerfile`,
- * `bun.lock`, `.env.local`, `Rakefile` and every `.mts` file drew the blank-page
- * default while the right glyph sat unused in the bundle. A name here wins over
- * whatever the mapping answers — including where the mapping answers *wrongly*,
- * which is `bunfig.toml` getting the generic TOML glyph.
- *
- * Every value is checked against the collection at generation time, so a key
- * that stops existing is reported rather than silently drawing nothing. Some
- * names are deliberately absent: `Makefile` has no glyph at all, and `LICENSE`
- * (23 KB) and `file.pug` (6 KB) are over the budget below.
+ * vscode-icons revises a glyph by publishing it under a numbered name, and the
+ * artwork package is versioned apart from the extension — so the manifest can
+ * name an icon the collection no longer has. Every unresolved name is reported
+ * at the end of a run rather than dropped quietly, and this is where the answer
+ * goes.
  */
-const OVERRIDES: Record<string, string> = {
-  // Bun, which is what this project is built with.
-  "bun.lock": "file-type-bun",
-  "bun.lockb": "file-type-bun",
-  "bunfig.toml": "file-type-bunfig",
-  // Containers.
-  Dockerfile: "file-type-docker",
-  dockerfile: "file-type-docker",
-  ".dockerignore": "file-type-docker",
-  Vagrantfile: "file-type-vagrant",
-  // Environment files, which the tables know only as a bare `.env`.
-  ".env.local": "file-type-dotenv",
-  ".env.development": "file-type-dotenv",
-  ".env.production": "file-type-dotenv",
-  ".env.example": "file-type-dotenv",
-  ".env.test": "file-type-dotenv",
-  // Build systems.
-  "meson.build": "file-type-meson",
-  BUILD: "file-type-bazel",
-  WORKSPACE: "file-type-bazel",
-  Justfile: "file-type-just",
-  Procfile: "file-type-procfile",
-  gradlew: "file-type-gradle",
-  "build.gradle.kts": "file-type-gradle",
-  // Per-language lockfiles and manifests.
-  "Cargo.lock": "file-type-rust",
-  "go.work": "file-type-go-package",
-  Gemfile: "file-type-ruby",
-  "Gemfile.lock": "file-type-ruby",
-  Rakefile: "file-type-rake",
-  Pipfile: "file-type-python",
-  "Pipfile.lock": "file-type-python",
-  "poetry.lock": "file-type-poetry",
-  "pytest.ini": "file-type-pytest",
-  "mix.exs": "file-type-elixir",
-  // Extensions the tables never learned.
-  mts: "file-type-typescript",
-  cts: "file-type-typescript",
-  cjs: "file-type-js",
-  jsonl: "file-type-json",
-  pyi: "file-type-python",
-  kts: "file-type-kotlin",
-  exs: "file-type-elixir",
-  ini: "file-type-ini",
-  graphql: "file-type-graphql",
-  proto: "file-type-protobuf",
-  tif: "file-type-image",
-  rest: "file-type-rest",
-  tfvars: "file-type-terraform",
-  npmrc: "file-type-npm",
-  nvmrc: "file-type-node",
-  apk: "file-type-binary",
-  deb: "file-type-binary",
-  rpm: "file-type-binary",
+const ALIASES: Record<string, string> = {
+  "file-type-pdf": "file-type-pdf2",
 };
 
-/** Extensions worth a glyph of their own. */
-const EXTENSIONS = `
-ts mts cts tsx js mjs cjs jsx json jsonc json5 jsonl map
-html htm ejs hbs handlebars pug css scss sass less styl vue svelte astro
-go py pyi rb php java jar kt kts scala rs c h cpp cc hpp cs swift
-dart lua pl r ex exs clj groovy gradle vb vbs ps1 bat cmd
-sh bash zsh fish
-yml yaml toml ini cfg conf env properties xml plist csv tsv
-xls xlsx doc docx pdf
-sql db sqlite sqlite3 prisma graphql gql proto
-png jpg jpeg gif svg webp avif ico bmp tif tiff
-mp4 webm mov avi mkv mp3 wav ogg flac m4a
-woff woff2 ttf otf eot
-zip tar gz tgz bz2 xz 7z rar exe dll so bin wasm apk deb rpm iso img dmg
-md mdx txt log lock diff patch key pem crt cert
-http rest ipynb tf tfvars nix cmake mk dockerfile
-tex sln csproj rake gemspec webmanifest babelrc npmrc nvmrc
-`.trim().split(/\s+/);
+/**
+ * What neither source knows, because VS Code answers it from somewhere else.
+ *
+ * All of these resolve in VS Code through a language association contributed by
+ * a *different* extension or by a built-in grammar, which is a table neither the
+ * icon manifest nor `vscode-icons-js` contains. `.env.local` is the one that
+ * matters most here — the manifest's `dotenv` entry declares no extensions at
+ * all and leans entirely on the `dotenv` language id, so every qualified env
+ * file drew a blank page.
+ *
+ * Keys are matched the way the runtime matches: whole filename first, then a
+ * dotted suffix. Values are checked against the collection at generation time,
+ * so an entry that stops resolving is reported rather than silently dropped.
+ */
+const LANGUAGE_EXTRAS: { names: Record<string, string>; extensions: Record<string, string> } = {
+  names: {
+    // Bazel, whose two marker files have no extension at all.
+    build: "bazel",
+    workspace: "bazel",
+    // Wrapper scripts and pipeline definitions named after their tool.
+    gradlew: "gradle",
+    "gradlew.bat": "gradle",
+    jenkinsfile: "groovy",
+    "cargo.lock": "rust",
+    // `file-type-bundler` is 43 KB — an illustration, not an icon, so the
+    // budget drops it and Ruby's own glyph is the honest stand-in.
+    gemfile: "ruby",
+    "gemfile.lock": "ruby",
+  },
+  extensions: {
+    // Languages and formats VS Code associates through a grammar neither source
+    // enumerates. Each of these was a line in the old hand-written `OVERRIDES`
+    // and drew a blank page without it.
+    graphql: "graphql",
+    gql: "graphql",
+    kts: "kotlin",
+    exs: "elixir",
+    tif: "image",
+    rest: "rest",
+    apk: "binary",
+    rpm: "binary",
+    npmrc: "npm",
+    nvmrc: "node",
+    // `.env.local`, `.env.production`, `.env.test.local` — the manifest has the
+    // artwork and reaches it only by language id.
+    "env.local": "dotenv",
+    "env.development": "dotenv",
+    "env.production": "dotenv",
+    "env.staging": "dotenv",
+    "env.test": "dotenv",
+    "env.example": "dotenv",
+    "env.sample": "dotenv",
+  },
+};
 
-/** Whole filenames the theme gives a dedicated glyph. */
-const FILENAMES = `
-package.json package-lock.json bun.lock bun.lockb yarn.lock pnpm-lock.yaml
-tsconfig.json jsconfig.json bunfig.toml deno.json
-.gitignore .gitattributes .gitmodules .gitkeep .mailmap
-.npmrc .npmignore .nvmrc .yarnrc .editorconfig .browserslistrc
-.prettierrc .prettierrc.json .prettierignore
-.eslintrc .eslintrc.js .eslintrc.json eslint.config.js eslint.config.mjs
-.env .env.local .env.development .env.production .env.example .env.test
-Dockerfile dockerfile docker-compose.yml docker-compose.yaml compose.yaml .dockerignore
-Makefile makefile CMakeLists.txt meson.build BUILD WORKSPACE Justfile
-README.md readme.md LICENSE LICENSE.md COPYING CHANGELOG.md CONTRIBUTING.md
-CODE_OF_CONDUCT.md SECURITY.md CODEOWNERS AUTHORS
-vite.config.ts vite.config.js rollup.config.js webpack.config.js
-tailwind.config.js tailwind.config.ts postcss.config.js postcss.config.mjs
-babel.config.js .babelrc jest.config.js jest.config.ts vitest.config.ts
-playwright.config.ts cypress.config.ts karma.conf.js nodemon.json pm2.config.js
-next.config.js next.config.mjs nuxt.config.ts svelte.config.js astro.config.mjs
-angular.json vue.config.js remix.config.js gatsby-config.js metro.config.js
-go.mod go.sum go.work Cargo.toml Cargo.lock
-requirements.txt pyproject.toml setup.py setup.cfg Pipfile Pipfile.lock poetry.lock
-tox.ini pytest.ini manage.py
-Gemfile Gemfile.lock Rakefile composer.json composer.lock
-pom.xml build.gradle build.gradle.kts settings.gradle gradlew mix.exs
-.gitlab-ci.yml .travis.yml appveyor.yml azure-pipelines.yml Jenkinsfile
-netlify.toml vercel.json now.json firebase.json app.json fly.toml railway.json
-serverless.yml Procfile Vagrantfile
-manifest.json robots.txt sitemap.xml humans.txt .htaccess favicon.ico
-index.html index.ts index.js main.ts main.go
-CLAUDE.md AGENTS.md
-`.trim().split(/\s+/);
+// ---------------------------------------------------------------------------
+// The manifest
+// ---------------------------------------------------------------------------
 
-/** Folder names the theme gives a dedicated glyph. */
-const FOLDERS = `
-src app apps packages lib dist build public assets images fonts
-components hooks utils helpers shared config api server client services
-store views controllers routes middleware
-test tests __tests__ e2e coverage docs examples scripts bin
-database db migrations types locales i18n functions
-node_modules vendor .git .github .vscode .husky
-android ios logs tmp temp cache
-`.trim().split(/\s+/);
-
-/** `file_type_typescript.svg` → `file-type-typescript` (the Iconify key). */
-function iconifyKey(svgName: string | undefined): string | null {
-  if (!svgName) return null;
-  return svgName.replace(/\.svg$/, "").replace(/_/g, "-");
+/** One entry of `supportedExtensions.ts` / `supportedFolders.ts`. */
+interface ManifestEntry {
+  icon: string;
+  extensions: string[];
+  /** The strings in `extensions` are whole filenames, not suffixes. */
+  filename?: boolean;
+  /** Cartesian product with `extensionsGlob`, joined by a dot. */
+  filenamesGlob?: string[];
+  extensionsGlob?: string[];
+  languages?: { ids: string | string[]; knownExtensions?: string[]; knownFilenames?: string[] }[];
+  /** The theme ships a second drawing of this glyph, for a light workbench. */
+  light?: boolean;
+  /** Off unless a preset turns it on — `nest_*`, `ng_*`, the `*2` redraws. */
+  disabled?: boolean;
 }
 
-const collection = (await import("@iconify-json/vscode-icons/icons.json", {
-  with: { type: "json" },
-})).default as { icons: Record<string, { body: string }>; width?: number; height?: number };
+interface Manifest {
+  files: ManifestEntry[];
+  folders: ManifestEntry[];
+}
+
+/**
+ * Fetch the three manifest modules and evaluate them.
+ *
+ * They are TypeScript that imports its types from `../models`, so they are
+ * staged in one temp directory next to a stub supplying that module. Evaluating
+ * them is the point: these tables are 200 KB of nested literals, and a regex
+ * over them would be a second, worse parser that fails silently the first time
+ * upstream reformats a line.
+ */
+async function loadManifest(): Promise<Manifest> {
+  const dir = mkdtempSync(resolve(tmpdir(), "ppm-vscode-icons-"));
+  try {
+    writeFileSync(
+      resolve(dir, "models.ts"),
+      "export const FileFormat = { svg: 'svg', png: 'png' };\n" +
+        "export const IFileCollection = undefined, IFolderCollection = undefined, ILanguage = undefined;\n",
+    );
+    for (const [name, digest] of Object.entries(MANIFEST_FILES)) {
+      const url =
+        `https://raw.githubusercontent.com/vscode-icons/vscode-icons/` +
+        `${MANIFEST_VERSION}/src/iconsManifest/${name}.ts`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
+      const body = Buffer.from(await res.arrayBuffer());
+      const got = createHash("sha256").update(body).digest("hex");
+      if (got !== digest) {
+        throw new Error(`${name}.ts digest mismatch\n  expected ${digest}\n  got      ${got}`);
+      }
+      writeFileSync(resolve(dir, `${name}.ts`), body.toString("utf8").replace("../models", "./models"));
+    }
+    const files = (await import(resolve(dir, "supportedExtensions.ts"))).extensions;
+    const folders = (await import(resolve(dir, "supportedFolders.ts"))).extensions;
+    return { files: files.supported, folders: folders.supported };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** `nest_controller_ts` → `file-type-nest-controller-ts`, the Iconify key. */
+function iconifyKey(prefix: string, icon: string): string {
+  const key = `${prefix}-${icon.replace(/_/g, "-")}`.toLowerCase();
+  return ALIASES[key] ?? key;
+}
+
+/**
+ * The tables one preset of the manifest produces, built the way
+ * `manifestBuilder.buildFiles` builds them.
+ *
+ * Two details are load-bearing and neither is obvious. Entries are walked in
+ * order of *icon name*, because that is what upstream sorts by and later
+ * writes overwrite earlier ones — so two icons claiming `service.ts` resolve
+ * the same way here as they do in VS Code. And the language layer is written
+ * first and then overwritten by the explicit `extensions`, so a hand-declared
+ * association always beats one inferred from a language's known extensions.
+ */
+function buildFiles(entries: ManifestEntry[]): {
+  fileNames: Record<string, string>;
+  fileExtensions: Record<string, string>;
+  langNames: Record<string, string>;
+  langExtensions: Record<string, string>;
+} {
+  const langNames: Record<string, string> = {};
+  const langExtensions: Record<string, string> = {};
+  const names: Record<string, string> = {};
+  const extensions: Record<string, string> = {};
+
+  for (const entry of [...entries].sort((a, b) => (a.icon < b.icon ? -1 : a.icon > b.icon ? 1 : 0))) {
+    for (const lang of entry.languages ?? []) {
+      for (const ext of lang.knownExtensions ?? []) langExtensions[ext.toLowerCase()] = entry.icon;
+      for (const name of lang.knownFilenames ?? []) langNames[name.toLowerCase()] = entry.icon;
+    }
+    const put = (value: string) => {
+      if (entry.filename) names[value.toLowerCase()] = entry.icon;
+      // `removeFirstDot`: the manifest writes `.babelrc` and means the suffix
+      // `babelrc`. Only the *leading* dot goes — `controller.ts` stays whole.
+      else extensions[value.replace(/^\./, "").toLowerCase()] = entry.icon;
+    };
+    for (const value of entry.extensions) put(value);
+    if (entry.filenamesGlob?.length && entry.extensionsGlob?.length) {
+      for (const stem of entry.filenamesGlob) for (const ext of entry.extensionsGlob) put(`${stem}.${ext}`);
+    }
+  }
+  // The language layer is handed back *separately* rather than merged under the
+  // explicit one, because it is the weaker claim in a way the merge cannot
+  // express. `knownExtensions` flattens "this language is known by .css" into
+  // "a .css file is this icon", and two languages may claim one extension —
+  // `tailwindcss` also lists `css`, sorts after it, and so every stylesheet in
+  // the app came out with the Tailwind logo. VS Code never sees that collision
+  // because it matches the file's *actual* language id. So this layer ranks
+  // below `vscode-icons-js`'s flattening of VS Code's own associations, and
+  // only answers for languages that package is too old to know.
+  return { fileNames: names, fileExtensions: extensions, langNames, langExtensions };
+}
+
+// ---------------------------------------------------------------------------
+// The artwork
+// ---------------------------------------------------------------------------
+
+const collection = (
+  await import("@iconify-json/vscode-icons/icons.json", { with: { type: "json" } })
+).default as { icons: Record<string, { body: string }>; width?: number; height?: number };
 
 /** Both drawings of one glyph; `light` only when the theme ships a second one. */
 type Glyph = { dark: string; light?: string };
 
-const used = new Map<string, Glyph>(); // iconify key → bodies
+const used = new Map<string, Glyph>();
 const missing = new Set<string>();
 const overBudget = new Map<string, number>();
 let lightVariants = 0;
 
 /**
- * `file_type_light_json` → `file_type_json`.
+ * Claim a glyph, or report why it cannot be drawn.
  *
- * The mapping tables answer with the **light** name for 143 of these glyphs and
- * there is no option to ask for the other one — `getIconForFile("a.json")` is
- * `file_type_light_json` full stop. Those are the drawings vscode-icons uses
- * when the *workbench* theme is light: `#fbc02d` where the normal one is
- * `#f5de19`, and for `toml` a path with no `fill` at all, i.e. black. Shipping
- * them as the only artwork is how the JSON braces came out muddy and the TOML
- * glyph came out invisible on every dark PPM theme. So the class is named after
- * the theme-independent glyph and carries both drawings.
+ * A `null` here is not an error at the call site: the name simply gets no entry
+ * in the tables, and the runtime falls through to a shorter suffix — which for
+ * `foo.controller.ts` means the TypeScript glyph rather than a blank page.
  */
-function canonical(key: string): string {
-  return key.replace(/^file-type-light-/, "file-type-");
-}
-
-function take(svgName: string | undefined): string | null {
-  const named = iconifyKey(svgName);
-  return named === null ? null : takeKey(named);
-}
-
-function takeKey(named: string): string | null {
-  const aliased = ALIASES[named] ?? named;
-  const key = canonical(aliased);
+function takeIcon(key: string): string | null {
   if (used.has(key)) return key;
   const icon = collection.icons[key];
   if (!icon) {
-    // A name the mapping knows and the collection does not: the two are
+    // A name the manifest knows and the collection does not: the two are
     // versioned separately, so this is reported rather than silently dropped.
     missing.add(key);
     return null;
@@ -258,56 +308,208 @@ function takeKey(named: string): string | null {
     overBudget.set(key, icon.body.length);
     return null;
   }
-  const light = collection.icons[key.replace(/^file-type-/, "file-type-light-")];
+  // The theme draws 132 of these twice, the second for a light workbench:
+  // `#fbc02d` where the normal one is `#f5de19`, and for `toml` a path with no
+  // `fill` at all, i.e. black. Shipping the light one as the *only* artwork is
+  // how the TOML glyph came out invisible on every dark PPM theme, so the class
+  // is named after the theme-independent glyph and carries both drawings.
+  // One `replace` per prefix, never a `??` chain: a pattern that does not match
+  // returns the key *unchanged*, so chaining would find the dark drawing again
+  // and ship it as its own light variant — 1187 of them, silently.
+  const lightKey = key.startsWith("file-type-")
+    ? key.replace(/^file-type-/, "file-type-light-")
+    : key.startsWith("folder-type-")
+      ? key.replace(/^folder-type-/, "folder-type-light-")
+      : null;
+  const light = lightKey === null ? undefined : collection.icons[lightKey];
   // A light drawing over the budget is simply left out: the class still has its
   // dark one, which is legible on a light background, just not tuned for it.
-  const within = light && light.body.length <= MAX_BODY_BYTES;
+  const within = light !== undefined && light.body.length <= MAX_BODY_BYTES;
   if (within) lightVariants++;
-  used.set(key, { dark: icon.body, light: within ? light.body : undefined });
+  used.set(key, { dark: icon.body, light: within ? light!.body : undefined });
   return key;
 }
 
-const DEFAULT_FILE = take("default_file.svg")!;
-const DEFAULT_FOLDER = take("default_folder.svg")!;
-const DEFAULT_FOLDER_OPEN = take("default_folder_opened.svg")!;
-
-/** An override if there is one, else whatever the mapping tables answer. */
-function iconFor(name: string, mapped: string | undefined): string | null {
-  const override = OVERRIDES[name];
-  return override ? takeKey(override) : take(mapped);
+/**
+ * Rewrite tables of manifest icon names into one table of drawable classes,
+ * earlier tables winning.
+ *
+ * Per key rather than merging first and resolving after, and that is the whole
+ * point: a key the manifest claims with a glyph that is missing or over the
+ * budget would otherwise be *lost* instead of falling through — `cargo.lock`
+ * reached `file-type-cargo`, which the collection does not have, and ended up
+ * with no icon at all while the second source's answer sat right there.
+ */
+function resolve_(prefix: string, ...tables: Record<string, string>[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of new Set(tables.flatMap((t) => Object.keys(t)))) {
+    for (const table of tables) {
+      const icon = table[name];
+      if (icon === undefined) continue;
+      const key = takeIcon(iconifyKey(prefix, icon));
+      if (key) {
+        out[name] = key;
+        break;
+      }
+    }
+  }
+  return out;
 }
 
-const extIcon: Record<string, string> = {};
-for (const ext of [...Object.keys(FileExtensions2ToIcon), ...EXTENSIONS]) {
-  const key = iconFor(ext, getIconForFile(`file.${ext}`));
-  // Only worth an entry when it differs from the fallback the component uses.
-  if (key && key !== DEFAULT_FILE) extIcon[ext] = key;
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+const manifest = await loadManifest();
+
+const DEFAULT_FILE = takeIcon("default-file")!;
+const DEFAULT_FOLDER = takeIcon("default-folder")!;
+const DEFAULT_FOLDER_OPEN = takeIcon("default-folder-opened")!;
+
+/**
+ * The presets, which are the reason this is three passes rather than one.
+ *
+ * `nest_*` and `ng_*` ship `disabled: true` — in VS Code they are behind
+ * `vsicons.presets.nestjs` and `vsicons.presets.angular`, off by default and
+ * *mutually exclusive in practice*: they claim the same six suffixes
+ * (`module`, `service`, `guard`, `pipe`, `interceptor`, `controller`, each in
+ * `.ts` and `.js`), and enabling both would silently hand a NestJS repository
+ * the Angular artwork, since `ng_` sorts after `nest_`.
+ *
+ * So the base tables have neither, and each preset is emitted as an overlay the
+ * runtime consults first once it knows which framework the project is built
+ * with. Off both overlays, `app.service.ts` falls through to `.ts` — the plain
+ * TypeScript glyph, which is what VS Code with no preset also shows.
+ */
+const isNest = (icon: string) => icon.startsWith("nest_");
+const isAngular = (icon: string) => icon.startsWith("ng_");
+
+const base = buildFiles(manifest.files.filter((e) => e.icon && !e.disabled));
+const withNest = buildFiles(manifest.files.filter((e) => e.icon && (!e.disabled || isNest(e.icon))));
+const withAngular = buildFiles(
+  manifest.files.filter((e) => e.icon && (!e.disabled || isAngular(e.icon))),
+);
+
+/**
+ * The second source, consulted only where the manifest said nothing.
+ *
+ * `file_type_typescript.svg` → `typescript`, back into the manifest's own
+ * vocabulary so both layers go through one `resolve_` and one budget check.
+ */
+async function legacyTable(name: string): Promise<Record<string, string>> {
+  const table = (await import(`vscode-icons-js/dist/generated/${name}`))[name] as Record<
+    string,
+    string
+  >;
+  const out: Record<string, string> = {};
+  for (const [key, svg] of Object.entries(table)) {
+    // `file_type_light_ini.svg` → `ini`. These tables answer with the **light**
+    // drawing for 143 glyphs and offer no way to ask for the other one, and
+    // those are darker ink meant for a light workbench — `light_toml` has no
+    // `fill` at all, i.e. black on black. The class is named after the
+    // theme-independent glyph and `takeIcon` attaches both drawings.
+    out[key.toLowerCase()] = svg
+      .replace(/\.svg$/, "")
+      .replace(/^(file|folder)_type_/, "")
+      .replace(/^light_/, "");
+  }
+  return out;
 }
 
-const nameIcon: Record<string, string> = {};
-for (const name of FILENAMES) {
-  const key = iconFor(name, getIconForFile(name));
-  if (!key || key === DEFAULT_FILE) continue;
-  // Skip a filename whose icon its own extension already gives: `main.go` and
-  // `.go` resolve to the same glyph, and the extension table already covers it.
-  const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
-  if (ext && extIcon[ext] === key) continue;
-  nameIcon[name.toLowerCase()] = key;
+/** `b` fills the keys `a` has no answer for; `a` always wins. */
+function fill(a: Record<string, string>, b: Record<string, string>): Record<string, string> {
+  return { ...b, ...a };
 }
 
-const folderIcon: Record<string, string> = {};
-const folderOpenIcon: Record<string, string> = {};
-for (const folder of FOLDERS) {
-  const closed = take(getIconForFolder(folder));
-  const open = take(getIconForOpenFolder(folder));
-  if (closed && closed !== DEFAULT_FOLDER) folderIcon[folder.toLowerCase()] = closed;
-  if (open && open !== DEFAULT_FOLDER_OPEN) folderOpenIcon[folder.toLowerCase()] = open;
+const legacyExtensions = fill(
+  await legacyTable("FileExtensions2ToIcon"),
+  await legacyTable("FileExtensions1ToIcon"),
+);
+/**
+ * The table that actually earns `vscode-icons-js` its place.
+ *
+ * It is that package's flattening of VS Code's *language* associations — `cc`
+ * and `cxx` to C++, `htm` to HTML, `conf` to INI — which is precisely what the
+ * icon manifest leaves to the editor and a port therefore has to find
+ * somewhere. 
+ */
+const legacyLanguages = await legacyTable("LanguagesToIcon");
+const legacyNames = await legacyTable("FileNamesToIcon");
+const legacyFolders = await legacyTable("FolderNamesToIcon");
+
+const extensionSources = [
+  base.fileExtensions,
+  legacyExtensions,
+  legacyLanguages,
+  base.langExtensions,
+  LANGUAGE_EXTRAS.extensions,
+];
+const nameSources = [base.fileNames, legacyNames, base.langNames, LANGUAGE_EXTRAS.names];
+
+const extensionIcons = resolve_("file-type", ...extensionSources);
+const filenameIcons = resolve_("file-type", ...nameSources);
+
+/**
+ * The same cascade, un-resolved, for the preset diff below.
+ *
+ * The overlay has to be compared at *manifest icon name* level — against the
+ * already-resolved class names it would differ on every single key, because
+ * `nest_service_ts` is never equal to `file-type-typescript`, and the two
+ * overlays came out at 2459 entries instead of 22.
+ */
+const baseNameSource = nameSources.reduceRight((acc, t) => fill(t, acc));
+const baseExtensionSource = extensionSources.reduceRight((acc, t) => fill(t, acc));
+
+/**
+ * Only what the preset *changes*, so the overlay is 45 lines rather than 1000.
+ *
+ * Diffed against the *combined* base rather than the manifest's, or an entry
+ * the second source already answers identically would ship twice.
+ */
+function overlay(
+  preset: { fileNames: Record<string, string>; fileExtensions: Record<string, string> },
+): { names: Record<string, string>; extensions: Record<string, string> } {
+  const diff = (a: Record<string, string>, b: Record<string, string>) =>
+    Object.fromEntries(Object.entries(a).filter(([k, v]) => b[k] !== v));
+  return {
+    names: resolve_("file-type", diff(preset.fileNames, baseNameSource)),
+    extensions: resolve_("file-type", diff(preset.fileExtensions, baseExtensionSource)),
+  };
 }
 
-function record(map: Record<string, string>): string {
+const frameworks = { nest: overlay(withNest), angular: overlay(withAngular) };
+
+/** `{ … }` on one line when there is nothing in it, so the output reads clean. */
+function block(map: Record<string, string>, key: string): string {
+  return Object.keys(map).length === 0 ? `  ${key}: {},` : `  ${key}: {\n${record(map, "    ")}\n  },`;
+}
+
+const folderTables = buildFiles(manifest.folders.filter((e) => e.icon && !e.disabled));
+const baseFolders = fill(folderTables.fileExtensions, legacyFolders);
+const folderIcons = resolve_("folder-type", folderTables.fileExtensions, legacyFolders);
+const folderOpenIcons: Record<string, string> = {};
+for (const [name, icon] of Object.entries(baseFolders)) {
+  const key = takeIcon(iconifyKey("folder-type", `${icon}_opened`));
+  if (key) folderOpenIcons[name] = key;
+}
+
+// A folder whose closed glyph was dropped but whose open one survived would
+// change picture on expand for no reason; keep the pair or neither.
+for (const name of Object.keys(folderOpenIcons)) {
+  if (!folderIcons[name]) delete folderOpenIcons[name];
+}
+for (const name of Object.keys(folderIcons)) {
+  if (!folderOpenIcons[name]) delete folderIcons[name];
+}
+
+// ---------------------------------------------------------------------------
+// Emit
+// ---------------------------------------------------------------------------
+
+function record(map: Record<string, string>, indent = "  "): string {
   return Object.keys(map)
     .sort()
-    .map((k) => `  ${JSON.stringify(k)}: ${JSON.stringify(map[k])},`)
+    .map((k) => `${indent}${JSON.stringify(k)}: ${JSON.stringify(map[k])},`)
     .join("\n");
 }
 
@@ -317,36 +519,69 @@ const names = [...used.keys()].sort();
 const ts = `/**
  * GENERATED by \`bun scripts/gen-file-icons.ts\` — do not edit.
  *
- * Which glyph of the vscode-icons theme (MIT, vscode-icons-team) a name gets.
+ * Which glyph of the vscode-icons theme (MIT, vscode-icons-team) a name gets,
+ * built from that extension's own \`src/iconsManifest\` at ${MANIFEST_VERSION}.
  * The glyphs themselves are in \`src/web/styles/file-icons.generated.css\`, one
- * class each: 500 KB of full-colour SVG has no business in a JS bundle, and as
+ * class each: 3 MB of full-colour SVG has no business in a JS bundle, and as
  * CSS the browser decodes each icon once however many rows use it — which is
  * also how VS Code draws its own file icon themes.
  */
 
-/** Lowercased extension → icon class suffix. */
+/** Lowercased extension → icon class suffix. Longest suffix wins. */
 export const EXTENSION_ICONS: Record<string, string> = {
-${record(extIcon)}
+${record(extensionIcons)}
 };
 
-/** Lowercased whole filename → icon; checked before the extension. */
+/** Lowercased whole filename → icon; checked before any extension. */
 export const FILENAME_ICONS: Record<string, string> = {
-${record(nameIcon)}
+${record(filenameIcons)}
+};
+
+/**
+ * The frameworks whose file-naming convention has artwork of its own.
+ *
+ * Upstream ships these as presets a user turns on, because they collide: both
+ * claim \`.module.ts\`, \`.service.ts\`, \`.guard.ts\`, \`.pipe.ts\`,
+ * \`.interceptor.ts\` and \`.controller.ts\`. PPM picks one per project instead —
+ * see \`project-framework-store.ts\`.
+ */
+export type IconFramework = ${Object.keys(frameworks)
+  .map((k) => JSON.stringify(k))
+  .join(" | ")};
+
+/** Checked before {@link EXTENSION_ICONS} when a project names a framework. */
+export const FRAMEWORK_EXTENSION_ICONS: Record<IconFramework, Record<string, string>> = {
+${Object.entries(frameworks)
+  .map(([key, o]) => block(o.extensions, key))
+  .join("\n")}
+};
+
+/** Checked before {@link FILENAME_ICONS} when a project names a framework. */
+export const FRAMEWORK_FILENAME_ICONS: Record<IconFramework, Record<string, string>> = {
+${Object.entries(frameworks)
+  .map(([key, o]) => block(o.names, key))
+  .join("\n")}
 };
 
 /** Lowercased folder name → icon. */
 export const FOLDER_ICONS: Record<string, string> = {
-${record(folderIcon)}
+${record(folderIcons)}
 };
 
 /** Lowercased folder name → icon, for an expanded folder. */
 export const FOLDER_OPEN_ICONS: Record<string, string> = {
-${record(folderOpenIcon)}
+${record(folderOpenIcons)}
 };
 
 export const DEFAULT_FILE_ICON = ${JSON.stringify(DEFAULT_FILE)};
 export const DEFAULT_FOLDER_ICON = ${JSON.stringify(DEFAULT_FOLDER)};
 export const DEFAULT_FOLDER_OPEN_ICON = ${JSON.stringify(DEFAULT_FOLDER_OPEN)};
+
+/** The longest suffix any entry of {@link EXTENSION_ICONS} is, in dot-segments. */
+export const MAX_EXTENSION_SEGMENTS = ${Math.max(
+  ...Object.keys(extensionIcons).map((k) => k.split(".").length),
+  ...Object.values(frameworks).flatMap((f) => Object.keys(f.extensions).map((k) => k.split(".").length)),
+)};
 
 /** Every icon this module can name, for the test that pairs the two files. */
 export const ICON_NAMES: readonly string[] = ${JSON.stringify(names)};
@@ -400,9 +635,16 @@ const bodyBytes = [...used.values()].reduce(
   0,
 );
 console.log(
-  `file icons  ${used.size} glyphs (${lightVariants} with a light-theme drawing)  ` +
-    `${Object.keys(extIcon).length} extensions  ` +
-    `${Object.keys(nameIcon).length} filenames  ${Object.keys(folderIcon).length} folders`,
+  `file icons  vscode-icons ${MANIFEST_VERSION}  ${used.size} glyphs ` +
+    `(${lightVariants} with a light-theme drawing)`,
+);
+console.log(
+  `            ${Object.keys(extensionIcons).length} extensions  ` +
+    `${Object.keys(filenameIcons).length} filenames  ` +
+    `${Object.keys(folderIcons).length} folders  ` +
+    Object.entries(frameworks)
+      .map(([k, o]) => `${Object.keys(o.extensions).length + Object.keys(o.names).length} ${k}`)
+      .join("  "),
 );
 console.log(
   `            ${(Buffer.byteLength(ts) / 1024).toFixed(1)} KiB of mapping (JS)  ` +

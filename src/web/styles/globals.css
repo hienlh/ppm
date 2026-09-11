@@ -24,6 +24,13 @@
   --color-text: var(--text);
   --color-text-2: var(--text-2);
   --color-text-3: var(--text-3);
+  /* A de-emphasised name (the explorer's gitignored rows). Halfway between
+     text-2 and text-3 as a *colour*, never an opacity: a fade toward the
+     background is not symmetric between light and dark — at 40% it put a
+     gitignored file name at 1.72:1 against the panel on the light themes and
+     2.07:1 on the dark ones. This mix measures 3.59–5.21:1 across all six.
+     See tests/unit/web/explorer-ignored-contrast.test.ts. */
+  --color-text-dim: color-mix(in srgb, var(--text-2) 50%, var(--text-3));
   --color-accent-2: var(--accent-2);
   --color-accent-wash: var(--accent-wash);
   --color-accent-wash-border: var(--accent-wash-border);
