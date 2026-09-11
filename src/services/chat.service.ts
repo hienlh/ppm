@@ -108,6 +108,15 @@ class ChatService {
     if (!provider) return [];
     return await provider.getMessages?.(sessionId) ?? [];
   }
+
+  /** Whole transcript rather than the resumable conversation, for the search index.
+   *  Falls back to the conversation for a provider that draws no distinction. */
+  async getFullMessages(providerId: string, sessionId: string): Promise<ChatMessage[]> {
+    const provider = providerRegistry.get(providerId);
+    if (!provider) return [];
+    if (provider.getFullMessages) return await provider.getFullMessages(sessionId);
+    return await provider.getMessages?.(sessionId) ?? [];
+  }
 }
 
 export const chatService = new ChatService();

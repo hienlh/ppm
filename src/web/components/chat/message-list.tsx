@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect, memo, lazy, Suspense } from "react";
+import { userMessageOrdinals } from "@/lib/message-ordinals";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
@@ -105,6 +106,40 @@ interface MessageListProps {
   isCompactExpanded?: (compactMessageId: string) => boolean;
 }
 
+/**
+ * Placeholder for a compaction segment being fetched.
+ *
+ * It sits in the flow rather than floating, so scrolling up lands on something
+ * the size of the turns that are coming instead of a blank gap that then jerks
+ * downward. The layout effect that preserves distance-from-bottom is what keeps
+ * inserting it from moving the messages already on screen.
+ */
+function PreCompactSkeleton() {
+  return (
+    <div
+      className="px-4 pt-4 space-y-4"
+      aria-busy="true"
+      aria-label="Loading previous conversation"
+    >
+      <div className="flex items-center justify-center gap-1.5 text-xs text-text-secondary">
+        <Loader2 className="size-3 animate-spin" />
+        Loading previous conversation…
+      </div>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className={i % 2 === 0 ? "flex justify-end" : "flex justify-start"}>
+          <div
+            className={`animate-pulse space-y-2 rounded-lg bg-surface p-3 ${i % 2 === 0 ? "w-1/2" : "w-3/4"}`}
+          >
+            <div className="h-3 rounded bg-border" />
+            <div className="h-3 w-5/6 rounded bg-border" />
+            {i % 2 === 1 && <div className="h-3 w-2/3 rounded bg-border" />}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function MessageList({
   messages,
   messagesLoading,
@@ -149,6 +184,10 @@ export function MessageList({
     if (msg.role === "user") return hasContent;
     return hasContent || hasEvents;
   }), [messages]);
+
+  // Counted once for the whole list — see `userMessageOrdinals` for why the
+  // obvious per-row form is the thing that makes a long transcript unusable.
+  const userOrdinals = useMemo(() => userMessageOrdinals(filtered), [filtered]);
 
   // The approval card + "thinking…" indicator ride at the end, inside the scrolled
   // content so stick-to-bottom keeps them in view.
@@ -200,14 +239,26 @@ export function MessageList({
   // distance-from-bottom before the prepend, restore scrollTop after so the content
   // being read doesn't jump. Only fires for prepends — streaming appends leave the
   // ref null, so this is a no-op during normal streaming.
+  // Declared above the scroll-preserving layout effect below, which reads
+  // `autoLoadingCompact` to know whether the skeleton is still occupying space.
+  const [autoLoadingCompact, setAutoLoadingCompact] = useState(false);
+  // A failed expand used to be invisible: the fetch rejected, nothing caught it,
+  // and scrolling to the top of a long chat simply did nothing forever. Holding
+  // the reason both shows it and stops the loader retrying on every intersection.
+  const [compactLoadError, setCompactLoadError] = useState<string | null>(null);
+
   const preserveFromBottomRef = useRef<number | null>(null);
   useLayoutEffect(() => {
     const el = scrollEl;
     if (el && preserveFromBottomRef.current != null) {
       el.scrollTop = el.scrollHeight - preserveFromBottomRef.current;
-      preserveFromBottomRef.current = null;
+      // Held, not cleared, while the skeleton is up: it occupies real space at
+      // the top, so it moves `scrollHeight` without `filtered.length` changing.
+      // Clearing here would leave the view jumped by the skeleton's height for
+      // as long as the fetch takes, then jumped back when it resolved.
+      if (!autoLoadingCompact) preserveFromBottomRef.current = null;
     }
-  }, [filtered.length, scrollEl]);
+  }, [filtered.length, scrollEl, autoLoadingCompact]);
 
   // Jump to the newest message when the conversation/session swaps (initial mount is
   // handled by `initial: "instant"`). Keyed on sessionId — NOT on filtered[0].id,
@@ -296,7 +347,6 @@ export function MessageList({
   const hasMore = !!topUnexpandedCompact;
 
   // Fetch pre-compact history from the server (prepends older messages).
-  const [autoLoadingCompact, setAutoLoadingCompact] = useState(false);
   const loadMore = useCallback(async () => {
     if (!topUnexpandedCompact || !onExpandCompact || autoLoadingCompact) return;
     // Capture distance-from-bottom so the post-prepend layout effect can hold the
@@ -304,21 +354,36 @@ export function MessageList({
     const el = scrollEl;
     preserveFromBottomRef.current = el ? el.scrollHeight - el.scrollTop : null;
     setAutoLoadingCompact(true);
+    setCompactLoadError(null);
     try {
       await onExpandCompact(topUnexpandedCompact.id, topUnexpandedCompact.jsonlPath);
+    } catch (e) {
+      setCompactLoadError(e instanceof Error ? e.message : "Could not load previous conversation");
     } finally {
       setAutoLoadingCompact(false);
     }
   }, [topUnexpandedCompact, onExpandCompact, autoLoadingCompact, scrollEl]);
 
-  // Auto-load older history when the user scrolls near the top.
+  // Lazy-load older history when a sentinel at the top of the transcript comes
+  // into range. This replaces a scroll listener that re-ran its check on every
+  // scroll event and — the part that actually failed — could not fire at all
+  // when the loaded history was shorter than the viewport, because there was
+  // nothing to scroll. `loadMore` guards on `autoLoadingCompact`, so repeat
+  // intersections while a fetch is in flight are free.
+  const topSentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = scrollEl;
-    if (!el || !hasMore) return;
-    const onScroll = () => { if (el.scrollTop < 200 && !autoLoadingCompact) loadMore(); };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [scrollEl, hasMore, autoLoadingCompact, loadMore]);
+    const sentinel = topSentinelRef.current;
+    if (!el || !sentinel || !hasMore || compactLoadError) return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) loadMore(); },
+      // Start the fetch while the top is still a screenful away, so the next
+      // segment is usually there before the user reaches the end of this one.
+      { root: el, rootMargin: "400px 0px 0px 0px" },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [scrollEl, hasMore, compactLoadError, loadMore]);
 
   if (messagesLoading && (!keepStaleWhileLoading || messages.length === 0)) {
     return (
@@ -353,10 +418,17 @@ export function MessageList({
           </button>
         </div>
       )}
-      {autoLoadingCompact && (
-        <div className="absolute top-2 left-0 right-0 z-10 flex items-center justify-center gap-1.5 text-xs text-text-secondary pointer-events-none">
-          <Loader2 className="size-3 animate-spin" />
-          Loading previous conversation...
+      {!autoLoadingCompact && compactLoadError && (
+        <div className="absolute top-2 left-0 right-0 z-10 flex justify-center">
+          <button
+            type="button"
+            onClick={() => { setCompactLoadError(null); loadMore(); }}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-xs text-text-primary hover:bg-surface-hover min-h-[44px] md:min-h-0"
+          >
+            <AlertCircle className="size-3.5 text-destructive" />
+            <span>Could not load previous conversation: {compactLoadError}</span>
+            <span className="underline">Retry</span>
+          </button>
         </div>
       )}
       <div
@@ -366,12 +438,12 @@ export function MessageList({
         style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
       >
         <div ref={contentRef as unknown as React.Ref<HTMLDivElement>} className="w-full">
+          {hasMore && <div ref={topSentinelRef} aria-hidden className="h-px" />}
+          {autoLoadingCompact && <PreCompactSkeleton />}
           {filtered.map((msg, globalIdx) => {
             const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
             // User-message ordinal (1-based) — stable version-group anchor across forks.
-            const versionOrdinal = msg.role === "user"
-              ? filtered.slice(0, globalIdx + 1).reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0)
-              : 0;
+            const versionOrdinal = userOrdinals[globalIdx] ?? 0;
             // Resolved here rather than deeper down so the ordinal→group lookup
             // happens once per message instead of being threaded through bubbles.
             const versionGroup = versionOrdinal ? versionMap?.[versionOrdinal] : undefined;
