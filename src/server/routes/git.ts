@@ -1,12 +1,58 @@
 import { Hono } from "hono";
+import { resolve, sep } from "node:path";
 import { gitService } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
 import { gitBlameService } from "../../services/git-blame/git-blame.service.ts";
+import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const gitRoutes = new Hono<Env>();
+
+/**
+ * `?repo=` scopes every git route below to one repository inside the project.
+ *
+ * A workspace folder is often a container whose *children* are the
+ * repositories, so the project path and the git root are not the same
+ * directory. Rather than teach each of the twenty-odd handlers, the parameter
+ * is resolved once here and `projectPath` is replaced — every handler already
+ * reads that, and `git.service` already takes the directory to run in.
+ *
+ * It is validated, and a bad value is a 400 rather than a fallback to the
+ * project root. Falling back would run the command one directory up and answer
+ * with *a* history — the wrong one — which is indistinguishable from a working
+ * feature until someone acts on it.
+ */
+gitRoutes.use("*", async (c, next) => {
+  const repo = c.req.query("repo");
+  if (repo) {
+    const root = resolve(c.get("projectPath"));
+    const target = resolve(repo);
+    if (target !== root && !target.startsWith(root + sep)) {
+      return c.json(err("repo is outside the project"), 400);
+    }
+    if (!isGitRepo(target)) {
+      return c.json(err("repo is not a git repository"), 400);
+    }
+    c.set("projectPath", target);
+  }
+  await next();
+});
+
+/**
+ * GET /git/repos — the repositories under this project.
+ *
+ * Answers for a project whose root is not a repository, which is the case the
+ * git surfaces used to report as an error.
+ */
+gitRoutes.get("/repos", (c) => {
+  try {
+    return c.json(ok(discoverGitRepos(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
 
 /** GET /git/status */
 gitRoutes.get("/status", async (c) => {
