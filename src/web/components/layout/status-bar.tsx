@@ -6,6 +6,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ResourceStatusBar } from "@/components/system/resource-status-bar";
+import { ProblemsStatus } from "@/components/problems/problems-status";
 import { ThemePicker } from "@/components/settings/theme-picker";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { WakeLockStatusBarItem } from "@/components/layout/wake-lock-indicator";
@@ -30,6 +31,8 @@ export const StatusBar = memo(function StatusBar() {
       <div className="flex items-center gap-3 min-w-0">
         {/* Git: branch · ahead/behind · synced (design status bar). */}
         <GitStatus />
+        {/* Errors/warnings across every open file — VS Code's leftmost item. */}
+        <ProblemsStatus />
         {left.map((item) => (
           <StatusBarEntry key={item.id} item={item} />
         ))}

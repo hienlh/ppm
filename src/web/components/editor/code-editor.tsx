@@ -9,6 +9,11 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
+import { disableBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
+import { useIsMobile, isMobileDevice } from "@/hooks/use-is-mobile";
+import type { EditorLspState } from "./editor-language-service";
+import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
+import { LspStatus } from "./lsp-status";
 import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal, ShieldCheck, ShieldOff } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
@@ -28,6 +33,13 @@ import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
+);
+// Only mounted while the language-server setting is on, which is what keeps
+// the LSP client, the Monaco providers and the conversions out of the chunk
+// that opening a file pulls in. Static-importing anything from that module —
+// even a constant — would put it back.
+const EditorLanguageService = lazy(() =>
+  import("./editor-language-service").then((m) => ({ default: m.EditorLanguageService }))
 );
 const CsvPreview = lazy(() => import("./csv-preview").then((m) => ({ default: m.CsvPreview })));
 const ImagePreview = lazy(() => import("./image-preview").then((m) => ({ default: m.ImagePreview })));
@@ -81,9 +93,25 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     monaco: typeof MonacoType;
   } | null>(null);
   const { tabs, updateTab } = useTabStore(useShallow((s) => ({ tabs: s.tabs, updateTab: s.updateTab })));
-  const { wordWrap, toggleWordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap })));
+  const { wordWrap, toggleWordWrap, mobileWordWrap, toggleMobileWordWrap } = useSettingsStore(
+    useShallow((s) => ({
+      wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap,
+      mobileWordWrap: s.mobileWordWrap, toggleMobileWordWrap: s.toggleMobileWordWrap,
+    })),
+  );
   const inlineBlame = useSettingsStore((s) => s.inlineBlame);
   const toggleInlineBlame = useSettingsStore((s) => s.toggleInlineBlame);
+  const lspEnabled = useSettingsStore((s) => s.lspEnabled);
+  const setLspEnabled = useSettingsStore((s) => s.setLspEnabled);
+  // The viewport breakpoint, not the `isMobile` further down: that one is
+  // `ontouchstart`, which is also true of a touch-screen laptop with every
+  // reason to run a language server and enough width to read unwrapped code.
+  const isPhone = useIsMobile();
+  // A phone's wrap state is its own pref. The toggle for `wordWrap` lives in
+  // the desktop-only breadcrumb bar, so a phone had no way to reach it and
+  // defaulted to off — the one shape of this setting a narrow screen cannot use.
+  const wrapOn = isPhone ? mobileWordWrap : wordWrap;
+  const toggleWrap = isPhone ? toggleMobileWordWrap : toggleWordWrap;
   const monacoTheme = useMonacoTheme();
 
   const isUntitled = metadata?.isUntitled === true;
@@ -379,7 +407,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // GitLens-style annotation on the cursor's line. Off unless the pref is on,
   // and never for an untitled buffer or inline (read-only preview) content —
   // neither has a path git could blame.
-  const canBlame = !isUntitled && inlineContent == null && !!filePath && !!projectName;
+  // Never on a phone: it is a `git blame` for every file opened and a
+  // `git show` for every hover, on the device least able to pay for either.
+  const canBlame = !isUntitled && inlineContent == null && !!filePath && !!projectName && !isPhone;
   const blame = useInlineBlame({
     editor: mounted?.editor ?? null,
     monaco: mounted?.monaco ?? null,
@@ -387,6 +417,20 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     filePath: canBlame ? filePath : undefined,
     enabled: inlineBlame && canBlame,
   });
+
+  // Real language intelligence, from a real language server on the host.
+  //
+  // Servable is about the buffer: an untitled or inline one has no path, and an
+  // external file (outside any project) has no project whose node_modules,
+  // tsconfig or go.mod would tell a server what it is looking at, so it gets
+  // nothing rather than a server rooted somewhere arbitrary.
+  const lspServable = !isUntitled && !isExternalFile && inlineContent == null && !!filePath && !!projectName;
+  // Off until asked, and never on a phone. A server is a real process on the
+  // host — one `typescript-language-server` was 854 MB resident — so it starts
+  // because someone wanted it, not because a file was opened.
+  const lspOn = lspEnabled && lspServable && !isPhone;
+  const [lsp, setLsp] = useState<EditorLspState>({ status: null, diagnostics: [] });
+  const handleLspState = useCallback((next: EditorLspState) => setLsp(next), []);
 
   const saveFile = useCallback(
     async (text: string) => {
@@ -402,9 +446,16 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         // The blame line table is keyed by line number, so an edit invalidates
         // it; a save is the point where a fresh one can be had.
         blame.refresh();
+        // Servers that only re-analyse on save (gopls by default, several
+        // linters) would otherwise keep reporting the previous contents.
+        // Dynamically, so the save path does not statically import the LSP
+        // client; by the time this runs the chunk is already loaded.
+        if (lspOn && projectName && filePath) {
+          void import("@/hooks/use-lsp").then((m) => m.notifyLspSave(projectName, filePath, text));
+        }
       } catch { /* Silent — unsaved indicator persists */ }
     },
-    [filePath, projectName, isExternalFile, blame.refresh], // eslint-disable-line react-hooks/exhaustive-deps
+    [filePath, projectName, isExternalFile, lspOn, blame.refresh], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   function handleChange(value: string | undefined) {
@@ -489,18 +540,24 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     }
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
-      () => useSettingsStore.getState().toggleWordWrap(),
+      () => {
+        // Read the breakpoint at press time: which of the two prefs this editor
+        // is showing depends on the viewport, and the binding outlives a resize.
+        const settings = useSettingsStore.getState();
+        if (isMobileDevice()) settings.toggleMobileWordWrap();
+        else settings.toggleWordWrap();
+      },
     );
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
       () => useSettingsStore.getState().toggleInlineBlame(),
     );
-    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true, noSyntaxValidation: true, noSuggestionDiagnostics: true,
-    });
-    monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true, noSyntaxValidation: true, noSuggestionDiagnostics: true,
-    });
+    // Monaco's own TypeScript worker is not a fallback beside a real server —
+    // it is a slower, single-file second answer. See the module for why.
+    disableBuiltinTypeScript(
+      monaco.languages.typescript.typescriptDefaults,
+      monaco.languages.typescript.javascriptDefaults,
+    );
     // Register SQL completion if schema available
     if (sqlSchemaInfo) {
       completionDisposable.current?.dispose();
@@ -695,6 +752,18 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       className="flex flex-col h-full w-full overflow-hidden"
       style={mobileHeight ? { height: `${mobileHeight}px`, maxHeight: `${mobileHeight}px` } : undefined}
     >
+      {/* Renders nothing — it is the language server, mounted only when asked. */}
+      {lspOn && mounted && filePath && projectName && (
+        <Suspense fallback={null}>
+          <EditorLanguageService
+            editor={mounted.editor}
+            monaco={mounted.monaco}
+            projectName={projectName}
+            filePath={filePath}
+            onState={handleLspState}
+          />
+        </Suspense>
+      )}
       {/* Inline content toolbar (cell viewer mode) */}
       {inlineContent != null && canBeautifyInline && (
         <div className="flex items-center h-7 border-b border-border bg-background shrink-0 px-2 gap-2">
@@ -713,6 +782,14 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             tabId={tabId}
             className="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none px-2 gap-0.5"
           />
+          {lspServable && (
+            <LspStatus
+              enabled={lspEnabled}
+              onToggle={setLspEnabled}
+              status={lsp.status}
+              diagnostics={lsp.diagnostics}
+            />
+          )}
           <EditorLanguagePicker value={effectiveLanguage} onChange={handleLanguageChange} />
           {sqlPickerBar}
           <EditorToolbar
@@ -721,8 +798,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             onMdModeChange={setMdMode}
             csvMode={csvMode}
             onCsvModeChange={setCsvMode}
-            wordWrap={wordWrap}
-            onToggleWordWrap={toggleWordWrap}
+            wordWrap={wrapOn}
+            onToggleWordWrap={toggleWrap}
             inlineBlame={inlineBlame}
             onToggleInlineBlame={canBlame ? toggleInlineBlame : undefined}
             blameStale={blame.stale}
@@ -749,7 +826,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       {/* Content area */}
       {isCsv && csvMode === "table" ? (
         <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>}>
-          <CsvPreview content={content ?? ""} onContentChange={handleChange} wordWrap={wordWrap} />
+          <CsvPreview content={content ?? ""} onContentChange={handleChange} wordWrap={wrapOn} />
         </Suspense>
       ) : isMarkdown && mdMode === "preview" ? (
         <MarkdownPreview content={content ?? ""} />
@@ -765,8 +842,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             theme={monacoTheme}
             options={{
               fontSize: 13,
-              fontFamily: "Menlo, Monaco, Consolas, monospace",
-              wordWrap: wordWrap ? "on" : "off",
+              fontFamily: EDITOR_FONT_FAMILY,
+              wordWrap: wrapOn ? "on" : "off",
               minimap: { enabled: false },
               scrollBeyondLastLine: false,
               automaticLayout: true,
@@ -774,6 +851,26 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
               folding: true,
               bracketPairColorization: { enabled: true },
               readOnly: inlineContent != null,
+
+              // VS Code's defaults for the things a language server drives.
+              // Monaco ships several of these off, which makes real
+              // intelligence look absent even once a server is answering.
+              quickSuggestions: { other: true, comments: false, strings: false },
+              suggestOnTriggerCharacters: true,
+              acceptSuggestionOnEnter: "on",
+              suggestSelection: "first",
+              parameterHints: { enabled: true },
+              inlayHints: { enabled: "on" },
+              // Standalone Monaco hardcodes its themes' `semanticHighlighting`
+              // to false and the default here follows the theme, so this is the
+              // only switch that turns server token colouring on at all.
+              "semanticHighlighting.enabled": true,
+              // Sticky scroll costs a row of vertical space, which is free on a
+              // desktop and expensive on a phone.
+              stickyScroll: { enabled: !isMobile },
+              // The peek and references widgets are how a cross-file result is
+              // read; the default height shows barely two lines.
+              peekWidgetDefaultFocus: "editor",
             }}
             loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
           />
@@ -791,7 +888,14 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       )}
 
       {/* Mobile toolbar — bottom, like terminal */}
-      {isMobile && <EditorMobileToolbar editorRef={editorRef} readOnly={inlineContent != null} />}
+      {isMobile && (
+        <EditorMobileToolbar
+          editorRef={editorRef}
+          readOnly={inlineContent != null}
+          wrapOn={wrapOn}
+          onToggleWrap={toggleWrap}
+        />
+      )}
 
       {/* Save As dialog for untitled tabs */}
       {showSaveAs && (

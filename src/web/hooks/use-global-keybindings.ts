@@ -225,6 +225,15 @@ export function useGlobalKeybindings() {
         return;
       }
 
+      // Problems, in the dock — VS Code's Ctrl+Shift+M, and its placement.
+      if (match(e, "open-problems")) {
+        e.preventDefault();
+        usePanelStore.getState().openInDock({
+          type: "problems", title: "Problems", projectId: null, closable: true,
+        });
+        return;
+      }
+
       // Switch project 1-9
       for (let i = 1; i <= 9; i++) {
         if (match(e, `switch-project-${i}`)) {

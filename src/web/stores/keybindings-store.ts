@@ -37,6 +37,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
   { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
+  { id: "open-problems", label: "Problems", category: "tabs", defaultKey: "Mod+Shift+M", note: "Errors and warnings across the open files, in the panel — VS Code's shortcut" },
   { id: "voice-input", label: "Voice Input", category: "general", defaultKey: "Mod+Shift+V", note: "Toggle speech-to-text in chat" },
   { id: "chat-nav-prev", label: "Previous Chat Message", category: "general", defaultKey: "Alt+ArrowUp", note: "Jump to your previous message in the visible chat transcript" },
   { id: "chat-nav-next", label: "Next Chat Message", category: "general", defaultKey: "Alt+ArrowDown", note: "Jump to your next message in the visible chat transcript" },
