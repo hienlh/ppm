@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.19.4] - 2026-09-11
+
+### Fixed
+- **Accounts sit side by side again instead of stacked** — the usage panel in chat and both Accounts sub-tabs scroll sideways, so several accounts can be compared without scrolling past the one above, and the fullscreen grid view is back.
+
 ## [0.19.3] - 2026-09-11
 
 ### Added
