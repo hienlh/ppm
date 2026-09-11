@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
+import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { draftService } from "../../services/draft.service.ts";
@@ -742,24 +743,25 @@ function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlD
 }
 
 /** GET /chat/sessions/:id/debug — session debug info (IDs, JSONL path) */
-chatRoutes.get("/sessions/:id/debug", (c) => {
+chatRoutes.get("/sessions/:id/debug", async (c) => {
   const sessionId = c.req.param("id");
   const { jsonlPath, jsonlDir, projectPath, exists } = resolveSessionJsonlPath(sessionId);
   // Transcript weight: file size + record count (1 JSONL line = 1 event record).
   // Line count skipped above 64MB so the debug button stays snappy on huge files.
+  //
+  // `countLines` rather than `readFileSync(path, "utf8")` plus a `charCodeAt`
+  // walk. Not for speed — both are 53 ms on a 35 MB transcript — but because
+  // the old one held the loop for every one of those milliseconds, and this one
+  // hands it back nine times. The yields inside it are explicit `setTimeout`s
+  // and have to be: awaiting the stream alone resolves as microtasks and blocks
+  // just as hard. See `file-lines.ts`.
   let jsonlSizeBytes: number | null = null;
   let jsonlLines: number | null = null;
   if (exists && jsonlPath) {
     try {
       const st = statSync(jsonlPath);
       jsonlSizeBytes = st.size;
-      if (st.size <= 64 * 1024 * 1024) {
-        const text = readFileSync(jsonlPath, "utf8");
-        let n = 0;
-        for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-        if (text.length > 0 && text.charCodeAt(text.length - 1) !== 10) n++;
-        jsonlLines = n;
-      }
+      if (st.size <= 64 * 1024 * 1024) jsonlLines = await countLines(jsonlPath);
     } catch { /* stat/read failure — omit weight fields */ }
   }
   // PPM session ID == SDK session ID (canonical — see claude-agent-sdk.ts:728).

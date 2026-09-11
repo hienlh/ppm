@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
+import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
+import {
+  clampCustomFps, clampCustomQualityPercent,
+} from "../../shared/remote-desktop-custom-quality";
+import {
+  clampCustomScale, parseViewStyle, type ViewStyle,
+} from "@/components/remote-desktop/remote-desktop-view-style";
 
 export type GitStatusViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
@@ -58,9 +65,60 @@ interface SettingsState {
   /** User ticked "don't show again" on the remote-desktop warning that precedes every open
    *  (`remote-desktop-warning-gate.tsx`); once true the viewer connects straight away. */
   remoteDesktopWarningDismissed: boolean;
+  /**
+   * Image quality rung to ask for on connect — RustDesk's three, or `"custom"`.
+   *
+   * It is a *ceiling*, not a pin: the session always adapts beneath it, so there is no `auto`
+   * arm to choose (`video_qos.rs`: "user set image quality => update to the maximum ratio").
+   *
+   * Device-local, for the same reason as `lspEnabled`: it answers "what can this link afford",
+   * and a desktop on a LAN must not choose "Good image quality" for a phone on mobile data.
+   * What comes back out of localStorage is untrusted the same way a rung off the wire is,
+   * hence `parseQualityChoice` below rather than a cast.
+   */
+  remoteDesktopQuality: QualityChoice;
+  /**
+   * How the remote screen is fitted into the viewer — RustDesk's three `ViewStyle`s.
+   *
+   * Device-local like the rung above, and for the same reason: `original` on a 3440×1440 host
+   * is a scrollable 1:1 view on a desktop and an unusable pinhole on a phone, so a choice made
+   * on one screen must not follow the user to the other.
+   */
+  remoteDesktopViewStyle: ViewStyle;
+  /** Zoom factor for `remoteDesktopViewStyle === "custom"` (RustDesk's 5%–1000%). */
+  remoteDesktopCustomScale: number;
+  /** Bitrate percentage for `remoteDesktopQuality === "custom"`. Not the ratio: 50 means
+   *  ratio 1.0 — see `remote-desktop-custom-quality.ts`. */
+  remoteDesktopCustomQualityPercent: number;
+  /** Frame rate for the custom rung (RustDesk's 5–120). */
+  remoteDesktopCustomFps: number;
+  /** RustDesk's "More" checkbox: raises the bitrate ceiling from 100% to 2000%. */
+  remoteDesktopCustomQualityMore: boolean;
+  /** Draw the host pointer into the captured frames. The grabber takes this at startup, so
+   *  changing it respawns ffmpeg (~400ms of held picture) — see `restartCapture`. */
+  remoteDesktopShowCursor: boolean;
+  /** Two-way clipboard sync. Off means Ctrl+V is forwarded to the host as a plain keystroke,
+   *  so the host pastes its *own* clipboard and nothing crosses the connection. */
+  remoteDesktopClipboardSync: boolean;
+  /**
+   * H.264 encoder to ask the host for, or null to take the host's own first choice.
+   *
+   * Device-local like the rest, which is also why the *server* re-checks it: this pref follows
+   * the browser, not the host, so the same phone reaching a second machine arrives asking for
+   * the first machine's GPU encoder.
+   */
+  remoteDesktopCodec: string | null;
   deviceName: string | null;
   version: string | null;
   tunnelActive: boolean;
+  setRemoteDesktopQuality: (choice: QualityChoice) => void;
+  setRemoteDesktopViewStyle: (style: ViewStyle) => void;
+  setRemoteDesktopCustomScale: (scale: number) => void;
+  setRemoteDesktopCustomQuality: (percent: number, fps: number) => void;
+  setRemoteDesktopCustomQualityMore: (more: boolean) => void;
+  setRemoteDesktopShowCursor: (show: boolean) => void;
+  setRemoteDesktopClipboardSync: (enabled: boolean) => void;
+  setRemoteDesktopCodec: (encoder: string | null) => void;
   setThemeStyle: (style: PpmThemeStyle) => void;
   setThemeMode: (mode: PpmThemeMode) => void;
   setCustomTheme: (id: string) => void;
@@ -115,6 +173,15 @@ interface PersistedSettings {
   explorerSkin?: ExplorerSkinPref;
   remoteDesktopStatsVisible?: boolean;
   remoteDesktopWarningDismissed?: boolean;
+  remoteDesktopQuality?: QualityChoice;
+  remoteDesktopViewStyle?: ViewStyle;
+  remoteDesktopCustomScale?: number;
+  remoteDesktopCustomQualityPercent?: number;
+  remoteDesktopCustomFps?: number;
+  remoteDesktopCustomQualityMore?: boolean;
+  remoteDesktopShowCursor?: boolean;
+  remoteDesktopClipboardSync?: boolean;
+  remoteDesktopCodec?: string | null;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -304,6 +371,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   inlineBlame: _initial.inlineBlame ?? false,
   wordWrap: _initial.wordWrap ?? false,
+  remoteDesktopQuality: parseQualityChoice(_initial.remoteDesktopQuality),
+  remoteDesktopViewStyle: parseViewStyle(_initial.remoteDesktopViewStyle),
+  remoteDesktopCustomScale: clampCustomScale(_initial.remoteDesktopCustomScale),
+  // `More` is read first: it decides the ceiling the percentage is clamped to, so clamping in
+  // the other order would silently cut a stored 500% back to 100% on every reload.
+  remoteDesktopCustomQualityMore: _initial.remoteDesktopCustomQualityMore ?? false,
+  remoteDesktopCustomQualityPercent: clampCustomQualityPercent(
+    _initial.remoteDesktopCustomQualityPercent, _initial.remoteDesktopCustomQualityMore ?? false,
+  ),
+  remoteDesktopCustomFps: clampCustomFps(_initial.remoteDesktopCustomFps),
+  remoteDesktopShowCursor: _initial.remoteDesktopShowCursor ?? true,
+  remoteDesktopClipboardSync: _initial.remoteDesktopClipboardSync ?? true,
+  remoteDesktopCodec: typeof _initial.remoteDesktopCodec === "string" ? _initial.remoteDesktopCodec : null,
   mobileWordWrap: _initial.mobileWordWrap ?? true,
   lspEnabled: _initial.lspEnabled ?? false,
   tabWrap: _initial.tabWrap ?? false,
@@ -438,6 +518,54 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setLspEnabled: (enabled) => {
     persistDevicePref({ lspEnabled: enabled });
     set({ lspEnabled: enabled });
+  },
+
+  setRemoteDesktopQuality: (choice) => {
+    persistDevicePref({ remoteDesktopQuality: choice });
+    set({ remoteDesktopQuality: choice });
+  },
+
+  setRemoteDesktopViewStyle: (style) => {
+    persistDevicePref({ remoteDesktopViewStyle: style });
+    set({ remoteDesktopViewStyle: style });
+  },
+
+  setRemoteDesktopCustomScale: (scale) => {
+    const next = clampCustomScale(scale);
+    persistDevicePref({ remoteDesktopCustomScale: next });
+    set({ remoteDesktopCustomScale: next });
+  },
+
+  setRemoteDesktopCustomQuality: (percent, fps) => {
+    const next = {
+      remoteDesktopCustomQualityPercent: clampCustomQualityPercent(percent, get().remoteDesktopCustomQualityMore),
+      remoteDesktopCustomFps: clampCustomFps(fps),
+    };
+    persistDevicePref(next);
+    set(next);
+  },
+
+  setRemoteDesktopCustomQualityMore: (more) => {
+    // Turning it off has to re-clamp: a 500% left over from when it was on is out of range.
+    const percent = clampCustomQualityPercent(get().remoteDesktopCustomQualityPercent, more);
+    const next = { remoteDesktopCustomQualityMore: more, remoteDesktopCustomQualityPercent: percent };
+    persistDevicePref(next);
+    set(next);
+  },
+
+  setRemoteDesktopShowCursor: (show) => {
+    persistDevicePref({ remoteDesktopShowCursor: show });
+    set({ remoteDesktopShowCursor: show });
+  },
+
+  setRemoteDesktopClipboardSync: (enabled) => {
+    persistDevicePref({ remoteDesktopClipboardSync: enabled });
+    set({ remoteDesktopClipboardSync: enabled });
+  },
+
+  setRemoteDesktopCodec: (encoder) => {
+    persistDevicePref({ remoteDesktopCodec: encoder });
+    set({ remoteDesktopCodec: encoder });
   },
 
   toggleTabWrap: () => {

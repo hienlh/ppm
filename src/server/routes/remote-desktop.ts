@@ -10,7 +10,7 @@
 import { Hono, type Context } from "hono";
 import { ok, err } from "../../types/api.ts";
 import { configService } from "../../services/config.service.ts";
-import { getFfmpegCapabilities } from "../../services/media-transcode/ffmpeg-capabilities.ts";
+import { getFfmpegCapabilities, workingEncoders } from "../../services/media-transcode/ffmpeg-capabilities.ts";
 import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-desktop-flag.ts";
 import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-desktop-nonce.ts";
 import { listDisplays } from "../../services/remote-desktop/remote-desktop-displays.ts";
@@ -51,9 +51,14 @@ function assertSessionAllowed(c: Context): Response | null {
 
 remoteDesktopRoutes.get("/capabilities", async (c) => {
   if (!isRemoteDesktopEnabled()) return c.json(err("remote desktop is disabled"), 404);
-  const [caps, readiness, displays] = await Promise.all([getFfmpegCapabilities(), remoteDesktopReadiness(), listDisplays()]);
+  const [caps, readiness, displays, encoders] = await Promise.all([
+    getFfmpegCapabilities(), remoteDesktopReadiness(), listDisplays(), workingEncoders(),
+  ]);
   return c.json(ok({
     displays,
+    // Every encoder that really encodes here, preference order, for the codec picker. The
+    // first is what a session uses unless the client names another.
+    encoders,
     // Flat booleans kept for existing clients/tests; `readiness` is the source of truth.
     ffmpegAvailable: !!caps.ffmpeg,
     videoAvailable: readiness.videoReady,

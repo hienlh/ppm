@@ -1,20 +1,22 @@
 /**
  * Single source of truth for the explorer's visible-row computation.
  * Flattens the lazy tree into ordered rows respecting expand state,
- * dir-first sorting, compact single-child folder chains, and inline
- * create/rename input rows. Consumed by the virtualized renderer,
- * keyboard navigation, and range selection.
+ * dir-first sorting, and inline create/rename input rows. Consumed by the
+ * virtualized renderer, keyboard navigation, and range selection.
+ *
+ * Every directory gets its own row. Single-child chains used to be joined into
+ * one `a/b/c` row (VS Code's compact folders) — but only *after* the child was
+ * expanded, because the join required both paths to be in `expandedPaths`. So
+ * the gesture that should have revealed a folder instead made the row you just
+ * clicked vanish into its parent, and depth stopped matching the hierarchy.
+ * Expanding is expanding: one row per directory, always.
  */
 import type { FileNode, InlineAction } from "@/stores/file-store";
 
 export interface NodeRow {
   kind: "node";
-  /** Original node (row identity, drag source, context menu target) */
+  /** Row identity, drag source, context menu target */
   node: FileNode;
-  /** Terminal node of a compacted single-child dir chain (equals node when not compacted) */
-  effectiveNode: FileNode;
-  /** Display label, e.g. "a/b/c" for compacted chains */
-  displayName: string;
   depth: number;
 }
 
@@ -22,35 +24,33 @@ export interface InputRow {
   kind: "input";
   inline: InlineAction;
   depth: number;
-  /** Directory the created entry lands in (effective path for compacted chains) */
+  /** Directory the created entry lands in */
   targetPath: string;
 }
 
 export type FlatRow = NodeRow | InputRow;
+
+/**
+ * A row's identity, independent of where it currently sits in the list.
+ *
+ * This is React's `key` *and* the virtualizer's `getItemKey`, and the two have
+ * to be the same string. The virtualizer caches the DOM node it positions under
+ * its own key, and it only learns of a node through the `measureElement` ref —
+ * which React does not call again when a row merely changes index. So with the
+ * default key (the index), expanding a folder left every row below it registered
+ * under the index it used to have: the inserted rows overwrote those entries and
+ * the shifted ones were positioned by nothing at all, landing on top of each
+ * other at their old offsets.
+ */
+export function rowKey(row: FlatRow): string {
+  return row.kind === "node" ? row.node.path : `input:${row.targetPath}:${row.inline.type}`;
+}
 
 function sortNodes(nodes: FileNode[]): FileNode[] {
   return [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
-}
-
-/** Follow expanded single-child dir chains; returns terminal node + joined label */
-function compactChain(node: FileNode, expandedPaths: Set<string>): { effective: FileNode; displayName: string } {
-  let effective = node;
-  let displayName = node.name;
-  if (node.type === "directory" && expandedPaths.has(node.path) && node.children) {
-    while (
-      effective.children &&
-      effective.children.length === 1 &&
-      effective.children[0]!.type === "directory" &&
-      expandedPaths.has(effective.children[0]!.path)
-    ) {
-      effective = effective.children[0]!;
-      displayName += `/${effective.name}`;
-    }
-  }
-  return { effective, displayName };
 }
 
 export function flattenVisibleTree(
@@ -69,24 +69,19 @@ export function flattenVisibleTree(
 
   function walk(nodes: FileNode[], depth: number) {
     for (const n of sortNodes(nodes)) {
-      const { effective, displayName } = compactChain(n, expandedPaths);
-
       if (renamePath != null && renamePath === n.path) {
         rows.push({ kind: "input", inline: inlineAction!, depth, targetPath: n.path });
       } else {
-        rows.push({ kind: "node", node: n, effectiveNode: effective, displayName, depth });
+        rows.push({ kind: "node", node: n, depth });
       }
 
-      const expanded = effective.type === "directory" && expandedPaths.has(effective.path);
+      const expanded = n.type === "directory" && expandedPaths.has(n.path);
       // Create input pinned under its parent dir, before children
-      if (
-        isCreate && expanded &&
-        (inlineAction!.parentPath === n.path || inlineAction!.parentPath === effective.path)
-      ) {
-        rows.push({ kind: "input", inline: inlineAction!, depth: depth + 1, targetPath: effective.path });
+      if (isCreate && expanded && inlineAction!.parentPath === n.path) {
+        rows.push({ kind: "input", inline: inlineAction!, depth: depth + 1, targetPath: n.path });
       }
-      if (expanded && effective.children) {
-        walk(effective.children, depth + 1);
+      if (expanded && n.children) {
+        walk(n.children, depth + 1);
       }
     }
   }
@@ -94,9 +89,9 @@ export function flattenVisibleTree(
   return rows;
 }
 
-/** Flat visible effective-node list (keyboard nav, range selection) */
+/** Flat visible node list (keyboard nav, range selection) */
 export function visibleNodesOf(tree: FileNode[], expandedPaths: Set<string>): FileNode[] {
   return flattenVisibleTree(tree, expandedPaths)
     .filter((r): r is NodeRow => r.kind === "node")
-    .map((r) => r.effectiveNode);
+    .map((r) => r.node);
 }

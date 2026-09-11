@@ -10,7 +10,9 @@ describe("remote-desktop-displays", () => {
   });
 
   it("platforms without a grabber list nothing", async () => {
-    expect(await listDisplays("linux")).toEqual([]);
+    expect(await listDisplays("linux", null)).toEqual([]);
+    // Wayland: the portal dialog picks the screen, so there is no list to offer.
+    expect(await listDisplays("linux", { kind: "wayland", display: "wayland-0", runtimeDir: "/run/user/1000" })).toEqual([]);
   });
 
   it("darwin (when running there): one entry per active display, exactly one primary, capture index = list position", async () => {

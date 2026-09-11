@@ -18,15 +18,22 @@ import {
   FILENAME_ICONS,
   FOLDER_ICONS,
   FOLDER_OPEN_ICONS,
+  FRAMEWORK_EXTENSION_ICONS,
+  FRAMEWORK_FILENAME_ICONS,
   ICON_NAMES,
+  MAX_EXTENSION_SEGMENTS,
 } from "../../../src/web/lib/file-icons.generated.ts";
-import { fileIconName, folderIconName } from "../../../src/web/lib/file-icons.tsx";
+// The pure half, deliberately importable without the component: `file-icons.tsx`
+// reaches `project-framework-store` and through it api-client and React.
+import { fileIconName, folderIconName } from "../../../src/web/lib/file-icon-name.ts";
 
 const css = readFileSync(
   resolve(import.meta.dir, "../../../src/web/styles/file-icons.generated.css"),
   "utf8",
 );
 const classes = new Set([...css.matchAll(/^\.vsi-([a-z0-9-]+) \{/gm)].map((m) => m[1]!));
+
+const FRAMEWORKS = ["nest", "angular"] as const;
 
 describe("the generated icon theme", () => {
   it("draws every icon the mapping can name", () => {
@@ -38,6 +45,10 @@ describe("the generated icon theme", () => {
       ...Object.values(FILENAME_ICONS),
       ...Object.values(FOLDER_ICONS),
       ...Object.values(FOLDER_OPEN_ICONS),
+      ...FRAMEWORKS.flatMap((f) => [
+        ...Object.values(FRAMEWORK_EXTENSION_ICONS[f]),
+        ...Object.values(FRAMEWORK_FILENAME_ICONS[f]),
+      ]),
     ]);
     expect([...named].filter((n) => !classes.has(n))).toEqual([]);
   });
@@ -52,12 +63,27 @@ describe("the generated icon theme", () => {
     // for. If one ever leaked out as `.vsi-file-type-light-json`, the mapping
     // would still point at the dark class and the extra artwork would be dead
     // weight — while every light theme kept the drawing meant for a dark one.
-    expect([...classes].filter((c) => c.startsWith("file-type-light-"))).toEqual([]);
+    expect([...classes].filter((c) => c.includes("-light-"))).toEqual([]);
     expect(css).toContain(":root.light .vsi-");
+  });
+
+  it("ships a light drawing for some glyphs and not for most", () => {
+    // The `??` chain that used to pick the light key returned the *dark* body
+    // for anything that did not match the first prefix, so all 1192 glyphs
+    // carried a "light variant" byte-identical to the dark one — an invisible
+    // doubling of the largest asset in the app.
+    const light = [...css.matchAll(/^:root\.light \.vsi-/gm)].length;
+    expect(light).toBeGreaterThan(50);
+    expect(light).toBeLessThan(classes.size / 2);
   });
 
   it("has no `currentColor` to inherit, which is why these are backgrounds", () => {
     expect(css).not.toContain("currentColor");
+  });
+
+  it("pairs every folder's closed glyph with an open one", () => {
+    // Half a pair means a folder silently changes picture on expand.
+    expect(Object.keys(FOLDER_ICONS).sort()).toEqual(Object.keys(FOLDER_OPEN_ICONS).sort());
   });
 });
 
@@ -72,7 +98,7 @@ describe("resolving a name to an icon", () => {
     expect(fileIconName("src\\web\\lib\\file-icons.tsx")).toBe(EXTENSION_ICONS.tsx!);
   });
 
-  it("matches a double extension before the single one", () => {
+  it("matches a longer suffix before a shorter one", () => {
     // `.spec.ts` and `.d.ts` have their own glyphs; falling through to `ts`
     // would lose the distinction the theme draws.
     expect(fileIconName("use-chat.test.ts")).not.toBe(EXTENSION_ICONS.ts);
@@ -80,15 +106,32 @@ describe("resolving a name to an icon", () => {
     expect(fileIconName("shared.d.ts")).toBe(EXTENSION_ICONS["d.ts"]!);
   });
 
+  it("matches a three-segment suffix, which the old mapping could not express", () => {
+    // `vscode-icons-js` held 41 multi-dot extensions and none longer than two
+    // segments; the real manifest has patterns like these, and matching only
+    // the last two would hand them the plain YAML glyph.
+    expect(MAX_EXTENSION_SEGMENTS).toBeGreaterThanOrEqual(3);
+    expect(fileIconName("service.buf.gen.yaml")).toBe(EXTENSION_ICONS["buf.gen.yaml"]!);
+    expect(fileIconName("service.buf.gen.yaml")).not.toBe(EXTENSION_ICONS.yaml);
+    // The suffix walk starts one segment in, exactly as VS Code's own
+    // `getIconClasses` does — so a file *named* `buf.gen.yaml` is a `.yaml`,
+    // because upstream registered that pattern as an extension and not as a
+    // filename. Faithful rather than improved: the point is to match VS Code.
+    expect(fileIconName("buf.gen.yaml")).toBe(EXTENSION_ICONS.yaml!);
+  });
+
   it("is case-insensitive on both tables", () => {
     expect(fileIconName("DOCKERFILE")).toBe(fileIconName("Dockerfile"));
     expect(fileIconName("README.MD")).toBe(fileIconName("readme.md"));
   });
 
-  it("reads a dotfile's name as its extension", () => {
-    // `.npmrc` is a name with no extension by the usual reading; the theme
-    // still has a glyph for it.
-    expect(fileIconName(".npmrc")).toBe(EXTENSION_ICONS.npmrc!);
+  it("reads a dotfile, whichever table upstream files it under", () => {
+    // `.npmrc` is a name with no extension by the usual reading. The manifest
+    // lists it as a whole filename and `.foorc`-shaped names arrive as a
+    // suffix, so both paths have to work.
+    expect(fileIconName(".npmrc")).toBe("file-type-npm");
+    expect(fileIconName(".prettierrc")).not.toBe(DEFAULT_FILE_ICON);
+    expect(fileIconName(".gitignore")).not.toBe(DEFAULT_FILE_ICON);
   });
 
   it("falls back to the neutral default rather than nothing", () => {
@@ -111,5 +154,97 @@ describe("resolving a name to an icon", () => {
     for (const name of ["app.tsx", "app.jsx", "main.go", "lib.rs", "bun.lock", "bunfig.toml"]) {
       expect(fileIconName(name)).not.toBe(DEFAULT_FILE_ICON);
     }
+  });
+
+  it("resolves the filenames the hand-written OVERRIDES table used to patch", () => {
+    // Every one of these drew the blank-page default while the mapping came
+    // from `vscode-icons-js`, and each needed a line of its own to fix.
+    for (const name of [
+      "Dockerfile",
+      ".env.local",
+      ".env.production",
+      "Rakefile",
+      "a.mts",
+      "Cargo.lock",
+      "Gemfile",
+      "gradlew",
+      "Jenkinsfile",
+      "a.graphql",
+      "a.kts",
+      "a.exs",
+    ]) {
+      expect(fileIconName(name)).not.toBe(DEFAULT_FILE_ICON);
+    }
+  });
+});
+
+describe("the framework presets", () => {
+  it("leaves a contested suffix on the plain language glyph with no framework", () => {
+    // What VS Code shows with neither preset on, and what PPM shows until the
+    // project's `package.json` has been read.
+    for (const name of ["app.service.ts", "app.module.ts", "app.controller.ts"]) {
+      expect(fileIconName(name)).toBe(EXTENSION_ICONS.ts!);
+    }
+  });
+
+  it("gives a NestJS project the Nest artwork", () => {
+    // The reported bug, exactly: these three were plain TypeScript in PPM and
+    // Nest glyphs in VS Code.
+    expect(fileIconName("app.controller.ts", "nest")).toBe("file-type-nest-controller-ts");
+    expect(fileIconName("app.module.ts", "nest")).toBe("file-type-nest-module-ts");
+    expect(fileIconName("app.service.ts", "nest")).toBe("file-type-nest-service-ts");
+  });
+
+  it("gives an Angular project the Angular artwork for the same suffixes", () => {
+    expect(fileIconName("app.module.ts", "angular")).toBe(FRAMEWORK_EXTENSION_ICONS.angular["module.ts"]!);
+    expect(fileIconName("app.service.ts", "angular")).not.toBe(
+      fileIconName("app.service.ts", "nest"),
+    );
+    // Angular-only, so the Nest overlay must not answer for it.
+    expect(fileIconName("hero.component.ts", "angular")).toBe(
+      FRAMEWORK_EXTENSION_ICONS.angular["component.ts"]!,
+    );
+    expect(fileIconName("hero.component.ts", "nest")).toBe(EXTENSION_ICONS.ts!);
+  });
+
+  it("contests exactly the six suffixes upstream's two presets both claim", () => {
+    const shared = Object.keys(FRAMEWORK_EXTENSION_ICONS.nest).filter(
+      (k) => k in FRAMEWORK_EXTENSION_ICONS.angular,
+    );
+    expect(shared.sort()).toEqual([
+      "controller.js",
+      "controller.ts",
+      "guard.js",
+      "guard.ts",
+      "interceptor.js",
+      "interceptor.ts",
+      "module.js",
+      "module.ts",
+      "pipe.js",
+      "pipe.ts",
+      "service.js",
+      "service.ts",
+    ]);
+    // …and disagree on every one of them, which is why they cannot both be on.
+    for (const key of shared) {
+      expect(FRAMEWORK_EXTENSION_ICONS.nest[key]).not.toBe(FRAMEWORK_EXTENSION_ICONS.angular[key]);
+    }
+  });
+
+  it("only ever overrides — an overlay entry that matches the base is dead weight", () => {
+    for (const framework of FRAMEWORKS) {
+      for (const [key, icon] of Object.entries(FRAMEWORK_EXTENSION_ICONS[framework])) {
+        expect(icon).not.toBe(EXTENSION_ICONS[key]);
+      }
+      for (const [key, icon] of Object.entries(FRAMEWORK_FILENAME_ICONS[framework])) {
+        expect(icon).not.toBe(FILENAME_ICONS[key]);
+      }
+    }
+  });
+
+  it("still prefers a more specific suffix over the overlay", () => {
+    // `app.controller.spec.ts` is a test first and a controller second — the
+    // suffix walk reaches `spec.ts` before it ever asks about `controller.ts`.
+    expect(fileIconName("app.controller.spec.ts", "nest")).toBe(EXTENSION_ICONS["spec.ts"]!);
   });
 });

@@ -9,14 +9,23 @@
 import { useRef, useState, useCallback } from "react";
 import { RotateCw, MonitorX } from "@/lib/icons";
 import { useVisualViewport } from "@/hooks/use-visual-viewport";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useRemoteDesktopConnection } from "./use-remote-desktop-connection";
 import { useRemoteDesktopTouch, type RemoteDesktopInputMode } from "./use-remote-desktop-touch";
 import { useRemoteDesktopVirtualKeyboard } from "./use-remote-desktop-virtual-keyboard";
 import { RemoteDesktopMobileToolbar } from "./remote-desktop-mobile-toolbar";
+import {
+  nextQualityChoice, shortQualityLabel, type QualityChoice,
+} from "../../../shared/remote-desktop-quality";
 import { RemoteDesktopMobileKeyBar } from "./remote-desktop-mobile-key-bar";
+import { RemoteDesktopMobileSettings } from "./remote-desktop-mobile-settings";
+import { useRemoteDesktopRecorder } from "./use-remote-desktop-recorder";
+import { saveCanvasScreenshot } from "./remote-desktop-recording";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { letterboxedContentRect } from "./remote-desktop-coords";
 import { useRemoteDesktopDisplayChoice } from "./use-remote-desktop-display-choice";
+import { RemoteDesktopClipboardNotice } from "./remote-desktop-clipboard-notice";
+import { useRemoteDesktopReadiness } from "./use-remote-desktop-readiness";
 
 export interface RemoteDesktopMobileViewProps {
   onClose: () => void;
@@ -27,12 +36,21 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [mode, setMode] = useState<RemoteDesktopInputMode>("mouse");
   const [keyBarOpen, setKeyBarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const display = useRemoteDesktopDisplayChoice();
 
   const {
     connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect,
-    getTotalBytes, getFrameCount,
+    getTotalBytes, getFrameCount, quality, setQuality, showCursor, setShowCursor,
+    audioOn, setAudioOn, getAudioTracks, privacyOn, privacyError, setPrivacyOn,
+    hostModeId, hostOriginalModeId, resolutionError, setHostMode,
+    pendingHostClipboard, clearHostClipboard, sendClipboard, requestHostClipboard,
   } = useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
+  const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
+  const toggleStats = useSettingsStore((s) => s.toggleRemoteDesktopStatsVisible);
+  const clipboardSync = useSettingsStore((s) => s.remoteDesktopClipboardSync);
+  const setClipboardSync = useSettingsStore((s) => s.setRemoteDesktopClipboardSync);
+  const qualityChoice = useSettingsStore((st) => st.remoteDesktopQuality);
   const streaming = connState === "streaming";
 
   const { transform, virtualCursor, resetZoom } = useRemoteDesktopTouch({
@@ -42,7 +60,24 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
     sendMessage,
     enabled: streaming,
   });
-  const { inputRef: keyboardInputRef, show: showKeyboard } = useRemoteDesktopVirtualKeyboard(sendMessage, streaming);
+  // A phone paste goes through the *host clipboard* rather than being typed character by
+  // character: typing is subject to the host's IME (a Telex host rewrites "World" as "ửold"),
+  // and a pasted URL or token is exactly the text that must survive verbatim. The server falls
+  // back to typing by itself when the host has no clipboard tool.
+  const [pasteAttempted, setPasteAttempted] = useState(false);
+  // Undefined with sync off, which is how the toggle is implemented on this surface: the
+  // virtual keyboard then lets the `paste` event's own default action stand (i.e. nothing
+  // leaves the device), and the key bar's Ctrl+V button still pastes the *host's* clipboard.
+  const onPasteText = useCallback((text: string) => {
+    setPasteAttempted(true);
+    sendClipboard(text, true);
+  }, [sendClipboard]);
+  // One fetch, no polling — read only to explain a paste that had to fall back to typing, and
+  // an audio toggle the host cannot honour.
+  const { caps } = useRemoteDesktopReadiness(false);
+  const recorder = useRemoteDesktopRecorder(canvasRef, getAudioTracks);
+  const { inputRef: keyboardInputRef, show: showKeyboard } =
+    useRemoteDesktopVirtualKeyboard(sendMessage, streaming, clipboardSync ? onPasteText : undefined);
 
   // Lifts the toolbar/key-bar row above the on-screen keyboard instead of the whole sheet
   // shrinking to make room for it (that was the previous, since-reverted behavior — see
@@ -169,14 +204,58 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
         style={keyboardInset > 0 ? { transform: `translateY(-${keyboardInset}px)` } : undefined}
         data-testid="remote-desktop-mobile-bottom-bar"
       >
-        {keyBarOpen && <RemoteDesktopMobileKeyBar sendMessage={sendMessage} />}
+        {/* In flow above the key bar so it rides the same `keyboardInset` lift and is never
+            hidden behind the toolbar. */}
+        <RemoteDesktopClipboardNotice
+          pendingText={pendingHostClipboard}
+          onDismiss={clearHostClipboard}
+          missingToolAction={pasteAttempted && caps && !caps.clipboard.available ? caps.clipboard.action : null}
+          onDismissMissingTool={() => setPasteAttempted(false)}
+          positionClassName="mx-2 mb-1 max-w-[calc(100%-1rem)]"
+        />
+        {settingsOpen && (
+          <RemoteDesktopMobileSettings
+            statsVisible={statsVisible}
+            onToggleStats={toggleStats}
+            showCursor={showCursor}
+            onSetShowCursor={setShowCursor}
+            clipboardEnabled={clipboardSync}
+            onSetClipboardEnabled={setClipboardSync}
+            audioOn={audioOn}
+            audioReason={caps && !caps.audio.available ? caps.audio.reason : null}
+            onSetAudioOn={setAudioOn}
+            privacyOn={privacyOn}
+            privacyReason={privacyError ?? (caps && !caps.privacy.available ? caps.privacy.reason : null)}
+            hostModes={caps?.resolutions?.modes ?? []}
+            hostModeId={hostModeId}
+            hostOriginalModeId={hostOriginalModeId}
+            onSetHostMode={setHostMode}
+            canResizeHost={caps?.inputReady ?? false}
+            resolutionError={resolutionError}
+            onSetPrivacyOn={setPrivacyOn}
+            recording={recorder.recording}
+            recordingSupported={recorder.supported}
+            onToggleRecording={recorder.toggle}
+            onScreenshot={() => void saveCanvasScreenshot(canvasRef.current)}
+          />
+        )}
+        {keyBarOpen && (
+          <RemoteDesktopMobileKeyBar
+            sendMessage={sendMessage}
+            onCopyCombo={clipboardSync ? requestHostClipboard : undefined}
+          />
+        )}
         <RemoteDesktopMobileToolbar
           displayLabel={display.displays.length > 1 ? display.current?.label ?? null : null}
           onNextDisplay={display.next}
+          qualityLabel={shortQualityLabel(qualityChoice)}
+          onNextQuality={() => setQuality(nextQualityChoice(qualityChoice))}
           mode={mode}
           onToggleMode={toggleMode}
           onOpenKeyboard={openKeyboard}
           onResetZoom={resetZoom}
+          settingsOpen={settingsOpen}
+          onToggleSettings={() => setSettingsOpen((open) => !open)}
           onClose={onClose}
         />
       </div>

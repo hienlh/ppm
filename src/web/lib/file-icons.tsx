@@ -14,63 +14,19 @@
  * nodes for React to reconcile on every expand. And a row is draggable — an
  * inner `<img>` supplies its own drag image and has to be talked out of it.
  *
- * Resolution order is the extension theme's own: whole filename, then double
- * extension (`.spec.ts`), then extension. `fileIconElement` is for the slots
- * that want a component rather than an element — the tab bar and the palette
- * both take an `icon: ElementType`.
+ * Name resolution is next door in `file-icon-name.ts`, which is pure and
+ * testable; this file is the drawing and the one subscription that decides
+ * whether `.service.ts` is a Nest provider or an Angular service.
+ * `fileIconElement` is for the slots that want a component rather than an
+ * element — the tab bar and the palette both take an `icon: ElementType`.
  */
 import type { FC } from "react";
 import { cn } from "@/lib/utils";
-import {
-  DEFAULT_FILE_ICON,
-  DEFAULT_FOLDER_ICON,
-  DEFAULT_FOLDER_OPEN_ICON,
-  EXTENSION_ICONS,
-  FILENAME_ICONS,
-  FOLDER_ICONS,
-  FOLDER_OPEN_ICONS,
-} from "./file-icons.generated";
+import { fileIconName, folderIconName } from "./file-icon-name";
+import { useIconFramework } from "@/stores/project-framework-store";
 import "@/styles/file-icons.generated.css";
 
-/** Strip a path down to its last segment, for either separator. */
-function baseName(path: string): string {
-  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return cut === -1 ? path : path.slice(cut + 1);
-}
-
-/** The icon name for a file, by name alone. */
-export function fileIconName(path: string): string {
-  const name = baseName(path).toLowerCase();
-  const byName = FILENAME_ICONS[name];
-  if (byName) return byName;
-
-  const parts = name.split(".");
-  if (parts.length > 2) {
-    // `.spec.ts`, `.d.ts`, `.config.js` — the theme gives these their own
-    // glyphs, and matching only the last extension would lose them.
-    const double = `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
-    const byDouble = EXTENSION_ICONS[double];
-    if (byDouble) return byDouble;
-  }
-  if (parts.length > 1) {
-    const byExt = EXTENSION_ICONS[parts[parts.length - 1]!];
-    if (byExt) return byExt;
-  }
-  // A dotfile with no extension (`.gitignore` handled above, `.foorc` not) has
-  // its name as its only extension.
-  if (name.startsWith(".")) {
-    const byDot = EXTENSION_ICONS[name.slice(1)];
-    if (byDot) return byDot;
-  }
-  return DEFAULT_FILE_ICON;
-}
-
-/** The icon name for a folder, open or closed. */
-export function folderIconName(path: string, open = false): string {
-  const name = baseName(path).toLowerCase();
-  const table = open ? FOLDER_OPEN_ICONS : FOLDER_ICONS;
-  return table[name] ?? (open ? DEFAULT_FOLDER_OPEN_ICON : DEFAULT_FOLDER_ICON);
-}
+export { fileIconName, folderIconName };
 
 export type FileIconKind = "file" | "directory";
 
@@ -94,9 +50,17 @@ export interface FileIconProps {
  * blockify it for free; the tab strip wraps its icon in a `<span class="relative">`
  * for the notification dot, and there the icon simply did not render — the one
  * place an inline `<svg>` would have worked without saying so.
+ *
+ * The framework overlay is read here rather than threaded through as a prop
+ * because there are eight call sites and two of them — the tab bar and the
+ * command palette — go through `fileIconElement`, which hands out a *component*
+ * and has no project in scope at all. The subscription costs nothing: the tree
+ * is virtualised, so only the ~40 visible rows are mounted, and `TreeRow`
+ * already reads four stores.
  */
 export function FileIcon({ name, kind = "file", open, className }: FileIconProps) {
-  const icon = kind === "directory" ? folderIconName(name, open) : fileIconName(name);
+  const framework = useIconFramework();
+  const icon = kind === "directory" ? folderIconName(name, open) : fileIconName(name, framework);
   return (
     <span
       aria-hidden="true"

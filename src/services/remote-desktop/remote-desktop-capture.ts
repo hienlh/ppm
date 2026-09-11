@@ -10,11 +10,14 @@
  * the in-flight `reader.read()` then resolves with `done: true` and the pump loop exits on
  * its own — it is never cancelled from outside.
  */
-import { getFfmpegCapabilities } from "../media-transcode/ffmpeg-capabilities.ts";
+import { encoderDeviceArgs, getFfmpegCapabilities } from "../media-transcode/ffmpeg-capabilities.ts";
 import { captureEncoderArgs } from "./remote-desktop-encoder-args.ts";
 import {
-  captureInputArgs, captureVideoFilter, captureInputForPlatform, type CaptureInput,
+  captureInputArgs, captureVideoFilter, captureInputForPlatform,
+  type CaptureInput, type CaptureRect,
 } from "./remote-desktop-capture-input.ts";
+import { detectLinuxSession, linuxSessionEnv } from "./remote-desktop-linux-session.ts";
+import { DEFAULT_FPS, type QualityPreset } from "./remote-desktop-quality.ts";
 import { AccessUnitAssembler, type AccessUnit } from "./access-unit-assembler.ts";
 import type { RemoteDisplay } from "./remote-desktop-displays.ts";
 
@@ -34,16 +37,26 @@ export function buildCaptureArgs(
   ffmpeg: string,
   encoder: string = "libx264",
   input: CaptureInput = { kind: "gdigrab" },
+  preset: QualityPreset = { fps: DEFAULT_FPS, bitrate: "1M" },
+  drawMouse = true,
 ): string[] {
   return [
     ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
     "-fflags", "nobuffer", "-flags", "low_delay",
-    ...captureInputArgs(input),
-    "-vf", captureVideoFilter(input),
-    ...captureEncoderArgs(encoder),
+    // VAAPI opens its DRM device during input setup, so this has to precede `-i`.
+    ...encoderDeviceArgs(encoder),
+    ...captureInputArgs(input, preset, drawMouse),
+    // Spread rather than a fixed pair: with no scale step a software encoder on x11grab/gdigrab
+    // has nothing left to filter, and ffmpeg rejects `-vf ""` outright rather than ignoring it.
+    ...withVideoFilter(captureVideoFilter(input, encoder, preset)),
+    ...captureEncoderArgs(encoder, preset),
     "-flush_packets", "1",
     "-f", "h264", "pipe:1",
   ];
+}
+
+function withVideoFilter(filter: string): string[] {
+  return filter ? ["-vf", filter] : [];
 }
 
 export interface CaptureHandle {
@@ -59,6 +72,15 @@ export interface CaptureHandle {
 export interface StartCaptureOptions {
   /** Which display to grab; null/undefined = the platform default (primary / whole desktop). */
   display?: RemoteDisplay | null;
+  /** Resolution/frame-rate/bitrate rung; defaults to the balanced preset. */
+  preset?: QualityPreset;
+  /** Draw the host pointer into the frames. Defaults to true, and can only be changed by
+   *  respawning: every grabber takes it as a startup flag. */
+  drawMouse?: boolean;
+  /** H.264 encoder to use, overriding the capability probe's first choice. Must be one that
+   *  `workingEncoders()` reported: an encoder this build/GPU cannot run makes ffmpeg exit at
+   *  once, which the session then reports as "Capture failed". */
+  encoder?: string;
   onAccessUnit: (au: AccessUnit) => void;
   /** Called once the process exits, whether via `stop()` or on its own (crash/killed
    *  externally) — lets the session registry clean up without polling. `reason` is a short
@@ -73,13 +95,24 @@ export interface StartCaptureOptions {
 export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHandle> {
   const caps = await getFfmpegCapabilities();
   if (!caps.ffmpeg) throw new CaptureUnavailableError();
-  const input = captureInputForPlatform(process.platform, opts.display?.captureIndex ?? 0);
+  // Linux only: the grabber is chosen by session type, and ffmpeg is handed the session's
+  // DISPLAY/XAUTHORITY because the PPM process very often has neither of its own.
+  const session = process.platform === "linux" ? detectLinuxSession() : null;
+  const d = opts.display;
+  const rect: CaptureRect | null =
+    d && d.width > 0 && d.height > 0 ? { x: d.x, y: d.y, width: d.width, height: d.height } : null;
+  const input = captureInputForPlatform(process.platform, d?.captureIndex ?? 0, { session, rect });
   if (!input) throw new CaptureUnavailableError(`no screen capture input on ${process.platform}`);
 
-  const proc = Bun.spawn(buildCaptureArgs(caps.ffmpeg, caps.encoder ?? "libx264", input), {
+  const argv = buildCaptureArgs(
+    caps.ffmpeg, opts.encoder ?? caps.encoder ?? "libx264", input, opts.preset,
+    opts.drawMouse ?? true,
+  );
+  const proc = Bun.spawn(argv, {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
+    ...(session ? { env: { ...process.env, ...linuxSessionEnv(session) } } : {}),
   });
 
   let stopped = false;
