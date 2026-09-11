@@ -47,7 +47,7 @@ export function toFtsQuery(raw: string): string {
  * `session_meta.indexer_version`; `isStale` compares it, so a session indexed by
  * an older, thinner indexer is re-read rather than left stamped as fresh.
  */
-export const INDEXER_VERSION = 1;
+export const INDEXER_VERSION = 2;
 
 /** Per-event cap on indexed tool output. A single `Read`/`grep` result can be
  *  hundreds of KB; indexing all of it bloats the FTS store far more than it
@@ -150,7 +150,7 @@ export async function indexSession(
   projectPath: string,
   jsonlMtime = 0,
 ): Promise<void> {
-  const messages = await chatService.getMessages(providerId, sessionId);
+  const messages = await chatService.getFullMessages(providerId, sessionId);
   indexMessages(sessionId, projectPath, messages, jsonlMtime);
 }
 

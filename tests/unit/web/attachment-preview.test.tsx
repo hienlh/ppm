@@ -20,7 +20,9 @@
  */
 import { describe, it, expect } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AttachmentChips } from "../../../src/web/components/chat/attachment-chips.tsx";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { AttachmentChips, chipBodyAction } from "../../../src/web/components/chat/attachment-chips.tsx";
 import type { ChatAttachment } from "../../../src/web/components/chat/message-input.tsx";
 
 function att(over: Partial<ChatAttachment> = {}): ChatAttachment {
@@ -82,5 +84,46 @@ describe("an image chip opens the viewer", () => {
     ]);
     expect(html).toContain("1400");
     expect(html).toContain('aria-label="Remove screenshot.png"');
+  });
+});
+
+describe("the whole chip is the target, not just the thumbnail", () => {
+  /**
+   * The thumbnail is 20px of a chip up to 192px wide, so most of what looks like
+   * one control was dead: clicking the filename did nothing, and the only way in
+   * was to hit the image exactly. `chipBodyAction` is the decision the chip's
+   * `onClick` makes, split out because this suite has no DOM renderer — a real
+   * click could not be dispatched at it.
+   */
+  it("opens the preview for an image", () => {
+    expect(chipBodyAction(att())).toBe("preview");
+  });
+
+  it("still expands a text attachment instead", () => {
+    // Both handlers live on the same element, so adding the image case must not
+    // take the inline expansion away from the kind that had it first.
+    expect(chipBodyAction(att({ previewUrl: undefined, textContent: "hello" }))).toBe("expand");
+  });
+
+  it("does nothing for a file with neither", () => {
+    expect(chipBodyAction(att({ isImage: false, previewUrl: undefined }))).toBe("none");
+  });
+
+  it("shows the pointer cursor on an image chip, which is what says it is clickable", () => {
+    // The affordance and the handler are one condition now; before the fix an image
+    // chip rendered with no `cursor-pointer` at all, which was an honest signal.
+    expect(markup([att()])).toContain("cursor-pointer");
+    expect(markup([att({ isImage: false, previewUrl: undefined })])).not.toContain("cursor-pointer");
+  });
+
+  it("keeps the remove button out of it", () => {
+    // It stops the event, so it is not one of `chipBodyAction`'s cases — the guard
+    // that matters is that the stop is still written.
+    const src = readFileSync(
+      resolve(import.meta.dir, "../../../src/web/components/chat/attachment-chips.tsx"),
+      "utf8",
+    );
+    const remove = src.slice(src.indexOf("{/* Remove button */}"));
+    expect(remove).toContain("e.stopPropagation()");
   });
 });

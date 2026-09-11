@@ -9,7 +9,13 @@ import { homedir } from "node:os";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+// A sanity bound, not a memory bound: the reader below streams, so the raw file
+// never lands in memory whole. What still grows with the file is the parsed
+// message array, which is what this number is really protecting. It was 50MB and
+// it silently killed the whole expand-compact path for exactly the sessions that
+// need it — a transcript with thirteen compactions in it had reached 77MB, so
+// scrolling to the top of that chat answered 403 and loaded nothing, forever.
+const MAX_FILE_SIZE = 256 * 1024 * 1024; // 256MB
 const TEAMMATE_MSG_RE = /<teammate-message[^>]*>[\s\S]*?<\/teammate-message>/g;
 
 /** Strip SDK teammate-message XML tags from assistant text */
@@ -233,9 +239,41 @@ export function validateJsonlPath(inputPath: string): string {
 }
 
 /**
+ * Yield a file's lines without holding the file in memory.
+ *
+ * `Bun.file().text()` plus `split("\n")` costs the whole transcript twice over —
+ * 277MB resident for a 77MB file, which is what forced a cap low enough to
+ * reject real sessions. Peak here is one chunk plus one line.
+ */
+async function* readLines(filePath: string): AsyncGenerator<string> {
+  const decoder = new TextDecoder();
+  // Explicit reader rather than `for await` over the stream: the DOM lib's
+  // ReadableStream is not typed as async-iterable, and the `finally` is what
+  // releases it when a caller breaks early on `beforeUuid`.
+  const reader = Bun.file(filePath).stream().getReader();
+  let buffered = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffered += decoder.decode(value, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) yield line;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  buffered += decoder.decode();
+  if (buffered) yield buffered;
+}
+
+/**
  * Read a JSONL transcript file, parse entries, apply merge/nest pipeline, return ChatMessage[].
  * Applies the same logic as ClaudeAgentSdkProvider.getMessages() but reads from file directly.
  *
+ * @param opts.oneSegment  Return only the stretch since the previous compaction,
+ *                    rather than everything before `beforeUuid`.
  * @param beforeUuid  If provided, stop parsing at the line with this uuid (exclusive).
  *                    Used for the expand-compact feature: Claude's compact summary references
  *                    the CURRENT session file (pre+summary+post), so we truncate at the
@@ -244,10 +282,10 @@ export function validateJsonlPath(inputPath: string): string {
 export async function parseJsonlTranscript(
   filePath: string,
   beforeUuid?: string,
+  opts?: { oneSegment?: boolean },
 ): Promise<ChatMessage[]> {
-  const text = await Bun.file(filePath).text();
   const parsed: ChatMessage[] = [];
-  for (const line of text.split("\n")) {
+  for await (const line of readLines(filePath)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     let entry: any;
@@ -257,6 +295,16 @@ export async function parseJsonlTranscript(
       continue; // skip malformed lines defensively
     }
     if (beforeUuid && entry.uuid === beforeUuid) break; // stop at compact boundary (exclusive)
+    // One segment only: drop everything collected so far each time another
+    // compaction is passed, so what survives is the stretch between the last
+    // compaction and `beforeUuid`. Without this a single expand answers with
+    // the whole history before the boundary — 5626 messages on a session with
+    // thirteen compactions, prepended into a view already carrying 3553 DOM
+    // nodes. The summary that resets it is itself a `user` record, so it is
+    // pushed straight back and becomes the segment's first message — which is
+    // what carries the transcript path, and therefore what lets the next
+    // scroll expand the segment before it.
+    if (opts?.oneSegment && entry.isCompactSummary) parsed.length = 0;
     if (entry.type !== "user" && entry.type !== "assistant") continue;
     if (!entry.uuid || !entry.message) continue;
     parsed.push(parseSessionMessage(entry));

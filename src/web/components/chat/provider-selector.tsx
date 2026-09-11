@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
 import { Check } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
+import { PROVIDER_LOGOS } from "@/lib/provider-logos";
+import { cn } from "@/lib/utils";
 
 interface ProviderInfo {
   id: string;
@@ -13,12 +15,26 @@ interface ProviderSelectorProps {
   projectName: string;
 }
 
-const PROVIDER_ICONS: Record<string, string> = {
-  claude: "C",
-  cursor: "▶",
-  codex: "◆",
-  gemini: "G",
-};
+/**
+ * The provider's own logo. An id with no artwork — or no id at all, which is a
+ * real case, since a chat search result carries no provider — keeps the lettered
+ * tile these all used to be, so it still reads as a provider rather than as a
+ * gap in the row.
+ */
+function ProviderIcon({ providerId, className }: { providerId: string | undefined; className: string }) {
+  const Logo = providerId ? PROVIDER_LOGOS[providerId] : undefined;
+  if (Logo) return <Logo className={cn("shrink-0", className)} />;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center justify-center rounded bg-surface-elevated text-[10px] font-bold text-text-subtle shrink-0",
+        className,
+      )}
+    >
+      ?
+    </span>
+  );
+}
 
 /**
  * Provider selector chip + popup — matches ModeSelector style.
@@ -79,7 +95,6 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
   if (providers.length <= 1) return null;
 
   const current = providers.find((p) => p.id === value);
-  const icon = PROVIDER_ICONS[value] || "?";
 
   return (
     <div className="relative">
@@ -90,9 +105,7 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
         className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors"
         aria-label={`AI Provider: ${current?.name ?? value}`}
       >
-        <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded text-[9px] font-bold bg-surface-elevated shrink-0">
-          {icon}
-        </span>
+        <ProviderIcon providerId={value} className="size-3.5" />
         <span className="max-w-[80px] truncate capitalize">{current?.name ?? value}</span>
       </button>
 
@@ -112,7 +125,6 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
           </div>
           <div className="py-1">
             {providers.map((p, idx) => {
-              const pIcon = PROVIDER_ICONS[p.id] || "?";
               const isActive = p.id === value;
               return (
                 <button
@@ -124,9 +136,7 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
                   onClick={() => { onChange(p.id); setOpen(false); }}
                   className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-surface-elevated focus:bg-surface-elevated focus:outline-none ${isActive ? "bg-surface-elevated" : ""}`}
                 >
-                  <span className="inline-flex h-5 w-5 items-center justify-center rounded text-[11px] font-bold bg-surface-elevated text-text-subtle shrink-0">
-                    {pIcon}
-                  </span>
+                  <ProviderIcon providerId={p.id} className="size-4" />
                   <span className="flex-1 text-sm font-medium text-text-primary capitalize">{p.name}</span>
                   {isActive && <Check className="size-4 shrink-0 text-primary" />}
                 </button>
@@ -139,15 +149,13 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
   );
 }
 
-/** Small provider badge for session lists */
-export function ProviderBadge({ providerId }: { providerId: string }) {
-  const icon = PROVIDER_ICONS[providerId] || "?";
+/** Small provider badge for session lists. */
+export function ProviderBadge({ providerId }: { providerId: string | undefined }) {
+  // The tooltip sits on a wrapper on purpose: a `title` *attribute* on an `<svg>`
+  // draws nothing (SVG wants a `<title>` child), so the name would be lost.
   return (
-    <span
-      className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold bg-surface-elevated text-text-subtle shrink-0"
-      title={providerId}
-    >
-      {icon}
+    <span className="inline-flex shrink-0" title={providerId}>
+      <ProviderIcon providerId={providerId} className="size-4" />
     </span>
   );
 }

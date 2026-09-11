@@ -10,6 +10,7 @@ export type TabType =
   | "sqlite"
   | "postgres"
   | "git-diff"
+  | "branch-review"
   | "settings"
   | "extension"
   | "extension-webview"

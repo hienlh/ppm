@@ -10,6 +10,14 @@ import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal
 import { Loader2, FileCode, WrapText, UserRound } from "@/lib/icons";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
 import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
+import {
+  BinaryDiffView,
+  BinaryViewSwitcher,
+  canPreviewBinary,
+  shortRef,
+  type BinaryViewMode,
+} from "./binary-diff-view";
+import type { FileFullDiff } from "../../../types/git";
 
 function getMonacoLanguage(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -43,7 +51,18 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
 
   const [diffText, setDiffText] = useState<string | null>(null);
   const [fileContents, setFileContents] = useState<{ original: string; modified: string } | null>(null);
-  const [fullFileDiff, setFullFileDiff] = useState<{ original: string; modified: string } | null>(null);
+  const [fullFileDiff, setFullFileDiff] = useState<FileFullDiff | null>(null);
+  // Two separate things, as in VS Code: which view the switcher is on, and
+  // whether "Open Anyway" has been pressed. Picking the text editor only gets
+  // you the warning — printing a megabyte of U+FFFD is the confirmed answer.
+  const [binaryMode, setBinaryMode] = useState<BinaryViewMode>("preview");
+  const [openAsText, setOpenAsText] = useState(false);
+  const chooseBinaryMode = (mode: BinaryViewMode) => {
+    setBinaryMode(mode);
+    // Going back to the image drops the confirmation, so choosing the text
+    // editor again asks again rather than dumping the bytes.
+    if (mode === "preview") setOpenAsText(false);
+  };
   const [loading, setLoading] = useState(!isInline);
   const [error, setError] = useState<string | null>(null);
   const { wordWrap, toggleWordWrap, mobileWordWrap, toggleMobileWordWrap } = useSettingsStore(
@@ -125,8 +144,10 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       const params = new URLSearchParams({ file: inRepo });
       if (ref1) params.set("ref", ref1);
       if (ref2) params.set("ref2", ref2);
+      // A binary file answers with its sides empty unless they are asked for.
+      if (openAsText) params.set("text", "1");
       api
-        .get<{ original: string; modified: string }>(
+        .get<FileFullDiff>(
           gitRepo.gitUrl(`/file-full-diff?${params}`),
         )
         .then((data) => { setFullFileDiff(data); setLoading(false); })
@@ -148,7 +169,10 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       .get<{ diff: string }>(url)
       .then((data) => { setDiffText(data.diff); setLoading(false); })
       .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load diff"); setLoading(false); });
-  }, [filePath, projectName, ref1, ref2, file1, file2, isInline, gitRepo]);
+  }, [filePath, projectName, ref1, ref2, file1, file2, isInline, gitRepo, openAsText]);
+
+  // A different file starts as a preview again, whatever the last one chose.
+  useEffect(() => { setOpenAsText(false); setBinaryMode("preview"); }, [filePath, ref1, ref2]);
 
   const { original, modified } = useMemo(() => {
     if (isInline) return { original: inlineOriginal ?? "", modified: inlineModified ?? "" };
@@ -249,6 +273,52 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     );
   }
 
+  // A file the text editor cannot show. An image is drawn on both sides, and
+  // anything else says so in VS Code's words; "Open Anyway" asks the route for
+  // the same bytes decoded. `repoFile` is non-null by construction here — the
+  // fetch above returns early without it — but the URL builder has to say so.
+  if (fullFileDiff?.binary && !openAsText && filePath && projectName) {
+    const repoFile = gitRepo.repoPath(filePath);
+    const blobUrl = (rev: string) =>
+      repoFile == null
+        ? null
+        : gitRepo.gitUrl(`/file-blob?file=${encodeURIComponent(repoFile)}&ref=${encodeURIComponent(rev)}`);
+    return (
+      <div className="flex flex-col h-full">
+        {canPreviewBinary(filePath) && (
+          <div className="flex items-center justify-end gap-0.5 px-2 py-0.5 border-b border-border shrink-0">
+            <BinaryViewSwitcher mode={binaryMode} onChange={chooseBinaryMode} />
+          </div>
+        )}
+        <div className="flex-1 min-h-0">
+          <BinaryDiffView
+            filePath={filePath}
+            mode={binaryMode}
+            original={{
+              url: fullFileDiff.originalSize === null ? null : blobUrl(ref1 || "HEAD"),
+              label: shortRef(ref1 || "HEAD"),
+              size: fullFileDiff.originalSize,
+            }}
+            modified={{
+              // No `ref2` means the right-hand side is the file on disk, which
+              // `/files/raw` already serves — addressed from the *project*, not the
+              // repository, unlike everything git is asked about.
+              url:
+                fullFileDiff.modifiedSize === null
+                  ? null
+                  : ref2
+                    ? blobUrl(ref2)
+                    : `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`,
+              label: ref2 ? shortRef(ref2) : "Working Tree",
+              size: fullFileDiff.modifiedSize,
+            }}
+            onOpenAnyway={() => setOpenAsText(true)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   // Catch diffs with metadata-only changes (mode, rename) where parseDiff returns empty
   if (!isInline && !isFileCompare && !fullFileDiff && !original && !modified) {
     return (
@@ -264,6 +334,9 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center justify-end gap-0.5 px-2 py-0.5 border-b border-border shrink-0">
+        {fullFileDiff?.binary && filePath && canPreviewBinary(filePath) && (
+          <BinaryViewSwitcher mode="text" onChange={chooseBinaryMode} />
+        )}
         {canBlame && (
           <button type="button" onClick={toggleInlineBlame}
             title="Inline blame (Alt+B) — who last touched the cursor's line. Click a pane to annotate that side."

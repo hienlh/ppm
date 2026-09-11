@@ -23,6 +23,7 @@ let fake: Map<string, Fake>;
 
 const origList = chatService.listSessions.bind(chatService);
 const origGet = chatService.getMessages.bind(chatService);
+const origGetFull = chatService.getFullMessages.bind(chatService);
 
 function stub() {
   (chatService as any).listSessions = async (_p?: string, dir?: string) => {
@@ -30,6 +31,10 @@ function stub() {
     return [...fake.values()].map((f) => f.info);
   };
   (chatService as any).getMessages = async (_pid: string, sid: string) =>
+    fake.get(sid)?.messages ?? [];
+  // `indexSession` reads the *whole* transcript, not the resumable conversation,
+  // so this is the seam it actually goes through.
+  (chatService as any).getFullMessages = async (_pid: string, sid: string) =>
     fake.get(sid)?.messages ?? [];
 }
 
@@ -49,6 +54,7 @@ beforeEach(() => {
 afterAll(() => {
   (chatService as any).listSessions = origList;
   (chatService as any).getMessages = origGet;
+  (chatService as any).getFullMessages = origGetFull;
   closeSearchIndexDb();
 });
 
@@ -105,5 +111,29 @@ describe("startBackfill dedup + status", () => {
     const status = getIndexStatus(PROJ);
     expect(status.running).toBe(false);
     expect(status.indexed).toBe(5);
+  });
+});
+
+describe("indexSession reads the whole transcript", () => {
+  test("indexes the pre-compaction history, not just the resumable conversation", async () => {
+    // `getMessages` answers with the segment after the last `compact_boundary`
+    // — right for the chat view, which offers "Load previous conversation"
+    // beside the summary. The index has no such affordance, so asking the same
+    // question leaves everything before the compaction unfindable by any query.
+    const updatedAt = "2026-07-14T09:00:00.000Z";
+    fake.set("s-compact", {
+      info: { id: "s-compact", providerId: "claude", title: "s-compact", createdAt: updatedAt, updatedAt },
+      messages: [{ id: "m-new", role: "user", content: "after the compaction", timestamp: updatedAt }],
+    });
+    // The whole transcript carries both segments.
+    (chatService as any).getFullMessages = async () => [
+      { id: "m-old", role: "user", content: "before the compaction", timestamp: updatedAt },
+      { id: "m-new", role: "user", content: "after the compaction", timestamp: updatedAt },
+    ];
+
+    await reconcile(PROJ);
+
+    expect(search(PROJ, "before the compaction", 10).length).toBe(1);
+    expect(search(PROJ, "after the compaction", 10).length).toBe(1);
   });
 });
