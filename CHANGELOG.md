@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.19.5] - 2026-09-12
+
+### Added
+- **Any provider's agent as an API** — point an OpenAI or Anthropic SDK at `/proxy/<provider>` (e.g. `/proxy/codex`) and that provider's agent answers, with `/v1/messages`, `/v1/chat/completions` (streaming included) and `/v1/models` under it. `/proxy/v1/*` keeps serving Claude as before.
+- **Image generation and editing over the API** — `POST /v1/images/generations` and `/v1/images/edits` in OpenAI's shape, returning base64. Requires the codex provider; other providers say so instead of hanging.
+- **Chat accepts pictures** — send an `image_url` block holding a `data:` URL and the agent looks at it. Remote URLs are refused rather than fetched.
+
+### Fixed
+- **Codex no longer strands a process per session** — a session addressed by the id it was created with was neither reused nor shut down, so each one left a ~90 MB codex process running.
+- **Token counts appear for codex turns** — usage was reported as zero because the counts arrive on their own notification and were being discarded.
+
 ## [0.19.4] - 2026-09-11
 
 ### Fixed
