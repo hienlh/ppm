@@ -7,11 +7,13 @@ import { getProxyStats } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 /**
- * Proxy routes — Anthropic-compatible API proxy.
- * External tools (opencode, cursor, etc.) send requests here
- * and PPM forwards them to Anthropic using account rotation.
+ * Proxy routes — PPM's accounts behind the Anthropic and OpenAI API formats.
  *
- * Mounted at /proxy — so /proxy/v1/messages maps to Anthropic's POST /v1/messages.
+ * Mounted at /proxy, so /proxy/v1/messages maps to Anthropic's POST /v1/messages
+ * and external tools (opencode, cursor, etc.) reach Claude through account
+ * rotation exactly as before. A provider segment — /proxy/<provider>/v1/… —
+ * routes to that provider's agent instead, and adds the images endpoints.
+ *
  * Uses its own auth (proxy auth key), NOT PPM's auth middleware.
  */
 export const proxyRoutes = new Hono();

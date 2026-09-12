@@ -83,8 +83,10 @@ export function ProxySettingsSection() {
     <div className="space-y-4">
       <div className="space-y-1.5">
         <p className="text-[11px] text-muted-foreground">
-          Expose your Claude accounts as an Anthropic-compatible API endpoint.
-          External tools (OpenCode, Cursor, etc.) can use your accounts via this proxy.
+          Expose your accounts as an API that speaks both the Anthropic and OpenAI
+          formats, so most SDKs need only a new base URL. The default path answers
+          from your Claude accounts; pick a provider below to run its agent instead,
+          which also unlocks image generation.
         </p>
       </div>
 
@@ -93,7 +95,7 @@ export function ProxySettingsSection() {
         <div className="space-y-0.5">
           <Label className="text-xs">Enable Proxy</Label>
           <p className="text-[11px] text-muted-foreground">
-            Accept API requests on /proxy/v1/messages
+            Accept API requests under /proxy
           </p>
         </div>
         <Switch
