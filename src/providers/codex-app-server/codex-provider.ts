@@ -521,6 +521,17 @@ export class CodexAppServerProvider implements AIProvider {
     return !!live && !live.client.isClosed;
   }
 
+  /**
+   * Spawn the app-server and open the thread before any turn is sent. A turn
+   * otherwise pays that cold start inline, which the proxy cannot hide from an
+   * HTTP caller. `opts` must match the turn's, since thread/start bakes in the
+   * sandbox and model.
+   */
+  async warmSession(sessionId: string, opts?: SendMessageOpts): Promise<void> {
+    if (this.hasStreamingSession(sessionId)) return;
+    await this.connect(sessionId, opts);
+  }
+
   /** Kill all live subprocesses — wired into server shutdown. */
   cleanupAll(): void {
     for (const sessionId of [...this.live.keys()]) this.abortQuery(sessionId, "cleanup");
@@ -607,7 +618,11 @@ export class CodexAppServerProvider implements AIProvider {
     if (this.modelsCache && Date.now() < this.modelsCache.expiry) return this.modelsCache.models;
     const client = new CodexJsonRpcClient();
     try {
-      client.start({ cwd: process.cwd() });
+      // Without a CODEX_HOME the app-server falls back to the machine's own
+      // ~/.codex login, which may be stale or absent — the model list then comes
+      // from an account PPM does not use, or fails outright on a refresh error.
+      const account = await resolveCodexAccountForSession();
+      client.start({ cwd: process.cwd(), ...(account ? { codexHome: account.home } : {}) });
       await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
       client.notify("initialized");
       const all: unknown[] = [];

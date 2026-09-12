@@ -3,6 +3,8 @@ import { accountSelector } from "./account-selector.service.ts";
 import { accountService } from "./account.service.ts";
 import { forwardViaSdk } from "./proxy-sdk-bridge.ts";
 import { forwardOpenAiViaSdk } from "./proxy-openai-bridge.ts";
+import { forwardAgentChatCompletions } from "./proxy-agent-bridge.ts";
+import { forwardAgentMessages } from "./proxy-agent-anthropic-bridge.ts";
 import { randomBytes } from "node:crypto";
 
 const PROXY_ENABLED_KEY = "proxy_enabled";
@@ -166,6 +168,58 @@ class ProxyService {
         { status: 502, headers: { "Content-Type": "application/json" } },
       );
     }
+  }
+
+  /**
+   * Run a provider's agent behind one of the two API dialects. Account rotation
+   * is the provider's own concern here — codex picks a CODEX_HOME — so unlike
+   * forwardOpenAi this must not claim a Claude account.
+   */
+  private async forwardAgent(
+    providerId: string,
+    body: string,
+    path: string,
+    run: (providerId: string, parsed: any) => Promise<Response>,
+    invalidJson: Response,
+    caller?: ProxyCallerMeta,
+  ): Promise<Response> {
+    const endpoint = `/${providerId}/v1/${path}`;
+    let parsed: { model?: string };
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return invalidJson;
+    }
+
+    const start = performance.now();
+    this.requestCount++;
+    const response = await run(providerId, parsed);
+    const durationMs = Math.round(performance.now() - start);
+    insertProxyRequest({
+      endpoint, model: parsed.model, accountLabel: providerId,
+      callerIp: caller?.callerIp, callerUa: caller?.callerUa,
+      status: response.ok ? "success" : "error", durationMs,
+    });
+    console.log(`[proxy] POST ${endpoint} → ${response.status} ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
+    return response;
+  }
+
+  /** OpenAI dialect: `/proxy/<provider>/v1/chat/completions`. */
+  async forwardAgentChat(providerId: string, body: string, caller?: ProxyCallerMeta): Promise<Response> {
+    return this.forwardAgent(providerId, body, "chat/completions", forwardAgentChatCompletions,
+      new Response(
+        JSON.stringify({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ), caller);
+  }
+
+  /** Anthropic dialect: `/proxy/<provider>/v1/messages`. */
+  async forwardAgentMessages(providerId: string, body: string, caller?: ProxyCallerMeta): Promise<Response> {
+    return this.forwardAgent(providerId, body, "messages", forwardAgentMessages,
+      new Response(
+        JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "Invalid JSON body" } }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ), caller);
   }
 
   /** Direct HTTP forward for API key accounts */

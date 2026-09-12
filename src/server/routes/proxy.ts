@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { proxyService } from "../../services/proxy.service.ts";
+import { listProviderModels } from "../../services/proxy-agent-turn.ts";
 import { getProxyStats } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -103,6 +104,48 @@ proxyRoutes.post("/v1/messages/count_tokens", async (c) => {
   }
 
   return proxyService.forward("/v1/messages/count_tokens", "POST", headers, body, getCallerMeta(c));
+});
+
+// ── Provider-scoped agent endpoints ──
+//
+// Both API dialects hang off the same `/proxy/<provider>` prefix, so a client
+// only swaps its base URL and keeps the vendor path its SDK already appends:
+//   ANTHROPIC_BASE_URL=<host>/proxy/codex     → POST /proxy/codex/v1/messages
+//   OPENAI_BASE_URL=<host>/proxy/codex/v1     → POST /proxy/codex/v1/chat/completions
+// Registered after the static routes above, which keep serving Claude unscoped.
+
+/** Shared gate: proxy must be on and the caller must present the proxy key. */
+function agentGate(c: Context, dialect: "anthropic" | "openai"): Response | null {
+  const authHeader = c.req.header("authorization") || c.req.header("x-api-key");
+  const fail = (status: 503 | 401, message: string) =>
+    dialect === "anthropic"
+      ? c.json({ type: "error", error: { type: status === 401 ? "authentication_error" : "api_error", message } }, status)
+      : c.json({ error: { message, type: status === 401 ? "authentication_error" : "server_error" } }, status);
+
+  if (!proxyService.isEnabled()) return fail(503, "Proxy is disabled");
+  if (!validateProxyAuth(authHeader)) return fail(401, "Invalid proxy auth key");
+  return null;
+}
+
+/** POST /proxy/:provider/v1/messages — provider's agent in Anthropic format. */
+proxyRoutes.post("/:provider/v1/messages", async (c) => {
+  const blocked = agentGate(c, "anthropic");
+  if (blocked) return blocked;
+  return proxyService.forwardAgentMessages(c.req.param("provider"), await c.req.text(), getCallerMeta(c));
+});
+
+/** POST /proxy/:provider/v1/chat/completions — provider's agent in OpenAI format. */
+proxyRoutes.post("/:provider/v1/chat/completions", async (c) => {
+  const blocked = agentGate(c, "openai");
+  if (blocked) return blocked;
+  return proxyService.forwardAgentChat(c.req.param("provider"), await c.req.text(), getCallerMeta(c));
+});
+
+/** GET /proxy/:provider/v1/models — models that provider offers, OpenAI list shape. */
+proxyRoutes.get("/:provider/v1/models", async (c) => {
+  const blocked = agentGate(c, "openai");
+  if (blocked) return blocked;
+  return listProviderModels(c.req.param("provider"));
 });
 
 /** GET /proxy/stats — proxy request stats (behind proxy auth) */

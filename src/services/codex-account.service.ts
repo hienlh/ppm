@@ -167,8 +167,10 @@ export function peekCodexAccount(): CodexAccount | null {
 }
 
 /** Sticky account for a session → else strategy pick → else null (default ~/.codex). */
-export async function resolveCodexAccountForSession(sessionId: string): Promise<CodexAccount | null> {
-  const sticky = getSessionCodexAccount(sessionId);
+export async function resolveCodexAccountForSession(sessionId?: string): Promise<CodexAccount | null> {
+  // Session-less callers (the model list) have nothing sticky to honour and fall
+  // straight through to the configured strategy.
+  const sticky = sessionId ? getSessionCodexAccount(sessionId) : null;
   if (sticky) { const a = getCodexAccount(sticky); if (a) return a; }
   if (getCodexStrategy() === "lowest-usage" && listCodexAccounts().length > 1) {
     const usages = await getAllCodexUsages();

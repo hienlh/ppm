@@ -7,6 +7,9 @@
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { accountSelector } from "./account-selector.service.ts";
+import {
+  buildPromptFromOpenAiMessages, openAiError, SSE_HEADERS,
+} from "./proxy-openai-format.ts";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -24,36 +27,6 @@ function buildSdkEnv(accessToken: string): Record<string, string | undefined> {
     CLAUDE_CODE_OAUTH_TOKEN: isOAuth ? accessToken : "",
     ANTHROPIC_BASE_URL: "",
   };
-}
-
-/** Extract system prompt and build text prompt from OpenAI messages format */
-function buildPromptFromOpenAiMessages(body: any): { prompt: string; systemPrompt?: string } {
-  const messages: any[] = body.messages ?? [];
-  let systemPrompt: string | undefined;
-  const conversationParts: string[] = [];
-
-  for (const m of messages) {
-    const text = typeof m.content === "string"
-      ? m.content
-      : Array.isArray(m.content)
-        ? m.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n")
-        : String(m.content ?? "");
-
-    if (m.role === "system") {
-      systemPrompt = systemPrompt ? `${systemPrompt}\n${text}` : text;
-    } else {
-      const role = m.role === "assistant" ? "Assistant" : "Human";
-      conversationParts.push(`${role}: ${text}`);
-    }
-  }
-
-  return { prompt: conversationParts.join("\n\n"), systemPrompt };
-}
-
-function openAiError(status: number, message: string): Response {
-  return new Response(JSON.stringify({
-    error: { message, type: "server_error", code: String(status) },
-  }), { status, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
 }
 
 // ── Public API ───────────────────────────────────────────────────────
@@ -230,12 +203,5 @@ async function handleStreaming(
     },
   });
 
-  return new Response(readable, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-      "Access-Control-Allow-Origin": "*",
-    },
-  });
+  return new Response(readable, { headers: SSE_HEADERS });
 }

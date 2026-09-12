@@ -4,11 +4,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { getProxySettings, updateProxySettings, type ProxySettings } from "@/lib/api-settings";
+import { getProxySettings, updateProxySettings, getAISettings, type ProxySettings } from "@/lib/api-settings";
 import { copyToClipboard } from "@/lib/clipboard";
 import { ProxyTestButton } from "./proxy-test-section";
 
 export function ProxySettingsSection() {
+  /** Provider the connection info targets; "" is the unscoped Claude path. */
+  const [provider, setProvider] = useState("");
+  /** Providers reachable as agents, minus the internal mock. */
+  const [agentProviders, setAgentProviders] = useState<string[]>([]);
+
+  useEffect(() => {
+    getAISettings()
+      .then((s) => setAgentProviders(Object.keys(s.providers ?? {}).filter((id) => id !== "mock" && id !== "claude")))
+      .catch(() => setAgentProviders([]));
+  }, []);
+
   const [settings, setSettings] = useState<ProxySettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -58,6 +69,16 @@ export function ProxySettingsSection() {
   // Local endpoint from server (actual port), NOT window.location which may be tunnel
   const localEndpoint = settings.localEndpoint;
   const localBaseUrl = localEndpoint.replace(/\/proxy\/v1\/messages$/, "");
+
+  // Both dialects hang off one prefix, so selecting a provider moves them
+  // together and the card cannot show a mismatched pair.
+  //   default:   <root>/proxy        → /v1/messages, /v1/chat/completions
+  //   provider:  <root>/proxy/codex  → same two paths underneath
+  const prefix = `${hasTunnel ? settings.tunnelUrl : localBaseUrl}/proxy${provider ? `/${provider}` : ""}`;
+  const anthropicEndpoint = `${prefix}/v1/messages`;
+  const openAiEndpoint = `${prefix}/v1/chat/completions`;
+  const anthropicEnv = `ANTHROPIC_BASE_URL=${prefix}\nANTHROPIC_API_KEY=${settings.authKey}`;
+  const openAiEnv = `OPENAI_BASE_URL=${prefix}/v1\nOPENAI_API_KEY=${settings.authKey}`;
 
   return (
     <div className="space-y-4">
@@ -135,18 +156,43 @@ export function ProxySettingsSection() {
             <ProxyTestButton authKey={settings.authKey!} baseUrl={window.location.origin} />
           </div>
 
+          {/* Target provider — the only thing that differs between the two
+              dialects below, so both are derived from one prefix. */}
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Provider</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {[{ id: "", label: "Claude (default)" }, ...agentProviders.map((id) => ({ id, label: id }))].map((p) => (
+                <button
+                  key={p.id || "default"}
+                  type="button"
+                  onClick={() => setProvider(p.id)}
+                  className={`text-[10px] px-2.5 min-h-[36px] rounded-md border transition-colors cursor-pointer ${
+                    provider === p.id ? "border-primary bg-primary/15" : "border-border bg-muted/40 hover:bg-muted"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {provider && (
+              <p className="text-[10px] text-muted-foreground">
+                Runs the {provider} agent per request (read-only sandbox, one turn). Slower than the default path.
+              </p>
+            )}
+          </div>
+
           {/* Anthropic endpoint */}
           <div className="space-y-1">
             <Label className="text-[10px] text-muted-foreground">Anthropic Endpoint</Label>
             <div className="flex gap-1.5 items-center">
               <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded flex-1 truncate">
-                {hasTunnel ? settings.proxyEndpoint : localEndpoint}
+                {anthropicEndpoint}
               </code>
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1.5 cursor-pointer shrink-0"
-                onClick={() => handleCopy(hasTunnel ? settings.proxyEndpoint! : localEndpoint, "anthropic")}
+                onClick={() => handleCopy(anthropicEndpoint, "anthropic")}
               >
                 {copied === "anthropic" ? "Copied!" : <Copy className="size-3" />}
               </Button>
@@ -158,15 +204,13 @@ export function ProxySettingsSection() {
             <Label className="text-[10px] text-muted-foreground">OpenAI-Compatible Endpoint</Label>
             <div className="flex gap-1.5 items-center">
               <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded flex-1 truncate">
-                {hasTunnel ? settings.openAiEndpoint : settings.localOpenAiEndpoint}
+                {openAiEndpoint}
               </code>
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1.5 cursor-pointer shrink-0"
-                onClick={() => handleCopy(
-                  hasTunnel ? settings.openAiEndpoint! : settings.localOpenAiEndpoint, "openai",
-                )}
+                onClick={() => handleCopy(openAiEndpoint, "openai")}
               >
                 {copied === "openai" ? "Copied!" : <Copy className="size-3" />}
               </Button>
@@ -183,18 +227,12 @@ export function ProxySettingsSection() {
           <div className="space-y-1 pt-1">
             <Label className="text-[10px] text-muted-foreground">Anthropic Format</Label>
             <div className="relative">
-              <pre className="text-[9px] font-mono bg-muted p-2 rounded overflow-x-auto whitespace-pre">
-{`ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}
-ANTHROPIC_API_KEY=${settings.authKey}`}
-              </pre>
+              <pre className="text-[9px] font-mono bg-muted p-2 rounded overflow-x-auto whitespace-pre">{anthropicEnv}</pre>
               <Button
                 variant="ghost"
                 size="sm"
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
-                onClick={() => handleCopy(
-                  `ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}\nANTHROPIC_API_KEY=${settings.authKey}`,
-                  "anthropic-env",
-                )}
+                onClick={() => handleCopy(anthropicEnv, "anthropic-env")}
               >
                 {copied === "anthropic-env" ? "Copied!" : <Copy className="size-2.5" />}
               </Button>
@@ -204,18 +242,12 @@ ANTHROPIC_API_KEY=${settings.authKey}`}
           <div className="space-y-1">
             <Label className="text-[10px] text-muted-foreground">OpenAI Format</Label>
             <div className="relative">
-              <pre className="text-[9px] font-mono bg-muted p-2 rounded overflow-x-auto whitespace-pre">
-{`OPENAI_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy/v1" : localBaseUrl + "/proxy/v1"}
-OPENAI_API_KEY=${settings.authKey}`}
-              </pre>
+              <pre className="text-[9px] font-mono bg-muted p-2 rounded overflow-x-auto whitespace-pre">{openAiEnv}</pre>
               <Button
                 variant="ghost"
                 size="sm"
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
-                onClick={() => handleCopy(
-                  `OPENAI_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy/v1" : localBaseUrl + "/proxy/v1"}\nOPENAI_API_KEY=${settings.authKey}`,
-                  "openai-env",
-                )}
+                onClick={() => handleCopy(openAiEnv, "openai-env")}
               >
                 {copied === "openai-env" ? "Copied!" : <Copy className="size-2.5" />}
               </Button>
