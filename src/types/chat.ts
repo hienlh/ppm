@@ -61,13 +61,6 @@ export interface AIProvider {
   getUsage?(sessionId?: string): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
-  /**
-   * Bring a session's runtime up before its first turn, so the caller does not
-   * pay the spawn inline. `opts` must match the turn that follows, because a
-   * provider may bake sandbox/model into the connection. Implemented by codex,
-   * whose app-server spawn dominates first-turn latency.
-   */
-  warmSession?(sessionId: string, opts?: SendMessageOpts): Promise<void>;
   /** Prompt-cache lifetime for this session, in ms — how long holding its subprocess pays. */
   promptCacheTtlMs?(sessionId: string): number;
 }

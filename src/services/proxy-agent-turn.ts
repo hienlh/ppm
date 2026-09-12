@@ -8,14 +8,15 @@
  * here once rather than twice.
  *
  * Sessions are ephemeral: one per request, deleted afterwards. An API call must
- * not leave a conversation behind in the sidebar.
+ * not leave a conversation behind in the sidebar, and an OpenAI or Anthropic
+ * client replays its whole conversation on every call, so a reused session would
+ * stack that history on itself.
  */
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { providerRegistry } from "../providers/registry.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import type { AIProvider, ChatEvent } from "../types/chat.ts";
-import { takePooledSession, releasePooledSession } from "./proxy-agent-pool.ts";
 
 /**
  * Read-only, no prompts. An agent reachable with the proxy key must not be able
@@ -132,24 +133,25 @@ export async function startAgentTurn(providerId: string, req: TurnRequest): Prom
   // instructions lead the turn instead.
   const message = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
 
-  // The turn's options must match what the session was warmed with — a provider
-  // may bake sandbox and model into the connection it opened.
-  const opts = {
-    permissionMode: PROXY_PERMISSION_MODE,
-    ...(req.model ? { model: req.model } : {}),
-    ...(req.imagePaths?.length ? { imagePaths: req.imagePaths } : {}),
-  };
-  const sessionId = await takePooledSession(providerId, {
-    provider, opts,
+  const session = await provider.createSession({
     projectPath: proxyWorkspace(),
     title: `[API] ${providerId}`,
   });
 
-  const events = provider.sendMessage(sessionId, message, opts);
+  const events = provider.sendMessage(session.id, message, {
+    permissionMode: PROXY_PERMISSION_MODE,
+    ...(req.model ? { model: req.model } : {}),
+    ...(req.imagePaths?.length ? { imagePaths: req.imagePaths } : {}),
+  });
 
   return {
     events: withTimeout(events),
-    cleanup: () => releasePooledSession(provider, sessionId),
+    cleanup: async () => {
+      // abortQuery is what kills the runtime; deleteSession alone may only drop
+      // the record, depending on the provider.
+      try { provider.abortQuery?.(session.id, "proxy"); } catch { /* best effort */ }
+      try { await provider.deleteSession(session.id); } catch { /* best effort */ }
+    },
   };
 }
 

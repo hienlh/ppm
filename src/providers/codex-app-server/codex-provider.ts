@@ -535,17 +535,6 @@ export class CodexAppServerProvider implements AIProvider {
     return !!live && !live.client.isClosed;
   }
 
-  /**
-   * Spawn the app-server and open the thread before any turn is sent. A turn
-   * otherwise pays that cold start inline, which the proxy cannot hide from an
-   * HTTP caller. `opts` must match the turn's, since thread/start bakes in the
-   * sandbox and model.
-   */
-  async warmSession(sessionId: string, opts?: SendMessageOpts): Promise<void> {
-    if (this.hasStreamingSession(sessionId)) return;
-    await this.connect(sessionId, opts);
-  }
-
   /** Kill all live subprocesses — wired into server shutdown. */
   cleanupAll(): void {
     for (const sessionId of [...this.live.keys()]) this.abortQuery(sessionId, "cleanup");
