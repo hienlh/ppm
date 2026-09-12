@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ResourceStatusBar } from "@/components/system/resource-status-bar";
 import { ThemePicker } from "@/components/settings/theme-picker";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
+import { WakeLockStatusBarItem } from "@/components/layout/wake-lock-indicator";
 import { countDockTabs } from "@/components/layout/dock-tabs";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,8 @@ export const StatusBar = memo(function StatusBar() {
         <DockToggle />
       </div>
       <div className="flex items-center gap-3 min-w-0">
+        {/* Screen-awake marker — only while a wake lock is actually held. */}
+        <WakeLockStatusBarItem />
         {/* CPU/MEM moved here from the sidebar resource strip. */}
         <ResourceStatusBar compact />
         {right.map((item) => (

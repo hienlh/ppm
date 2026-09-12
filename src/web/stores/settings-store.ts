@@ -47,6 +47,9 @@ interface SettingsState {
   /** User ticked "don't show again" on the remote-desktop warning that precedes every open
    *  (`remote-desktop-warning-gate.tsx`); once true the viewer connects straight away. */
   remoteDesktopWarningDismissed: boolean;
+  /** Hold a screen wake lock while any chat turn is running, so a propped-up tablet does not
+   *  dim mid-answer. Defaults on; see `hooks/use-wake-lock.ts`. */
+  keepScreenAwake: boolean;
   deviceName: string | null;
   version: string | null;
   tunnelActive: boolean;
@@ -73,6 +76,7 @@ interface SettingsState {
   setExplorerSkin: (pref: ExplorerSkinPref) => void;
   toggleRemoteDesktopStatsVisible: () => void;
   setRemoteDesktopWarningDismissed: (dismissed: boolean) => void;
+  setKeepScreenAwake: (enabled: boolean) => void;
   fetchServerInfo: () => Promise<void>;
   /** Re-push the in-memory theme selection to the server (see the action for why). */
   syncThemeToServer: () => Promise<void>;
@@ -98,6 +102,7 @@ interface PersistedSettings {
   explorerSkin?: ExplorerSkinPref;
   remoteDesktopStatsVisible?: boolean;
   remoteDesktopWarningDismissed?: boolean;
+  keepScreenAwake?: boolean;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -252,6 +257,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   }
   if (typeof data.remoteDesktopStatsVisible === "boolean") patch.remoteDesktopStatsVisible = data.remoteDesktopStatsVisible;
   if (typeof data.remoteDesktopWarningDismissed === "boolean") patch.remoteDesktopWarningDismissed = data.remoteDesktopWarningDismissed;
+  if (typeof data.keepScreenAwake === "boolean") patch.keepScreenAwake = data.keepScreenAwake;
   const dbExpanded = sanitizeDbExpanded(data.dbSidebarExpanded);
   if (dbExpanded) patch.dbSidebarExpanded = dbExpanded;
   if (Object.keys(patch).length === 0) return;
@@ -281,6 +287,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   explorerSkin: (_initial.explorerSkin === "windows" || _initial.explorerSkin === "macos") ? _initial.explorerSkin : "auto",
   remoteDesktopStatsVisible: _initial.remoteDesktopStatsVisible ?? false,
   remoteDesktopWarningDismissed: _initial.remoteDesktopWarningDismissed ?? false,
+  keepScreenAwake: _initial.keepScreenAwake ?? true,
   deviceName: null,
   version: null,
   tunnelActive: false,
@@ -403,6 +410,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setRemoteDesktopWarningDismissed: (dismissed) => {
     persistUiPref({ remoteDesktopWarningDismissed: dismissed });
     set({ remoteDesktopWarningDismissed: dismissed });
+  },
+
+  setKeepScreenAwake: (enabled) => {
+    persistUiPref({ keepScreenAwake: enabled });
+    set({ keepScreenAwake: enabled });
   },
 
   setEditorTabStyle: (style) => {

@@ -6,19 +6,30 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, Sun } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { useSettingsStore } from "@/stores/settings-store";
+import { wakeLockSupport } from "@/hooks/use-wake-lock";
 import { ChangePasswordSection } from "./change-password-section";
 
 export function GeneralSettingsSection() {
-  const { deviceName, setDeviceName, version } = useSettingsStore(
-    useShallow((s) => ({ deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version })),
+  const { deviceName, setDeviceName, version, keepScreenAwake, setKeepScreenAwake } = useSettingsStore(
+    useShallow((s) => ({
+      deviceName: s.deviceName,
+      setDeviceName: s.setDeviceName,
+      version: s.version,
+      keepScreenAwake: s.keepScreenAwake,
+      setKeepScreenAwake: s.setKeepScreenAwake,
+    })),
   );
+  // Computed once per mount: neither the browser nor the origin's secure-context status can
+  // change while the pane is open.
+  const [support] = useState(wakeLockSupport);
   const [nameInput, setNameInput] = useState(deviceName ?? "");
   const [nameSaving, setNameSaving] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
@@ -64,6 +75,29 @@ export function GeneralSettingsSection() {
         <p className="text-xs text-muted-foreground">
           Shown in page title and synced to PPM Cloud.
         </p>
+      </section>
+
+      <Separator />
+
+      <section className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <Sun className="size-4 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Keep Screen Awake</p>
+            <p className="text-xs text-muted-foreground">
+              {support === "insecure"
+                ? "Unavailable over plain HTTP — reach PPM through its HTTPS tunnel address to use this."
+                : support === "unsupported"
+                  ? "This browser does not support screen wake locks."
+                  : "Stop this device dimming while a chat turn is running."}
+            </p>
+          </div>
+        </div>
+        <Switch
+          checked={keepScreenAwake && support === "ok"}
+          disabled={support !== "ok"}
+          onCheckedChange={setKeepScreenAwake}
+        />
       </section>
 
       <Separator />
