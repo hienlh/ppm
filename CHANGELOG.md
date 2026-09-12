@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.7] - 2026-09-12
+
+### Added
+- **The screen stays on while a turn runs** — a propped-up tablet no longer dims mid-answer, including while the agent waits on a question or an approval. On by default, with a switch in Settings → General and an on-screen marker while it is holding. Needs an HTTPS address; over a plain-HTTP LAN address the browser withholds the API and the switch says so.
+
+### Fixed
+- **Ad-hoc scripts can no longer open the production database** — importing a service from a throwaway script was enough to reach live state, and one such script blanked the auth token and deleted every project. Only the CLI, server, supervisor and edge forwarder may now open it; anything else needs `PPM_HOME` set.
+
 ## [0.19.6] - 2026-09-12
 
 ### Fixed
