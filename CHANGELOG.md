@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.19.6] - 2026-09-12
+
+### Fixed
+- **Codex accounts show when each quota window resets** — the card drew two bare percentages while the Claude card beside it counted down; the reset times were already being fetched.
+- **The proxy Test dialog follows the provider you picked** — testing a codex connection still called the Claude endpoint, so the reply came back from the wrong engine, and the model list only offered Claude names.
+
 ## [0.19.5] - 2026-09-12
 
 ### Added
