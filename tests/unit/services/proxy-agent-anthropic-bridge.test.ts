@@ -138,7 +138,7 @@ describe("proxy agent bridge — anthropic dialect", () => {
     expect(res.status).toBe(400);
     const j = await res.json() as any;
     expect(j.error.type).toBe("invalid_request_error");
-    expect(j.error.message).toContain("image blocks are not supported");
+    expect(j.error.message).toContain("/v1/images/edits");
   });
 
   it("returns as soon as the turn is done, even though the stream stays open", async () => {

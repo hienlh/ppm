@@ -22,6 +22,7 @@ class FakeProvider implements AIProvider {
   seenMessage = "";
   seenModel: string | undefined;
   seenPermissionMode: string | undefined;
+  seenImagePaths: string[] | undefined;
   created = 0;
   deleted: string[] = [];
 
@@ -39,10 +40,11 @@ class FakeProvider implements AIProvider {
   /** When true the stream never ends, the way a real live session behaves. */
   endless = false;
 
-  async *sendMessage(_id: string, message: string, opts?: { model?: string; permissionMode?: string }): AsyncIterable<ChatEvent> {
+  async *sendMessage(_id: string, message: string, opts?: { model?: string; permissionMode?: string; imagePaths?: string[] }): AsyncIterable<ChatEvent> {
     this.seenMessage = message;
     this.seenModel = opts?.model;
     this.seenPermissionMode = opts?.permissionMode;
+    this.seenImagePaths = opts?.imagePaths;
     for (const ev of this.script) yield ev;
     if (this.endless) await new Promise(() => {});
   }
@@ -186,13 +188,35 @@ describe("proxy agent bridge", () => {
     expect(available).not.toContain("mock");
   });
 
-  it("refuses an image instead of answering as if it had seen one", async () => {
+  it("writes an inline image to disk and hands the agent its path", async () => {
+    fake.script = [{ type: "text", content: "a cat" }, { type: "done", sessionId: "s-1" }];
+    // 1x1 PNG — enough to prove the bytes survive the round trip to a file.
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
     const res = await forwardAgentChatCompletions("test-agent", {
       model: "fake-1",
-      messages: [{ role: "user", content: [{ type: "text", text: "what is this?" }, { type: "image_url" }] }],
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${png}` } },
+        ],
+      }],
+    } as any);
+    expect(res.status).toBe(200);
+    expect(fake.seenImagePaths?.length).toBe(1);
+    expect(fake.seenImagePaths![0]).toEndWith(".png");
+    // A provider that takes images by path cannot use a prompt-embedded payload,
+    // so the text must stay clean of the base64 blob.
+    expect(fake.seenMessage).toBe("Human: what is this?");
+  });
+
+  it("refuses a remote image URL rather than fetching it server-side", async () => {
+    const res = await forwardAgentChatCompletions("test-agent", {
+      model: "fake-1",
+      messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://evil/internal.png" } }] }],
     } as any);
     expect(res.status).toBe(400);
-    expect((await res.json() as any).error.message).toContain("image_url is not supported");
+    expect((await res.json() as any).error.message).toContain("data: URL");
   });
 
   it("rejects a request with nothing for the agent to answer", async () => {

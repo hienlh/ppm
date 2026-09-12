@@ -11,18 +11,51 @@
  * before answering. Tool traffic has no place in the OpenAI wire format, so only
  * assistant text reaches the caller.
  */
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   startAgentTurn, usageOf, resolveProvider, proxyableProviderIds,
 } from "./proxy-agent-turn.ts";
+import { decodeImagePayload } from "./proxy-image-bridge.ts";
 import {
-  buildPromptFromOpenAiMessages, hasUnsupportedBlocks, completionResponse, openAiError,
+  buildPromptFromOpenAiMessages, hasUnsupportedBlocks, extractImagePayloads,
+  completionResponse, openAiError,
   ChunkWriter, SSE_HEADERS, type OpenAiChatBody,
 } from "./proxy-openai-format.ts";
 
+/**
+ * Inline images written to a scratch directory, since a provider may take an
+ * image only as a path. Returns the paths plus the cleanup that removes them.
+ */
+function stageImages(body: OpenAiChatBody): { paths: string[]; discard: () => void } {
+  const { dataUrls } = extractImagePayloads(body);
+  if (dataUrls.length === 0) return { paths: [], discard: () => {} };
+  const dir = mkdtempSync(join(tmpdir(), "ppm-chat-img-"));
+  const paths = dataUrls.map((url, i) => {
+    const { bytes, ext } = decodeImagePayload(url);
+    const path = join(dir, `image-${i}${ext}`);
+    writeFileSync(path, bytes);
+    return path;
+  });
+  return { paths, discard: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } } };
+}
+
 /** Open the turn described by an OpenAI-format body. */
-function startTurn(providerId: string, body: OpenAiChatBody) {
+async function startTurn(providerId: string, body: OpenAiChatBody) {
   const { prompt, systemPrompt } = buildPromptFromOpenAiMessages(body);
-  return startAgentTurn(providerId, { prompt, systemPrompt, model: body.model });
+  const staged = stageImages(body);
+  try {
+    const run = await startAgentTurn(providerId, {
+      prompt, systemPrompt, model: body.model, imagePaths: staged.paths,
+    });
+    // The agent reads the files during the turn, so they outlive startTurn and
+    // are dropped alongside the session.
+    return { ...run, cleanup: async () => { await run.cleanup(); staged.discard(); } };
+  } catch (e) {
+    staged.discard();
+    throw e;
+  }
 }
 
 /** Non-streaming: drain the turn, return one `chat.completion`. */
@@ -94,10 +127,13 @@ export async function forwardAgentChatCompletions(
   if (!resolveProvider(providerId)) {
     return openAiError(404, `Unknown provider "${providerId}". Available: ${proxyableProviderIds().join(", ") || "none"}`);
   }
-  // Silently dropping an image would answer the prompt as if the picture had
-  // been seen — worse than refusing, because the caller cannot tell.
+  // Silently dropping a block would answer the prompt as if it had been seen —
+  // worse than refusing, because the caller cannot tell.
   if (hasUnsupportedBlocks(body)) {
-    return openAiError(400, "This endpoint accepts text content blocks only; image_url is not supported yet");
+    return openAiError(400, "Only text and image_url content blocks are supported");
+  }
+  if (extractImagePayloads(body).remoteUrls > 0) {
+    return openAiError(400, "image_url must be a data: URL; remote URLs are not fetched");
   }
   try {
     return body.stream

@@ -11,7 +11,11 @@
 /** One entry of the OpenAI `messages` array (content is string or block array). */
 export interface OpenAiMessage {
   role?: string;
-  content?: string | Array<{ type?: string; text?: string }> | null;
+  content?: string | Array<{
+    type?: string;
+    text?: string;
+    image_url?: { url?: string };
+  }> | null;
 }
 
 export interface OpenAiChatBody {
@@ -52,10 +56,32 @@ export function buildPromptFromOpenAiMessages(
   return { prompt: conversationParts.join("\n\n"), systemPrompt };
 }
 
-/** True when any message carries a content block this format cannot forward. */
+/**
+ * Inline image payloads, in request order.
+ *
+ * Only `data:` URLs are accepted. Fetching an arbitrary `http(s)` URL would let
+ * a caller aim the server at hosts it can reach and the caller cannot, so a
+ * remote URL is refused rather than followed.
+ */
+export function extractImagePayloads(body: OpenAiChatBody): { dataUrls: string[]; remoteUrls: number } {
+  const dataUrls: string[] = [];
+  let remoteUrls = 0;
+  for (const m of body.messages ?? []) {
+    if (!Array.isArray(m.content)) continue;
+    for (const block of m.content) {
+      if (block.type !== "image_url") continue;
+      const url = block.image_url?.url ?? "";
+      if (url.startsWith("data:")) dataUrls.push(url);
+      else remoteUrls++;
+    }
+  }
+  return { dataUrls, remoteUrls };
+}
+
+/** True when a message carries a block this format can neither send nor name. */
 export function hasUnsupportedBlocks(body: OpenAiChatBody): boolean {
   return (body.messages ?? []).some((m) =>
-    Array.isArray(m.content) && m.content.some((b) => b.type && b.type !== "text"),
+    Array.isArray(m.content) && m.content.some((b) => b.type && b.type !== "text" && b.type !== "image_url"),
   );
 }
 

@@ -5,7 +5,8 @@
  */
 import { describe, it, expect } from "bun:test";
 import {
-  buildPromptFromOpenAiMessages, hasUnsupportedBlocks, completionResponse, openAiError,
+  buildPromptFromOpenAiMessages, hasUnsupportedBlocks, extractImagePayloads,
+  completionResponse, openAiError,
 } from "../../../src/services/proxy-openai-format.ts";
 
 describe("proxy openai format", () => {
@@ -40,16 +41,33 @@ describe("proxy openai format", () => {
     expect(r.prompt).toBe("Human: a\nb");
   });
 
-  it("flags image blocks as unsupported instead of pretending they carried", () => {
+  it("keeps only the text in the prompt and hands images back separately", () => {
     const withImage = {
       messages: [{
         role: "user",
-        content: [{ type: "text", text: "what is this?" }, { type: "image_url" }],
+        content: [
+          { type: "text", text: "what is this?" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+        ],
       }],
     };
-    // Dropping is the documented behaviour; hasUnsupportedBlocks is how a caller detects it.
+    // The prompt carries text; the picture travels as a file, not as prompt text.
     expect(buildPromptFromOpenAiMessages(withImage).prompt).toBe("Human: what is this?");
-    expect(hasUnsupportedBlocks(withImage)).toBe(true);
+    expect(hasUnsupportedBlocks(withImage)).toBe(false);
+    expect(extractImagePayloads(withImage).dataUrls).toEqual(["data:image/png;base64,AAAA"]);
+  });
+
+  it("counts remote image URLs separately so the caller can be told why", () => {
+    const remote = {
+      messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://x/y.png" } }] }],
+    };
+    // Fetching that URL would aim the server at hosts the caller cannot reach.
+    expect(extractImagePayloads(remote)).toEqual({ dataUrls: [], remoteUrls: 1 });
+  });
+
+  it("still flags a block type it can neither send nor name", () => {
+    const audio = { messages: [{ role: "user", content: [{ type: "input_audio" }] }] };
+    expect(hasUnsupportedBlocks(audio)).toBe(true);
     expect(hasUnsupportedBlocks({ messages: [{ role: "user", content: "plain" }] })).toBe(false);
   });
 

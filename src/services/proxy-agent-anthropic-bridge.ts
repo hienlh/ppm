@@ -89,9 +89,10 @@ export async function forwardAgentMessages(
     return anthropicError(404, `Unknown provider "${providerId}". Available: ${proxyableProviderIds().join(", ") || "none"}`);
   }
   // Silently dropping an image would answer the prompt as if the picture had
-  // been seen — worse than refusing, because the caller cannot tell.
+  // been seen — worse than refusing, because the caller cannot tell. Images in
+  // this dialect are not staged yet; the OpenAI endpoint is the one to use.
   if (hasUnsupportedAnthropicBlocks(body)) {
-    return anthropicError(400, "This endpoint accepts text content blocks only; image blocks are not supported yet");
+    return anthropicError(400, "This endpoint accepts text content blocks only; send images to /v1/chat/completions or /v1/images/edits");
   }
   try {
     return body.stream

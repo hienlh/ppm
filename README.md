@@ -76,7 +76,7 @@ After setup, open the URL shown in terminal and enter your access password.
 - **MCP servers** — add, edit and import MCP servers (auto-imports from `~/.claude.json`).
 - **Scheduled agents** — cron jobs inside PPM that wake a session to work unattended, with turn/timeout budgets and a summary notification.
 - **Multi-account** — store several Claude/Codex accounts, rotate on cooldown, track usage.
-- **API proxy** — expose your accounts as an Anthropic-compatible (and OpenAI-compatible) endpoint under `/proxy/v1/*`, guarded by its own auth key, with request logging.
+- **API proxy** — expose your accounts as an Anthropic- and OpenAI-compatible endpoint, guarded by its own auth key, with request logging. Point any SDK at `/proxy` for Claude, or at `/proxy/<provider>` to drive that provider's agent instead — including image generation and editing. See [API proxy](#api-proxy).
 
 ### Workspace
 
@@ -213,6 +213,59 @@ ppm export skill --install
 ```
 
 Then in Claude Code: `/ppm list my projects` → Claude invokes `ppm projects list` automatically. Re-run any time to refresh (existing files are backed up with a `.bak-<timestamp>` suffix). Requires PPM v0.13.0+.
+
+## API proxy
+
+Turn PPM into an API your own apps can call. Enable it in **Settings → API Proxy**, generate an auth key, and point any OpenAI or Anthropic SDK at PPM. The proxy has its own key and does not use your PPM login.
+
+### Choosing what answers
+
+Everything hangs off one prefix, so you pick the engine by changing the base URL and nothing else:
+
+| Base URL | Answered by |
+|---|---|
+| `<host>/proxy` | Your Claude accounts, with rotation |
+| `<host>/proxy/codex` | The Codex agent, using your Codex account |
+
+Each prefix serves both dialects at the path your SDK already appends:
+
+```
+POST  <prefix>/v1/messages             Anthropic Messages
+POST  <prefix>/v1/chat/completions     OpenAI Chat Completions   (streaming supported)
+GET   <prefix>/v1/models               Models the provider offers
+POST  <prefix>/v1/images/generations   Text to image
+POST  <prefix>/v1/images/edits         Image to image
+```
+
+```bash
+# OpenAI SDK
+OPENAI_BASE_URL=https://your-host/proxy/codex/v1
+OPENAI_API_KEY=<your proxy key>
+
+# Anthropic SDK
+ANTHROPIC_BASE_URL=https://your-host/proxy/codex
+ANTHROPIC_API_KEY=<your proxy key>
+```
+
+The `model` field is passed to the provider, so `GET /v1/models` tells you what to put there.
+
+### Images
+
+`images/generations` and `images/edits` take JSON and return OpenAI's shape, `{ "created": …, "data": [{ "b64_json": … }] }`. Images always come back as base64 because PPM has nowhere to host a URL. `edits` takes its source the same way — a `data:` URL or bare base64 in the `image` field, not multipart.
+
+```bash
+curl -X POST "$BASE/v1/images/generations" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"prompt":"a single yellow star on a black background","n":1}'
+```
+
+Chat also accepts pictures: send an `image_url` content block holding a `data:` URL and the agent will look at it. Remote `http(s)` URLs are refused rather than fetched, so the proxy cannot be pointed at hosts the caller cannot reach itself.
+
+Image support currently requires the `codex` provider — Claude cannot generate images, and asking it returns a clear error rather than hanging.
+
+### What to expect
+
+Provider-scoped requests run a real agent turn, so they are slower than a plain model call: a few seconds for chat, roughly half a minute for an image. Each request gets its own throwaway session, so nothing accumulates in your sidebar and no conversation leaks between callers. The agent runs read-only with approvals off — an API key must not become write access to your machine.
 
 ## Requirements
 

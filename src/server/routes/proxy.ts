@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { proxyService } from "../../services/proxy.service.ts";
 import { listProviderModels } from "../../services/proxy-agent-turn.ts";
+import { forwardImageGeneration, forwardImageEdit } from "../../services/proxy-image-bridge.ts";
 import { getProxyStats } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -139,6 +140,22 @@ proxyRoutes.post("/:provider/v1/chat/completions", async (c) => {
   const blocked = agentGate(c, "openai");
   if (blocked) return blocked;
   return proxyService.forwardAgentChat(c.req.param("provider"), await c.req.text(), getCallerMeta(c));
+});
+
+/** POST /proxy/:provider/v1/images/generations — text to image, OpenAI shape. */
+proxyRoutes.post("/:provider/v1/images/generations", async (c) => {
+  const blocked = agentGate(c, "openai");
+  if (blocked) return blocked;
+  return forwardImageGeneration(c.req.param("provider"), await c.req.json().catch(() => ({})));
+});
+
+/** POST /proxy/:provider/v1/images/edits — image to image, OpenAI shape.
+ *  JSON only: the agent needs the source on disk, so a base64 payload is what
+ *  the bridge can actually act on. */
+proxyRoutes.post("/:provider/v1/images/edits", async (c) => {
+  const blocked = agentGate(c, "openai");
+  if (blocked) return blocked;
+  return forwardImageEdit(c.req.param("provider"), await c.req.json().catch(() => ({})));
 });
 
 /** GET /proxy/:provider/v1/models — models that provider offers, OpenAI list shape. */

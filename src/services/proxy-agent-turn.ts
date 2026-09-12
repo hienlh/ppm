@@ -105,6 +105,12 @@ export interface TurnRequest {
   systemPrompt?: string;
   /** Model name passed straight to the provider. */
   model?: string;
+  /**
+   * Local files holding the request's images. Codex takes an image as a path
+   * and has no base64 form, so an inline attachment reaches the agent only
+   * after the caller has written it to disk.
+   */
+  imagePaths?: string[];
 }
 
 export interface TurnRun {
@@ -131,6 +137,7 @@ export async function startAgentTurn(providerId: string, req: TurnRequest): Prom
   const opts = {
     permissionMode: PROXY_PERMISSION_MODE,
     ...(req.model ? { model: req.model } : {}),
+    ...(req.imagePaths?.length ? { imagePaths: req.imagePaths } : {}),
   };
   const sessionId = await takePooledSession(providerId, {
     provider, opts,
