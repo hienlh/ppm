@@ -29,9 +29,13 @@ class FakeProvider implements AIProvider {
   async resumeSession(): Promise<Session> { throw new Error("unused"); }
   async listSessions() { return []; }
   async deleteSession(id: string) { this.deleted.push(id); }
+  /** When true the stream never ends, the way a real live session behaves. */
+  endless = false;
+
   async *sendMessage(_id: string, message: string): AsyncIterable<ChatEvent> {
     this.seenMessage = message;
     for (const ev of this.script) yield ev;
+    if (this.endless) await new Promise(() => {});
   }
 }
 
@@ -135,6 +139,22 @@ describe("proxy agent bridge — anthropic dialect", () => {
     const j = await res.json() as any;
     expect(j.error.type).toBe("invalid_request_error");
     expect(j.error.message).toContain("image blocks are not supported");
+  });
+
+  it("returns as soon as the turn is done, even though the stream stays open", async () => {
+    // See the OpenAI bridge test: a real session outlives the turn it just ran.
+    fake.endless = true;
+    fake.script = [
+      { type: "text", content: "finished" },
+      { type: "done", sessionId: "s-1", usage: FULL_USAGE },
+    ];
+    const res = await Promise.race([
+      forwardAgentMessages("test-anthropic", body()),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("bridge hung past the turn")), 1000)),
+    ]);
+    fake.endless = false;
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).content).toEqual([{ type: "text", text: "finished" }]);
   });
 
   it("uses Anthropic's error envelope, not OpenAI's", async () => {

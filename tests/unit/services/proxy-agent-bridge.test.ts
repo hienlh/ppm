@@ -36,11 +36,15 @@ class FakeProvider implements AIProvider {
   async deleteSession(id: string) { this.deleted.push(id); }
   async listModels() { return [{ value: "fake-1", label: "Fake One" }]; }
 
+  /** When true the stream never ends, the way a real live session behaves. */
+  endless = false;
+
   async *sendMessage(_id: string, message: string, opts?: { model?: string; permissionMode?: string }): AsyncIterable<ChatEvent> {
     this.seenMessage = message;
     this.seenModel = opts?.model;
     this.seenPermissionMode = opts?.permissionMode;
     for (const ev of this.script) yield ev;
+    if (this.endless) await new Promise(() => {});
   }
 }
 
@@ -144,6 +148,25 @@ describe("proxy agent bridge", () => {
     expect(joined).toContain("part");
     expect(joined).toContain("boom");
     expect(frames.at(-1)).toBe("[DONE]");
+  });
+
+  it("returns as soon as the turn is done, even though the stream stays open", async () => {
+    // A live provider keeps its event channel open for the next turn, so it never
+    // completes on its own. The other cases end the script right after `done`,
+    // which hides that; only a stream that outlives the turn proves the bridge
+    // stops on `done` instead of hanging on an answer it already has.
+    fake.endless = true;
+    fake.script = [
+      { type: "text", content: "done-and-dusted" },
+      { type: "done", sessionId: "s-1", usage: FULL_USAGE },
+    ];
+    const res = await Promise.race([
+      forwardAgentChatCompletions("test-agent", body()),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("bridge hung past the turn")), 1000)),
+    ]);
+    fake.endless = false;
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).choices[0].message.content).toBe("done-and-dusted");
   });
 
   it("rejects an unknown provider and names the ones that work", async () => {

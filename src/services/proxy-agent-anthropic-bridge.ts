@@ -29,7 +29,10 @@ async function runNonStreaming(providerId: string, body: AnthropicMessagesBody):
     for await (const ev of events) {
       if (ev.type === "text") text += ev.content;
       else if (ev.type === "error") throw new Error(ev.message);
-      else if (ev.type === "done") usage = usageOf(ev);
+      // `done` ends the turn, but a provider's event stream stays open for the
+      // session's next turn and never returns. Without this break the request
+      // hangs on a completed answer until the idle timeout fires.
+      else if (ev.type === "done") { usage = usageOf(ev); break; }
     }
     return messageResponse(text, body.model || providerId, usage);
   } finally {
@@ -53,7 +56,9 @@ async function runStreaming(providerId: string, body: AnthropicMessagesBody): Pr
         for await (const ev of events) {
           if (ev.type === "text") stream.text(ev.content);
           else if (ev.type === "error") throw new Error(ev.message);
-          else if (ev.type === "done") usage = usageOf(ev);
+          // See runNonStreaming: the stream outlives the turn, so `done` is the
+          // only signal that the answer is complete.
+          else if (ev.type === "done") { usage = usageOf(ev); break; }
         }
         stream.close(usage);
       } catch (e) {
