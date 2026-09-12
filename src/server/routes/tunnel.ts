@@ -5,6 +5,7 @@ import { getLocalIp } from "../../lib/network-utils.ts";
 import { ok, err } from "../../types/api.ts";
 import { getConfigValue } from "../../services/db.service.ts";
 import { resolveTunnelConfig } from "../../services/named-tunnel/named-tunnel-config.ts";
+import { requestTunnelReload } from "../../services/supervisor-state.ts";
 
 export const tunnelRoutes = new Hono();
 
@@ -14,7 +15,31 @@ tunnelRoutes.get("/", (c) => {
   const port = configService.get("port") ?? 8080;
   const localIp = getLocalIp();
   const localUrl = localIp ? `http://${localIp}:${port}` : null;
-  return c.json(ok({ active: !!url, url, localUrl }));
+  // `enabled` is what the user asked for; `active` is what is actually serving.
+  // They disagree for the seconds between a toggle and the supervisor acting on
+  // it, and whenever a tunnel the switch permits has failed to come up.
+  const enabled = resolveTunnelConfig(getConfigValue("tunnel")).enabled;
+  return c.json(ok({ active: !!url, url, localUrl, enabled }));
+});
+
+/**
+ * POST /api/tunnel/enabled — the master switch.
+ *
+ * Writing the config is only half of it: the supervisor owns the cloudflared
+ * process and lives in another process with its own config cache, so the change
+ * reaches it as a `retunnel`, which it already knows how to claim atomically.
+ * `no-supervisor` is not an error — a dev server started without one still
+ * persists the choice for the next real start.
+ */
+tunnelRoutes.post("/enabled", async (c) => {
+  const body = await c.req.json().catch(() => null) as { enabled?: unknown } | null;
+  if (typeof body?.enabled !== "boolean") {
+    return c.json(err("`enabled` must be a boolean"), 400);
+  }
+  const current = configService.get("tunnel");
+  configService.set("tunnel", { ...current, enabled: body.enabled });
+  const reload = requestTunnelReload();
+  return c.json(ok({ enabled: body.enabled, reload }));
 });
 
 /** POST /api/tunnel/start — start tunnel if not already running */

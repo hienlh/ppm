@@ -77,3 +77,78 @@ describe("GET /tunnel after stop", () => {
 // POST /tunnel/start is tested by integration tests
 // Unit test skipped because it spawns cloudflared process which hangs in test env
 // Real test requires cloudflared binary installed and available
+
+describe("POST /tunnel/enabled — the master switch", () => {
+  it("defaults to on, so an untouched install keeps sharing", async () => {
+    const app = createApp();
+    const res = await app.request("/tunnel");
+    const json = await res.json() as any;
+    expect(json.data.enabled).toBe(true);
+  });
+
+  it("persists off and reports it back on the status route", async () => {
+    const app = createApp();
+    const res = await app.request("/tunnel/enabled", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).data.enabled).toBe(false);
+
+    expect(configService.get("tunnel").enabled).toBe(false);
+    const status = await (await app.request("/tunnel")).json() as any;
+    expect(status.data.enabled).toBe(false);
+  });
+
+  it("round-trips back on", async () => {
+    const app = createApp();
+    const post = (enabled: boolean) => app.request("/tunnel/enabled", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    await post(false);
+    await post(true);
+    expect(configService.get("tunnel").enabled).toBe(true);
+  });
+
+  // Turning the tunnel off is not the same as giving up a configured domain:
+  // the hostname has to survive so turning it back on needs no re-setup.
+  it("leaves a configured named tunnel intact when switched off", async () => {
+    configService.set("tunnel", {
+      enabled: true,
+      mode: "named",
+      namedTunnelName: "ppm-host",
+      namedTunnelHostname: "ppm.hienle.tech",
+      namedTunnelToken: "tok",
+      zoneID: "a".repeat(32),
+      accountID: "b".repeat(32),
+    });
+    const app = createApp();
+    await app.request("/tunnel/enabled", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    const tunnel = configService.get("tunnel");
+    expect(tunnel.enabled).toBe(false);
+    expect(tunnel.mode).toBe("named");
+    expect(tunnel.namedTunnelHostname).toBe("ppm.hienle.tech");
+    expect(tunnel.namedTunnelToken).toBe("tok");
+  });
+
+  it("rejects a non-boolean body without touching the stored value", async () => {
+    const app = createApp();
+    for (const body of ['{"enabled":"false"}', '{"enabled":0}', '{}', "not-json"]) {
+      const res = await app.request("/tunnel/enabled", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(configService.get("tunnel").enabled).toBe(true);
+  });
+});
+

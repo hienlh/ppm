@@ -44,6 +44,14 @@ export interface PpmConfig {
  * `zoneID`/`accountID` are pinned at setup and re-checked on every reuse.
  */
 export interface TunnelConfig {
+  /**
+   * Master switch for the public tunnel. `false` means the supervisor spawns no
+   * cloudflared at all, whatever `mode` says — a machine reached over a LAN, a
+   * VPN or Tailscale gains nothing from a public URL and pays for it in
+   * exposure. Absent in rows written before this switch existed, so every
+   * reader must default it to `true`: the tunnel used to be unconditional.
+   */
+  enabled: boolean;
   mode: "quick" | "named";
   namedTunnelName?: string;
   namedTunnelHostname?: string;
@@ -170,6 +178,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
     debounce_ms: 2000,
   },
   tunnel: {
+    enabled: true,
     mode: "quick",
   },
 };
@@ -335,6 +344,11 @@ export function sanitizeConfig(config: PpmConfig): boolean {
   if (typeof config.tunnel !== "object" || config.tunnel === null ||
       (config.tunnel.mode !== "quick" && config.tunnel.mode !== "named")) {
     config.tunnel = structuredClone(DEFAULT_CONFIG.tunnel);
+    dirty = true;
+  } else if (typeof config.tunnel.enabled !== "boolean") {
+    // Written before the master switch existed, when the tunnel was
+    // unconditional — so an absent flag must read as on, never off.
+    config.tunnel.enabled = true;
     dirty = true;
   }
 

@@ -101,6 +101,11 @@ const TUNNEL_REGEN_MIN_INTERVAL_MS = 300_000; // 5min
 // cache, never `configService` (a separate process, stale here) nor a fresh
 // async DB read (would reorder the startup adopt/probe-before-spawn race).
 let namedTunnelMode: ResolvedTunnelConfig | null = null;
+// Effective master switch: the argv flag AND `tunnel.enabled` from config.
+// Module-level rather than a local because the SIGUSR1 and Windows-command
+// handlers close over it before startup reaches the config read, and because
+// `retunnel` flips it live when the user toggles the switch.
+let tunnelSharingEnabled = false;
 // The mode of the tunnel actually spawned (as opposed to `namedTunnelMode`,
 // which is merely the persisted intent) — a token failure leaves config=named
 // but live=quick, and every status write / throttle / restart decision must
@@ -428,6 +433,26 @@ function restartTunnel(port: number) {
     updateStatus({ shareUrl: null, tunnelPid: null, tunnelPort: null });
   }
   spawnTunnel(port).catch((e) => log("ERROR", `restartTunnel failed: ${e}`));
+}
+
+/**
+ * Tear the tunnel down for good because the master switch went off — as opposed
+ * to `restartTunnel`, which kills in order to respawn.
+ *
+ * Bumping the generation is the load-bearing part: the running spawn loop is
+ * awaiting its child's `exited` and would otherwise treat the kill as a crash
+ * and respawn. The probe needs no stopping — it returns early once there is no
+ * `tunnelUrl` and no live process.
+ */
+function stopTunnelForDisable(): void {
+  tunnelGeneration++;
+  cancelNamedRetry();
+  namedRetryAttempt = 0;
+  if (tunnelChild) { try { tunnelChild.kill(); } catch {} tunnelChild = null; }
+  if (adoptedTunnelPid) { try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {} adoptedTunnelPid = null; }
+  tunnelUrl = null;
+  tunnelPort = null;
+  updateStatus({ shareUrl: null, tunnelPid: null, tunnelPort: null });
 }
 
 // ─── Server shutdown ───────────────────────────────────────────────────
@@ -1206,6 +1231,10 @@ async function probeNamedTunnelHealth(): Promise<boolean> {
 }
 
 function startTunnelProbe() {
+  // Idempotent: a supervisor that booted with the tunnel switched off never
+  // started this, and turning the switch on has to be able to start it then —
+  // without leaving a second interval behind on the boots that did start it.
+  if (tunnelProbeTimer) return;
   tunnelProbeTimer = setInterval(async () => {
     if (shuttingDown || !tunnelUrl) { tunnelFailCount = 0; return; }
     if (!tunnelChild && !adoptedTunnelPid) { tunnelFailCount = 0; return; }
@@ -2049,7 +2078,16 @@ export async function runSupervisor(opts: {
         // restarts the ladder so a later transient failure gets a full budget.
         cancelNamedRetry();
         namedRetryAttempt = 0;
-        restartTunnel(_opts.port);
+        // `retunnel` is also how the master switch is applied without a
+        // restart, so it has to be able to mean "stop" and not only "respawn".
+        tunnelSharingEnabled = _opts.share && namedTunnelMode.enabled;
+        if (tunnelSharingEnabled) {
+          startTunnelProbe();
+          restartTunnel(_opts.port);
+        } else {
+          log("INFO", "Tunnel switched off — tearing down the running tunnel");
+          stopTunnelForDisable();
+        }
         // Deliberate fall-through (no return): a bare `ppm restart` sends a
         // bare SIGUSR2 with no command file of its own, and a `retunnel` that
         // happens to still be unclaimed at that instant must not silently
@@ -2091,7 +2129,7 @@ export async function runSupervisor(opts: {
       log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
       spawnServer(serverArgs, logFd);
       // Tunnel was kept alive during selfReplace; only respawn if dead
-      if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
+      if (tunnelSharingEnabled && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
     }
   });
 
@@ -2200,7 +2238,16 @@ export async function runSupervisor(opts: {
           tunnelFailCount = 0;
           cancelNamedRetry();
           namedRetryAttempt = 0;
-          restartTunnel(_opts.port);
+          // Same dual meaning as the POSIX path: this is how the master switch
+          // is applied live, so it must also be able to mean "stop".
+          tunnelSharingEnabled = _opts.share && cfg.enabled;
+          if (tunnelSharingEnabled) {
+            startTunnelProbe();
+            restartTunnel(_opts.port);
+          } else {
+            log("INFO", "Tunnel switched off — tearing down the running tunnel");
+            stopTunnelForDisable();
+          }
         });
       }
       else if (cmd.action === "upgrade") {
@@ -2209,7 +2256,7 @@ export async function runSupervisor(opts: {
           if (!result.success) {
             log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
             spawnServer(serverArgs, logFd);
-            if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
+            if (tunnelSharingEnabled && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
           }
         });
       }
@@ -2229,12 +2276,18 @@ export async function runSupervisor(opts: {
   // tunnel's origin port (public URL continuity), so adoption state must be
   // settled first — the old order raced spawnServer's port selection.
   let tunnelAdopted = false;
-  if (opts.share) {
-    // Populate the cache BEFORE adoptTunnel/probe — an adopted tunnel skips
-    // spawnTunnel entirely for this whole generation, so without this the
-    // cache would stay null (adoptTunnel's named-hostname gate always refuses,
-    // and the probe can never tell named from quick) until the next spawn.
-    namedTunnelMode = await readTunnelConfigFresh();
+  // Populate the cache BEFORE adoptTunnel/probe — an adopted tunnel skips
+  // spawnTunnel entirely for this whole generation, so without this the
+  // cache would stay null (adoptTunnel's named-hostname gate always refuses,
+  // and the probe can never tell named from quick) until the next spawn.
+  // It also carries the master switch, so it is read before the gate rather
+  // than inside it.
+  namedTunnelMode = await readTunnelConfigFresh();
+  tunnelSharingEnabled = opts.share && namedTunnelMode.enabled;
+  if (opts.share && !tunnelSharingEnabled) {
+    log("INFO", "Tunnel off (tunnel.enabled = false) — no cloudflared will be started");
+  }
+  if (tunnelSharingEnabled) {
     // Defensive — already `false` at module init, but a fresh boot must never
     // start with an inherited restart-once budget "spent".
     namedProbeRestartAttempted = false;
@@ -2250,6 +2303,12 @@ export async function runSupervisor(opts: {
     // Sweep leftover cloudflared orphans (crashed supervisors / pre-fix stale
     // loops) so they don't saturate the network and false-trigger regeneration.
     await reapOrphanedTunnels(tunnelAdopted ? adoptedTunnelPid : null);
+  } else if (opts.share) {
+    // Switched off while a tunnel from an earlier boot is still alive: nothing
+    // adopts or probes it now, so it would go on serving a stale origin with no
+    // supervisor watching it.
+    killStaleTunnel();
+    await reapOrphanedTunnels(null);
   }
 
   // The edge owns the public port, so it must exist before anything else tries
@@ -2298,7 +2357,7 @@ export async function runSupervisor(opts: {
 
   // Spawn server + (fresh) tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];
-  if (opts.share && !tunnelAdopted) promises.push(spawnTunnel(_opts.port));
+  if (tunnelSharingEnabled && !tunnelAdopted) promises.push(spawnTunnel(_opts.port));
 
   await Promise.all(promises);
 

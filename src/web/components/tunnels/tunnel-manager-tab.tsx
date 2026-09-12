@@ -4,6 +4,7 @@ import { tunnelsApi, type TunnelEntry } from "@/lib/api-tunnels";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "sonner";
 import { NamedTunnelSection } from "@/components/tunnels/named-tunnel/named-tunnel-section";
+import { PublicTunnelSwitch } from "@/components/tunnels/public-tunnel-switch";
 
 /** Badge label + style per tunnel source. */
 const SOURCE_META: Record<TunnelEntry["source"], { label: string; cls: string }> = {
@@ -92,6 +93,9 @@ export function TunnelManagerTab() {
 
   return (
     <div className="flex flex-col h-full w-full bg-background">
+      {/* Master switch first: everything below it is moot while the tunnel is off */}
+      <PublicTunnelSwitch />
+
       {/* Named tunnel status + setup entry point, above the quick-forward form */}
       <NamedTunnelSection />
 
