@@ -18,6 +18,12 @@ import { configService } from "../src/services/config.service.ts";
 // Use in-memory DB for all tests (prevents polluting real DB)
 setDb(openTestDb());
 
+// Bring the config service up against that throwaway database. It refuses to persist until
+// load() has run, because writing pristine defaults over a live instance once blanked the auth
+// token and deleted every project — but here PPM_HOME is a fresh temp dir and the database is
+// in-memory, so there is nothing to protect and fixtures write config legitimately.
+configService.load();
+
 // Disable auth for all tests
 const config = (configService as any).config;
 config.auth.enabled = false;

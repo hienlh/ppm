@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+// Isolates PPM_HOME and loads the config service before any service import reaches a database.
+import "../test-setup.ts";
 import { Hono } from "hono";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
