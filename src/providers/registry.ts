@@ -54,6 +54,12 @@ providerRegistry.register(new MockProvider()); // testing only
 /**
  * Bootstrap CLI providers asynchronously.
  * Checks isAvailable() before registering — call at server startup.
+ *
+ * Persists provider entries with set() only, never save(): set() writes just the
+ * "ai" row, while save() rewrites every config key and re-syncs the projects
+ * table from this process's in-memory config. A caller that bootstraps without
+ * configService.load() first still holds pristine defaults, so a save() here
+ * would blank the auth token and delete every project in the real database.
  */
 export async function bootstrapProviders(): Promise<void> {
   try {
@@ -71,7 +77,6 @@ export async function bootstrapProviders(): Promise<void> {
             cursor: { type: "cli", cli_command: "cursor-agent", permission_mode: "bypassPermissions" },
           },
         });
-        configService.save();
       }
       console.log("[registry] Cursor provider registered (cursor-agent found)");
     } else {
@@ -95,7 +100,6 @@ export async function bootstrapProviders(): Promise<void> {
             codex: { type: "cli", cli_command: "codex", permission_mode: "bypassPermissions" },
           },
         });
-        configService.save();
       }
       console.log("[registry] Codex provider registered (@openai/codex found)");
     } else {

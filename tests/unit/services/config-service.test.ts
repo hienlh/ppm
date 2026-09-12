@@ -6,6 +6,7 @@ import {
   getConfigValue,
   getAllConfig,
   getProjects,
+  setConfigValue,
 } from "../../../src/services/db.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import type { ProjectConfig } from "../../../src/types/config.ts";
@@ -194,6 +195,46 @@ describe("ConfigService (SQLite-backed)", () => {
       const dbProjects = getProjects();
       expect(dbProjects).toHaveLength(1);
       expect(dbProjects[0]!.name).toBe("x-project");
+    });
+  });
+
+  describe("refusing to persist unloaded defaults", () => {
+    // A ConfigService that never loaded still holds a clone of DEFAULT_CONFIG:
+    // blank auth token, no device name, no projects. Writing that out is how a
+    // stray bootstrap in a throwaway script once wiped the real instance.
+    function markUnloaded() {
+      (configService as any).loaded = false;
+    }
+
+    it("save() before load() throws instead of overwriting", () => {
+      setConfigValue("device_name", JSON.stringify("real-machine"));
+      markUnloaded();
+
+      expect(() => configService.save()).toThrow(/before load\(\)/);
+      expect(JSON.parse(getConfigValue("device_name")!)).toBe("real-machine");
+    });
+
+    it("set() before load() throws instead of overwriting", () => {
+      setConfigValue("device_name", JSON.stringify("real-machine"));
+      markUnloaded();
+
+      expect(() => configService.set("device_name", "clobbered")).toThrow(/before load\(\)/);
+      expect(JSON.parse(getConfigValue("device_name")!)).toBe("real-machine");
+    });
+
+    it("leaves existing project rows alone when set('projects') runs unloaded", () => {
+      configService.load();
+      configService.set("projects", [{ path: "/keep", name: "keep-me" }]);
+      expect(getProjects()).toHaveLength(1);
+
+      markUnloaded();
+      expect(() => configService.set("projects", [])).toThrow(/before load\(\)/);
+      expect(getProjects()).toHaveLength(1);
+    });
+
+    it("still allows save() once load() has run", () => {
+      configService.load();
+      expect(() => configService.save()).not.toThrow();
     });
   });
 

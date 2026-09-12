@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
+import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 export const CURRENT_SCHEMA_VERSION = 44;
 
@@ -24,6 +25,11 @@ export function getDbPath(): string {
 /** Get or create the singleton DB instance (lazy init) */
 export function getDb(): Database {
   if (db) return db;
+  // Checked before anything is created on disk: an unsanctioned caller must not
+  // even leave a ~/.ppm behind, let alone open the production database. Tests
+  // and other isolated callers never reach this -- setDb() short-circuits above,
+  // and PPM_HOME clears the guard.
+  assertProdDbAccessAllowed(getDbPath());
   const ppmDir = getPpmDir();
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
   db = new Database(getDbPath());

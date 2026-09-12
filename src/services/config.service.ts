@@ -28,9 +28,30 @@ export const FILE_CONFIG_KEYS = {
 
 class ConfigService {
   private config: PpmConfig = structuredClone(DEFAULT_CONFIG);
+  /** Whether `config` reflects the database rather than the pristine defaults. */
+  private loaded = false;
+
+  /**
+   * Refuse writes that would push the untouched defaults over real data.
+   *
+   * Until load() runs, `config` is a clone of DEFAULT_CONFIG: an empty auth
+   * token, no device name, no projects. Persisting that state overwrites every
+   * config key and deletes every project row, which is exactly how a stray
+   * bootstrap in a throwaway script once locked the user out of their instance.
+   */
+  private assertLoaded(operation: string): void {
+    if (this.loaded) return;
+    throw new Error(
+      `ConfigService.${operation}() called before load() — refusing to persist default ` +
+        `config over existing data. Call configService.load() first.`,
+    );
+  }
 
   /** Load config from SQLite. Creates defaults if DB is empty. */
   load(): PpmConfig {
+    // Set before assembling: createDefault() and the sanitize pass below both
+    // persist, and they are legitimate writes from inside load() itself.
+    this.loaded = true;
     const dbConfig = getAllConfig();
     const dbProjects = getProjects();
 
@@ -57,6 +78,7 @@ class ConfigService {
 
   /** Save current config to DB */
   save(): void {
+    this.assertLoaded("save");
     for (const key of CONFIG_TABLE_KEYS) {
       const value = this.config[key];
       if (value !== undefined) {
@@ -74,6 +96,9 @@ class ConfigService {
 
   /** Set a top-level config key (persists immediately) */
   set<K extends keyof PpmConfig>(key: K, value: PpmConfig[K]): void {
+    // Writes one row rather than the whole table, but on unloaded defaults that
+    // row still replaces real settings with placeholders.
+    this.assertLoaded("set");
     this.config[key] = value;
     if (key === "projects") {
       this.syncProjectsToDb(value as ProjectConfig[]);
@@ -159,6 +184,9 @@ class ConfigService {
   }
 
   private syncProjectsToDb(projects: ProjectConfig[]): void {
+    // Also guarded here, not just in save(): this is the call that DELETEs every
+    // project row, and set("projects", ...) reaches it without going through save().
+    this.assertLoaded("syncProjectsToDb");
     const db = getDb();
     // Wrap in a transaction so a mid-operation SIGKILL cannot leave the table empty
     // (DELETE committed but INSERTs never ran would permanently wipe all projects).

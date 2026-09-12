@@ -64,6 +64,20 @@ Exceptions (intentionally use real `homedir()`):
 - `fs-credential-path-guard.ts` — refuses `~/.cloudflared` (alongside the PPM dir) on every fs read/write/transfer door
 - `db-backup/db-backup-paths.ts` — snapshots live in `~/.ppm-backups` *outside* the PPM dir on purpose, so they survive a wipe of it (under an isolated `PPM_HOME` they go back inside that temp dir)
 
+## Never Write to the Real `~/.ppm` From a Script
+
+Ad-hoc scripts, spikes and probes **must not** touch the production database. `getDb()` opens `~/.ppm/ppm.db` for whoever asks first, so merely importing a service is enough to reach it — that is how a throwaway proxy probe once blanked the auth token and deleted every project (see `docs/lessons-learned.md`).
+
+Before running any script that imports from `src/`:
+
+```bash
+PPM_HOME=$(mktemp -d) bun my-script.ts     # scratch database, nothing at risk
+```
+
+`src/services/prod-db-guard.ts` enforces this: only `src/index.ts` (CLI), `src/server/index.ts`, `src/services/supervisor.ts` and `src/services/edge-forwarder.ts` may open the real database. Anything else throws unless `PPM_HOME` is set or `PPM_ALLOW_PROD_DB=1` is passed deliberately. If you hit that error, **set `PPM_HOME` — do not set the override** unless writing to the user's live instance is the actual goal.
+
+Related: `configService.save()`/`set()` throw when `load()` has not run, because an unloaded `ConfigService` still holds `DEFAULT_CONFIG` (blank token, no projects) and persisting it overwrites real data.
+
 ## Known Gotchas
 
 - **SDK .env poisoning**: Projects with `ANTHROPIC_API_KEY` in `.env` break SDK tool execution. Provider neutralizes these vars. See `docs/lessons-learned.md`.
