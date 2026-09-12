@@ -127,10 +127,10 @@ describe("sanitizeConfig — tunnel", () => {
 
   it("leaves an incomplete-but-typed named row unchanged — no strip", () => {
     const config = makeConfig();
-    config.tunnel = { mode: "quick", namedTunnelHostname: "ppm.x", namedTunnelToken: "t" } as any;
+    config.tunnel = { enabled: true, mode: "quick", namedTunnelHostname: "ppm.x", namedTunnelToken: "t" } as any;
     const dirty = sanitizeConfig(config);
     expect(dirty).toBe(false);
-    expect(config.tunnel).toEqual({ mode: "quick", namedTunnelHostname: "ppm.x", namedTunnelToken: "t" });
+    expect(config.tunnel).toEqual({ enabled: true, mode: "quick", namedTunnelHostname: "ppm.x", namedTunnelToken: "t" });
   });
 
   it("resets tunnel to default when the raw value is not an object", () => {
@@ -138,7 +138,7 @@ describe("sanitizeConfig — tunnel", () => {
     (config as any).tunnel = "not-an-object";
     const dirty = sanitizeConfig(config);
     expect(dirty).toBe(true);
-    expect(config.tunnel).toEqual({ mode: "quick" });
+    expect(config.tunnel).toEqual({ enabled: true, mode: "quick" });
   });
 
   it("resets tunnel to default when mode is neither quick nor named", () => {
@@ -146,18 +146,45 @@ describe("sanitizeConfig — tunnel", () => {
     (config as any).tunnel = { mode: "bogus" };
     const dirty = sanitizeConfig(config);
     expect(dirty).toBe(true);
-    expect(config.tunnel).toEqual({ mode: "quick" });
+    expect(config.tunnel).toEqual({ enabled: true, mode: "quick" });
   });
 
   it("preserves a fully-populated named tunnel row", () => {
     const config = makeConfig();
     config.tunnel = {
+      enabled: true,
       mode: "named", namedTunnelName: "ppm-host", namedTunnelHostname: "ppm.hienle.tech",
       namedTunnelToken: "tok", zoneID: "a".repeat(32), accountID: "b".repeat(32),
     };
     const dirty = sanitizeConfig(config);
     expect(dirty).toBe(false);
     expect(config.tunnel.namedTunnelToken).toBe("tok");
+  });
+
+  // The master switch landed after these rows were written, so every existing
+  // install has a tunnel row without it. It has to be filled in on the way
+  // through — `ppm config set tunnel.enabled false` refuses a key that is not
+  // already there, and assembleConfig replaces the whole row rather than
+  // merging defaults into it, so nothing else would ever add it.
+  it("backfills a missing `enabled` as on, without disturbing the rest of the row", () => {
+    const config = makeConfig();
+    (config as any).tunnel = {
+      mode: "named", namedTunnelName: "ppm-host", namedTunnelHostname: "ppm.hienle.tech",
+      namedTunnelToken: "tok", zoneID: "a".repeat(32), accountID: "b".repeat(32),
+    };
+    const dirty = sanitizeConfig(config);
+    expect(dirty).toBe(true);
+    expect(config.tunnel.enabled).toBe(true);
+    expect(config.tunnel.namedTunnelToken).toBe("tok");
+    expect(config.tunnel.mode).toBe("named");
+  });
+
+  it("leaves an explicit `enabled: false` off — the backfill must not re-enable it", () => {
+    const config = makeConfig();
+    (config as any).tunnel = { enabled: false, mode: "quick" };
+    const dirty = sanitizeConfig(config);
+    expect(dirty).toBe(false);
+    expect(config.tunnel.enabled).toBe(false);
   });
 });
 
