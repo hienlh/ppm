@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CLAUDE_MODELS } from "../../../types/claude-models";
+import { proxyEndpoints } from "@/lib/proxy-endpoints";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -16,6 +17,8 @@ type EndpointFormat = "anthropic" | "openai";
 interface ProxyTestDialogProps {
   authKey: string;
   baseUrl: string;
+  /** Provider prefix to test; empty means the unscoped Claude path. */
+  provider?: string;
 }
 
 export function ProxyTestButton(props: ProxyTestDialogProps) {
@@ -42,10 +45,12 @@ export function ProxyTestButton(props: ProxyTestDialogProps) {
   );
 }
 
-function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
+function ProxyTestForm({ authKey, baseUrl, provider }: ProxyTestDialogProps) {
   const [format, setFormat] = useState<EndpointFormat>("anthropic");
   const [message, setMessage] = useState(DEFAULT_MESSAGE);
-  const [model, setModel] = useState(DEFAULT_MODEL);
+  // Only the unscoped path is Claude's. Another provider rejects a Claude model
+  // name outright, so the test starts with none and lets that provider choose.
+  const [model, setModel] = useState(provider ? "" : DEFAULT_MODEL);
   const [streaming, setStreaming] = useState(true);
   const [testing, setTesting] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
@@ -75,11 +80,18 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
     const start = Date.now();
 
     const isOpenAi = format === "openai";
-    const endpoint = isOpenAi
-      ? `${baseUrl}/proxy/v1/chat/completions`
-      : `${baseUrl}/proxy/v1/messages`;
+    // Same helper the Connection Info card uses. Testing the unscoped path while
+    // the card showed a provider was exactly the bug: the answer came back from
+    // Claude and looked like the proxy returning the wrong thing.
+    const ep = proxyEndpoints(baseUrl, provider);
+    const endpoint = isOpenAi ? ep.openAiChatCompletions : ep.anthropicMessages;
 
-    const body = JSON.stringify({ model, max_tokens: 256, stream: streaming, messages: [{ role: "user", content: message }] });
+    const body = JSON.stringify({
+      ...(model ? { model } : {}),
+      max_tokens: 256,
+      stream: streaming,
+      messages: [{ role: "user", content: message }],
+    });
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (isOpenAi) {
@@ -147,23 +159,39 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
             </button>
           ))}
         </div>
-        <p className="text-[9px] text-muted-foreground">
+        <p className="text-[9px] text-muted-foreground break-all">
           {format === "anthropic" ? "x-api-key header" : "Authorization: Bearer header"}
+          {" · "}
+          <code>{`/proxy${provider ? `/${provider}` : ""}/v1/${format === "anthropic" ? "messages" : "chat/completions"}`}</code>
         </p>
       </div>
 
-      {/* Model */}
+      {/* Model — the Claude list only applies to the unscoped path. */}
       <div className="space-y-1.5">
         <Label className="text-[11px]">Model</Label>
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="h-8 w-full rounded-md border bg-background px-2 text-[11px]"
-        >
-          {CLAUDE_MODELS.map((m) => (
-            <option key={m.value} value={m.value}>{m.value}</option>
-          ))}
-        </select>
+        {provider ? (
+          <>
+            <Input
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="leave empty to let the provider choose"
+              className="h-8 text-[11px] font-mono"
+            />
+            <p className="text-[9px] text-muted-foreground">
+              Names come from <code>GET /proxy/{provider}/v1/models</code>.
+            </p>
+          </>
+        ) : (
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="h-8 w-full rounded-md border bg-background px-2 text-[11px]"
+          >
+            {CLAUDE_MODELS.map((m) => (
+              <option key={m.value} value={m.value}>{m.value}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Streaming toggle */}

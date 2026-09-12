@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { getProxySettings, updateProxySettings, getAISettings, type ProxySettings } from "@/lib/api-settings";
 import { copyToClipboard } from "@/lib/clipboard";
 import { ProxyTestButton } from "./proxy-test-section";
+import { proxyEndpoints } from "@/lib/proxy-endpoints";
 
 export function ProxySettingsSection() {
   /** Provider the connection info targets; "" is the unscoped Claude path. */
@@ -70,15 +71,13 @@ export function ProxySettingsSection() {
   const localEndpoint = settings.localEndpoint;
   const localBaseUrl = localEndpoint.replace(/\/proxy\/v1\/messages$/, "");
 
-  // Both dialects hang off one prefix, so selecting a provider moves them
-  // together and the card cannot show a mismatched pair.
-  //   default:   <root>/proxy        → /v1/messages, /v1/chat/completions
-  //   provider:  <root>/proxy/codex  → same two paths underneath
-  const prefix = `${hasTunnel ? settings.tunnelUrl : localBaseUrl}/proxy${provider ? `/${provider}` : ""}`;
-  const anthropicEndpoint = `${prefix}/v1/messages`;
-  const openAiEndpoint = `${prefix}/v1/chat/completions`;
-  const anthropicEnv = `ANTHROPIC_BASE_URL=${prefix}\nANTHROPIC_API_KEY=${settings.authKey}`;
-  const openAiEnv = `OPENAI_BASE_URL=${prefix}/v1\nOPENAI_API_KEY=${settings.authKey}`;
+  // Every URL below comes from the shared helper, which the Test dialog also
+  // uses — that is what keeps the card and the request it fires in agreement.
+  const ep = proxyEndpoints(hasTunnel ? settings.tunnelUrl! : localBaseUrl, provider);
+  const anthropicEndpoint = ep.anthropicMessages;
+  const openAiEndpoint = ep.openAiChatCompletions;
+  const anthropicEnv = `ANTHROPIC_BASE_URL=${ep.anthropicBase}\nANTHROPIC_API_KEY=${settings.authKey}`;
+  const openAiEnv = `OPENAI_BASE_URL=${ep.openAiBase}\nOPENAI_API_KEY=${settings.authKey}`;
 
   return (
     <div className="space-y-4">
@@ -153,7 +152,7 @@ export function ProxySettingsSection() {
         <div className="space-y-2 rounded-md border p-3 bg-muted/30">
           <div className="flex items-center justify-between">
             <h4 className="text-[11px] font-medium">Connection Info</h4>
-            <ProxyTestButton authKey={settings.authKey!} baseUrl={window.location.origin} />
+            <ProxyTestButton authKey={settings.authKey!} baseUrl={window.location.origin} provider={provider} />
           </div>
 
           {/* Target provider — the only thing that differs between the two
@@ -216,6 +215,19 @@ export function ProxySettingsSection() {
               </Button>
             </div>
           </div>
+
+          {/* Images live only under a provider — the unscoped path has no such route. */}
+          {ep.imagesGenerations && ep.imagesEdits && (
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground">Image Endpoints</Label>
+              <code className="block text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded truncate">
+                {ep.imagesGenerations}
+              </code>
+              <code className="block text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded truncate">
+                {ep.imagesEdits}
+              </code>
+            </div>
+          )}
 
           {!hasTunnel && (
             <p className="text-[10px] text-muted-foreground">
