@@ -11,11 +11,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getAuthToken } from "@/lib/api-client";
+import type { LimitBucket } from "../../../../types/chat";
 import type { CodexStrategy } from "./codex-rotation-dialog";
 
 export type Strategy = CodexStrategy;
 export interface CodexAccount { id: string; label: string; type: string; planType?: string | null }
-export interface Usage { fiveHour?: number; sevenDay?: number }
+/**
+ * One account's quota. The two percentages are what the bars read; the buckets carry the
+ * reset clock the server already sends, so the Codex card can show "resets in" the way the
+ * Claude card does.
+ */
+export interface Usage {
+  fiveHour?: number;
+  sevenDay?: number;
+  session?: LimitBucket;
+  weekly?: LimitBucket;
+}
 interface DevicePending { id: string; userCode: string; verificationUrl: string }
 type DeviceStatus = { state: "pending" } | { state: "done" } | { state: "error"; error: string };
 

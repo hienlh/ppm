@@ -1,10 +1,10 @@
 /**
  * The usage bar, and the rate-limit-bucket adapter over it.
  *
- * Two callers with different data: a Claude bucket knows its reset time and window, a Codex
- * usage figure is a bare percentage. `AccountUsageBar` is the shared visual so both read the
- * same; the bucket adapter adds what only a bucket has. Fabricating a reset time to force
- * Codex through the bucket shape would have put invented data on screen.
+ * `AccountUsageBar` is the shared visual, so Claude and Codex rows read the same; it takes
+ * the reset text already formatted, because a caller may hold a percentage whose bucket is
+ * missing and must render the bar without inventing a reset time. `AccountBucketRow` is the
+ * adapter for callers that do have a whole bucket, and it drops the row when they do not.
  */
 
 import type { LimitBucket } from "../../../../types/chat";

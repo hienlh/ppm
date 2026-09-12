@@ -10,14 +10,11 @@ import { useState } from "react";
 import { Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AccountCardRow, AccountCardShell, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
-import { AccountUsageBar } from "./account-bucket-row";
 import { CodexAddAccountDialog } from "./codex-add-account-dialog";
 import { CodexBackupDialog } from "./codex-backup-dialog";
 import { CodexRotationDialog } from "./codex-rotation-dialog";
+import { CodexUsageRows } from "./codex-usage-rows";
 import { useCodexAccounts } from "./use-codex-accounts";
-
-/** Usage arrives as a 0-1 fraction; the shared bar wants whole percent. */
-function toPct(v?: number): number | null { return v != null ? Math.round(v * 100) : null; }
 
 /** Codex multi-account management, separate from Claude accounts because codex auth is owned
  *  by the app-server per CODEX_HOME. Added by API key or ChatGPT device code. */
@@ -98,10 +95,7 @@ export function CodexAccountsSection() {
                       <Trash2 className="size-4" />
                     </button>
                   </div>
-                  <div className="space-y-2">
-                    <AccountUsageBar label="5-Hour Session" pct={toPct(u.fiveHour)} />
-                    <AccountUsageBar label="Weekly" pct={toPct(u.sevenDay)} />
-                  </div>
+                  <CodexUsageRows usage={u} />
                 </AccountCardShell>
               );
             })}
