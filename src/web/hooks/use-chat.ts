@@ -8,6 +8,8 @@ import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
+import type { PromptCacheState } from "../../shared/prompt-cache-idle";
+import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 
@@ -64,6 +66,8 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   compactStatus: "compacting" | null;
+  /** Prompt-cache clock for this session; drives the idle re-cache notice. */
+  promptCache: PromptCacheState | null;
   statusMessage: string | null;
   sessionTitle: string | null;
   /**
@@ -144,6 +148,7 @@ export function useChat(
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [compactStatus, setCompactStatus] = useState<"compacting" | null>(null);
+  const [promptCache, setPromptCache] = useState<PromptCacheState | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -749,6 +754,16 @@ export function useChat(
           }
           return prev;
         });
+        // This turn just rewrote the cache, so the idle clock restarts here. Done locally
+        // rather than waiting for the next `session_state`: a tab left open for hours may
+        // never reconnect, and that is exactly the case the notice exists for.
+        if (doneUsage) {
+          setPromptCache((prev) => prev && {
+            ...prev,
+            lastTurnEndedAt: Date.now(),
+            prefixTokens: prefixTokens(doneUsage),
+          });
+        }
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
         streamingAccountRef.current = null;
@@ -906,6 +921,9 @@ export function useChat(
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
+      // The server is the only holder of when the cache was last written and how big the
+      // replayed prefix was — neither is in the transcript, so a reload has to be told.
+      setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
       // and the full transcript finished loading moments ago — on boot the WS
@@ -1454,6 +1472,7 @@ export function useChat(
     pendingApproval,
     contextWindowPct,
     compactStatus,
+    promptCache,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

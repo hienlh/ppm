@@ -15,7 +15,8 @@ import { resolveSessionDir } from "../../services/subagent-transcript-merger.ts"
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
-import { formatTurnUsageLog } from "../../shared/turn-usage.ts";
+import { formatTurnUsageLog, prefixTokens } from "../../shared/turn-usage.ts";
+import type { PromptCacheState } from "../../shared/prompt-cache-idle.ts";
 import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 
@@ -124,6 +125,8 @@ interface SessionEntry {
   idleSince?: number;
   /** When the last turn completed — the moment this session's prompt cache was last written */
   lastTurnEndedAt?: number;
+  /** Transcript replayed to the API on that turn — what re-caching it would cost again */
+  lastTurnPrefixTokens?: number;
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
 }
@@ -233,6 +236,32 @@ function scheduleSubprocessRelease(sessionId: string): void {
     if (e) e.cacheReleaseTimer = undefined;
     releaseSubprocess(sessionId, "cache_expired", note);
   }, delay);
+}
+
+/**
+ * What a reconnecting client needs to say whether this session's prompt cache is still warm.
+ *
+ * The three facts are only known here: when the cache was last written, how long this
+ * install's caches live, and how much transcript would have to be re-sent. The browser has
+ * none of them after a reload — `ChatMessage.usage` is attached from the live `done` event
+ * and is not in the transcript — so a tab reopened the next morning would otherwise have no
+ * way to warn that the first message of the day is the expensive one.
+ *
+ * Null until a turn has both completed and reported its usage: with nothing cached there is
+ * nothing to lose, and a size PPM cannot measure must not be guessed at.
+ */
+function promptCacheSnapshot(sessionId: string, entry: SessionEntry): PromptCacheState | null {
+  const provider = providerRegistry.get(entry.providerId);
+  const ttlMs = provider?.promptCacheTtlMs?.(sessionId);
+  // A provider with no opinion has no Anthropic prompt cache to warn about.
+  if (ttlMs == null) return null;
+  return {
+    ttlMs,
+    // Sent even before a turn has completed: the window is the install's, and a tab that
+    // stays connected all day needs it to arm the notice from its own turns.
+    ...(entry.lastTurnEndedAt != null && { lastTurnEndedAt: entry.lastTurnEndedAt }),
+    ...(entry.lastTurnPrefixTokens != null && { prefixTokens: entry.lastTurnPrefixTokens }),
+  };
 }
 
 /** Push the current background-shell registry snapshot to a session's clients. */
@@ -784,6 +813,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // release pending from the disconnect was timed against the previous turn — re-time it
         // or it fires while the cache it was protecting is still fresh.
         entry.lastTurnEndedAt = Date.now();
+        if (ev.usage) entry.lastTurnPrefixTokens = prefixTokens(ev.usage);
         if (entry.clients.size === 0) scheduleSubprocessRelease(sessionId);
 
         // Fire-and-forget: fetch updated session title (DB title takes priority) + notification
@@ -992,6 +1022,7 @@ export const chatWebSocket = {
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
+        promptCache: promptCacheSnapshot(sessionId, existing),
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -1124,6 +1155,7 @@ export const chatWebSocket = {
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
+        promptCache: promptCacheSnapshot(sessionId, entry),
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
