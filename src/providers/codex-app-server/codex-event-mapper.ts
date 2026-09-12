@@ -1,4 +1,5 @@
 import type { ChatEvent } from "../provider.interface.ts";
+import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { diffToOldNew, changeToToolUse } from "./codex-patch.ts";
 
@@ -207,7 +208,9 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
       return [{ type: "error", message: redactTruncate(message, 1024) }];
     }
 
-    // Usage cut from MVP — ChatEvent has no usage variant + no cross-provider sink.
+    // Neither carries a ChatEvent of its own. Token usage is read by the caller
+    // through parseTokenUsage and attached to the turn's `done`; rate limits are
+    // served by the usage registry instead.
     case "thread/tokenUsage/updated":
     case "account/rateLimits/updated":
       return [];
@@ -215,4 +218,42 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     default:
       return []; // ignore unknown / out-of-scope notifications
   }
+}
+
+/**
+ * Per-turn token counts from `thread/tokenUsage/updated`.
+ *
+ * Codex reports `inputTokens` as the whole prefix with `cachedInputTokens`
+ * already inside it, while TurnUsage.inputTokens means the fresh part only —
+ * so the cached and cache-write shares are subtracted rather than added.
+ *
+ * `last` is this turn; `total` accumulates over the thread and would inflate
+ * every turn after the first.
+ *
+ * `costUsd` stays 0: codex bills against a subscription, so there is no
+ * per-token price to report.
+ */
+export function parseTokenUsage(params: unknown, model?: string): TurnUsage | null {
+  const usage = asObj(asObj(params).tokenUsage);
+  const last = asObj(usage.last);
+  if (typeof last.inputTokens !== "number") return null;
+
+  const cacheReadTokens = num(last.cachedInputTokens);
+  const cacheWriteTokens = num(last.cacheWriteInputTokens);
+  const prefix = num(last.inputTokens);
+  return {
+    model: model ?? "",
+    inputTokens: Math.max(prefix - cacheReadTokens - cacheWriteTokens, 0),
+    outputTokens: num(last.outputTokens),
+    cacheReadTokens,
+    cacheWriteTokens,
+    contextWindow: num(usage.modelContextWindow),
+    costUsd: 0,
+    cacheHitRate: prefix > 0 ? cacheReadTokens / prefix : 0,
+    coldStart: false,
+  };
+}
+
+function num(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }

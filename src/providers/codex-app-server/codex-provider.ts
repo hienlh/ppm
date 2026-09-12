@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { mapCodexEvent } from "./codex-event-mapper.ts";
+import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
 import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
@@ -104,6 +104,8 @@ interface LiveSession {
   currentAssistant: string;
   currentEvents: ChatEvent[];
   compactRequested?: boolean;
+  /** Token counts from the most recent usage notification, attached to `done`. */
+  lastUsage?: import("../../shared/turn-usage.ts").TurnUsage;
 }
 
 interface EventChannel {
@@ -378,7 +380,10 @@ export class CodexAppServerProvider implements AIProvider {
     live.threadId = threadId;
 
     if (threadId !== sessionId) {
-      this.live.delete(sessionId);
+      // Both ids stay mapped. The caller still holds the id it created the
+      // session with, and dropping it here meant a follow-up sendMessage missed
+      // and spawned a second app-server, while abortQuery found nothing to kill
+      // and leaked the first.
       this.live.set(threadId, live);
       if (meta) { this.sessions.delete(sessionId); meta.id = threadId; this.sessions.set(threadId, meta); }
       setSessionMetadata(threadId, meta?.projectName, cwd);
@@ -404,8 +409,15 @@ export class CodexAppServerProvider implements AIProvider {
       const d = (notif.params as { delta?: string })?.delta;
       if (typeof d === "string") live.currentAssistant += d;
     }
+    if (notif.method === "thread/tokenUsage/updated") {
+      const usage = parseTokenUsage(notif.params, live.model);
+      if (usage) live.lastUsage = usage;
+    }
     const events = mapCodexEvent(notif, live.threadId ?? "");
     for (const ev of events) {
+      // The counts arrive on their own notification just before the turn ends,
+      // so `done` is where they become visible to a consumer.
+      if (ev.type === "done" && live.lastUsage) ev.usage = live.lastUsage;
       live.channel.push(ev);
       // Accumulate tool calls into the turn so getMessages (live) keeps them.
       if (ev.type === "tool_use" || ev.type === "tool_result") live.currentEvents.push(ev);
@@ -502,7 +514,9 @@ export class CodexAppServerProvider implements AIProvider {
     live.client.close();
     if (process.platform === "win32" && pid) killProcessTree(pid);
     else if (proc) setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* dead */ } }, 2000).unref?.();
-    this.live.delete(sessionId);
+    // A migrated session is reachable under both its original id and its thread
+    // id; leaving either behind would hand out a dead session later.
+    for (const [k, v] of this.live) if (v === live) this.live.delete(k);
     live.channel.done();
   }
 
