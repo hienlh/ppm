@@ -30,6 +30,7 @@ import { accountService, type AccountWithTokens } from "../services/account.serv
 import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
+import { readCompactions, applyCompactions } from "../services/compaction-savings.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
 import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
@@ -2208,6 +2209,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // instead of inline sidechain lines — merge them back as card children.
       const sessionDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
       if (sessionDir) mergeSubagentChildren(sessionDir, merged);
+
+      // The SDK walk stops at the `compact_boundary` record and never yields it, so what
+      // each compaction cost has to come from the file the walk read.
+      if (sessionDir) {
+        applyCompactions(merged, await readCompactions(`${sessionDir}.jsonl`).catch(() => new Map()));
+      }
 
       // A backgrounded Agent's tool result is only a launch ack; its real outcome arrives
       // later as a <task-notification>. Stamp that onto the tool_use so the card can tell
