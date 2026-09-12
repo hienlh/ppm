@@ -196,7 +196,9 @@ app.route("/api/fs/sqlite", fsSqliteRoutes);
 
 // System resource monitoring (SSE + JSON)
 import { resourceRoutes } from "./routes/resources.ts";
+import { systemServiceRoutes } from "./routes/system-services.ts";
 app.route("/api/system", resourceRoutes);
+app.route("/api/system", systemServiceRoutes);
 
 // Host OS facts for the file explorer (platform, drives, known + pinned folders)
 import { hostInfoRoutes } from "./routes/host-info.ts";

@@ -9,16 +9,22 @@
  * queries run only while ≥1 full subscriber exists, and the child is torn down
  * 60 s after the last one leaves (a window reopen then skips the bootstrap).
  */
-import type { KillProcessResult, MetricsSnapshot, MetricsTier } from "../../types/system-metrics.ts";
+import type {
+  KillProcessResult, MetricsSnapshot, MetricsTier, ProcessDetails, ProcessSignal, SignalProcessResult,
+} from "../../types/system-metrics.ts";
 import { METRICS_INTERVAL_MS, METRICS_LEASE_TIMEOUT_MS, METRICS_LIGHT_INTERVAL_MS } from "../../types/system-metrics.ts";
 import { collectMemory, sampleCpuTimes } from "./cpu-memory-collector.ts";
 import { assembleTick, EMPTY_DELTA_STATE, projectLight, type TickDeltaState, type TickDeps } from "./system-metrics-tick.ts";
+import { EMPTY_DEVICE_STATE } from "./device-collector-types.ts";
 import { createPlatformCollectors, type PlatformCollectors } from "./system-metrics-platform.ts";
 import { resolveProtectedPidsLive } from "./ppm-protected-pids.ts";
 import { SubscriberRegistry, type MetricsSubscriber } from "./metrics-subscriber-registry.ts";
 import { PollScheduler, installProcessExitHooks } from "./metrics-poll-scheduler.ts";
 import { handleKillRequest, type KillOutcome } from "./kill-request-handler.ts";
 import { executeKill } from "./kill-executor.ts";
+import { handleSignalRequest, type SignalOutcome } from "./signal-request-handler.ts";
+import { executeSignal, supportedSignals } from "./signal-executor.ts";
+import { readProcessDetails } from "./process-details-linux.ts";
 import { CollectorLock } from "./metrics-collector-lock.ts";
 
 /** Over a proxy a closed window's lease lives until the reap; 8 leaves room for
@@ -35,6 +41,9 @@ export interface SystemMetricsServiceOptions {
   now?: () => number;
   resolveProtected?: TickDeps["resolveProtected"];
   execute?: (pid: number, tree: boolean) => Promise<KillProcessResult>;
+  executeSignal?: (pid: number, signal: ProcessSignal, tree: boolean) => Promise<SignalProcessResult>;
+  /** Injected in tests so a unit test never reads the real /proc. */
+  details?: (pid: number) => ProcessDetails | null;
   log?: (line: string) => void;
   /** Register process exit/signal teardown of children (off in unit tests). */
   exitHooks?: boolean;
@@ -52,6 +61,8 @@ export class SystemMetricsService {
   private readonly now: () => number;
   private readonly tickDeps: TickDeps;
   private readonly execute: NonNullable<SystemMetricsServiceOptions["execute"]>;
+  private readonly signalExecutor: NonNullable<SystemMetricsServiceOptions["executeSignal"]>;
+  private readonly details: (pid: number) => ProcessDetails | null;
   private readonly log: (line: string) => void;
   private readonly exitHooks: boolean;
 
@@ -66,6 +77,8 @@ export class SystemMetricsService {
     this.leaseTimeoutMs = opts.leaseTimeoutMs ?? METRICS_LEASE_TIMEOUT_MS;
     this.now = opts.now ?? Date.now;
     this.execute = opts.execute ?? executeKill;
+    this.signalExecutor = opts.executeSignal ?? executeSignal;
+    this.details = opts.details ?? ((pid) => (this.collectors.platform === "linux" ? readProcessDetails(pid) : null));
     this.log = opts.log ?? ((line) => console.log(line));
     this.exitHooks = opts.exitHooks ?? true;
     this.tickDeps = {
@@ -74,6 +87,9 @@ export class SystemMetricsService {
       processes: this.collectors.processes,
       diskNet: this.collectors.diskNet,
       gpus: this.collectors.gpus,
+      devices: this.collectors.devices,
+      signals: this.signalMenu(),
+      apps: this.collectors.apps,
       resolveProtected: opts.resolveProtected ?? resolveProtectedPidsLive,
       now: this.now,
       sampleCpu: sampleCpuTimes,
@@ -152,6 +168,47 @@ export class SystemMetricsService {
     }
   }
 
+  /**
+   * Delivers one signal, through exactly the chain a kill uses — including the
+   * collector lock, because it re-collects the process table to authorise
+   * against a FRESH name and the PowerShell session takes one request at a time.
+   */
+  async signal(body: unknown): Promise<SignalOutcome> {
+    this.ensureExitHooks();
+    try {
+      return await this.collectorLock.runExclusive(() => handleSignalRequest(body, {
+        platform: this.collectors.platform,
+        collector: this.collectors.processes,
+        resolveProtected: this.tickDeps.resolveProtected,
+        execute: this.signalExecutor,
+        supported: this.signalMenu(),
+        log: this.log,
+      }));
+    } finally {
+      // The re-query may have started the PowerShell child with no window open.
+      if (this.registry.count("full") === 0) this.scheduler.armIdle();
+    }
+  }
+
+  /**
+   * Facts for the Details dialog. Deliberately NOT behind the collector lock: it
+   * is a handful of /proc reads sharing nothing with a tick or a kill, and
+   * queueing it there would make the dialog wait out a 174 ms Windows tick for
+   * data that tick does not even produce.
+   */
+  processDetails(pid: number): ProcessDetails | null {
+    return this.details(pid);
+  }
+
+  /** What this host can deliver. Read through a plain string because the platform
+   *  union says which COLLECTOR runs, not whether signals exist. */
+  private signalMenu(): ProcessSignal[] {
+    const p: string = this.collectors.platform;
+    if (p === "linux" || p === "darwin") return supportedSignals("linux");
+    if (p === "win32") return supportedSignals("win32");
+    return [];
+  }
+
   /** One poll: assemble for the active tier, commit the baseline, publish. */
   async runTick(): Promise<void> {
     // A Windows tick is ~174 ms and can slip, and a kill re-collects through the
@@ -196,7 +253,9 @@ export class SystemMetricsService {
     const changed = this.scheduler.reconcile(this.registry.count("full"), this.registry.count("light"));
     // Leaving the full tier: its baselines would be stale by the time it resumes.
     if (changed && this.scheduler.activeTier() !== "full") {
-      this.state = { ...this.state, procCpu: null, procIo: null, disk: null, net: null };
+      this.state = {
+        ...this.state, procCpu: null, procIo: null, disk: null, net: null, devices: EMPTY_DEVICE_STATE,
+      };
     }
   }
 

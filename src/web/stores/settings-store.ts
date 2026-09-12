@@ -2,6 +2,11 @@ import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
+import { parseTempUnit, type TempUnit } from "../lib/temperature";
+import {
+  parseCpuGraphMode, parseCpuBottomGraph,
+  type CpuGraphMode, type CpuBottomGraph,
+} from "../lib/cpu-graph-mode";
 import {
   clampCustomFps, clampCustomQualityPercent,
 } from "../../shared/remote-desktop-custom-quality";
@@ -62,6 +67,17 @@ interface SettingsState {
   /** Show/hide the small fps/KB-per-s/resolution overlay on the remote-desktop viewer
    *  (desktop window and mobile full-screen view both read this same flag). */
   remoteDesktopStatsVisible: boolean;
+  /** System Monitor: show temperatures in °C or °F. Device-local — the unit you
+   *  read in is a property of who is looking, not of the machine being watched. */
+  sysmonTempUnit: TempUnit;
+  /** System Monitor: draw the kernel-time line under the CPU graph (Mission
+   *  Center's own default is on). Device-local for the same reason. */
+  sysmonKernelTimes: boolean;
+  /** System Monitor: which CPU graph the Performance page draws, top and bottom
+   *  — Mission Center's two "Change ... Graph To" menus. Device-local: which
+   *  view of the same machine you want is a property of who is looking. */
+  sysmonCpuGraph: CpuGraphMode;
+  sysmonCpuBottomGraph: CpuBottomGraph;
   /** User ticked "don't show again" on the remote-desktop warning that precedes every open
    *  (`remote-desktop-warning-gate.tsx`); once true the viewer connects straight away. */
   remoteDesktopWarningDismissed: boolean;
@@ -147,6 +163,10 @@ interface SettingsState {
   setDbSidebarExpanded: (next: DbSidebarExpanded) => void;
   setExplorerSkin: (pref: ExplorerSkinPref) => void;
   toggleRemoteDesktopStatsVisible: () => void;
+  setSysmonTempUnit: (unit: TempUnit) => void;
+  setSysmonKernelTimes: (on: boolean) => void;
+  setSysmonCpuGraph: (mode: CpuGraphMode) => void;
+  setSysmonCpuBottomGraph: (mode: CpuBottomGraph) => void;
   setRemoteDesktopWarningDismissed: (dismissed: boolean) => void;
   setKeepScreenAwake: (enabled: boolean) => void;
   fetchServerInfo: () => Promise<void>;
@@ -187,6 +207,10 @@ interface PersistedSettings {
   remoteDesktopShowCursor?: boolean;
   remoteDesktopClipboardSync?: boolean;
   remoteDesktopCodec?: string | null;
+  sysmonTempUnit?: TempUnit;
+  sysmonKernelTimes?: boolean;
+  sysmonCpuGraph?: CpuGraphMode;
+  sysmonCpuBottomGraph?: CpuBottomGraph;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -401,6 +425,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   dbSidebarExpanded: sanitizeDbExpanded(_initial.dbSidebarExpanded) ?? DEFAULT_DB_EXPANDED,
   explorerSkin: (_initial.explorerSkin === "windows" || _initial.explorerSkin === "macos") ? _initial.explorerSkin : "auto",
   remoteDesktopStatsVisible: _initial.remoteDesktopStatsVisible ?? false,
+  sysmonTempUnit: parseTempUnit(_initial.sysmonTempUnit),
+  sysmonKernelTimes: _initial.sysmonKernelTimes ?? true,
+  sysmonCpuGraph: parseCpuGraphMode(_initial.sysmonCpuGraph),
+  sysmonCpuBottomGraph: parseCpuBottomGraph(_initial.sysmonCpuBottomGraph),
   remoteDesktopWarningDismissed: _initial.remoteDesktopWarningDismissed ?? false,
   keepScreenAwake: _initial.keepScreenAwake ?? true,
   deviceName: null,
@@ -585,6 +613,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().remoteDesktopStatsVisible;
     persistUiPref({ remoteDesktopStatsVisible: next });
     set({ remoteDesktopStatsVisible: next });
+  },
+
+  setSysmonTempUnit: (unit) => {
+    persistDevicePref({ sysmonTempUnit: unit });
+    set({ sysmonTempUnit: unit });
+  },
+
+  setSysmonKernelTimes: (on) => {
+    persistDevicePref({ sysmonKernelTimes: on });
+    set({ sysmonKernelTimes: on });
+  },
+
+  setSysmonCpuGraph: (mode) => {
+    persistDevicePref({ sysmonCpuGraph: mode });
+    set({ sysmonCpuGraph: mode });
+  },
+
+  setSysmonCpuBottomGraph: (mode) => {
+    persistDevicePref({ sysmonCpuBottomGraph: mode });
+    set({ sysmonCpuBottomGraph: mode });
   },
 
   setRemoteDesktopWarningDismissed: (dismissed) => {

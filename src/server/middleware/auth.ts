@@ -30,7 +30,11 @@ export async function authMiddleware(c: Context, next: Next) {
   if (c.req.method === "GET") {
     const p = c.req.path;
     const isMediaPath = p.endsWith("/files/raw") || p.endsWith("/files/transcode") || p === "/api/fs/raw" || p === "/api/fs/transcode";
-    if (p.endsWith("/stream") || isMediaPath || p.endsWith("/image")) {
+    // An <img> cannot send an Authorization header either. This one route is safe
+    // to widen to: it takes an APP ID, not a path, and answers only with the icon
+    // that app's own desktop entry already points at.
+    const isAppIcon = p.startsWith("/api/system/app-icon/");
+    if (p.endsWith("/stream") || isMediaPath || isAppIcon || p.endsWith("/image")) {
       const queryToken = c.req.query("token");
       if (queryToken && queryToken === authConfig.token) {
         return next();

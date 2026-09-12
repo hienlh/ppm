@@ -13,6 +13,12 @@ export interface RawProcessRow {
   /** Cumulative CPU time (user + kernel), milliseconds. */
   cpuMs: number;
   ramMB: number;
+  /** Swapped-out anonymous memory, MB. `undefined` = this OS has no per-process
+   *  source; 0 is a real reading (a kernel thread has no address space). */
+  swapMB?: number;
+  /** `"<scope>:<unit>"` — which Services row owns this pid. Absent off systemd,
+   *  for a pid in no unit, and for another user's units. */
+  unitKey?: string;
   /** Epoch ms UTC; 0 when unknown. */
   startedAt: number;
   /** CUMULATIVE per-process byte counters. The rows builder turns them into
@@ -49,7 +55,7 @@ export interface ProcessCollector {
 
 /** Frozen: it is shared by every light-tier snapshot, so an accidental mutation
  *  would rewrite history for all of them. */
-export const NO_PROCESS_COLUMNS: ProcessColumnAvailability = Object.freeze({ disk: false, gpu: false, net: false });
+export const NO_PROCESS_COLUMNS: ProcessColumnAvailability = Object.freeze({ disk: false, gpu: false, net: false, swap: false });
 
 /**
  * Sticky column availability. A capability is advertised as soon as it has
@@ -64,6 +70,7 @@ export function createStickyColumns(): (seen: Partial<ProcessColumnAvailability>
     state.disk ||= seen.disk === true;
     state.gpu ||= seen.gpu === true;
     state.net ||= seen.net === true;
+    state.swap ||= seen.swap === true;
     return { ...state };
   };
 }

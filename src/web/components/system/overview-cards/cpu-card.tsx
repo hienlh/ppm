@@ -1,11 +1,14 @@
 import { MetricChartCanvas } from "../metric-chart-canvas";
 import { CpuCoreBars } from "../cpu-core-bars";
+import { CardShell } from "./card-shell";
 
 export interface CpuCardProps {
   total: number;
   cores: number[];
   model: string;
   series: number[];
+  /** Opens the Performance page on this device. */
+  onOpen?: () => void;
 }
 
 function cpuColor(pct: number): string {
@@ -14,12 +17,13 @@ function cpuColor(pct: number): string {
   return "text-success";
 }
 
-export function CpuCard({ total, cores, model, series }: CpuCardProps) {
+export function CpuCard({ total, cores, model, series, onOpen }: CpuCardProps) {
   return (
-    <div
-      className="rounded-lg border border-border p-4 space-y-2"
-      data-testid="sysmon-card-cpu"
-      data-cpu-total={total}
+    <CardShell
+      testId="sysmon-card-cpu"
+      data={{ "data-cpu-total": total }}
+      onOpen={onOpen}
+      openLabel="CPU details"
     >
       <div className="flex items-baseline justify-between">
         <h3 className="text-sm font-medium">CPU</h3>
@@ -29,11 +33,12 @@ export function CpuCard({ total, cores, model, series }: CpuCardProps) {
         series={[{ data: series, color: "var(--color-primary)" }]}
         height={56}
         maxValue={100}
+        grid
       />
       <CpuCoreBars cores={cores} />
       <p className="text-[11px] text-text-subtle truncate" title={model}>
         {model}
       </p>
-    </div>
+    </CardShell>
   );
 }

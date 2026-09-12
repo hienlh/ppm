@@ -1,6 +1,6 @@
 import { ArrowUp, ArrowDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import type { SortDir, SortKey } from "../../../types/system-metrics";
+import type { SortDir } from "../../../types/system-metrics";
 import type { ResizableColumnKey } from "./process-columns-grid";
 
 export interface ColumnResizeHandlers {
@@ -8,12 +8,16 @@ export interface ColumnResizeHandlers {
   onResizeReset: (key: ResizableColumnKey) => void;
 }
 
-/** Sortable column header shared by the process table toolbar. Renders as a
- *  `columnheader` `<div>`, not a `<th>` — the parent row is a CSS-grid
+/** Sortable column header shared by the process table and the services table.
+ *  Renders as a `columnheader` `<div>`, not a `<th>` — the parent row is a CSS-grid
  *  `<div role="row">`, and a `<th>` inside a non-table ancestor both triggers React's
  *  DOM-nesting warning and makes `aria-sort` meaningless to assistive tech outside
- *  an actual table. */
-export function SortableHeader({
+ *  an actual table.
+ *
+ *  Generic over the field name because the two tables do not sort on the same
+ *  set: the services table has a `pid` column, which is a systemd property and
+ *  not one of `SortKey`'s metrics. */
+export function SortableHeader<F extends string>({
   label,
   field,
   activeKey,
@@ -26,10 +30,11 @@ export function SortableHeader({
   resize,
 }: {
   label: string;
-  field: Exclude<SortKey, null>;
-  activeKey: SortKey;
+  field: F;
+  /** `null` = nothing is sorted by, i.e. the table's own default order. */
+  activeKey: F | null;
   activeDir: SortDir;
-  onClick: (field: Exclude<SortKey, null>) => void;
+  onClick: (field: F) => void;
   /** Text/justify alignment — the "Process" column is left-aligned over the name
    *  cell, every numeric column stays right-aligned. */
   align?: "left" | "right";

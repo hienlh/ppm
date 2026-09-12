@@ -3,18 +3,41 @@ import os from "node:os";
 import {
   computeCpuFromSamples,
   sampleCpuTimes,
+  parseProcStatCores,
   collectMemory,
   parseMemAvailableBytes,
   type CpuTimesSample,
 } from "../../../../src/services/system-metrics/cpu-memory-collector.ts";
 
-const times = (user: number, sys: number, idle: number) => ({ user, nice: 0, sys, idle, irq: 0 });
+const times = (user: number, sys: number, idle: number) => (
+  { user, nice: 0, sys, idle, irq: 0, iowait: 0, softirq: 0, steal: 0 }
+);
 const sample = (at: number, ...cores: ReturnType<typeof times>[]): CpuTimesSample => ({ times: cores, at, model: "test" });
 
 describe("computeCpuFromSamples", () => {
   test("no previous sample → zeros with the right core count", () => {
     const r = computeCpuFromSamples(null, sample(0, times(1, 1, 1), times(1, 1, 1)));
-    expect(r).toEqual({ total: 0, cores: [0, 0], model: "test" });
+    expect(r).toEqual({ total: 0, cores: [0, 0], model: "test", kernelPercent: 0, coreKernel: [0, 0] });
+  });
+
+  test("the kernel share is sys+irq, a SUBSET of the total and never added to it", () => {
+    // Core 0: 300 user + 200 sys of 1000. Core 1: idle but for 100 sys.
+    const prev = sample(0, times(0, 0, 0), times(0, 0, 0));
+    const next = sample(1000, times(300, 200, 500), times(0, 100, 900));
+    const r = computeCpuFromSamples(prev, next);
+    expect(r.cores).toEqual([50, 10]);
+    expect(r.coreKernel).toEqual([20, 10]);
+    expect(r.total).toBe(30);
+    expect(r.kernelPercent).toBe(15);
+    expect(r.kernelPercent!).toBeLessThanOrEqual(r.total);
+  });
+
+  test("irq time counts as kernel, as it does for the total", () => {
+    const prev = sample(0, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0, iowait: 0, softirq: 0, steal: 0 });
+    const next = sample(1000, { user: 0, nice: 0, sys: 100, idle: 800, irq: 100, iowait: 0, softirq: 0, steal: 0 });
+    const r = computeCpuFromSamples(prev, next);
+    expect(r.coreKernel).toEqual([20]);
+    expect(r.cores).toEqual([20]);
   });
 
   test("busy fraction per core and machine total", () => {
@@ -23,6 +46,29 @@ describe("computeCpuFromSamples", () => {
     const r = computeCpuFromSamples(prev, next);
     expect(r.cores).toEqual([50, 25]);
     expect(r.total).toBe(37.5);
+  });
+
+  test("a core blocked on I/O is not busy — the bug that drew an idle core red", () => {
+    // Real numbers off this host: over 2 s the kernel reported core 18 as
+    // 2 user + 4 sys + 195 iowait of 201 jiffies. `os.cpus()` cannot see the
+    // iowait column at all, so the only window it had was 6 jiffies with no
+    // idle in it, and the Overview card drew a solid red 100% bar for a core
+    // that was 3% busy waiting on a disk write.
+    const prev = sample(0, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0, iowait: 0, softirq: 0, steal: 0 });
+    const next = sample(2000, { user: 2, nice: 0, sys: 4, idle: 0, irq: 0, iowait: 195, softirq: 0, steal: 0 });
+    const r = computeCpuFromSamples(prev, next);
+    expect(r.cores[0]).toBeCloseTo(3, 0);
+    expect(r.cores[0]).toBeLessThan(10);
+  });
+
+  test("softirq is kernel time and counts toward the total, not dropped", () => {
+    // libuv discards this column too, so a core busy servicing network
+    // interrupts had the same shape of error as the iowait one.
+    const prev = sample(0, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0, iowait: 0, softirq: 0, steal: 0 });
+    const next = sample(1000, { user: 100, nice: 0, sys: 0, idle: 700, irq: 0, iowait: 0, softirq: 200, steal: 0 });
+    const r = computeCpuFromSamples(prev, next);
+    expect(r.cores).toEqual([30]);
+    expect(r.coreKernel).toEqual([20]);
   });
 
   test("core count change (hot-plug) → zeros rather than garbage", () => {
@@ -34,6 +80,7 @@ describe("computeCpuFromSamples", () => {
     const r = computeCpuFromSamples(sample(0, times(5, 5, 5)), sample(1, times(5, 5, 5)));
     expect(r.cores).toEqual([0]);
     expect(r.total).toBe(0);
+    expect(r.coreKernel).toEqual([0]);
   });
 });
 
@@ -81,5 +128,49 @@ describe("collectMemory", () => {
   test("parseMemAvailableBytes handles a missing key", () => {
     expect(parseMemAvailableBytes("MemTotal: 1 kB\n")).toBeNull();
     expect(parseMemAvailableBytes("MemAvailable:    2048 kB")).toBe(2048 * 1024);
+  });
+});
+
+describe("parseProcStatCores", () => {
+  test("all eight columns are read, guest and guest_nice deliberately are not", () => {
+    // The kernel already counts guest inside user and guest_nice inside nice, so
+    // adding them would inflate the total and under-report every percentage.
+    const stat = [
+      "cpu  100 0 50 900 10 0 5 0 7 3",
+      "cpu0 40 1 20 500 8 2 3 1 7 3",
+      "cpu1 60 0 30 400 2 0 2 0 0 0",
+      "intr 1234",
+    ].join("\n");
+    expect(parseProcStatCores(stat)).toEqual([
+      { user: 40, nice: 1, sys: 20, idle: 500, iowait: 8, irq: 2, softirq: 3, steal: 1 },
+      { user: 60, nice: 0, sys: 30, idle: 400, iowait: 2, irq: 0, softirq: 2, steal: 0 },
+    ]);
+  });
+
+  test("the aggregate `cpu` line is not a core", () => {
+    expect(parseProcStatCores("cpu  1 2 3 4 5 6 7 8")).toBeNull();
+  });
+
+  test("a kernel too old for the steal column is unusable rather than half-read", () => {
+    expect(parseProcStatCores("cpu0 1 2 3 4 5 6")).toBeNull();
+  });
+
+  test("a garbled dump answers null so the caller can fall back", () => {
+    expect(parseProcStatCores("cpu0 1 2 x 4 5 6 7 8")).toBeNull();
+    expect(parseProcStatCores("")).toBeNull();
+  });
+});
+
+describe("sampleCpuTimes falls back", () => {
+  test("no /proc/stat → os.cpus(), with the three missing columns as 0", () => {
+    const s = sampleCpuTimes(5, () => null);
+    expect(s.times.length).toBe(os.cpus().length);
+    expect(s.times.every((t) => t.iowait === 0 && t.softirq === 0 && t.steal === 0)).toBe(true);
+  });
+
+  test("a core count that disagrees with os.cpus() is not trusted", () => {
+    // A dump naming one core on a multi-core host means we misread it.
+    const s = sampleCpuTimes(5, () => "cpu0 1 2 3 4 5 6 7 8");
+    if (os.cpus().length > 1) expect(s.times.length).toBe(os.cpus().length);
   });
 });

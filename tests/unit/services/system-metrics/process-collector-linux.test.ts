@@ -32,9 +32,14 @@ describe("procEntriesToRows", () => {
   });
 });
 
+/** Every `/proc` reader stubbed out. Without this a test measures the machine
+ *  running the suite, which is how `swap: true` first appeared in an assertion
+ *  about a host that was supposed to have no sources at all. */
+const NO_HOST = { readIo: () => null, readSwap: () => null, readCgroup: () => null };
+
 describe("createLinuxProcessCollector", () => {
   test("wraps the injected reader and never spawns", async () => {
-    const c = createLinuxProcessCollector(() => TABLE);
+    const c = createLinuxProcessCollector(() => TABLE, NO_HOST);
     const r = await c.collect();
     expect(r.rows.map((x) => x.pid)).toEqual([1, 2, 345]);
     expect(r.warnings).toEqual([]);
@@ -42,21 +47,22 @@ describe("createLinuxProcessCollector", () => {
   });
 
   test("unreadable /proc → empty rows plus a warning, not a throw", async () => {
-    const r = await createLinuxProcessCollector(() => null).collect();
+    const r = await createLinuxProcessCollector(() => null, NO_HOST).collect();
     expect(r.rows).toEqual([]);
     expect(r.warnings[0]).toContain("/proc");
-    expect(r.columns).toEqual({ disk: false, gpu: false, net: false });
+    expect(r.columns).toEqual({ disk: false, gpu: false, net: false, swap: false });
   });
 
   test("no /proc/<pid>/io reader and no GPU query → the disk and gpu columns are simply not offered", async () => {
-    const r = await createLinuxProcessCollector(() => TABLE, { readIo: () => null }).collect();
-    expect(r.columns).toEqual({ disk: false, gpu: false, net: false });
+    const r = await createLinuxProcessCollector(() => TABLE, NO_HOST).collect();
+    expect(r.columns).toEqual({ disk: false, gpu: false, net: false, swap: false });
     expect(r.rows[0]!.diskReadBytes).toBeUndefined();
     expect(r.rows[0]!.gpuMemMB).toBeUndefined();
   });
 
   test("/proc/<pid>/io fills CUMULATIVE bytes; an EACCES pid stays unmeasured beside readable ones", async () => {
     const r = await createLinuxProcessCollector(() => TABLE, {
+      ...NO_HOST,
       // Reading another user's process is EACCES — the normal case unprivileged.
       readIo: (pid) => (pid === 345 ? { readBytes: 4096000, writeBytes: 2093056 } : null),
     }).collect();
@@ -67,33 +73,62 @@ describe("createLinuxProcessCollector", () => {
     expect(denied.diskReadBytes).toBeUndefined();
     expect(denied.diskWriteBytes).toBeUndefined();
     // One readable row is enough to offer the column.
-    expect(r.columns).toEqual({ disk: true, gpu: false, net: false });
+    expect(r.columns).toEqual({ disk: true, gpu: false, net: false, swap: false });
   });
 
   test("nvidia compute-apps fills VRAM only; per-process GPU busy has no unprivileged source on Linux", async () => {
     const r = await createLinuxProcessCollector(() => TABLE, {
-      readIo: () => null,
+      ...NO_HOST,
       gpuMemory: { isDisabled: () => false, collect: async () => new Map([[345, 512]]) },
     }).collect();
     expect(r.rows.find((x) => x.pid === 345)!.gpuMemMB).toBe(512);
     // A pid the query did not list holds no VRAM — measured, not unknown.
     expect(r.rows.find((x) => x.pid === 1)!.gpuMemMB).toBe(0);
     expect(r.rows.find((x) => x.pid === 345)!.gpuPct).toBeUndefined();
-    expect(r.columns).toEqual({ disk: false, gpu: true, net: false });
+    expect(r.columns).toEqual({ disk: false, gpu: true, net: false, swap: false });
   });
 
   test("a failed nvidia query leaves VRAM unmeasured instead of publishing zeros", async () => {
     const r = await createLinuxProcessCollector(() => TABLE, {
-      readIo: () => null,
+      ...NO_HOST,
       gpuMemory: { isDisabled: () => true, collect: async () => null },
     }).collect();
     expect(r.rows[0]!.gpuMemMB).toBeUndefined();
     expect(r.columns.gpu).toBe(false);
   });
 
+  test("VmSwap fills the Swap column; a pid that refuses stays unmeasured", async () => {
+    const r = await createLinuxProcessCollector(() => TABLE, {
+      ...NO_HOST,
+      readSwap: (pid) => (pid === 345 ? 12.5 : pid === 2 ? 0 : null),
+    }).collect();
+    expect(r.rows.find((x) => x.pid === 345)!.swapMB).toBe(12.5);
+    // A kernel thread has no address space: 0 is a reading, not a gap.
+    expect(r.rows.find((x) => x.pid === 2)!.swapMB).toBe(0);
+    expect(r.rows.find((x) => x.pid === 1)!.swapMB).toBeUndefined();
+    expect(r.columns).toEqual({ disk: false, gpu: false, net: false, swap: true });
+  });
+
+  test("each row names the Services row it belongs to, scope included", async () => {
+    const r = await createLinuxProcessCollector(() => TABLE, {
+      ...NO_HOST,
+      selfUid: 1000,
+      readCgroup: (pid) => (pid === 345
+        ? "0::/user.slice/user-1000.slice/user@1000.service/app.slice/ppm.service"
+        : pid === 1 ? "0::/system.slice/ppm.service" : "0::/"),
+    }).collect();
+    // The same unit NAME in both scopes, kept apart — which is the whole point.
+    expect(r.rows.find((x) => x.pid === 345)!.unitKey).toBe("user:ppm.service");
+    expect(r.rows.find((x) => x.pid === 1)!.unitKey).toBe("system:ppm.service");
+    // The root slice is no unit at all — a kernel thread, and not a row the
+    // Services page can attribute to anything.
+    expect(r.rows.find((x) => x.pid === 2)!.unitKey).toBeUndefined();
+  });
+
   test("column availability is sticky: one bad tick must not make the UI drop a column", async () => {
     let readable = true;
     const c = createLinuxProcessCollector(() => TABLE, {
+      ...NO_HOST,
       readIo: () => (readable ? { readBytes: 1, writeBytes: 2 } : null),
     });
     expect((await c.collect()).columns!.disk).toBe(true);
