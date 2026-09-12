@@ -31,6 +31,17 @@
      2.07:1 on the dark ones. This mix measures 3.59–5.21:1 across all six.
      See tests/unit/web/explorer-ignored-contrast.test.ts. */
   --color-text-dim: color-mix(in srgb, var(--text-2) 50%, var(--text-3));
+  /* Row hover and meter tracks. `bg-surface-hover` was written against a token
+     that only ever existed in the webview panels, so Tailwind emitted NO rule
+     for it and every use was a silent no-op — 21 of them in the System Monitor
+     alone: no hover feedback on any Processes/Services/Apps row, and the memory
+     composition bar, the partition bars, the sidebar sparkline tracks and the
+     per-core strip all drew their track at rgba(0,0,0,0), i.e. invisible.
+     Derived from `--text` rather than from a panel colour, exactly as
+     packages/ext-git-graph/src/webview-shell.ts does it: some themes give
+     `--panel` and `--panel-2` the same value, and a hover mapped from either
+     would be invisible in precisely those themes. */
+  --color-surface-hover: color-mix(in srgb, var(--text) 8%, transparent);
   --color-accent-2: var(--accent-2);
   --color-accent-wash: var(--accent-wash);
   --color-accent-wash-border: var(--accent-wash-border);

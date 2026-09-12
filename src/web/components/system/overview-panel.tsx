@@ -5,10 +5,14 @@ import { MemCard } from "./overview-cards/mem-card";
 import { DiskCard } from "./overview-cards/disk-card";
 import { NetCard } from "./overview-cards/net-card";
 import { GpuCard } from "./overview-cards/gpu-card";
+import { busiestDiskKey, busiestNicKey, gpuKey } from "./overview-device-target";
 
 export interface OverviewPanelProps {
   system: SystemMetrics;
   history: MetricsHistoryPoint[];
+  /** Opens the Performance tab on one device. Absent in a read-only render (and
+   *  then every card stays a plain frame rather than a button that does nothing). */
+  onOpenDevice?: (key: string) => void;
 }
 
 const SERIES_POINTS = 200;
@@ -42,12 +46,17 @@ function useOverviewSeries(history: MetricsHistoryPoint[]) {
   }, [history]);
 }
 
-export function OverviewPanel({ system, history }: OverviewPanelProps) {
+export function OverviewPanel({ system, history, onOpenDevice }: OverviewPanelProps) {
   const series = useOverviewSeries(history);
   // Disk/net rates need a delta between two samples — `available:false` on the very
   // first frame(s) is the collector doing exactly what it should, not a missing
   // source, so the card says so instead of the flat, indistinguishable "n/a".
   const measuring = history.length <= 1;
+  // Undefined rather than a no-op handler when there is no device to open, so
+  // `CardShell` renders a frame instead of a dead button. Computed per render
+  // because the busiest drive and interface change with the tick.
+  const open = (key: string | null) =>
+    onOpenDevice && key ? () => onOpenDevice(key) : undefined;
 
   return (
     <div
@@ -59,12 +68,14 @@ export function OverviewPanel({ system, history }: OverviewPanelProps) {
         cores={system.cpu.cores}
         model={system.cpu.model}
         series={series.cpu}
+        onOpen={open("cpu")}
       />
       <MemCard
         usedMB={system.mem.usedMB}
         totalMB={system.mem.totalMB}
         percent={system.mem.percent}
         series={series.mem}
+        onOpen={open("memory")}
       />
       <DiskCard
         available={system.disk.available}
@@ -73,6 +84,7 @@ export function OverviewPanel({ system, history }: OverviewPanelProps) {
         readSeries={series.diskRead}
         writeSeries={series.diskWrite}
         measuring={measuring}
+        onOpen={open(busiestDiskKey(system))}
       />
       <NetCard
         available={system.net.available}
@@ -81,6 +93,7 @@ export function OverviewPanel({ system, history }: OverviewPanelProps) {
         downSeries={series.netDown}
         upSeries={series.netUp}
         measuring={measuring}
+        onOpen={open(busiestNicKey(system))}
       />
       {system.gpus.map((gpu, i) => (
         <GpuCard
@@ -90,6 +103,7 @@ export function OverviewPanel({ system, history }: OverviewPanelProps) {
           vramUsedMB={gpu.vramUsedMB}
           vramTotalMB={gpu.vramTotalMB}
           series={series.gpuUtil[i] ?? []}
+          onOpen={open(gpuKey(gpu.id, i))}
         />
       ))}
     </div>

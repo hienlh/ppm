@@ -9,7 +9,7 @@
 import type { CSSProperties } from "react";
 import type { ProcessColumnAvailability, SortKey } from "../../../types/system-metrics";
 
-export type OptionalColumnKey = "disk" | "gpu" | "net";
+export type OptionalColumnKey = "swap" | "disk" | "gpu" | "net";
 /** Every column whose width the user can drag. The name column takes the rest. */
 export type ResizableColumnKey = "cpu" | "ram" | OptionalColumnKey;
 
@@ -20,13 +20,15 @@ export type ProcessColumnsFlags = ProcessColumnAvailability;
 /** px overrides from a drag; missing keys fall back to `DEFAULT_COLUMN_WIDTH`. */
 export type ColumnWidths = Partial<Record<ResizableColumnKey, number>>;
 
-const OPTIONAL_COLUMN_ORDER: OptionalColumnKey[] = ["disk", "gpu", "net"];
+/** Mission Center's own order on both its tables: Memory, Swap, then the rest. */
+const OPTIONAL_COLUMN_ORDER: OptionalColumnKey[] = ["swap", "disk", "gpu", "net"];
 
 /** Disk/Net cells show two values ("↓ read ↑ write"); GPU shows one composite
  *  ("12% · 1.1 GB") and fits narrower. */
 export const DEFAULT_COLUMN_WIDTH: Record<ResizableColumnKey, number> = {
   cpu: 64,
   ram: 80,
+  swap: 80,
   disk: 120,
   gpu: 90,
   net: 120,
@@ -54,7 +56,7 @@ export interface ProcessGridResult {
 }
 
 function isOptionalColumnKey(key: SortKey): key is OptionalColumnKey {
-  return key === "disk" || key === "gpu" || key === "net";
+  return key === "swap" || key === "disk" || key === "gpu" || key === "net";
 }
 
 export function clampColumnWidth(px: number): number {
