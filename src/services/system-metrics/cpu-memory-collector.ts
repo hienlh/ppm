@@ -1,10 +1,15 @@
 /**
- * Whole-machine CPU + memory from `node:os`. Runs in both tiers, spawns nothing.
+ * Whole-machine CPU + memory. Runs in both tiers.
+ *
+ * Reads files on Linux and spawns nothing there. On darwin it spawns exactly one
+ * `sysctl` per tick for swap, which `node:os` does not carry — measured at
+ * 1.33 ms, see `memory-darwin.ts`.
  */
 import os from "node:os";
 import { readFileSync } from "node:fs";
 import type { CpuMetrics, MemoryMetrics } from "../../types/system-metrics.ts";
 import { enrichMemory, readZramTotals, type ZramTotals } from "./memory-linux.ts";
+import { parseSwapUsage, readSwapUsage } from "./memory-darwin.ts";
 
 export interface CoreTimes {
   user: number;
@@ -163,10 +168,18 @@ export function parseMemAvailableBytes(meminfo: string): number | null {
  * and `os.freemem()` is within 0.2 GiB of CIM's `FreePhysicalMemory`. On Linux
  * `freemem()` is `MemFree`, which makes a warm page cache look like a nearly
  * full machine — `MemAvailable` is what `free` and Task-Manager-like tools show.
+ * On **darwin** `freemem()` is already right and must be left alone: it agrees
+ * with what `top` calls unused (75 MB against this figure's 124 MB on the same
+ * host, sampled seconds apart), which is the number Activity Monitor shows.
+ *
+ * Swap is the one field macOS publishes and `os` does not, so it is fetched
+ * separately — see `memory-darwin.ts` for why that costs a spawn and why the
+ * page counts from `vm_stat` are deliberately not used.
  */
 export function collectMemory(
   meminfo: () => string | null = readMeminfo,
   zram: () => ZramTotals | undefined = defaultZram,
+  swapusage: () => string | null = readSwapUsage,
 ): MemoryMetrics {
   const totalBytes = os.totalmem();
   let availableBytes = os.freemem();
@@ -181,8 +194,12 @@ export function collectMemory(
   const availableMB = round1(availableBytes / MB);
   const usedMB = round1(Math.max(totalMB - availableMB, 0));
   const percent = totalMB > 0 ? round1(usedMB / totalMB * 100) : 0;
-  // `info` is null off Linux, so the composition fields simply stay absent there.
-  return enrichMemory({ totalMB, usedMB, availableMB, percent }, info, info ? zram() : undefined);
+  const base: MemoryMetrics = { totalMB, usedMB, availableMB, percent };
+  // `info` is null off Linux, so the composition fields simply stay absent there
+  // — but swap is not one of those: macOS answers for it, and leaving it absent
+  // rendered an em dash on a host with 8 GB of swap in use.
+  if (info) return enrichMemory(base, info, zram());
+  return { ...base, ...parseSwapUsage(swapusage()) };
 }
 
 /** Two `/sys` reads on a host that has zram and one cheap directory listing on
