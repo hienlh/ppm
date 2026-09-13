@@ -8,7 +8,7 @@ import type {
   MetricsPlatform, MetricsSnapshot, MetricsTier, MemoryMetrics, ProcessColumnAvailability, ProcessSignal, SystemMetrics,
 } from "../../types/system-metrics.ts";
 import { METRICS_INTERVAL_MS, METRICS_LIGHT_INTERVAL_MS } from "../../types/system-metrics.ts";
-import { computeCpuFromSamples, type CpuTimesSample } from "./cpu-memory-collector.ts";
+import { computeCpuFromSamples, hostUptimeSec, type CpuTimesSample } from "./cpu-memory-collector.ts";
 import { toRate, UNAVAILABLE_RATE, type CounterSample } from "./rate-delta.ts";
 import type { DiskNetCounters } from "./disk-net-collector-linux.ts";
 import type { AppInfo } from "../../types/system-metrics.ts";
@@ -81,6 +81,9 @@ export async function assembleTick(
   const now = deps.now();
   const cpuSample = deps.sampleCpu(now);
   const cpu = computeCpuFromSamples(state.cpu, cpuSample);
+  // Set before `collectDevices`, which merges Linux's own `/proc/uptime` over it.
+  const uptimeSec = hostUptimeSec();
+  if (uptimeSec !== undefined) cpu.uptimeSec = uptimeSec;
   const mem = deps.memory();
   const warnings: string[] = [];
 

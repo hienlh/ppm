@@ -145,6 +145,20 @@ function clampPercent(v: number): number {
   return round1(Math.min(100, Math.max(0, v)));
 }
 
+/**
+ * Seconds since boot, on all three platforms — `os.uptime()` reads
+ * `/proc/uptime`, `kern.boottime` and `GetTickCount64` respectively.
+ *
+ * Linux has a finer figure of its own and `collectDevices` merges it OVER this
+ * one; the reason this exists is that the per-device collector is null off
+ * Linux, so "Up time" was an em dash — the claim that the host could not be
+ * asked how long it had been up — on macOS and Windows both.
+ */
+export function hostUptimeSec(): number | undefined {
+  const seconds = os.uptime();
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : undefined;
+}
+
 /** Read `/proc/meminfo` on Linux, null elsewhere or on failure. Injectable for tests. */
 export function readMeminfo(): string | null {
   if (process.platform !== "linux") return null;

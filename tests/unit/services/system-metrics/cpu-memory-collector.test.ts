@@ -6,6 +6,7 @@ import {
   parseProcStatCores,
   collectMemory,
   parseMemAvailableBytes,
+  hostUptimeSec,
   type CpuTimesSample,
 } from "../../../../src/services/system-metrics/cpu-memory-collector.ts";
 
@@ -172,5 +173,16 @@ describe("sampleCpuTimes falls back", () => {
     // A dump naming one core on a multi-core host means we misread it.
     const s = sampleCpuTimes(5, () => "cpu0 1 2 3 4 5 6 7 8");
     if (os.cpus().length > 1) expect(s.times.length).toBe(os.cpus().length);
+  });
+});
+
+describe("hostUptimeSec", () => {
+  test("answers on whatever platform this suite is running on", () => {
+    // The point of the function: `/proc/uptime` exists on one of the three
+    // platforms PPM ships to, and `os.uptime()` on all of them.
+    const s = hostUptimeSec();
+    expect(s).toBeGreaterThan(0);
+    expect(Number.isInteger(s)).toBe(true);
+    expect(Math.abs(s! - os.uptime())).toBeLessThan(2);
   });
 });
