@@ -2,6 +2,7 @@ import type { AIProvider } from "./provider.interface.ts";
 import { MockProvider } from "./mock-provider.ts";
 import { ClaudeAgentSdkProvider } from "./claude-agent-sdk.ts";
 import { configService } from "../services/config.service.ts";
+import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 
 export interface ProviderInfo {
   id: string;
@@ -92,12 +93,22 @@ export async function bootstrapProviders(): Promise<void> {
     if (await codex.isAvailable()) {
       providerRegistry.register(codex);
       const ai = configService.get("ai");
+      // Only when codex has never been configured. An absent `model` is a real
+      // choice here — the settings picker writes it for "Auto (default)", which
+      // hands model selection back to codex — so filling one in on every startup
+      // would undo that choice each restart. Existing installs are given the
+      // default once, by migration.
       if (!ai.providers["codex"]) {
         configService.set("ai", {
           ...ai,
           providers: {
             ...ai.providers,
-            codex: { type: "cli", cli_command: "codex", permission_mode: "bypassPermissions" },
+            codex: {
+              type: "cli",
+              cli_command: "codex",
+              permission_mode: "bypassPermissions",
+              model: CODEX_DEFAULT_MODEL,
+            },
           },
         });
       }

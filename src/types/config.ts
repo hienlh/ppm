@@ -111,6 +111,20 @@ export interface AIProviderConfig {
   cli_command?: string;
 }
 
+/**
+ * Model a new codex session uses unless the picker says otherwise.
+ *
+ * Codex is registered at runtime rather than shipped in DEFAULT_CONFIG — it only
+ * exists once `@openai/codex` is installed — so its default lives here, beside
+ * Claude's, instead of being invisible inside the registration code.
+ *
+ * Deliberately not codex's own default, which is its most capable model and
+ * bills accordingly; codex describes this one as its balanced agentic coding
+ * model for everyday work, which is what a chat in an IDE mostly does. Changing
+ * it in Settings, or per session in the chat's model picker, overrides this.
+ */
+export const CODEX_DEFAULT_MODEL = "gpt-5.6-terra";
+
 export const DEFAULT_CONFIG: PpmConfig = {
   device_name: "",
   port: 8080,

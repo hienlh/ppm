@@ -5,7 +5,8 @@ import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
-export const CURRENT_SCHEMA_VERSION = 44;
+import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
+export const CURRENT_SCHEMA_VERSION = 45;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -89,7 +90,8 @@ export function setDb(instance: Database): void {
 // Schema migrations
 // ---------------------------------------------------------------------------
 
-function runMigrations(database: Database): void {
+/** Exported so a test can drive an upgrade from a specific older version. */
+export function runMigrations(database: Database): void {
   const row = database.query("PRAGMA user_version").get() as { user_version: number };
   const current = row.user_version;
 
@@ -1046,6 +1048,35 @@ function runMigrations(database: Database): void {
         ON session_metadata(migrated_to);
       PRAGMA user_version = 44;
     `);
+  }
+
+  if (current < 45) {
+    // Codex was registered without a model, and PPM sends no model when none is
+    // configured, so codex fell back to its own default — its most capable and
+    // most expensive model — for every chat.
+    //
+    // Applied once, here, rather than on each startup: the settings picker
+    // stores "Auto (default)" as an absent model, so a startup check could not
+    // tell that choice apart from never having chosen and would reimpose this
+    // value at every restart.
+    try {
+      const row = database.query("SELECT value FROM config WHERE key = 'ai'").get() as { value: string } | null;
+      if (row?.value) {
+        const ai = JSON.parse(row.value) as {
+          providers?: Record<string, Record<string, unknown> | undefined>;
+        };
+        const codex = ai.providers?.["codex"];
+        if (codex && codex.model == null) {
+          codex.model = CODEX_DEFAULT_MODEL;
+          database.query("UPDATE config SET value = ? WHERE key = 'ai'").run(JSON.stringify(ai));
+        }
+      }
+    } catch {
+      // A config that cannot be read or parsed is not worth failing the upgrade
+      // over; codex keeps choosing for itself, exactly as before.
+    }
+
+    database.exec(`PRAGMA user_version = 45;`);
   }
 }
 
