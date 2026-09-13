@@ -328,6 +328,22 @@ describe("assembleTick — per-device figures", () => {
     expect("nics" in snapshot.system).toBe(false);
   });
 
+  test("uptime survives a host with no device source, because os.uptime() answers everywhere", async () => {
+    // The Performance page drew "Up time —" on macOS and Windows for exactly
+    // this reason: the ONLY writer was the Linux device collector, which is null
+    // on both. An em dash there claims the host cannot be asked how long it has
+    // been up, which is never true.
+    const { d } = deps({ devices: null });
+    const { snapshot } = await assembleTick("full", EMPTY_DELTA_STATE, d);
+    expect(snapshot.system.cpu.uptimeSec).toBeGreaterThan(0);
+  });
+
+  test("Linux's own /proc/uptime wins over it — merged after, not before", async () => {
+    const { d } = deps({ devices: () => ({ ...collection(1), cpu: { uptimeSec: 4242 } }) });
+    const { snapshot } = await assembleTick("full", EMPTY_DELTA_STATE, d);
+    expect(snapshot.system.cpu.uptimeSec).toBe(4242);
+  });
+
   test("projectLight strips the device lists — the status bar must not carry them", () => {
     const full = { system: { disks: [{ id: "a" }], nics: [{ id: "b" }], disk: {}, net: {}, gpus: [], processCount: 3 }, total: {} } as never;
     const light = projectLight(full);
