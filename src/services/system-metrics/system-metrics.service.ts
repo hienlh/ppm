@@ -10,7 +10,7 @@
  * 60 s after the last one leaves (a window reopen then skips the bootstrap).
  */
 import type {
-  KillProcessResult, MetricsSnapshot, MetricsTier, ProcessDetails, ProcessSignal, SignalProcessResult,
+  KillProcessResult, MetricsPlatform, MetricsSnapshot, MetricsTier, ProcessDetails, ProcessSignal, SignalProcessResult,
 } from "../../types/system-metrics.ts";
 import { METRICS_INTERVAL_MS, METRICS_LEASE_TIMEOUT_MS, METRICS_LIGHT_INTERVAL_MS } from "../../types/system-metrics.ts";
 import { collectMemory, sampleCpuTimes } from "./cpu-memory-collector.ts";
@@ -25,6 +25,7 @@ import { executeKill } from "./kill-executor.ts";
 import { handleSignalRequest, type SignalOutcome } from "./signal-request-handler.ts";
 import { executeSignal, supportedSignals } from "./signal-executor.ts";
 import { readProcessDetails } from "./process-details-linux.ts";
+import { readProcessDetailsDarwin } from "./process-details-darwin.ts";
 import { CollectorLock } from "./metrics-collector-lock.ts";
 
 /** Over a proxy a closed window's lease lives until the reap; 8 leaves room for
@@ -42,11 +43,24 @@ export interface SystemMetricsServiceOptions {
   resolveProtected?: TickDeps["resolveProtected"];
   execute?: (pid: number, tree: boolean) => Promise<KillProcessResult>;
   executeSignal?: (pid: number, signal: ProcessSignal, tree: boolean) => Promise<SignalProcessResult>;
-  /** Injected in tests so a unit test never reads the real /proc. */
-  details?: (pid: number) => ProcessDetails | null;
+  /** Injected in tests so a unit test never reads the real /proc. Explicit
+   *  `null` models a host with no reader for this at all. */
+  details?: DetailsReader | null;
   log?: (line: string) => void;
   /** Register process exit/signal teardown of children (off in unit tests). */
   exitHooks?: boolean;
+}
+
+/** A reader may answer synchronously (Linux reads files) or not (macOS shells
+ *  out), so the service awaits whatever it gets. */
+export type DetailsReader = (pid: number) => ProcessDetails | null | Promise<ProcessDetails | null>;
+
+/** Null where PPM has no reader yet — currently win32, whose Details dialog says
+ *  so rather than reporting every process as exited. */
+function detailsReaderFor(platform: MetricsPlatform): DetailsReader | null {
+  if (platform === "linux") return (pid) => readProcessDetails(pid);
+  if (platform === "darwin") return (pid) => readProcessDetailsDarwin(pid);
+  return null;
 }
 
 export type SubscribeInit = Pick<MetricsSubscriber, "tier" | "deliver" | "close">;
@@ -62,7 +76,7 @@ export class SystemMetricsService {
   private readonly tickDeps: TickDeps;
   private readonly execute: NonNullable<SystemMetricsServiceOptions["execute"]>;
   private readonly signalExecutor: NonNullable<SystemMetricsServiceOptions["executeSignal"]>;
-  private readonly details: (pid: number) => ProcessDetails | null;
+  private readonly details: DetailsReader | null;
   private readonly log: (line: string) => void;
   private readonly exitHooks: boolean;
 
@@ -78,7 +92,7 @@ export class SystemMetricsService {
     this.now = opts.now ?? Date.now;
     this.execute = opts.execute ?? executeKill;
     this.signalExecutor = opts.executeSignal ?? executeSignal;
-    this.details = opts.details ?? ((pid) => (this.collectors.platform === "linux" ? readProcessDetails(pid) : null));
+    this.details = opts.details !== undefined ? opts.details : detailsReaderFor(this.collectors.platform);
     this.log = opts.log ?? ((line) => console.log(line));
     this.exitHooks = opts.exitHooks ?? true;
     this.tickDeps = {
@@ -196,8 +210,20 @@ export class SystemMetricsService {
    * queueing it there would make the dialog wait out a 174 ms Windows tick for
    * data that tick does not even produce.
    */
-  processDetails(pid: number): ProcessDetails | null {
-    return this.details(pid);
+  async processDetails(pid: number): Promise<ProcessDetails | null> {
+    return this.details ? await this.details(pid) : null;
+  }
+
+  /**
+   * Whether this host has any reader for that dialog at all.
+   *
+   * The caller needs it because `null` from `processDetails` would otherwise
+   * carry two unrelated meanings: "that pid has exited" and "PPM cannot read
+   * process details here". Collapsing them is what made the dialog tell a macOS
+   * user that a process consuming 4% of the CPU was no longer running.
+   */
+  supportsProcessDetails(): boolean {
+    return this.details !== null;
   }
 
   /** What this host can deliver. Read through a plain string because the platform

@@ -1,7 +1,7 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { Hono } from "hono";
 import { createResourceRoutes } from "../../../src/server/routes/resources.ts";
-import { SystemMetricsService } from "../../../src/services/system-metrics/system-metrics.service.ts";
+import { SystemMetricsService, type SystemMetricsServiceOptions } from "../../../src/services/system-metrics/system-metrics.service.ts";
 import type { PlatformCollectors } from "../../../src/services/system-metrics/system-metrics-platform.ts";
 import type { RawProcessRow } from "../../../src/services/system-metrics/process-collector-types.ts";
 import type { MetricsPlatform, MetricsSnapshot, ProcessDetails } from "../../../src/types/system-metrics.ts";
@@ -18,7 +18,10 @@ const DETAILS: ProcessDetails = {
 const live: SystemMetricsService[] = [];
 afterEach(() => { for (const s of live.splice(0)) s.shutdown(); });
 
-function harness(platform: MetricsPlatform = "linux") {
+function harness(
+  platform: MetricsPlatform = "linux",
+  details: SystemMetricsServiceOptions["details"] = (pid) => (pid === 400 ? DETAILS : null),
+) {
   const sent: Array<[number, string, boolean]> = [];
   const collectors: PlatformCollectors = {
     platform,
@@ -42,7 +45,7 @@ function harness(platform: MetricsPlatform = "linux") {
       sent.push([pid, signal, tree]);
       return { pid, signal, tree, method: "signal", signalled: [pid] };
     },
-    details: (pid) => (pid === 400 ? DETAILS : null),
+    details,
     log: () => {},
     exitHooks: false,
   });
@@ -145,6 +148,17 @@ describe("GET /resources/process/:pid", () => {
     for (const bad of ["abc", "-1", "1.5", "0", "00", "4e2"]) {
       expect((await app.request(`/api/system/resources/process/${bad}`)).status).toBe(400);
     }
+  });
+
+  test("a host with no reader says so — it does not report live processes as dead", async () => {
+    // This is the bug the platform split caused: `null` meant both "that pid has
+    // exited" and "PPM cannot read details here", so a macOS user opening the
+    // dialog on a process using 4% of the CPU was told it was no longer running.
+    const { app } = harness("win32", null);
+    const res = await app.request("/api/system/resources/process/400");
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body.error).not.toContain("no longer running");
   });
 
   test("a traversal segment never even reaches the handler", async () => {
