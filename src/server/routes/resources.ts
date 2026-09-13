@@ -137,13 +137,18 @@ export function createResourceRoutes(
 
   // Every field here is already in the process table this caller can stream,
   // except exe/cwd/cgroup — the same trust level, behind the same auth.
-  routes.get("/resources/process/:pid", (c) => {
+  routes.get("/resources/process/:pid", async (c) => {
     const raw = c.req.param("pid") ?? "";
     const pid = Number(raw);
     if (!/^\d+$/.test(raw) || !Number.isInteger(pid) || pid <= 0) {
       return c.json(err("PID must be a positive integer"), 400);
     }
-    const details = service.processDetails(pid);
+    // Two different claims, and for a while they shared one sentence: a host with
+    // no reader answered "no longer running" about processes that were running.
+    if (!service.supportsProcessDetails()) {
+      return c.json(err("PPM cannot read process details on this host yet"), 501);
+    }
+    const details = await service.processDetails(pid);
     if (!details) return c.json(err(`PID ${pid} is no longer running`), 404);
     return c.json(ok(details));
   });
