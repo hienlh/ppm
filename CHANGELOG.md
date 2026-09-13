@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.19.8] - 2026-09-13
+
+### Changed
+- **Codex chats now use a balanced model by default** — PPM asked for no particular model, so Codex fell back to its most capable and most expensive one for every chat. Settings → AI Provider and the chat's model picker still override it, and "Auto (default)" hands the choice back to Codex.
+
 ## [0.19.7] - 2026-09-12
 
 ### Added
