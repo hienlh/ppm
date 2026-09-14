@@ -33,7 +33,7 @@ interface ChatHistoryBarProps {
   projectName: string;
   usageInfo: UsageInfo;
   usageLoading?: boolean;
-  refreshUsage?: () => void;
+  refreshUsage?: () => void | Promise<void>;
   lastFetchedAt?: string | null;
   sessionId?: string | null;
   providerId?: string;
@@ -628,7 +628,7 @@ export function ChatHistoryBar({
         />
       )}
       {activePanel === "usage" && isCodexProvider && (
-        <CodexUsagePanel usage={usageInfo} onClose={() => setActivePanel(null)} />
+        <CodexUsagePanel usage={usageInfo} onClose={() => setActivePanel(null)} onReload={refreshUsage} />
       )}
 
     </div>

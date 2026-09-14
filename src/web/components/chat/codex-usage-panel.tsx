@@ -22,7 +22,12 @@ function UsageBar({ label, frac, bucket }: {
  * accounts exist, chats run on the ambient ~/.codex login — its usage comes
  * from the session `usage` prop. Login/management lives in Settings → AI
  * Provider → Codex. */
-export function CodexUsagePanel({ onClose, usage }: { onClose: () => void; usage: UsageInfo }) {
+export function CodexUsagePanel({ onClose, usage, onReload }: {
+  onClose: () => void;
+  usage: UsageInfo;
+  /** Forces the chat usage endpoint to bypass its provider-usage cache. */
+  onReload?: () => void | Promise<void>;
+}) {
   const [accounts, setAccounts] = useState<CodexAccount[]>([]);
   const [usages, setUsages] = useState<Record<string, Usage>>({});
   const [loading, setLoading] = useState(false);
@@ -38,13 +43,24 @@ export function CodexUsagePanel({ onClose, usage }: { onClose: () => void; usage
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Unlike the account-list endpoint, the chat refresh carries refresh=1
+      // and invalidates Codex's five-minute provider-usage cache first.
+      await onReload?.();
+      const u = await api.get<Record<string, Usage>>("/api/codex-accounts/usage");
+      setUsages(u);
+    } catch { /* retain the last successful reading */ } finally { setLoading(false); }
+  }, [onReload]);
+
   return (
     <div className="border-t border-border bg-surface px-3 py-2.5 space-y-2.5 max-h-[350px] overflow-y-auto">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-text-primary">Codex Usage</span>
         <div className="flex items-center gap-1">
           <button
-            onClick={load}
+            onClick={reload}
             disabled={loading}
             className="text-text-subtle hover:text-text-primary px-1 cursor-pointer disabled:opacity-50"
             title="Refresh"

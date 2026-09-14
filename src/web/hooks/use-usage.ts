@@ -23,15 +23,15 @@ export function useUsage(projectName: string, providerId = "claude", sessionId?:
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestRef = useRef(0);
 
-  const doFetch = useCallback((forceRefresh = false) => {
-    if (!projectName) return;
+  const doFetch = useCallback((forceRefresh = false): Promise<void> => {
+    if (!projectName) return Promise.resolve();
     const request = ++requestRef.current;
     setUsageLoading(true);
     const qs = forceRefresh ? "&refresh=1" : "";
     const sessionQs = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
     // Via api.get, not raw fetch: the toolbar's loading state is gated on this
     // settling, and a raw fetch has no timeout to stop it stalling forever.
-    api
+    return api
       .get<(UsageInfo & { lastFetchedAt?: string }) | null>(
         `${projectUrl(projectName)}/chat/usage?providerId=${providerId}${sessionQs}${qs}`,
       )
