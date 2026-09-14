@@ -348,6 +348,34 @@ describe("ClaudeAgentSdkProvider", () => {
       // The env is just process.env spread — sensitive keys only neutralized if project .env has them
       expect(opts.env).toBeDefined();
     });
+
+    it("names the entrypoint, so the CLI and IDE pickers stop hiding these sessions", async () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+      const session = await provider.createSession({});
+      for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+      const opts = mockQueryFn.mock.calls[0]![0].options;
+      // sdk-cli/sdk-ts/sdk-py are exactly the labels those pickers filter out
+      expect(opts.env.CLAUDE_CODE_ENTRYPOINT).toBe("ppm");
+    });
+
+    it("overrides an entrypoint inherited from the parent process", async () => {
+      // PPM launched from a Claude Code session inherits that session's sdk-ts label,
+      // which is the filtered one — the spread order has to keep ours last.
+      const saved = process.env.CLAUDE_CODE_ENTRYPOINT;
+      process.env.CLAUDE_CODE_ENTRYPOINT = "sdk-ts";
+      try {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        expect(opts.env.CLAUDE_CODE_ENTRYPOINT).toBe("ppm");
+      } finally {
+        if (saved === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
+        else process.env.CLAUDE_CODE_ENTRYPOINT = saved;
+      }
+    });
   });
 
   describe("ResultMessage subtype handling", () => {
