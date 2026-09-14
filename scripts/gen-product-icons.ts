@@ -23,6 +23,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { writeNotices } from "./third-party-notices.ts";
 
 const OUT = resolve(import.meta.dir, "../src/web/lib/icons.generated.tsx");
 
@@ -289,6 +290,14 @@ const collection = (
 };
 
 /**
+ * The fluentui-system-icons release the bodies came from, rather than the
+ * Iconify package's own version, which moves for packaging reasons.
+ */
+const collectionVersion = (
+  await import("@iconify-json/fluent/info.json", { with: { type: "json" } })
+).default.version as string;
+
+/**
  * Pull the `d` of every path out of a body.
  *
  * 2819 of the 2873 20px Regular glyphs are nothing but
@@ -393,6 +402,29 @@ lines.push("");
 
 const out = lines.join("\n");
 writeFileSync(OUT, out);
+
+/**
+ * Path data compiled into a `.tsx` module reads as PPM's own source. It is
+ * not, so the notice says whose it is and which release it was taken from.
+ */
+writeNotices(
+  "product-icons",
+  "Product icons",
+  `\`src/web/lib/icons.generated.tsx\` holds the path data for ${glyphNames.length} glyphs, emitted by
+\`scripts/gen-product-icons.ts\` at 20px Regular. The outlines are reproduced unchanged;
+only the surrounding component is PPM's. The ${kept.length} names Fluent has no glyph for stay on
+\`lucide-react\`, which is a dependency rather than something vendored here.`,
+  [
+    {
+      name: "Fluent UI System Icons",
+      upstream: "https://github.com/microsoft/fluentui-system-icons",
+      version: collectionVersion,
+      license: "MIT",
+      holder: "Microsoft Corporation",
+      note: "vendored through `@iconify-json/fluent`.",
+    },
+  ],
+);
 
 const bytes = [...glyphs.values()].reduce(
   (n, ps) => n + ps.reduce((m, p) => m + p.length, 0),

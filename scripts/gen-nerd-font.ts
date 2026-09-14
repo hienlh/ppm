@@ -24,6 +24,7 @@ import subsetFont from "subset-font";
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { writeNotices } from "./third-party-notices.ts";
 
 /**
  * Pinned, and checked against a digest rather than trusted.
@@ -57,12 +58,50 @@ const OUT_FONT_DIR = resolve(import.meta.dir, "../src/web/styles/fonts");
 const OUT_CSS = resolve(import.meta.dir, "../src/web/styles/nerd-font.generated.css");
 const FILE_PREFIX = "nerd-symbols-";
 
+/**
+ * Who drew each set, and under what terms.
+ *
+ * Versions and upstreams are Nerd Fonts' own `src/glyphs/README.md` table for
+ * the tag pinned above; the licence column is the upstream licence *text*,
+ * checked against each project rather than copied from that table. They differ
+ * in one place and it matters: the table records Font Logos as "unlicensed",
+ * while the repository ships a verbatim copy of The Unlicense — a dedication
+ * to the public domain, which is the opposite of having no terms.
+ *
+ * Keyed rather than inlined because a block can draw on two of these and two
+ * blocks can draw on one, and an attribution list that repeats a project or
+ * misses one is worth nothing.
+ */
+const SOURCES = {
+  codicons: { name: "Codicons", upstream: "https://github.com/microsoft/vscode-codicons", version: "0.0.45", license: "CC-BY-4.0", holder: "Microsoft Corporation" },
+  devicons: { name: "Devicons", upstream: "https://github.com/devicons/devicon", version: "2.17.0", license: "MIT", holder: "konpa" },
+  "font-awesome": { name: "Font Awesome Free", upstream: "https://github.com/FortAwesome/Font-Awesome", version: "6.5.1", license: "CC-BY-4.0 (icons), OFL-1.1 (fonts)", holder: "Fonticons, Inc." },
+  "font-awesome-extension": { name: "Font Awesome Extension", upstream: "https://github.com/AndreLZGava/font-awesome-extension", version: "0.0.3", license: "MIT", holder: "Andr\u00e9 Luiz Gava" },
+  "font-logos": { name: "Font Logos", upstream: "https://github.com/Lukas-W/font-logos", version: "1.3.0", license: "Unlicense", holder: "Lukas W" },
+  material: { name: "Material Design Icons", upstream: "https://github.com/Templarian/MaterialDesign-Font", version: "Oct 6, 2022", license: "Apache-2.0", holder: "Pictogrammers" },
+  "nerd-fonts": { name: "Nerd Fonts (patcher and its own Custom glyphs)", upstream: "https://github.com/ryanoasis/nerd-fonts", version: VERSION, license: "MIT", holder: "Ryan L McIntyre" },
+  octicons: { name: "Octicons", upstream: "https://github.com/primer/octicons", version: "18.3.0", license: "MIT", holder: "GitHub Inc." },
+  "iec-power": { name: "Unicode Power Symbols", upstream: "https://github.com/jloughry/Unicode", version: "Feb 2015", license: "MIT", holder: "Joe Loughry" },
+  pomicons: { name: "Pomicons", upstream: "https://github.com/gabrielelana/pomicons", version: "1.001", license: "OFL-1.1", holder: "Gabriele Lana" },
+  powerline: { name: "Powerline Symbols", upstream: "https://github.com/powerline/powerline", version: "1.000", license: "MIT", holder: "Kim Silkeb\u00e6kken and other contributors" },
+  "powerline-extra": { name: "Powerline Extra Symbols", upstream: "https://github.com/ryanoasis/powerline-extra-symbols", version: "1.200", license: "MIT", holder: "Ryan L McIntyre" },
+  seti: { name: "Seti UI", upstream: "https://github.com/jesseweed/seti-ui", version: "0.8.1", license: "MIT", holder: "Jesse Weed" },
+  weather: { name: "Weather Icons", upstream: "https://github.com/erikflowers/weather-icons", version: "2.0.10", license: "OFL-1.1", holder: "Erik Flowers, artwork by Lukas Bischoff" },
+} as const;
+
+type SourceId = keyof typeof SOURCES;
+
 interface Block {
   /** Filename and CSS comment key. */
   slug: string;
   /** Nerd Fonts' own name for the set, as the cheat sheet lists it. */
   label: string;
   ranges: readonly (readonly [number, number])[];
+  /**
+   * Whose artwork ends up in this face. Required, so a block added in a
+   * version bump cannot ship with nobody credited.
+   */
+  sources: readonly SourceId[];
 }
 
 /**
@@ -78,26 +117,27 @@ const BLOCKS: readonly Block[] = [
   // they are the only ones a system font might also have. They are kept here
   // anyway — a prompt drawing `⚡` wants the single-cell icon beside its other
   // segments, not a double-width emoji from a fallback font.
-  { slug: "iec-power", label: "IEC Power Symbols", ranges: [[0x23fb, 0x23fe], [0x2b58, 0x2b58]] },
+  { slug: "iec-power", label: "IEC Power Symbols", ranges: [[0x23fb, 0x23fe], [0x2b58, 0x2b58]], sources: ["iec-power"] },
   {
     slug: "misc",
     label: "Octicons and Powerline Extra strays",
     ranges: [[0x2630, 0x2630], [0x2665, 0x2665], [0x26a1, 0x26a1], [0x276c, 0x2771]],
+    sources: ["octicons", "powerline-extra"],
   },
-  { slug: "pomicons", label: "Pomicons", ranges: [[0xe000, 0xe00a]] },
+  { slug: "pomicons", label: "Pomicons", ranges: [[0xe000, 0xe00a]], sources: ["pomicons"] },
   // The one nearly every prompt needs, and the cheapest.
-  { slug: "powerline", label: "Powerline + Powerline Extra", ranges: [[0xe0a0, 0xe0a3], [0xe0b0, 0xe0d7]] },
-  { slug: "font-awesome-ext", label: "Font Awesome Extension", ranges: [[0xe200, 0xe2a9]] },
-  { slug: "weather", label: "Weather", ranges: [[0xe300, 0xe3e3]] },
-  { slug: "seti", label: "Seti-UI + Custom", ranges: [[0xe5fa, 0xe6bb]] },
-  { slug: "devicons", label: "Devicons", ranges: [[0xe700, 0xe958]] },
-  { slug: "codicons", label: "Codicons", ranges: [[0xea60, 0xec84]] },
-  { slug: "font-awesome", label: "Font Awesome", ranges: [[0xed00, 0xefcf]] },
-  { slug: "font-awesome-legacy", label: "Font Awesome (legacy range)", ranges: [[0xf000, 0xf2ff]] },
-  { slug: "font-logos", label: "Font Logos", ranges: [[0xf300, 0xf385]] },
-  { slug: "octicons", label: "Octicons", ranges: [[0xf400, 0xf533]] },
+  { slug: "powerline", label: "Powerline + Powerline Extra", ranges: [[0xe0a0, 0xe0a3], [0xe0b0, 0xe0d7]], sources: ["powerline", "powerline-extra"] },
+  { slug: "font-awesome-ext", label: "Font Awesome Extension", ranges: [[0xe200, 0xe2a9]], sources: ["font-awesome-extension"] },
+  { slug: "weather", label: "Weather", ranges: [[0xe300, 0xe3e3]], sources: ["weather"] },
+  { slug: "seti", label: "Seti-UI + Custom", ranges: [[0xe5fa, 0xe6bb]], sources: ["seti", "nerd-fonts"] },
+  { slug: "devicons", label: "Devicons", ranges: [[0xe700, 0xe958]], sources: ["devicons"] },
+  { slug: "codicons", label: "Codicons", ranges: [[0xea60, 0xec84]], sources: ["codicons"] },
+  { slug: "font-awesome", label: "Font Awesome", ranges: [[0xed00, 0xefcf]], sources: ["font-awesome"] },
+  { slug: "font-awesome-legacy", label: "Font Awesome (legacy range)", ranges: [[0xf000, 0xf2ff]], sources: ["font-awesome"] },
+  { slug: "font-logos", label: "Font Logos", ranges: [[0xf300, 0xf385]], sources: ["font-logos"] },
+  { slug: "octicons", label: "Octicons", ranges: [[0xf400, 0xf533]], sources: ["octicons"] },
   // Half the total weight on its own, and the reason none of this is one file.
-  { slug: "material", label: "Material Design Icons", ranges: [[0xf0001, 0xf1af0]] },
+  { slug: "material", label: "Material Design Icons", ranges: [[0xf0001, 0xf1af0]], sources: ["material"] },
 ];
 
 /**
@@ -228,6 +268,38 @@ ${faces
   .join("\n\n")}
 `;
 writeFileSync(OUT_CSS, css);
+
+/**
+ * The faces are the one thing PPM ships that is somebody else's work in its
+ * original form — 14 `.woff2` files carved out of Nerd Fonts, sitting in the
+ * tarball under names that say nothing about where they came from. Emitted
+ * here rather than written by hand so that adding a block cannot ship artwork
+ * with nobody credited: `sources` is required on `Block`.
+ */
+const cited = [...new Set(faces.flatMap((f) => f.block.sources))].sort();
+writeNotices(
+  "nerd-font",
+  "Terminal icon glyphs",
+  `\`src/web/styles/fonts/${FILE_PREFIX}*.woff2\` (${faces.length} files) are subsets of the
+symbols-only face from [Nerd Fonts ${VERSION}](${SOURCE_URL}), cut per icon set by
+\`scripts/gen-nerd-font.ts\`. Nerd Fonts assembles them from the projects below; the
+subsetting reproduces their outlines unchanged.
+
+The \`@font-face\` family is \`${FAMILY}\`, not any upstream family name. That is there so
+a local install of the real font is not shadowed, and it also satisfies the Reserved
+Font Name clause the SIL OFL sets on Pomicons: no PPM face is offered under a
+reserved name.`,
+  cited.map((id) => {
+    const src = SOURCES[id];
+    return {
+      name: src.name,
+      upstream: src.upstream,
+      version: src.version,
+      license: src.license,
+      holder: src.holder,
+    };
+  }),
+);
 
 const total = faces.reduce((n, f) => n + f.bytes, 0);
 const glyphs = faces.reduce((n, f) => n + f.glyphs, 0);
