@@ -217,6 +217,36 @@ describe("Chat REST API", () => {
       expect(json.data[1].sdkUuid).toBe("pre2");
       try { rmSync(BOUNDARY_FILE, { force: true }); } catch { /* ignore */ }
     });
+
+    it("200 with two compactions returns one segment, headed by the earlier summary", async () => {
+      // Two is the smallest fixture in which `oneSegment` does anything at all:
+      // with one compaction the route answers identically whether the flag is
+      // there or not, so removing it would have broken the feature silently.
+      //
+      // Without the flag this is [pre1, pre2, compactA, mid1] — a single expand
+      // answering with the whole history before the boundary, which on a real
+      // session with thirteen compactions was 5626 messages prepended into a
+      // view already carrying 3553 DOM nodes.
+      const TWO_COMPACTIONS = resolve(TRANSCRIPT_DIR, "two-compactions.jsonl");
+      writeFileSync(TWO_COMPACTIONS, [
+        JSON.stringify({ uuid: "pre1", type: "user", message: { content: "oldest question" } }),
+        JSON.stringify({ uuid: "pre2", type: "assistant", message: { content: [{ type: "text", text: "oldest reply" }] } }),
+        JSON.stringify({ uuid: "compactA", type: "user", isCompactSummary: true, message: { content: "summary of the oldest stretch" } }),
+        JSON.stringify({ uuid: "mid1", type: "assistant", message: { content: [{ type: "text", text: "middle reply" }] } }),
+        JSON.stringify({ uuid: "compactB", type: "user", isCompactSummary: true, message: { content: "summary of everything so far" } }),
+        JSON.stringify({ uuid: "post1", type: "assistant", message: { content: [{ type: "text", text: "newest reply" }] } }),
+      ].join("\n") + "\n");
+
+      const res = await req(`/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(TWO_COMPACTIONS)}&before=compactB`);
+      const json = await res.json() as any;
+      expect(res.status).toBe(200);
+      expect(json.data.map((m: any) => m.sdkUuid)).toEqual(["compactA", "mid1"]);
+      // The summary is the segment's first message on purpose: it is what
+      // carries the transcript path, so it is what lets the next scroll expand
+      // the segment before it.
+      expect(json.data[0].content).toContain("summary of the oldest stretch");
+      try { rmSync(TWO_COMPACTIONS, { force: true }); } catch { /* ignore */ }
+    });
   });
 });
 
