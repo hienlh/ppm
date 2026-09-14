@@ -346,9 +346,18 @@ export function MessageList({
   const topUnexpandedCompact = findTopUnexpandedCompact();
   const hasMore = !!topUnexpandedCompact;
 
+  // Held as two strings rather than as the object. `findTopUnexpandedCompact`
+  // runs on every render and answers with a fresh literal, so depending on that
+  // object made `loadMore` new every render — and the observer effect below
+  // tore the IntersectionObserver down and built another one with it, which
+  // during streaming is every token batch. Measured before: 1 observer at
+  // mount, +1 per re-render against an unchanged message list.
+  const topCompactId = topUnexpandedCompact?.id ?? null;
+  const topCompactPath = topUnexpandedCompact?.jsonlPath ?? null;
+
   // Fetch pre-compact history from the server (prepends older messages).
   const loadMore = useCallback(async () => {
-    if (!topUnexpandedCompact || !onExpandCompact || autoLoadingCompact) return;
+    if (!topCompactId || !topCompactPath || !onExpandCompact || autoLoadingCompact) return;
     // Capture distance-from-bottom so the post-prepend layout effect can hold the
     // reading position steady while older messages are inserted above.
     const el = scrollEl;
@@ -356,13 +365,13 @@ export function MessageList({
     setAutoLoadingCompact(true);
     setCompactLoadError(null);
     try {
-      await onExpandCompact(topUnexpandedCompact.id, topUnexpandedCompact.jsonlPath);
+      await onExpandCompact(topCompactId, topCompactPath);
     } catch (e) {
       setCompactLoadError(e instanceof Error ? e.message : "Could not load previous conversation");
     } finally {
       setAutoLoadingCompact(false);
     }
-  }, [topUnexpandedCompact, onExpandCompact, autoLoadingCompact, scrollEl]);
+  }, [topCompactId, topCompactPath, onExpandCompact, autoLoadingCompact, scrollEl]);
 
   // Lazy-load older history when a sentinel at the top of the transcript comes
   // into range. This replaces a scroll listener that re-ran its check on every
