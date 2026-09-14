@@ -27,6 +27,22 @@
 const RELOAD_KEY = "ppm:chunk-reload";
 
 /**
+ * Set once a recovery reload is on its way, and read by the `beforeunload`
+ * guard in `app.tsx`.
+ *
+ * That guard is unconditional while authenticated — it exists to catch a stray
+ * Ctrl+W — and `beforeunload` cannot tell who asked for the navigation. So the
+ * automatic recovery put a "Leave site?" dialog in front of the one reload the
+ * user never chose and cannot act on knowledgeably: the tab is already showing
+ * a broken app. Declining it leaves them there.
+ */
+let recoveryReloadPending = false;
+
+export function isRecoveryReloadPending(): boolean {
+  return recoveryReloadPending;
+}
+
+/**
  * The wordings browsers use when a dynamic import does not produce a module.
  * Chrome, Firefox and Safari each phrase it differently, and the MIME refusal
  * is phrased differently again from a plain network failure.
@@ -59,6 +75,7 @@ export async function purgeAndReload(): Promise<void> {
   } catch {
     // Nothing to clear; the reload below is what matters.
   }
+  recoveryReloadPending = true;
   await purgeAssetCaches();
   window.location.reload();
 }
@@ -78,6 +95,7 @@ export function reloadOnceForChunkError(): boolean {
     return false;
   }
   if (already) return false;
+  recoveryReloadPending = true;
   void purgeAssetCaches().then(() => window.location.reload());
   return true;
 }
