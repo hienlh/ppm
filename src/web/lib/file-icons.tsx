@@ -117,28 +117,35 @@ export interface FileIconProps {
  * for the notification dot, and there the icon simply did not render — the one
  * place an inline `<svg>` would have worked without saying so.
  */
+function iconClass(icon: string, className?: string): string {
+  return cn(
+    "inline-block shrink-0 size-4 bg-center bg-no-repeat bg-contain",
+    `vsi-${icon}`,
+    className,
+  );
+}
+
 export function FileIcon({ name, kind = "file", open, className }: FileIconProps) {
   requestIconCss();
   const icon = kind === "directory" ? folderIconName(name, open) : fileIconName(name);
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "inline-block shrink-0 size-4 bg-center bg-no-repeat bg-contain",
-        `vsi-${icon}`,
-        className,
-      )}
-    />
-  );
+  return <span aria-hidden="true" className={iconClass(icon, className)} />;
 }
 
 /**
  * The same icon as a zero-prop component, for the `icon: ElementType` slots the
  * tab bar and the command palette already have.
  *
- * Cached by name because React treats a *component type* as identity: a fresh
- * arrow function per render would unmount and remount the node on every
- * keystroke in the palette's filter.
+ * Cached because React treats a *component type* as identity: a fresh arrow
+ * function per render would unmount and remount the node on every keystroke in
+ * the palette's filter.
+ *
+ * Keyed by the resolved glyph rather than by the path that resolved to it. A
+ * path key is wrong twice over: `src/a/index.ts` and `src/b/index.ts` are two
+ * entries rendering the same span, and a repository indexed by the palette has
+ * as many keys as it has files — which is why the old key needed an eviction
+ * rule, and why that rule was `clear()`, remounting every icon on screen at the
+ * 501st distinct path. There are 224 glyphs, so keying on those makes the cache
+ * bounded by construction and eviction unnecessary.
  */
 const elementCache = new Map<string, FC<{ className?: string }>>();
 
@@ -149,16 +156,13 @@ export function fileIconElement(
   // The palette asks for hundreds of these before any of them renders, so the
   // fetch starts here too rather than waiting for the first mount.
   requestIconCss();
-  const key = `${kind}:${name}`;
-  const cached = elementCache.get(key);
+  const icon = kind === "directory" ? folderIconName(name) : fileIconName(name);
+  const cached = elementCache.get(icon);
   if (cached) return cached;
   const Bound: FC<{ className?: string }> = ({ className }) => (
-    <FileIcon name={name} kind={kind} className={className} />
+    <span aria-hidden="true" className={iconClass(icon, className)} />
   );
-  Bound.displayName = `FileIcon(${name})`;
-  // The palette indexes whole repositories, so this is bounded like any other
-  // per-path cache in the app.
-  if (elementCache.size > 500) elementCache.clear();
-  elementCache.set(key, Bound);
+  Bound.displayName = `FileIcon(${icon})`;
+  elementCache.set(icon, Bound);
   return Bound;
 }
