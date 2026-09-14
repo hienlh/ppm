@@ -22,11 +22,79 @@ import { Window } from "happy-dom";
 const DOM_GLOBALS = [
   "window", "document", "navigator", "location", "history",
   "HTMLElement", "HTMLInputElement", "HTMLButtonElement", "Element", "Node", "NodeFilter",
-  "Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "TouchEvent",
+  "Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "TouchEvent", "MessageEvent",
   "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
   "localStorage", "sessionStorage", "matchMedia", "ResizeObserver", "IntersectionObserver",
   "DOMRect", "Image", "File", "Blob", "URL", "FormData",
 ] as const;
+
+/**
+ * happy-dom ships no `EventSource`, and a component that opens one does it in a
+ * passive effect — so the mount throws where React reports it as a render
+ * failure rather than as a missing API. Bun has a real one, which is worse
+ * here: it would dial the test's own machine.
+ *
+ * It carries its own listener table rather than extending `EventTarget`.
+ * There are two of those in scope — Bun's global and the one on the happy-dom
+ * window — and `dispatchEvent` rejects an event from the other realm, so a stub
+ * built on the global cannot be handed a `MessageEvent` from the installed DOM.
+ *
+ * Silent until a test feeds it. That is also the state the UI renders before the
+ * first frame arrives, which is worth being able to assert on its own.
+ */
+class InertEventSource {
+  static readonly instances: InertEventSource[] = [];
+  readonly url: string;
+  readonly withCredentials = false;
+  readyState = 0;
+  onopen: ((e: unknown) => void) | null = null;
+  onmessage: ((e: unknown) => void) | null = null;
+  onerror: ((e: unknown) => void) | null = null;
+  private readonly listeners = new Map<string, Set<(e: unknown) => void>>();
+
+  constructor(url: string | URL) {
+    this.url = String(url);
+    InertEventSource.instances.push(this);
+  }
+  addEventListener(type: string, cb: (e: unknown) => void): void {
+    const set = this.listeners.get(type) ?? new Set();
+    set.add(cb);
+    this.listeners.set(type, set);
+  }
+  removeEventListener(type: string, cb: (e: unknown) => void): void {
+    this.listeners.get(type)?.delete(cb);
+  }
+  dispatchEvent(event: { type: string }): boolean {
+    for (const cb of this.listeners.get(event.type) ?? []) cb(event);
+    return true;
+  }
+  close(): void { this.readyState = 2; }
+}
+
+/** A stream the component under test opened. Dispatch on it to feed it a frame. */
+export interface FakeEventSource {
+  readonly url: string;
+  readyState: number;
+  dispatchEvent(event: { type: string; data?: string }): boolean;
+  close(): void;
+}
+
+/** Every `EventSource` opened so far, in the order they were opened. */
+export function eventSources(): FakeEventSource[] {
+  return InertEventSource.instances;
+}
+
+/** Deliver one named SSE frame and flush what it caused. */
+export async function emitServerEvent(source: FakeEventSource | undefined, type: string, data: unknown): Promise<void> {
+  if (!source) throw new Error(`emitServerEvent(): no stream was opened`);
+  const { act } = await import("react");
+  // A plain object, not a `MessageEvent`: the listeners this feeds read `.data`
+  // off it and nothing else, and constructing the real thing would reintroduce
+  // the cross-realm problem the stub exists to avoid.
+  await act(async () => {
+    source.dispatchEvent({ type, data: JSON.stringify(data) });
+  });
+}
 
 /** Install a DOM on `globalThis`. Safe to call from several test files. */
 export function installDom(url = "http://localhost/"): void {
@@ -52,6 +120,10 @@ export function installDom(url = "http://localhost/"): void {
   // place and the flag doing nothing.
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   (w as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  if ((w as unknown as Record<string, unknown>).EventSource === undefined) {
+    (globalThis as Record<string, unknown>).EventSource = InertEventSource;
+    (w as unknown as Record<string, unknown>).EventSource = InertEventSource;
+  }
   (globalThis as Record<string, unknown>).__ppmDomInstalled = true;
 }
 
