@@ -107,3 +107,72 @@ describe("startBackfill dedup + status", () => {
     expect(status.indexed).toBe(5);
   });
 });
+
+describe("what one pass is allowed to cost", () => {
+  test("stops after the budget and says how many are left", async () => {
+    // The case this exists for is an INDEXER_VERSION bump, which makes every
+    // session stale at once. Unbounded, the first search after an upgrade
+    // re-reads and re-parses the whole corpus before the indexing indicator can
+    // finish; here that would be 250 transcripts inside one request.
+    for (let i = 0; i < 250; i++) {
+      seed(`s${i}`, `2026-07-14T00:00:${String(i % 60).padStart(2, "0")}.000Z`, `content ${i}`);
+    }
+
+    const first = await reconcile(PROJ);
+    expect(first.total).toBe(250);
+    expect(first.indexed).toBe(200);
+    expect(first.remaining).toBe(50);
+
+    // The ones left stale are still stale, so the next pass picks them up.
+    const second = await reconcile(PROJ);
+    expect(second.indexed).toBe(50);
+    expect(second.remaining).toBe(0);
+    expect(getIndexedCount(PROJ)).toBe(250);
+
+    const third = await reconcile(PROJ);
+    expect(third.indexed).toBe(0);
+  });
+
+  test("uses a session list it is handed instead of enumerating again", async () => {
+    seed("s1", "2026-07-14T00:00:00.000Z", "handed over");
+    let listCalls = 0;
+    const inner = (chatService as any).listSessions;
+    (chatService as any).listSessions = async (...args: unknown[]) => {
+      listCalls++;
+      return inner(...args);
+    };
+    try {
+      const sessions = await chatService.listSessions(undefined, PROJ);
+      listCalls = 0;
+
+      // `GET /chat/search` enumerates for title matching and then handed the
+      // same list to the backfill; a dir-scoped list with no limit pages the
+      // SDK until exhausted, so doing it twice per keystroke is the cost.
+      const r = await reconcile(PROJ, undefined, sessions);
+
+      expect(listCalls).toBe(0);
+      expect(r.indexed).toBe(1);
+      expect(search(PROJ, "handed", 10).length).toBe(1);
+    } finally {
+      (chatService as any).listSessions = inner;
+    }
+  });
+
+  test("startBackfill passes the list through", async () => {
+    seed("s1", "2026-07-14T00:00:00.000Z", "through backfill");
+    const sessions = await chatService.listSessions(undefined, PROJ);
+    let listCalls = 0;
+    const inner = (chatService as any).listSessions;
+    (chatService as any).listSessions = async (...args: unknown[]) => {
+      listCalls++;
+      return inner(...args);
+    };
+    try {
+      await startBackfill(PROJ, sessions);
+      expect(listCalls).toBe(0);
+      expect(getIndexedCount(PROJ)).toBe(1);
+    } finally {
+      (chatService as any).listSessions = inner;
+    }
+  });
+});

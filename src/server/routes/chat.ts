@@ -254,8 +254,11 @@ chatRoutes.get("/search", async (c) => {
 
     if (!rawQuery) return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
 
-    // Lazy self-refresh; UI shows an indexing indicator while this runs.
-    chatSearchStartBackfill(projectPath);
+    // Lazy self-refresh; UI shows an indexing indicator while this runs. The
+    // sessions are handed over rather than enumerated again: a dir-scoped list
+    // with no limit pages the SDK until exhausted, and this route was paying
+    // for that twice on every search.
+    chatSearchStartBackfill(projectPath, sessions);
 
     const pinnedIds = getPinnedSessionIds();
     const tagMap = getSessionTags(sessions.map((s) => s.id));

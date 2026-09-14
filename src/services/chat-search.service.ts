@@ -46,13 +46,30 @@ export function toFtsQuery(raw: string): string {
  * Bump whenever `messageSearchText` changes what it emits. Stored per session in
  * `session_meta.indexer_version`; `isStale` compares it, so a session indexed by
  * an older, thinner indexer is re-read rather than left stamped as fresh.
+ *
+ * 2: `MESSAGE_TEXT_CAP`. Sessions indexed at 1 may hold multi-megabyte rows.
+ *
+ * A bump makes *every* session stale at once, which is what `RECONCILE_BUDGET`
+ * below is for — the whole corpus must not be re-read inside one search.
  */
-export const INDEXER_VERSION = 1;
+export const INDEXER_VERSION = 2;
 
 /** Per-event cap on indexed tool output. A single `Read`/`grep` result can be
  *  hundreds of KB; indexing all of it bloats the FTS store far more than it
  *  helps, since matches that deep are rarely what someone is looking for. */
 const EVENT_TEXT_CAP = 4000;
+
+/**
+ * Whole-message cap, which the per-event one does not imply.
+ *
+ * `EVENT_TEXT_CAP` bounds each event and nothing bounds how many there are. One
+ * agent turn is routinely hundreds of tool calls, each with children that
+ * recurse through the same collector — so a single turn could contribute a
+ * multi-megabyte FTS row, for a feature whose output is a twelve-token snippet.
+ * The cap is generous on purpose: this is about the tail, not about trimming
+ * ordinary messages.
+ */
+const MESSAGE_TEXT_CAP = 64_000;
 
 function stringifyToolInput(input: unknown): string {
   if (input == null) return "";
@@ -64,24 +81,33 @@ function stringifyToolInput(input: unknown): string {
   }
 }
 
-function collectEventText(events: ChatEvent[] | undefined, out: string[]): void {
-  if (!events) return;
+/**
+ * Appends to `out` until the budget runs out, and reports what is left.
+ *
+ * The budget is threaded through rather than applied to the joined result so a
+ * turn with a thousand tool calls stops *collecting* — building the array and
+ * then slicing it is the same allocation this is meant to avoid.
+ */
+function collectEventText(events: ChatEvent[] | undefined, out: string[], budget: number): number {
+  if (!events) return budget;
   for (const ev of events) {
+    if (budget <= 0) return 0;
     switch (ev.type) {
       case "text":
-        out.push(ev.content);
+        budget = take(ev.content, out, budget);
         break;
       case "tool_use":
         // The tool name and its arguments are what a search for "the commit
         // where I opened PR 10232" actually has to match.
-        out.push(ev.tool, stringifyToolInput(ev.input));
-        collectEventText(ev.children, out);
+        budget = take(ev.tool, out, budget);
+        budget = take(stringifyToolInput(ev.input), out, budget);
+        budget = collectEventText(ev.children, out, budget);
         break;
       case "tool_result":
-        out.push(ev.output.slice(0, EVENT_TEXT_CAP));
+        budget = take(ev.output.slice(0, EVENT_TEXT_CAP), out, budget);
         break;
       case "error":
-        out.push(ev.message);
+        budget = take(ev.message, out, budget);
         break;
       // `thinking` is deliberately skipped: it is the model's scratch work, it
       // is bulky, and a snippet drawn from it reads as noise in the results.
@@ -89,6 +115,14 @@ function collectEventText(events: ChatEvent[] | undefined, out: string[]): void 
         break;
     }
   }
+  return budget;
+}
+
+/** Push as much of `text` as the budget allows; answer with what remains. */
+function take(text: string | undefined, out: string[], budget: number): number {
+  if (!text || budget <= 0) return budget;
+  out.push(text.length <= budget ? text : text.slice(0, budget));
+  return budget - Math.min(text.length, budget);
 }
 
 /**
@@ -101,9 +135,13 @@ function collectEventText(events: ChatEvent[] | undefined, out: string[]): void 
  */
 export function messageSearchText(msg: ChatMessage): string {
   const parts: string[] = [];
-  if (msg.content) parts.push(msg.content);
-  collectEventText(msg.events, parts);
-  return parts.filter((p) => p && p.trim()).join("\n").trim();
+  let budget = MESSAGE_TEXT_CAP;
+  if (msg.content) budget = take(msg.content, parts, budget);
+  collectEventText(msg.events, parts, budget);
+  // Threading the budget is what stops the *collection*; the final slice is
+  // what makes the cap exact, since the separators joined in below are not
+  // part of any part's length.
+  return parts.filter((p) => p && p.trim()).join("\n").trim().slice(0, MESSAGE_TEXT_CAP);
 }
 
 /** Index a concrete set of normalized messages (core, provider-agnostic). */
@@ -219,28 +257,52 @@ function staleKey(updatedAt?: string, createdAt?: string): number {
 }
 
 /**
+ * Sessions one pass will re-read, at most.
+ *
+ * Steady state is a handful — whatever was touched since the last search. The
+ * case this exists for is an `INDEXER_VERSION` bump, which makes every session
+ * stale at once: the first search after an upgrade would otherwise re-read and
+ * re-parse the entire corpus (hundreds of MB over thousands of transcripts)
+ * before the indexing indicator could ever finish. Bounding the pass turns that
+ * into progress the user watches advance, because `startBackfill` runs again on
+ * the next search and the ones left stale are still stale.
+ */
+const RECONCILE_BUDGET = 200;
+
+/**
  * Re-index any session whose transcript changed since last index. Enumerates
  * all providers for the project via `chatService.listSessions`. Sequential to
  * avoid an FS/parse storm over large transcript corpora.
+ *
+ * `sessions` may be supplied by a caller that has already enumerated them.
+ * `GET /chat/search` has: without this it listed every session in the project
+ * twice per keystroke, once for title matching and once in here, and a
+ * dir-scoped list with no limit pages the SDK until it is exhausted.
  */
 export async function reconcile(
   projectPath: string,
   onProgress?: (done: number, total: number) => void,
-): Promise<{ total: number; indexed: number }> {
-  const sessions = await chatService.listSessions(undefined, projectPath);
+  sessions?: { id: string; providerId: string; updatedAt?: string; createdAt?: string }[],
+): Promise<{ total: number; indexed: number; remaining: number }> {
+  const list = sessions ?? (await chatService.listSessions(undefined, projectPath));
   let reindexed = 0;
-  for (let i = 0; i < sessions.length; i++) {
-    const s = sessions[i]!;
+  let remaining = 0;
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i]!;
     const mtime = staleKey(s.updatedAt, s.createdAt);
     if (isStale(s.id, mtime)) {
-      try {
-        await indexSession(s.providerId, s.id, projectPath, mtime);
-        reindexed++;
-      } catch { /* skip unreadable/broken transcript */ }
+      if (reindexed >= RECONCILE_BUDGET) {
+        remaining++;
+      } else {
+        try {
+          await indexSession(s.providerId, s.id, projectPath, mtime);
+          reindexed++;
+        } catch { /* skip unreadable/broken transcript */ }
+      }
     }
-    onProgress?.(i + 1, sessions.length);
+    onProgress?.(i + 1, list.length);
   }
-  return { total: sessions.length, indexed: reindexed };
+  return { total: list.length, indexed: reindexed, remaining };
 }
 
 // Module-level dedup guard — one backfill per project at a time (no lifecycle
@@ -248,10 +310,14 @@ export async function reconcile(
 const backfillRuns = new Map<string, Promise<unknown>>();
 
 /** Trigger a lazy backfill/reconcile for a project (idempotent, fire-and-forget safe). */
-export function startBackfill(projectPath: string): Promise<unknown> {
+export function startBackfill(
+  projectPath: string,
+  sessions?: { id: string; providerId: string; updatedAt?: string; createdAt?: string }[],
+): Promise<unknown> {
   const existing = backfillRuns.get(projectPath);
   if (existing) return existing;
-  const run = reconcile(projectPath).finally(() => backfillRuns.delete(projectPath));
+  const run = reconcile(projectPath, undefined, sessions)
+    .finally(() => backfillRuns.delete(projectPath));
   backfillRuns.set(projectPath, run);
   return run;
 }
