@@ -6,7 +6,7 @@
  * dashes (option injection), control characters, and paths that escape the
  * project root.
  */
-import { normalize, resolve } from "node:path";
+import * as nodePath from "node:path";
 import type { SpawnResult } from "@ppm/vscode-compat/src/process.ts";
 
 export interface VscodeApi {
@@ -81,15 +81,30 @@ export function assertValidRemote(value: unknown): string {
   return s;
 }
 
+/**
+ * The part of `node:path` the guard below needs. It is a parameter because the
+ * separator decides whether the guard accepts a path or rejects it, so a test
+ * running on one platform says nothing about the other.
+ */
+type PathApi = Pick<typeof nodePath, "resolve" | "relative" | "isAbsolute" | "sep">;
+
 /** Validate file paths are relative and don't escape the project root */
-export function assertSafeFilePaths(files: string[], projectPath: string): void {
-  const root = normalize(projectPath) + "/";
+export function assertSafeFilePaths(
+  files: string[],
+  projectPath: string,
+  path: PathApi = nodePath,
+): void {
   for (const f of files) {
-    if (!f || f.startsWith("-") || f.startsWith("/") || /[\x00-\x1f\x7f]/.test(f)) {
+    if (!f || f.startsWith("-") || path.isAbsolute(f) || /[\x00-\x1f\x7f]/.test(f)) {
       throw new Error(`Invalid file path: "${f}"`);
     }
-    const resolved = normalize(resolve(projectPath, f));
-    if (!resolved.startsWith(root) && resolved !== normalize(projectPath)) {
+    // Containment is asked of `relative`, not of a string prefix. Comparing a
+    // resolved path against `normalize(projectPath) + "/"` rejected *every*
+    // path on Windows, where `resolve` answers with backslashes and the root
+    // built with a forward slash therefore never matched — the whole extension
+    // was unusable there, with a message blaming the file.
+    const rel = path.relative(projectPath, path.resolve(projectPath, f));
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
       throw new Error(`File path escapes project root: "${f}"`);
     }
   }

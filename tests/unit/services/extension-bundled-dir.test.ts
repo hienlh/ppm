@@ -23,10 +23,13 @@ describe("bundledExtensionsDir", () => {
 
   test("falls back to the executable's directory when compiled", () => {
     // What a compiled binary actually reports — verified against `bun build --compile`.
-    expect(bundledExtensionsDir("/$bunfs/root", "/opt/ppm/dist/ppm")).toBe("/opt/ppm/packages");
+    // The expectation goes through `resolve` rather than naming a POSIX string:
+    // on Windows the same call answers `C:\\opt\\ppm\\packages`, so a literal
+    // would fail there while the relationship being asserted still holds.
+    expect(bundledExtensionsDir("/$bunfs/root", "/opt/ppm/dist/ppm")).toBe(resolve("/opt/ppm/packages"));
   });
 
   test("does not resolve to the filesystem root, which is what the bug produced", () => {
-    expect(bundledExtensionsDir("/$bunfs/root", "/opt/ppm/dist/ppm")).not.toBe("/packages");
+    expect(bundledExtensionsDir("/$bunfs/root", "/opt/ppm/dist/ppm")).not.toBe(resolve("/packages"));
   });
 });
