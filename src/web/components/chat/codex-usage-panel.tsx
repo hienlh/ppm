@@ -1,40 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
 import { X, Loader2, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { AccountUsageBar } from "@/components/settings/accounts/account-bucket-row";
+import { formatResetTime } from "@/components/settings/accounts/account-usage-format";
 import type { UsageInfo } from "../../../types/chat";
 
 interface CodexAccount { id: string; label: string; type: string; planType?: string | null }
-interface Usage { fiveHour?: number; sevenDay?: number }
+type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly">;
 
-function pctColor(p: number): string {
-  if (p >= 90) return "text-error";
-  if (p >= 70) return "text-warning";
-  return "text-success";
-}
-function barColor(p: number): string {
-  if (p >= 90) return "bg-error";
-  if (p >= 70) return "bg-warning";
-  return "bg-success";
-}
-
-function UsageBar({ label, frac }: { label: string; frac?: number }) {
+function UsageBar({ label, frac, bucket }: {
+  label: string;
+  frac?: number;
+  bucket?: UsageInfo["session"];
+}) {
   const pct = frac != null ? Math.round(frac * 100) : null;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-text-primary">{label}</span>
-        <span className={`text-xs font-medium tabular-nums ${pct != null ? pctColor(pct) : "text-text-subtle"}`}>
-          {pct != null ? `${pct}%` : "—"}
-        </span>
-      </div>
-      <div className="h-2 rounded-full bg-border overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${pct != null ? barColor(pct) : ""}`}
-          style={{ width: `${Math.min(pct ?? 0, 100)}%` }}
-        />
-      </div>
-    </div>
-  );
+  return <AccountUsageBar label={label} pct={pct} reset={formatResetTime(bucket)} />;
 }
 
 /** Read-only usage panel opened from the chat toolbar badge (Claude parity).
@@ -89,8 +69,8 @@ export function CodexUsagePanel({ onClose, usage }: { onClose: () => void; usage
               <span className="text-sm text-text-primary truncate flex-1 min-w-0">{usage.activeAccountLabel || "Default login"}</span>
               <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1">~/.codex</span>
             </div>
-            <UsageBar label="5-Hour" frac={usage.fiveHour} />
-            <UsageBar label="Weekly" frac={usage.sevenDay} />
+            <UsageBar label="5-Hour" frac={usage.fiveHour} bucket={usage.session} />
+            <UsageBar label="Weekly" frac={usage.sevenDay} bucket={usage.weekly} />
           </div>
           <p className="text-[11px] text-text-subtle">Using your default <code>~/.codex</code> login. Add managed accounts in Settings → AI Provider → Codex.</p>
         </>
@@ -105,8 +85,8 @@ export function CodexUsagePanel({ onClose, usage }: { onClose: () => void; usage
               <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1">{a.type}</span>
               {a.planType && <span className="text-[10px] text-text-subtle">{a.planType}</span>}
             </div>
-            <UsageBar label="5-Hour" frac={u.fiveHour} />
-            <UsageBar label="Weekly" frac={u.sevenDay} />
+            <UsageBar label="5-Hour" frac={u.fiveHour} bucket={u.session} />
+            <UsageBar label="Weekly" frac={u.sevenDay} bucket={u.weekly} />
           </div>
         );
       })}
