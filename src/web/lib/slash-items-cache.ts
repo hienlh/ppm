@@ -22,7 +22,8 @@ export interface SlashItemsPayload {
  * codex tab and a Claude tab in one project get different lists — and two codex
  * tabs can differ too when they are bound to different accounts.
  */
-const cache = new Map<string, Promise<SlashItemsPayload>>();
+const CACHE_TTL_MS = 60_000;
+const cache = new Map<string, { promise: Promise<SlashItemsPayload>; expiresAt: number }>();
 
 export function fetchSlashItems(
   projectName: string,
@@ -31,7 +32,7 @@ export function fetchSlashItems(
 ): Promise<SlashItemsPayload> {
   const key = `${projectName}\0${providerId ?? ""}\0${sessionId ?? ""}`;
   const cached = cache.get(key);
-  if (cached) return cached;
+  if (cached && Date.now() < cached.expiresAt) return cached.promise;
 
   const query = new URLSearchParams();
   if (providerId) query.set("providerId", providerId);
@@ -43,11 +44,11 @@ export function fetchSlashItems(
     .then((data) => ({ items: data.items ?? [], recentNames: data.recentNames ?? [] }))
     .catch((e) => {
       // Don't cache failures — the next mount should retry.
-      cache.delete(key);
+      if (cache.get(key)?.promise === p) cache.delete(key);
       throw e;
     });
 
-  cache.set(key, p);
+  cache.set(key, { promise: p, expiresAt: Date.now() + CACHE_TTL_MS });
   return p;
 }
 

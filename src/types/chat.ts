@@ -57,6 +57,8 @@ export interface AIProvider {
    * codex; absent for Claude, whose skills come from the shared disk discovery.
    */
   listSkills?(sessionId?: string): Promise<import("../providers/codex-app-server/codex-protocol").CodexSkill[]>;
+  /** Drop runtime skill discovery results after a user requests a refresh. */
+  invalidateSkillsCache?(): void;
   /** Provider-specific usage/quota (rate limits). Used by GET /chat/usage. */
   getUsage?(sessionId?: string): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */

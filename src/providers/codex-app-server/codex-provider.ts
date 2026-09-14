@@ -660,6 +660,10 @@ export class CodexAppServerProvider implements AIProvider {
    * skill, which should show up without a restart, but a picker keystroke must
    * not spawn an app-server.
    */
+  invalidateSkillsCache(): void {
+    this.skillsCache.clear();
+  }
+
   async listSkills(sessionId?: string): Promise<CodexSkill[]> {
     const cwd = (sessionId ? getSessionProjectPath(sessionId) : null) || process.cwd();
     // Reuse the account already bound to the session; resolving afresh here

@@ -94,6 +94,9 @@ chatRoutes.delete("/slash-items/cache", (c) => {
   try {
     invalidateCache(c.get("projectPath"));
     invalidateSdkCommands(c.get("projectPath"));
+    for (const { id } of providerRegistry.listAll()) {
+      providerRegistry.get(id)?.invalidateSkillsCache?.();
+    }
     return c.json(ok({ invalidated: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

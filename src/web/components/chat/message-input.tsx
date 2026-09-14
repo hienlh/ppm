@@ -323,9 +323,7 @@ export const MessageInput = memo(function MessageInput({
     setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load slash items via the shared per-project cache. The list is identical for
-  // every chat tab, and the picker renders nothing until it resolves — fetching it
-  // per tab mount put a 23 KB round trip in front of the first `/` in every tab.
+  // Cache per project/provider/session, with a TTL for externally installed skills.
   const loadSlashItems = useCallback(() => {
     if (!projectName) {
       slashItemsRef.current = [];
@@ -708,6 +706,7 @@ export const MessageInput = memo(function MessageInput({
       if (hasSlash) {
         const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
         if (slashMatch && slashItemsRef.current.length > 0) {
+          if (!slashPickerOpenRef.current) loadSlashItems();
           const filter = slashMatch[1] ?? "";
           onSlashStateChange?.(true, filter);
           slashPickerOpenRef.current = true;
@@ -731,7 +730,7 @@ export const MessageInput = memo(function MessageInput({
       if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
       if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
     },
-    [onSlashStateChange, onFileStateChange],
+    [onSlashStateChange, onFileStateChange, loadSlashItems],
   );
 
   /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */
