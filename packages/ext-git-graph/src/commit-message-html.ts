@@ -38,8 +38,16 @@ function formatCommitMessageImpl(message: string, rules: IssueLinkRule[]): strin
   const text = String(message == null ? "" : message);
   const spans: { start: number; end: number; html: string }[] = [];
 
+  // The overlap test is linear in the spans already collected, so collecting
+  // them is quadratic — and the bare-hash rule matches once per hex-looking
+  // *word*, which a commit body can be made entirely of. Past this many links
+  // the message is not one anybody is reading anyway, and the rest of it is
+  // still rendered, just without link decoration. 500 caps the comparisons at
+  // ~125k rather than at whatever a cloned repository felt like.
+  // The literal is inline because this function is injected by `toString()`
+  // and cannot reach a constant in this module's scope.
   const add = (start: number, end: number, html: string): void => {
-    if (end <= start) return;
+    if (end <= start || spans.length >= 500) return;
     for (const span of spans) if (start < span.end && end > span.start) return;
     spans.push({ start, end, html });
   };

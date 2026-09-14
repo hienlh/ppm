@@ -26,6 +26,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { GitRepoCandidate } from "@/lib/git-repo-scope";
+import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
+import { cn } from "@/lib/utils";
 
 interface GitRepoBarProps {
   repo: GitRepoCandidate;
@@ -37,6 +39,7 @@ export function GitRepoBar({ repo, repos, onChoose }: GitRepoBarProps) {
   // One repository under a container still gets the row: the panel is showing
   // a subfolder's history under the project's name, and that has to be visible.
   const single = repos.length < 2;
+  const coarse = usePrefersCoarsePointer();
   return (
     <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border shrink-0 text-xs text-text-secondary">
       <FolderGit2 className="size-3.5 shrink-0 text-text-subtle" />
@@ -47,9 +50,15 @@ export function GitRepoBar({ repo, repos, onChoose }: GitRepoBarProps) {
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            {/* h-8 rather than the panel's icon-xs: this is a real target on a
-                phone, and it is the only way back to the other repository. */}
-            <Button variant="ghost" size="sm" className="h-8 min-w-0 gap-1 px-1.5 text-xs">
+            {/* The only way back to the other repository, so it is a full
+                44px target wherever the pointer is coarse — gated on the
+                pointer rather than on a width, because a touch laptop is wide
+                and has no mouse. On a mouse it stays out of the way. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("min-w-0 gap-1 px-1.5 text-xs", coarse ? "h-11" : "h-8")}
+            >
               <span className="truncate" title={repo.path}>{repo.relative}</span>
               <ChevronsUpDown className="size-3 shrink-0 opacity-60" />
             </Button>

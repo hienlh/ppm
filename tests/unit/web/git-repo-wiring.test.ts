@@ -12,13 +12,21 @@
 import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Glob } from "bun";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 const WEB = resolve(import.meta.dir, "../../../src/web");
 
 function webFiles(): string[] {
   const glob = new Glob("**/*.{ts,tsx}");
-  return [...glob.scanSync(WEB)].filter((f) => !f.endsWith(".test.ts") && !f.endsWith(".test.tsx"));
+  return [...glob.scanSync(WEB)]
+    // `scanSync` joins with the platform separator, so on Windows every path
+    // comes back as `stores\\git-repo-store.ts` and matches nothing in the
+    // allowlists below — which inverts them: the two files that are *allowed*
+    // to build a git URL are reported as the offenders, and this guard is
+    // permanently red on the one platform it was never run on. A guard that is
+    // always red is one nobody reads.
+    .map((file) => file.split(sep).join("/"))
+    .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"));
 }
 
 /** The two places allowed to build a project git URL from scratch. */

@@ -14,6 +14,7 @@ import {
   discoverGitRepos,
   isGitRepo,
   DEFAULT_SCAN_DEPTH,
+  DEFAULT_SCAN_ENTRIES,
   IGNORED_DIRS,
 } from "../../../../src/services/git-repos/git-repo-discovery.ts";
 
@@ -119,5 +120,36 @@ describe("discoverGitRepos", () => {
     const found = discoverGitRepos(join(root, "no", "such", "place"));
     expect(found.rootIsRepo).toBe(false);
     expect(found.repos).toEqual([]);
+  });
+});
+
+describe("the entry budget", () => {
+  it("stops walking once it has looked at enough, and says so", () => {
+    // Depth says nothing about how much work a directory is: point a project
+    // at a home folder and two levels is every dotfile directory on the
+    // machine, one lstat at a time, on the thread answering HTTP.
+    const found = discoverGitRepos(root, { maxEntries: 2 });
+
+    expect(found.truncated).toBe(true);
+    expect(found.repos.length).toBeLessThan(discoverGitRepos(root).repos.length);
+  });
+
+  it("does not claim truncation on a workspace that fits", () => {
+    const found = discoverGitRepos(root);
+
+    expect(found.truncated).toBeUndefined();
+    expect(DEFAULT_SCAN_ENTRIES).toBeGreaterThan(1000);
+  });
+
+  it("never applies to a project that is itself a repository", () => {
+    // The root short-circuits before any walk, so the budget cannot hide the
+    // one repository that matters in the common case.
+    const repo = mkdtempSync(join(tmpdir(), "ppm-repo-root-"));
+    try {
+      makeRepo(repo);
+      expect(discoverGitRepos(repo, { maxEntries: 0 }).rootIsRepo).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

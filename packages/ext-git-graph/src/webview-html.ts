@@ -432,6 +432,7 @@ button:active { background: var(--surface); }
 .chip.copyable { cursor: pointer; }
 .chip.copyable:hover { color: var(--text); border-color: var(--blue); }
 .chip.copied { color: var(--green); border-color: var(--green); }
+.chip.copy-failed { color: var(--red); border-color: var(--red); }
 
 /* Two columns when there is room. A commit message is hard-wrapped by whoever
    wrote it, so on a wide panel it fills half the width and the rest of the row
@@ -459,6 +460,7 @@ button:active { background: var(--surface); }
 .meta-value:hover .hash-lead, .meta-value:hover .meta-name, .meta-value:hover .meta-email { color: var(--blue); }
 .meta-value:hover { color: var(--blue); }
 .meta-value.copied, .meta-value.copied .hash-lead, .meta-value.copied .meta-name, .meta-value.copied .meta-email { color: var(--green); }
+.meta-value.copy-failed, .meta-value.copy-failed .hash-lead, .meta-value.copy-failed .meta-name, .meta-value.copy-failed .meta-email { color: var(--red); }
 .meta-when { color: var(--subtext); font-variant-numeric: tabular-nums; }
 .detail-subject { font-size: 15px; font-weight: 600; line-height: 1.4; letter-spacing: -0.1px; }
 
@@ -781,6 +783,12 @@ window.addEventListener('message', (event) => {
         state.commits = state.commits.concat(msg.data);
       } else {
         state.commits = msg.data;
+        // Not an append means the list was replaced — a branch change, a
+        // refresh. Hashes are unique so keeping the old numbers would not be
+        // wrong, but nothing would ever read them again and nothing would ever
+        // drop them either: a long session switching branches grows a map of
+        // every commit it has ever looked at.
+        state.stats = {};
       }
       renderCommitList();
       updateStatus();
@@ -792,7 +800,14 @@ window.addEventListener('message', (event) => {
       applyCommitStats();
       break;
     case 'commitDetails':
-      renderDetailPanel(msg.data);
+      // The answer has to still be the question. Arrow-keying down the list
+      // spawns one "git show" per row with nothing cancelling the last, so they
+      // come back in whatever order they finish: click A then B quickly and the
+      // panel could show A while B is highlighted, and deselecting A while its
+      // request was in flight popped the panel open again for a commit that is
+      // no longer selected. (No backticks in here: this whole script is a
+      // template literal, and one would end it hundreds of lines early.)
+      if (msg.data && msg.data.hash === state.selectedCommit) renderDetailPanel(msg.data);
       break;
     case 'refresh':
       state.commits = msg.data;
@@ -923,9 +938,13 @@ document.getElementById('detail-panel').addEventListener('click', (e) => {
   const copySource = e.target.closest('[data-copy]');
   if (copySource) {
     e.stopPropagation();
-    copyText(copySource.dataset.copy);
-    copySource.classList.add('copied');
-    setTimeout(() => copySource.classList.remove('copied'), 900);
+    // The green flash is the only evidence the user gets, so it waits for the
+    // answer rather than assuming one. A failure says so instead of lying.
+    copyText(copySource.dataset.copy).then((ok) => {
+      const cls = ok ? 'copied' : 'copy-failed';
+      copySource.classList.add(cls);
+      setTimeout(() => copySource.classList.remove(cls), 900);
+    });
     return;
   }
   // File-level action buttons (stage/unstage/discard/open)
@@ -2776,8 +2795,44 @@ function promptResetMode(hash) {
   });
 }
 
-function copyText(text) {
-  navigator.clipboard.writeText(text).catch(() => {});
+/* A panel is mounted sandbox="allow-scripts" with no allow-same-origin, so it
+   runs at an OPAQUE ORIGIN — and the default Permissions Policy allowlist for
+   clipboard-write is "self", which an opaque origin never matches. Measured in
+   Chromium with the iframe focused and a real click: writeText rejects with
+   NotAllowedError ("blocked because of a permissions policy"), while a textarea
+   plus execCommand('copy') returns true and the text really does land on the
+   system clipboard (pasted it back out to check). So every copy chip in every
+   panel had been copying nothing, and saying that it had.
+
+   The modern call is still tried first, for the day the policy changes. The
+   textarea has to stay RENDERED — display:none or visibility:hidden give an
+   empty selection and execCommand then copies nothing while still returning
+   true — and setSelectionRange is what actually selects on iOS. */
+async function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) { /* fall through */ }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = String(text == null ? '' : text);
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:none;opacity:0;';
+  document.body.appendChild(ta);
+  const selection = document.getSelection();
+  const previous = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  try {
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    return document.execCommand('copy');
+  } catch (e) {
+    return false;
+  } finally {
+    ta.remove();
+    if (selection && previous) { selection.removeAllRanges(); selection.addRange(previous); }
+  }
 }
 
 // --- Dialog system ---

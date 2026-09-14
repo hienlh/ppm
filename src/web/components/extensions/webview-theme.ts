@@ -57,7 +57,13 @@ export interface HostTheme {
 export function hostThemeCss(readVar: (name: string) => string): string {
   const decls: string[] = [];
   for (const [webviewVar, appVar] of VAR_MAP) {
-    const value = readVar(appVar).trim();
+    // The values land inside a `<style>` element in `srcDoc`, where a `<` or a
+    // `>` would end the element and start markup. Nothing can currently put one
+    // there — `validate-theme.ts` refuses a token that is not a colour — but
+    // that is a guard in another subsystem, two imports away, and this one is a
+    // character class. An angle bracket has no meaning in a custom property
+    // value, so dropping it costs nothing it could have meant.
+    const value = readVar(appVar).replace(/[<>]/g, "").trim();
     if (value) decls.push(`${webviewVar}: ${value};`);
   }
   if (!decls.length) return "";
@@ -85,6 +91,7 @@ export const HOST_THEME_MESSAGE = "ppm:theme";
  */
 const HOST_THEME_SHIM = `<script>
 window.addEventListener("message",function(e){
+  if(e.source!==window.parent)return;
   var m=e.data;
   if(!m||m.command!=="${HOST_THEME_MESSAGE}")return;
   document.documentElement.setAttribute("data-ppm-theme",m.mode==="dark"?"dark":"light");
