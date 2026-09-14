@@ -8,8 +8,10 @@
  * green. `renderToStaticMarkup` cannot close that, because it runs no effects
  * and dispatches no events; it can only say what the first paint looks like.
  *
- * happy-dom rather than jsdom: it starts in about 20ms, which is what keeps this
- * usable for a handful of focused tests rather than a second test runner.
+ * happy-dom rather than jsdom, and it is cheap enough not to need rationing:
+ * measured 87ms to import once per test process and 3ms per document after
+ * that, so a suite that mounts a dozen components pays for the import and
+ * almost nothing else.
  *
  * Globals are assigned before React is imported, not after. `react-dom/client`
  * reads `document` while its module body runs, so importing it first binds it to
