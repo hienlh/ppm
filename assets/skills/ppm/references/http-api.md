@@ -43,6 +43,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 ## /api/chat
 
+- `GET    /api/chat/sessions/running`
 - `POST   /api/chat/sessions/read`
 
 ## /api/cloud
@@ -341,4 +342,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.19.8 -->
+<!-- Generated from src/server/routes/ for PPM v0.19.9 -->
