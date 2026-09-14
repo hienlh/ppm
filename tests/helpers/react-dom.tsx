@@ -109,9 +109,23 @@ export function installDom(url = "http://localhost/"): void {
   if ((w.document as unknown as { compatMode?: string }).compatMode === undefined) {
     Object.defineProperty(w.document, "compatMode", { value: "CSS1Compat", configurable: true });
   }
+  // Read before anything is overwritten: Bun backs `os.cpus()` with
+  // `globalThis.navigator.hardwareConcurrency`, and happy-dom's navigator
+  // hardcodes 8. So installing a DOM quietly changed the core count that every
+  // *server-side* collector in the same test process reported — on this
+  // 24-core host, three cpu-collector tests two directories away went red, and
+  // only when run in the same batch as a DOM test. Nothing about a DOM harness
+  // suggests it can do that, so the real value is carried across.
+  const realConcurrency = (globalThis.navigator as { hardwareConcurrency?: number } | undefined)
+    ?.hardwareConcurrency;
   for (const key of DOM_GLOBALS) {
     const value = (w as unknown as Record<string, unknown>)[key];
     if (value !== undefined) (globalThis as Record<string, unknown>)[key] = value;
+  }
+  if (typeof realConcurrency === "number") {
+    for (const nav of [globalThis.navigator, (w as unknown as Record<string, unknown>).navigator]) {
+      if (nav) Object.defineProperty(nav, "hardwareConcurrency", { value: realConcurrency, configurable: true });
+    }
   }
   // React refuses to run `act` without it, and without `act` a render is not
   // flushed before the assertions read the DOM. On both objects: React reads it
