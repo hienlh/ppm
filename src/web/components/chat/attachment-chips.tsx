@@ -82,9 +82,21 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
               // remove button, and a button inside a button is invalid. It also means the
               // preview is reachable by keyboard, which the chip never was.
               //
-              // The visible thumbnail stays 20px and only the tap-registering area grows to
-              // the 44px minimum, through the same invisible `::before` the explorer toolbar
-              // uses — a chip that changed size on a phone would push the composer around.
+              // The visible thumbnail stays 20px and only the tap-registering area grows,
+              // through the same invisible `::before` the explorer toolbar uses — a chip
+              // that changed size on a phone would push the composer around.
+              //
+              // Vertical and horizontal are deliberately different. A symmetric `-inset-3`
+              // is 44x44, and was fine while it was the only grown target — but the remove
+              // button below now needs one too, and a chip row is horizontally dense by
+              // construction. Two targets each reaching 12px towards the other overlap, and
+              // an overlap means the tap goes to whichever paints last.
+              //
+              // So the full 44px goes on the axis a finger actually misses on — a list
+              // scrolls vertically — and horizontal takes what is left over. Measured in a
+              // browser at the real metrics, worst case being a one-character filename:
+              // thumbnail target 32x44, remove target 28x44, 7px clear between them and
+              // 12px to the next chip's thumbnail, no overlap either way.
               <button
                 type="button"
                 title={`Preview ${att.name}`}
@@ -93,7 +105,7 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
                 className={cn(
                   "relative shrink-0 rounded",
                   "can-hover:hover:ring-2 can-hover:hover:ring-primary/60 transition-shadow",
-                  coarse && "before:absolute before:-inset-3 before:content-['']",
+                  coarse && "before:absolute before:-inset-y-3 before:-inset-x-1.5 before:content-['']",
                 )}
               >
                 <img
@@ -135,10 +147,21 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
             ) : null}
 
             {/* Remove button */}
+            {/*
+              16x16 of ink, and until now 16x16 of target — the smallest thing a finger
+              was asked to hit anywhere in the composer, on the one control that throws
+              work away. Same treatment as the thumbnail above: 14px of vertical bleed
+              takes it to the full 44px, and 6px horizontal keeps it clear of both the
+              thumbnail to its left and the next chip's thumbnail to its right. 28x44
+              measured, not 44x44 — see the note above for why the width gives way.
+            */}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onRemove(att.id); if (expandedId === att.id) setExpandedId(null); }}
-              className="shrink-0 rounded-sm p-0.5 hover:bg-border/50 transition-colors"
+              className={cn(
+                "relative shrink-0 rounded-sm p-0.5 hover:bg-border/50 transition-colors",
+                coarse && "before:absolute before:-inset-y-3.5 before:-inset-x-1.5 before:content-['']",
+              )}
               aria-label={`Remove ${att.name}`}
             >
               <X className="size-3" />

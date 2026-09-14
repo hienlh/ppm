@@ -114,6 +114,42 @@ describe("resolving a name to an icon", () => {
   });
 });
 
+describe("a filename is not a property name", () => {
+  // A file really can be called `constructor` and a directory really can be
+  // called `toString`. With an ordinary object literal the lookup answers from
+  // `Object.prototype` with something inherited and truthy, so the truthiness
+  // check treats it as a hit: `fileIconName("constructor")` returned the
+  // `Object` *function* and `fileIconName("__proto__")` returned
+  // `Object.prototype`, each interpolated straight into a class name.
+  const hazards = ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__", "isPrototypeOf"];
+
+  it("gives inherited property names the default icon", () => {
+    for (const name of hazards) {
+      expect(fileIconName(name), `file "${name}"`).toBe(DEFAULT_FILE_ICON);
+      expect(folderIconName(name), `folder "${name}"`).toBe(DEFAULT_FOLDER_ICON);
+      expect(folderIconName(name, true), `open folder "${name}"`).toBe(DEFAULT_FOLDER_OPEN_ICON);
+      // The extension path reaches the same tables.
+      expect(fileIconName(`x.${name}`), `extension ".${name}"`).toBe(DEFAULT_FILE_ICON);
+    }
+  });
+
+  it("always answers with a string, whatever the name", () => {
+    // The class is built by interpolation, so a non-string answer is not an
+    // error anywhere — it is `vsi-function Object() { [native code] }` in the
+    // DOM and a span of nothing on screen.
+    for (const name of [...hazards, "__defineGetter__", "propertyIsEnumerable"]) {
+      expect(typeof fileIconName(name)).toBe("string");
+      expect(typeof folderIconName(name)).toBe("string");
+    }
+  });
+
+  it("keeps the tables prototype-less so this cannot come back", () => {
+    for (const table of [EXTENSION_ICONS, FILENAME_ICONS, FOLDER_ICONS, FOLDER_OPEN_ICONS]) {
+      expect(Object.getPrototypeOf(table)).toBeNull();
+    }
+  });
+});
+
 /**
  * The artwork must stay off the entry's static graph.
  *
