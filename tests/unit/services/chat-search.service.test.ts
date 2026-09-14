@@ -204,3 +204,52 @@ describe("isStale — indexer version", () => {
     expect(isStale("s2", 7)).toBe(false);
   });
 });
+
+describe("how much of one message gets indexed", () => {
+  /** A turn with `n` tool calls, each carrying a full-size result. */
+  function bigTurn(n: number): ChatMessage {
+    return {
+      id: "m1",
+      role: "assistant",
+      content: "",
+      timestamp: "2026-07-14T00:00:00.000Z",
+      events: Array.from({ length: n }, (_, i) => ({
+        type: "tool_use" as const,
+        id: `t${i}`,
+        tool: "Read",
+        input: { file: `f${i}.ts` },
+        children: [
+          { type: "tool_result" as const, id: `r${i}`, output: "x".repeat(50_000) },
+        ],
+      })),
+    } as unknown as ChatMessage;
+  }
+
+  test("caps a turn with hundreds of tool calls", () => {
+    // The per-event cap bounds each event and nothing bounded how many there
+    // are. 400 tool calls at 4000 indexed characters each is 1.6 MB in a single
+    // FTS row, for a feature whose output is a twelve-token snippet.
+    const text = messageSearchText(bigTurn(400));
+    expect(text.length).toBeLessThanOrEqual(64_000);
+    expect(text.length).toBeGreaterThan(1000);
+  });
+
+  test("leaves an ordinary message untouched", () => {
+    const msg = {
+      id: "m2",
+      role: "user",
+      content: "where did I open the pull request for hunk staging",
+      timestamp: "2026-07-14T00:00:00.000Z",
+    } as unknown as ChatMessage;
+    expect(messageSearchText(msg)).toBe("where did I open the pull request for hunk staging");
+  });
+
+  test("spends the budget on the start of the turn, not the end", () => {
+    // Truncation has to keep the first events: a turn's opening is what a
+    // search for "the commit where I opened PR 10232" matches on.
+    const text = messageSearchText(bigTurn(400));
+    expect(text.startsWith("Read")).toBe(true);
+    expect(text).toContain("f0.ts");
+    expect(text).not.toContain("f399.ts");
+  });
+});
