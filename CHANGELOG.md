@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.19.12] - 2026-09-14
+
+### Fixed
+- **Codex usage reload fetches fresh quota** — the refresh control in the chat usage panel now bypasses the five-minute cache and waits for Codex to return the latest limits.
+
 ## [0.19.11] - 2026-09-14
 
 ### Fixed
