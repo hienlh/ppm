@@ -28,6 +28,7 @@ import { getIconForFile, getIconForFolder, getIconForOpenFolder } from "vscode-i
 import { FileExtensions2ToIcon } from "vscode-icons-js/dist/generated/FileExtensions2ToIcon";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { writeNotices } from "./third-party-notices.ts";
 
 const OUT_TS = resolve(import.meta.dir, "../src/web/lib/file-icons.generated.ts");
 const OUT_CSS = resolve(import.meta.dir, "../src/web/styles/file-icons.generated.css");
@@ -214,6 +215,22 @@ const collection = (await import("@iconify-json/vscode-icons/icons.json", {
   with: { type: "json" },
 })).default as { icons: Record<string, { body: string }>; width?: number; height?: number };
 
+/**
+ * The *artwork* version, which is the one the notice has to name.
+ *
+ * `@iconify-json/vscode-icons`'s own package version tracks Iconify's packaging
+ * and moves for reasons that have nothing to do with the drawings; `info.json`
+ * carries the vscode-icons release the bodies were taken from.
+ */
+const collectionVersion = (
+  await import("@iconify-json/vscode-icons/info.json", { with: { type: "json" } })
+).default.version as string;
+
+/** Versioned apart from the artwork, and behind it — see `OVERRIDES` above. */
+const mappingVersion = (
+  await import("vscode-icons-js/package.json", { with: { type: "json" } })
+).default.version as string;
+
 /** Both drawings of one glyph; `light` only when the theme ships a second one. */
 type Glyph = { dark: string; light?: string };
 
@@ -394,6 +411,40 @@ ${names
 
 writeFileSync(OUT_TS, ts);
 writeFileSync(OUT_CSS, css);
+
+/**
+ * The stylesheet is half a megabyte of somebody else's drawings inlined as
+ * data URIs, which is not recognisable as vendored artwork once it is one
+ * `background-image` per class. The collection version is read back out of the
+ * package rather than written here, so a dependency bump cannot leave the
+ * notice pointing at the wrong release.
+ */
+writeNotices(
+  "file-icons",
+  "File icons",
+  `\`src/web/styles/file-icons.generated.css\` inlines ${used.size} SVG drawings as data URIs and
+\`src/web/lib/file-icons.generated.ts\` holds the name-to-glyph tables. Both are emitted by
+\`scripts/gen-file-icons.ts\` from the packages below: the artwork comes from the icon
+collection, the extension-to-name mapping from \`vscode-icons-js\`. The drawings are
+reproduced unchanged apart from being minified into a URI.`,
+  [
+    {
+      name: "vscode-icons (artwork)",
+      upstream: "https://github.com/vscode-icons/vscode-icons",
+      version: collectionVersion,
+      license: "MIT",
+      holder: "Roberto Huertas",
+      note: "vendored through `@iconify-json/vscode-icons`.",
+    },
+    {
+      name: "vscode-icons-js (name mapping)",
+      upstream: "https://github.com/dderevjanik/vscode-icons-js",
+      version: mappingVersion,
+      license: "MIT",
+      holder: "Daniel Derevjanik",
+    },
+  ],
+);
 
 const bodyBytes = [...used.values()].reduce(
   (n, g) => n + g.dark.length + (g.light?.length ?? 0),
