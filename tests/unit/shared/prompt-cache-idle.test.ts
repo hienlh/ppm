@@ -6,12 +6,20 @@ const HOUR = 60 * 60_000;
 const NOW = 1_800_000_000_000;
 
 function state(over: Partial<PromptCacheState> = {}): PromptCacheState {
-  return { lastTurnEndedAt: NOW - 2 * HOUR, ttlMs: HOUR, prefixTokens: 199_000, ...over };
+  return { lastTurnEndedAt: NOW - 2 * HOUR, ttlMs: HOUR, billedPrefixTokens: 199_000, ...over };
 }
 
 describe("idleCacheNotice", () => {
-  it("reports the idle time and what the next message would re-cache", () => {
-    expect(idleCacheNotice(state(), NOW)).toEqual({ idleMs: 2 * HOUR, prefixTokens: 199_000 });
+  it("reports how long the session has been idle", () => {
+    expect(idleCacheNotice(state(), NOW)).toEqual({ idleMs: 2 * HOUR });
+  });
+
+  // `modelUsage` is a running session total, so the only honest answer to "how much would
+  // this re-cache" is none. A field here is how a wrong figure gets back onto the screen.
+  it("offers no token figure to display", () => {
+    expect(idleCacheNotice(state({ billedPrefixTokens: 67_700_000 }), NOW)).toEqual({
+      idleMs: 2 * HOUR,
+    });
   });
 
   it("stays silent while the cache is still inside its window", () => {
@@ -28,9 +36,9 @@ describe("idleCacheNotice", () => {
     expect(idleCacheNotice(state({ ...tenMinutesIdle, ttlMs: 5 * 60_000 }), NOW)).not.toBeNull();
   });
 
-  it("says nothing about a transcript small enough to be cheap either way", () => {
-    expect(idleCacheNotice(state({ prefixTokens: PREFIX_WARN_TOKENS - 1 }), NOW)).toBeNull();
-    expect(idleCacheNotice(state({ prefixTokens: PREFIX_WARN_TOKENS }), NOW)).not.toBeNull();
+  it("says nothing about a session that has never billed enough to matter", () => {
+    expect(idleCacheNotice(state({ billedPrefixTokens: PREFIX_WARN_TOKENS - 1 }), NOW)).toBeNull();
+    expect(idleCacheNotice(state({ billedPrefixTokens: PREFIX_WARN_TOKENS }), NOW)).not.toBeNull();
   });
 
   it("treats an unmeasured session as unknown, not as expired", () => {

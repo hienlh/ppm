@@ -260,7 +260,7 @@ function promptCacheSnapshot(sessionId: string, entry: SessionEntry): PromptCach
     // Sent even before a turn has completed: the window is the install's, and a tab that
     // stays connected all day needs it to arm the notice from its own turns.
     ...(entry.lastTurnEndedAt != null && { lastTurnEndedAt: entry.lastTurnEndedAt }),
-    ...(entry.lastTurnPrefixTokens != null && { prefixTokens: entry.lastTurnPrefixTokens }),
+    ...(entry.lastTurnPrefixTokens != null && { billedPrefixTokens: entry.lastTurnPrefixTokens }),
   };
 }
 

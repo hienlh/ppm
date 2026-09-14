@@ -761,7 +761,7 @@ export function useChat(
           setPromptCache((prev) => prev && {
             ...prev,
             lastTurnEndedAt: Date.now(),
-            prefixTokens: prefixTokens(doneUsage),
+            billedPrefixTokens: prefixTokens(doneUsage),
           });
         }
         streamingContentRef.current = "";

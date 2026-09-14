@@ -26,15 +26,19 @@ export interface PromptCacheState {
   ttlMs: number;
   /** When the last turn completed — the moment the cache was last written. */
   lastTurnEndedAt?: number;
-  /** Transcript replayed on that turn — what re-caching would cost again. */
-  prefixTokens?: number;
+  /**
+   * Cached prefix *billed* on the last turn — a running session total, not a transcript size.
+   *
+   * The SDK sums `modelUsage` across a streaming session, so a long chat reports tens of
+   * millions against a context window of one. It is a usable floor for "has this session
+   * cached anything worth losing" and nothing more; never show it as a number.
+   */
+  billedPrefixTokens?: number;
 }
 
 export interface IdleCacheNotice {
   /** How long since the last turn, for the wording. */
   idleMs: number;
-  /** Tokens the next message would re-cache. */
-  prefixTokens: number;
 }
 
 /**
@@ -42,10 +46,10 @@ export interface IdleCacheNotice {
  *
  * Silent in three cases, all of them deliberate. Before the TTL, because the cache really is
  * still warm and a countdown to a cost that has not happened is just noise. Below
- * `PREFIX_WARN_TOKENS`, because a short transcript is cheap however it is billed — the same
- * floor the after-the-fact warning uses, so the two cannot disagree about what is worth
- * mentioning. And with no state at all, because "PPM has not measured this" and "this
- * session has nothing cached" must not be reported as the same thing.
+ * `PREFIX_WARN_TOKENS`, because a session that has never billed even that much has nothing
+ * worth warning about — the same floor the after-the-fact warning uses, so the two cannot
+ * disagree about what is worth mentioning. And with no state at all, because "PPM has not
+ * measured this" and "this session has nothing cached" must not be reported as the same thing.
  */
 export function idleCacheNotice(
   state: PromptCacheState | null | undefined,
@@ -53,15 +57,15 @@ export function idleCacheNotice(
 ): IdleCacheNotice | null {
   if (!state) return null;
   // No completed turn means nothing has been cached, so there is nothing to lose yet.
-  if (state.lastTurnEndedAt == null || state.prefixTokens == null) return null;
-  if (state.prefixTokens < PREFIX_WARN_TOKENS) return null;
+  if (state.lastTurnEndedAt == null || state.billedPrefixTokens == null) return null;
+  if (state.billedPrefixTokens < PREFIX_WARN_TOKENS) return null;
 
   const idleMs = now - state.lastTurnEndedAt;
   // A clock that disagrees between server and browser can make this negative; a turn that
   // just finished is the warmest case there is, so it reads as "not idle" either way.
   if (idleMs < state.ttlMs) return null;
 
-  return { idleMs, prefixTokens: state.prefixTokens };
+  return { idleMs };
 }
 
 const MINUTE_MS = 60_000;
