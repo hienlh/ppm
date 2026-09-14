@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.19.10] - 2026-09-14
+
+### Fixed
+- **Newly installed Codex skills appear in the chat picker** — the browser skill cache now expires after one minute and is checked when reopening the picker. Refresh also clears the Codex provider cache, so installing AgentKit no longer leaves the picker stuck on the old list.
+
 ## [0.19.9] - 2026-09-14
 
 ### Fixed
