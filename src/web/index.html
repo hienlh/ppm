@@ -94,7 +94,16 @@
         function check() {
           // Module scripts execute before `load`, so a flag still unset here is
           // never going to be set — this cannot misfire on a slow boot.
-          if (window.__ppmEntryRan) return;
+          //
+          // A boot that worked also clears the key. The silent retry is meant to
+          // be one per *incident*, and the key was only ever written: after one
+          // upgrade healed itself, a second upgrade in the same tab session went
+          // straight to the panic card without trying the reload that would have
+          // fixed it — on a long-lived tab, which is exactly the tab this is for.
+          if (window.__ppmEntryRan) {
+            try { sessionStorage.removeItem(KEY); } catch (e) {}
+            return;
+          }
           var retried;
           try {
             retried = sessionStorage.getItem(KEY) === "1";

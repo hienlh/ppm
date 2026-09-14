@@ -175,10 +175,21 @@ describe("the rails are drawn by the container, not per row", () => {
 });
 
 describe("a row is thumb-sized on a touch screen", () => {
+  /** Tailwind's spacing scale is 4px per unit; `text-sm` has a 20px line box. */
+  const REM_STEP = 4;
+  const LINE_BOX = 20;
+  const MIN_TARGET = 44;
+
   it("is 44px tall below md and compact where there is a pointer", () => {
-    // design-guidelines.md rule 3. `py-px` — what the file row had — is 18px.
-    const matches = src.match(/py-2\.5 md:py-1\b/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(2); // the file row and the folder row
+    // Computed rather than pinned to a class string. The previous version of
+    // this test asserted `py-2.5` under a comment that said 44px — 10 + 20 + 10
+    // is 40, so it pinned the shortfall it was written to prevent.
+    const rows = [...src.matchAll(/rounded(?: pl-1)? py-([\d.]+) md:py-1\b/g)];
+    expect(rows.length).toBeGreaterThanOrEqual(2); // the file row and the folder row
+    for (const [whole, pad] of rows) {
+      const height = Number(pad) * REM_STEP * 2 + LINE_BOX;
+      expect(height, `${whole} is ${height}px`).toBeGreaterThanOrEqual(MIN_TARGET);
+    }
     expect(src).not.toMatch(/rounded pl-1 py-px/);
   });
 });
