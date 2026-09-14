@@ -241,6 +241,19 @@ describe("which files are env files", () => {
       expect(isDotenvFile(name), name).toBe(false);
     }
   });
+
+  it("reads the basename on a Windows path too", () => {
+    // Splitting on "/" alone leaves a backslash path whole, so the basename is
+    // the entire string and all three tests below fail on it: a Windows host
+    // got plaintext for every `.env` it opened, with nothing to say why.
+    for (const name of [
+      "C:\\src\\app\\.env", "C:\\src\\.env.local", "src\\config\\dev.env",
+    ]) {
+      expect(isDotenvFile(name), name).toBe(true);
+    }
+    expect(isDotenvFile("C:\\project\\.envrc")).toBe(false);
+    expect(isDotenvFile("C:\\project\\environment.ts")).toBe(false);
+  });
 });
 
 describe("every editor resolves the language the same way", () => {

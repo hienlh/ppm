@@ -430,9 +430,17 @@ button:active { background: var(--surface); }
    Escape key, so a panel opened by a tap could not be put away at all — it
    sits over a third of the graph until another commit is tapped. It took the
    place of the two hash chips, which were a convenience: the metadata grid
-   two lines below carries the hash and the parents in full. The 32px touch
-   size comes from the pointer: coarse button rule further down. */
-.detail-close { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 5px; background: none; color: var(--subtext); }
+   two lines below carries the hash and the parents in full.
+
+   It stays 24px of ink on every device. The generic pointer: coarse button rule
+   further down took it to 32, which is still under the 44 a finger needs, and
+   growing the button itself would grow the header with it - this sits in a
+   sticky bar above a panel that is already capped at 35vh on a phone. So the
+   tap area grows instead, through an invisible overlay, which is the same thing
+   the app does for its own 20px controls. Nothing else lives in
+   .detail-head-actions, and what it reaches on the left is the committed-when
+   text, which is not clickable. */
+.detail-close { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 5px; background: none; color: var(--subtext); }
 .detail-close:hover { background: var(--surface-hover); color: var(--text); }
 
 /* Two columns when there is room. A commit message is hard-wrapped by whoever
@@ -614,6 +622,11 @@ button:active { background: var(--surface); }
   .commit-row { height: 32px; }
   .ctx-item { padding: 8px 12px; min-height: 36px; }
   button { min-width: 32px; min-height: 32px; padding: 2px 6px; }
+  /* The one way out of the detail panel, and the only place 32 is not enough:
+     a phone has no Escape key, so a panel opened by a tap is closed by this
+     button or not at all. 10px each side takes the 24px box to 44, and the 32px
+     the rule above gives it to 52. */
+  .detail-close::before { content: ''; position: absolute; inset: -10px; }
   #app { flex-direction: column; }
   #toolbar { order: 10; border-bottom: none; border-top: 1px solid var(--border); padding: 2px 6px; }
   #toolbar button { font-size: 10px; }
