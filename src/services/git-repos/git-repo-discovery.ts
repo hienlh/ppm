@@ -23,6 +23,10 @@
  * - **The root short-circuits.** If the workspace folder is itself a
  *   repository, nothing below it is offered: that is the single-repo case and
  *   it must not grow a picker.
+ * - **The walk is bounded by entries, not only by depth.** Depth 2 says nothing
+ *   about how much work a directory is: point a project at `~` and two levels
+ *   is every dotfile directory on the machine, one `lstat` at a time, on the
+ *   thread answering HTTP. The budget stops and reports what it has.
  */
 import { readdirSync, lstatSync, existsSync } from "node:fs";
 import { basename, relative, resolve, sep } from "node:path";
@@ -42,6 +46,8 @@ export interface GitRepoDiscovery {
   /** True when the root is a repository, in which case `repos` is just it. */
   rootIsRepo: boolean;
   repos: GitRepoCandidate[];
+  /** True when the entry budget ran out, so `repos` may be incomplete. */
+  truncated?: boolean;
 }
 
 /**
@@ -64,6 +70,17 @@ export const IGNORED_DIRS: ReadonlySet<string> = new Set([
  */
 export const DEFAULT_SCAN_DEPTH = 2;
 
+/**
+ * How many directory entries the walk may look at before giving up.
+ *
+ * Generous for any real workspace — a hundred checkouts with a hundred entries
+ * each is a tenth of it — and small enough that the worst case is tens of
+ * milliseconds rather than a hung server. What it buys is a *bound*: this runs
+ * synchronously on the HTTP thread, so an unbounded walk is an unbounded stall
+ * for every other request at the same time.
+ */
+export const DEFAULT_SCAN_ENTRIES = 20_000;
+
 /** True when `dir` is the working tree of a repository, worktree or submodule. */
 export function isGitRepo(dir: string): boolean {
   return existsSync(resolve(dir, ".git"));
@@ -74,12 +91,15 @@ export interface DiscoverOptions {
   maxDepth?: number;
   /** Overrides `IGNORED_DIRS` when given. */
   ignore?: ReadonlySet<string>;
+  /** Directory entries the walk may examine. Defaults to `DEFAULT_SCAN_ENTRIES`. */
+  maxEntries?: number;
 }
 
 export function discoverGitRepos(projectPath: string, options: DiscoverOptions = {}): GitRepoDiscovery {
   const root = resolve(projectPath);
   const maxDepth = options.maxDepth ?? DEFAULT_SCAN_DEPTH;
   const ignore = options.ignore ?? IGNORED_DIRS;
+  let budget = options.maxEntries ?? DEFAULT_SCAN_ENTRIES;
 
   if (isGitRepo(root)) {
     return {
@@ -100,6 +120,8 @@ export function discoverGitRepos(projectPath: string, options: DiscoverOptions =
       return; // unreadable: not an error, just nothing to offer from here
     }
     for (const entry of entries) {
+      if (budget <= 0) return;
+      budget--;
       if (entry === ".git" || ignore.has(entry)) continue;
       const full = resolve(dir, entry);
       try {
@@ -124,5 +146,7 @@ export function discoverGitRepos(projectPath: string, options: DiscoverOptions =
     const byDepth = a.relative.split("/").length - b.relative.split("/").length;
     return byDepth !== 0 ? byDepth : a.relative.localeCompare(b.relative);
   });
-  return { root, rootIsRepo: false, repos };
+  return budget <= 0
+    ? { root, rootIsRepo: false, repos, truncated: true }
+    : { root, rootIsRepo: false, repos };
 }

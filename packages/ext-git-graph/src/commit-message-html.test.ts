@@ -185,3 +185,30 @@ describe("splitCommitBody", () => {
     expect(() => new Function(COMMIT_MESSAGE_JS)).not.toThrow();
   });
 });
+
+describe("a commit message a cloned repository chose", () => {
+  it("stops collecting links when the whole body is hex-looking words", () => {
+    // `\b[0-9a-f]{7,40}\b` matches once per word and the overlap test is
+    // linear in the spans already collected, so collecting them is quadratic in
+    // something the commit's author chose. Measured on this input: 271 ms
+    // uncapped against 3 ms capped, on the thread that draws the panel.
+    //
+    // Asserted as a count rather than as a duration, because a duration on CI
+    // is a coin toss and the count is the thing that bounds it.
+    const body = Array.from({ length: 20_000 }, (_, i) => (0xa000000 + i).toString(16)).join(" ");
+
+    const html = formatCommitMessage(body, []);
+
+    expect([...html.matchAll(/class="commit-link"/g)]).toHaveLength(500);
+    // The cap costs link decoration, never text: the last word is still there.
+    expect(html).toContain((0xa000000 + 19_999).toString(16));
+  });
+
+  it("never drops text when the link cap is reached", () => {
+    const words = Array.from({ length: 900 }, (_, i) => (0xb000000 + i).toString(16));
+
+    const html = formatCommitMessage(words.join(" "), []);
+
+    for (const word of [words[0]!, words[500]!, words[899]!]) expect(html).toContain(word);
+  });
+});
