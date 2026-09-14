@@ -11,6 +11,23 @@ import type {
   GitWorktree,
 } from "../types/git.ts";
 
+
+/**
+ * `filePath` resolved inside `projectPath`, or null when it escapes.
+ *
+ * Containment is asked of `relative`, not of a string prefix: a prefix compare
+ * built with a forward slash rejects every path on Windows, where `resolve`
+ * answers with backslashes — the same trap `assertSafeFilePaths` in the git
+ * graph extension documents.
+ */
+function insideProject(projectPath: string, filePath: string): string | null {
+  if (!filePath || path.isAbsolute(filePath) || filePath.includes("\0")) return null;
+  const resolved = path.resolve(projectPath, filePath);
+  const rel = path.relative(projectPath, resolved);
+  if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+  return resolved;
+}
+
 class GitService {
   private git(projectPath: string): SimpleGit {
     return simpleGit(projectPath);
@@ -168,12 +185,23 @@ class GitService {
       // Commit-to-commit diff: read modified from git object store
       modified = await this.fileBlob(projectPath, filePath, ref2);
     } else {
-      // Working tree diff: read from disk
-      try {
-        const f = Bun.file(path.resolve(projectPath, filePath));
-        if (await f.exists()) modified = await f.bytes();
-      } catch {
-        modified = null;
+      // Working tree diff: read from disk.
+      //
+      // The only side of this function that touches the filesystem directly,
+      // and therefore the only one needing a containment check: git refuses
+      // `HEAD:../secret.txt` itself, but `path.resolve` is happy to answer with
+      // anything the caller asks for and `filePath` arrives from a query
+      // string. `fileFullDiff(repo, "../secret.txt", "HEAD")` returned that
+      // file's contents. PPM is routinely reached through a public tunnel URL,
+      // so "behind auth" is not the whole story.
+      const onDisk = insideProject(projectPath, filePath);
+      if (onDisk) {
+        try {
+          const f = Bun.file(onDisk);
+          if (await f.exists()) modified = await f.bytes();
+        } catch {
+          modified = null;
+        }
       }
     }
 
