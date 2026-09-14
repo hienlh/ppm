@@ -492,9 +492,7 @@ export function MessageList({
           {/* Idle only: once a turn starts the cache question is already answered, and the
               thinking indicator below owns that space. */}
           {!isStreaming && !pendingApproval && (
-            <div className="px-4 pt-4 select-none">
-              <IdleCacheNotice promptCache={promptCache ?? null} />
-            </div>
+            <IdleCacheNotice promptCache={promptCache ?? null} />
           )}
           {hasTrailing && (
             <div className="px-4 pt-4 pb-4 space-y-4 select-none">
