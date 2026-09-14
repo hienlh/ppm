@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.19.9] - 2026-09-14
+
+### Fixed
+- **"Screen awake" turns itself off again** — once it came on it stayed on, because a session that went idle while the connection was down, or one whose id the provider re-keyed, was left marked as running with nothing able to clear it. Also stops the tab spinner lingering for the same reason.
+
 ## [0.19.8] - 2026-09-13
 
 ### Changed
