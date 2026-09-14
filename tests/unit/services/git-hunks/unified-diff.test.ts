@@ -1,7 +1,9 @@
 import { describe, it, expect } from "bun:test";
 import {
   buildPatch,
+  hunkFingerprint,
   parseUnifiedDiff,
+  resolveRequestedHunks,
   selectAll,
   selectionFromRequest,
 } from "../../../../src/services/git-hunks/unified-diff.ts";
@@ -245,5 +247,119 @@ describe("selectionFromRequest", () => {
     const parsed = parseUnifiedDiff(TWO_HUNKS);
 
     expect(() => selectionFromRequest(parsed, [{ hunk: 1.5 }])).toThrow(/No hunk at index/);
+  });
+});
+
+/** The same two hunks, with an unrelated third change inserted before them. */
+const THREE_HUNKS = [
+  ...HEADER,
+  "@@ -1,3 +1,4 @@ function a()",
+  " const a = 1;",
+  "-const b = 2;",
+  "+const b = 20;",
+  "+const b2 = 21;",
+  " const c = 3;",
+  "@@ -6,3 +7,3 @@ function mid()",
+  " const m = 1;",
+  "-const n = 2;",
+  "+const n = 20;",
+  " const o = 3;",
+  "@@ -10,3 +12,4 @@ function b()",
+  " const x = 1;",
+  "-const y = 2;",
+  "+const y = 20;",
+  "+const z = 30;",
+  " const w = 4;",
+  "",
+].join("\n");
+
+describe("hunkFingerprint", () => {
+  it("is the same hunk after everything above it moved", () => {
+    const before = parseUnifiedDiff(TWO_HUNKS).hunks[1]!;
+    const after = parseUnifiedDiff(THREE_HUNKS).hunks[2]!;
+
+    // Same change sitting at a different line: the ids have to agree, or a
+    // benign edit elsewhere in the file would cancel a selection.
+    expect(after.newStart).not.toBe(before.newStart);
+    expect(hunkFingerprint(after)).toBe(hunkFingerprint(before));
+  });
+
+  it("changes when one character of the hunk changes", () => {
+    const parsed = parseUnifiedDiff(TWO_HUNKS);
+    const edited = parseUnifiedDiff(TWO_HUNKS.replace("const y = 20;", "const y = 21;"));
+
+    expect(hunkFingerprint(edited.hunks[1]!)).not.toBe(hunkFingerprint(parsed.hunks[1]!));
+  });
+
+  it("changes when only the trailing-newline marker moves", () => {
+    const withMarker = parseUnifiedDiff(TWO_HUNKS.replace(
+      " const w = 4;\n",
+      " const w = 4;\n\\ No newline at end of file\n",
+    ));
+
+    expect(withMarker.hunks[1]!.lines.at(-1)!.noNewline).toBe(true);
+    expect(hunkFingerprint(withMarker.hunks[1]!))
+      .not.toBe(hunkFingerprint(parseUnifiedDiff(TWO_HUNKS).hunks[1]!));
+  });
+});
+
+describe("resolveRequestedHunks", () => {
+  it("follows the hunk the client ticked to wherever it sits now", () => {
+    const shown = parseUnifiedDiff(TWO_HUNKS);
+    const now = parseUnifiedDiff(THREE_HUNKS);
+
+    const resolved = resolveRequestedHunks(now, [
+      { hunk: 1, id: hunkFingerprint(shown.hunks[1]!) },
+    ]);
+
+    expect(resolved).toEqual([{ hunk: 2 }]);
+  });
+
+  it("carries the line selection across with it", () => {
+    const shown = parseUnifiedDiff(TWO_HUNKS);
+    const now = parseUnifiedDiff(THREE_HUNKS);
+
+    expect(resolveRequestedHunks(now, [
+      { hunk: 1, id: hunkFingerprint(shown.hunks[1]!), lines: [1, 2] },
+    ])).toEqual([{ hunk: 2, lines: [1, 2] }]);
+  });
+
+  it("refuses a hunk that is no longer in the diff", () => {
+    const now = parseUnifiedDiff(THREE_HUNKS);
+
+    expect(() => resolveRequestedHunks(now, [{ hunk: 0, id: "0".repeat(32) }]))
+      .toThrow(/changed since these hunks were listed/);
+  });
+
+  it("refuses a request that carries no id at all", () => {
+    const now = parseUnifiedDiff(TWO_HUNKS);
+
+    expect(() => resolveRequestedHunks(now, [{ hunk: 0 } as unknown as { hunk: number; id: string }]))
+      .toThrow(/older client/);
+  });
+
+  it("gives two identical hunks one index each, starting from the one that was shown", () => {
+    // The same edit made twice in one file: the ids are equal by construction,
+    // so the client's own index is the only thing that can tell them apart.
+    const twins = parseUnifiedDiff([
+      ...HEADER,
+      "@@ -1,3 +1,3 @@",
+      " const a = 1;",
+      "-dup();",
+      "+dup(1);",
+      " const c = 3;",
+      "@@ -20,3 +20,3 @@",
+      " const a = 1;",
+      "-dup();",
+      "+dup(1);",
+      " const c = 3;",
+      "",
+    ].join("\n"));
+    const id = hunkFingerprint(twins.hunks[0]!);
+    expect(hunkFingerprint(twins.hunks[1]!)).toBe(id);
+
+    expect(resolveRequestedHunks(twins, [{ hunk: 1, id }])).toEqual([{ hunk: 1 }]);
+    expect(resolveRequestedHunks(twins, [{ hunk: 1, id }, { hunk: 1, id }]))
+      .toEqual([{ hunk: 1 }, { hunk: 0 }]);
   });
 });

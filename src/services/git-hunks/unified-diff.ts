@@ -10,6 +10,8 @@
  * repository.
  */
 
+import { createHash } from "node:crypto";
+
 export type DiffLineKind = " " | "+" | "-";
 
 export interface DiffLine {
@@ -252,4 +254,62 @@ export function selectionFromRequest(
     selection.set(index, lines);
   }
   return selection;
+}
+
+/**
+ * A content address for one hunk: everything the user was shown, and nothing
+ * about where it sat.
+ *
+ * Positions are deliberately excluded. An edit somewhere else in the file
+ * renumbers every later hunk and shifts its index in the list, but the hunk the
+ * user ticked is still the same change — matching on content lets that benign
+ * case through while a hunk whose own text moved on no longer matches anything.
+ *
+ * Computed over the bytes git emitted (see `runGit`'s latin1 decode), so it does
+ * not depend on the file's encoding being valid UTF-8.
+ */
+export function hunkFingerprint(hunk: DiffHunk): string {
+  const body = hunk.lines
+    .map((line) => `${line.kind}${line.noNewline ? "\\" : ""}${line.text}`)
+    .join("\n");
+  return createHash("sha256")
+    .update(`${hunk.oldLines} ${hunk.newLines} ${hunk.heading}\n${body}`, "latin1")
+    .digest("hex")
+    .slice(0, 32);
+}
+
+/**
+ * Resolve each requested hunk to its position in `parsed` by content, refusing
+ * anything that is no longer there.
+ *
+ * Returns the requests rewritten onto current indexes. A caller that skipped
+ * this and trusted the incoming index would be resolving a position from one
+ * diff against a different diff — which is exactly how the wrong lines get
+ * staged without anything failing.
+ */
+export function resolveRequestedHunks(
+  parsed: ParsedDiff,
+  requested: { hunk: number; id: string; lines?: number[] }[],
+): { hunk: number; lines?: number[] }[] {
+  const fingerprints = parsed.hunks.map(hunkFingerprint);
+  const taken = new Set<number>();
+  return requested.map((entry) => {
+    if (typeof entry.id !== "string" || entry.id.length === 0) {
+      throw new Error("This selection is from an older client that cannot be verified — reload and try again.");
+    }
+    const candidates: number[] = [];
+    for (let i = 0; i < fingerprints.length; i++) {
+      if (fingerprints[i] === entry.id && !taken.has(i)) candidates.push(i);
+    }
+    if (candidates.length === 0) {
+      throw new Error(
+        "The file changed since these hunks were listed, so this selection no longer describes it. Reload and try again.",
+      );
+    }
+    // The same edit can appear twice in one file; prefer the position the
+    // client actually saw it at before falling back to the first free match.
+    const index = candidates.includes(entry.hunk) ? entry.hunk : candidates[0]!;
+    taken.add(index);
+    return entry.lines ? { hunk: index, lines: entry.lines } : { hunk: index };
+  });
 }

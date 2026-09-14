@@ -5,10 +5,12 @@
  * itself can prove the patch is one git accepts. These run git for real.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { gitHunksService } from "../../../../src/services/git-hunks/git-hunks.service.ts";
+import type { HunkRequest, HunkScope } from "../../../../src/services/git-hunks/git-hunks.service.ts";
 
 let repo: string;
 
@@ -57,11 +59,46 @@ afterEach(() => {
 
 /** Change line 2 and line 18 — far enough apart to stay two hunks. */
 function makeTwoDistantChanges(): void {
-  const lines = ORIGINAL.split("\n");
-  lines[1] = "TWO-changed";
-  lines[17] = "EIGHTEEN-changed";
-  writeFileSync(join(repo, "file.txt"), lines.join("\n"));
+  writeFileSync(join(repo, "file.txt"), withChanges({ 2: "TWO-changed", 18: "EIGHTEEN-changed" }));
 }
+
+/** `ORIGINAL` with the named 1-based lines replaced. */
+function withChanges(changes: Record<number, string>): string {
+  const lines = ORIGINAL.split("\n");
+  for (const [number, text] of Object.entries(changes)) lines[Number(number) - 1] = text;
+  return lines.join("\n");
+}
+
+/**
+ * What the browser sends back: the hunk's position *and* the content address it
+ * was listed with. Every call has to go through the list first, which is the
+ * point — a selection that was never listed cannot be applied.
+ */
+async function pick(
+  filePath: string,
+  scope: HunkScope,
+  indexes: number[],
+): Promise<HunkRequest[]> {
+  const { hunks } = await gitHunksService.getHunks(repo, filePath, scope);
+  return indexes.map((i) => {
+    const hunk = hunks[i];
+    if (!hunk) throw new Error(`no hunk ${i} to pick — the file has ${hunks.length}`);
+    return { hunk: i, id: hunk.id };
+  });
+}
+
+/** The staged bytes of a path, read without going through any decoder. */
+async function stagedBytes(filePath: string): Promise<Buffer> {
+  const proc = Bun.spawn(["git", "show", `:${filePath}`], { cwd: repo, stdout: "pipe", stderr: "pipe" });
+  const [out, err] = await Promise.all([
+    new Response(proc.stdout).arrayBuffer(),
+    new Response(proc.stderr).text(),
+  ]);
+  if (await proc.exited !== 0) throw new Error(`git show :${filePath} failed: ${err}`);
+  return Buffer.from(out);
+}
+
+const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
 
 describe("gitHunksService.getHunks", () => {
   it("reports one hunk per separated change", async () => {
@@ -98,7 +135,7 @@ describe("gitHunksService.stage", () => {
   it("stages one hunk and leaves the other in the working tree", async () => {
     makeTwoDistantChanges();
 
-    await gitHunksService.stage(repo, "file.txt", [{ hunk: 0 }]);
+    await gitHunksService.stage(repo, "file.txt", await pick("file.txt", "worktree", [0]));
 
     const staged = await git(["diff", "--cached"]);
     expect(staged).toContain("TWO-changed");
@@ -127,6 +164,7 @@ describe("gitHunksService.stage", () => {
     // Take the first replacement only: its deletion and its addition.
     await gitHunksService.stage(repo, "file.txt", [{
       hunk: 0,
+      id: hunks[0]!.id,
       lines: [removedIndexes[0]!, addedIndexes[0]!],
     }]);
 
@@ -138,7 +176,7 @@ describe("gitHunksService.stage", () => {
   it("stages an untracked file's content", async () => {
     writeFileSync(join(repo, "new.txt"), "alpha\nbeta\n");
 
-    await gitHunksService.stage(repo, "new.txt", [{ hunk: 0 }]);
+    await gitHunksService.stage(repo, "new.txt", await pick("new.txt", "worktree", [0]));
 
     const staged = await git(["diff", "--cached"]);
     expect(staged).toContain("+alpha");
@@ -152,11 +190,17 @@ describe("gitHunksService.stage", () => {
       .rejects.toThrow(/No hunks were selected/);
   });
 
-  it("refuses a hunk index that does not exist", async () => {
+  it("goes by the hunk's content, not the index the client sent", async () => {
     makeTwoDistantChanges();
+    const [second] = await pick("file.txt", "worktree", [1]);
 
-    await expect(gitHunksService.stage(repo, "file.txt", [{ hunk: 9 }]))
-      .rejects.toThrow(/No hunk at index 9/);
+    // The index is a hint for telling two identical hunks apart; on its own it
+    // decides nothing, so a wrong one still stages the hunk that was ticked.
+    await gitHunksService.stage(repo, "file.txt", [{ ...second!, hunk: 9 }]);
+
+    const staged = await git(["diff", "--cached"]);
+    expect(staged).toContain("EIGHTEEN-changed");
+    expect(staged).not.toContain("TWO-changed");
   });
 });
 
@@ -168,7 +212,7 @@ describe("gitHunksService.unstage", () => {
     const { hunks } = await gitHunksService.getHunks(repo, "file.txt", "index");
     expect(hunks).toHaveLength(2);
 
-    await gitHunksService.unstage(repo, "file.txt", [{ hunk: 0 }]);
+    await gitHunksService.unstage(repo, "file.txt", [{ hunk: 0, id: hunks[0]!.id }]);
 
     const staged = await git(["diff", "--cached"]);
     expect(staged).not.toContain("TWO-changed");
@@ -185,7 +229,7 @@ describe("gitHunksService.discard", () => {
   it("throws away one hunk from the working tree and keeps the other", async () => {
     makeTwoDistantChanges();
 
-    await gitHunksService.discard(repo, "file.txt", [{ hunk: 0 }]);
+    await gitHunksService.discard(repo, "file.txt", await pick("file.txt", "worktree", [0]));
 
     const onDisk = readFileSync(join(repo, "file.txt"), "utf-8");
     expect(onDisk).toContain("line-2");
@@ -199,9 +243,9 @@ describe("round trip", () => {
     makeTwoDistantChanges();
     const before = await git(["diff"]);
 
-    await gitHunksService.stage(repo, "file.txt", [{ hunk: 0 }]);
+    await gitHunksService.stage(repo, "file.txt", await pick("file.txt", "worktree", [0]));
     const { hunks } = await gitHunksService.getHunks(repo, "file.txt", "index");
-    await gitHunksService.unstage(repo, "file.txt", [{ hunk: 0 }]);
+    await gitHunksService.unstage(repo, "file.txt", [{ hunk: 0, id: hunks[0]!.id }]);
 
     expect(hunks).toHaveLength(1);
     expect(await git(["diff", "--cached"])).toBe("");
@@ -211,7 +255,7 @@ describe("round trip", () => {
   it("staging every hunk one at a time matches staging the whole file", async () => {
     makeTwoDistantChanges();
 
-    await gitHunksService.stage(repo, "file.txt", [{ hunk: 0 }, { hunk: 1 }]);
+    await gitHunksService.stage(repo, "file.txt", await pick("file.txt", "worktree", [0, 1]));
 
     expect(await git(["diff"])).toBe("");
     const staged = await git(["diff", "--cached"]);
@@ -225,9 +269,156 @@ describe("round trip", () => {
     await git(["commit", "-qm", "no trailing newline"]);
     writeFileSync(join(repo, "nonl.txt"), "alpha\nBETA");
 
-    await gitHunksService.stage(repo, "nonl.txt", [{ hunk: 0 }]);
+    await gitHunksService.stage(repo, "nonl.txt", await pick("nonl.txt", "worktree", [0]));
 
     expect(await git(["diff"])).toBe("");
     expect(await git(["diff", "--cached"])).toContain("\\ No newline at end of file");
+  });
+});
+
+describe("a file that moved on after the hunks were listed", () => {
+  it("refuses to stage a hunk the file no longer has", async () => {
+    makeTwoDistantChanges();
+    const stale = await pick("file.txt", "worktree", [0]);
+
+    // The user keeps typing while the dialog is open: line 2 says something
+    // else now, so hunk 0 of *this* diff is not the hunk that was ticked.
+    writeFileSync(join(repo, "file.txt"), withChanges({ 2: "TWO-something-else", 18: "EIGHTEEN-changed" }));
+
+    await expect(gitHunksService.stage(repo, "file.txt", stale))
+      .rejects.toThrow(/changed since these hunks were listed/);
+    expect(await git(["diff", "--cached"])).toBe("");
+  });
+
+  it("refuses to discard a hunk the file no longer has", async () => {
+    // The unrecoverable one: discarding by a stale index throws away whatever
+    // now sits at that position, and there is nothing to recover it from.
+    makeTwoDistantChanges();
+    const stale = await pick("file.txt", "worktree", [0]);
+
+    const edited = withChanges({ 2: "TWO-something-else", 18: "EIGHTEEN-changed" });
+    writeFileSync(join(repo, "file.txt"), edited);
+
+    await expect(gitHunksService.discard(repo, "file.txt", stale))
+      .rejects.toThrow(/changed since these hunks were listed/);
+    expect(readFileSync(join(repo, "file.txt"), "utf-8")).toBe(edited);
+  });
+
+  it("refuses a selection from a client too old to send an id", async () => {
+    makeTwoDistantChanges();
+
+    await expect(gitHunksService.stage(repo, "file.txt", [{ hunk: 0 } as unknown as HunkRequest]))
+      .rejects.toThrow(/older client/);
+    expect(await git(["diff", "--cached"])).toBe("");
+  });
+
+  it("still stages the right hunk when an unrelated edit moved it down the list", async () => {
+    makeTwoDistantChanges();
+    const stale = await pick("file.txt", "worktree", [1]);
+
+    // A third change lands between the two, so the ticked hunk is now index 2.
+    writeFileSync(join(repo, "file.txt"), withChanges({
+      2: "TWO-changed", 10: "TEN-changed", 18: "EIGHTEEN-changed",
+    }));
+    expect((await gitHunksService.getHunks(repo, "file.txt", "worktree")).hunks).toHaveLength(3);
+
+    await gitHunksService.stage(repo, "file.txt", stale);
+
+    const staged = await git(["diff", "--cached"]);
+    expect(staged).toContain("EIGHTEEN-changed");
+    expect(staged).not.toContain("TWO-changed");
+    expect(staged).not.toContain("TEN-changed");
+  });
+});
+
+describe("byte fidelity", () => {
+  /**
+   * git's output arrives in 64 KB chunks, so a diff has to be comfortably
+   * larger than that before a multi-byte character can straddle a boundary —
+   * and the characters have to be everywhere in it, since a boundary falling
+   * between two ASCII bytes proves nothing. Decoding chunk by chunk turns the
+   * split character into two U+FFFD, and a patch carrying those no longer
+   * matches the file.
+   */
+  it("keeps a diff far larger than one pipe chunk intact", async () => {
+    const line = (i: number) => `行${i}：日本語のテキストと絵文字 🍣 と記号 — ${i}`;
+    const before = Array.from({ length: 4000 }, (_, i) => line(i)).join("\n") + "\n";
+    writeFileSync(join(repo, "big.txt"), before);
+    await git(["add", "big.txt"]);
+    await git(["commit", "-qm", "big"]);
+
+    // Two blocks of changes with 1000 untouched lines between them, so they
+    // stay two hunks and each one is hundreds of kilobytes of diff.
+    const changed = (i: number) => (i < 2000 || i >= 3000 ? `${line(i)}／変更` : line(i));
+    const after = Array.from({ length: 4000 }, (_, i) => changed(i)).join("\n") + "\n";
+    writeFileSync(join(repo, "big.txt"), after);
+
+    const { hunks } = await gitHunksService.getHunks(repo, "big.txt", "worktree");
+    expect(hunks).toHaveLength(2);
+    expect(hunks.some((h) => h.lines.some((l) => l.text.includes("�")))).toBe(false);
+
+    await gitHunksService.stage(repo, "big.txt", [{ hunk: 0, id: hunks[0]!.id }]);
+
+    // Only the first block is staged, and byte for byte rather than nearly.
+    const expected = Array.from({ length: 4000 }, (_, i) => (i < 2000 ? changed(i) : line(i))).join("\n") + "\n";
+    expect(sha(await stagedBytes("big.txt"))).toBe(sha(Buffer.from(expected, "utf-8")));
+    expect(sha(readFileSync(join(repo, "big.txt")))).toBe(sha(Buffer.from(after, "utf-8")));
+  });
+
+  it("stages a file that is not UTF-8 at all", async () => {
+    // ISO-8859-1: 0xED is "í" and is not valid UTF-8 on its own, so any decode
+    // that is not a byte round-trip replaces it and the patch stops matching.
+    const latin1 = (text: string) => Buffer.from(text, "latin1");
+    const spanish = (changes: Record<number, string>) => latin1(
+      Array.from({ length: 20 }, (_, i) => changes[i + 1] ?? `l\xedne\xe1-${i + 1}`).join("\n") + "\n",
+    );
+
+    writeFileSync(join(repo, "es.txt"), spanish({}));
+    await git(["add", "es.txt"]);
+    await git(["commit", "-qm", "latin-1"]);
+
+    const after = spanish({ 2: "DOS-cambi\xf3", 18: "DIECIOCHO-cambi\xf3" });
+    writeFileSync(join(repo, "es.txt"), after);
+
+    const { hunks } = await gitHunksService.getHunks(repo, "es.txt", "worktree");
+    expect(hunks).toHaveLength(2);
+
+    await gitHunksService.stage(repo, "es.txt", [{ hunk: 0, id: hunks[0]!.id }]);
+
+    expect(sha(await stagedBytes("es.txt"))).toBe(sha(spanish({ 2: "DOS-cambi\xf3" })));
+    expect(sha(readFileSync(join(repo, "es.txt")))).toBe(sha(after));
+  });
+});
+
+describe("renames", () => {
+  /**
+   * `git apply --cached --reverse` on a rename patch rewrites index *entries*
+   * rather than lines: it takes the new path out of the index altogether and
+   * leaves the old one staged as deleted, one commit away from losing the
+   * file's history. `--no-renames` is what keeps such a patch from ever being
+   * built, and this is the shortest way to check the flag is still there —
+   * git only pairs a deletion with an addition when both sides are inside the
+   * pathspec, which a single file path never is.
+   */
+  it("describes a staged git mv as content, never as a rename", async () => {
+    mkdirSync(join(repo, "sub"));
+    writeFileSync(join(repo, "sub", "a.txt"), ORIGINAL);
+    await git(["add", "sub/a.txt"]);
+    await git(["commit", "-qm", "sub"]);
+
+    await git(["mv", "sub/a.txt", "sub/b.txt"]);
+    writeFileSync(join(repo, "sub", "b.txt"), withChanges({ 2: "TWO-changed" }));
+    await git(["add", "-A", "sub"]);
+    expect(await git(["status", "--porcelain"])).toContain("R  sub/a.txt -> sub/b.txt");
+
+    const { hunks } = await gitHunksService.getHunks(repo, "sub", "index");
+
+    // Rename detection answers with a single 92%-similar patch whose only
+    // removed line is the one that changed. The content form removes the whole
+    // of the old path and adds the whole of the new one.
+    expect(hunks.length).toBe(2);
+    const removed = hunks.flatMap((h) => h.lines).filter((l) => l.kind === "-").map((l) => l.text);
+    expect(removed).toContain("line-1");
+    expect(removed).toContain("line-20");
   });
 });

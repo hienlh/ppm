@@ -11,10 +11,14 @@ import {
   type DiffHunk,
 } from "../../../src/web/components/git/hunk-selection.ts";
 
-/** Two hunks; the first replaces a line, the second replaces one and adds one. */
+/**
+ * Two hunks; the first replaces a line, the second replaces one and adds one.
+ * The `id` is the content address the server listed the hunk with — the browser
+ * only ever echoes it, so any string stands in for one here.
+ */
 const HUNKS: DiffHunk[] = [
   {
-    oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, heading: "function a()",
+    id: "aaaa1111", oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, heading: "function a()",
     lines: [
       { kind: " ", text: "const a = 1;" },
       { kind: "-", text: "const b = 2;" },
@@ -23,7 +27,7 @@ const HUNKS: DiffHunk[] = [
     ],
   },
   {
-    oldStart: 10, oldLines: 3, newStart: 10, newLines: 4, heading: "",
+    id: "bbbb2222", oldStart: 10, oldLines: 3, newStart: 10, newLines: 4, heading: "",
     lines: [
       { kind: " ", text: "const x = 1;" },
       { kind: "-", text: "const y = 2;" },
@@ -99,19 +103,20 @@ describe("toggleLine", () => {
 
 describe("buildHunkRequest", () => {
   it("sends a fully ticked hunk whole, with no line list", () => {
-    expect(buildHunkRequest(HUNKS, everything())).toEqual([{ hunk: 0 }, { hunk: 1 }]);
+    expect(buildHunkRequest(HUNKS, everything()))
+      .toEqual([{ hunk: 0, id: "aaaa1111" }, { hunk: 1, id: "bbbb2222" }]);
   });
 
   it("narrows a partly ticked hunk to its ticked line indexes", () => {
     const selected = new Set([lineKey(1, 1), lineKey(1, 2)]);
 
-    expect(buildHunkRequest(HUNKS, selected)).toEqual([{ hunk: 1, lines: [1, 2] }]);
+    expect(buildHunkRequest(HUNKS, selected)).toEqual([{ hunk: 1, id: "bbbb2222", lines: [1, 2] }]);
   });
 
   it("leaves out a hunk with nothing ticked instead of sending it empty", () => {
     const selected = new Set([lineKey(0, 2)]);
 
-    expect(buildHunkRequest(HUNKS, selected)).toEqual([{ hunk: 0, lines: [2] }]);
+    expect(buildHunkRequest(HUNKS, selected)).toEqual([{ hunk: 0, id: "aaaa1111", lines: [2] }]);
   });
 
   it("returns nothing when the selection is empty", () => {
@@ -119,8 +124,10 @@ describe("buildHunkRequest", () => {
   });
 
   it("numbers hunks by their position in the diff, not by what is selected", () => {
-    // Only the second hunk is picked; it must still be sent as index 1.
-    expect(buildHunkRequest(HUNKS, new Set([lineKey(1, 3)]))).toEqual([{ hunk: 1, lines: [3] }]);
+    // Only the second hunk is picked; it must still be sent as index 1, beside
+    // the id that is what the server actually resolves it by.
+    expect(buildHunkRequest(HUNKS, new Set([lineKey(1, 3)])))
+      .toEqual([{ hunk: 1, id: "bbbb2222", lines: [3] }]);
   });
 });
 

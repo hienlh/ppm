@@ -200,18 +200,28 @@ gitRoutes.get("/hunks", async (c) => {
 });
 
 /**
- * Hunk-level staging. `hunks` carries indexes into the list `GET /git/hunks`
- * returned; a hunk without `lines` is taken whole. Indexes are resolved against
- * a freshly read diff, so an edit in between makes `git apply` fail rather than
- * stage the wrong lines.
+ * Hunk-level staging. Each entry carries the `id` that `GET /git/hunks` gave
+ * for that hunk; a hunk without `lines` is taken whole.
+ *
+ * `id` is required, and that is the whole safety property: the service reads
+ * the diff again at apply time, so a positional index alone would be resolved
+ * against a *different* list than the one the user ticked and would stage
+ * whatever now sits at that position. `git apply` cannot catch it either,
+ * because the patch is built from the fresh diff and therefore applies. An
+ * entry with no `id` is refused rather than trusted.
  */
 function readHunkBody(body: { path?: string; hunks?: HunkRequest[] }): { filePath: string; hunks: HunkRequest[] } | string {
   if (!body.path) return "Missing: path";
   if (!Array.isArray(body.hunks) || body.hunks.length === 0) return "Missing: hunks";
+  for (const entry of body.hunks) {
+    if (!entry || typeof entry.id !== "string" || entry.id.length === 0) {
+      return "Each hunk needs the id it was listed with";
+    }
+  }
   return { filePath: body.path, hunks: body.hunks };
 }
 
-/** POST /git/stage-hunks { path, hunks: [{ hunk, lines? }] } */
+/** POST /git/stage-hunks { path, hunks: [{ hunk, id, lines? }] } */
 gitRoutes.post("/stage-hunks", async (c) => {
   try {
     const projectPath = c.get("projectPath");
@@ -224,7 +234,7 @@ gitRoutes.post("/stage-hunks", async (c) => {
   }
 });
 
-/** POST /git/unstage-hunks { path, hunks: [{ hunk, lines? }] } */
+/** POST /git/unstage-hunks { path, hunks: [{ hunk, id, lines? }] } */
 gitRoutes.post("/unstage-hunks", async (c) => {
   try {
     const projectPath = c.get("projectPath");
@@ -237,7 +247,7 @@ gitRoutes.post("/unstage-hunks", async (c) => {
   }
 });
 
-/** POST /git/discard-hunks { path, hunks: [{ hunk, lines? }] } — not recoverable */
+/** POST /git/discard-hunks { path, hunks: [{ hunk, id, lines? }] } — not recoverable */
 gitRoutes.post("/discard-hunks", async (c) => {
   try {
     const projectPath = c.get("projectPath");

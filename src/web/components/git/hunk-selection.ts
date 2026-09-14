@@ -19,6 +19,12 @@ export interface DiffHunk {
   newLines: number;
   heading: string;
   lines: DiffLine[];
+  /**
+   * Content address of this hunk, from `GET /git/hunks`. Echoed back on apply
+   * so the server resolves the selection against the diff that was on screen
+   * rather than against whatever the file says by the time the request lands.
+   */
+  id: string;
 }
 
 /** `${hunkIndex}:${lineIndex}` — flat, so one Set holds the whole selection. */
@@ -82,7 +88,10 @@ export function toggleLine(hunk: number, line: number, selected: Set<LineKey>): 
 }
 
 export interface HunkRequest {
+  /** Position in the list as shown. A hint for the server, not the key. */
   hunk: number;
+  /** The hunk's content address — what the server actually resolves by. */
+  id: string;
   /** Line indexes within the hunk; omitted means the whole hunk. */
   lines?: number[];
 }
@@ -100,7 +109,11 @@ export function buildHunkRequest(hunks: DiffHunk[], selected: Set<LineKey>): Hun
     const changed = changedLineIndexes(hunk);
     const picked = changed.filter((i) => selected.has(lineKey(h, i)));
     if (picked.length === 0) return;
-    out.push(picked.length === changed.length ? { hunk: h } : { hunk: h, lines: picked });
+    out.push(
+      picked.length === changed.length
+        ? { hunk: h, id: hunk.id }
+        : { hunk: h, id: hunk.id, lines: picked },
+    );
   });
   return out;
 }

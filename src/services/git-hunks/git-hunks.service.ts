@@ -6,20 +6,32 @@
  */
 import { spawn } from "node:child_process";
 import type { DiffHunk } from "./unified-diff.ts";
-import { buildPatch, parseUnifiedDiff, selectionFromRequest } from "./unified-diff.ts";
+import {
+  buildPatch, hunkFingerprint, parseUnifiedDiff, resolveRequestedHunks, selectionFromRequest,
+} from "./unified-diff.ts";
 
 export type HunkScope = "worktree" | "index";
 
 export interface HunkRequest {
+  /** Where the hunk sat in the list the client was given. A hint, not the key. */
   hunk: number;
+  /**
+   * `hunkFingerprint` of the hunk the user actually ticked. This is what the
+   * selection is resolved by, so a file that moved on cannot be silently staged
+   * from a different diff than the one on screen.
+   */
+  id: string;
   /** Line indexes within the hunk; omitted means the whole hunk. */
   lines?: number[];
 }
 
+/** A hunk as the browser receives it: UTF-8 text plus its content address. */
+export type ListedHunk = DiffHunk & { id: string };
+
 export interface FileHunks {
   filePath: string;
   scope: HunkScope;
-  hunks: DiffHunk[];
+  hunks: ListedHunk[];
   binary: boolean;
 }
 
@@ -29,19 +41,44 @@ interface GitResult {
   exitCode: number;
 }
 
-function runGit(projectPath: string, args: string[], stdin?: string): Promise<GitResult> {
+/**
+ * Spawn git and hand back its output byte-for-byte.
+ *
+ * Two things here are load-bearing and neither is visible in review.
+ *
+ * Chunks are collected as `Buffer` and decoded **once**. Decoding each chunk as
+ * it arrives (`stdout += c.toString()`) splits any multi-byte sequence that
+ * straddles a chunk boundary into two invalid halves, which become U+FFFD — and
+ * because a patch built from that text still *applies*, the corruption lands in
+ * the index with no error anywhere. Measured on a 2 MB all-Japanese diff: 43
+ * mangled lines.
+ *
+ * The decode is **latin1**, not utf8, so it is a lossless byte round-trip: the
+ * patch written back to `git apply` is the bytes git gave us, whatever the
+ * file's encoding actually is (a Latin-1 file could not be hunk-staged at all
+ * before). Everything the parser looks at — `@@`, `+`, `-`, `\` — is ASCII and
+ * reads the same either way. Only text leaving for the browser is turned back
+ * into UTF-8, by `toDisplay` below.
+ */
+function runGit(projectPath: string, args: string[], stdin?: Buffer): Promise<GitResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, {
       cwd: projectPath,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     });
 
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c) => { stdout += c.toString(); });
-    child.stderr.on("data", (c) => { stderr += c.toString(); });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => { stdout.push(c); });
+    child.stderr.on("data", (c: Buffer) => { stderr.push(c); });
     child.on("error", reject);
-    child.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? 0 }));
+    child.on("close", (code) => resolve({
+      stdout: Buffer.concat(stdout).toString("latin1"),
+      // stderr only ever becomes a message for a human, so it is decoded the
+      // way a human expects to read it.
+      stderr: Buffer.concat(stderr).toString("utf8"),
+      exitCode: code ?? 0,
+    }));
 
     if (stdin !== undefined) {
       child.stdin.end(stdin);
@@ -49,6 +86,11 @@ function runGit(projectPath: string, args: string[], stdin?: string): Promise<Gi
       child.stdin.end();
     }
   });
+}
+
+/** Undo `runGit`'s latin1 decode, for text on its way to the browser. */
+function toDisplay(text: string): string {
+  return Buffer.from(text, "latin1").toString("utf8");
 }
 
 /**
@@ -90,23 +132,50 @@ class GitHunksService {
     }
   }
 
+  /**
+   * `--no-renames` is not a formatting preference.
+   *
+   * With rename detection on, a staged `git mv` makes `git diff --cached` emit a
+   * *rename patch*, and `git apply --cached --reverse` on one of those rewrites
+   * index entries instead of lines: unstaging a single hunk left `D a.txt`
+   * staged and `b.txt` untracked, one commit away from losing the file's
+   * history. Forcing the content form keeps every patch here a patch about
+   * lines in one path.
+   */
   private async rawDiff(projectPath: string, filePath: string, scope: HunkScope): Promise<string> {
-    const args = ["diff", "--no-color", "--no-ext-diff"];
+    const args = ["diff", "--no-color", "--no-ext-diff", "--no-renames"];
     if (scope === "index") args.push("--cached");
     args.push("--", filePath);
     const res = await runGit(projectPath, args);
     if (res.exitCode !== 0) {
       throw new Error(res.stderr.trim() || `git diff exited with ${res.exitCode}`);
     }
+    // Belt and braces: a future flag or a repository config that reintroduces
+    // rename headers must fail loudly rather than reach `git apply --reverse`.
+    if (/^rename (from|to) /m.test(res.stdout)) {
+      throw new Error("This file was renamed — stage or unstage it whole rather than by hunk.");
+    }
     return res.stdout;
   }
 
-  /** The hunks the UI shows and later refers to by index. */
+  /**
+   * The hunks the UI shows, each carrying the content address it must send back.
+   *
+   * Fingerprints are taken from the byte-exact text and the *text* is then
+   * converted for display, so what the client echoes identifies the bytes
+   * rather than a lossy rendering of them.
+   */
   async getHunks(projectPath: string, filePath: string, scope: HunkScope): Promise<FileHunks> {
     assertSafeFilePath(filePath);
     if (scope === "worktree") await this.ensureIntentToAdd(projectPath, filePath);
     const parsed = parseUnifiedDiff(await this.rawDiff(projectPath, filePath, scope));
-    return { filePath, scope, hunks: parsed.hunks, binary: parsed.binary };
+    const hunks: ListedHunk[] = parsed.hunks.map((hunk) => ({
+      ...hunk,
+      id: hunkFingerprint(hunk),
+      heading: toDisplay(hunk.heading),
+      lines: hunk.lines.map((line) => ({ ...line, text: toDisplay(line.text) })),
+    }));
+    return { filePath, scope, hunks, binary: parsed.binary };
   }
 
   private async applySelection(
@@ -123,24 +192,25 @@ class GitHunksService {
     if (parsed.binary) throw new Error("A binary file cannot be staged by hunk — stage the whole file.");
     if (parsed.hunks.length === 0) throw new Error("This file has no changes to apply.");
 
-    const selection = selectionFromRequest(parsed, requested);
+    // The client's indexes describe the diff it was *shown*; this diff was read
+    // again just now. Resolving by content is what makes the two the same list
+    // — or refuses. `git apply` cannot be the guard here, because the patch is
+    // built from this fresh parse and therefore always applies cleanly.
+    const selection = selectionFromRequest(parsed, resolveRequestedHunks(parsed, requested));
     const patch = buildPatch(parsed, selection, { reverse: apply.reverse });
     if (!patch) throw new Error("The selection contains no actual change.");
 
-    // No `--unidiff-zero`: these patches keep git's default three lines of
-    // context, and that flag would switch off the very check that catches a
-    // patch built against a stale diff.
+    // Default three lines of context, no `--unidiff-zero`.
     const args = ["apply"];
     if (apply.cached) args.push("--cached");
     if (apply.reverse) args.push("--reverse");
     args.push("-");
 
-    const res = await runGit(projectPath, args, patch);
+    const res = await runGit(projectPath, args, Buffer.from(patch, "latin1"));
     if (res.exitCode !== 0) {
-      // Nearly always means the file moved on since the hunks were listed.
       throw new Error(
         res.stderr.trim() ||
-        "git could not apply the patch — the file changed since these hunks were listed. Reload and try again.",
+        `git could not apply the patch (exit ${res.exitCode}).`,
       );
     }
   }
