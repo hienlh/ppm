@@ -131,6 +131,10 @@ export function buildPatch(
 
   const reverse = options.reverse === true;
   const out: string[] = [];
+  // Totals over the hunks that actually make it into the patch, which is what
+  // decides whether a "whole file" header is still true of it.
+  let oldTotal = 0;
+  let newTotal = 0;
   // Running difference between the new and old side of the hunks included so
   // far. Skipping a hunk means later hunks start at a different new-file line
   // than the original diff said.
@@ -189,13 +193,53 @@ export function buildPatch(
     // side starts at N+1. A new file is the extreme case: git writes `-0,0`,
     // and its content begins at line 1.
     const newStartBase = hunk.oldLines === 0 ? hunk.oldStart + 1 : hunk.oldStart;
-    out.push(formatHunkHeader(hunk.oldStart, oldCount, newStartBase + offset, newCount, hunk.heading));
+    // And once a narrowed selection gives that old side real content — the
+    // lines that were not picked, kept as context — "after line 0" has to
+    // become "from line 1", or the patch names a line that cannot exist.
+    const oldStartBase = hunk.oldLines === 0 && oldCount > 0 ? hunk.oldStart + 1 : hunk.oldStart;
+    out.push(formatHunkHeader(oldStartBase, oldCount, newStartBase + offset, newCount, hunk.heading));
     out.push(...body);
     offset += newCount - oldCount;
+    oldTotal += oldCount;
+    newTotal += newCount;
   }
 
   if (out.length === 0) return null;
-  return [...parsed.header, ...out, ""].join("\n");
+  return [...narrowedHeader(parsed.header, oldTotal, newTotal), ...out, ""].join("\n");
+}
+
+/**
+ * Downgrade a whole-file header that a partial selection has made untrue.
+ *
+ * `new file mode` says the other side of this patch is empty, and taking only
+ * some of a new file's lines stops that being so: the lines left behind become
+ * context, and git refuses the patch with "new file X depends on old contents"
+ * — which reads as a bug in the file rather than in the patch. `deleted file
+ * mode` is the same claim mirrored, and breaks the same way when only some of a
+ * deletion is staged. Either becomes an ordinary modification of the one path
+ * the header already names.
+ *
+ * The `index` line goes with them: its hashes describe the whole-file change,
+ * not this narrowed one. A patch without one applies the same way.
+ */
+function narrowedHeader(header: string[], oldTotal: number, newTotal: number): string[] {
+  const creates = header.some((line) => line.startsWith("new file mode")) && oldTotal > 0;
+  const deletes = header.some((line) => line.startsWith("deleted file mode")) && newTotal > 0;
+  if (!creates && !deletes) return header;
+
+  const named = header.find((line) => creates ? line.startsWith("+++ b/") : line.startsWith("--- a/"));
+  // Without a path to name, leaving the header alone is the honest failure:
+  // git rejects the patch rather than applying it to something unintended.
+  if (!named) return header;
+  const path = named.slice("+++ b/".length);
+
+  return header.flatMap((line) => {
+    if (line.startsWith("new file mode") || line.startsWith("deleted file mode")) return [];
+    if (line.startsWith("index ")) return [];
+    if (line === "--- /dev/null") return [`--- a/${path}`];
+    if (line === "+++ /dev/null") return [`+++ b/${path}`];
+    return [line];
+  });
 }
 
 function formatHunkHeader(

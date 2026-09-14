@@ -5,7 +5,7 @@
  * itself can prove the patch is one git accepts. These run git for real.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -115,9 +115,11 @@ describe("gitHunksService.getHunks", () => {
 
     const result = await gitHunksService.getHunks(repo, "new.txt", "worktree");
 
-    // `git add -N` puts it in the index so a normal diff exists at all.
+    // A `git add -N` on a throwaway index is what gives it something to diff
+    // against; the user's own index is not touched to answer a question.
     expect(result.hunks).toHaveLength(1);
     expect(result.hunks[0]!.lines.every((l) => l.kind === "+")).toBe(true);
+    expect(await git(["status", "--porcelain"])).toBe("?? new.txt\n");
   });
 
   it("refuses a path that escapes the repository", async () => {
@@ -420,5 +422,90 @@ describe("renames", () => {
     const removed = hunks.flatMap((h) => h.lines).filter((l) => l.kind === "-").map((l) => l.text);
     expect(removed).toContain("line-1");
     expect(removed).toContain("line-20");
+  });
+});
+
+describe("a file git has never seen", () => {
+  beforeEach(() => {
+    writeFileSync(join(repo, "new.txt"), "alpha\nbeta\ngamma\n");
+  });
+
+  it("leaves the index exactly as it found it", async () => {
+    const before = await git(["ls-files", "--stage"]);
+
+    await gitHunksService.getHunks(repo, "new.txt", "worktree");
+
+    // Listing hunks is a GET. Recording the intent to add in the real index
+    // would turn `?? new.txt` into `A new.txt` on nothing more than opening a
+    // dialog, and would survive closing it again.
+    expect(await git(["ls-files", "--stage"])).toBe(before);
+    expect(await git(["status", "--porcelain"])).toBe("?? new.txt\n");
+  });
+
+  it("stages it without an intent-to-add entry being there first", async () => {
+    await gitHunksService.stage(repo, "new.txt", await pick("new.txt", "worktree", [0]));
+
+    expect(await git(["status", "--porcelain"])).toBe("A  new.txt\n");
+    expect(sha(await stagedBytes("new.txt"))).toBe(sha(Buffer.from("alpha\nbeta\ngamma\n", "utf-8")));
+  });
+
+  it("stages part of it and leaves the rest in the working tree", async () => {
+    const { hunks } = await gitHunksService.getHunks(repo, "new.txt", "worktree");
+
+    await gitHunksService.stage(repo, "new.txt", [{ hunk: 0, id: hunks[0]!.id, lines: [0] }]);
+
+    expect(sha(await stagedBytes("new.txt"))).toBe(sha(Buffer.from("alpha\n", "utf-8")));
+    expect(readFileSync(join(repo, "new.txt"), "utf-8")).toBe("alpha\nbeta\ngamma\n");
+  });
+
+  it("takes the file with it when every line is discarded, and stages nothing", async () => {
+    // Discarding all of an untracked file is deleting it — that is what the
+    // dialog's second click says. What must not survive is a staged deletion of
+    // a file that was never in a commit, which is what the listing's own
+    // `git add -N` used to leave behind.
+    await gitHunksService.discard(repo, "new.txt", await pick("new.txt", "worktree", [0]));
+
+    expect(existsSync(join(repo, "new.txt"))).toBe(false);
+    expect(await git(["status", "--porcelain"])).toBe("");
+  });
+
+  it("keeps the file when only some of its lines are discarded", async () => {
+    const { hunks } = await gitHunksService.getHunks(repo, "new.txt", "worktree");
+
+    await gitHunksService.discard(repo, "new.txt", [{ hunk: 0, id: hunks[0]!.id, lines: [1] }]);
+
+    expect(readFileSync(join(repo, "new.txt"), "utf-8")).toBe("alpha\ngamma\n");
+    expect(await git(["status", "--porcelain"])).toBe("?? new.txt\n");
+  });
+});
+
+describe("a file that was deleted", () => {
+  beforeEach(() => {
+    rmSync(join(repo, "file.txt"));
+  });
+
+  it("stages part of the deletion without claiming the whole file is gone", async () => {
+    const { hunks } = await gitHunksService.getHunks(repo, "file.txt", "worktree");
+    expect(hunks).toHaveLength(1);
+
+    // Keep only the first two lines' removal. The other eighteen stay as
+    // context, so `deleted file mode` is no longer true of this patch.
+    await gitHunksService.stage(repo, "file.txt", [{ hunk: 0, id: hunks[0]!.id, lines: [0, 1] }]);
+
+    const expected = ORIGINAL.split("\n").slice(2).join("\n");
+    expect(sha(await stagedBytes("file.txt"))).toBe(sha(Buffer.from(expected, "utf-8")));
+  });
+
+  it("stages the whole deletion as a deletion", async () => {
+    await gitHunksService.stage(repo, "file.txt", await pick("file.txt", "worktree", [0]));
+
+    expect(await git(["status", "--porcelain"])).toBe("D  file.txt\n");
+  });
+
+  it("puts the file back when the deletion is discarded", async () => {
+    await gitHunksService.discard(repo, "file.txt", await pick("file.txt", "worktree", [0]));
+
+    expect(readFileSync(join(repo, "file.txt"), "utf-8")).toBe(ORIGINAL);
+    expect(await git(["status", "--porcelain"])).toBe("");
   });
 });

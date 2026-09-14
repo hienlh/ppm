@@ -22,6 +22,27 @@ import { shellHtml } from "./webview-shell.ts";
 const VIEW_TYPE = "git-graph.reflog";
 const MAX_ENTRIES = 300;
 
+/**
+ * Why `reset --hard` must not run, or null if it may.
+ *
+ * It throws away the working tree without asking, and there is no reflog for
+ * uncommitted work — refusing on a dirty tree is the difference between undoing
+ * a mistake and making a worse one. The *exit code* is half the decision:
+ * reading only `stdout` meant a `git status` that failed — an index another
+ * process holds a lock on, a repository git cannot read — came back empty and
+ * was taken for "clean", so the destructive command ran on the strength of a
+ * check that never happened. A guard that cannot see has to say no.
+ */
+export function resetHardRefusal(status: { exitCode: number; stdout: string }): string | null {
+  if (status.exitCode !== 0) {
+    return "Could not check whether the working tree is clean, so nothing was run. Try again once git can read the repository.";
+  }
+  if (status.stdout.trim()) {
+    return "This would discard uncommitted changes, which nothing can recover. Commit or stash them first.";
+  }
+  return null;
+}
+
 export function registerReflogView(context: ExtensionContext, vscode: VscodeApi): void {
   registerViewCommand({
     context,
@@ -110,15 +131,8 @@ export function openReflogView(
   async function resetHard(rawSelector: unknown): Promise<void> {
     const selector = assertValidSelector(rawSelector);
 
-    // `reset --hard` throws away the working tree without asking. Refusing on a
-    // dirty tree is the difference between undoing a mistake and making a worse
-    // one — there is no reflog for uncommitted work.
-    const status = await spawnGit(vscode, ["status", "--porcelain"], projectPath);
-    if (status.exitCode === 0 && status.stdout.trim()) {
-      throw new Error(
-        "This would discard uncommitted changes, which nothing can recover. Commit or stash them first.",
-      );
-    }
+    const refusal = resetHardRefusal(await spawnGit(vscode, ["status", "--porcelain"], projectPath));
+    if (refusal) throw new Error(refusal);
 
     const res = await spawnGit(vscode, ["reset", "--hard", selector], projectPath, 60_000);
     await finish(res, `Reset to ${selector}.`);

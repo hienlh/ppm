@@ -363,3 +363,93 @@ describe("resolveRequestedHunks", () => {
       .toEqual([{ hunk: 1 }, { hunk: 0 }]);
   });
 });
+
+/** What `git diff` says about a file it has never seen. */
+const NEW_FILE = [
+  "diff --git a/notes.txt b/notes.txt",
+  "new file mode 100644",
+  "index 0000000..fbbee86",
+  "--- /dev/null",
+  "+++ b/notes.txt",
+  "@@ -0,0 +1,3 @@",
+  "+alpha",
+  "+beta",
+  "+gamma",
+  "",
+].join("\n");
+
+/** And about one that is gone. */
+const DELETED_FILE = [
+  "diff --git a/notes.txt b/notes.txt",
+  "deleted file mode 100644",
+  "index fbbee86..0000000",
+  "--- a/notes.txt",
+  "+++ /dev/null",
+  "@@ -1,3 +0,0 @@",
+  "-alpha",
+  "-beta",
+  "-gamma",
+  "",
+].join("\n");
+
+describe("whole-file headers under a partial selection", () => {
+  it("keeps `new file mode` when the whole file is taken", () => {
+    const parsed = parseUnifiedDiff(NEW_FILE);
+
+    const patch = buildPatch(parsed, selectAll(parsed))!;
+
+    expect(patch).toContain("new file mode 100644");
+    expect(patch).toContain("--- /dev/null");
+  });
+
+  it("drops it when reversing only part of the file", () => {
+    // The lines that were not picked stay as context, so the other side of the
+    // patch is no longer empty and git answers "new file notes.txt depends on
+    // old contents" — a message about the file, for a fault in the patch.
+    const parsed = parseUnifiedDiff(NEW_FILE);
+
+    const patch = buildPatch(parsed, new Map([[0, new Set([1])]]), { reverse: true })!;
+
+    expect(patch).not.toContain("new file mode");
+    expect(patch).not.toContain("/dev/null");
+    expect(patch).not.toContain("\nindex ");
+    expect(patch).toContain("--- a/notes.txt");
+    expect(patch).toContain("+++ b/notes.txt");
+    // `-0,2` is what the creation's own `-0,0` becomes if nothing corrects it,
+    // and it names a line 0 that no file has.
+    expect(patch.split("\n")).toContain("@@ -1,2 +1,3 @@");
+  });
+
+  it("keeps it when taking part of the file forwards, where it is still true", () => {
+    // Forwards, an unpicked addition is dropped rather than demoted, so the
+    // patch still creates a file out of nothing — just a shorter one.
+    const parsed = parseUnifiedDiff(NEW_FILE);
+
+    const patch = buildPatch(parsed, new Map([[0, new Set([0])]]))!;
+
+    expect(patch).toContain("new file mode 100644");
+    expect(patch).toContain("--- /dev/null");
+    expect(patch.split("\n")).toContain("@@ -0,0 +1 @@");
+  });
+
+  it("drops `deleted file mode` when only part of the deletion is taken", () => {
+    const parsed = parseUnifiedDiff(DELETED_FILE);
+
+    const patch = buildPatch(parsed, new Map([[0, new Set([0])]]))!;
+
+    expect(patch).not.toContain("deleted file mode");
+    expect(patch).not.toContain("/dev/null");
+    expect(patch).toContain("--- a/notes.txt");
+    expect(patch).toContain("+++ b/notes.txt");
+    expect(patch.split("\n")).toContain("@@ -1,3 +1,2 @@");
+  });
+
+  it("keeps it when the whole deletion is taken", () => {
+    const parsed = parseUnifiedDiff(DELETED_FILE);
+
+    const patch = buildPatch(parsed, selectAll(parsed))!;
+
+    expect(patch).toContain("deleted file mode 100644");
+    expect(patch).toContain("+++ /dev/null");
+  });
+});

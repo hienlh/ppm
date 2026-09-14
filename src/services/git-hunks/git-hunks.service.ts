@@ -5,6 +5,9 @@
  * stdin door, so these spawn git directly.
  */
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { DiffHunk } from "./unified-diff.ts";
 import {
   buildPatch, hunkFingerprint, parseUnifiedDiff, resolveRequestedHunks, selectionFromRequest,
@@ -60,11 +63,15 @@ interface GitResult {
  * reads the same either way. Only text leaving for the browser is turned back
  * into UTF-8, by `toDisplay` below.
  */
-function runGit(projectPath: string, args: string[], stdin?: Buffer): Promise<GitResult> {
+function runGit(
+  projectPath: string,
+  args: string[],
+  options: { stdin?: Buffer; env?: Record<string, string> } = {},
+): Promise<GitResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, {
       cwd: projectPath,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...options.env },
     });
 
     const stdout: Buffer[] = [];
@@ -80,8 +87,8 @@ function runGit(projectPath: string, args: string[], stdin?: Buffer): Promise<Gi
       exitCode: code ?? 0,
     }));
 
-    if (stdin !== undefined) {
-      child.stdin.end(stdin);
+    if (options.stdin !== undefined) {
+      child.stdin.end(options.stdin);
     } else {
       child.stdin.end();
     }
@@ -122,14 +129,31 @@ class GitHunksService {
   }
 
   /**
-   * `git add -N` records the file in the index with empty content, so a normal
-   * `git diff` describes the whole file as additions and the usual patch path
-   * works. Without it an untracked file has nothing to diff against.
+   * An index git may write to, for a file it has never seen.
+   *
+   * A `git diff` needs something to compare against, which for an untracked
+   * file is what `git add -N` provides. That is a write, and every caller here
+   * is describing a file rather than changing one: doing it to the user's index
+   * turns `?? file` into `A file` behind their back, on nothing more than
+   * opening a dialog, and the exit code went unread so a failure showed up as
+   * "no changes" instead. It goes into a throwaway index instead — git reads the
+   * same config and the same `.gitattributes`, normalises line endings the same
+   * way and produces the same bytes, while the real index is never opened for
+   * writing. `git apply --cached` needs no entry of its own to add a new file,
+   * so staging still lands in the real index.
    */
-  private async ensureIntentToAdd(projectPath: string, filePath: string): Promise<void> {
-    if (await this.isUntracked(projectPath, filePath)) {
-      await runGit(projectPath, ["add", "-N", "--", filePath]);
+  private async scratchIndexFor(projectPath: string, filePath: string): Promise<string | null> {
+    if (!await this.isUntracked(projectPath, filePath)) return null;
+    const dir = await mkdtemp(join(tmpdir(), "ppm-hunk-index-"));
+    const env = { GIT_INDEX_FILE: join(dir, "index") };
+    const added = await runGit(projectPath, ["add", "-N", "--", filePath], { env });
+    if (added.exitCode !== 0) {
+      await rm(dir, { recursive: true, force: true });
+      throw new Error(
+        added.stderr.trim() || `git could not read "${filePath}" (exit ${added.exitCode}).`,
+      );
     }
+    return dir;
   }
 
   /**
@@ -143,19 +167,26 @@ class GitHunksService {
    * lines in one path.
    */
   private async rawDiff(projectPath: string, filePath: string, scope: HunkScope): Promise<string> {
-    const args = ["diff", "--no-color", "--no-ext-diff", "--no-renames"];
-    if (scope === "index") args.push("--cached");
-    args.push("--", filePath);
-    const res = await runGit(projectPath, args);
-    if (res.exitCode !== 0) {
-      throw new Error(res.stderr.trim() || `git diff exited with ${res.exitCode}`);
+    const scratch = scope === "worktree" ? await this.scratchIndexFor(projectPath, filePath) : null;
+    try {
+      const args = ["diff", "--no-color", "--no-ext-diff", "--no-renames"];
+      if (scope === "index") args.push("--cached");
+      args.push("--", filePath);
+      const res = await runGit(projectPath, args, {
+        env: scratch ? { GIT_INDEX_FILE: join(scratch, "index") } : undefined,
+      });
+      if (res.exitCode !== 0) {
+        throw new Error(res.stderr.trim() || `git diff exited with ${res.exitCode}`);
+      }
+      // Belt and braces: a future flag or a repository config that reintroduces
+      // rename headers must fail loudly rather than reach `git apply --reverse`.
+      if (/^rename (from|to) /m.test(res.stdout)) {
+        throw new Error("This file was renamed — stage or unstage it whole rather than by hunk.");
+      }
+      return res.stdout;
+    } finally {
+      if (scratch) await rm(scratch, { recursive: true, force: true });
     }
-    // Belt and braces: a future flag or a repository config that reintroduces
-    // rename headers must fail loudly rather than reach `git apply --reverse`.
-    if (/^rename (from|to) /m.test(res.stdout)) {
-      throw new Error("This file was renamed — stage or unstage it whole rather than by hunk.");
-    }
-    return res.stdout;
   }
 
   /**
@@ -167,7 +198,6 @@ class GitHunksService {
    */
   async getHunks(projectPath: string, filePath: string, scope: HunkScope): Promise<FileHunks> {
     assertSafeFilePath(filePath);
-    if (scope === "worktree") await this.ensureIntentToAdd(projectPath, filePath);
     const parsed = parseUnifiedDiff(await this.rawDiff(projectPath, filePath, scope));
     const hunks: ListedHunk[] = parsed.hunks.map((hunk) => ({
       ...hunk,
@@ -206,7 +236,7 @@ class GitHunksService {
     if (apply.reverse) args.push("--reverse");
     args.push("-");
 
-    const res = await runGit(projectPath, args, Buffer.from(patch, "latin1"));
+    const res = await runGit(projectPath, args, { stdin: Buffer.from(patch, "latin1") });
     if (res.exitCode !== 0) {
       throw new Error(
         res.stderr.trim() ||
@@ -217,7 +247,6 @@ class GitHunksService {
 
   /** Move the selected worktree changes into the index. */
   async stage(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<void> {
-    await this.ensureIntentToAdd(projectPath, filePath);
     await this.applySelection(projectPath, filePath, "worktree", hunks, { cached: true, reverse: false });
   }
 
