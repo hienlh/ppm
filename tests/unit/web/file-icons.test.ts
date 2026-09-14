@@ -8,8 +8,8 @@
  * of the two files without the other is the way that happens.
  */
 import { describe, it, expect } from "bun:test";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { resolve, relative } from "node:path";
 import {
   DEFAULT_FILE_ICON,
   DEFAULT_FOLDER_ICON,
@@ -111,5 +111,61 @@ describe("resolving a name to an icon", () => {
     for (const name of ["app.tsx", "app.jsx", "main.go", "lib.rs", "bun.lock", "bunfig.toml"]) {
       expect(fileIconName(name)).not.toBe(DEFAULT_FILE_ICON);
     }
+  });
+});
+
+/**
+ * The artwork must stay off the entry's static graph.
+ *
+ * One `import "@/styles/file-icons.generated.css"` anywhere the shell reaches
+ * eagerly puts the whole 499 KB back into a render-blocking `<link>` in
+ * `index.html`, and nothing about the app looks different when it does — which
+ * is why this is enumerated rather than left to review. `file-icons.tsx` is
+ * reached from `tab-type-icons.ts`, which the tab bar, the mobile nav and the
+ * dock header all import at module scope.
+ */
+describe("the artwork is not in the entry chunk", () => {
+  const WEB = resolve(import.meta.dir, "../../../src/web");
+  const SHEET = "styles/file-icons.generated.css";
+
+  function sources(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx|css)$/.test(entry.name)) out.push(full);
+      }
+    };
+    walk(WEB);
+    return out;
+  }
+
+  it("is imported dynamically, and only from the icon module", () => {
+    const offenders: string[] = [];
+    for (const file of sources()) {
+      const text = readFileSync(file, "utf8");
+      // Only an import puts it on the graph — the name also appears in prose,
+      // and matching the bare string flagged a doc comment.
+      const statics = [
+        ...text.matchAll(/^\s*import\s+(?:[^"';]*\s+from\s+)?["'][^"']*file-icons\.generated\.css["']/gm),
+        ...text.matchAll(/@import\s+(?:url\()?["'][^"']*file-icons\.generated\.css["']/g),
+        ...text.matchAll(/\brequire\(\s*["'][^"']*file-icons\.generated\.css["']/g),
+      ];
+      for (const m of statics) {
+        offenders.push(`${relative(WEB, file).replaceAll("\\", "/")}: ${m[0].trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("is still reachable — the stylesheet the dynamic import names exists", () => {
+    // A typo in the specifier is a silent no-op at build time and blank icons
+    // at runtime, so resolve it rather than trusting the string.
+    const icons = readFileSync(resolve(WEB, "lib/file-icons.tsx"), "utf8");
+    const spec = icons.match(/import\("([^"]*file-icons\.generated\.css)"\)/)?.[1];
+    expect(spec, "file-icons.tsx no longer dynamically imports the artwork").toBeTruthy();
+    expect(existsSync(resolve(WEB, spec!.replace(/^@\//, "")))).toBe(true);
+    expect(spec!.endsWith(SHEET)).toBe(true);
   });
 });

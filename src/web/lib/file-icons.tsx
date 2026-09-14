@@ -20,7 +20,7 @@
  * both take an `icon: ElementType`.
  */
 import type { FC } from "react";
-import { cn } from "@/lib/utils";
+import { basename, cn } from "@/lib/utils";
 import {
   DEFAULT_FILE_ICON,
   DEFAULT_FOLDER_ICON,
@@ -30,17 +30,39 @@ import {
   FOLDER_ICONS,
   FOLDER_OPEN_ICONS,
 } from "./file-icons.generated";
-import "@/styles/file-icons.generated.css";
 
-/** Strip a path down to its last segment, for either separator. */
-function baseName(path: string): string {
-  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return cut === -1 ? path : path.slice(cut + 1);
+/**
+ * The artwork is fetched when something first asks for an icon, not before.
+ *
+ * Imported at module scope it was not lazy in any useful sense: this module is
+ * reached from `tab-type-icons.ts`, which the tab bar, the mobile nav and the
+ * dock header all import eagerly, so Vite hoisted the stylesheet into a
+ * `<link rel="stylesheet">` in `index.html` — render-blocking on every load,
+ * measured at 499,375 bytes raw / 127,333 gzip / 79,836 brotli. The app's
+ * entire other stylesheet is 25,956 gzip, so the icons were 4.9x everything
+ * else put together, in front of the first paint.
+ *
+ * A dynamic import makes it its own chunk with a `<link>` injected at runtime.
+ * The cost is honest and visible: an icon that renders before the stylesheet
+ * lands is a correctly-sized blank span for one round trip, so icons pop in a
+ * beat after the text. That is the trade — paint the app now and the artwork
+ * shortly, rather than neither until half a megabyte arrives — and a session
+ * that never lists a file now never fetches it at all.
+ *
+ * Called from render rather than an effect because the point is to start the
+ * fetch at the earliest moment anything wants an icon; it is idempotent and
+ * touches no state, so a double invocation under StrictMode costs nothing.
+ */
+let cssRequested = false;
+function requestIconCss(): void {
+  if (cssRequested) return;
+  cssRequested = true;
+  void import("@/styles/file-icons.generated.css");
 }
 
 /** The icon name for a file, by name alone. */
 export function fileIconName(path: string): string {
-  const name = baseName(path).toLowerCase();
+  const name = basename(path).toLowerCase();
   const byName = FILENAME_ICONS[name];
   if (byName) return byName;
 
@@ -67,7 +89,7 @@ export function fileIconName(path: string): string {
 
 /** The icon name for a folder, open or closed. */
 export function folderIconName(path: string, open = false): string {
-  const name = baseName(path).toLowerCase();
+  const name = basename(path).toLowerCase();
   const table = open ? FOLDER_OPEN_ICONS : FOLDER_ICONS;
   return table[name] ?? (open ? DEFAULT_FOLDER_OPEN_ICON : DEFAULT_FOLDER_ICON);
 }
@@ -96,6 +118,7 @@ export interface FileIconProps {
  * place an inline `<svg>` would have worked without saying so.
  */
 export function FileIcon({ name, kind = "file", open, className }: FileIconProps) {
+  requestIconCss();
   const icon = kind === "directory" ? folderIconName(name, open) : fileIconName(name);
   return (
     <span
@@ -123,6 +146,9 @@ export function fileIconElement(
   name: string,
   kind: FileIconKind = "file",
 ): FC<{ className?: string }> {
+  // The palette asks for hundreds of these before any of them renders, so the
+  // fetch starts here too rather than waiting for the first mount.
+  requestIconCss();
   const key = `${kind}:${name}`;
   const cached = elementCache.get(key);
   if (cached) return cached;

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { existsSync, statSync } from "node:fs";
 import { resolve, join, extname, dirname } from "node:path";
 import { isCompiledBinary } from "../../services/autostart-generator.ts";
@@ -36,8 +37,16 @@ const MIME_TYPES: Record<string, string> = {
  * Serve static files from dist/web/ using Bun.file() directly.
  * Avoids hono/bun serveStatic which has path issues on Windows.
  * Falls back to index.html for SPA routing.
+ *
+ * Built around the directory rather than reading `DIST_DIR` directly so the
+ * whole handler can be mounted on a temporary one. The white-screen rule below
+ * is decided per request from headers, which is not something the pure
+ * `shouldServeAppShell` test can reach: with that call replaced by a constant,
+ * the route tests were byte-identical, so the one line standing between an
+ * upgrade and a blank page had no coverage at all.
  */
-staticRoutes.get("*", async (c) => {
+export function createStaticHandler(DIST_DIR: string) {
+  return async (c: Context): Promise<Response> => {
   if (!existsSync(DIST_DIR)) {
     return c.text("Frontend not built. Run: bun run build:web", 404);
   }
@@ -109,4 +118,7 @@ staticRoutes.get("*", async (c) => {
     return c.html(await Bun.file(indexPath).text());
   }
   return c.text("Frontend not built. Run: bun run build:web", 404);
-});
+  };
+}
+
+staticRoutes.get("*", createStaticHandler(DIST_DIR));
