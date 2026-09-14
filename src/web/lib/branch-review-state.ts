@@ -22,6 +22,20 @@ import type { BranchDiffFile } from "../../types/git";
 
 const PREFIX = "ppm:branch-review";
 
+/** Where the list of comparisons that have progress stored is kept. */
+const RECENT_KEY = `${PREFIX}:recent`;
+
+/**
+ * How many comparisons keep their progress.
+ *
+ * One `localStorage` key per ref pair ever compared, and `pruneReviewed` only
+ * prunes *within* a key — so comparing twenty branches against main left twenty
+ * records, none of which anything would ever delete. Twenty is well past what a
+ * person has open reviews of, and the cost of falling off the end is a list of
+ * ticks, not work.
+ */
+const MAX_REMEMBERED = 20;
+
 /** path → blob id the file had when it was marked reviewed. */
 export type ReviewState = Record<string, string>;
 
@@ -116,10 +130,44 @@ export function loadReviewed(key: string): ReviewState {
   }
 }
 
+/**
+ * `recent` with `key` moved to the front, capped at `max`.
+ *
+ * Returns the surviving order and the keys that fell off, so the caller can
+ * delete exactly those — pure, because deciding what to evict is the part worth
+ * testing and `localStorage` is not available under `bun:test`.
+ */
+export function nextRecent(
+  recent: readonly string[],
+  key: string,
+  max = MAX_REMEMBERED,
+): { recent: string[]; evicted: string[] } {
+  const moved = [key, ...recent.filter((k) => k !== key)];
+  return { recent: moved.slice(0, max), evicted: moved.slice(max) };
+}
+
+/** The stored order, with anything that is not a string dropped. */
+function readRecent(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as unknown;
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export function saveReviewed(key: string, state: ReviewState): void {
   try {
-    if (Object.keys(state).length === 0) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify(state));
+    if (Object.keys(state).length === 0) {
+      localStorage.removeItem(key);
+      const kept = readRecent().filter((k) => k !== key);
+      localStorage.setItem(RECENT_KEY, JSON.stringify(kept));
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(state));
+    const { recent, evicted } = nextRecent(readRecent(), key);
+    for (const stale of evicted) localStorage.removeItem(stale);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
   } catch {
     // Private browsing, or the quota is full. Losing review progress is not
     // worth failing the render over.
