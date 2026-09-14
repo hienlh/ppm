@@ -59,7 +59,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         if (projectRef.current) {
           client.send(JSON.stringify({ type: "watch", projectName: projectRef.current }));
         }
-        void syncRunningSessions(projectRef.current);
+        void syncRunningSessions();
         return;
       }
 
@@ -85,6 +85,16 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         return;
       }
 
+      if (type === "session:migrated") {
+        // The server re-keyed the session, so every phase change from here on carries the new
+        // id and the old one's `idle` will never arrive. Drop it now rather than waiting for
+        // the next reconnect to reconcile it away — a socket that stays up for hours would
+        // hold the screen awake for just as long.
+        const d = data as unknown as { oldSessionId: string; newSessionId: string };
+        useStreamingStore.getState().dropSession(d.oldSessionId);
+        return;
+      }
+
       if (type.startsWith("jira:") || type.startsWith("tunnel:")) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));
       }
@@ -104,6 +114,6 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
   useEffect(() => {
     if (!enabled || !projectName) return;
     clientRef.current?.send(JSON.stringify({ type: "watch", projectName }));
-    void syncRunningSessions(projectName);
+    void syncRunningSessions();
   }, [enabled, projectName]);
 }

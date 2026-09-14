@@ -259,12 +259,14 @@ export function hasActiveClient(): boolean {
  * background turn would otherwise show no spinner in the tab strip and no
  * indicator in the document title. Reads the in-memory registry only — no DB.
  */
-export function listRunningSessions(projectName?: string): { sessionId: string; phase: SessionPhase }[] {
-  const running: { sessionId: string; phase: SessionPhase }[] = [];
+export function listRunningSessions(
+  projectName?: string,
+): { sessionId: string; phase: SessionPhase; projectName: string }[] {
+  const running: { sessionId: string; phase: SessionPhase; projectName: string }[] = [];
   for (const [sessionId, entry] of activeSessions) {
     if (entry.phase === "idle") continue;
     if (projectName && entry.projectName !== projectName) continue;
-    running.push({ sessionId, phase: entry.phase });
+    running.push({ sessionId, phase: entry.phase, projectName: entry.projectName ?? "" });
   }
   return running;
 }
@@ -854,6 +856,16 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
               try { (client as any).data.sessionId = newId; } catch { /* ignore */ }
             }
           }
+          // Announce the rename app-wide too. Every later phase change goes out under the
+          // new id, so a client that only hears the global bus — which is every client whose
+          // chat tab is not mounted — would keep the old id marked running for good: its
+          // `idle` is never coming, because nothing is keyed to it any more.
+          broadcastGlobalEvent({
+            type: "session:migrated",
+            oldSessionId: sessionId,
+            newSessionId: newId,
+            projectName: oldEntry?.projectName ?? "",
+          });
           // The consumer must target the new id for every subsequent broadcast —
           // including this session_migrated event — since the entry moved. Without
           // this, a provider that always migrates (e.g. codex: threadId ≠ ppm id)

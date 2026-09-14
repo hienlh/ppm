@@ -101,6 +101,18 @@ describe("Chat REST API", () => {
     expect(Array.isArray(json.data)).toBe(true);
   });
 
+  it("GET /api/chat/sessions/running answers without a project segment", async () => {
+    // The project-scoped twin above can only reconcile the project on screen, which leaves a
+    // stale entry from any other project with nothing able to clear it. This one covers all
+    // projects, so a client can replace its whole map in one call.
+    const res = await app.request(new Request("http://localhost/api/chat/sessions/running"));
+    const json = await res.json() as any;
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(Array.isArray(json.data)).toBe(true);
+  });
+
   it("DELETE /chat/sessions/:id deletes a session", async () => {
     const createRes = await req("/chat/sessions", {
       method: "POST",

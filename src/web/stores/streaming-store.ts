@@ -9,13 +9,27 @@ interface StreamingStore {
   /** Mark a session as streaming or idle */
   setStreaming: (sessionId: string, streaming: boolean, projectName?: string) => void;
   /**
-   * Reconcile one project's streaming set against the server's registry, which
-   * is authoritative. Needed because an `idle` broadcast missed while
-   * `/ws/global` was down would otherwise leave a spinner running forever —
-   * nothing else ever clears it. Scoped per project: the running list only
-   * covers one project, so entries from other projects must survive.
+   * Reconcile the whole map against the server's registry, which is authoritative.
+   *
+   * Needed because an `idle` broadcast missed while `/ws/global` was down — a tablet
+   * asleep, a network change, a server restart mid-turn on an upgrade — otherwise leaves an
+   * entry that nothing can ever clear.
+   *
+   * App-wide, not per project. A per-project reconcile could only reach the project the user
+   * happened to be looking at, so a stale entry from any other project survived every sync
+   * and stayed in the map for the life of the page. That was invisible to the favicon and the
+   * title, which filter by project, but not to the screen wake lock, which asks whether
+   * anything at all is running and so never let the screen sleep again.
    */
-  replaceProjectStreaming: (projectName: string, sessionIds: string[]) => void;
+  replaceAllStreaming: (running: { sessionId: string; projectName: string }[]) => void;
+  /**
+   * Forget a session that the server re-keyed under a new id.
+   *
+   * The rename is announced on the global bus because every later phase change uses the new
+   * id: the old one's `idle` is never coming. Codex re-keys every session (its thread id is
+   * not PPM's), and CLI providers do it as soon as they read their real id from the output.
+   */
+  dropSession: (sessionId: string) => void;
 }
 
 export const useStreamingStore = create<StreamingStore>((set) => ({
@@ -29,14 +43,13 @@ export const useStreamingStore = create<StreamingStore>((set) => ({
       else next.delete(sessionId);
       return { sessions: next };
     }),
-  replaceProjectStreaming: (projectName, sessionIds) =>
+  replaceAllStreaming: (running) =>
+    set(() => ({ sessions: new Map(running.map((s) => [s.sessionId, s.projectName])) })),
+  dropSession: (sessionId) =>
     set((state) => {
-      const running = new Set(sessionIds);
+      if (!state.sessions.has(sessionId)) return state;
       const next = new Map(state.sessions);
-      for (const [id, project] of state.sessions) {
-        if (project === projectName && !running.has(id)) next.delete(id);
-      }
-      for (const id of sessionIds) next.set(id, projectName);
+      next.delete(sessionId);
       return { sessions: next };
     }),
 }));
@@ -50,8 +63,8 @@ export const useStreamingStore = create<StreamingStore>((set) => ({
  * whenever any one of them was working: three PWA windows, one busy, three busy-looking
  * icons, and no way to tell which.
  *
- * No new state is needed for this. The map already records the project per session so
- * `replaceProjectStreaming` can reconcile one project without touching another's entries.
+ * No new state is needed for this: the map records the project per session, which the server's
+ * running list supplies on every reconcile.
  */
 export const selectProjectStreaming =
   (projectName: string | undefined) =>
