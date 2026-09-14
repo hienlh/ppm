@@ -3,6 +3,7 @@ import {
   isReviewed,
   nextUnreviewed,
   pruneReviewed,
+  nextRecent,
   reviewKey,
   firstReviewable,
   reviewedCount,
@@ -142,5 +143,38 @@ describe("firstReviewable", () => {
 
   it("answers null for an empty diff", () => {
     expect(firstReviewable([])).toBeNull();
+  });
+});
+
+describe("nextRecent", () => {
+  const keys = (n: number) => Array.from({ length: n }, (_, i) => `k${i}`);
+
+  it("moves a comparison to the front without duplicating it", () => {
+    expect(nextRecent(["a", "b", "c"], "c").recent).toEqual(["c", "a", "b"]);
+    expect(nextRecent(["a", "b", "c"], "c").evicted).toEqual([]);
+  });
+
+  it("adds one that was not there", () => {
+    expect(nextRecent(["a"], "b").recent).toEqual(["b", "a"]);
+  });
+
+  it("evicts the least recent past the cap, so the keys stop accumulating", () => {
+    // `pruneReviewed` prunes *within* a key; nothing pruned across them, so
+    // every ref pair ever compared kept a `localStorage` record forever.
+    const { recent, evicted } = nextRecent(keys(20), "fresh", 20);
+    expect(recent).toHaveLength(20);
+    expect(recent[0]).toBe("fresh");
+    expect(evicted).toEqual(["k19"]);
+  });
+
+  it("evicts nothing while under the cap", () => {
+    expect(nextRecent(keys(5), "fresh", 20).evicted).toEqual([]);
+  });
+
+  it("a re-touched key cannot evict anything, since the list does not grow", () => {
+    const { recent, evicted } = nextRecent(keys(20), "k7", 20);
+    expect(evicted).toEqual([]);
+    expect(recent).toHaveLength(20);
+    expect(new Set(recent).size).toBe(20);
   });
 });

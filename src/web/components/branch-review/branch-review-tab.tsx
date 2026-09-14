@@ -17,7 +17,7 @@
  *   root is a container of checkouts is where those differ, and handing the
  *   viewer the wrong one shows an empty diff for a file that plainly exists.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { useIsMobile } from "@/hooks/use-is-mobile";
@@ -110,13 +110,33 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
     return () => { cancelled = true; };
   }, [projectName, gitRepo]);
 
+  /**
+   * The comparison currently allowed to write. Change a picker twice on a large
+   * repository and two requests are in flight: the slower one answering last
+   * would put the previous pair's file list under the new pair's pickers, and
+   * `stateKey` below is derived from `base`/`head` — so review ticks would be
+   * read and written against a key that does not describe the list on screen.
+   * Its stale `setLoading(false)` also clears the spinner while the real request
+   * is still running.
+   *
+   * A ref rather than a flag in the effect's cleanup, because the Reload button
+   * calls `loadDiff` outside the effect and races exactly the same way.
+   */
+  const diffRequest = useRef<AbortController | null>(null);
+
   const loadDiff = useCallback(async () => {
     if (!projectName || !gitRepo.repo || !base || !head) return;
+    diffRequest.current?.abort();
+    const request = new AbortController();
+    diffRequest.current = request;
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({ base, head });
-      const result = await api.get<BranchDiff>(gitRepo.gitUrl(`/branch-diff?${params}`));
+      const result = await api.get<BranchDiff>(gitRepo.gitUrl(`/branch-diff?${params}`), {
+        signal: request.signal,
+      });
+      if (request.signal.aborted) return;
       setDiff(result);
       setSelectedPath((current) =>
         current && result.files.some((f) => f.path === current)
@@ -124,18 +144,27 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
           : firstReviewable(result.files)?.path ?? null,
       );
     } catch (e) {
+      if (request.signal.aborted) return;
       setDiff(null);
       setError(e instanceof Error ? e.message : "Could not compare these branches");
     } finally {
-      setLoading(false);
+      if (!request.signal.aborted) setLoading(false);
     }
   }, [projectName, gitRepo, base, head]);
 
-  useEffect(() => { void loadDiff(); }, [loadDiff]);
+  useEffect(() => {
+    void loadDiff();
+    return () => diffRequest.current?.abort();
+  }, [loadDiff]);
 
   // Review progress is keyed by ref names, so it survives new commits; which
   // files are *still* reviewed is decided per file by the blob id.
   const stateKey = projectName && base && head ? reviewKey(projectName, base, head) : null;
+
+  // Which directories are folded describes one file tree. Carrying it into the
+  // next comparison collapses paths that are not the same paths, so a review
+  // opens with folders shut for reasons belonging to the review before it.
+  useEffect(() => { setCollapsed(new Set()); }, [stateKey]);
   useEffect(() => {
     setReviewed(stateKey ? loadReviewed(stateKey) : {});
   }, [stateKey]);
@@ -209,6 +238,14 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
             onToggleReviewed={(file) => commitReviewed(toggleReviewed(reviewed, file))}
           />
         ))}
+        {!!diff?.omitted && (
+          // Said rather than silently dropped: a list that simply ends looks
+          // like a branch with fewer changes than it has, and the count is the
+          // only clue that reviewing this one file-by-file is the wrong tool.
+          <div className="px-3 py-3 text-center text-xs text-text-3">
+            {diff.omitted.toLocaleString()} more {diff.omitted === 1 ? "file" : "files"} not listed.
+          </div>
+        )}
       </div>
     </ScrollArea>
   );
@@ -281,12 +318,15 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
               // Remount per file: the viewer keys its fetch off the props it was
               // mounted with, and a shared instance would keep the previous
               // file's contents while the next one loads.
-              key={`${selected.path}:${diff?.mergeBase}`}
+              key={`${selected.path}:${diff?.mergeBase}:${diff?.headCommit}`}
               metadata={{
                 filePath: gitRepo.projectFile(selected.path),
                 projectName,
                 ref1: diff?.mergeBase,
-                ref2: head,
+                // The resolved commit, never `head` itself: a ref name moves,
+                // and a commit landing mid-review would show the new tip beside
+                // a row whose counts and blob id describe the old one.
+                ref2: diff?.headCommit,
               }}
             />
           ) : (

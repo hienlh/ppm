@@ -109,6 +109,15 @@ export interface BranchDiff {
   head: string;
   mode: "three-dot" | "two-dot";
   mergeBase: string;
+  /**
+   * `head` resolved to a commit, which is what a file must be opened against.
+   * `head` itself is a ref name and moves: a commit landing between the list
+   * fetch and a file being opened would show the new tip beside counts and a
+   * blob id describing the old one.
+   */
+  headCommit: string;
+  /** Files omitted from `files` because the list hit its cap; 0 when complete. */
+  omitted: number;
   files: BranchDiffFile[];
 }
 

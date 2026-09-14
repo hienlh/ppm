@@ -131,6 +131,51 @@ describe("branchDiff", () => {
     await expect(branchDiff(repo, "main..feature", "feature")).rejects.toThrow(/Invalid git ref/);
   });
 
+  it("resolves head to a commit, so the viewer cannot be opened against a moving ref", async () => {
+    // `ref1` was a resolved merge-base while `ref2` was the ref *name*, against
+    // this service's own header promising "one resolved commit so the two
+    // cannot drift". A commit landing between the list fetch and a file being
+    // opened is exactly when that matters.
+    const before = await branchDiff(repo, "main", "feature");
+    expect(before.headCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(before.headCommit).toBe(await git("rev-parse", "feature"));
+
+    writeFileSync(join(repo, "src/after-the-fetch.ts"), "export const late = 1;\n");
+    await git("add", ".");
+    await git("commit", "-m", "lands mid-review");
+
+    // The ref now points somewhere else; the commit the first list described
+    // still exists and still describes it.
+    expect(await git("rev-parse", "feature")).not.toBe(before.headCommit);
+    expect(await git("cat-file", "-t", before.headCommit)).toBe("commit");
+  });
+
+  it("caps the file list and says how many it left out", async () => {
+    await git("checkout", "-b", "bulk", "main");
+    mkdirSync(join(repo, "vendor"), { recursive: true });
+    // Stands in for a vendored dependency or a formatter pass: the list is
+    // returned in one JSON array and rendered un-virtualized, so the cap is
+    // what stops a 20,000-row sidebar and a multi-megabyte response.
+    for (let i = 0; i < 40; i++) {
+      writeFileSync(join(repo, `vendor/f${i}.ts`), `export const n = ${i};\n`);
+    }
+    await git("add", ".");
+    await git("commit", "-m", "vendor drop");
+
+    const full = await branchDiff(repo, "main", "bulk");
+    expect(full.files.length).toBe(40);
+    expect(full.omitted).toBe(0);
+
+    const capped = await branchDiff(repo, "main", "bulk", "three-dot", 5);
+    expect(capped.files.length).toBe(5);
+    expect(capped.omitted).toBe(35);
+    // The kept ones are the head of the same list, not an arbitrary subset, so
+    // a path is either listed or counted and never both.
+    expect(capped.files.map((f) => f.path)).toEqual(full.files.slice(0, 5).map((f) => f.path));
+
+    await git("checkout", "feature");
+  });
+
   it("says so when two refs have no common ancestor", async () => {
     await git("checkout", "--orphan", "unrelated");
     await git("rm", "-rqf", ".");

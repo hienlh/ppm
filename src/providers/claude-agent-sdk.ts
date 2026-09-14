@@ -27,7 +27,7 @@ import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from ".
 import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
-import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript } from "../services/jsonl-transcript-parser.ts";
+import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
@@ -2147,11 +2147,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * linearly ignores the `parentUuid` chain and costs less than the SDK call
    * (40ms for a 6.9MB transcript).
    */
-  async getFullMessages(sessionId: string): Promise<ChatMessage[]> {
+  async getFullMessages(sessionId: string, opts?: { maxBytes?: number }): Promise<ChatMessage[]> {
     const transcriptDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
     if (transcriptDir) {
+      const file = `${transcriptDir}.jsonl`;
+      // Nothing else bounds this path. `validateJsonlPath` guards the route
+      // that serves one chat's pre-compact scroll; the search indexer arrives
+      // here instead, unattended and once per stale session — and a bumped
+      // INDEXER_VERSION makes that every session on disk. Parsing costs about
+      // 4.3× the file in transient allocator growth (measured: 88.6MB → +355MB
+      // RSS, which neither a forced GC nor dropping the array gives back), so
+      // past the bound the newest `FULL_PARSE_MAX_BYTES` are read and the rest
+      // of the history is left out of the index rather than out of memory.
+      // `maxBytes` is a parameter only so a test can assert the window against a
+      // one-byte-over fixture: a real 128MB transcript is a 12s read even when
+      // the point is that most of it goes unread.
+      const fromByte = fullParseWindow(file, opts?.maxBytes);
+      if (fromByte > 0) {
+        console.warn(`[sdk] getFullMessages: ${sessionId} transcript is over the full-parse bound — indexing from byte ${fromByte} on, older segments stay out of the index`);
+      }
       try {
-        const fromFile = await parseJsonlTranscript(`${transcriptDir}.jsonl`);
+        const fromFile = await parseJsonlTranscript(file, undefined, { fromByte });
         if (fromFile.length > 0) return fromFile;
       } catch { /* unreadable or malformed — fall back to the conversation */ }
     }
