@@ -395,6 +395,41 @@ async function handleRepoInfo(
   });
 }
 
+/**
+ * Which commit-window requests a panel still wants the answers to.
+ *
+ * Scrolling fires one `requestCommits` per page and each one spawns two git
+ * processes — the log and the lines-changed pass — with nothing stopping the
+ * previous pair. Pages are additive, so a late *append* is still wanted; what
+ * is not is anything from before the list was last thrown away. Switching
+ * branch or refreshing sends `skip: 0`, which replaces the list, and an
+ * in-flight page-two append landing after that appends the old branch's
+ * commits to the new branch's first page.
+ *
+ * So responses are dropped by generation rather than cancelled — there is no
+ * abort to reach for through the extension spawn API — and the second pass is
+ * skipped outright when it is already stale, which is also what keeps the
+ * process count down while somebody scrolls.
+ */
+export interface CommitRequestState {
+  latest: number;
+  lastReset: number;
+}
+
+/** Record a new request and return its generation. */
+export function beginCommitRequest(state: CommitRequestState, skip: number): number {
+  state.latest += 1;
+  if (skip === 0) state.lastReset = state.latest;
+  return state.latest;
+}
+
+/** True when the list this request was answering has since been replaced. */
+export function isStaleCommitRequest(state: CommitRequestState, generation: number): boolean {
+  return generation < state.lastReset;
+}
+
+const commitRequests = new WeakMap<object, CommitRequestState>();
+
 async function handleRequestCommits(
   vscode: VscodeApi,
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
@@ -409,11 +444,19 @@ async function handleRequestCommits(
   const window = { maxCommits, skip, branch, firstParentOnly: settings.firstParentOnly,
     ordering: settings.commitOrdering };
 
+  let requests = commitRequests.get(panel);
+  if (!requests) {
+    requests = { latest: 0, lastReset: 0 };
+    commitRequests.set(panel, requests);
+  }
+  const generation = beginCommitRequest(requests, skip);
+
   const result = await spawnGit(
     vscode,
     logArgs(window, `--format=%H%n%P%n%an%n%ae%n%at%n%cn%n%ce%n%ct%n%D%n%s%n<END_COMMIT>`),
     projectPath,
   );
+  if (isStaleCommitRequest(requests, generation)) return;
   const commits = parseGitLog(result.stdout);
 
   await panel.webview.postMessage({
@@ -429,6 +472,7 @@ async function handleRequestCommits(
   try {
     const { parseShortstat } = await import("./shortstat-parser.ts");
     const stats = await spawnGit(vscode, logArgs(window, "--format=%H", "--shortstat"), projectPath);
+    if (isStaleCommitRequest(requests, generation)) return;
     await panel.webview.postMessage({
       command: "loadCommitStats",
       data: parseShortstat(stats.stdout),
@@ -438,7 +482,7 @@ async function handleRequestCommits(
   }
 }
 
-interface LogWindow {
+export interface LogWindow {
   maxCommits: number;
   skip: number;
   branch?: string;
@@ -451,8 +495,9 @@ interface LogWindow {
  *
  * Shared so the stats pass sees exactly the same commits as the graph: the two
  * are joined by hash, so a different window would silently leave rows blank.
+ * Exported for its own test — the branch in it comes from a webview.
  */
-function logArgs(window: LogWindow, ...format: string[]): string[] {
+export function logArgs(window: LogWindow, ...format: string[]): string[] {
   const orderFlag = window.ordering === "date" ? "--date-order"
     : window.ordering === "author-date" ? "--author-date-order"
     : "--topo-order";
@@ -460,7 +505,11 @@ function logArgs(window: LogWindow, ...format: string[]): string[] {
   if (window.firstParentOnly) args.push("--first-parent");
   if (window.skip > 0) args.push(`--skip=${window.skip}`);
   if (window.branch && window.branch !== "all") {
-    args.push(window.branch);
+    // The branch came from a webview. git happens to reject a dash-leading
+    // refname on its own, but that is a coincidence rather than a design, and
+    // this window is now spawned twice per request — once for the graph and
+    // once for the stats — so the value reaches git on two paths.
+    args.push(assertValidRef(window.branch, "branch"));
   } else {
     // Exclude stash refs — stashes are loaded separately via handleStashes
     args.push("--exclude=refs/stash", "--all");
@@ -472,8 +521,9 @@ async function handleCommitDetails(
   vscode: VscodeApi,
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
   projectPath: string,
-  hash: string,
+  rawHash: string,
 ): Promise<void> {
+  const hash = assertValidHash(rawHash);
   const result = await spawnGit(vscode, [
     "show", "--numstat", "--format=%H%n%P%n%an%n%ae%n%at%n%cn%n%ce%n%ct%n%B%n<END_MSG>", hash,
   ], projectPath);
@@ -776,6 +826,26 @@ function parseStashes(stdout: string): import("./types.ts").Stash[] {
   });
 }
 
+/**
+ * Files listed for one commit. The uncommitted-status handler two functions
+ * away already caps at the same number; this one capped at nothing, and a
+ * commit touching ten thousand files became ten thousand objects across
+ * `postMessage` and ten thousand rows in one `innerHTML`. A repository you
+ * clone can ship that commit.
+ */
+const MAX_DETAIL_FILES = 500;
+
+/**
+ * Characters of commit message the panel will render.
+ *
+ * `%B` is whatever the author wrote and is not bounded by anything — and the
+ * message then goes through the issue-link matcher, whose span-overlap check is
+ * quadratic in the number of matches. `\b[0-9a-f]{7,40}\b` matches once per
+ * hex-looking word, so a body of them is ~n² comparisons. 100 KB is longer than
+ * any message anyone reads and short enough that the worst case stays cheap.
+ */
+const MAX_MESSAGE_CHARS = 100_000;
+
 function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
   const [headerBlock, rest] = stdout.split("<END_MSG>");
   const lines = headerBlock.trim().split("\n");
@@ -787,12 +857,16 @@ function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
   const committer = lines[5];
   const committerEmail = lines[6];
   const commitDate = parseInt(lines[7], 10);
-  const message = lines.slice(8).join("\n").trim();
+  const full = lines.slice(8).join("\n").trim();
+  const message = full.length > MAX_MESSAGE_CHARS
+    ? `${full.slice(0, MAX_MESSAGE_CHARS)}\n\n[… ${full.length - MAX_MESSAGE_CHARS} more characters]`
+    : full;
 
   // Parse --numstat output for file changes (format: "adds\tdels\tpath")
   const fileChanges: import("./types.ts").FileChange[] = [];
   if (rest) {
     for (const line of rest.trim().split("\n").filter(Boolean)) {
+      if (fileChanges.length >= MAX_DETAIL_FILES) break;
       const numstatMatch = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
       if (numstatMatch) {
         const additions = numstatMatch[1] === "-" ? 0 : parseInt(numstatMatch[1], 10);

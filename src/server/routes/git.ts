@@ -4,6 +4,7 @@ import { gitService } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
 import { gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
+import { realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -23,12 +24,18 @@ export const gitRoutes = new Hono<Env>();
  * project root. Falling back would run the command one directory up and answer
  * with *a* history — the wrong one — which is indistinguishable from a working
  * feature until someone acts on it.
+ *
+ * Both sides go through `realPathOrSelfSync` first. `resolve` is purely
+ * textual, so a symlink inside the project pointing anywhere on the host
+ * resolves to an in-project path, passes, and git runs in the link's target.
+ * Discovery refuses to *offer* such a path, but this parameter comes straight
+ * from the client and is not obliged to be one discovery returned.
  */
 gitRoutes.use("*", async (c, next) => {
   const repo = c.req.query("repo");
   if (repo) {
-    const root = resolve(c.get("projectPath"));
-    const target = resolve(repo);
+    const root = realPathOrSelfSync(resolve(c.get("projectPath")));
+    const target = realPathOrSelfSync(resolve(repo));
     if (target !== root && !target.startsWith(root + sep)) {
       return c.json(err("repo is outside the project"), 400);
     }

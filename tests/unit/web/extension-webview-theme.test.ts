@@ -131,3 +131,34 @@ describe("ExtensionWebview theme wiring", () => {
     expect(source).toContain("command: HOST_THEME_MESSAGE");
   });
 });
+
+describe("the injected block cannot become markup", () => {
+  it("drops angle brackets out of a token value", () => {
+    // The value is interpolated into a <style> element inside srcDoc, where a
+    // "<" ends the element. Today `validate-theme.ts` refuses a token that is
+    // not a colour, but that is a guard in a different subsystem; this one is a
+    // character class here, in the file that does the interpolating.
+    const css = hostThemeCss((name) =>
+      name === "--bg-solid" ? "</style><script>alert(1)</script>" : "",
+    );
+
+    expect(css).not.toContain("<");
+    expect(css).not.toContain(">");
+    expect(css).toContain("--bg:");
+  });
+
+  it("leaves an ordinary colour alone", () => {
+    const css = hostThemeCss((name) => (name === "--accent" ? "oklch(0.7 0.1 250)" : ""));
+
+    expect(css).toContain("--blue: oklch(0.7 0.1 250);");
+  });
+});
+
+describe("the injected theme listener", () => {
+  it("ignores a message from anything but the host frame", () => {
+    // The shim is inside a sandboxed iframe, which any frame on the page can
+    // postMessage to. Without this the theme is whatever the last sender said.
+    expect(injectHostTheme("<html><head></head><body></body></html>", { mode: "dark", css: "" }))
+      .toContain("e.source!==window.parent");
+  });
+});

@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { Hono } from "hono";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitRoutes } from "../../../src/server/routes/git.ts";
@@ -68,7 +68,7 @@ describe("the ?repo= scope guard", () => {
     const { status, body } = await repos(`?repo=${encodeURIComponent(join(project, "frontend"))}`);
     expect(status).toBe(200);
     expect(body.data.rootIsRepo).toBe(true);
-    expect(body.data.repos[0].path).toBe(join(project, "frontend"));
+    expect(body.data.repos[0].path).toBe(realpathSync(join(project, "frontend")));
   });
 
   it("refuses a repository outside the project", async () => {
@@ -103,6 +103,34 @@ describe("the ?repo= scope guard", () => {
       expect(body.error).toContain("outside the project");
     } finally {
       rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlink inside the project that points out of it", async () => {
+    // `resolve()` is purely textual, so `<project>/escape` *is* inside the
+    // project as a string while git would run in whatever it points at. This
+    // is the one case discovery cannot protect against, because the parameter
+    // does not have to be a path discovery returned.
+    const link = join(project, "escape");
+    symlinkSync(outside, link, "dir");
+    try {
+      const { status, body } = await repos(`?repo=${encodeURIComponent(link)}`);
+      expect(status).toBe(400);
+      expect(body.error).toContain("outside the project");
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it("still accepts a symlink that stays inside the project", async () => {
+    const link = join(project, "alias");
+    symlinkSync(join(project, "frontend"), link, "dir");
+    try {
+      const { status, body } = await repos(`?repo=${encodeURIComponent(link)}`);
+      expect(status).toBe(200);
+      expect(body.data.rootIsRepo).toBe(true);
+    } finally {
+      rmSync(link, { force: true });
     }
   });
 

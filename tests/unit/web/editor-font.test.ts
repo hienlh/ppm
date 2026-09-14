@@ -15,6 +15,7 @@
  */
 import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import {
   EDITOR_FONT_FAMILY,
   EDITOR_FONT_LIGATURES,
@@ -23,8 +24,12 @@ import {
   TERMINAL_FONT_FAMILY,
 } from "../../../src/web/lib/editor-font.ts";
 
-const entry = readFileSync("src/web/main.tsx", "utf8");
-const globals = readFileSync("src/web/styles/globals.css", "utf8");
+// Relative to this file, not to the working directory: every other path here
+// already is, and a cwd-relative read only works when the runner happens to
+// have been started from the repository root.
+const WEB = resolve(import.meta.dir, "../../../src/web");
+const entry = readFileSync(join(WEB, "main.tsx"), "utf8");
+const globals = readFileSync(join(WEB, "styles/globals.css"), "utf8");
 
 /** The family a stack asks for first, unquoted. */
 function head(stack: string): string {

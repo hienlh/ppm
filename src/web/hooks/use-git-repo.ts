@@ -37,7 +37,6 @@ export interface UseGitRepo {
   needsPick: boolean;
   /** True when nothing under the project is a repository. */
   noRepo: boolean;
-  loading: boolean;
   /** `gitUrl("/status")`, `gitUrl("/graph?max=50")` — scope included. */
   gitUrl: (suffix: string) => string;
   /** Project-relative → repository-relative; null when outside the repository. */
@@ -53,7 +52,6 @@ export interface UseGitRepo {
 export function useGitRepo(projectName: string | undefined): UseGitRepo {
   const discovery = useGitRepoStore((s) => (projectName ? s.discovery[projectName] : undefined));
   const chosen = useGitRepoStore((s) => (projectName ? s.chosen[projectName] : undefined));
-  const loading = useGitRepoStore((s) => (projectName ? (s.loading[projectName] ?? false) : false));
   const load = useGitRepoStore((s) => s.load);
   const chooseInStore = useGitRepoStore((s) => s.choose);
 
@@ -99,6 +97,13 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
   // every render, and an effect depending on one of those would re-fetch in a
   // loop. Every field is already stable: the store's own values, or a
   // `useCallback` keyed on the resolved repo.
+  //
+  // `loading` is deliberately not one of them. It is the store's in-flight
+  // flag, it went false → true → false on every mount, and nothing read it —
+  // so all it did was hand every consumer three identities where one would do
+  // and fire the first `git blame`, `git status` and file diff three times.
+  // The two identities left are the ones that mean something: before discovery
+  // answers, and after.
   return useMemo(
     () => ({
       repo,
@@ -106,7 +111,6 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
       isNested: !!discovery && !discovery.rootIsRepo && discovery.repos.length > 0,
       needsPick: needsPick(discovery, chosen),
       noRepo: hasNoRepo(discovery),
-      loading,
       gitUrl,
       repoPath,
       projectFile,
@@ -114,6 +118,6 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
       choose,
       reload,
     }),
-    [repo, discovery, chosen, loading, gitUrl, repoPath, projectFile, rebaseStatus, choose, reload],
+    [repo, discovery, chosen, gitUrl, repoPath, projectFile, rebaseStatus, choose, reload],
   );
 }
