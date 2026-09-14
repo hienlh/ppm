@@ -26,7 +26,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   // General
   { id: "command-palette", label: "Command Palette", category: "general", defaultKey: "F1", note: "Shift+Shift also opens (not customizable)" },
   { id: "toggle-sidebar", label: "Toggle Sidebar", category: "general", defaultKey: "Mod+B" },
-  { id: "toggle-dock", label: "Toggle Terminal Panel", category: "general", defaultKey: "Mod+'", note: "Opens/closes the terminal panel; auto-opens a terminal when empty. Fires even when a terminal is focused." },
+  { id: "toggle-dock", label: "Toggle Terminal Panel", category: "general", defaultKey: "Mod+'", note: "Opens/closes the terminal panel; auto-opens a terminal when empty. Fires even when a terminal is focused. Ctrl+` also toggles it on desktop (fixed)." },
   { id: "save-prevent", label: "Prevent Save Dialog", category: "general", defaultKey: "Mod+S", locked: true, note: "Always active — prevents browser save" },
   // Tabs
   { id: "next-tab", label: "Next Tab", category: "tabs", defaultKey: "Alt+]" },
@@ -92,6 +92,19 @@ export function eventMatchesCombo(e: KeyboardEvent, combo: ParsedCombo): boolean
   if (e.altKey !== combo.alt) return false;
   if (e.shiftKey !== combo.shift) return false;
   return e.key.toLowerCase() === combo.key;
+}
+
+/**
+ * VS Code's Ctrl+` — a second, fixed way to toggle the terminal panel, alongside
+ * the customizable `toggle-dock` binding. Desktop only: below `md` the dock is a
+ * bottom sheet the mobile nav owns, and there is no keyboard to press this.
+ *
+ * `isMobile` is passed in rather than read here so the matcher stays pure.
+ */
+const DOCK_BACKTICK_COMBO = parseCombo("Ctrl+`");
+
+export function matchesDockBacktick(e: KeyboardEvent, isMobile: boolean): boolean {
+  return !isMobile && eventMatchesCombo(e, DOCK_BACKTICK_COMBO);
 }
 
 // ---------------------------------------------------------------------------
