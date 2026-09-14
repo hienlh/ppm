@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.19.11] - 2026-09-14
+
+### Fixed
+- **Codex quota reset times appear in the chat panel** — the usage panel beside the chat input now shows when both the five-hour and weekly limits reset, matching Settings.
+
 ## [0.19.10] - 2026-09-14
 
 ### Fixed
