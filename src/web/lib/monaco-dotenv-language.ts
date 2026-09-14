@@ -22,6 +22,7 @@
  * unregistered id is plaintext.
  */
 import type * as MonacoType from "monaco-editor";
+import { basename } from "@/lib/utils";
 
 export const DOTENV_LANGUAGE_ID = "dotenv";
 
@@ -40,7 +41,10 @@ export const DOTENV_LANGUAGE_ID = "dotenv";
  * matches the prefix test but is markdown, and the extension map answers first.
  */
 export function isDotenvFile(filename: string): boolean {
-  const base = filename.split("/").pop() ?? filename;
+  // Both separators: a Windows host hands this a path with backslashes, and
+  // splitting on "/" alone leaves the whole path as the basename, so
+  // C:\\src\\.env failed every one of the three tests below.
+  const base = basename(filename);
   return base === ".env" || base.startsWith(".env.") || base.endsWith(".env");
 }
 

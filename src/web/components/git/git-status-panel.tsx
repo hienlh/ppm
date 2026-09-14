@@ -869,7 +869,7 @@ function FileRow({
             than a hand-rolled tap detector — so a press that became a scroll,
             or one that opened the sheet, cannot also open a diff. */}
         {/* 44px of row on a touch screen, compact where there is a pointer. */}
-        <div className="group relative flex items-center gap-1.5 hover:bg-muted/50 rounded pl-1 py-2.5 md:py-1 w-full min-w-0 select-none">
+        <div className="group relative flex items-center gap-1.5 hover:bg-muted/50 rounded pl-1 py-3 md:py-1 w-full min-w-0 select-none">
           <span
             className={`text-xs font-mono w-3.5 text-center shrink-0 ${STATUS_COLORS[file.status] ?? ""}`}
           >
@@ -1059,7 +1059,7 @@ function TreeNodeView({
           <ContextMenuTrigger asChild>
             <div
               // 44px of row on a touch screen, compact where there is a pointer.
-              className="group relative flex items-center hover:bg-muted/50 rounded py-2.5 md:py-1 select-none"
+              className="group relative flex items-center hover:bg-muted/50 rounded py-3 md:py-1 select-none"
               style={{ paddingLeft: depth * TREE_INDENT }}
             >
               <button

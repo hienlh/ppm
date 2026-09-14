@@ -31,13 +31,24 @@ function sources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Repo-relative with forward slashes.
+ *
+ * `relative` answers with backslashes on Windows, so comparing its result to
+ * `GENERATED` fails there — the suite would be red on one platform and green
+ * on the other, for a reason that has nothing to do with icons.
+ */
+function rel(file: string): string {
+  return relative(WEB, file).replaceAll("\\", "/");
+}
+
 const files = sources(WEB);
 
 describe("one icon set, enforced by the import path", () => {
   it("has exactly one file importing lucide-react", () => {
     const offenders = files
       .filter((f) => /["']lucide-react["']/.test(readFileSync(f, "utf8")))
-      .map((f) => relative(WEB, f));
+      .map(rel);
     expect(offenders).toEqual([GENERATED]);
   });
 
@@ -49,7 +60,7 @@ describe("one icon set, enforced by the import path", () => {
     const known = new Set([...FLUENT_NAMES, ...LUCIDE_NAMES]);
     const unknown = new Set<string>();
     for (const f of files) {
-      if (relative(WEB, f) === GENERATED) continue;
+      if (rel(f) === GENERATED) continue;
       const src = readFileSync(f, "utf8");
       for (const m of src.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*"@\/lib\/icons"/gs)) {
         for (const raw of m[1]!.split(",")) {

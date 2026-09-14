@@ -339,6 +339,14 @@ const ts = `/**
  * class each: 500 KB of full-colour SVG has no business in a JS bundle, and as
  * CSS the browser decodes each icon once however many rows use it — which is
  * also how VS Code draws its own file icon themes.
+ *
+ * Every table has a null prototype. These are looked up by a *filename*, and an
+ * object literal answers for \`constructor\`, \`toString\`, \`valueOf\`,
+ * \`hasOwnProperty\` and \`__proto__\` with something inherited and truthy — so
+ * \`fileIconName("constructor")\` returned the \`Object\` function and
+ * \`fileIconName("__proto__")\` returned \`Object.prototype\`, each interpolated
+ * into a class as \`vsi-function Object() { [native code] }\`. A file really can
+ * be called \`constructor\`; a directory really can be called \`toString\`.
  */
 
 /** Lowercased extension → icon class suffix. */
@@ -367,6 +375,13 @@ export const DEFAULT_FOLDER_OPEN_ICON = ${JSON.stringify(DEFAULT_FOLDER_OPEN)};
 
 /** Every icon this module can name, for the test that pairs the two files. */
 export const ICON_NAMES: readonly string[] = ${JSON.stringify(names)};
+
+// After the literals rather than \`Object.create(null)\` around each, so the
+// tables above stay readable as data and \`Record<string, string>\` still
+// describes them.
+for (const table of [EXTENSION_ICONS, FILENAME_ICONS, FOLDER_ICONS, FOLDER_OPEN_ICONS]) {
+  Object.setPrototypeOf(table, null);
+}
 `;
 
 /**

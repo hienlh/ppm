@@ -33,10 +33,31 @@ function sources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Source with comments and type declarations removed.
+ *
+ * Both are places a handler name appears without anything being wired to it,
+ * and both are exactly where these names *do* appear: an interface declaring
+ * the handler is optional, and a comment explaining why it is the one that
+ * matters. A scan over the raw text is satisfied by either.
+ */
+function codeOnly(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/(?:export\s+)?(?:interface|type)\s+\w+[^{;]*\{[\s\S]*?\n\}/g, "");
+}
+
 /** Files that both handle touchstart and arm a timer — i.e. hold a press open. */
 function pressSites(): { file: string; src: string }[] {
   return sources(WEB)
-    .map((file) => ({ file: relative(WEB, file), src: readFileSync(file, "utf8") }))
+    // Separators are normalised: `relative` answers with backslashes on Windows,
+    // so every `toContain` below would miss and the suite would go red there
+    // while passing here.
+    .map((file) => ({
+      file: relative(WEB, file).replaceAll("\\", "/"),
+      src: readFileSync(file, "utf8"),
+    }))
     .filter(({ src }) => /onTouchStart/.test(src) && /setTimeout/.test(src));
 }
 
@@ -55,8 +76,14 @@ describe("a long-press is disarmed when the browser takes the gesture", () => {
   });
 
   it("handles touchcancel everywhere a press is armed", () => {
+    // Matched against code with comments and type declarations removed, and
+    // against a *binding* rather than a mention. `use-coarse-long-press.ts`
+    // names `onTouchCancel` three times — once in `LongPressHandlers`, once in
+    // the comment explaining why it matters, and once where it is actually
+    // wired — so scanning the raw text stayed green with the wiring deleted,
+    // which is the single line this whole suite exists to protect.
     const missing = pressSites()
-      .filter(({ src }) => !/onTouchCancel|"touchcancel"|'touchcancel'/.test(src))
+      .filter(({ src }) => !/onTouchCancel\s*[:=]|addEventListener\(\s*["']touchcancel["']/.test(codeOnly(src)))
       .map(({ file }) => file);
     expect(missing).toEqual([]);
   });
