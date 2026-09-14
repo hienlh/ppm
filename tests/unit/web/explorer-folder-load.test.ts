@@ -18,7 +18,11 @@ import { describe, it, expect, mock, beforeEach } from "bun:test";
 const pending: { url: string; resolve: (v: unknown) => void; aborted: boolean }[] = [];
 let getCalls: string[] = [];
 
-mock.module("/home/thawngho/Projects/ppm/src/web/lib/api-client.ts", () => ({
+// Relative, like every other `mock.module` in the suite. An absolute path is
+// one machine's checkout: in any other clone — or in a second worktree of this
+// one — it names a file outside the run, the real `api-client` is loaded
+// instead, and these two tests fail on a network call nobody made.
+mock.module("../../../src/web/lib/api-client.ts", () => ({
   projectUrl: (name: string) => `/api/projects/${name}`,
   api: {
     get: (url: string, opts?: { signal?: AbortSignal }) => {
@@ -38,7 +42,7 @@ mock.module("/home/thawngho/Projects/ppm/src/web/lib/api-client.ts", () => ({
   },
 }));
 
-const { useFileStore } = await import("/home/thawngho/Projects/ppm/src/web/stores/file-store.ts");
+const { useFileStore } = await import("../../../src/web/stores/file-store.ts");
 
 const FOLDER = "src/app/notification-campaigns";
 
