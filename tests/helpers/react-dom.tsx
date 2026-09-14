@@ -30,6 +30,15 @@ const DOM_GLOBALS = [
 export function installDom(url = "http://localhost/"): void {
   if ((globalThis as Record<string, unknown>).__ppmDomInstalled) return;
   const w = new Window({ url });
+  // A document with no doctype is in quirks mode, and libraries say so at
+  // runtime rather than failing — KaTeX prints a warning into every test that
+  // renders markdown. The doctype alone is not enough: happy-dom does not
+  // implement `compatMode` at all, and the check is against its *value*, so an
+  // absent property reads as quirks however the document was written.
+  w.document.write("<!DOCTYPE html><html><head></head><body></body></html>");
+  if ((w.document as unknown as { compatMode?: string }).compatMode === undefined) {
+    Object.defineProperty(w.document, "compatMode", { value: "CSS1Compat", configurable: true });
+  }
   for (const key of DOM_GLOBALS) {
     const value = (w as unknown as Record<string, unknown>)[key];
     if (value !== undefined) (globalThis as Record<string, unknown>)[key] = value;
