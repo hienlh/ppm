@@ -106,6 +106,26 @@ interface LiveSession {
   compactRequested?: boolean;
   /** Token counts from the most recent usage notification, attached to `done`. */
   lastUsage?: import("../../shared/turn-usage.ts").TurnUsage;
+  /** A turn is running on the thread. Codex accepts exactly one at a time: a
+   *  second `turn/start` resolves with the ALREADY-RUNNING turn (same id,
+   *  status `inProgress`) and silently discards the new input — no error, so
+   *  nothing downstream can notice. Follow-ups therefore wait in `pendingTurns`
+   *  and are sent when the running turn reports `turn/completed`. */
+  turnInFlight?: boolean;
+  /** Id of the running turn — `turn/interrupt` needs it, `threadId` alone is rejected. */
+  activeTurnId?: string | null;
+  /** Interrupt asked for before `turn/started` named the turn; fired on arrival. */
+  interruptRequested?: boolean;
+  /** Follow-ups waiting for the current turn, in the order they will be sent. */
+  pendingTurns: QueuedTurn[];
+}
+
+/** A follow-up held back because a turn was already running. */
+interface QueuedTurn {
+  message: string;
+  opts?: SendMessageOpts;
+  /** `later` sinks to the end of the queue; `now`/`next` go in front of it. */
+  priority: "now" | "next" | "later";
 }
 
 interface EventChannel {
@@ -310,6 +330,15 @@ export class CodexAppServerProvider implements AIProvider {
 
   private startTurn(live: LiveSession, message: string, opts?: SendMessageOpts): void {
     if (!live.threadId) return;
+    // One turn at a time — anything sent now would be dropped without a trace.
+    // `now` additionally cuts the running turn short so this one answers next.
+    if (live.turnInFlight) {
+      const priority = opts?.priority ?? "next";
+      this.enqueueTurn(live, { message, opts, priority });
+      if (priority === "now") this.interruptActiveTurn(live);
+      return;
+    }
+    live.turnInFlight = true;
     // `/compact` → trigger codex's real compaction (thread/compact/start), not a text turn.
     // Completion is surfaced on the `thread/compacted` notification (handleNotification).
     if (message.trim() === "/compact") {
@@ -318,6 +347,7 @@ export class CodexAppServerProvider implements AIProvider {
         live.compactRequested = false;
         if (!live.client.isClosed) live.channel.push({ type: "error", message: redactTruncate((err as Error)?.message ?? String(err), 256) });
         live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
+        this.endTurn(live);
       });
       return;
     }
@@ -335,9 +365,53 @@ export class CodexAppServerProvider implements AIProvider {
       threadId: live.threadId,
       input,
       ...(turnModel ? { model: turnModel } : {}),
+    }).then((res) => {
+      // Backup for the `turn/started` notification, which is what normally names
+      // the turn — an interrupt arriving in between has nothing to address.
+      const id = (res as { turn?: { id?: string } })?.turn?.id;
+      if (id && !live.activeTurnId) this.setActiveTurn(live, id);
     }).catch((err) => {
       if (!live.client.isClosed) live.channel.push({ type: "error", message: redactTruncate((err as Error)?.message ?? String(err), 256) });
+      // No turn is running, so nothing will report `turn/completed` — release the
+      // queue here or every later follow-up waits on a turn that never existed.
+      this.endTurn(live);
     });
+  }
+
+  /** Insert a follow-up: `later` sinks behind everything, `now`/`next` queue ahead of it. */
+  private enqueueTurn(live: LiveSession, item: QueuedTurn): void {
+    if (item.priority === "later") {
+      live.pendingTurns.push(item);
+      return;
+    }
+    const firstLater = live.pendingTurns.findIndex((q) => q.priority === "later");
+    if (firstLater === -1) live.pendingTurns.push(item);
+    else live.pendingTurns.splice(firstLater, 0, item);
+  }
+
+  /** Cut the running turn short. Falls back to waiting it out when the interrupt
+   *  cannot be sent — the follow-up stays queued either way, never dropped. */
+  private interruptActiveTurn(live: LiveSession): void {
+    if (!live.activeTurnId) { live.interruptRequested = true; return; }
+    live.client.request("turn/interrupt", { threadId: live.threadId, turnId: live.activeTurnId })
+      .catch(() => { /* turn already ending — the queue drains on turn/completed */ });
+  }
+
+  private setActiveTurn(live: LiveSession, turnId: string): void {
+    live.activeTurnId = turnId;
+    if (live.interruptRequested) {
+      live.interruptRequested = false;
+      this.interruptActiveTurn(live);
+    }
+  }
+
+  /** Running turn is over: send the next follow-up, if one is waiting. */
+  private endTurn(live: LiveSession): void {
+    live.turnInFlight = false;
+    live.activeTurnId = null;
+    live.interruptRequested = false;
+    const next = live.pendingTurns.shift();
+    if (next) this.startTurn(live, next.message, next.opts);
   }
 
   private async connect(sessionId: string, opts?: SendMessageOpts): Promise<LiveSession> {
@@ -352,6 +426,7 @@ export class CodexAppServerProvider implements AIProvider {
       client, threadId: null, cwd, channel, permission, model,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
+      pendingTurns: [],
     };
     this.live.set(sessionId, live);
 
@@ -434,6 +509,14 @@ export class CodexAppServerProvider implements AIProvider {
       }
       live.currentAssistant = "";
       live.currentEvents = [];
+      this.endTurn(live);
+    }
+    if (notif.method === "turn/started") {
+      // Codex is the authority on whether the thread is busy — take the flag from
+      // it rather than only from what this side believes it started.
+      live.turnInFlight = true;
+      const id = (notif.params as { turn?: { id?: string } })?.turn?.id;
+      if (id) this.setActiveTurn(live, id);
     }
     // Manual /compact finished — codex signals via the contextCompaction item
     // (the thread/compacted notification is deprecated). Surface the compact-summary

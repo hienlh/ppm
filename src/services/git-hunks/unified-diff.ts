@@ -334,6 +334,7 @@ export function hunkFingerprint(hunk: DiffHunk): string {
 export function resolveRequestedHunks(
   parsed: ParsedDiff,
   requested: { hunk: number; id: string; lines?: number[] }[],
+  opts?: { refuseMoved?: boolean },
 ): { hunk: number; lines?: number[] }[] {
   const fingerprints = parsed.hunks.map(hunkFingerprint);
   const taken = new Set<number>();
@@ -352,7 +353,20 @@ export function resolveRequestedHunks(
     }
     // The same edit can appear twice in one file; prefer the position the
     // client actually saw it at before falling back to the first free match.
-    const index = candidates.includes(entry.hunk) ? entry.hunk : candidates[0]!;
+    const atClientIndex = candidates.includes(entry.hunk);
+    if (!atClientIndex && opts?.refuseMoved) {
+      // The fingerprint is content only, so two identical edits in one file are
+      // the same value here. That makes "the hunk you ticked moved down the
+      // list" and "the copy you ticked is gone, this is the other one"
+      // indistinguishable — both leave one free candidate at a different index.
+      // Following it is right when the change can be undone and wrong when it
+      // cannot, so the caller with no reflog behind it asks the user to look
+      // again instead.
+      throw new Error(
+        "This change moved in the file since it was listed, and the same edit can appear more than once. Reload and pick it again.",
+      );
+    }
+    const index = atClientIndex ? entry.hunk : candidates[0]!;
     taken.add(index);
     return entry.lines ? { hunk: index, lines: entry.lines } : { hunk: index };
   });
