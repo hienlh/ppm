@@ -15,6 +15,7 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { configService } from "./config.service.ts";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getOrFetchUsage } from "./provider-usage/usage-registry.ts";
+import { isCodexAccountUsageLimited } from "./codex-account-cooldown.ts";
 import type { UsageInfo } from "../providers/provider.interface.ts";
 
 export type CodexStrategy = "round-robin" | "fill-first" | "lowest-usage";
@@ -163,6 +164,22 @@ export function setCodexStrategy(strategy: CodexStrategy): void {
 const FIVE_HOUR_SKIP_THRESHOLD = 0.95;
 
 /**
+ * The utilisation an account should be judged on, as a 0-1 fraction.
+ *
+ * Not every plan has a short window. A ChatGPT Business account reports a weekly quota and
+ * nothing else, so reading `fiveHour` alone finds nothing there and reports the account as
+ * unreadable — which sends it to the back of `lowest-usage` and exempts it from the cap
+ * skip, for an account whose usage is in fact perfectly well known. Falling through to the
+ * weekly figure judges it on the only limit it actually has.
+ *
+ * `Infinity` still means genuinely unreadable: a failed fetch de-prioritises the account
+ * rather than reading as a flattering 0%.
+ */
+export function codexUsageLevel(usage?: UsageInfo): number {
+  return usage?.fiveHour ?? usage?.sevenDay ?? Number.POSITIVE_INFINITY;
+}
+
+/**
  * Drop accounts with no five-hour room left, unless that would leave nothing.
  *
  * Soft on purpose, mirroring the Claude selector: a throttled turn beats no turn, so when
@@ -184,22 +201,40 @@ function withFiveHourRoom(
 }
 
 /**
+ * Drop accounts Codex itself refused for an exhausted quota, unless that would leave nothing.
+ *
+ * Complements the five-hour skip rather than repeating it. That one reads a usage figure
+ * served from a two-minute cache, so an account that hit its cap moments ago still looks
+ * like it has room; this one reads the refusal Codex just gave us, which is current by
+ * definition. Soft for the same reason as the skip above: a park is a guess at when the
+ * quota returns, and handing back a parked account beats handing back nothing.
+ */
+function withQuotaLeft(accts: CodexAccount[]): CodexAccount[] {
+  const usable = accts.filter((a) => !isCodexAccountUsageLimited(a.id));
+  return usable.length > 0 ? usable : accts;
+}
+
+/**
  * Pick an account by strategy. `usageOf` (optional, from P4) enables lowest-usage;
  * without it lowest-usage falls back to round-robin.
  *
  * `usageOf` also drives the five-hour skip, so a caller that supplies it gets an account
  * with room rather than merely the least-used one among several that are all capped.
  */
-export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: (id: string) => number }): CodexAccount | null {
+export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: (id: string) => number; exclude?: string[] }): CodexAccount | null {
   // Disabled is a hard exclusion with no fallback, unlike the five-hour skip below. Being
   // capped means a slower turn; being switched off is the user saying don't use this, and
   // handing it back anyway because nothing else was left would ignore them.
-  const all = listCodexAccounts().filter((a) => a.status !== "disabled");
+  //
+  // `exclude` is hard for the same reason: its only caller is the rotation away from an
+  // account that just refused the turn, and falling back to it would rotate in a circle.
+  const excluded = new Set(opts?.exclude ?? []);
+  const all = listCodexAccounts().filter((a) => a.status !== "disabled" && !excluded.has(a.id));
   if (all.length === 0) return null;
   if (all.length === 1) return all[0]!;
   const strategy = opts?.strategy ?? getCodexStrategy();
   const usageOf = opts?.usageOf;
-  const accts = withFiveHourRoom(all, usageOf);
+  const accts = withFiveHourRoom(withQuotaLeft(all), usageOf);
   if (accts.length === 1) return accts[0]!;
   if (strategy === "fill-first") return accts[0]!;
   if (strategy === "lowest-usage" && usageOf) {
@@ -225,9 +260,10 @@ export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: 
  * null rather than guessing at one.
  */
 export function peekCodexAccount(): CodexAccount | null {
-  // Status is the one thing this can filter on without going async, so it does. Usage lives
-  // behind a fetch and stays out of reach here; the consuming pick endpoint reads it instead.
-  const accts = listCodexAccounts().filter((a) => a.status !== "disabled");
+  // Status and the quota park are the two things this can filter on without going async, so
+  // it does both. Usage lives behind a fetch and stays out of reach here; the consuming pick
+  // endpoint reads it instead.
+  const accts = withQuotaLeft(listCodexAccounts().filter((a) => a.status !== "disabled"));
   if (accts.length === 0) return null;
   if (accts.length === 1) return accts[0]!;
   return getCodexStrategy() === "fill-first" ? accts[0]! : null;
@@ -240,9 +276,19 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   const sticky = sessionId ? getSessionCodexAccount(sessionId) : null;
   // A binding is held for the prompt cache, not honoured unconditionally: an account the
   // user has switched off has to let go of the sessions sitting on it, or turning it off
-  // would do nothing for exactly the conversations already using it.
-  if (sticky) { const a = getCodexAccount(sticky); if (a && a.status !== "disabled") return a; }
-  if (listCodexAccounts().filter((a) => a.status !== "disabled").length <= 1) return selectCodexAccount();
+  // would do nothing for exactly the conversations already using it. An account parked for
+  // an exhausted quota lets go for a different reason — it would refuse the turn, and
+  // spending one to rediscover that is worse than starting on an account that can answer.
+  if (sticky) {
+    const a = getCodexAccount(sticky);
+    if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
+  }
+  // Usage is only worth fetching when it can change the answer, and with at most one
+  // account able to serve it cannot. Parked accounts count as unable for the same reason
+  // they are skipped below, so a pool of two where one is out of quota resolves without a
+  // network read at all.
+  const usable = listCodexAccounts().filter((a) => a.status !== "disabled" && !isCodexAccountUsageLimited(a.id));
+  if (usable.length <= 1) return selectCodexAccount();
   // Usage is read for every strategy, not just lowest-usage: it is also what lets the
   // selector skip an account with no five-hour room left. Reading it only for lowest-usage
   // left that skip inert under round-robin, which is the default — sessions kept landing on
@@ -252,7 +298,7 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   // A failed usage fetch (broken/expired account) yields {} → treat as +Infinity so
   // lowest-usage de-prioritizes it instead of preferring it as "0% used".
   const usages = await getAllCodexUsages();
-  return selectCodexAccount({ usageOf: (id) => usages[id]?.fiveHour ?? Number.POSITIVE_INFINITY });
+  return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
 }
 
 // ── Usage (per account) ──

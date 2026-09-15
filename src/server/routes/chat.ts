@@ -498,6 +498,23 @@ chatRoutes.put("/sessions/:id/account", async (c) => {
   if (!bindPickedAccount(sessionId, providerId, body.accountId)) {
     return c.json(err(bindRefusalReason(providerId, body.accountId)), 400);
   }
+  // Codex binds an account by spawning its app-server with that account's CODEX_HOME, so a
+  // subprocess already running keeps serving the old account however the binding reads — the
+  // switch appeared to do nothing until something else happened to kill it. Dropping it while
+  // idle makes the next message respawn on the account the user just picked. Claude needs
+  // none of this: it reads the binding per turn, and there is nothing stale to clear.
+  if (providerId === "codex") {
+    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
+    // Never mid-turn. The answer being streamed would be lost, and the switch takes effect
+    // on the next message either way — which is exactly what the picker promises.
+    if (!listRunningSessions().some((s) => s.sessionId === sessionId)) {
+      dropIdleSubprocess(
+        sessionId,
+        "account_switch",
+        "Subprocess released: the session was moved to another Codex account",
+      );
+    }
+  }
   return c.json(ok({ accountId: body.accountId }));
 });
 
@@ -893,7 +910,7 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     const mode: StripMode = (body as { mode?: unknown }).mode === "all" ? "all" : "oversized";
     const includeAttachments = (body as { includeAttachments?: unknown }).includeAttachments === true;
 
-    const { listRunningSessions, dropSubprocessForTranscriptRewrite } = await import("../ws/chat.ts");
+    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
     if (listRunningSessions().some((s) => s.sessionId === sessionId)) {
       return c.json(err("Session is running — wait for the turn to finish"), 409);
     }
@@ -906,7 +923,11 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     // re-sends the oversized attachment from memory and fails exactly as before, which is the
     // failure this endpoint exists to clear. Drop it so the turn is rebuilt from the file we
     // are about to rewrite.
-    dropSubprocessForTranscriptRewrite(sessionId);
+    dropIdleSubprocess(
+      sessionId,
+      "transcript_rewritten",
+      "Subprocess released: the transcript was rewritten, so the next turn is rebuilt from disk",
+    );
 
     const result = await stripTranscriptImagesFile(found.path, mode, { includeAttachments });
     return c.json(ok({

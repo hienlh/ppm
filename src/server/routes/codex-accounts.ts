@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
-import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, type CodexStrategy } from "../../services/codex-account.service.ts";
-import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin } from "../../services/codex-account-login.ts";
+import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, codexUsageLevel, type CodexStrategy } from "../../services/codex-account.service.ts";
+import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin, startBrowserLogin, submitBrowserCallback, getBrowserLoginStatus, cancelBrowserLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
@@ -29,7 +29,7 @@ codexAccountsRoutes.post("/pick", async (c) => {
   const usages = await getAllCodexUsages();
   // A failed usage fetch yields {} → +Infinity, which the selector reads as "unknown", not
   // as "capped": an account we could not measure stays a candidate.
-  const picked = selectCodexAccount({ usageOf: (id) => usages[id]?.fiveHour ?? Number.POSITIVE_INFINITY });
+  const picked = selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
   if (!picked) return c.json(ok(null));
   return c.json(ok({ id: picked.id, label: picked.label }));
 });
@@ -83,6 +83,35 @@ codexAccountsRoutes.get("/device-login/:id/status", (c) => c.json(ok(getDeviceLo
 /** Abandon a device login the user closed out of. */
 codexAccountsRoutes.delete("/device-login/:id", (c) => {
   cancelDeviceLogin(c.req.param("id"));
+  return c.json(ok({ cancelled: true }));
+});
+
+/** Browser OAuth uses the same durable polling as device-code login. */
+codexAccountsRoutes.post("/browser-login", async (c) => {
+  const body = await c.req.json<{ label?: string }>().catch(() => ({} as { label?: string }));
+  if (body.label !== undefined && typeof body.label !== "string") return c.json(err("label must be a string"), 400);
+  c.header("Cache-Control", "no-store");
+  try { return c.json(ok(await startBrowserLogin(body.label))); }
+  catch (e) { return c.json(err((e as Error).message), 400); }
+});
+
+codexAccountsRoutes.post("/browser-login/:id/callback", async (c) => {
+  const body = await c.req.json<{ callbackUrl?: string }>().catch(() => ({} as { callbackUrl?: string }));
+  c.header("Cache-Control", "no-store");
+  if (typeof body.callbackUrl !== "string") return c.json(err("callbackUrl is required"), 400);
+  try {
+    submitBrowserCallback(c.req.param("id"), body.callbackUrl);
+    return c.json(ok({ submitted: true }));
+  } catch (e) { return c.json(err((e as Error).message), 400); }
+});
+
+codexAccountsRoutes.get("/browser-login/:id/status", (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(ok(getBrowserLoginStatus(c.req.param("id"))));
+});
+
+codexAccountsRoutes.delete("/browser-login/:id", (c) => {
+  cancelBrowserLogin(c.req.param("id"));
   return c.json(ok({ cancelled: true }));
 });
 
