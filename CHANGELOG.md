@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.20.6] - 2026-09-15
+
+### Added
+- **Codex context settings with presets** — choose a context window and auto-compaction threshold, enter a custom value, or keep Codex defaults.
+- **Shared native provider memory** — Claude and Codex can share provider memory with bounded session context.
+
+### Fixed
+- **Chat recovers from stalled realtime connections** — reconnects silent sockets, restores missing completed replies, and applies replay before live events without duplicating history or discarding healthy completion metadata.
+- **Session usage follows the selected account** — the toolbar no longer combines one account's name with another account's quota after switching accounts.
+
 ## [0.20.5] - 2026-09-15
 
 ### Fixed
