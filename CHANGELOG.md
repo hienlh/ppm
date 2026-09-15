@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.20.7] - 2026-09-15
+
+### Fixed
+- **Reconnecting overlay clears while chat streams** after the provider assigns a new session ID or reconnects before any events are buffered.
+- **Selected model survives the first turn and reload** — model, effort and thinking settings follow the provider's new session ID.
+
 ## [0.20.6] - 2026-09-15
 
 ### Added
