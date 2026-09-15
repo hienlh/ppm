@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { PanelBottom, GitBranch, ArrowUp, ArrowDown, Check } from "@/lib/icons";
 import { useExtensionStore, type StatusBarItemUI } from "@/stores/extension-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -11,6 +11,7 @@ import { ThemePicker } from "@/components/settings/theme-picker";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { WakeLockStatusBarItem } from "@/components/layout/wake-lock-indicator";
 import { countDockTabs } from "@/components/layout/dock-tabs";
+import { BranchPicker } from "@/components/git/branch-picker";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { cn } from "@/lib/utils";
 
@@ -59,34 +60,56 @@ export const StatusBar = memo(function StatusBar() {
   );
 });
 
-/** Git branch + ahead/behind + synced indicator for the active project. */
+/**
+ * Git branch + ahead/behind + synced indicator for the active project, and the
+ * one way into the branch picker — the same gesture as VS Code's, where this
+ * item is the trigger for "Select a branch or tag to checkout".
+ *
+ * The whole group is the button, counts included, because that is what VS Code
+ * makes clickable; the bar is `hidden md:flex`, so the picker it opens is
+ * desktop-only by construction rather than by a second breakpoint check.
+ */
 const GitStatus = memo(function GitStatus() {
   const activeProjectName = useProjectStore((s) => s.activeProject?.name ?? null);
   const meta = useGitStatusStore((s) => (activeProjectName ? s.meta.get(activeProjectName) : undefined));
+  const [pickerOpen, setPickerOpen] = useState(false);
 
-  if (!meta?.branch) return null;
+  if (!meta?.branch || !activeProjectName) return null;
   const { branch, ahead, behind, tracking } = meta;
   const synced = !!tracking && ahead === 0 && behind === 0;
 
   return (
-    <span className="flex items-center gap-2 min-w-0">
-      <span className="flex items-center gap-1 text-primary min-w-0" title={tracking ? `Tracking ${tracking}` : "No upstream"}>
-        <GitBranch className="size-3 shrink-0" />
-        <span className="truncate max-w-[140px]">{branch}</span>
-      </span>
-      {/* On a bar under 36rem the counts give way, so the branch name stays readable. */}
-      {(ahead > 0 || behind > 0) && (
-        <span className="flex items-center gap-1.5 shrink-0 @max-xl:hidden">
-          {ahead > 0 && <span className="flex items-center gap-0.5"><ArrowUp className="size-3" />{ahead}</span>}
-          {behind > 0 && <span className="flex items-center gap-0.5"><ArrowDown className="size-3" />{behind}</span>}
+    <>
+      <button
+        onClick={() => setPickerOpen(true)}
+        title={`Checkout a branch or tag — ${tracking ? `tracking ${tracking}` : "no upstream"}`}
+        aria-label={`Current branch ${branch}. Checkout a branch or tag`}
+        // `bg-accent/15` is shadcn's hover *surface* at 15% over a near-identical
+        // panel — measured at a 1.01 contrast ratio, i.e. no hover at all. The
+        // brand blue lives in `primary`; see the note in `branch-picker.tsx`.
+        className="flex items-center gap-2 min-w-0 px-1 rounded-sm transition-colors hover:bg-primary/10"
+      >
+        <span className="flex items-center gap-1 text-primary min-w-0">
+          <GitBranch className="size-3 shrink-0" />
+          <span className="truncate max-w-[140px]">{branch}</span>
         </span>
+        {/* On a bar under 36rem the counts give way, so the branch name stays readable. */}
+        {(ahead > 0 || behind > 0) && (
+          <span className="flex items-center gap-1.5 shrink-0 @max-xl:hidden">
+            {ahead > 0 && <span className="flex items-center gap-0.5"><ArrowUp className="size-3" />{ahead}</span>}
+            {behind > 0 && <span className="flex items-center gap-0.5"><ArrowDown className="size-3" />{behind}</span>}
+          </span>
+        )}
+        {synced && (
+          <span className="flex items-center gap-1 text-success shrink-0 @max-xl:hidden">
+            <Check className="size-3" />synced
+          </span>
+        )}
+      </button>
+      {pickerOpen && (
+        <BranchPicker projectName={activeProjectName} onClose={() => setPickerOpen(false)} />
       )}
-      {synced && (
-        <span className="flex items-center gap-1 text-success shrink-0 @max-xl:hidden">
-          <Check className="size-3" />synced
-        </span>
-      )}
-    </span>
+    </>
   );
 });
 
