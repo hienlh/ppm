@@ -32,6 +32,9 @@ accountsRoutes.get("/", (c) => {
   const accounts = accountService.list().map((acc) => ({
     ...acc,
     hasRefreshToken: accountService.hasRefreshToken(acc.id),
+    // When this account's sign-in stops being valid, so the card can warn instead of
+    // waiting for the turn that fails. Null where PPM never recorded the grant.
+    grantExpiresAt: accountService.grantExpiresAt(acc),
   }));
   return c.json(ok(accounts));
 });
@@ -389,7 +392,9 @@ accountsRoutes.patch("/:id", async (c) => {
       // Only for an account that has a refresh token: a temporary one has nothing to prove,
       // and setEnabled()'s own guard says something more useful than a refresh error would.
       if (wasParked && accountService.hasRefreshToken(id)) {
-        const proof = await accountService.ensureFreshTokenChecked(id);
+        // Enabling is a deliberate gesture, so it re-tests a grant PPM has already
+        // written off — the check exists to catch a rejection, not to trust a stored one.
+        const proof = await accountService.ensureFreshTokenChecked(id, { retryRejected: true });
         if (!proof.account) {
           // Worth splitting: invalid_grant means the token is gone and only a fresh sign-in
           // brings it back, while a network drop or a 429 is worth trying again in a minute.

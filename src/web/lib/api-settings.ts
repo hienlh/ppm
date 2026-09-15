@@ -40,6 +40,12 @@ export interface AccountInfo {
   profileData: OAuthProfileData | null;
   createdAt: number;
   hasRefreshToken: boolean;
+  /** When the current sign-in was made. Null for accounts added before PPM recorded it. */
+  grantedAt: number | null;
+  /** The OAuth server rejected this account's refresh token; only signing in again fixes it. */
+  reauthRequired: boolean;
+  /** When the sign-in stops working, server-reported where available. Null when unknown. */
+  grantExpiresAt: number | null;
 }
 
 export interface VerifyResult {

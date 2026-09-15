@@ -6,7 +6,7 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
-export const CURRENT_SCHEMA_VERSION = 45;
+export const CURRENT_SCHEMA_VERSION = 46;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1077,6 +1077,32 @@ export function runMigrations(database: Database): void {
     }
 
     database.exec(`PRAGMA user_version = 45;`);
+
+  if (current < 46) {
+    // Anthropic kills the whole refresh-token family a fixed time after the
+    // original grant — rotation does not extend it — so an account that has been
+    // refreshing happily every 7h still dies on a schedule nothing local can see.
+    // Recording when the grant was issued, and what the server says about the
+    // refresh token's own lifetime, is what lets PPM warn before that happens.
+    for (const col of [
+      "granted_at INTEGER",
+      "refresh_expires_at INTEGER",
+      "reauth_required INTEGER NOT NULL DEFAULT 0",
+      "last_refresh_attempt_at INTEGER",
+    ]) {
+      try {
+        database.exec(`ALTER TABLE accounts ADD COLUMN ${col}`);
+      } catch {
+        // Column may already exist
+      }
+    }
+    // Existing rows are deliberately left with granted_at NULL. created_at is the
+    // row's creation, not the grant: an account re-authenticated last week still
+    // carries a created_at from months ago, and backfilling it would render every
+    // healthy account as long past due. NULL reads as "unknown until next sign-in",
+    // which is the truth; reauth_required still catches the death either way.
+    database.exec(`PRAGMA user_version = 46;`);
+  }
   }
 }
 
@@ -1967,6 +1993,13 @@ export interface AccountRow {
   last_used_at: number | null;
   profile_json: string | null;
   created_at: number;
+  /** When the current OAuth grant was issued. NULL for rows predating this column. */
+  granted_at: number | null;
+  /** Server-reported refresh-token expiry, when the token endpoint provides one. */
+  refresh_expires_at: number | null;
+  /** Set once the OAuth server rejects the refresh token; only a fresh sign-in clears it. */
+  reauth_required: number;
+  last_refresh_attempt_at: number | null;
 }
 
 export function getAccounts(): AccountRow[] {
@@ -1979,12 +2012,13 @@ export function getAccountById(id: string): AccountRow | null {
 
 export function insertAccount(row: Omit<AccountRow, "created_at">): void {
   getDb().query(
-    `INSERT INTO accounts (id, label, email, access_token, refresh_token, expires_at, status, cooldown_until, priority, total_requests, last_used_at, profile_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO accounts (id, label, email, access_token, refresh_token, expires_at, status, cooldown_until, priority, total_requests, last_used_at, profile_json, granted_at, refresh_expires_at, reauth_required, last_refresh_attempt_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id, row.label, row.email, row.access_token, row.refresh_token,
     row.expires_at, row.status, row.cooldown_until, row.priority,
     row.total_requests, row.last_used_at, row.profile_json,
+    row.granted_at, row.refresh_expires_at, row.reauth_required, row.last_refresh_attempt_at,
   );
 }
 
@@ -2002,6 +2036,10 @@ export function updateAccount(id: string, updates: Partial<Omit<AccountRow, "id"
   if (updates.total_requests !== undefined) { sets.push("total_requests = ?"); vals.push(updates.total_requests); }
   if (updates.last_used_at !== undefined) { sets.push("last_used_at = ?"); vals.push(updates.last_used_at); }
   if (updates.profile_json !== undefined) { sets.push("profile_json = ?"); vals.push(updates.profile_json); }
+  if (updates.granted_at !== undefined) { sets.push("granted_at = ?"); vals.push(updates.granted_at); }
+  if (updates.refresh_expires_at !== undefined) { sets.push("refresh_expires_at = ?"); vals.push(updates.refresh_expires_at); }
+  if (updates.reauth_required !== undefined) { sets.push("reauth_required = ?"); vals.push(updates.reauth_required); }
+  if (updates.last_refresh_attempt_at !== undefined) { sets.push("last_refresh_attempt_at = ?"); vals.push(updates.last_refresh_attempt_at); }
   if (sets.length === 0) return;
   vals.push(id);
   getDb().query(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as SQLQueryBindings[]));

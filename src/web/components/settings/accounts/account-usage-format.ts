@@ -65,10 +65,18 @@ export function formatExpiry(expiresAtMs: number): string {
  *
  * An expired token with a refresh token is only a warning, not an error: the server renews
  * it on the next call. Without one it is genuinely dead, which is why the two cases differ.
+ *
+ * Unless the server has already refused to renew it. PPM kept a rejected account holding its
+ * refresh token — deliberately, so a re-import can recover it — and this function read that
+ * as "will auto-renew" for six days while every turn on the account failed. A rejection
+ * outranks both other cases.
  */
 export function tokenStatus(info?: AccountInfo): { label: string; tip: string; color: string } {
   if (!info) return { label: "unknown", tip: "No account info available", color: "text-text-subtle" };
   if (!info.expiresAt) return { label: "key", tip: "API key (no expiry)", color: "text-text-subtle" };
+  if (info.reauthRequired) {
+    return { label: "sign in again", tip: "Anthropic rejected this account's refresh token. Sign in again to restore it.", color: "text-error" };
+  }
   const expired = info.expiresAt * 1000 < Date.now(); // expiresAt is seconds
   if (expired && info.hasRefreshToken) return { label: "expired", tip: "Token expired but has refresh token — will auto-renew", color: "text-warning" };
   if (expired) return { label: "expired", tip: "Token expired, no refresh token", color: "text-error" };
