@@ -2,7 +2,12 @@
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-15
+
 ### Added
+- **Pick the account a chat runs on, before you send anything** — a new chat tab claims an account when it opens and names it in the toolbar, instead of leaving you to send a message to find out. Any other account can be chosen from the usage panel, before or during a conversation.
+- **Quick account on/off in the chat panel** — switch an account out of rotation without opening Settings. Codex accounts can now be switched off at all; only Claude accounts could before.
+- **Exact reset times on hover** — the relative "resets in 2h 10m" beside each usage bar now carries the precise date and time in your own timezone.
 - **Blame** (`@ppm/ext-git-graph` 0.3.0, `Mod+Shift+B`) — who last touched each line of a file, with an age heatmap down the gutter, an author card per commit, "blame before this commit" to walk back through the file's past, and a jump to that commit's diff. It is a panel of its own rather than annotations inside the editor: PPM's extension API exposes no editor, so an extension cannot draw in the gutter. Reachable from the command palette or by right-clicking a file in the graph's commit details.
 - **File history** — every commit that touched one file, following it through renames (`--follow`), or the history of just a line range (`-L`). Click a commit for its diff of that file, or blame the file as it stood at that commit.
 - **Compare refs** — pick two branches, tags or remotes and see the commits between them beside the files that differ, with ahead/behind counts. Defaults to comparing against the merge base ("since divergence"), which is what a review wants; a direct ref-to-ref diff is one dropdown away.
@@ -19,6 +24,12 @@
 - **Git Graph's integration tests no longer depend on your git config** — they spawn git with a replacing environment, which drops `HOME`, so git never read `init.defaultBranch` and created `master` while every assertion named `main`. The test repository now asks for `main` explicitly.
 - **Conflict detection worked nowhere** — the git-graph extension detected an in-progress merge, rebase or cherry-pick by spawning `test` and `cat`, but extensions may only spawn git, node, bun, npx and sqlite3, so the call threw. The caller's `catch` then discarded the whole uncommitted-changes payload, so a repository with conflicts showed no staged or unstaged files at all — the one case where the panel mattered most. The markers are now read through the workspace filesystem API.
 - **`ppm upgrade` right after a release no longer fails with "No version matching … (but package exists)"** — bun resolved the new version against a cached package manifest that predated it; the upgrade install now bypasses that cache.
+- **A sign-in that Anthropic has revoked is now visible and stops being retried** — the deadline is recorded per sign-in and shown on the card, and a rejected grant is no longer polled every few minutes nor routed to.
+- **A schema upgrade skipped its own migration** — the v46 block sat inside the v45 block, so it ran only for a database coming from 44 or below. Every install already at 45 silently skipped it and then read columns that were never created.
+- **An account at its 5-hour or weekly cap can no longer be picked** — the cap test now matches the whole-percent figure the usage bars display, so a card reading 100% and a button that accepts the choice can no longer disagree.
+- **A chat keeps its account when the session id changes** — the binding was left behind under the old id and the conversation was silently re-routed, which costs a full prompt-cache write.
+- **Codex follow-ups typed mid-turn are no longer dropped** — Codex serves one turn per thread and discarded the second without erroring; they are queued and sent when the running turn finishes, and "now" interrupts as the input promises.
+- **A teammate's window follows their session live** — it read the transcript once on mount, so a teammate that kept working appeared frozen until you pressed refresh.
 
 ## [0.19.12] - 2026-09-14
 
