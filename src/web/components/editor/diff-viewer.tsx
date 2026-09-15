@@ -5,7 +5,8 @@ import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
-import { Loader2, FileCode, WrapText } from "lucide-react";
+import { Loader2, FileCode, WrapText, UserRound } from "lucide-react";
+import { useInlineBlame } from "@/hooks/use-inline-blame";
 
 function getMonacoLanguage(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -49,6 +50,20 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const diffEditorRef = useRef<import("monaco-editor").editor.IStandaloneDiffEditor | null>(null);
   const [editorReady, setEditorReady] = useState(false);
+  // The two panes, as state rather than refs: the blame hooks have to re-run
+  // once the editor exists. `focused` is which pane gets annotated — only one,
+  // because both panes carry a cursor position and annotating both would leave a
+  // stray line-1 annotation in the idle pane.
+  //
+  // It starts on the modified side rather than nothing: that is the side the
+  // normal editor annotates, so turning blame on shows something immediately
+  // instead of waiting for a click nobody knows to make.
+  const [panes, setPanes] = useState<{
+    monaco: typeof import("monaco-editor");
+    original: import("monaco-editor").editor.ICodeEditor;
+    modified: import("monaco-editor").editor.ICodeEditor;
+  } | null>(null);
+  const [focused, setFocused] = useState<"original" | "modified">("modified");
   const [containerHeight, setContainerHeight] = useState<number | undefined>();
 
   useEffect(() => {
@@ -134,6 +149,42 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     return langFile ? getMonacoLanguage(langFile) : "plaintext";
   }, [filePath, file1, file2]);
 
+  const inlineBlame = useSettingsStore((s) => s.inlineBlame);
+  const toggleInlineBlame = useSettingsStore((s) => s.toggleInlineBlame);
+
+  /**
+   * Blame is only honest on the full-file path.
+   *
+   * `file-full-diff` hands back both sides as complete files at real revisions,
+   * so a line number here is the line number git blamed. The other three paths
+   * cannot be blamed: inline content and a two-file compare are not a tracked
+   * path at a revision, and `parseDiff` rebuilds the file from hunks alone, so
+   * its line 40 is not the file's line 40 — annotating it would confidently
+   * name the wrong commit.
+   */
+  const canBlame = Boolean(projectName && filePath && fullFileDiff);
+
+  // The left pane is the file at `ref1` (the route defaults to HEAD); the right
+  // is `ref2`, or the working tree when there is none.
+  useInlineBlame({
+    editor: panes?.original ?? null,
+    monaco: panes?.monaco ?? null,
+    projectName,
+    filePath: canBlame ? filePath : undefined,
+    rev: ref1 || "HEAD",
+    enabled: inlineBlame && canBlame && focused === "original",
+    readOnly: true,
+  });
+  useInlineBlame({
+    editor: panes?.modified ?? null,
+    monaco: panes?.monaco ?? null,
+    projectName,
+    filePath: canBlame ? filePath : undefined,
+    rev: ref2,
+    enabled: inlineBlame && canBlame && focused === "modified",
+    readOnly: true,
+  });
+
   // Force inline on mobile (<768px) since side-by-side is too narrow
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
   const renderSideBySide = !isMobile;
@@ -190,13 +241,26 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      {!isMobile && (
+      {(!isMobile || canBlame) && (
         <div className="flex items-center justify-end gap-0.5 px-2 py-0.5 border-b border-border shrink-0">
-          <button type="button" onClick={toggleWordWrap} title="Toggle word wrap"
-            className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
-          >
-            <WrapText className="size-3.5" />
-          </button>
+          {canBlame && (
+            <button type="button" onClick={toggleInlineBlame}
+              title="Inline blame (Alt+B) — who last touched the cursor's line. Click a pane to annotate that side."
+              className={`flex items-center justify-center rounded hover:bg-muted active:scale-95 transition-colors ${
+                isMobile ? "size-11" : "p-1"
+              } ${inlineBlame ? "bg-muted text-foreground" : ""}`}
+            >
+              <UserRound className="size-3.5" />
+            </button>
+          )}
+          {/* Word wrap is forced on below `md`, so its toggle would be a lie. */}
+          {!isMobile && (
+            <button type="button" onClick={toggleWordWrap} title="Toggle word wrap"
+              className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
+            >
+              <WrapText className="size-3.5" />
+            </button>
+          )}
         </div>
       )}
       {/* Monaco DiffEditor */}
@@ -208,9 +272,20 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
             original={original}
             modified={modified}
             theme={monacoTheme}
-            onMount={(editor) => {
+            onMount={(editor, monaco) => {
               diffEditorRef.current = editor;
               setEditorReady(true);
+              const originalPane = editor.getOriginalEditor();
+              const modifiedPane = editor.getModifiedEditor();
+              setPanes({ monaco, original: originalPane, modified: modifiedPane });
+              originalPane.onDidFocusEditorText(() => setFocused("original"));
+              modifiedPane.onDidFocusEditorText(() => setFocused("modified"));
+              // Same shortcut as the normal editor. It goes on the diff editor,
+              // not the panes: only IStandaloneDiffEditor has addCommand.
+              editor.addCommand(
+                monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
+                () => useSettingsStore.getState().toggleInlineBlame(),
+              );
             }}
             options={{
               fontSize: isMobile ? 11 : 13,
