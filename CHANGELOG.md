@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-09-15
+
+### Fixed
+- **Codex session titles can now be renamed** — renaming no longer sends a Codex session through the Claude SDK; PPM's saved title is used directly.
+- **Codex subagent work now stays inside its Agent card while it streams** — each event is linked to the thread that owns it, including nested subagents, so tools no longer spill into the parent transcript or remain stuck loading after completion.
+- **Codex Thinking, effort and model changes now carry into every turn** — PPM sends the app-server's reasoning effort and summary settings, displays reasoning summaries, and applies a selected model to follow-up turns as well as the first message.
+- **Codex token/cache history and transcript debugging now work** — per-turn token and cache splits are saved for Debug, and managed-account rollouts are found for transcript and image inspection.
+
 ## [0.20.3] - 2026-09-15
 
 ### Fixed

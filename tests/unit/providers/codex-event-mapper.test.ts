@@ -14,6 +14,12 @@ describe("mapCodexEvent", () => {
       .toEqual([{ type: "thinking", content: "hmm" }]);
   });
 
+  it("reasoning/summaryTextDelta → thinking", () => {
+    expect(mapCodexEvent({ method: "item/reasoning/summaryTextDelta", params: { delta: "Checking the request" } }, "s")).toEqual([
+      { type: "thinking", content: "Checking the request" },
+    ]);
+  });
+
   it("item/started(commandExecution) → Bash tool_use with toolUseId", () => {
     const out = mapCodexEvent({
       method: "item/started",

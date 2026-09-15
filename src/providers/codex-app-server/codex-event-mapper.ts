@@ -168,6 +168,10 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
       return typeof p.delta === "string" ? [{ type: "text", content: p.delta }] : [];
 
     case "item/reasoning/textDelta":
+    // `summary` is what turn/start requests for PPM's Thinking switch. Recent
+    // app-server builds stream it under this method, while older builds used
+    // textDelta directly. Both are safe, user-visible reasoning summaries.
+    case "item/reasoning/summaryTextDelta":
       return typeof p.delta === "string" ? [{ type: "thinking", content: p.delta }] : [];
 
     case "item/started": {

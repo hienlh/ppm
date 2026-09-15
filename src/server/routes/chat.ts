@@ -19,6 +19,8 @@ import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-tr
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
+import { listCodexAccounts } from "../../services/codex-account.service.ts";
+import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
@@ -469,8 +471,11 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const projectPath = c.get("projectPath");
     // Persist to PPM DB (authoritative source for user-set titles)
     setSessionTitle(id, title);
-    // Also persist to SDK so Claude Code CLI sees the custom title
-    await sdkRenameSession(id, title, { dir: projectPath });
+    // Codex owns its rollout title and has no Claude SDK session to rename.
+    // PPM's title table is the authoritative title for both providers.
+    if (getSessionProvider(id) !== "codex") {
+      await sdkRenameSession(id, title, { dir: projectPath });
+    }
     // Also update in-memory session
     const session = chatService.getSession(id);
     if (session) session.title = title;
@@ -763,9 +768,22 @@ chatRoutes.get("/sessions/:id/logs", (c) => {
  */
 function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlDir: string; projectPath: string; exists: boolean } {
   const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const providerId = getSessionProvider(sessionId);
+  const storedProjectPath = getSessionProjectPath(sessionId) ?? "";
+  if (providerId === "codex") {
+    const dirs = [
+      ...listCodexAccounts().map((account) => join(account.home, "sessions")),
+      ...(homedir ? [resolve(homedir, ".codex", "sessions")] : []),
+    ];
+    for (const dir of dirs) {
+      const found = findRolloutByThreadId(dir, sessionId, storedProjectPath || undefined);
+      if (found) return { jsonlPath: found, jsonlDir: dir, projectPath: storedProjectPath, exists: true };
+    }
+    return { jsonlPath: "", jsonlDir: "", projectPath: storedProjectPath, exists: false };
+  }
   const provider = providerRegistry.get("claude") as any;
   const projectPath = provider?.activeSessions?.get(sessionId)?.projectPath
-    ?? getSessionProjectPath(sessionId)
+    ?? storedProjectPath
     ?? "";
   const projectsRoot = homedir ? resolve(homedir, ".claude", "projects") : "";
   // SDK encodes cwd by replacing path separators + drive colon with "-".
@@ -815,6 +833,7 @@ chatRoutes.get("/sessions/:id/debug", (c) => {
   return c.json(ok({
     ppmSessionId: sessionId,
     sdkSessionId: sessionId,
+    providerId: getSessionProvider(sessionId) ?? "claude",
     sessionId,
     jsonlPath: exists ? jsonlPath : null,
     jsonlDir,

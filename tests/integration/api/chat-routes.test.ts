@@ -53,6 +53,23 @@ describe("Chat REST API", () => {
     expect(json.data.providerId).toBe("mock");
   });
 
+  it("PATCH /chat/sessions/:id renames a Codex session without invoking the Claude SDK", async () => {
+    const createRes = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", title: "Before" }),
+    });
+    const { data: session } = await createRes.json() as any;
+    const { setSessionProvider } = require("../../../src/services/db.service.ts");
+    setSessionProvider(session.id, "codex");
+
+    const renamed = await req(`/chat/sessions/${session.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title: "Codex renamed" }),
+    });
+    expect(renamed.status).toBe(200);
+    expect((await renamed.json() as any).data.title).toBe("Codex renamed");
+  });
+
   it("GET /chat/sessions lists sessions", async () => {
     await req("/chat/sessions", {
       method: "POST",

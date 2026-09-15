@@ -10,7 +10,7 @@ import type {
   UsageInfo,
 } from "../provider.interface.ts";
 import { configService } from "../../services/config.service.ts";
-import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles } from "../../services/db.service.ts";
+import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles, insertTurnUsage } from "../../services/db.service.ts";
 import {
   resolveCodexAccountForSession,
   getCodexAccount,
@@ -29,6 +29,7 @@ import { join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
+import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
 import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
@@ -147,6 +148,8 @@ interface LiveSession {
   compactRequested?: boolean;
   /** Token counts from the most recent usage notification, attached to `done`. */
   lastUsage?: import("../../shared/turn-usage.ts").TurnUsage;
+  /** Spawned thread ids. Notifications from these threads belong inside their Agent card. */
+  subagentThreadIds: Set<string>;
   /** A turn is running on the thread. Codex accepts exactly one at a time: a
    *  second `turn/start` resolves with the ALREADY-RUNNING turn (same id,
    *  status `inProgress`) and silently discards the new input — no error, so
@@ -217,6 +220,21 @@ function createEventChannel(): EventChannel {
     },
     iterator: gen(),
   };
+}
+
+/** The app-server puts the owner thread on every item notification.  An
+ * `agentThreadId` inside a SubAgentActivity is the newly spawned child, so it
+ * must never be used here: that would nest the launch card inside itself. */
+export function threadIdFromNotification(params: unknown): string | null {
+  if (!params || typeof params !== "object") return null;
+  const p = params as Record<string, unknown>;
+  const direct = p.threadId ?? p.thread_id;
+  if (typeof direct === "string" && direct) return direct;
+  const thread = p.thread;
+  if (thread && typeof thread === "object" && typeof (thread as Record<string, unknown>).id === "string") {
+    return (thread as Record<string, unknown>).id as string;
+  }
+  return null;
 }
 
 /**
@@ -425,6 +443,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.lastTurnInput = { message, opts };
     live.currentAssistant = "";
     live.currentEvents = [];
+    live.lastUsage = undefined;
     // Codex takes an image as a path, never as a payload, so the uploaded copy is what it
     // gets. Images lead: the text usually refers to them ("what is this?").
     const input: UserInput[] = [
@@ -432,10 +451,17 @@ export class CodexAppServerProvider implements AIProvider {
       { type: "text" as const, text: message, text_elements: [] },
     ];
     const turnModel = codexModel(opts?.model);
+    const turnEffort = opts?.effort ?? this.config?.effort;
+    const configuredThinking = this.config?.thinking_budget_tokens;
+    // Codex does not accept a token budget. Its equivalent is an effort level,
+    // while `summary` controls the safe thinking text the UI can show.
+    const thinkingEnabled = (opts?.thinkingBudget ?? configuredThinking ?? -1) !== 0;
     live.client.request("turn/start", {
       threadId: live.threadId,
       input,
       ...(turnModel ? { model: turnModel } : {}),
+      ...(turnEffort ? { effort: turnEffort } : {}),
+      summary: thinkingEnabled ? "detailed" : "none",
     }).then((res) => {
       // Backup for the `turn/started` notification, which is what normally names
       // the turn — an interrupt arriving in between has nothing to address.
@@ -678,7 +704,7 @@ export class CodexAppServerProvider implements AIProvider {
       client, threadId: null, cwd, channel, permission, model,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
-      pendingTurns: [],
+      pendingTurns: [], subagentThreadIds: new Set(),
     };
     this.live.set(sessionId, live);
 
@@ -750,14 +776,26 @@ export class CodexAppServerProvider implements AIProvider {
       const usage = parseTokenUsage(notif.params, live.model);
       if (usage) live.lastUsage = usage;
     }
+    const notificationThreadId = threadIdFromNotification(notif.params);
+    const parentToolUseId = notificationThreadId && live.subagentThreadIds.has(notificationThreadId)
+      ? subagentCardId(notificationThreadId)
+      : undefined;
     const events = mapCodexEvent(notif, live.threadId ?? "");
     for (const ev of events) {
       // The counts arrive on their own notification just before the turn ends,
       // so `done` is where they become visible to a consumer.
-      if (ev.type === "done" && live.lastUsage) ev.usage = live.lastUsage;
-      live.channel.push(ev);
+      if (ev.type === "done" && live.lastUsage) {
+        ev.usage = live.lastUsage;
+        this.recordTurnUsage(live, live.lastUsage);
+      }
+      const nested = parentToolUseId ? { ...ev, parentToolUseId } as ChatEvent : ev;
+      live.channel.push(nested);
       // Accumulate tool calls into the turn so getMessages (live) keeps them.
-      if (ev.type === "tool_use" || ev.type === "tool_result") live.currentEvents.push(ev);
+      if (nested.type === "tool_use" || nested.type === "tool_result") live.currentEvents.push(nested);
+      if (nested.type === "tool_use" && nested.tool === "Agent" && typeof nested.toolUseId === "string"
+          && nested.toolUseId.startsWith("subagent-")) {
+        live.subagentThreadIds.add(nested.toolUseId.slice("subagent-".length));
+      }
     }
     if (notif.method === "turn/completed") {
       if (live.currentAssistant || live.currentEvents.length) {
@@ -795,6 +833,32 @@ export class CodexAppServerProvider implements AIProvider {
         // Keep the live transcript consistent so getMessages (live reload) also shows it.
         live.transcript.push({ id: `codex-compact-${live.threadId}`, role: "assistant", content, timestamp: new Date().toISOString() });
       }
+    }
+  }
+
+  /** Persist Codex's per-turn token and prompt-cache split for the debug panel. */
+  private recordTurnUsage(live: LiveSession, usage: import("../../shared/turn-usage.ts").TurnUsage): void {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) ?? undefined : undefined;
+    const account = accountId ? getCodexAccount(accountId) : null;
+    try {
+      insertTurnUsage({
+        sessionId: live.threadId ?? "",
+        model: usage.model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        contextWindow: usage.contextWindow,
+        costUsd: usage.costUsd,
+        // A cache miss alone does not prove a process restart: a first turn and
+        // an evicted prompt cache look the same on the wire. Keep this false
+        // until the provider has an explicit lifecycle reason to record.
+        coldStart: false,
+        ...(accountId ? { accountId } : {}),
+        ...(account?.label ? { accountLabel: account.label } : {}),
+      });
+    } catch (err) {
+      console.warn(`[usage] failed to persist codex usage: ${(err as Error).message}`);
     }
   }
 

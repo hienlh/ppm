@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from "bun:test";
 import { parseTokenUsage } from "../../../src/providers/codex-app-server/codex-event-mapper.ts";
+import { threadIdFromNotification } from "../../../src/providers/codex-app-server/codex-provider.ts";
 
 /** Verbatim shape of a `thread/tokenUsage/updated` notification. */
 const PARAMS = {
@@ -82,5 +83,18 @@ describe("codex token usage", () => {
     expect(u.cacheReadTokens).toBe(0);
     expect(u.contextWindow).toBe(0);
     expect(u.inputTokens).toBe(50);
+  });
+});
+
+describe("codex subagent notification ownership", () => {
+  it("uses the notification owner, never the newly spawned agent thread", () => {
+    expect(threadIdFromNotification({
+      threadId: "parent-thread",
+      item: { agentThreadId: "child-thread" },
+    })).toBe("parent-thread");
+  });
+
+  it("accepts rollout's snake_case notification spelling", () => {
+    expect(threadIdFromNotification({ thread_id: "child-thread" })).toBe("child-thread");
   });
 });

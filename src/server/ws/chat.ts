@@ -1286,10 +1286,15 @@ export const chatWebSocket = {
       } else {
         // Follow-up: push into existing generator via provider
         if (provider && "pushMessage" in provider && parsed.type === "message") {
+          const effort = getSessionEffort(sessionId) ?? undefined;
+          const thinkingBudget = getSessionThinking(sessionId);
           (provider as any).pushMessage(sessionId, parsed.content, {
             priority: parsed.priority ?? 'next',
             images: parsed.images,
             imagePaths: parsed.imagePaths,
+            ...(entry.model ? { model: entry.model } : {}),
+            ...(effort ? { effort } : {}),
+            ...(thinkingBudget != null ? { thinkingBudget } : {}),
           });
         }
         // Clear turn events for new turn display + transition phase

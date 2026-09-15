@@ -280,17 +280,28 @@ export function useChat(
    * Returns true if routed (caller should skip flat append), false if no parent found.
    */
   const routeToParent = useCallback((childEvent: ChatEvent, parentToolUseId: string): boolean => {
-    const idx = streamingEventsRef.current.findIndex(
-      (e) => e.type === "tool_use"
-        && (e.tool === "Agent" || e.tool === "Task")
-        && (e as any).toolUseId === parentToolUseId,
-    );
-    if (idx === -1) return false;
-    const parent = streamingEventsRef.current[idx]!;
-    if (parent.type !== "tool_use") return false;
-    const newChildren = [...(parent.children ?? []), childEvent];
-    streamingEventsRef.current[idx] = { ...parent, children: newChildren };
-    return true;
+    const append = (events: ChatEvent[]): [ChatEvent[], boolean] => {
+      for (let i = 0; i < events.length; i++) {
+        const event = events[i]!;
+        if (event.type !== "tool_use") continue;
+        if ((event.tool === "Agent" || event.tool === "Task") && (event as any).toolUseId === parentToolUseId) {
+          const children = [...(event.children ?? [])];
+          const id = (childEvent as any).toolUseId as string | undefined;
+          const duplicate = id ? children.findIndex((c) => c.type === childEvent.type && (c as any).toolUseId === id) : -1;
+          if (duplicate === -1) children.push(childEvent);
+          else children[duplicate] = childEvent;
+          return [[...events.slice(0, i), { ...event, children }, ...events.slice(i + 1)], true];
+        }
+        if (event.children?.length) {
+          const [children, found] = append(event.children);
+          if (found) return [[...events.slice(0, i), { ...event, children }, ...events.slice(i + 1)], true];
+        }
+      }
+      return [events, false];
+    };
+    const [events, found] = append(streamingEventsRef.current);
+    if (found) streamingEventsRef.current = events;
+    return found;
   }, []);
 
   /**

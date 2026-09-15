@@ -411,10 +411,12 @@ export function getRolloutMessages(sessionsDir: string, threadId: string, reques
   } catch { return []; }
 }
 
-/** True when a path points at a codex rollout under ~/.codex/sessions. */
+/** True when a path points at a codex rollout in the ambient or a PPM account home. */
 export function isCodexRolloutPath(p: string): boolean {
   const n = normPath(p);
-  return n.endsWith(".jsonl") && n.includes(normPath(join(homedir(), ".codex", "sessions")));
+  const ambient = normPath(join(homedir(), ".codex", "sessions"));
+  const managed = normPath(join(homedir(), ".ppm", "codex-accounts"));
+  return n.endsWith(".jsonl") && (n.includes(ambient) || (n.includes(managed) && n.includes("/sessions/")));
 }
 
 /**
