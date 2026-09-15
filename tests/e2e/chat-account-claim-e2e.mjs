@@ -71,7 +71,10 @@ async function launchChrome() {
       "--disable-gpu",
       "about:blank",
     ],
-    { stdio: "ignore" },
+    // Its own process group on POSIX, so the cleanup below can signal the whole tree with
+    // one negative pid. Not on Windows, where detaching would open a console window and
+    // taskkill /T walks the tree anyway.
+    { stdio: "ignore", detached: process.platform !== "win32" },
   );
   for (let i = 0; i < 40; i++) {
     try {
@@ -384,6 +387,33 @@ async function main() {
   return finish();
 }
 
+/**
+ * Kill the browser and everything it spawned.
+ *
+ * `chrome.kill()` reaches only the launcher. Chrome's renderers, GPU and utility processes
+ * are its children, and on Windows they are not in the launcher's job object, so they
+ * survive it — a single aborted run leaks a dozen of them, each holding tens of megabytes.
+ * Enough runs in one session and the machine is out of memory, which is how this was found:
+ * 126 orphans holding 10.5 GB, taking Docker, bun and the build down with them.
+ */
+function killChromeTree() {
+  if (!chrome?.pid) return;
+  try {
+    if (process.platform === "win32") {
+      // /T takes the tree, /F because a headless child ignores a polite close.
+      spawn("taskkill", ["/PID", String(chrome.pid), "/T", "/F"], { stdio: "ignore" });
+    } else {
+      // Negative pid signals the process group, which spawn() gave its own.
+      process.kill(-chrome.pid, "SIGKILL");
+    }
+  } catch { /* already gone */ }
+  try { chrome.kill("SIGKILL"); } catch { /* already gone */ }
+}
+
+// Ctrl-C and an unhandled throw both used to leave the whole tree behind.
+process.on("SIGINT", () => { killChromeTree(); process.exit(130); });
+process.on("SIGTERM", () => { killChromeTree(); process.exit(143); });
+
 main()
-  .then((code) => { chrome?.kill("SIGKILL"); process.exit(code); })
-  .catch((e) => { log(`ERROR: ${e.message}`); chrome?.kill("SIGKILL"); process.exit(2); });
+  .then((code) => { killChromeTree(); process.exit(code); })
+  .catch((e) => { log(`ERROR: ${e.message}`); killChromeTree(); process.exit(2); });
