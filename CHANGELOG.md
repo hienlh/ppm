@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-09-15
+
+### Fixed
+- **An existing Codex conversation no longer silently starts over when its transcript cannot be found** — resuming or rotating accounts now reports the missing history instead of creating a replacement thread and redirecting the original session to it. New chats still start normally, and a failed initial connection can be retried.
+
 ## [0.20.2] - 2026-09-15
 
 ### Added
