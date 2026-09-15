@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-09-15
+
+### Fixed
+- **A streaming chat no longer rebuilds every diff line and code block on each tick** — React 19 re-parses `innerHTML` whenever the markup object is recreated, even when the markup is identical (about 1,600 rebuilds per turn, 82% of them no-ops). The objects are now memoised, which cuts the DOM churn of a turn roughly eightfold and most of the CPU a streaming tab burned.
+
 ## [0.20.0] - 2026-09-15
 
 ### Added
