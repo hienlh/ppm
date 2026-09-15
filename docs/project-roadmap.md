@@ -85,6 +85,8 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 - Agent Team UI (v0.9.9) — team activity button, members + messages panel
 - Git-Graph UI (v0.9.85+) — faithful SVG graph (vscode-git-graph port), interactive stage/unstage/commit/stash, branch filters, auto-fetch, mobile support
 - Git Workflow (v0.9.86+) — stash management, rebase from context menu, conflict detection, inline Monaco conflict resolution, worktree CRUD
+- Git Insights (ext 0.3.0) — blame with age heatmap, file/line history, compare refs, interactive rebase (incl. reword/edit), reflog with undo, submodules, whole-history commit search, author avatars, drag-to-merge/rebase. Each is its own panel because the extension API exposes no editor to annotate.
+- Git in the core app — inline blame on the cursor's line in the Monaco editor (`Alt+B`), and hunk/line-level stage, unstage and discard from Source Control. Both live in core rather than the extension precisely because they need the editor and the panel the extension cannot reach.
 
 ### v0.10.0 — "Enhanced Workflow" (Released)
 
@@ -92,7 +94,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 |---------|--------|-------|
 | **Agent Team** | ✅ Done | Live member activity (status, current step, model, elapsed), Members/Messages tabs, both directions of the team conversation, replay any member's session. Teams are read from agent transcripts, not `~/.claude/teams` config — see `src/services/team-member-activity/`. |
 | **Group chat** | ✅ Done | Multi-agent group conversation with turn engine, responder routing, context-window management and transcript archiving. |
-| **Advanced Git Operations** | ◐ Partial | Rebase, stash, conflict resolution and worktrees shipped. Cherry-pick exists as `POST /git/cherry-pick` with **no UI**. Interactive-rebase UI and merge-strategy selection not started. |
+| **Advanced Git Operations** | ✅ Done | Rebase, stash, conflict resolution, worktrees and cherry-pick (graph context menu) shipped. Interactive rebase landed in `@ppm/ext-git-graph` 0.2.0 and gained reword/edit in 0.3.0 — a reword's message is collected up front and applied by an `exec git commit --amend`, since git's own reword blocks on an editor. Reflog (with branch-here / reset-hard undo) and submodules shipped in 0.3.0; hunk-level staging and inline editor blame shipped in core. Merge-strategy selection is still limited to `--no-ff` / `--squash`. |
 
 ---
 

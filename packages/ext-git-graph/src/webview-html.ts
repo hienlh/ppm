@@ -2,6 +2,7 @@
  * Generate the complete webview HTML for the git graph panel.
  * All JS + CSS is inlined since webview runs in an iframe sandbox.
  */
+import { AVATAR_JS } from "./webview-shell.ts";
 
 export function getWebviewHtml(): string {
   return `<!DOCTYPE html>
@@ -50,17 +51,36 @@ ${getStyles()}
             </div>
           </div>
         </div>
+        <div class="submodule-dropdown hidden" id="submodule-wrap">
+          <button id="btn-submodule" title="Submodules"></button>
+          <div id="submodule-popover" class="worktree-popover hidden">
+            <div class="worktree-popover-header"><span>Submodules</span></div>
+            <div id="submodule-list" class="worktree-list"></div>
+            <div class="worktree-popover-footer">
+              <button id="sm-update-all" class="btn-sm">Update all</button>
+            </div>
+          </div>
+        </div>
+        <button id="btn-reflog" title="Reflog — undo a rebase, reset or deleted branch"></button>
         <button id="btn-find" title="Find (Ctrl+F)"></button>
         <button id="btn-settings" title="Settings"></button>
       </div>
     </header>
     <div id="find-bar" class="find-bar hidden">
       <input id="find-input" type="text" placeholder="Search commits..." />
+      <select id="find-mode" title="Where to search">
+        <option value="loaded">Loaded rows</option>
+        <option value="message">Message (all history)</option>
+        <option value="author">Author (all history)</option>
+        <option value="content">Code change (all history)</option>
+        <option value="file">Touched file (all history)</option>
+      </select>
       <span id="find-count"></span>
       <button id="find-prev" title="Previous">&uarr;</button>
       <button id="find-next" title="Next">&darr;</button>
       <button id="find-close" title="Close">&times;</button>
     </div>
+    <div id="search-results" class="search-results hidden"></div>
     <div id="graph-container">
       <div id="graph-header" class="commit-row header-row">
         <div class="col-graph">Graph<div class="graph-resize-handle" id="graph-resize-handle"></div></div>
@@ -200,6 +220,14 @@ button:active { background: var(--surface); }
 .worktree-popover-footer { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
 .worktree-popover-footer .btn-sm { flex: 1; }
 .wt-empty { padding: 16px; text-align: center; font-size: 11px; color: var(--subtext); }
+
+/* Submodules reuse the worktree popover chrome; only the badges differ. */
+.submodule-dropdown { position: relative; }
+#btn-submodule { display: flex; align-items: center; gap: 3px; font-size: 11px; padding: 3px 6px; }
+#btn-submodule .sm-count { background: var(--accent, #58a6ff); color: #fff; font-size: 9px; border-radius: 7px; padding: 0 4px; min-width: 14px; text-align: center; line-height: 14px; }
+.sm-badge-uninitialized { background: var(--border); color: var(--subtext); }
+.sm-badge-modified { background: #d29922; color: #fff; }
+.sm-badge-conflicted { background: #f85149; color: #fff; }
 @media (max-width: 768px) { .branch-option { padding: 10px 12px; min-height: 44px; } }
 
 /* Stash popover */
@@ -257,7 +285,28 @@ button:active { background: var(--surface); }
 .graph-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; background: transparent; }
 .graph-resize-handle:hover, .graph-resize-handle.dragging { background: var(--blue); opacity: 0.5; }
 .col-message { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; }
-.col-author { width: 100px; min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtext); font-size: 11px; }
+.col-author { width: 100px; min-width: 100px; overflow: hidden; white-space: nowrap; color: var(--subtext); font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.col-author .author-name { overflow: hidden; text-overflow: ellipsis; }
+.avatar { width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; color: #fff; flex-shrink: 0; letter-spacing: -0.2px; }
+
+/* Author hover card */
+.author-card { position: fixed; z-index: 80; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); padding: 8px 10px; font-size: 11px; max-width: 280px; pointer-events: none; }
+.author-card .ac-head { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 4px; }
+.author-card .ac-row { color: var(--subtext); font-size: 10px; }
+
+/* Drag a ref badge onto a commit row to merge or rebase onto it */
+.ref-badge[draggable=true] { cursor: grab; }
+.commit-row.drop-target { outline: 2px dashed var(--blue); outline-offset: -2px; background: var(--selected); }
+.ref-badge.dragging { opacity: 0.45; }
+
+/* Whole-history search results */
+.search-results { position: absolute; top: 56px; left: 8px; right: 8px; max-height: 55vh; z-index: 45; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); overflow: auto; }
+.sr-head { padding: 6px 10px; font-size: 10px; color: var(--subtext); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+.sr-item { padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.sr-item:hover { background: var(--surface-hover); }
+.sr-subject { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-meta { font-size: 10px; color: var(--subtext); display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+.sr-hash { font-family: 'SF Mono', 'Fira Code', monospace; }
 .col-date { width: 80px; min-width: 80px; color: var(--subtext); font-size: 11px; }
 .col-hash { width: 60px; min-width: 60px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; color: var(--subtle); }
 
@@ -452,6 +501,7 @@ const state = {
   graphColWidth: null,
   fileViewMode: 'list',
   worktrees: [],
+  submodules: [],
   mergeState: null,
   _lastDetail: null,
 };
@@ -473,6 +523,7 @@ const ICONS = {
   gitBranch: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>',
   trash: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>',
   archive: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
+  history: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 106 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>',
 };
 
 // --- Toast notifications ---
@@ -489,6 +540,8 @@ function showToast(message, type) {
 // --- Init ---
 document.getElementById('btn-refresh').innerHTML = ICONS.refresh;
 document.getElementById('btn-fetch').innerHTML = ICONS.download;
+document.getElementById('btn-submodule').innerHTML = ICONS.folderOpen + ' <span class="sm-count" style="display:none">0</span>';
+document.getElementById('btn-reflog').innerHTML = ICONS.history;
 document.getElementById('btn-find').innerHTML = ICONS.search;
 document.getElementById('btn-settings').innerHTML = ICONS.settings;
 document.getElementById('btn-worktree').innerHTML = ICONS.gitBranch + ' <span class="wt-count" style="display:none">0</span>';
@@ -499,6 +552,9 @@ vscode.postMessage({ command: 'ready' });
 window.addEventListener('message', (event) => {
   const msg = event.data;
   switch (msg.command) {
+    case 'loadSearchResults':
+      renderSearchResults(msg.data);
+      break;
     case 'loadRepoInfo':
       state.repo = msg.data.path;
       state.branches = msg.data.branches;
@@ -555,6 +611,9 @@ window.addEventListener('message', (event) => {
         }
       }
       break;
+    case 'loadSearchResults':
+      renderSearchResults(msg.data);
+      break;
     case 'loadSettings':
       state.settings = { ...DEFAULT_SETTINGS, ...msg.data };
       state.maxCommits = state.settings.maxCommits;
@@ -605,6 +664,10 @@ window.addEventListener('message', (event) => {
       state.worktrees = msg.data || [];
       renderWorktreeList();
       break;
+    case 'loadSubmodules':
+      state.submodules = msg.data || [];
+      renderSubmoduleList();
+      break;
     case 'loadStashes':
       state.stashes = msg.data || [];
       renderStashList();
@@ -614,6 +677,30 @@ window.addEventListener('message', (event) => {
       document.getElementById('status-text').textContent = 'Error: ' + msg.message;
       break;
   }
+});
+
+// --- File context menu: blame / history for one file ---
+function showFileContextMenu(x, y, filePath, hash) {
+  const items = [
+    { label: 'Blame this file', action: () => vscode.postMessage({ command: 'openBlame', filePath }) },
+  ];
+  if (hash && hash !== 'uncommitted' && hash !== 'staged') {
+    items.push({ label: 'Blame at ' + hash.substring(0, 7), action: () => vscode.postMessage({ command: 'openBlame', filePath, hash }) });
+  }
+  items.push(
+    { label: 'File history', action: () => vscode.postMessage({ command: 'openFileHistory', filePath }) },
+    { separator: true },
+    { label: 'Open file', action: () => vscode.postMessage({ command: 'openFile', filePath }) },
+  );
+  renderContextMenu(x, y, items);
+}
+
+document.getElementById('detail-panel').addEventListener('contextmenu', (e) => {
+  const item = e.target.closest('.file-item');
+  if (!item || !item.dataset.path) return;
+  e.preventDefault();
+  e.stopPropagation();
+  showFileContextMenu(e.clientX, e.clientY, item.dataset.path, item.dataset.hash);
 });
 
 // --- File click delegation (opens diff tab) ---
@@ -678,6 +765,56 @@ document.getElementById('detail-panel').addEventListener('click', (e) => {
     vscode.postMessage({ command: 'openDiff', filePath, hash, parentHash });
   }
 });
+
+/* Blame and history are per-file, so the commit detail's file list is the
+   natural place to reach them. */
+function showFileContextMenu(x, y, filePath, hash) {
+  const committed = hash && hash !== 'uncommitted' && hash !== 'staged';
+  const items = [
+    { label: 'Blame this file', action: () => vscode.postMessage({ command: 'openBlame', filePath }) },
+  ];
+  if (committed) {
+    items.push({ label: 'Blame at ' + hash.substring(0, 7), action: () => vscode.postMessage({ command: 'openBlame', filePath, hash }) });
+  }
+  items.push(
+    { label: 'File history', action: () => vscode.postMessage({ command: 'openFileHistory', filePath }) },
+    { separator: true },
+    { label: 'Open file', action: () => vscode.postMessage({ command: 'openFile', filePath }) },
+  );
+  renderContextMenu(x, y, items);
+}
+
+document.getElementById('detail-panel').addEventListener('contextmenu', (e) => {
+  const item = e.target.closest('.file-clickable');
+  if (!item) return;
+  e.preventDefault();
+  e.stopPropagation();
+  showFileContextMenu(e.clientX, e.clientY, item.dataset.path || item.dataset.file, item.dataset.hash);
+});
+
+/* Touch has no right-click, and the detail panel re-renders on every selection,
+   so the long-press is delegated rather than bound per row. */
+(function setupFileLongPress() {
+  const panel = document.getElementById('detail-panel');
+  let timer = null, startX = 0, startY = 0, target = null;
+  panel.addEventListener('touchstart', (e) => {
+    target = e.target.closest('.file-clickable');
+    if (!target) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    timer = setTimeout(() => {
+      e.preventDefault();
+      showFileContextMenu(startX, startY, target.dataset.path || target.dataset.file, target.dataset.hash);
+      target = null;
+    }, 500);
+  }, { passive: false });
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  panel.addEventListener('touchmove', (e) => {
+    if (timer && (Math.abs(e.touches[0].clientX - startX) > 10 || Math.abs(e.touches[0].clientY - startY) > 10)) cancel();
+  }, { passive: true });
+  panel.addEventListener('touchend', cancel);
+  panel.addEventListener('touchcancel', cancel);
+})();
 
 // --- Branch dropdown ---
 let selectedBranch = 'all';
@@ -840,6 +977,88 @@ function renderWorktreeList() {
     });
   });
 }
+
+/* --- Submodules ---
+   The whole control stays hidden in the common case: most repositories have no
+   submodules, and an always-visible empty dropdown is just noise in a toolbar
+   that is already tight on a phone. */
+const smWrap = document.getElementById('submodule-wrap');
+const smPopover = document.getElementById('submodule-popover');
+document.getElementById('btn-submodule').addEventListener('click', (e) => {
+  e.stopPropagation();
+  smPopover.classList.toggle('hidden');
+  if (!smPopover.classList.contains('hidden')) vscode.postMessage({ command: 'requestSubmodules' });
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.submodule-dropdown')) smPopover.classList.add('hidden');
+});
+
+const SM_STATE_TEXT = {
+  current: 'up to date',
+  uninitialized: 'not checked out',
+  modified: 'differs from the recorded commit',
+  conflicted: 'has merge conflicts',
+};
+
+function renderSubmoduleList() {
+  const subs = state.submodules;
+  smWrap.classList.toggle('hidden', subs.length === 0);
+  if (!subs.length) { smPopover.classList.add('hidden'); return; }
+
+  const stale = subs.filter((sm) => sm.state !== 'current').length;
+  const countEl = document.getElementById('btn-submodule').querySelector('.sm-count');
+  if (countEl) {
+    countEl.textContent = stale || subs.length;
+    countEl.style.display = '';
+  }
+
+  const listEl = document.getElementById('submodule-list');
+  listEl.innerHTML = subs.map((sm, i) => {
+    const badge = sm.state === 'current' ? ''
+      : ' <span class="wt-badge sm-badge-' + escHtml(sm.state) + '">' + escHtml(sm.state) + '</span>';
+    const name = sm.path.split('/').pop() || sm.path;
+    return '<div class="wt-item">'
+      + '<div class="wt-item-info">'
+        + '<div class="wt-item-branch">' + escHtml(name) + badge + '</div>'
+        + '<div class="wt-item-path" title="' + escHtml(SM_STATE_TEXT[sm.state] || '') + '">'
+          + escHtml(sm.path) + ' <span style="color:var(--subtle)">' + escHtml(sm.hash.slice(0, 7)) + '</span>'
+          + (sm.describe ? ' ' + escHtml(sm.describe) : '')
+        + '</div>'
+      + '</div>'
+      + '<div class="wt-item-actions">'
+        + '<button class="sm-update" data-idx="' + i + '" title="Checkout the recorded commit">' + ICONS.download + '</button>'
+        + (sm.state === 'uninitialized' ? ''
+            : '<button class="sm-open" data-idx="' + i + '" title="Open in PPM">' + ICONS.fileOpen + '</button>')
+      + '</div>'
+    + '</div>';
+  }).join('');
+
+  listEl.querySelectorAll('.sm-update').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sm = state.submodules[parseInt(btn.dataset.idx)];
+      if (sm) vscode.postMessage({ command: 'updateSubmodule', path: sm.path });
+    });
+  });
+  listEl.querySelectorAll('.sm-open').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sm = state.submodules[parseInt(btn.dataset.idx)];
+      if (sm) vscode.postMessage({ command: 'openSubmodule', path: sm.path });
+    });
+  });
+}
+
+document.getElementById('sm-update-all').addEventListener('click', () => {
+  showDialog({
+    title: 'Update Submodules',
+    message: 'Check out the recorded commit in every submodule? Local changes inside them are left alone, but the checkout moves.',
+    confirmLabel: 'Update all',
+    onConfirm: () => {
+      for (const sm of state.submodules) vscode.postMessage({ command: 'updateSubmodule', path: sm.path });
+    },
+  });
+});
 
 document.getElementById('wt-add').addEventListener('click', () => {
   showCreateWorktreeDialog();
@@ -1512,6 +1731,7 @@ function renderCommitList() {
                     : badge.className.includes('ref-tag') ? 'tag'
                     : badge.className.includes('ref-stash') ? 'stash' : 'local';
       badge.style.cursor = 'pointer';
+      makeRefDraggable(badge, refName, refType);
       if (refType === 'stash') {
         badge.addEventListener('contextmenu', (e) => {
           e.preventDefault();
@@ -1533,7 +1753,14 @@ function renderCommitList() {
 
     const authorCol = document.createElement('div');
     authorCol.className = 'col-author';
-    authorCol.textContent = (isVirtual || isStash) ? '' : commit.author;
+    if (isVirtual || isStash) {
+      authorCol.textContent = '';
+    } else {
+      authorCol.innerHTML = avatarHtml(commit.author, commit.authorEmail)
+        + '<span class="author-name">' + escHtml(commit.author) + '</span>';
+      authorCol.addEventListener('mouseenter', () => showAuthorCard(authorCol, commit));
+      authorCol.addEventListener('mouseleave', hideAuthorCard);
+    }
 
     const dateCol = document.createElement('div');
     dateCol.className = 'col-date';
@@ -1549,6 +1776,7 @@ function renderCommitList() {
     row.appendChild(dateCol);
     row.appendChild(hashCol);
 
+    makeRowDropTarget(row, commit);
     row.addEventListener('click', () => selectCommit(commit.hash));
     if (isVirtual) {
       row.addEventListener('contextmenu', (e) => {
@@ -1815,6 +2043,9 @@ function showCommitContextMenu(x, y, commit) {
     { separator: true },
     { label: 'Cherry-pick', action: () => gitAction('cherryPick', { hash: commit.hash }) },
     { label: 'Revert', action: () => gitAction('revert', { hash: commit.hash }) },
+    { separator: true },
+    { label: 'Interactive rebase from here...', action: () => vscode.postMessage({ command: 'openInteractiveRebase', base: commit.hash }) },
+    { label: 'Compare with current branch...', action: () => vscode.postMessage({ command: 'openCompare', ref1: commit.hash, ref2: state.currentBranch || undefined }) },
     { separator: true },
     { label: 'Reset Current Branch to Here...', destructive: true, action: () => promptResetMode(commit.hash) },
   );
@@ -2195,6 +2426,7 @@ function formatCommitMessage(msg) {
 const findBar = document.getElementById('find-bar');
 const findInput = document.getElementById('find-input');
 
+document.getElementById('btn-reflog').addEventListener('click', () => vscode.postMessage({ command: 'openReflog' }));
 document.getElementById('btn-find').addEventListener('click', toggleFind);
 
 function toggleFind() {
@@ -2203,7 +2435,82 @@ function toggleFind() {
   else clearSearch();
 }
 
-findInput.addEventListener('input', () => doSearch(findInput.value));
+const findMode = document.getElementById('find-mode');
+const searchResultsEl = document.getElementById('search-results');
+
+/*
+ * "Loaded rows" keeps the original behaviour: highlight matches among the rows
+ * already rendered. The other modes run in git over the whole history, because a
+ * commit older than the current page is otherwise invisible to a search.
+ */
+findInput.addEventListener('input', () => {
+  if (findMode.value === 'loaded') doSearch(findInput.value);
+});
+
+findInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || findMode.value === 'loaded') return;
+  e.preventDefault();
+  runHistorySearch();
+});
+
+findMode.addEventListener('change', () => {
+  clearSearchHighlights();
+  hideSearchResults();
+  document.getElementById('find-count').textContent = '';
+  if (findMode.value === 'loaded') doSearch(findInput.value);
+  else if (findInput.value.trim()) runHistorySearch();
+  findInput.placeholder = findMode.value === 'loaded'
+    ? 'Search commits...'
+    : findMode.value === 'file' ? 'Path, then Enter…' : 'Type, then Enter…';
+});
+
+function runHistorySearch() {
+  const text = findInput.value.trim();
+  if (!text) { hideSearchResults(); return; }
+  document.getElementById('find-count').textContent = 'searching…';
+  vscode.postMessage({ command: 'searchCommits', mode: findMode.value, text });
+}
+
+function hideSearchResults() {
+  searchResultsEl.classList.add('hidden');
+  searchResultsEl.innerHTML = '';
+}
+
+function renderSearchResults(data) {
+  const hits = data.hits || [];
+  document.getElementById('find-count').textContent = hits.length + ' match(es)';
+  if (!hits.length) {
+    searchResultsEl.innerHTML = '<div class="sr-head">Nothing in this repository matches.</div>';
+    searchResultsEl.classList.remove('hidden');
+    return;
+  }
+  const loaded = new Set(getDisplayCommits().map(c => c.hash));
+  searchResultsEl.innerHTML = '<div class="sr-head">' + hits.length + ' commit(s) across all history — click to open</div>'
+    + hits.map(h =>
+      '<div class="sr-item" data-hash="' + escHtml(h.hash) + '">'
+        + '<div class="sr-subject">' + escHtml(h.subject) + '</div>'
+        + '<div class="sr-meta">' + avatarHtml(h.author, h.authorEmail)
+          + '<span>' + escHtml(h.author) + '</span>'
+          + '<span>' + escHtml(formatDate(h.authorDate)) + '</span>'
+          + '<span class="sr-hash">' + escHtml(h.hash.substring(0, 7)) + '</span>'
+          + (loaded.has(h.hash) ? '' : '<span>not in the loaded range</span>')
+        + '</div>'
+      + '</div>').join('');
+  searchResultsEl.classList.remove('hidden');
+}
+
+searchResultsEl.addEventListener('click', (e) => {
+  const item = e.target.closest('.sr-item');
+  if (!item) return;
+  const hash = item.dataset.hash;
+  hideSearchResults();
+  // Scroll to the row when this commit is on screen; otherwise just open its
+  // details, since loading the intervening history could be thousands of rows.
+  const row = document.querySelector('.commit-row[data-hash="' + hash + '"]');
+  if (row) { selectCommit(hash); row.scrollIntoView({ block: 'center' }); }
+  else { selectCommit(hash); }
+});
+
 document.getElementById('find-next').addEventListener('click', () => navigateSearch(1));
 document.getElementById('find-prev').addEventListener('click', () => navigateSearch(-1));
 document.getElementById('find-close').addEventListener('click', () => { findBar.classList.add('hidden'); clearSearch(); });
@@ -2239,6 +2546,7 @@ function navigateSearch(dir) {
 
 function clearSearch() {
   clearSearchHighlights();
+  hideSearchResults();
   state.searchMatches = [];
   state.searchIndex = -1;
   findInput.value = '';
@@ -2273,6 +2581,133 @@ document.getElementById('graph-container').addEventListener('scroll', (e) => {
 
 // --- Utilities ---
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+${AVATAR_JS}
+
+/* --- Author hover card --- */
+let authorCardEl = null;
+function showAuthorCard(anchorEl, commit) {
+  hideAuthorCard();
+  const rect = anchorEl.getBoundingClientRect();
+  const card = document.createElement('div');
+  card.className = 'author-card';
+  card.innerHTML = '<div class="ac-head">' + avatarHtml(commit.author, commit.authorEmail)
+      + escHtml(commit.author) + '</div>'
+    + '<div class="ac-row">' + escHtml(commit.authorEmail || '') + '</div>'
+    + '<div class="ac-row">authored ' + escHtml(formatDate(commit.authorDate)) + '</div>'
+    + (commit.committer && commit.committer !== commit.author
+        ? '<div class="ac-row">committed by ' + escHtml(commit.committer) + '</div>'
+        : '')
+    + '<div class="ac-row">' + escHtml(commit.hash.substring(0, 10)) + '</div>';
+  document.body.appendChild(card);
+  // Flip above the row when the card would fall off the bottom.
+  const cardRect = card.getBoundingClientRect();
+  const top = rect.bottom + cardRect.height > window.innerHeight ? rect.top - cardRect.height - 4 : rect.bottom + 4;
+  card.style.top = Math.max(4, top) + 'px';
+  card.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - cardRect.width - 4)) + 'px';
+  authorCardEl = card;
+}
+function hideAuthorCard() {
+  if (authorCardEl) { authorCardEl.remove(); authorCardEl = null; }
+}
+
+/* --- Drag a ref badge onto a commit to merge or rebase onto it --- */
+let dragRef = null;
+
+function makeRefDraggable(badge, refName, refType) {
+  // Only branches can be merged or rebased; tags and stashes cannot.
+  if (refType === 'tag' || refType === 'stash') return;
+  badge.draggable = true;
+  badge.addEventListener('dragstart', (e) => {
+    dragRef = { name: refName, type: refType };
+    badge.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', refName);
+    e.stopPropagation();
+  });
+  badge.addEventListener('dragend', () => {
+    dragRef = null;
+    badge.classList.remove('dragging');
+    document.querySelectorAll('.commit-row.drop-target').forEach(r => r.classList.remove('drop-target'));
+  });
+}
+
+function makeRowDropTarget(row, commit) {
+  if (commit.hash === 'uncommitted' || commit._isStash) return;
+  row.addEventListener('dragover', (e) => {
+    if (!dragRef) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    row.classList.add('drop-target');
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+  row.addEventListener('drop', (e) => {
+    if (!dragRef) return;
+    e.preventDefault();
+    row.classList.remove('drop-target');
+    showDropActionMenu(e.clientX, e.clientY, dragRef, commit);
+    dragRef = null;
+  });
+}
+
+function showDropActionMenu(x, y, ref, commit) {
+  const short = commit.hash.substring(0, 7);
+  const onCurrent = ref.name === state.currentBranch;
+  const items = [];
+  if (onCurrent) {
+    // Dragging the checked-out branch onto a commit = move this branch there.
+    items.push({ label: 'Rebase ' + ref.name + ' onto ' + short, action: () => showDialog({
+      title: 'Rebase',
+      message: 'Rebase ' + escHtml(ref.name) + ' onto commit ' + short + '?',
+      rawMessage: true,
+      confirmLabel: 'Rebase',
+      onConfirm: () => gitAction('rebase', { branch: commit.hash }),
+    }) });
+  } else {
+    items.push({ label: 'Merge ' + ref.name + ' into ' + (state.currentBranch || 'HEAD'), action: () => showDialog({
+      title: 'Merge',
+      message: 'Merge ' + escHtml(ref.name) + ' into ' + escHtml(state.currentBranch || 'HEAD') + '?',
+      rawMessage: true,
+      confirmLabel: 'Merge',
+      onConfirm: () => gitAction('merge', { branch: ref.name }),
+    }) });
+    items.push({ label: 'Rebase ' + (state.currentBranch || 'HEAD') + ' onto ' + ref.name, action: () => showDialog({
+      title: 'Rebase',
+      message: 'Rebase ' + escHtml(state.currentBranch || 'HEAD') + ' onto ' + escHtml(ref.name) + '?',
+      rawMessage: true,
+      confirmLabel: 'Rebase',
+      onConfirm: () => gitAction('rebase', { branch: ref.name }),
+    }) });
+  }
+  items.push({ separator: true });
+  items.push({ label: 'Compare ' + ref.name + ' with ' + short, action: () => vscode.postMessage({ command: 'openCompare', ref1: ref.name, ref2: commit.hash }) });
+  renderContextMenu(x, y, items);
+}
+
+/**
+ * Render a context menu from an item list. The older menu builders each inline
+ * this same block; new menus go through here.
+ */
+function renderContextMenu(x, y, items) {
+  const menu = document.getElementById('context-menu');
+  let html = '';
+  items.forEach((item, idx) => {
+    if (item.separator) {
+      html += '<div class="ctx-separator"></div>';
+    } else {
+      html += '<div class="ctx-item' + (item.destructive ? ' destructive' : '') + '" data-idx="' + idx + '">' + escHtml(item.label) + '</div>';
+    }
+  });
+  menu.innerHTML = html;
+  menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+  menu.classList.remove('hidden');
+  menu.querySelectorAll('.ctx-item').forEach(el => {
+    const item = items[parseInt(el.dataset.idx)];
+    if (item && item.action) el.addEventListener('click', () => { hideContextMenu(); item.action(); });
+  });
+  setTimeout(() => document.addEventListener('click', hideContextMenu, { once: true }), 0);
+}
+
 
 function formatDate(ts) {
   const fmt = state.settings.dateFormat;

@@ -1,0 +1,72 @@
+/**
+ * One live panel per (viewType, project).
+ *
+ * Keying by project alone would make opening Blame dispose the Git Graph panel
+ * of the same project, since both go through this registry. Keying by viewType
+ * alone would let one project's panel hijack another's tab across browser tabs
+ * — the bug fixed in v0.9.x. Both parts of the key are required.
+ */
+import type { ExtWebviewPanel, VscodeApi } from "./git-exec.ts";
+
+const panels = new Map<string, ExtWebviewPanel>();
+
+function key(viewType: string, projectPath: string): string {
+  // Written as an escape, never as the byte itself: one raw NUL makes git
+  // call the whole file binary, and every diff of it becomes "Binary files
+  // differ" — the file stops being reviewable at all.
+  return `${viewType}\u0000${projectPath}`;
+}
+
+export interface OpenPanelOptions {
+  vscode: VscodeApi;
+  viewType: string;
+  title: string;
+  projectPath: string;
+  html: string;
+  onMessage: (msg: unknown, panel: ExtWebviewPanel) => void | Promise<void>;
+  /** Extra teardown for timers the caller owns. */
+  onDispose?: () => void;
+}
+
+export function openPanel(options: OpenPanelOptions): ExtWebviewPanel {
+  const { vscode, viewType, title, projectPath, html, onMessage, onDispose } = options;
+  const k = key(viewType, projectPath);
+
+  // Dispose the stale panel for THIS viewType + project only. On page reload the
+  // browser's WS close message can be lost, leaving the map referencing a panel
+  // the browser no longer knows about.
+  panels.get(k)?.dispose(); // fires onDidDispose → clears map entry & timers
+
+  const panel = vscode.window.createWebviewPanel(
+    viewType,
+    title,
+    vscode.ViewColumn.Active,
+    { projectPath },
+  );
+  panels.set(k, panel);
+  panel.webview.html = html;
+
+  const msgDisposable = panel.webview.onDidReceiveMessage((raw: unknown) => {
+    void onMessage(raw, panel);
+  });
+
+  const disposeDisposable = panel.onDidDispose(() => {
+    // Only clear if the map still points at THIS panel — a newer panel for the
+    // same key must not be evicted by an older one's teardown.
+    if (panels.get(k) === panel) panels.delete(k);
+    msgDisposable.dispose();
+    disposeDisposable.dispose();
+    onDispose?.();
+  });
+
+  return panel;
+}
+
+/** Test seam: drop all registry state. */
+export function _resetPanelRegistry(): void {
+  panels.clear();
+}
+
+export function _panelCount(): number {
+  return panels.size;
+}

@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/extension.ts";
 import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
@@ -8,6 +8,58 @@ import { parseManifest, discoverManifests, discoverBundledManifests } from "./ex
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 import { getPpmDir } from "./ppm-dir.ts";
+import { isCompiledBinary } from "./autostart-generator.ts";
+
+/**
+ * Where the bundled `packages/ext-*` extensions live on disk.
+ *
+ * They are loaded as source by the extension host, so they ship *beside* the install rather
+ * than inside it. Walking up from `import.meta.dir` finds them when PPM runs from source, but
+ * a compiled binary reports `/$bunfs/root` — its embedded filesystem — and the same walk lands
+ * on `/packages`, an absolute path at the filesystem root that cannot exist. Every bundled
+ * extension then vanished with no error and no log line: the panel simply said none were
+ * installed. Fall back to the directory holding the executable (`<install>/dist/ppm` →
+ * `<install>/packages`).
+ */
+export function bundledExtensionsDir(
+  moduleDir: string = import.meta.dir,
+  execPath: string = process.execPath,
+): string {
+  const fromSource = resolve(moduleDir, "../../packages");
+  if (existsSync(fromSource)) return fromSource;
+  return resolve(dirname(execPath), "../packages");
+}
+
+/**
+ * How to name the extension host worker so Bun will actually load it.
+ *
+ * Neither form works in both modes, which is why this is a branch and not a constant:
+ *
+ * - `new URL("./extension-host-worker.ts", import.meta.url)` is right from source — it is
+ *   anchored to this module, so it survives the service's `WorkingDirectory=~/.ppm`. From a
+ *   compiled binary it yields `file:///$bunfs/root/...`, the embedded filesystem, and Bun
+ *   refuses to resolve a worker entry point there: the Worker fails to build and dies at once.
+ *   `ensureWorker` only null-checks, so every later activation posts to the corpse and reports
+ *   `Worker has been terminated`.
+ * - A relative specifier is right when compiled — but it resolves against the directory of the
+ *   build's *main entry point* (`src/index.ts`), not against this module, so it reads
+ *   `./services/...` rather than `./`. Verified at cwd `/`, `~/.ppm` and the binary's own
+ *   directory; every other spelling tried (`./extension-host-worker.ts`, `src/services/...`,
+ *   the `/$bunfs/` path) is refused. From source the same specifier resolves against cwd, so
+ *   it breaks the moment cwd is not this directory, which for the service it never is.
+ *
+ * The worker also has to be a second entry point of `bun build --compile` (see the `build`
+ * script) — a worker referenced only through `new URL` is not pulled into the binary.
+ *
+ * Compiling this way also keeps the worker's own imports (`@ppm/vscode-compat`) inside the
+ * bundle, where loading it off disk would have to resolve them through `node_modules` — which
+ * a worker spawned from a compiled binary does not do.
+ */
+export function extensionHostWorkerSpec(compiled: boolean = isCompiledBinary()): string {
+  return compiled
+    ? "./services/extension-host-worker.ts"
+    : new URL("./extension-host-worker.ts", import.meta.url).href;
+}
 
 class ExtensionService {
   private worker: Worker | null = null;
@@ -24,8 +76,7 @@ class ExtensionService {
   private ensureWorker(): { worker: Worker; rpc: RpcChannel } {
     if (this.worker && this.rpc) return { worker: this.worker, rpc: this.rpc };
 
-    const workerPath = new URL("./extension-host-worker.ts", import.meta.url).href;
-    this.worker = new Worker(workerPath, { type: "module" });
+    this.worker = new Worker(extensionHostWorkerSpec(), { type: "module" });
     this.rpc = new RpcChannel((msg) => this.worker!.postMessage(msg));
 
     this.rpc.onRequest("storage:set", async (params) => {
@@ -73,8 +124,7 @@ class ExtensionService {
     ensureExtensionsDir(resolve(getPpmDir(), "extensions"));
 
     // Discover bundled extensions from packages/ext-*
-    const bundledDir = resolve(import.meta.dir, "../../packages");
-    const bundled = await discoverBundledManifests(bundledDir);
+    const bundled = await discoverBundledManifests(bundledExtensionsDir());
     for (const m of bundled) {
       this.extensionPaths.set(m.id, m._dir);
       this.bundledIds.add(m.id);

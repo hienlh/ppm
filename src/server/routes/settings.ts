@@ -112,6 +112,7 @@ const UI_PREFS_KEY = "ui_prefs";
 /** Whitelisted UI pref keys with their validators */
 const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   wordWrap: (v) => typeof v === "boolean",
+  inlineBlame: (v) => typeof v === "boolean",
   tabWrap: (v) => typeof v === "boolean",
   sidebarCollapsed: (v) => typeof v === "boolean",
   remoteDesktopStatsVisible: (v) => typeof v === "boolean",
