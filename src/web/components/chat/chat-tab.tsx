@@ -89,7 +89,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   // Usage runs independently — auto-refreshes on interval. Scoped to this session so the
   // account shown is the one bound to it, not whichever session ran most recently.
-  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage } =
+  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, reloadUsage } =
     useUsage(projectName, providerId, sessionId ?? undefined);
 
   // Draft auto-save/restore
@@ -183,6 +183,12 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         // other source is the usage endpoint on a two-minute poll — so without this the badge
         // sits on the old account long after the switch, which reads as the button not working.
         setServingAccount({ id: accountId, label });
+        // The header chip reports the account BOUND to this session, and that binding has
+        // just changed — so re-read it now instead of leaving the chip on the previous
+        // account's figures for up to the two-minute poll. Before the first message a
+        // session has no binding at all, so those figures were blank, and the chip sat at
+        // "--%" beside a panel already showing the chosen account's quota.
+        void reloadUsage();
         // Switching costs a full prompt-cache write, so it is worth saying out loud rather
         // than letting the chip quietly change.
         toast.success("This chat will use the selected account from the next message.");
@@ -198,7 +204,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       metadata: { ...metadata, pickedAccountId: accountId, pickedAccountLabel: label, pickedAccountProvider: providerId },
     });
     return null;
-  }, [sessionId, projectName, tabId, metadata, providerId, updateTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, projectName, tabId, metadata, providerId, updateTab, reloadUsage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * The account this chat is on, as far as the UI can tell.

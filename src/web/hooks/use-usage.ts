@@ -10,6 +10,16 @@ interface UseUsageReturn {
   /** ISO timestamp from BE — when usage was actually fetched. */
   lastFetchedAt: string | null;
   refreshUsage: () => void;
+  /**
+   * Re-read without forcing the provider to go back to its source.
+   *
+   * For the caller that has just changed WHICH account this session reports on, rather than
+   * wanting fresher numbers for the same one. The new account's quota is already cached —
+   * it is what the account panel was showing a moment ago — so `refresh=1` would drop every
+   * account's cached value and re-read them all to display one figure that was already
+   * known.
+   */
+  reloadUsage: () => void;
 }
 
 /**
@@ -61,8 +71,10 @@ export function useUsage(projectName: string, providerId = "claude", sessionId?:
 
   /** Manual refresh — asks BE for fresh usage. */
   const refreshUsage = useCallback(() => doFetch(true), [doFetch]);
+  /** Re-read the cached value, for when the session's account changed underneath it. */
+  const reloadUsage = useCallback(() => doFetch(), [doFetch]);
 
   // Hide the previous scope synchronously, before the new effect runs.
   const current = snapshot?.scope === scope ? snapshot : null;
-  return { usageInfo: current?.usage ?? {}, usageLoading, lastFetchedAt: current?.fetchedAt ?? null, refreshUsage };
+  return { usageInfo: current?.usage ?? {}, usageLoading, lastFetchedAt: current?.fetchedAt ?? null, refreshUsage, reloadUsage };
 }

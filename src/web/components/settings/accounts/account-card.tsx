@@ -51,6 +51,10 @@ export interface AccountCardProps {
   /** `list` fills the width, `strip` is a fixed-width card in a sideways scroller, `grid`
    *  fills a cell of the fullscreen grid. */
   layout?: "list" | "strip" | "grid";
+  /** The subscription tier this account is on, when the provider reports one. Codex names
+   *  a plan ("plus", "team") and that decides which quota windows the account even has, so
+   *  it belongs on the card; Claude reports none and the badge simply does not appear. */
+  planLabel?: string | null;
 }
 
 // Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
@@ -60,7 +64,7 @@ const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } 
 
 export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
-  onSelect, unselectableReason, selecting,
+  onSelect, unselectableReason, selecting, planLabel,
   layout = "list",
 }: AccountCardProps) {
   const { usage } = entry;
@@ -83,8 +87,13 @@ export function AccountCard({
   // restates what the sign-in chip beside it implies. That leaves the two states nothing
   // else announces: a temporary token with no way to renew, and one that has lapsed but
   // still has a refresh token behind it.
-  const showTokenStatus = ts.label === "temp" || ts.label === "unknown"
-    || (ts.label === "expired" && !isExpired && !needsReauth);
+  //
+  // Gated on there being an `accountInfo` at all. Without one `tokenStatus` reports
+  // "unknown", which reads as a warning about this account's token — and a Codex card has
+  // no token to warn about, because its credentials live in a CODEX_HOME the server
+  // authenticates against rather than in a grant with an expiry.
+  const showTokenStatus = !!accountInfo && (ts.label === "temp" || ts.label === "unknown"
+    || (ts.label === "expired" && !isExpired && !needsReauth));
   const grantExpiresOn = grantExpiresAtMs
     ? new Date(grantExpiresAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
     : null;
@@ -171,6 +180,14 @@ export function AccountCard({
             hint="A static API key rather than a sign-in: nothing to expire and nothing to renew."
           >
             API key
+          </AccountHint>
+        )}
+        {planLabel && (
+          <AccountHint
+            className="text-[10px] uppercase tracking-wide text-text-subtle shrink-0"
+            hint="The subscription this account is on. It decides which quota windows the account has — some plans have a weekly limit and no shorter one."
+          >
+            {planLabel}
           </AccountHint>
         )}
 
