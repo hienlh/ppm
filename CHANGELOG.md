@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-09-15
+
+### Added
+- **Sign in to Codex through the browser** — paste the `localhost` callback URL after signing in and PPM completes the login, so you no longer need device-code login enabled on the ChatGPT account. Works from a phone or another machine, where the callback could never reach this host on its own.
+
+### Fixed
+- **Codex switches account by itself when one hits its usage limit** — the exhausted account is parked until its quota returns, the conversation moves to one with room, and the same turn is sent again instead of stopping in front of you.
+- **Switching a Codex account by hand now takes effect** — a live app-server keeps serving the account it was spawned on, so the choice used to do nothing until something else happened to kill it.
+- **Continuing a Codex chat on another account no longer loses the conversation** — codex resolves a thread only inside its own account directory, so the chat silently started over as an empty one. Its transcript is now carried across first.
+- **A ChatGPT Business account no longer shows a phantom "5-Hour" limit** — that plan has a weekly quota and no shorter one, and its weekly figure was being labelled and counted as the 5-hour one, complete with a reset nearly seven days out.
+- **Codex's usage panel is the same panel as Claude's** — accounts sit in a sideways strip with a fullscreen grid for comparing them, instead of stacked so that seeing the second meant scrolling past the first, and both now draw the same account cards.
+- **The usage chip updates as soon as you switch account** — it used to sit at `--%` for up to two minutes beside a panel already showing the chosen account's quota.
+- **Spawned Codex subagents no longer appear as sessions of their own** — each one was listed as a top-level chat that opened with no prompt and never ended; their transcripts now fold into the parent's Agent card, and a session is titled by its opening prompt.
+- **A tooltip works wherever it is rendered** — Radix throws rather than warns without a provider above it, which made any component that gained a tooltip in 0.20.0 unrenderable outside the app shell.
+
+
 ## [0.20.1] - 2026-09-15
 
 ### Fixed
