@@ -7,9 +7,11 @@
  * the chosen hunks to `/git/{stage,unstage,discard}-hunks`, which rebuilds a
  * patch from them server-side.
  *
- * Hunk and line numbers are indexes into the diff *as loaded here*. If the file
- * changes underneath, the server's `git apply` rejects the patch rather than
- * staging the wrong lines, and the error says so.
+ * Each hunk goes back with the `id` it was listed with, a hash of its content,
+ * and the server finds it by that id rather than by position, so the line
+ * numbers inside it still name the lines ticked here. If the file changed and a
+ * ticked hunk is no longer in the diff, the request is refused before any patch
+ * is built, and the error says so.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Minus, Plus, Trash2 } from "lucide-react";
