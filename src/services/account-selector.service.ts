@@ -21,6 +21,18 @@ const FIVE_HOUR_SKIP_THRESHOLD = 0.95;
 /** Weekly utilization at which an account has nothing left to give until its reset. */
 const WEEKLY_EXHAUSTED_UTIL = 1.0;
 
+/**
+ * Whether a utilisation reads as a reached cap.
+ *
+ * Rounded to whole percent because that is what the usage bars display, and a refusal has to
+ * agree with the number the user is looking at. On the raw value, 0.996 is "not yet at the
+ * cap" while the card beside it already says 100% — so the button stayed enabled on an
+ * account the user could see was finished.
+ */
+function atCap(util: number | null | undefined): boolean {
+  return Math.round((util ?? 0) * 100) >= 100;
+}
+
 class AccountSelectorService {
   private cursor = 0;
   private retryCounts = new Map<string, number>();
@@ -119,6 +131,11 @@ class AccountSelectorService {
   private hasUsableToken(accountId: string): boolean {
     const acc = accountService.list().find((a) => a.id === accountId);
     if (!acc) return false;
+    // A grant the server has rejected is refused by `ensureFreshTokenChecked` before it even
+    // looks at how fresh the access token is, so such an account cannot serve a turn no
+    // matter what it still holds. Routing to it only moves that refusal into the middle of
+    // a request.
+    if (acc.reauthRequired) return false;
     if (!acc.expiresAt) return true;
     if (acc.expiresAt >= Math.floor(Date.now() / 1000)) return true;
     const withTokens = accountService.getWithTokens(accountId);
@@ -139,16 +156,46 @@ class AccountSelectorService {
   }
 
   /**
+   * Whether an account has actually reached a cap, as opposed to merely being close to one.
+   *
+   * Distinct from [[hasQuotaRoom]], which treats 95% as "no room" so the router steers away
+   * early. That margin is right for routing and wrong for a refusal: an account at 96% still
+   * answers. At 100% it does not — the next turn fails outright — and that is the only point
+   * at which telling a user "no" is honest.
+   */
+  private isExhausted(accountId: string): boolean {
+    const snap = getLatestSnapshotForAccount(accountId);
+    if (!snap) return false;
+    return atCap(snap.five_hour_util) || atCap(snap.weekly_util);
+  }
+
+  /**
    * Whether this account could serve a turn if a caller asked for it by name.
    *
-   * The hard test only. A caller naming a specific account — a user picking one in the
-   * panel, or a tab redeeming the account it claimed — is allowed to land on one that is
-   * near its cap; that is a choice to make a slower turn, not an impossible one. It is not
-   * allowed to land on one that is disabled or has no live token, which is the same line
-   * the router itself draws.
+   * Looser than the router's own filter in one direction and stricter in another. An account
+   * merely near its cap is allowed — naming it is a choice to accept a slower turn. An
+   * account that has reached its cap is not, because the turn would simply fail, and neither
+   * is one that is disabled or out of a live token.
    */
   canServe(accountId: string): boolean {
-    return this.isUsable(accountId);
+    return this.isUsable(accountId) && !this.isExhausted(accountId);
+  }
+
+  /** Why [[canServe]] said no, in words a user can act on. Null when it said yes. */
+  refusalReason(accountId: string): string | null {
+    const acc = accountService.list().find((a) => a.id === accountId);
+    if (!acc) return "That account no longer exists.";
+    if (!this.isSelectable(accountId)) return "That account is switched off.";
+    if (!this.hasUsableToken(accountId)) return "That account needs to be signed in again.";
+    if (this.isExhausted(accountId)) {
+      const snap = getLatestSnapshotForAccount(accountId);
+      const weekly = (snap?.weekly_util ?? 0) >= 1;
+      const resetsAt = weekly ? snap?.weekly_resets_at : snap?.five_hour_resets_at;
+      const window = weekly ? "weekly" : "5-hour";
+      const when = resetsAt ? ` It resets at ${new Date(resetsAt).toLocaleString()}.` : "";
+      return `That account has reached its ${window} limit.${when}`;
+    }
+    return null;
   }
 
   /**

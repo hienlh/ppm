@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { X, Loader2, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AccountUsageBar } from "@/components/settings/accounts/account-bucket-row";
 import { formatResetTime } from "@/components/settings/accounts/account-usage-format";
 import type { UsageInfo } from "../../../types/chat";
@@ -9,13 +10,18 @@ import type { UsageInfo } from "../../../types/chat";
 interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled" }
 type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly">;
 
+/** Matches the whole-percent figure the bars show, so a refusal agrees with the card. */
+function atCap(util: number | null | undefined): boolean {
+  return Math.round((util ?? 0) * 100) >= 100;
+}
+
 function UsageBar({ label, frac, bucket }: {
   label: string;
   frac?: number;
   bucket?: UsageInfo["session"];
 }) {
   const pct = frac != null ? Math.round(frac * 100) : null;
-  return <AccountUsageBar label={label} pct={pct} reset={formatResetTime(bucket)} />;
+  return <AccountUsageBar label={label} pct={pct} reset={formatResetTime(bucket)} resetsAt={bucket?.resetsAt} />;
 }
 
 /** Read-only usage panel opened from the chat toolbar badge (Claude parity).
@@ -29,7 +35,7 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
   /** Forces the chat usage endpoint to bypass its provider-usage cache. */
   onReload?: () => void | Promise<void>;
   /** Route this chat onto another Codex account. */
-  onSelectAccount?: (accountId: string, label: string | null) => void | Promise<void>;
+  onSelectAccount?: (accountId: string, label: string | null) => Promise<string | null>;
   /** Account currently claimed or bound for this chat. */
   selectedAccountId?: string | null;
 }) {
@@ -44,10 +50,15 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
   // selection control is rebuilt here. Kept visually the same as the Claude panel's on
   // purpose — the two sub-tabs drifting apart is the thing the shared Settings layout was
   // introduced to stop, and a differently-shaped button here would start it again.
-  const select = useCallback(async (id: string, label: string) => {
+  const select = useCallback(async (id: string, label: string, refused: string | null) => {
     if (!onSelectAccount) return;
+    // Refuse here rather than leaving the button inert: the user pressed something and is
+    // owed the reason. The server checks again, which catches an account that became
+    // unusable between this render and the click.
+    if (refused) { setToggleError(`Cannot switch to this account — ${refused}`); return; }
     setSelectingId(id);
-    try { await onSelectAccount(id, label); } finally { setSelectingId(null); }
+    setToggleError(null);
+    try { setToggleError((await onSelectAccount(id, label)) ?? null); } finally { setSelectingId(null); }
   }, [onSelectAccount]);
 
   /**
@@ -98,17 +109,31 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-text-primary">Codex Usage</span>
         <div className="flex items-center gap-1">
-          <button
-            onClick={reload}
-            disabled={loading}
-            className="text-text-subtle hover:text-text-primary px-1 cursor-pointer disabled:opacity-50"
-            title="Refresh"
-          >
-            <RefreshCw className={`size-3 ${loading ? "animate-spin" : ""}`} />
-          </button>
-          <button onClick={onClose} className="text-text-subtle hover:text-text-primary px-1 cursor-pointer" title="Close">
-            <X className="size-3" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={reload}
+                disabled={loading}
+                className="text-text-subtle hover:text-text-primary px-1 cursor-pointer disabled:opacity-50"
+                aria-label="Refresh usage"
+              >
+                <RefreshCw className={`size-3 ${loading ? "animate-spin" : ""}`} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Refresh</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onClose}
+                className="text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+                aria-label="Close usage panel"
+              >
+                <X className="size-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Close</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -143,6 +168,14 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
       {accounts.map((a) => {
         const u = usages[a.id] ?? {};
         const isServing = a.id === (selectedAccountId ?? usage.activeAccountId);
+        // Reached, not approaching: an account at 96% still answers, one at 100% does not.
+        const refused = a.status === "disabled"
+          ? "it is switched off."
+          : atCap(u.fiveHour)
+            ? "it has reached its 5-hour limit."
+            : atCap(u.sevenDay)
+              ? "it has reached its weekly limit."
+              : null;
         return (
           <div
             key={a.id}
@@ -151,6 +184,30 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
             <div className="flex items-center gap-2">
               <span className="text-sm text-text-primary truncate flex-1 min-w-0">{a.label}</span>
               {isServing && <span className="text-[10px] text-primary shrink-0 font-medium">Active</span>}
+              {/* Same slot as the Active badge, so every card keeps one header row and the
+                  panel does not grow taller just to carry a button. */}
+              {onSelectAccount && !isServing && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => select(a.id, a.label, refused)}
+                      disabled={selectingId === a.id}
+                      className={[
+                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors cursor-pointer disabled:cursor-wait",
+                        refused
+                          ? "text-text-subtle hover:text-error hover:bg-error/10"
+                          : "text-text-secondary hover:text-foreground hover:bg-surface-elevated",
+                      ].join(" ")}
+                    >
+                      {selectingId === a.id ? "Switching…" : "Use"}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    {refused ? `Cannot use this account — ${refused}` : "Use this account for this chat"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {a.status === "disabled" && <span className="text-[10px] text-text-subtle shrink-0">Off</span>}
               <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1">{a.type}</span>
               {a.planType && <span className="text-[10px] text-text-subtle">{a.planType}</span>}
@@ -164,22 +221,6 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
             </div>
             <UsageBar label="5-Hour" frac={u.fiveHour} bucket={u.session} />
             <UsageBar label="Weekly" frac={u.sevenDay} bucket={u.weekly} />
-            {onSelectAccount && (
-              <button
-                type="button"
-                onClick={() => !isServing && select(a.id, a.label)}
-                disabled={isServing || selectingId === a.id}
-                title={isServing ? "Already serving this chat" : "Use this account for this chat"}
-                className={[
-                  "w-full min-h-[44px] rounded text-[11px] font-medium transition-colors",
-                  isServing
-                    ? "text-primary/70 cursor-default"
-                    : "text-text-secondary hover:text-foreground hover:bg-surface-elevated cursor-pointer",
-                ].join(" ")}
-              >
-                {isServing ? "Serving this chat" : selectingId === a.id ? "Switching…" : "Use for this chat"}
-              </button>
-            )}
           </div>
         );
       })}

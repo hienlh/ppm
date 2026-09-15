@@ -175,23 +175,41 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
    * written directly. Both end up in the same place — this is the same path the automatic
    * route uses, not a parallel one.
    */
-  const handleSelectAccount = useCallback(async (accountId: string, label: string | null) => {
+  const handleSelectAccount = useCallback(async (accountId: string, label: string | null): Promise<string | null> => {
     if (sessionId) {
       try {
         await api.put(`${projectUrl(projectName)}/chat/sessions/${sessionId}/account`, { accountId });
+        // Say it locally too. The panel marks the serving card from this state, and the only
+        // other source is the usage endpoint on a two-minute poll — so without this the badge
+        // sits on the old account long after the switch, which reads as the button not working.
+        setServingAccount({ id: accountId, label });
         // Switching costs a full prompt-cache write, so it is worth saying out loud rather
         // than letting the chip quietly change.
         toast.success("This chat will use the selected account from the next message.");
       } catch (e) {
-        toast.error((e as Error).message || "Could not switch account");
+        // Returned rather than toasted: the panel shows it beside the cards, which is where
+        // the user just clicked and where the account they picked is still on screen.
+        return (e as Error).message || "Could not switch account";
       }
-      return;
+      return null;
     }
-    if (!tabId) return;
+    if (!tabId) return null;
     updateTab(tabId, {
       metadata: { ...metadata, pickedAccountId: accountId, pickedAccountLabel: label, pickedAccountProvider: providerId },
     });
+    return null;
   }, [sessionId, projectName, tabId, metadata, providerId, updateTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * The account this chat is on, as far as the UI can tell.
+   *
+   * One piece of state with two writers, and last write wins — which is the right answer
+   * chronologically. The stream writes it whenever a turn reports who served (including a
+   * forced switch), and the manual picker writes it the moment the server accepts a choice.
+   * Deriving it instead from the polled usage endpoint is what made the badge lag two
+   * minutes behind a switch the user had just made.
+   */
+  const [servingAccount, setServingAccount] = useState<{ id: string; label: string | null } | null>(null);
 
   const {
     messages,
@@ -211,7 +229,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     compactStatus,
     statusMessage,
     sessionTitle,
-    liveAccountLabel,
+    liveAccount,
     model,
     setModel,
     effort,
@@ -231,6 +249,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     backgroundShells,
     killBackgroundShell,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated);
+
+  // The stream's report is the second writer. A turn that ran — or was forced onto another
+  // account mid-flight — is ground truth, and it arrives after whatever the picker last said.
+  useEffect(() => {
+    if (liveAccount) setServingAccount(liveAccount);
+  }, [liveAccount]);
+
+  // A different conversation has a different account; carrying this one's over would label
+  // it wrongly until the next turn corrected it.
+  useEffect(() => { setServingAccount(null); }, [sessionId]);
+
 
   // Teammates keep working long after their spawn card scrolled away — a resume
   // arrives by SendMessage and writes no card at all. Poll the roster whenever this
@@ -773,8 +802,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           lastFetchedAt={lastFetchedAt}
           sessionId={sessionId}
           providerId={providerId}
-          pickedAccountLabel={liveAccountLabel ?? (claimMatchesProvider ? pickedAccountLabel : null)}
-          pickedAccountId={claimMatchesProvider ? pickedAccountId ?? null : null}
+          pickedAccountLabel={servingAccount?.label ?? (claimMatchesProvider ? pickedAccountLabel : null)}
+          pickedAccountId={servingAccount?.id ?? (claimMatchesProvider ? pickedAccountId ?? null : null)}
           onSelectAccount={handleSelectAccount}
           onSelectSession={handleSelectSession}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}

@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AccountCardRow, AccountCardShell, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
 import { CodexAddAccountDialog } from "./codex-add-account-dialog";
 import { CodexBackupDialog } from "./codex-backup-dialog";
@@ -95,15 +96,19 @@ export function CodexAccountsSection() {
                       aria-label={a.status === "disabled" ? "Enable account" : "Disable account"}
                       className="cursor-pointer shrink-0"
                     />
-                    <button
-                      type="button"
-                      onClick={() => void c.remove(a.id)}
-                      title="Remove account"
-                      aria-label="Remove account"
-                      className="p-2 rounded cursor-pointer text-text-subtle hover:text-error hover:bg-surface-elevated transition-colors shrink-0"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => void c.remove(a.id)}
+                          aria-label="Remove account"
+                          className="p-2 rounded cursor-pointer text-text-subtle hover:text-error hover:bg-surface-elevated transition-colors shrink-0"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">Remove account</TooltipContent>
+                    </Tooltip>
                   </div>
                   <CodexUsageRows usage={u} />
                 </AccountCardShell>

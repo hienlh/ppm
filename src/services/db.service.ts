@@ -6,7 +6,7 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
-export const CURRENT_SCHEMA_VERSION = 46;
+export const CURRENT_SCHEMA_VERSION = 47;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1077,7 +1077,11 @@ export function runMigrations(database: Database): void {
     }
 
     database.exec(`PRAGMA user_version = 45;`);
+  }
 
+  // Nesting this inside the v45 block, as it briefly was, meant it only ran for a database
+  // coming from 44 or below — every install already sitting at 45 skipped it silently and
+  // then read columns that were never added.
   if (current < 46) {
     // Anthropic kills the whole refresh-token family a fixed time after the
     // original grant — rotation does not extend it — so an account that has been
@@ -1103,9 +1107,8 @@ export function runMigrations(database: Database): void {
     // which is the truth; reauth_required still catches the death either way.
     database.exec(`PRAGMA user_version = 46;`);
   }
-  }
 
-  if (current < 46) {
+  if (current < 47) {
     // Codex accounts had no way to be switched off. Claude accounts have had `status` since
     // the beginning, so the chat panel could offer a toggle there and not here — the same
     // control meaning two different amounts of work depending on which provider you were
@@ -1116,7 +1119,7 @@ export function runMigrations(database: Database): void {
     //
     // Defaults to enabled so an upgrade changes nothing about which accounts are in play.
     try { database.exec(`ALTER TABLE codex_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`); } catch { /* exists */ }
-    database.exec(`PRAGMA user_version = 46;`);
+    database.exec(`PRAGMA user_version = 47;`);
   }
 }
 

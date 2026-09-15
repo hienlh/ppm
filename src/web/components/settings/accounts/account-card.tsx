@@ -89,10 +89,14 @@ export function AccountCard({
     ? new Date(grantExpiresAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
     : null;
   const hasActions = Boolean(onToggle || onDelete || onExport || onViewProfile);
-  // An expired account is already refused everywhere else on this card; folding it in here
-  // keeps one answer to "can this serve" rather than two that can disagree.
-  const refusedReason = isExpired ? "Token expired — sign in again" : unselectableReason ?? null;
-  const canSelect = Boolean(onSelect) && !isActive && !refusedReason && !selecting;
+  // Every state that already dims this card also refuses the chat to it. `needsReauth` is
+  // the one worth naming separately: the token is present and unexpired, so nothing else
+  // here looks wrong, but the server has rejected it and no turn can run on it.
+  const refusedReason = isExpired
+    ? "Token expired — sign in again"
+    : needsReauth
+      ? "Sign in again to use this account"
+      : unselectableReason ?? null;
 
   const layoutClass = layout === "list"
     ? ""
@@ -118,6 +122,32 @@ export function AccountCard({
           <AccountHint className="text-[10px] text-primary shrink-0 font-medium" hint="The next turn will run on this account.">
             Active
           </AccountHint>
+        )}
+        {/* Occupies the slot the "Active" badge would, so a card is the same height whether
+            it is the one serving or one you could switch to. A row of its own below cost
+            every card that height, including the ones whose button did nothing. */}
+        {onSelect && !isActive && (
+          // Shown even when the account cannot serve, and clicking it then reports why.
+          // Hiding it instead left a blank where the other cards have a control, which reads
+          // as a missing feature rather than as a refusal with a reason behind it.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => onSelect(entry.accountId)}
+                disabled={selecting}
+                className={[
+                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors cursor-pointer disabled:cursor-wait",
+                  refusedReason
+                    ? "text-text-subtle hover:text-error hover:bg-error/10"
+                    : "text-text-secondary hover:text-foreground hover:bg-surface-elevated",
+                ].join(" ")}
+              >
+                {selecting ? "Switching…" : "Use"}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{refusedReason ?? "Use this account for this chat"}</TooltipContent>
+          </Tooltip>
         )}
         {isExpired && (
           <AccountHint
@@ -236,32 +266,6 @@ export function AccountCard({
         )}
       </div>
 
-      {/* Selection lives in its own full-width row rather than as another icon beside the
-          name: the header icons are 32px and already tight, while this is the one control
-          a thumb reaches for on a phone. Full width clears the 44px touch minimum without
-          resizing its neighbours. */}
-      {onSelect && (
-        <button
-          type="button"
-          onClick={() => canSelect && onSelect(entry.accountId)}
-          disabled={!canSelect}
-          title={refusedReason ?? (isActive ? "Already serving this chat" : "Use this account for this chat")}
-          className={[
-            "w-full min-h-[44px] rounded text-[11px] font-medium transition-colors",
-            isActive
-              ? "text-primary/70 cursor-default"
-              : canSelect
-                ? "text-text-secondary hover:text-foreground hover:bg-surface-elevated cursor-pointer"
-                : "text-text-subtle cursor-not-allowed",
-          ].join(" ")}
-        >
-          {isActive
-            ? "Serving this chat"
-            : selecting
-              ? "Switching…"
-              : refusedReason ?? "Use for this chat"}
-        </button>
-      )}
     </AccountCardShell>
   );
 }

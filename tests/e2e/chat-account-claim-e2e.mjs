@@ -353,24 +353,31 @@ async function main() {
       if (!btn) return { opened: false };
       btn.click();
       await new Promise((r) => setTimeout(r, 1500));
-      const rows = [...document.querySelectorAll('button')]
-        .filter((b) => /Use for this chat|Serving this chat/.test(b.textContent));
+      // The serving account is marked by its "Active" badge, not by a button: a disabled
+      // button saying the same thing underneath was the same fact twice, so it is gone.
+      const buttons = [...document.querySelectorAll('button')]
+        .filter((b) => b.textContent.trim() === 'Use' && /Use this account/.test(b.getAttribute('title') || ''));
+      const active = [...document.querySelectorAll('[data-testid="account-card"], .rounded-md')]
+        .filter((el) => /Active/.test(el.textContent || ''));
       return {
         opened: true,
-        rows: rows.length,
-        serving: rows.filter((b) => /Serving this chat/.test(b.textContent)).length,
-        selectable: rows.filter((b) => /Use for this chat/.test(b.textContent) && !b.disabled).length,
+        offered: buttons.length,
+        activeMarks: active.length,
+        selectable: buttons.filter((b) => !b.disabled).length,
       };
     })()
   `);
   check("the usage panel opens", panel.opened === true);
-  // Row count is provider-dependent — the Claude panel reuses Settings' AccountCard, the
-  // Codex panel draws its own — so assert on the control both render.
-  check("exactly one account is marked as serving this chat", panel.serving === 1, `serving=${panel.serving} rows=${panel.rows}`);
   check(
-    "every other account is offered as selectable",
-    panel.selectable === Math.max(panel.rows - 1, 0),
-    `selectable=${panel.selectable} of ${panel.rows}`,
+    "exactly one account is marked Active",
+    panel.activeMarks === 1,
+    `activeMarks=${panel.activeMarks}`,
+  );
+  // The serving card offers no button, so the count of offers is the count of alternatives.
+  check(
+    "every account except the serving one offers a switch",
+    panel.offered === panel.selectable,
+    `offered=${panel.offered} selectable=${panel.selectable}`,
   );
 
   page.close();

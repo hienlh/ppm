@@ -13,7 +13,7 @@ import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-d
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
-import { bindPickedAccount } from "../../services/picked-account-binding.ts";
+import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
@@ -496,7 +496,7 @@ chatRoutes.put("/sessions/:id/account", async (c) => {
   if (!body.accountId) return c.json(err("accountId is required"), 400);
   const providerId = getSessionProvider(sessionId) ?? "claude";
   if (!bindPickedAccount(sessionId, providerId, body.accountId)) {
-    return c.json(err("That account cannot serve this session — it may be disabled, removed, or out of a usable token."), 400);
+    return c.json(err(bindRefusalReason(providerId, body.accountId)), 400);
   }
   return c.json(ok({ accountId: body.accountId }));
 });

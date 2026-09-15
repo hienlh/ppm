@@ -19,8 +19,8 @@ function toPct(v?: number): number | null { return v != null ? Math.round(v * 10
 export function CodexUsageRows({ usage }: { usage: Usage }) {
   return (
     <div className="space-y-2">
-      <AccountUsageBar label="5-Hour Session" pct={toPct(usage.fiveHour)} reset={formatResetTime(usage.session)} />
-      <AccountUsageBar label="Weekly" pct={toPct(usage.sevenDay)} reset={formatResetTime(usage.weekly)} />
+      <AccountUsageBar label="5-Hour Session" pct={toPct(usage.fiveHour)} reset={formatResetTime(usage.session)} resetsAt={usage.session?.resetsAt} />
+      <AccountUsageBar label="Weekly" pct={toPct(usage.sevenDay)} reset={formatResetTime(usage.weekly)} resetsAt={usage.weekly?.resetsAt} />
     </div>
   );
 }

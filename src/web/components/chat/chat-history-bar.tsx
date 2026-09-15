@@ -46,7 +46,7 @@ interface ChatHistoryBarProps {
   /** Id of that same account, so the panel can mark which card is serving this chat. */
   pickedAccountId?: string | null;
   /** Route this chat onto another account. */
-  onSelectAccount?: (accountId: string, label: string | null) => void | Promise<void>;
+  onSelectAccount?: (accountId: string, label: string | null) => Promise<string | null>;
   onSelectSession?: (session: SessionInfo) => void;
   onBugReport?: () => void;
   isConnected?: boolean;

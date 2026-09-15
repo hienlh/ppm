@@ -69,9 +69,10 @@ interface UseChatReturn {
   /**
    * Account the server last reported as serving this session, from the stream rather than
    * the polled usage endpoint — so a forced account switch shows up immediately instead of
-   * up to two minutes later.
+   * up to two minutes later. Carries the id as well as the label because the panel marks the
+   * serving card by id.
    */
-  liveAccountLabel: string | null;
+  liveAccount: { id: string; label: string | null } | null;
   /** Per-session model override (null = provider default) */
   model: string | null;
   /** Switch the per-session model (persists + recreates query on next message) */
@@ -182,7 +183,7 @@ export function useChat(
    * dropping it at turn end would leave the chip showing a stale name for minutes after the
    * server was forced onto a different account.
    */
-  const [liveAccountLabel, setLiveAccountLabel] = useState<string | null>(null);
+  const [liveAccount, setLiveAccount] = useState<{ id: string; label: string | null } | null>(null);
   const phaseRef = useRef<SessionPhase>("idle");
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
@@ -419,7 +420,7 @@ export function useChat(
     switch (evType) {
       case "account_info": {
         streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
-        setLiveAccountLabel(ev.accountLabel ?? null);
+        setLiveAccount({ id: ev.accountId, label: ev.accountLabel ?? null });
         setStatusMessage(null);
         break;
       }
@@ -430,7 +431,7 @@ export function useChat(
           streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
           // A retry means the server was forced off the account the toolbar is naming —
           // rate limit, usage cap or auth. Say so now rather than at the next usage poll.
-          setLiveAccountLabel(ev.accountLabel);
+          setLiveAccount({ id: ev.accountId, label: ev.accountLabel });
         }
         // Clear previous streaming events (error text from failed attempt)
         // and start fresh with only the retry notification
@@ -984,7 +985,7 @@ export function useChat(
       thinkingRef.current = null;
       // One session's account must not label another's. Only on a real session-to-session
       // switch: the draft→real transition (null → id) keeps serving the same conversation.
-      setLiveAccountLabel(null);
+      setLiveAccount(null);
     }
     prevSessionIdRef.current = sessionId ?? null;
 
@@ -1384,7 +1385,7 @@ export function useChat(
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */
-    liveAccountLabel,
+    liveAccount,
     model,
     setModel,
     effort,

@@ -613,6 +613,49 @@ describe("selectability filter shared by next() and peek()", () => {
     expect(accountSelector.lastFailReason).toBe("all_decrypt_failed");
   });
 
+  it("never routes to an account whose grant the server rejected", () => {
+    // The refresh path refuses a rejected grant before it even checks how fresh the access
+    // token is, so such an account cannot serve a turn however healthy it otherwise looks.
+    // Routing to it only moves that refusal into the middle of a request.
+    const rejected = addAccount("rejected@test.com");
+    const live = addAccount("live@test.com");
+    updateAccount(rejected.id, { reauth_required: 1 });
+
+    for (let i = 0; i < 4; i++) expect(accountSelector.next()!.id).toBe(live.id);
+    expect(accountSelector.peek()!.id).toBe(live.id);
+    expect(accountSelector.canServe(rejected.id)).toBe(false);
+  });
+
+  it("refuses a named account that has reached its cap, but allows one merely near it", () => {
+    // The router steers away from 95% so it can spread load early. That margin is right for
+    // routing and wrong for a refusal: 96% still answers, so naming it is a legitimate choice
+    // to accept a slower turn. 100% does not answer, and that is where saying no is the truth.
+    const nearCap = addAccount("near@test.com");
+    const atCap = addAccount("at@test.com");
+    const weeklyGone = addAccount("weekly@test.com");
+    insertUsage(nearCap.id, { fiveHour: 0.96, weekly: 0.5 });
+    insertUsage(atCap.id, { fiveHour: 1.0, weekly: 0.5 });
+    insertUsage(weeklyGone.id, { fiveHour: 0.1, weekly: 1.0 });
+
+    expect(accountSelector.canServe(nearCap.id)).toBe(true);
+    expect(accountSelector.canServe(atCap.id)).toBe(false);
+    expect(accountSelector.canServe(weeklyGone.id)).toBe(false);
+
+    expect(accountSelector.refusalReason(nearCap.id)).toBeNull();
+    expect(accountSelector.refusalReason(atCap.id)).toContain("5-hour limit");
+    expect(accountSelector.refusalReason(weeklyGone.id)).toContain("weekly limit");
+  });
+
+  it("treats a utilisation that displays as 100% as reached", () => {
+    // The usage bars round to whole percent, so 0.996 already reads "100%" on the card. A
+    // refusal that used the raw value left the button enabled on an account the user could
+    // plainly see was finished — which is exactly how this was reported.
+    const rounds = addAccount("rounds@test.com");
+    insertUsage(rounds.id, { fiveHour: 0.996, weekly: 0.2 });
+    expect(Math.round(0.996 * 100)).toBe(100);
+    expect(accountSelector.canServe(rounds.id)).toBe(false);
+  });
+
   it("still returns an account when every account is capped (fallback preserved)", () => {
     const a = addAccount("a@test.com");
     const b = addAccount("b@test.com");

@@ -49,6 +49,24 @@ export function formatResetTime(bucket?: LimitBucket): string | null {
 }
 
 /** Time until a token expires. Takes milliseconds. */
+/**
+ * The exact moment a bucket resets, for the tooltip behind the relative "↻ 2h 10m".
+ *
+ * The relative figure is the right thing on the card — it answers "can I keep working" at a
+ * glance — but it cannot answer "will this be back before my meeting", and it goes stale as
+ * soon as it is rendered. The absolute time answers both, so it belongs one hover away rather
+ * than competing for the same few pixels.
+ *
+ * Rendered in the viewer's own locale and zone: the server sends UTC, and a reset time shown
+ * in UTC is a small puzzle to solve at exactly the moment someone is in a hurry.
+ */
+export function formatResetAt(resetsAt?: string | null): string | null {
+  if (!resetsAt) return null;
+  const ms = new Date(resetsAt).getTime();
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 export function formatExpiry(expiresAtMs: number): string {
   const diff = expiresAtMs - Date.now();
   if (diff <= 0) return "expired";

@@ -19,11 +19,17 @@
 import { useState } from "react";
 import { Activity, ExternalLink, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import type { UsageInfo } from "../../../types/chat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { openSettings } from "@/components/settings/open-settings";
 import { AccountCard } from "@/components/settings/accounts/account-card";
 import { AccountBucketRow } from "@/components/settings/accounts/account-bucket-row";
 import { useAccountsData } from "@/components/settings/accounts/use-accounts-data";
-import { formatLastUpdated, pctColor } from "@/components/settings/accounts/account-usage-format";
+import { formatLastUpdated, formatResetTime, pctColor } from "@/components/settings/accounts/account-usage-format";
+
+/** Matches the whole-percent figure the usage bars show, so a refusal agrees with the card. */
+function atCap(util: number | null | undefined): boolean {
+  return Math.round((util ?? 0) * 100) >= 100;
+}
 
 interface UsageBadgeProps {
   usage: UsageInfo;
@@ -42,16 +48,20 @@ export function UsageBadge({ usage, loading, onClick }: UsageBadgeProps) {
   const colorClass = fiveHourPct != null || sevenDayPct != null ? pctColor(worstPct) : "text-text-subtle";
 
   return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-hover ${colorClass}`}
-      title="Click for usage details"
-    >
-      {loading ? <RefreshCw className="size-3 animate-spin" /> : <Activity className="size-3" />}
-      <span>5h:{fiveHourLabel}</span>
-      <span className="text-text-subtle">·</span>
-      <span>Wk:{sevenDayLabel}</span>
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-hover ${colorClass}`}
+        >
+          {loading ? <RefreshCw className="size-3 animate-spin" /> : <Activity className="size-3" />}
+          <span>5h:{fiveHourLabel}</span>
+          <span className="text-text-subtle">·</span>
+          <span>Wk:{sevenDayLabel}</span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">Click for usage details</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -65,7 +75,7 @@ interface UsageDetailPanelProps {
   loading?: boolean;
   lastFetchedAt?: string | null;
   /** Route this chat to a different account. Omitted when the caller cannot re-route. */
-  onSelectAccount?: (accountId: string, label: string | null) => void | Promise<void>;
+  onSelectAccount?: (accountId: string, label: string | null) => Promise<string | null>;
   /** Account currently claimed or bound for this chat, so the card can mark itself. */
   selectedAccountId?: string | null;
 }
@@ -78,7 +88,9 @@ export function UsageDetailPanel({
   // Fetching is gated on visibility: the panel is collapsed most of the time, and its
   // usage endpoint is the expensive one.
   const { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload, toggle, togglingId } = useAccountsData(visible);
-  const [toggleError, setToggleError] = useState<string | null>(null);
+  // One strip for anything that went wrong in this panel — a refused switch or a refused
+  // toggle. Two separate messages in two places would be harder to notice, not clearer.
+  const [panelError, setPanelError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   if (!visible) return null;
@@ -92,25 +104,54 @@ export function UsageDetailPanel({
    * near a quota cap is not one of them: that is a slower turn, not an impossible one, and
    * a user who picks a nearly-capped account on purpose is allowed to.
    */
-  function unselectableReason(info?: (typeof accounts)[number]): string | null {
-    if (!info) return null;
-    if (info.status === "disabled") return "Disabled";
-    const expired = !info.hasRefreshToken && info.expiresAt && info.expiresAt < Math.floor(Date.now() / 1000);
-    return expired ? "Token expired — sign in again" : null;
+  function unselectableReason(
+    info?: (typeof accounts)[number],
+    entry?: (typeof usages)[number],
+  ): string | null {
+    if (info) {
+      if (info.status === "disabled") return "Disabled";
+      // A rejected grant is refused before the token's freshness is even consulted, so such
+      // an account cannot take a turn however healthy the rest of the card looks.
+      if (info.reauthRequired) return "Sign in again to use this account";
+      const expired = !info.hasRefreshToken && info.expiresAt && info.expiresAt < Math.floor(Date.now() / 1000);
+      if (expired) return "Token expired — sign in again";
+    }
+    // Reached, not merely approaching. The router steers away from 95% so it can spread load
+    // early, but an account at 96% still answers — refusing it would be wrong. At 100% the
+    // next turn fails outright, and that is the point where saying no is the truth.
+    const session = entry?.usage.session;
+    if (atCap(session?.utilization)) {
+      return `5-hour limit reached${session?.resetsAt ? ` — resets ${formatResetTime(session)}` : ""}`;
+    }
+    const weekly = entry?.usage.weekly;
+    if (atCap(weekly?.utilization)) {
+      return `Weekly limit reached${weekly?.resetsAt ? ` — resets ${formatResetTime(weekly)}` : ""}`;
+    }
+    return null;
   }
 
   async function handleToggle(id: string, status: string) {
-    setToggleError(await toggle(id, status));
+    setPanelError(await toggle(id, status));
   }
 
   async function handleSelect(accountId: string) {
     if (!onSelectAccount) return;
+    // Refuse here rather than leaving the button inert: the user pressed something and is
+    // owed the reason. Checked again server-side, which is what catches an account that
+    // became unusable between this render and the click.
+    const refused = unselectableReason(
+      accountMap.get(accountId),
+      usages.find((u) => u.accountId === accountId),
+    );
+    if (refused) { setPanelError(`Cannot switch to this account — ${refused.toLowerCase()}.`); return; }
+
     setSelectingId(accountId);
+    setPanelError(null);
     try {
       // The label travels with the id: a tab that has no session yet displays the choice
       // straight away, and it is the only place that knows the human-readable name.
       const label = usages.find((u) => u.accountId === accountId)?.accountLabel ?? null;
-      await onSelectAccount(accountId, label);
+      setPanelError((await onSelectAccount(accountId, label)) ?? null);
     } finally {
       setSelectingId(null);
     }
@@ -140,33 +181,45 @@ export function UsageDetailPanel({
           )}
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => openSettings("accounts")}
-            className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-primary px-1 cursor-pointer"
-            title="Add, remove or rotate accounts"
-          >
-            Manage accounts <ExternalLink className="size-3" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => openSettings("accounts")}
+                className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+              >
+                Manage accounts <ExternalLink className="size-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Add, remove or rotate accounts</TooltipContent>
+          </Tooltip>
           {hasPerAccountUsage && (
-            <button
-              onClick={() => setIsFullscreen((v) => !v)}
-              className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
-              title={isFullscreen ? "Exit fullscreen" : "Fullscreen view"}
-              aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen view"}
-            >
-              {isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setIsFullscreen((v) => !v)}
+                  className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen view"}
+                >
+                  {isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{isFullscreen ? "Exit fullscreen" : "Fullscreen view"}</TooltipContent>
+            </Tooltip>
           )}
           {onReload && (
-            <button
-              onClick={() => { onReload(); void reload(); }}
-              disabled={loading || refreshing}
-              className="text-xs text-text-subtle hover:text-text-primary px-1 disabled:opacity-50 cursor-pointer"
-              title="Refresh"
-              aria-label="Refresh usage"
-            >
-              <RefreshCw className={`size-3 ${(loading || refreshing) ? "animate-spin" : ""}`} />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => { onReload(); void reload(); }}
+                  disabled={loading || refreshing}
+                  className="text-xs text-text-subtle hover:text-text-primary px-1 disabled:opacity-50 cursor-pointer"
+                  aria-label="Refresh usage"
+                >
+                  <RefreshCw className={`size-3 ${(loading || refreshing) ? "animate-spin" : ""}`} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Refresh</TooltipContent>
+            </Tooltip>
           )}
           <button
             onClick={() => { setIsFullscreen(false); onClose(); }}
@@ -181,11 +234,11 @@ export function UsageDetailPanel({
       {/* The server distinguishes "this login was rejected, sign in again" from "could not
           reach Anthropic, try shortly", and the difference decides what the user should do.
           Showing its words verbatim is the only way that survives to them. */}
-      {toggleError && (
+      {panelError && (
         <div className="shrink-0 flex items-start gap-2 rounded border border-error/40 bg-error/10 px-2 py-1.5 text-[11px] text-error">
-          <span className="flex-1">{toggleError}</span>
+          <span className="flex-1">{panelError}</span>
           <button
-            onClick={() => setToggleError(null)}
+            onClick={() => setPanelError(null)}
             className="shrink-0 text-error/70 hover:text-error cursor-pointer"
             aria-label="Dismiss"
           >
@@ -221,7 +274,7 @@ export function UsageDetailPanel({
                   flash={flashIds.has(entry.accountId)}
                   layout={isFullscreen ? "grid" : "strip"}
                   onSelect={onSelectAccount ? handleSelect : undefined}
-                  unselectableReason={unselectableReason(info)}
+                  unselectableReason={unselectableReason(info, entry)}
                   selecting={selectingId === entry.accountId}
                   onToggle={handleToggle}
                   toggling={togglingId === entry.accountId}

@@ -19,8 +19,27 @@ import { setSessionAccount, setSessionCodexAccount } from "./db.service.ts";
 
 /** Whether this provider/account pair is one the server would route to on its own. */
 export function canBindAccount(providerId: string, accountId: string): boolean {
-  if (providerId === "codex") return getCodexAccount(accountId) !== null;
+  if (providerId === "codex") {
+    const acc = getCodexAccount(accountId);
+    return acc !== null && acc.status !== "disabled";
+  }
   return accountSelector.canServe(accountId);
+}
+
+/**
+ * Why a bind was refused, in words the panel can show as-is.
+ *
+ * Worth the extra call: "that account cannot serve this session" tells a user nothing they
+ * can act on, while "it has reached its 5-hour limit, resets at 4:10pm" tells them whether
+ * to wait or pick another.
+ */
+export function bindRefusalReason(providerId: string, accountId: string): string {
+  if (providerId === "codex") {
+    const acc = getCodexAccount(accountId);
+    if (!acc) return "That account no longer exists.";
+    return acc.status === "disabled" ? "That account is switched off." : "That account cannot serve this session.";
+  }
+  return accountSelector.refusalReason(accountId) ?? "That account cannot serve this session.";
 }
 
 /**
