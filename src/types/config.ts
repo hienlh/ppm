@@ -109,6 +109,10 @@ export interface AIProviderConfig {
 
   // CLI-specific (Cursor, Codex, Gemini)
   cli_command?: string;
+
+  // Codex config overrides in tokens. Null/unset inherits Codex's configuration.
+  model_context_window?: number | null;
+  model_auto_compact_token_limit?: number | null;
 }
 
 /**
@@ -203,6 +207,7 @@ function migrateThemeValue(theme: unknown): ThemeConfig | null {
 /** Validate AI provider config fields. Returns array of error messages (empty = valid). */
 export function validateAIProviderConfig(config: Partial<AIProviderConfig>): string[] {
   const errors: string[] = [];
+  errors.push(...validateCodexContextConfig(config));
   if (config.type != null && !VALID_TYPES.includes(config.type as any)) {
     errors.push(`type must be one of: ${VALID_TYPES.join(", ")}`);
   }
@@ -250,6 +255,22 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
     } else if (config.system_prompt.length > 10000) {
       errors.push("system_prompt must be 10000 characters or less");
     }
+  }
+  return errors;
+}
+
+/** Also validate the merged provider config so partial updates cannot break the pair. */
+export function validateCodexContextConfig(config: Partial<AIProviderConfig>): string[] {
+  const errors: string[] = [];
+  for (const key of ["model_context_window", "model_auto_compact_token_limit"] as const) {
+    const value = config[key];
+    if (value != null && (!Number.isSafeInteger(value) || value < 1)) {
+      errors.push(`${key} must be a positive safe integer or null`);
+    }
+  }
+  if (config.model_context_window != null && config.model_auto_compact_token_limit != null
+    && config.model_auto_compact_token_limit > config.model_context_window) {
+    errors.push("model_auto_compact_token_limit must not exceed model_context_window");
   }
   return errors;
 }

@@ -2,6 +2,36 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Codex context settings
+
+**AI Settings → Codex** exposes **Context window (tokens)** and **Auto-compact
+threshold (tokens)**. These map to Codex's documented `model_context_window` and
+`model_auto_compact_token_limit` keys under `ai.providers.codex`.
+
+Both controls offer presets, Codex default and Custom entry. Presets are numeric
+shortcuts, not advertised model capabilities. Existing non-preset values appear
+as Custom. Both values are optional positive safe integers. The compact threshold cannot
+exceed an explicitly configured window. The form saves the pair together;
+`PUT /api/settings/ai` also validates merged partial updates before persisting.
+Clearing a field sends `null`, which removes the PPM override. An omitted field
+in a partial update preserves the existing setting.
+
+PPM passes configured values in the `config` map of app-server `thread/start`
+and `thread/resume`, including account rotation. It does not edit account
+`config.toml` files. Unset values inherit native Codex configuration and model
+defaults. Changes apply on the next provider connection/resumption; an already
+running session keeps its current limits. Restart PPM and resume an existing
+session to apply changed limits to it.
+
+Increasing these values does not increase the model/account's supported limit.
+Codex can reserve part of the configured window, so runtime token usage may
+report a smaller effective window. Local compacted rollouts inspected on
+2026-09-15 reported 258,400 tokens (272,000 × 95%); this is runtime evidence for
+this installation, not a hardcoded application default.
+
+References: [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference)
+and [App Server](https://learn.chatgpt.com/docs/app-server).
+
 ## Provider Layer (AI Adapters)
 **Component:** Provider interface + implementations
 

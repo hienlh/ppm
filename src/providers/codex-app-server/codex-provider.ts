@@ -651,6 +651,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.notify("initialized");
 
     const resumeBase = {
+      ...this.contextConfigOverrides(),
       cwd: live.cwd,
       sandbox: live.permission.sandbox,
       approvalPolicy: live.permission.approvalPolicy,
@@ -687,6 +688,17 @@ export class CodexAppServerProvider implements AIProvider {
     return client.request("thread/resume", { threadId, path, ...resumeBase });
   }
 
+  /** Read on connect/resume only; changing settings never interrupts a live turn. */
+  private contextConfigOverrides(): { config?: Record<string, number> } {
+    const providerConfig = this.config;
+    const config: Record<string, number> = {};
+    for (const key of ["model_context_window", "model_auto_compact_token_limit"] as const) {
+      const value = providerConfig?.[key];
+      if (value != null) config[key] = value;
+    }
+    return Object.keys(config).length ? { config } : {};
+  }
+
   private async connect(sessionId: string, opts?: SendMessageOpts): Promise<LiveSession> {
     const meta = this.sessions.get(sessionId);
     const cwd = meta?.projectPath || getSessionProjectPath(sessionId) || process.cwd();
@@ -720,7 +732,7 @@ export class CodexAppServerProvider implements AIProvider {
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
 
-    const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}) };
+    const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}), ...this.contextConfigOverrides() };
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
     const result = found

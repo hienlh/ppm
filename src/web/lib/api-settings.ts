@@ -205,6 +205,8 @@ export interface AIProviderSettings {
   system_prompt?: string;
   agent_teams?: boolean;
   context_1m?: boolean;
+  model_context_window?: number | null;
+  model_auto_compact_token_limit?: number | null;
   inherit_claude_mcp?: boolean;
 }
 

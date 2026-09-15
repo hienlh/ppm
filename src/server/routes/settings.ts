@@ -3,6 +3,7 @@ import { configService, FILE_CONFIG_KEYS } from "../../services/config.service.t
 import { getConfigValue, setConfigValue, listPairedChats, getPairingByCode, approvePairing, revokePairing, getPPMBotMemories, getDb } from "../../services/db.service.ts";
 import {
   validateAIProviderConfig,
+  validateCodexContextConfig,
   validateDefaultProvider,
   VALID_PROVIDERS,
   DEFAULT_CONFIG,
@@ -214,6 +215,13 @@ settingsRoutes.put("/ai", async (c) => {
           ...currentAi.providers[name],
           ...config,
         } as AIProviderConfig;
+        for (const key of ["model_context_window", "model_auto_compact_token_limit"] as const) {
+          if (updated.providers[name]![key] === null) delete updated.providers[name]![key];
+        }
+        const contextErrors = validateCodexContextConfig(updated.providers[name]!);
+        if (contextErrors.length) {
+          return c.json(err(`Provider "${name}": ${contextErrors.join(", ")}`), 400);
+        }
       }
     }
 

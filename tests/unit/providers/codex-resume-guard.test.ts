@@ -5,6 +5,7 @@ import * as accounts from "../../../src/services/codex-account.service.ts";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { setSessionMetadata } from "../../../src/services/db.service.ts";
+import { configService } from "../../../src/services/config.service.ts";
 
 interface LiveThread { threadId: string; client: CodexJsonRpcClient }
 interface ProviderInternals {
@@ -18,18 +19,25 @@ describe("Codex missing rollout guard", () => {
   let internal: ProviderInternals;
   let requests: string[];
   let rejectStart: boolean;
+  let params: Array<{ method: string; value: any }>;
+  let previousAi: ReturnType<typeof configService.get<"ai">>;
 
   beforeEach(() => {
     provider = new CodexAppServerProvider();
     internal = provider as unknown as ProviderInternals;
     requests = [];
+    params = [];
+    previousAi = configService.get("ai");
+    configService.set("ai", { ...previousAi, providers: { ...previousAi.providers,
+      codex: { type: "cli", cli_command: "codex" } } });
     rejectStart = false;
     spies.push(spyOn(accounts, "resolveCodexAccountForSession").mockResolvedValue(null));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "notify").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "close").mockImplementation(() => {}));
-    spies.push(spyOn(CodexJsonRpcClient.prototype, "request").mockImplementation(async (method) => {
+    spies.push(spyOn(CodexJsonRpcClient.prototype, "request").mockImplementation(async (method, value) => {
       requests.push(method);
+      params.push({ method, value });
       if (method === "thread/start") {
         if (rejectStart) throw new Error("temporary start failure");
         return { thread: { id: `test-thread-${crypto.randomUUID()}` } };
@@ -40,7 +48,23 @@ describe("Codex missing rollout guard", () => {
 
   afterEach(() => {
     provider.cleanupAll();
+    configService.set("ai", previousAi);
     spies.splice(0).forEach((spy) => spy.mockRestore());
+  });
+
+  it("omits context overrides by default and forwards explicit limits when starting", async () => {
+    await internal.connect((await provider.createSession({})).id);
+    expect(params.find((p) => p.method === "thread/start")!.value).not.toHaveProperty("config");
+    configService.get("ai").providers.codex!.model_context_window = 872000;
+    configService.get("ai").providers.codex!.model_auto_compact_token_limit = 800000;
+    await internal.connect((await provider.createSession({})).id);
+    expect(params.filter((p) => p.method === "thread/start").at(-1)!.value.config).toEqual({
+      model_context_window: 872000, model_auto_compact_token_limit: 800000,
+    });
+    configService.get("ai").providers.codex!.model_context_window = null;
+    configService.get("ai").providers.codex!.model_auto_compact_token_limit = null;
+    await internal.connect((await provider.createSession({})).id);
+    expect(params.filter((p) => p.method === "thread/start").at(-1)!.value).not.toHaveProperty("config");
   });
 
   it("refuses a resumed thread with no rollout instead of replacing its identity", async () => {
@@ -89,6 +113,8 @@ describe("Codex missing rollout guard", () => {
   });
 
   it("still resumes existing history found in another account home", async () => {
+    configService.get("ai").providers.codex!.model_context_window = 872000;
+    configService.get("ai").providers.codex!.model_auto_compact_token_limit = 800000;
     const id = crypto.randomUUID();
     const source: accounts.CodexAccount = {
       id: `source-${id}`, label: "Source", home: join(process.env.PPM_HOME!, `source-${id}`),
@@ -105,7 +131,16 @@ describe("Codex missing rollout guard", () => {
     spies.push(spyOn(accounts, "resolveCodexAccountForSession").mockResolvedValue(target));
     setSessionMetadata(id, "test", process.cwd());
     await provider.resumeSession(id);
-    expect((await internal.connect(id)).threadId).toBe(id);
+    const live = await internal.connect(id);
+    expect(live.threadId).toBe(id);
+    expect(params.find((p) => p.method === "thread/resume")!.value.config).toEqual({
+      model_context_window: 872000, model_auto_compact_token_limit: 800000,
+    });
+    configService.get("ai").providers.codex!.model_auto_compact_token_limit = 750000;
+    await internal.respawnOn(live, id, source);
+    expect(params.filter((p) => p.method === "thread/resume").at(-1)!.value.config).toEqual({
+      model_context_window: 872000, model_auto_compact_token_limit: 750000,
+    });
     expect(requests).toContain("thread/resume");
     expect(requests).not.toContain("thread/start");
     expect(existsSync(join(target.home, "sessions", filename))).toBe(true);

@@ -14,6 +14,7 @@ import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-sett
 import { api } from "@/lib/api-client";
 import { ProviderBadge } from "@/components/chat/provider-selector";
 import { openSettings } from "./open-settings";
+import { CodexContextSettings } from "./codex-context-settings";
 import type { ModelOption } from "../../../types/chat";
 
 const EFFORT_OPTIONS = [
@@ -73,22 +74,25 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   const config = settings?.providers[activeTab];
   const isSdkProvider = config?.type === "agent-sdk" || (!config?.type && activeTab === "claude");
 
-  const handleSave = async (field: string, value: unknown) => {
-    if (!settings) return;
+  const handleSettingsSave = async (patch: Partial<AISettings>) => {
+    if (!settings) return false;
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateAISettings({
-        providers: { [activeTab]: { [field]: value } },
-      });
+      const updated = await updateAISettings(patch);
       setSettings(updated);
       setRevision((r) => r + 1);
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const handleSave = (field: string, value: unknown) =>
+    handleSettingsSave({ providers: { [activeTab]: { [field]: value } } });
 
   const labelSize = compact ? "text-[11px]" : "text-sm";
   const headingSize = compact ? "text-xs" : "text-sm";
@@ -171,6 +175,12 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
               </SelectContent>
             </Select>
           </div>
+        )}
+
+        {activeTab === "codex" && (
+          <CodexContextSettings key={JSON.stringify([config?.model_context_window, config?.model_auto_compact_token_limit])} config={config}
+            compact={compact} saving={saving}
+            onSave={(patch) => handleSettingsSave({ providers: { codex: patch } })} />
         )}
 
         {/* SDK-specific fields */}
