@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.20.8] - 2026-09-16
+
+### Fixed
+- **Windows file links in chat now open in PPM** â€” Markdown links such as `D:/Projects/app/report.md` retain their path instead of being cleared as an unsafe URL scheme.
+
 ## [0.20.7] - 2026-09-15
 
 ### Fixed
