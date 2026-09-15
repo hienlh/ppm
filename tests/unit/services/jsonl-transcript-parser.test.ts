@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, truncateSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
@@ -10,6 +10,8 @@ import {
   nestChildEventsAcrossMessages,
   validateJsonlPath,
   parseJsonlTranscript,
+  fullParseWindow,
+  FULL_PARSE_MAX_BYTES,
 } from "../../../src/services/jsonl-transcript-parser";
 import type { ChatEvent } from "../../../src/types/chat";
 
@@ -213,6 +215,44 @@ describe("validateJsonlPath", () => {
     expect(() => validateJsonlPath(resolve(TEST_DIR, "nope.jsonl"))).toThrow(/not found/i);
   });
 
+  /**
+   * Sparse: `truncateSync` grows the file without writing a block, so a fixture
+   * one byte over a 256MB bound costs nothing on disk and the boundary can be
+   * asserted from both sides. `maxBytes` is a parameter for exactly this.
+   */
+  function sparse(name: string, size: number): string {
+    const p = resolve(TEST_DIR, name);
+    writeFileSync(p, "");
+    truncateSync(p, size);
+    return p;
+  }
+
+  test("accepts a file exactly at the bound and rejects one byte over", () => {
+    const max = 1024;
+    const at = sparse("at-bound.jsonl", max);
+    const over = sparse("over-bound.jsonl", max + 1);
+    try {
+      expect(validateJsonlPath(at, max).endsWith("at-bound.jsonl")).toBe(true);
+      expect(() => validateJsonlPath(over, max)).toThrow(/too large/i);
+    } finally {
+      rmSync(at, { force: true });
+      rmSync(over, { force: true });
+    }
+  });
+
+  test("names the bound it actually enforced, not a number it used to", () => {
+    const max = 8 * 1024 * 1024;
+    const over = sparse("wrong-number.jsonl", 12 * 1024 * 1024);
+    try {
+      // The message said "exceeds 50MB limit" while rejecting at 256MB, which
+      // sends the next reader looking in the wrong file for the wrong cap.
+      expect(() => validateJsonlPath(over, max)).toThrow(/12MB exceeds 8MB limit/);
+      expect(() => validateJsonlPath(over, max)).not.toThrow(/50MB/);
+    } finally {
+      rmSync(over, { force: true });
+    }
+  });
+
   test("rejects symlink escaping ~/.claude/", () => {
     const outside = resolve(tmpdir(), "ppm-escape-target.jsonl");
     writeFileSync(outside, "{}\n");
@@ -257,5 +297,185 @@ describe("parseJsonlTranscript", () => {
     // text + tool_use + merged tool_result
     expect(assistant.events?.length).toBe(3);
     expect(assistant.events?.[2]?.type).toBe("tool_result");
+  });
+
+  test("history before a compact boundary is still returned", async () => {
+    // Claude Code writes a `compact_boundary` record with `parentUuid: null`
+    // when it compacts a conversation. The SDK's reader walks `parentUuid`
+    // backwards from the newest message, so it stops at that record and every
+    // older message becomes invisible — 179 of 1084 on the session that found
+    // this. This reader is linear on purpose; a compaction must not cut
+    // history, and the boundary itself is not a message.
+    const lines = [
+      JSON.stringify({ uuid: "old1", type: "user", message: { content: "before compaction" } }),
+      JSON.stringify({
+        uuid: "old2", type: "assistant",
+        message: { content: [{ type: "text", text: "old answer" }] },
+      }),
+      JSON.stringify({
+        uuid: "b1", type: "system", subtype: "compact_boundary",
+        parentUuid: null, logicalParentUuid: "old2", content: "Compacted",
+      }),
+      JSON.stringify({ uuid: "new1", parentUuid: null, type: "user", message: { content: "after compaction" } }),
+    ].join("\n");
+    const file = resolve(TEST_DIR, "compacted.jsonl");
+    writeFileSync(file, lines);
+
+    const messages = await parseJsonlTranscript(file);
+    expect(messages.length).toBe(3);
+    expect(messages[0]).toMatchObject({ role: "user", content: "before compaction" });
+    expect(messages[2]).toMatchObject({ role: "user", content: "after compaction" });
+    // The boundary record is a `system` line, not a turn.
+    expect(messages.some((m) => m.content.includes("Compacted"))).toBe(false);
+  });
+
+  test("multi-byte text survives the chunked read, with no trailing newline", async () => {
+    // The reader decodes chunk by chunk, so a character split across a chunk
+    // boundary is corrupted unless the decoder is told the stream continues —
+    // and a file whose last line has no "\n" is dropped unless the tail is
+    // flushed. Both fail on some files only, which is the worst way to fail.
+    const vi = "Tiếng Việt có dấu — 日本語 — 🎉";
+    const lines = [
+      JSON.stringify({ uuid: "u1", type: "user", message: { content: vi } }),
+      JSON.stringify({ uuid: "u2", type: "user", message: { content: "last line, no newline" } }),
+    ].join("\n"); // deliberately no trailing newline
+    const file = resolve(TEST_DIR, "multibyte.jsonl");
+    writeFileSync(file, lines);
+
+    const messages = await parseJsonlTranscript(file);
+    expect(messages.length).toBe(2);
+    expect(messages[0]!.content).toBe(vi);
+    expect(messages[1]!.content).toBe("last line, no newline");
+  });
+
+  test("oneSegment returns only the stretch since the previous compaction", async () => {
+    const rec = (uuid: string, content: string, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ uuid, type: "user", message: { content }, ...extra });
+    const lines = [
+      rec("a1", "oldest turn"),
+      rec("s1", "summary one — read the full transcript at: /x.jsonl", { isCompactSummary: true }),
+      rec("b1", "middle turn"),
+      rec("s2", "summary two — read the full transcript at: /x.jsonl", { isCompactSummary: true }),
+      rec("c1", "newest turn"),
+    ].join("\n");
+    const file = resolve(TEST_DIR, "segments.jsonl");
+    writeFileSync(file, lines);
+
+    // One segment: everything since `s1`, headed by `s1` itself — that head is
+    // what carries the transcript path, so the next scroll can expand further.
+    const seg = await parseJsonlTranscript(file, "s2", { oneSegment: true });
+    expect(seg.map((m) => m.content)).toEqual([
+      "summary one — read the full transcript at: /x.jsonl",
+      "middle turn",
+    ]);
+
+    // Walking one more step back reaches the true beginning.
+    const older = await parseJsonlTranscript(file, "s1", { oneSegment: true });
+    expect(older.map((m) => m.content)).toEqual(["oldest turn"]);
+
+    // Without the option the old behaviour is intact: everything before `s2`.
+    const all = await parseJsonlTranscript(file, "s2");
+    expect(all.length).toBe(3);
+  });
+});
+
+describe("fullParseWindow", () => {
+  function sparse(name: string, size: number): string {
+    const p = resolve(TEST_DIR, name);
+    writeFileSync(p, "");
+    truncateSync(p, size);
+    return p;
+  }
+
+  test("reads a file at the bound whole, and windows one byte over", () => {
+    const max = 1024;
+    const at = sparse("full-at.jsonl", max);
+    const over = sparse("full-over.jsonl", max + 1);
+    try {
+      expect(fullParseWindow(at, max)).toBe(0);
+      expect(fullParseWindow(over, max)).toBe(1);
+    } finally {
+      rmSync(at, { force: true });
+      rmSync(over, { force: true });
+    }
+  });
+
+  test("the window it leaves is the bound, however large the file", () => {
+    const max = 1024;
+    for (const size of [4096, 1024 * 1024, 900 * 1024 * 1024]) {
+      const p = sparse("full-scaling.jsonl", size);
+      try {
+        expect(size - fullParseWindow(p, max)).toBe(max);
+      } finally {
+        rmSync(p, { force: true });
+      }
+    }
+  });
+
+  test("a missing file reads from the start", () => {
+    // The parse reports an unreadable file in its own words; an invented offset
+    // here would turn every missing transcript into a silently empty index.
+    expect(fullParseWindow(resolve(TEST_DIR, "not-here.jsonl"))).toBe(0);
+  });
+
+  test("the default bound leaves room above the largest transcripts seen", () => {
+    // 88.8MB was the largest of 1666 on the machine this was measured on, and
+    // the parse costs ~4.3x the file transiently — so the bound has to clear a
+    // real transcript by a wide margin while still capping the pathological one.
+    expect(FULL_PARSE_MAX_BYTES).toBeGreaterThan(100 * 1024 * 1024);
+    expect(FULL_PARSE_MAX_BYTES).toBeLessThanOrEqual(256 * 1024 * 1024);
+    const big = sparse("realistic.jsonl", 89 * 1024 * 1024);
+    try {
+      expect(fullParseWindow(big)).toBe(0);
+      expect(statSync(big).size).toBe(89 * 1024 * 1024);
+    } finally {
+      rmSync(big, { force: true });
+    }
+  });
+});
+
+describe("parseJsonlTranscript from an offset", () => {
+  const line = (uuid: string, content: string) =>
+    `${JSON.stringify({ uuid, type: "user", message: { content } })}\n`;
+
+  test("reads only what follows the offset", async () => {
+    const p = resolve(TEST_DIR, "offset.jsonl");
+    const head = line("u1", "old") + line("u2", "older still");
+    writeFileSync(p, head + line("u3", "newest"));
+    try {
+      expect((await parseJsonlTranscript(p)).map((m) => m.content))
+        .toEqual(["old", "older still", "newest"]);
+      expect((await parseJsonlTranscript(p, undefined, { fromByte: head.length })).map((m) => m.content))
+        .toEqual(["newest"]);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("drops the record the offset lands inside", async () => {
+    // A fragment is not always unparseable — the tail of one record can be a
+    // complete smaller document — so it has to be dropped by position rather
+    // than left for `JSON.parse` to reject, or it enters as an invented message.
+    const p = resolve(TEST_DIR, "offset-mid.jsonl");
+    const first = line("u1", "cut me");
+    writeFileSync(p, first + line("u2", "keep me"));
+    try {
+      const mid = first.length - 10;
+      expect((await parseJsonlTranscript(p, undefined, { fromByte: mid })).map((m) => m.content))
+        .toEqual(["keep me"]);
+    } finally {
+      rmSync(p, { force: true });
+    }
+  });
+
+  test("an offset past the last newline yields nothing rather than a fragment", async () => {
+    const p = resolve(TEST_DIR, "offset-tail.jsonl");
+    const only = line("u1", "whole file");
+    writeFileSync(p, only);
+    try {
+      expect(await parseJsonlTranscript(p, undefined, { fromByte: only.length - 5 })).toEqual([]);
+    } finally {
+      rmSync(p, { force: true });
+    }
   });
 });

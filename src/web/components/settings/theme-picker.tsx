@@ -41,7 +41,8 @@ export const ThemePicker = memo(function ThemePicker() {
           className="flex items-center gap-1 px-1 rounded-sm transition-colors hover:bg-accent/40 hover:text-text-primary"
         >
           <Palette className="size-[11px]" />
-          <span className="truncate max-w-[90px]">{active.name}</span>
+          {/* Icon only on a status bar under 48rem (the bar is the `@container`). */}
+          <span className="truncate max-w-[90px] @max-3xl:hidden">{active.name}</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" className="w-56">

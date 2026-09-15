@@ -10,6 +10,7 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 | [Data & Storage](architecture/data-and-storage.md) | SQLite schema and access, database viewer, MCP server management, group-chat model |
 | [Workspace & UI](architecture/workspace-and-ui.md) | Workspace switching, editor, terminal, git, file service, OS File Explorer, tab-host windows and Document PiP |
 | [Integrations](architecture/integrations.md) | PPMBot Telegram coordinator, Jira watcher auto-debug |
+| [Plugins & Tracing](architecture/plugins-and-tracing.md) | *Design, not built.* The append-only session-event log (including browser errors) and the seam inventory behind "Everything is a Plugin. Every run is traceable." |
 
 ## High-Level Architecture
 
