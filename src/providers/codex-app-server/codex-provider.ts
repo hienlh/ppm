@@ -235,6 +235,10 @@ function extractThreadId(result: unknown): string | null {
   return r?.thread?.id ?? r?.threadId ?? r?.id ?? null;
 }
 
+function missingRolloutError(sessionId: string): Error {
+  return new Error(`Cannot resume Codex session ${sessionId}: its transcript was not found in the available account homes for this project. Restore the original account/transcript and retry, or explicitly open a new chat.`);
+}
+
 /** Human label for an approval prompt (dormant in MVP under default bypass). */
 function approvalToolLabel(method: string, params: unknown): string {
   const p = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
@@ -273,6 +277,8 @@ export class CodexAppServerProvider implements AIProvider {
   readonly name = "Codex";
 
   private sessions = new Map<string, Session>();
+  /** Only IDs minted here may start a thread. Missing history is never proof of a new chat. */
+  private unstartedSessions = new Set<string>();
   private live = new Map<string, LiveSession>();
   private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
   /** Keyed by `cwd\0codexHome` — skills differ per workspace AND per account. */
@@ -294,6 +300,7 @@ export class CodexAppServerProvider implements AIProvider {
       createdAt: new Date().toISOString(),
     };
     this.sessions.set(id, session);
+    this.unstartedSessions.add(id);
     if (config.projectPath) setSessionMetadata(id, config.projectName, config.projectPath);
     return session;
   }
@@ -354,6 +361,7 @@ export class CodexAppServerProvider implements AIProvider {
   async deleteSession(sessionId: string): Promise<void> {
     this.abortQuery(sessionId, "delete");
     this.sessions.delete(sessionId);
+    this.unstartedSessions.delete(sessionId);
   }
 
   // ── Streaming (multi-turn) ──
@@ -363,6 +371,7 @@ export class CodexAppServerProvider implements AIProvider {
       try {
         live = await this.connect(sessionId, opts);
       } catch (err) {
+        this.abortQuery(sessionId, "connect_failed");
         yield { type: "error", message: redactTruncate((err as Error)?.message ?? String(err), 512) };
         yield { type: "done", sessionId, resultSubtype: "error_during_execution" };
         return;
@@ -586,6 +595,11 @@ export class CodexAppServerProvider implements AIProvider {
    * had just been repaired.
    */
   private async respawnOn(live: LiveSession, threadId: string, account: CodexAccount): Promise<void> {
+    // Validate before replacing the client or its account binding. A missing file
+    // can mean inaccessible history, including on the first turn; it cannot justify
+    // migrating an existing provider thread onto an empty conversation.
+    const found = locateRollout(threadId, live.cwd);
+    if (!found) throw missingRolloutError(threadId);
     const old = live.client;
     old.onNotification(() => {});
     old.onServerRequest(() => {});
@@ -596,8 +610,8 @@ export class CodexAppServerProvider implements AIProvider {
     if (process.platform === "win32" && pid) killProcessTree(pid);
     else if (proc) setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* dead */ } }, 2000).unref?.();
 
-    // Written before the rollout lookup so the new account's own directory is searched
-    // first — on a second rotation that is where the freshest history sits.
+    // Locate history while the outgoing account is still bound, so its current
+    // transcript wins. Then bind the account that will receive the localized copy.
     setSessionCodexAccount(threadId, account.id);
 
     const client = new CodexJsonRpcClient();
@@ -616,26 +630,7 @@ export class CodexAppServerProvider implements AIProvider {
       approvalPolicy: live.permission.approvalPolicy,
       ...(live.model ? { model: live.model } : {}),
     };
-    const found = locateRollout(threadId, live.cwd);
-    if (found) {
-      await this.resumeThread(client, threadId, found, account.home, resumeBase);
-      return;
-    }
-    // No rollout yet means the limit hit the very first turn, before codex had written one.
-    // There is nothing to resume, so the thread starts fresh — and it comes back under a
-    // new id, which every map keyed by the old one has to learn about or the next turn is
-    // sent to a thread this app-server has never heard of.
-    const started = await client.request("thread/start", resumeBase);
-    const newId = extractThreadId(started);
-    if (!newId || newId === threadId) return;
-    live.threadId = newId;
-    this.live.set(newId, live);
-    const meta = this.sessions.get(threadId);
-    if (meta) { this.sessions.delete(threadId); meta.id = newId; this.sessions.set(newId, meta); }
-    setSessionMetadata(newId, meta?.projectName, live.cwd);
-    setSessionProvider(newId, this.id);
-    setSessionCodexAccount(newId, account.id);
-    live.channel.push({ type: "session_migrated", oldSessionId: threadId, newSessionId: newId });
+    await this.resumeThread(client, threadId, found, account.home, resumeBase);
   }
 
   /**
@@ -672,6 +667,11 @@ export class CodexAppServerProvider implements AIProvider {
     const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode);
     const model = codexModel(opts?.model ?? this.config?.model);
 
+    // Only resume a rollout attributable to this project. An unknown/resumed ID
+    // without one must not silently become a fresh thread with a different identity.
+    const found = locateRollout(sessionId, cwd);
+    if (!found && !this.unstartedSessions.has(sessionId)) throw missingRolloutError(sessionId);
+
     const client = new CodexJsonRpcClient();
     const channel = createEventChannel();
     const live: LiveSession = {
@@ -697,13 +697,13 @@ export class CodexAppServerProvider implements AIProvider {
     const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}) };
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
-    const found = locateRollout(sessionId, cwd);
     const result = found
       ? await this.resumeThread(client, sessionId, found, account?.home, resumeBase)
       : await client.request("thread/start", resumeBase);
 
     const threadId = extractThreadId(result) ?? (found ? sessionId : null);
     if (!threadId) throw new Error("codex thread/start returned no thread id");
+    this.unstartedSessions.delete(sessionId);
     live.threadId = threadId;
 
     if (threadId !== sessionId) {
