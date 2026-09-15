@@ -1288,7 +1288,7 @@ export const chatWebSocket = {
         if (provider && "pushMessage" in provider && parsed.type === "message") {
           const effort = getSessionEffort(sessionId) ?? undefined;
           const thinkingBudget = getSessionThinking(sessionId);
-          (provider as any).pushMessage(sessionId, parsed.content, {
+          await chatService.pushMessage(providerId, sessionId, parsed.content, {
             priority: parsed.priority ?? 'next',
             images: parsed.images,
             imagePaths: parsed.imagePaths,
@@ -1413,7 +1413,7 @@ export const chatWebSocket = {
           }, 0);
         });
       } else if (provider && "pushMessage" in provider) {
-        (provider as any).pushMessage(sessionId, instruction, { priority: "next" });
+        await chatService.pushMessage(providerId, sessionId, instruction, { priority: "next" });
         entry.turnEvents = [];
         entry.pendingApprovalEvent = undefined;
         setPhase(sessionId, "thinking");

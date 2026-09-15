@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatEvent, SessionInfo } from "../provider.interface.ts";
+import { stripSharedContext } from "../../shared/provider-context.ts";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -135,7 +136,7 @@ export function parseRolloutJsonl(
     if (rec.type === "event_msg") {
       if (p.type === "user_message" && typeof p.message === "string") {
         if (pendingEvents.length) flushAssistant("", ts); // tools with no final text
-        messages.push({ id: `rollout-${i++}`, role: "user", content: p.message, timestamp: ts });
+        messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(p.message), timestamp: ts });
       } else if (p.type === "agent_message" && typeof p.message === "string") {
         flushAssistant(p.message, ts);
       } else if (p.type === "item_completed") {
@@ -145,7 +146,7 @@ export function parseRolloutJsonl(
         const mapped = mapRolloutItem(p.item);
         if (mapped.kind === "user") {
           if (pendingEvents.length) flushAssistant("", ts);
-          messages.push({ id: `rollout-${i++}`, role: "user", content: mapped.text, timestamp: ts });
+          messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(mapped.text), timestamp: ts });
         } else if (mapped.kind === "assistant") {
           flushAssistant(mapped.text, ts);
         } else if (mapped.kind === "events") {
@@ -196,7 +197,8 @@ export function parseRolloutJsonl(
         if (item.type !== "message") continue;
         const role = item.role === "assistant" ? "assistant" : item.role === "user" ? "user" : null;
         if (!role) continue;
-        const content = contentToText(item.content);
+        const rawContent = contentToText(item.content);
+        const content = role === "user" ? stripSharedContext(rawContent) : rawContent;
         if (content) messages.push({ id: `rollout-${i++}`, role, content, timestamp: ts });
       }
     }

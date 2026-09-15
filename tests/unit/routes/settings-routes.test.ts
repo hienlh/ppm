@@ -25,6 +25,7 @@ describe("GET /settings/ai", () => {
     const json = await res.json();
     expect(json.ok).toBe(true);
     expect(json.data.default_provider).toBe("claude");
+    expect(json.data.share_provider_context).toBe(true);
     expect(json.data.providers.claude.type).toBe("agent-sdk");
     expect(json.data.providers.claude.model).toBe("claude-opus-5");
     expect(json.data.providers.claude.effort).toBe("high");
@@ -73,6 +74,36 @@ describe("PUT /settings/ai", () => {
     expect((await put({ model_auto_compact_token_limit: 900000 })).status).toBe(400);
     expect(getConfigValue("ai")).toBe(before);
     expect(configService.get("ai").providers.codex!.model_context_window).toBe(872000);
+  });
+
+  it("persists sharing off and on without modifying provider settings", async () => {
+    const app = createApp();
+    const providers = structuredClone(configService.get("ai").providers);
+    for (const enabled of [false, true]) {
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ share_provider_context: enabled }),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.share_provider_context).toBe(enabled);
+      expect(JSON.parse(getConfigValue("ai")!).share_provider_context).toBe(enabled);
+      expect(configService.load().ai.share_provider_context).toBe(enabled);
+      expect(configService.get("ai").providers).toEqual(providers);
+    }
+  });
+
+  it("rejects invalid sharing values without changing stored settings", async () => {
+    const app = createApp();
+    for (const value of ["false", 0, null, {}]) {
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ share_provider_context: value }),
+      });
+      expect(res.status).toBe(400);
+      expect(configService.get("ai").share_provider_context).toBe(true);
+    }
   });
 
   it("updates provider config and returns merged result", async () => {

@@ -10,6 +10,7 @@ import type {
   UsageInfo,
 } from "../provider.interface.ts";
 import { configService } from "../../services/config.service.ts";
+import { withSharedContext } from "../../shared/provider-context.ts";
 import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles, insertTurnUsage } from "../../services/db.service.ts";
 import {
   resolveCodexAccountForSession,
@@ -291,6 +292,7 @@ function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestU
  * notification stream. Token-by-token streaming is the load-bearing capability.
  */
 export class CodexAppServerProvider implements AIProvider {
+  readonly supportsSharedContext = true;
   readonly id = "codex";
   readonly name = "Codex";
 
@@ -448,7 +450,7 @@ export class CodexAppServerProvider implements AIProvider {
     // gets. Images lead: the text usually refers to them ("what is this?").
     const input: UserInput[] = [
       ...(opts?.imagePaths ?? []).map((path) => ({ type: "localImage" as const, path })),
-      { type: "text" as const, text: message, text_elements: [] },
+      { type: "text" as const, text: withSharedContext(message, opts?.sharedContext), text_elements: [] },
     ];
     const turnModel = codexModel(opts?.model);
     const turnEffort = opts?.effort ?? this.config?.effort;

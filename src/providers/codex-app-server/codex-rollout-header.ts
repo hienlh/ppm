@@ -1,4 +1,5 @@
 import { mapRolloutItem } from "./codex-rollout-items.ts";
+import { stripSharedContext } from "../../shared/provider-context.ts";
 
 /**
  * Line primitives for a codex rollout JSONL, plus the header a session list
@@ -49,7 +50,7 @@ const TITLE_MAX_CHARS = 80;
 
 /** First user prompt → a one-line label. */
 function toTitle(text: string): string | undefined {
-  const flat = text.replace(/\s+/g, " ").trim();
+  const flat = stripSharedContext(text).replace(/\s+/g, " ").trim();
   if (!flat) return undefined;
   return flat.length > TITLE_MAX_CHARS ? `${flat.slice(0, TITLE_MAX_CHARS - 1)}…` : flat;
 }

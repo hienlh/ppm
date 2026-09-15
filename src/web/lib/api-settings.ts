@@ -212,6 +212,7 @@ export interface AIProviderSettings {
 
 export interface AISettings {
   default_provider: string;
+  share_provider_context?: boolean;
   providers: Record<string, AIProviderSettings>;
 }
 

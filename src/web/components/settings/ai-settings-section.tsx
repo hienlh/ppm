@@ -120,6 +120,25 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
     <div className={gapSize}>
       <h3 className={`${headingSize} font-medium text-text-secondary`}>AI Settings</h3>
 
+      <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
+        <div className={fieldGap}>
+          <Label htmlFor="ai-share-provider-context" className={compact ? labelSize : undefined}>
+            Share rules and memory between providers
+          </Label>
+          <p id="ai-share-provider-context-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+            Share project rules and memory, plus global instruction files, across providers.
+            Applies from the next project-chat message. Turning off keeps context already sent.
+          </p>
+        </div>
+        <Switch
+          id="ai-share-provider-context"
+          aria-describedby="ai-share-provider-context-description"
+          checked={settings.share_provider_context ?? true}
+          disabled={saving}
+          onCheckedChange={(checked) => handleSettingsSave({ share_provider_context: checked })}
+        />
+      </div>
+
       {/* Provider tabs */}
       {providerTabs.length > 1 && (
         <div className="flex gap-0.5 border-b border-border/50 -mx-1 px-1">

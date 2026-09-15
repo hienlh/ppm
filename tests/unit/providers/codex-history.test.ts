@@ -1,12 +1,24 @@
 import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { withSharedContext } from "../../../src/shared/provider-context.ts";
+import { readRolloutHeader } from "../../../src/providers/codex-app-server/codex-rollout-header.ts";
 import { parseRolloutJsonl, listCodexRollouts, findRolloutByThreadId, getRolloutMessages } from "../../../src/providers/codex-app-server/codex-history.ts";
 
 const FIXTURES = join(import.meta.dir, "../../fixtures/codex");
 const PPM_CWD = "C:\\Users\\PC\\ppm";
 
 describe("parseRolloutJsonl", () => {
+  it("keeps shared provider context out of reloaded messages and titles", () => {
+    const prompt = withSharedContext("Fix the login", "Private project memory");
+    const text = [
+      { type: "session_meta", payload: { id: "shared-context-session", cwd: PPM_CWD } },
+      { type: "event_msg", payload: { type: "user_message", message: prompt } },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n";
+    expect(parseRolloutJsonl(text)[0]?.content).toBe("Fix the login");
+    expect(readRolloutHeader(text, { withTitle: true })?.title).toBe("Fix the login");
+  });
+
   const text = readFileSync(join(FIXTURES, "rollout-real.jsonl"), "utf-8");
 
   it("reconstructs ordered user/assistant transcript", () => {

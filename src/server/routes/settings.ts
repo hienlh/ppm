@@ -179,15 +179,20 @@ settingsRoutes.get("/ai", (c) => {
   return c.json(ok(stripSensitiveFields(ai)));
 });
 
-/** PUT /settings/ai — update AI provider settings, writes to yaml */
+/** PUT /settings/ai — update AI settings, persists to SQLite */
 settingsRoutes.put("/ai", async (c) => {
   try {
     const body = await c.req.json<{
       default_provider?: string;
+      share_provider_context?: boolean;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
     const currentAi = configService.get("ai");
+
+    if ("share_provider_context" in body && typeof body.share_provider_context !== "boolean") {
+      return c.json(err("share_provider_context must be a boolean"), 400);
+    }
 
     // Validate each provider config
     if (body.providers) {
@@ -202,6 +207,7 @@ settingsRoutes.put("/ai", async (c) => {
     // Merge: body overrides current values (shallow merge per provider)
     const updated = {
       ...currentAi,
+      share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
     if (body.providers) {

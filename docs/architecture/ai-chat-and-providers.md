@@ -33,6 +33,56 @@ References: [Codex configuration](https://learn.chatgpt.com/docs/config-file/con
 and [App Server](https://learn.chatgpt.com/docs/app-server).
 
 ## Provider Layer (AI Adapters)
+
+### Shared instructions and memory
+
+**Settings → AI → Share rules and memory between providers** controls
+`ai.share_provider_context`. It defaults to `true`, including existing configs.
+PPM checks sources for each project-chat message and sends a snapshot only when
+it differs from the last delivered snapshot for that provider/session. Live
+follow-ups use the same check. Compaction, failed delivery, explicit resume,
+server restart, or eviction from the bounded 512-session cache causes a fresh
+snapshot on the next message. Slash commands retain their native parser behavior.
+Disabling stops future injections, but does not
+remove context already present in an existing conversation. Start a new session
+for a clean context. The isolated HTTP API proxy is outside this project-chat flow.
+
+Sources include project `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, provider
+`.{providerId}/rules/` and `.{providerId}/memory/` directories,
+user Claude rules, Codex account `AGENTS.md`, and Claude auto-memory for the exact
+project path. PPM does not import account credentials, runtime settings/hooks,
+conversation transcripts, or another project's auto-memory.
+
+PPM reads existing native memory directly, including knowledge created before
+PPM was installed. It does not create or maintain an intermediate memory store.
+Claude's native `MEMORY.md` index is prioritized and its topic files remain
+readable at their original paths. `CLAUDE_CONFIG_DIR` is respected. Codex native
+memory is read from its memory database with exact project attribution from its
+thread database; databases are opened read-only. New memory stays in the native
+provider's storage. Conversation transcripts are not treated as memory.
+
+Snapshots omit rules already loaded by the receiving provider (Codex AGENTS and
+rules, Claude instructions/rules/auto-memory, Cursor rules). Codex's native memory
+is supplied only to other providers. Unknown providers retain conventional sources.
+Memory directories contribute their index and a directory reference, with topic
+files read on demand. A compact revision tracks file metadata changes, including
+omitted topics, within the bounded scan.
+
+Snapshots are bounded to 48 content files, 4 KB excerpts per file and 12,000 content
+characters, with limited directory traversal and a 1,500-character directory list.
+Large files retain their original paths and a truncation notice so agents can
+read the remainder on demand. Unreadable files are skipped. Rule scopes/frontmatter
+remain part of the supplied instructions.
+
+New registered providers automatically receive the common context and contribute
+conventional `.providerId/rules` and `.providerId/memory` directories. For custom
+paths, implement `AIProvider.getSharedContextSources(projectPath)`. Implement
+`supportsSharedContext = true` to consume `SendMessageOpts.sharedContext` separately
+from raw user text; `CliProvider` already does this. Other implementations receive
+a prefixed prompt automatically. Keep titles based on raw user text and use
+`stripSharedContext` when importing native transcripts. Claude, Codex and Cursor
+already implement this separation.
+
 **Component:** Provider interface + implementations
 
 **Responsibilities:**

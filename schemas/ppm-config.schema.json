@@ -36,6 +36,11 @@
       "type": "object",
       "properties": {
         "default_provider": { "type": "string", "default": "claude" },
+        "share_provider_context": {
+          "type": "boolean",
+          "default": true,
+          "description": "Share project rules and memory between AI providers"
+        },
         "providers": {
           "type": "object",
           "additionalProperties": {

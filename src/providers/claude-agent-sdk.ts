@@ -18,10 +18,11 @@ import type {
   ModelOption,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
+import { withSharedContext, stripSharedContext } from "../shared/provider-context.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionProjectPath, setSessionMetadata, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, getSessionTitle, setSessionTitle, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
 import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from "../services/subprocess-retention.ts";
 import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
@@ -213,6 +214,7 @@ interface PendingApproval {
  * Uses canUseTool callback for tool approvals and AskUserQuestion.
  */
 export class ClaudeAgentSdkProvider implements AIProvider {
+  readonly supportsSharedContext = true;
   id = "claude";
   name = "Claude";
 
@@ -571,7 +573,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const sessions: SessionInfo[] = sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
+        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (stripSharedContext(s.firstPrompt ?? "") || "Chat"),
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
@@ -619,7 +621,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         return {
           id: info.sessionId,
           providerId: this.id,
-          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? info.firstPrompt ?? "Chat",
+          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (stripSharedContext(info.firstPrompt ?? "") || "Chat"),
           createdAt: new Date(info.lastModified).toISOString(),
           updatedAt: new Date(info.lastModified).toISOString(),
         };
@@ -725,13 +727,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * Push a follow-up message into an existing streaming session's generator.
    * Called by WS handler for follow-up messages (Phase 2).
    */
-  pushMessage(sessionId: string, content: string, opts?: { priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }): void {
+  pushMessage(sessionId: string, content: string, opts?: import("./provider.interface.ts").SendMessageOpts): void {
     const ss = this.streamingSessions.get(sessionId);
     if (!ss) {
       console.warn(`[sdk] pushMessage: no streaming session for ${sessionId}`);
       return;
     }
-    const msgContent = buildMessageParam(content, opts?.images);
+    const modelInput = withSharedContext(content, opts?.sharedContext);
+    const msgContent = buildMessageParam(modelInput, opts?.images);
     ss.controller.push({
       type: 'user',
       message: msgContent,
@@ -740,7 +743,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       priority: opts?.priority ?? 'next',
     });
     // Track latest message for retry paths (fixes stale firstMsg bug)
-    ss.lastUserContent = content;
+    ss.lastUserContent = modelInput;
     ss.lastUserImages = opts?.images;
     console.log(`[sdk] pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
   }
@@ -794,6 +797,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     message: string,
     opts?: import("./provider.interface.ts").SendMessageOpts & { forkSession?: boolean; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> },
   ): AsyncIterable<ChatEvent> {
+    const modelInput = withSharedContext(message, opts?.sharedContext);
     // SDK requires valid UUID session IDs. Short/random IDs can leak from
     // tab derivation or URL parsing — migrate to a real UUID early.
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -826,7 +830,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // Follow-up: push into existing streaming session, yield nothing
     const existingStream = this.streamingSessions.get(sessionId);
     if (existingStream) {
-      const msgContent = buildMessageParam(message, opts?.images);
+      const msgContent = buildMessageParam(modelInput, opts?.images);
       existingStream.controller.push({
         type: 'user',
         message: msgContent,
@@ -835,7 +839,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         priority: opts?.priority ?? 'next',
       });
       // Track latest message for retry paths (fixes stale firstMsg bug)
-      existingStream.lastUserContent = message;
+      existingStream.lastUserContent = modelInput;
       existingStream.lastUserImages = opts?.images;
       console.log(`[sdk] sendMessage follow-up: session=${sessionId} pushed to generator`);
       return; // Events flow through first-message's consumer loop
@@ -853,6 +857,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const count = this.messageCount.get(sessionId) ?? 0;
     const isFirstMessage = count === 0;
     this.messageCount.set(sessionId, count + 1);
+    // Native firstPrompt may truncate before the shared-context block ends.
+    // Keep the opening user title available after restart without replacing a rename.
+    if (isFirstMessage && opts?.sharedContext && getSessionTitle(sessionId) === null) {
+      setSessionTitle(sessionId, meta.title);
+    }
 
     // Check if this session should fork from another
     const forkSourceId = this.forkSources.get(sessionId);
@@ -1145,7 +1154,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // model a bare path instead — the round trip the caller passed them in to avoid.
       const firstMsg = {
         type: 'user' as const,
-        message: buildMessageParam(message, opts?.images),
+        message: buildMessageParam(modelInput, opts?.images),
         parent_tool_use_id: null,
         session_id: sessionId,
       };
@@ -1165,7 +1174,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Also returns the raw content/images for re-populating the new streaming session.
       const buildRetryMsg = () => {
         const ss = this.streamingSessions.get(sessionId);
-        const content = ss?.lastUserContent ?? message;
+        const content = ss?.lastUserContent ?? modelInput;
         const images = ss?.lastUserImages;
         const retryContent = turnProgressed ? "Continue from where you left off." : content;
         return {
@@ -1184,7 +1193,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg)
       const initRetry = crashRetryCount > 0 ? buildRetryMsg() : null;
       initialCtrl.push(initRetry?.msg ?? firstMsg);
-      const initContent = initRetry?.lastUserContent ?? message;
+      const initContent = initRetry?.lastUserContent ?? modelInput;
       const initImages = initRetry?.lastUserImages ?? opts?.images;
 
       const initialQuery = query({
@@ -2219,7 +2228,7 @@ function findMissingSessions(
           if (head[end] === '"') break;
           end++;
         }
-        const raw = head.slice(start, end).replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
+        const raw = stripSharedContext(head.slice(start, end).replace(/\\n/g, "\n").replace(/\\"/g, '"').trim()).replace(/\n/g, " ");
         if (raw.length > 0) {
           title = raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
         }
@@ -2236,4 +2245,3 @@ function findMissingSessions(
   }
   return results;
 }
-

@@ -76,6 +76,8 @@ export interface ProjectConfig {
 
 export interface AIConfig {
   default_provider: string;
+  /** Share project rules and memory between providers. Unset defaults to true. */
+  share_provider_context?: boolean;
   providers: Record<string, AIProviderConfig>;
 }
 
@@ -138,6 +140,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   projects: [],
   ai: {
     default_provider: "claude",
+    share_provider_context: true,
     providers: {
       claude: {
         type: "agent-sdk",
@@ -289,6 +292,11 @@ export function validateDefaultProvider(defaultProvider: string, providers: Reco
  */
 export function sanitizeConfig(config: PpmConfig): boolean {
   let dirty = false;
+
+  if (typeof config.ai.share_provider_context !== "boolean") {
+    config.ai.share_provider_context = true;
+    dirty = true;
+  }
 
   // Migrate/repair theme (legacy string → {style, mode})
   const migrated = migrateThemeValue(config.theme);
