@@ -27,7 +27,7 @@ import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { usePortalContainer } from "@/components/ui/portal-container-context";
 import { firstSelectable, moveSelection } from "@/lib/git-ref-picker";
 import { branchRows, rowIndexOf } from "@/lib/branch-select-rows";
-import { StartEllipsis } from "./branch-review-tree-row";
+import { StartEllipsis } from "@/components/ui/start-ellipsis";
 import type { GitBranch } from "../../../types/git";
 
 interface BranchSelectProps {
@@ -39,9 +39,21 @@ interface BranchSelectProps {
   testId?: string;
   /** Width, from the caller — the two pickers share a row with everything else. */
   className?: string;
+  /**
+   * Set this inside a Radix dialog, and only there.
+   *
+   * A modal dialog traps focus, and the popover is portalled outside it: the
+   * dialog's focus scope sees focus land on an element it does not contain and
+   * pulls it straight back, so the filter box cannot be typed in at all. A
+   * modal popover has a trapped scope of its own, which pushes onto Radix's
+   * scope stack and pauses the dialog's — the one arrangement where both
+   * behave. It costs a scroll lock and `aria-hidden` on everything behind,
+   * which is why it is not the default out in a panel.
+   */
+  modal?: boolean;
 }
 
-export function BranchSelect({ value, branches, onChange, label, testId, className }: BranchSelectProps) {
+export function BranchSelect({ value, branches, onChange, label, testId, className, modal }: BranchSelectProps) {
   const isMobile = useIsMobile();
   const portalContainer = usePortalContainer();
   const [open, setOpen] = useState(false);
@@ -193,7 +205,7 @@ export function BranchSelect({ value, branches, onChange, label, testId, classNa
   }
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root open={open} onOpenChange={setOpen} modal={modal}>
       <Popover.Trigger asChild>{trigger}</Popover.Trigger>
       <Popover.Portal container={portalContainer}>
         <Popover.Content

@@ -16,7 +16,7 @@ import type { GitBranch } from "../../../src/types/git.ts";
 
 installDom();
 
-const { BranchSelect } = await import("../../../src/web/components/branch-review/branch-select.tsx");
+const { BranchSelect } = await import("../../../src/web/components/git/branch-select.tsx");
 
 const b = (name: string, over: Partial<GitBranch> = {}): GitBranch => ({
   name, current: false, remote: false, commitHash: "abc1234", ahead: 0, behind: 0, remotes: [], ...over,
@@ -125,6 +125,20 @@ describe("the branch select", () => {
     expect(rowNames()).toEqual(branches.map((x) => x.name));
   });
 });
+
+/*
+ * There is no test here for the Add Worktree dialog, which mounts this with
+ * `modal`, and the reason is the harness rather than the code. Radix binds its
+ * `useLayoutEffect` at *import* time (`typeof document !== "undefined"`), and in
+ * a batched `bun test` run some earlier file has already imported Radix with no
+ * DOM installed — so `Portal` never flips to mounted and **every** Radix portal
+ * renders null. A plain `<Dialog open><DialogContent>hi</DialogContent></Dialog>`
+ * comes back empty in `bun test tests/unit/web`, and passes on its own. Nor
+ * would it have proved the thing worth proving: happy-dom does not reproduce the
+ * dialog's focus trap at all (measured — with `modal` and without, the filter
+ * box ends up focused either way), so the argument for `modal` is settled
+ * against Radix's own source, in the prop's comment.
+ */
 
 describe("under a finger", () => {
   // `useIsMobile` reads `window.innerWidth`, so a phone is one property away.

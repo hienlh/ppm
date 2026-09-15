@@ -28,8 +28,9 @@ import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { GitRepoBar, GitRepoChoice, GitNoRepo } from "@/components/git/git-repo-picker";
 import { FileIcon } from "@/lib/file-icons";
 import { buildTree, compactTree } from "@/lib/git-file-tree";
-import { StartEllipsis, TreeRow } from "./branch-review-tree-row";
-import { BranchSelect } from "./branch-select";
+import { TreeRow } from "./branch-review-tree-row";
+import { StartEllipsis } from "@/components/ui/start-ellipsis";
+import { BranchSelect } from "@/components/git/branch-select";
 import {
   Check, ChevronDown, ChevronRight, FileText, Loader2, RefreshCw, ListChecks, ArrowRight,
 } from "@/lib/icons";
