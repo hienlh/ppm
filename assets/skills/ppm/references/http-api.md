@@ -12,6 +12,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 - `GET    /api/accounts`
 - `GET    /api/accounts/active`
+- `POST   /api/accounts/pick`
 - `GET    /api/accounts/settings`
 - `PUT    /api/accounts/settings`
 - `POST   /api/accounts`
@@ -64,6 +65,8 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 - `GET    /api/codex-accounts`
 - `GET    /api/codex-accounts/usage`
+- `POST   /api/codex-accounts/pick`
+- `PATCH  /api/codex-accounts/:id`
 - `PUT    /api/codex-accounts/strategy`
 - `POST   /api/codex-accounts/api-key`
 - `POST   /api/codex-accounts/device-login`
@@ -342,4 +345,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.19.12 -->
+<!-- Generated from src/server/routes/ for PPM v0.20.0 -->
