@@ -79,6 +79,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.GroupChatTab,
     })),
   ),
+  problems: lazy(() =>
+    import("@/components/problems/problems-panel").then((m) => ({
+      default: m.ProblemsPanel,
+    })),
+  ),
 };
 
 function LoadingFallback() {
