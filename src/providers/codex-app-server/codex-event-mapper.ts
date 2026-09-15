@@ -126,11 +126,13 @@ export function itemToToolResult(item: Item): ChatEvent {
   const type = item.type;
   let output = "";
   let isError = false;
+  let exitCode: number | undefined;
 
   if (type === "commandExecution") {
     output = redactTruncate(item.aggregatedOutput ?? "");
     const exit = item.exitCode;
-    isError = typeof exit === "number" && exit !== 0;
+    exitCode = typeof exit === "number" ? exit : undefined;
+    isError = exitCode != null && exitCode !== 0;
   } else if (type === "mcpToolCall") {
     output = redactTruncate(item.result ?? item.error ?? "");
     isError = item.error != null;
@@ -153,7 +155,7 @@ export function itemToToolResult(item: Item): ChatEvent {
     output = redactTruncate(item);
   }
 
-  return { type: "tool_result", output, isError, toolUseId: item.id };
+  return { type: "tool_result", output, isError, ...(exitCode != null ? { exitCode } : {}), toolUseId: item.id };
 }
 
 /**

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-09-15
+
+### Fixed
+- **Codex shell cards now show their exit code** ? PowerShell can emit useful table output while still returning a nonzero status for a hidden non-terminating error. PPM preserves and displays that code so a red status is explainable.
+
 ## [0.20.4] - 2026-09-15
 
 ### Fixed

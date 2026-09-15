@@ -333,7 +333,7 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
         for (let i = entry.turnEvents.length - 1; i >= 0; i--) {
           const buffered = entry.turnEvents[i] as any;
           if (buffered.type === "tool_use" && buffered.toolUseId === toolUseId) {
-            buffered.result = { output: (event as any).output, isError: (event as any).isError };
+            buffered.result = { output: (event as any).output, isError: (event as any).isError, exitCode: (event as any).exitCode };
             break;
           }
         }

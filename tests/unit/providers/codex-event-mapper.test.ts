@@ -50,7 +50,7 @@ describe("mapCodexEvent", () => {
       method: "item/completed",
       params: { item: { type: "commandExecution", id: "i1", aggregatedOutput: "boom", exitCode: 1 } },
     }, SID);
-    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, toolUseId: "i1" });
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, exitCode: 1, toolUseId: "i1" });
   });
 
   it("item/completed(commandExecution exit 0) → tool_result not error", () => {
@@ -58,7 +58,7 @@ describe("mapCodexEvent", () => {
       method: "item/completed",
       params: { item: { type: "commandExecution", id: "i2", aggregatedOutput: "ok", exitCode: 0 } },
     }, SID);
-    expect(out[0]).toMatchObject({ type: "tool_result", isError: false, toolUseId: "i2" });
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: false, exitCode: 0, toolUseId: "i2" });
   });
 
   it("turn/completed → done", () => {
