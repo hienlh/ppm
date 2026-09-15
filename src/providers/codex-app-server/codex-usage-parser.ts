@@ -1,5 +1,6 @@
 import type { UsageInfo, LimitBucket } from "../provider.interface.ts";
 import type { GetAccountRateLimitsResponse, RateLimitWindow } from "./codex-protocol.ts";
+import { codexPlanLabel } from "../../shared/codex-plan-label.ts";
 
 /** codex resetsAt is a unix timestamp; tolerate seconds or milliseconds. */
 function toIso(resetsAt: number | null | undefined): string | undefined {
@@ -64,6 +65,7 @@ export function parseCodexUsage(res: GetAccountRateLimitsResponse | null | undef
       out.session = toBucket(w);
     }
   });
-  if (snap.planType) out.activeAccountLabel = String(snap.planType);
+  const planLabel = codexPlanLabel(snap.planType);
+  if (planLabel) out.activeAccountLabel = planLabel;
   return out;
 }

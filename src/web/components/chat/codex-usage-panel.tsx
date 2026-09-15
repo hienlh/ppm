@@ -21,6 +21,7 @@ import { AccountBucketRow } from "@/components/settings/accounts/account-bucket-
 import { formatResetTime } from "@/components/settings/accounts/account-usage-format";
 import type { AccountUsageEntry } from "@/lib/api-settings";
 import type { UsageInfo } from "../../../types/chat";
+import { codexPlanLabel } from "../../../shared/codex-plan-label.ts";
 import { UsagePanelShell } from "./usage-panel-shell";
 
 interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled" }
@@ -179,7 +180,7 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
             // those differ the moment a session is bound to an account.
             isActive={a.id === (selectedAccountId ?? usage.activeAccountId)}
             layout={layout}
-            planLabel={a.planType}
+            planLabel={codexPlanLabel(a.planType)}
             onSelect={onSelectAccount ? handleSelect : undefined}
             unselectableReason={unselectableReason(a, u)}
             selecting={selectingId === a.id}

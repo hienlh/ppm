@@ -45,6 +45,27 @@ describe("mapCodexEvent", () => {
     expect(out).toEqual([{ type: "tool_use", tool: "WebSearch", input: { query: "bun test" }, toolUseId: "w1" }]);
   });
 
+  it("completed webSearch updates an initially blank query and formats results", () => {
+    const out = mapCodexEvent({
+      method: "item/completed",
+      params: { item: {
+        type: "webSearch", id: "w1", query: "OpenAI Codex docs",
+        results: [{ title: "Codex", url: "https://learn.chatgpt.com/codex", snippet: "Build with Codex." }],
+      } },
+    }, SID) as any[];
+    expect(out[0]).toMatchObject({ type: "tool_use", tool: "WebSearch", input: { query: "OpenAI Codex docs" }, toolUseId: "w1" });
+    expect(out[1]).toMatchObject({ type: "tool_result", toolUseId: "w1", isError: false });
+    expect(out[1].output).toBe("Found 1 result.\n1. Codex\n   https://learn.chatgpt.com/codex\n   Build with Codex.");
+  });
+
+  it("completed webSearch reports an empty result set without dumping its item JSON", () => {
+    const out = mapCodexEvent({
+      method: "item/completed", params: { item: { type: "webSearch", id: "w2", query: "nothing", results: [] } },
+    }, SID) as any[];
+    expect(out[1].output).toBe("Search completed with no results.");
+    expect(out[1].output).not.toContain('"type"');
+  });
+
   it("item/completed(commandExecution exit!=0) → tool_result isError", () => {
     const out = mapCodexEvent({
       method: "item/completed",

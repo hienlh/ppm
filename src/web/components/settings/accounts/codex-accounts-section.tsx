@@ -17,6 +17,7 @@ import { CodexBackupDialog } from "./codex-backup-dialog";
 import { CodexRotationDialog } from "./codex-rotation-dialog";
 import { CodexUsageRows } from "./codex-usage-rows";
 import { useCodexAccounts } from "./use-codex-accounts";
+import { codexPlanLabel } from "../../../../shared/codex-plan-label.ts";
 
 /** Codex multi-account management, separate from Claude accounts because codex auth is owned
  *  by the app-server per CODEX_HOME. Added by API key, browser login, or ChatGPT device code. */
@@ -86,7 +87,7 @@ export function CodexAccountsSection() {
                     <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1 shrink-0">
                       {a.type}
                     </span>
-                    {a.planType && <span className="text-[10px] text-text-subtle shrink-0">{a.planType}</span>}
+                    {codexPlanLabel(a.planType) && <span className="text-[10px] text-text-subtle shrink-0">{codexPlanLabel(a.planType)}</span>}
                     {/* Same control the Claude card uses, in the same place, so the two
                         sub-tabs read as one screen rather than two designs. */}
                     <Switch

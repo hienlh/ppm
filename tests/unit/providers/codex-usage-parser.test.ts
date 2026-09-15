@@ -16,7 +16,7 @@ describe("parseCodexUsage", () => {
     expect(u.fiveHourResetsAt).toBeTruthy();
     expect(u.session?.windowHours).toBe(5);
     expect(u.weekly?.windowHours).toBe(168);
-    expect(u.activeAccountLabel).toBe("plus");
+    expect(u.activeAccountLabel).toBe("ChatGPT Plus");
   });
 
   it("handles missing windows / empty input", () => {

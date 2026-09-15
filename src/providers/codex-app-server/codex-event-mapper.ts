@@ -29,6 +29,30 @@ function asObj(v: unknown): Record<string, unknown> {
   return (v && typeof v === "object") ? (v as Record<string, unknown>) : {};
 }
 
+function text(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** Keep web-search cards readable: Codex returns structured results, not terminal output. */
+function webSearchOutput(item: Item): string {
+  const error = text(item.error);
+  if (error) return error;
+  const results = Array.isArray(item.results) ? item.results : [];
+  if (results.length === 0) return "Search completed with no results.";
+  const lines = results.slice(0, 8).flatMap((value, index) => {
+    const result = asObj(value);
+    const url = text(result.url) || text(result.href) || text(result.link);
+    const title = text(result.title) || text(result.name) || text(result.domain) || url || `Result ${index + 1}`;
+    const snippet = text(result.snippet) || text(result.description) || text(result.text);
+    return [
+      `${index + 1}. ${title}`,
+      ...(url ? [`   ${url}`] : []),
+      ...(snippet ? [`   ${snippet}`] : []),
+    ];
+  });
+  return [`Found ${results.length} result${results.length === 1 ? "" : "s"}.`, ...lines].join("\n");
+}
+
 /**
  * The command text to SHOW for a commandExecution item.
  *
@@ -151,6 +175,9 @@ export function itemToToolResult(item: Item): ChatEvent {
     const failure = item.failure;
     isError = failure != null;
     output = isError ? redactTruncate(failure) : String(item.savedPath ?? "generated");
+  } else if (type === "webSearch") {
+    output = redactTruncate(webSearchOutput(item));
+    isError = item.error != null;
   } else {
     output = redactTruncate(item);
   }
@@ -208,7 +235,7 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
         // Other tools describe themselves fully at `started`; re-sending those
         // would only cost a second event in the buffer, the log and every
         // client's socket.
-        if (item.type === "imageGeneration") return [itemToToolUse(item), itemToToolResult(item)];
+        if (item.type === "imageGeneration" || item.type === "webSearch") return [itemToToolUse(item), itemToToolResult(item)];
         return [itemToToolResult(item)];
       }
       return [];
