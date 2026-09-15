@@ -53,6 +53,13 @@ export default defineConfig({
     outDir: "../../dist/web",
     emptyOutDir: true,
     sourcemap: false,
+    // A font is never worth inlining. The whole reason a `@font-face` carries a
+    // `unicode-range` is that it is fetched only for text that actually needs
+    // it — base64 in the stylesheet turns that into an unconditional download,
+    // inside the one file the service worker precaches. Under Vite's 4 KB
+    // default, four subsets were being inlined into the shell, three of them
+    // the *rarest* Nerd Font blocks (IEC power symbols, Pomicons).
+    assetsInlineLimit: (file: string) => (file.endsWith(".woff2") ? false : undefined),
     rollupOptions: {
       output: {
         manualChunks(id: string) {

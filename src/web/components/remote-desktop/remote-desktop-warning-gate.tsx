@@ -10,7 +10,7 @@
  * will be, on both surfaces.
  */
 import { useState, type ReactNode } from "react";
-import { MonitorSmartphone, ShieldAlert } from "lucide-react";
+import { MonitorSmartphone, ShieldAlert } from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 
 export interface RemoteDesktopWarningGateProps {

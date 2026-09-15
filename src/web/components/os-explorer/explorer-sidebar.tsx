@@ -8,7 +8,7 @@
  */
 
 import type { ComponentType } from "react";
-import { AlertTriangle, HardDrive, Pin, Usb, Network } from "lucide-react";
+import { AlertTriangle, HardDrive, Pin, Usb, Network } from "@/lib/icons";
 import type { HostInfo, Drive } from "../../../types/system";
 import { cn } from "@/lib/utils";
 import { DROP_TARGET_CLASS } from "./dnd/drop-target-style";

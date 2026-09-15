@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, FileWarning, ExternalLink } from "lucide-react";
+import { Loader2, FileWarning, ExternalLink } from "@/lib/icons";
 import { projectUrl, getAuthToken } from "@/lib/api-client";
 
 export function PdfPreview({ filePath, projectName }: { filePath: string; projectName: string }) {

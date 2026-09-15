@@ -7,7 +7,7 @@
  */
 
 import { useState } from "react";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { FlaskConical, Loader2 } from "@/lib/icons";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";

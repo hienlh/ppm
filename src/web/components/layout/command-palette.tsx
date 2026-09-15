@@ -22,7 +22,7 @@ import {
   CircleX,
   WrapText,
   Zap,
-} from "lucide-react";
+} from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
 import { useTabStore, type TabType } from "@/stores/tab-store";
@@ -39,6 +39,7 @@ import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
 import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
 import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
+import { fileIconElement } from "@/lib/file-icons";
 
 /** Max results to display — prevents rendering thousands of matches */
 const MAX_RESULTS = 100;
@@ -314,7 +315,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       id: `file:${f.path}`,
       label: f.name,
       hint: f.path,
-      icon: FileCode,
+      icon: fileIconElement(f.name),
       group: "file" as const,
       keywords: f.path,
       // Propagate gitignore flag for muted rendering (only present on /files/index entries)

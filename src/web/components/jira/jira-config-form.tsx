@@ -2,7 +2,7 @@ import { useState, useEffect, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useJiraStore } from "@/stores/jira-store";
-import { CheckCircle, AlertCircle, Loader2, Trash2 } from "lucide-react";
+import { CheckCircle, AlertCircle, Loader2, Trash2 } from "@/lib/icons";
 
 interface Props {
   projectId: number;

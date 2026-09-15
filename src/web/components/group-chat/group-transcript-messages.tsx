@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, Brain, Settings2 } from "lucide-react";
+import { ChevronRight, Brain, Settings2 } from "@/lib/icons";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { ToolCard } from "@/components/chat/tool-cards";
 import { cn } from "@/lib/utils";

@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useJiraStore } from "@/stores/jira-store";
 import { JiraFilterBuilder } from "./jira-filter-builder";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search } from "@/lib/icons";
 import type { JiraWatcher, JiraWatcherMode, JiraIssue } from "../../../../src/types/jira";
 
 const INTERVALS = [

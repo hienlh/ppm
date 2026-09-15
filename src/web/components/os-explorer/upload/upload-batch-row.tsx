@@ -3,7 +3,7 @@
  * bar, state, and a per-row Cancel while it is still queued/uploading.
  */
 
-import { AlertTriangle, Check, X } from "lucide-react";
+import { AlertTriangle, Check, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { UploadItem } from "./upload-store";
 

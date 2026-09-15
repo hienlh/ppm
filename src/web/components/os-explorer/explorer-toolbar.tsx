@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import {
   ArrowLeft, ArrowRight, ArrowUp, Columns3, Eye, EyeOff, LayoutGrid, List, PencilLine, RefreshCw, Search,
   Upload, X,
-} from "lucide-react";
+} from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";

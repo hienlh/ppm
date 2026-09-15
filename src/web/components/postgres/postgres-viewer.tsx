@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef, lazy, Suspense } from "react";
-import { Database, Loader2, AlertCircle, Play, ChevronLeft, ChevronRight, Table, RefreshCw } from "lucide-react";
+import { Database, Loader2, AlertCircle, Play, ChevronLeft, ChevronRight, Table, RefreshCw } from "@/lib/icons";
 import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
 const CodeMirror = lazy(() => import("@uiw/react-codemirror"));
 import { sql, PostgreSQL } from "@codemirror/lang-sql";

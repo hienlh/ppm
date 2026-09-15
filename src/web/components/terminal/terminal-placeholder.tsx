@@ -1,4 +1,4 @@
-import { Terminal } from "lucide-react";
+import { Terminal } from "@/lib/icons";
 
 export function TerminalPlaceholder() {
   return (

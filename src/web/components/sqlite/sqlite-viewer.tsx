@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Database, Loader2, AlertCircle } from "lucide-react";
+import { Database, Loader2, AlertCircle } from "@/lib/icons";
 import { useSqlite } from "./use-sqlite";
 import { SqliteTableList } from "./sqlite-table-list";
 import { GlideDataGrid } from "../database/glide-data-grid";

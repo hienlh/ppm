@@ -1,4 +1,4 @@
-import { Hexagon, Bot, SquareTerminal } from "lucide-react";
+import { Hexagon, Bot, SquareTerminal } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AiResourceType, AiResourceScope } from "@/lib/api-ai-resources";
 

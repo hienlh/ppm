@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp } from "@/lib/icons";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import { useFileStore } from "@/stores/file-store";
 import { cn } from "@/lib/utils";

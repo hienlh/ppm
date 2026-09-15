@@ -4,7 +4,7 @@
  * mobile tab, so this file and the panels beneath it are written once for both hosts.
  */
 import { lazy, memo, Suspense, useState } from "react";
-import { Wifi, WifiOff } from "lucide-react";
+import { Wifi, WifiOff } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useResourceMonitor } from "@/hooks/use-resource-monitor";
 

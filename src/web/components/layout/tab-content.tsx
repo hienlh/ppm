@@ -1,7 +1,7 @@
 import { Suspense, lazy } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore, type TabType } from "@/stores/tab-store";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 
 const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
   terminal: lazy(() =>

@@ -36,8 +36,8 @@ import {
   Clock,
   Send,
   Users,
-  ImagePlus,
-} from "lucide-react";
+} from "@/lib/icons";
+import { ImagePlus } from "@/lib/icons";
 
 /**
  * Handle of an agent that can be addressed later, or null for a one-shot subagent.

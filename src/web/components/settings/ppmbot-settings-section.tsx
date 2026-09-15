@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api-client";
-import { Trash2, CheckCircle, Clock, Send, Brain, RefreshCw } from "lucide-react";
+import { Trash2, CheckCircle, Clock, Send, Brain, RefreshCw } from "@/lib/icons";
 import { Separator } from "@/components/ui/separator";
 
 interface PPMBotConfig {

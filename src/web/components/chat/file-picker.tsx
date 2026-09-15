@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { File, Folder } from "lucide-react";
+import { File, Folder } from "@/lib/icons";
 import type { FileNode } from "../../../types/project";
 
 interface FilePickerProps {

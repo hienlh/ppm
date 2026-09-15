@@ -6,7 +6,7 @@
  * which is exactly the display that made it impossible to tell who was running.
  */
 
-import { Loader2, ChevronRight } from "lucide-react";
+import { Loader2, ChevronRight } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { TeamMemberActivity } from "@/hooks/use-team-activity-feed";
 import { currentStep, formatDuration, shortAgentType } from "./team-member-activity-format";

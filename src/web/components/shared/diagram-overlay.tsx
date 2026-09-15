@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from "react";
-import { X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { X, ZoomIn, ZoomOut, RotateCcw } from "@/lib/icons";
 import { useDiagramOverlay } from "@/stores/diagram-overlay-store";
 
 const MIN_ZOOM = 0.25;

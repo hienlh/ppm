@@ -10,7 +10,7 @@ import {
   Lock,
   AlertCircle,
   Check,
-} from "lucide-react";
+} from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { Button } from "@/components/ui/button";
