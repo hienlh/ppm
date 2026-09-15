@@ -1,13 +1,4 @@
-/**
- * State and requests for the Codex accounts pane.
- *
- * Split from the pane the way `use-accounts-data` is on the Claude side, so both panes are
- * render-only and the two providers stay comparable.
- *
- * The device-code login is the reason the cleanup here matters: it holds a server-side
- * app-server until it resolves, so leaving the pane has to release it rather than let it age
- * out. That cleanup belongs to the pane's lifetime, not to a dialog being closed.
- */
+/** State and requests for the Codex accounts pane, including cancellable login flows. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getAuthToken } from "@/lib/api-client";
@@ -28,6 +19,8 @@ export interface Usage {
   weekly?: LimitBucket;
 }
 interface DevicePending { id: string; userCode: string; verificationUrl: string }
+interface BrowserPending { id: string; authUrl: string }
+type LoginMethod = "device" | "browser";
 type DeviceStatus = { state: "pending" } | { state: "done" } | { state: "error"; error: string };
 
 /** Gap between status polls. Each poll answers immediately, so a request lost to
@@ -48,13 +41,23 @@ export function useCodexAccounts(onDone: () => void) {
   const [err, setErr] = useState<string | null>(null);
   const [device, setDevice] = useState<DevicePending | null>(null);
   const [deviceWaiting, setDeviceWaiting] = useState(false);
+  const [browser, setBrowser] = useState<BrowserPending | null>(null);
+  const [loginStarting, setLoginStarting] = useState(false);
+  const [callbackUrl, setCallbackUrl] = useState("");
+  const [submittingCallback, setSubmittingCallback] = useState(false);
   const [backupPassword, setBackupPassword] = useState("");
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const stopPollRef = useRef<(() => void) | null>(null);
   /** Id of the login still owed a result, so unmount can release it. */
-  const devicePendingIdRef = useRef<string | null>(null);
+  const pendingLoginRef = useRef<{ id: string; method: LoginMethod } | null>(null);
+  const loginGenerationRef = useRef(0);
+  const startingRef = useRef(false);
+  const addingRef = useRef(false);
+  const submittingRef = useRef(false);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,53 +71,95 @@ export function useCodexAccounts(onDone: () => void) {
   useEffect(() => { load(); }, [load]);
 
   const addApiKey = async () => {
-    if (!apiKey.trim()) return;
+    if (!apiKey.trim() || addingRef.current || startingRef.current || pendingLoginRef.current) return;
+    addingRef.current = true;
     setAdding(true); setErr(null);
     try {
       await api.post("/api/codex-accounts/api-key", { apiKey: apiKey.trim(), label: label.trim() || undefined });
       setApiKey(""); setLabel(""); onDone(); await load();
-    } catch (e) { setErr((e as Error).message); } finally { setAdding(false); }
+    } catch (e) { setErr((e as Error).message); } finally { addingRef.current = false; setAdding(false); }
   };
 
-  const pollDevice = useCallback((id: string) => {
-    const deadline = Date.now() + DEVICE_POLL_DEADLINE_MS;
-    let stopped = false;
-    stopPollRef.current = () => { stopped = true; };
-    const finish = (message?: string) => {
-      stopped = true; stopPollRef.current = null; devicePendingIdRef.current = null;
-      if (message) setErr(message);
-      setDevice(null); setDeviceWaiting(false);
-    };
-    const tick = async () => {
-      if (stopped) return;
-      let s: DeviceStatus | null = null;
-      // A failed poll is not a failed login — the outcome is held server-side,
-      // so keep asking until the deadline instead of aborting the flow.
-      try { s = await api.get<DeviceStatus>(`/api/codex-accounts/device-login/${id}/status`); } catch { /* retry */ }
-      if (stopped) return;
-      if (s?.state === "done") { finish(); setLabel(""); onDone(); await load(); return; }
-      if (s?.state === "error") { finish(s.error); return; }
-      if (Date.now() > deadline) { finish("Device login timed out."); return; }
-      setTimeout(tick, DEVICE_POLL_MS);
-    };
-    void tick();
-  }, [load]);
-
-  // Abandoning the panel mid-login stops the polling and releases the
-  // server-side app-server instead of leaving it to age out.
-  useEffect(() => () => {
+  const releaseLogin = useCallback(() => {
+    loginGenerationRef.current += 1;
+    startingRef.current = false;
+    submittingRef.current = false;
     stopPollRef.current?.();
-    const id = devicePendingIdRef.current;
-    if (id) api.del(`/api/codex-accounts/device-login/${id}`).catch(() => {});
+    stopPollRef.current = null;
+    const pending = pendingLoginRef.current;
+    pendingLoginRef.current = null;
+    if (pending) void api.del(`/api/codex-accounts/${pending.method}-login/${pending.id}`).catch(() => {});
   }, []);
 
-  const startDevice = async () => {
-    setErr(null);
+  const cancelLogin = useCallback(() => {
+    releaseLogin();
+    setDevice(null); setDeviceWaiting(false); setBrowser(null);
+    setLoginStarting(false); setCallbackUrl(""); setSubmittingCallback(false);
+  }, [releaseLogin]);
+
+  const pollLogin = useCallback((id: string, method: LoginMethod) => {
+    const deadline = Date.now() + (method === "browser" ? 610_000 : DEVICE_POLL_DEADLINE_MS);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    stopPollRef.current = () => { stopped = true; clearTimeout(timer); };
+    const tick = async () => {
+      if (stopped) return;
+      let status: DeviceStatus | null = null;
+      // Transient network failures must not discard an authorization in progress.
+      try { status = await api.get<DeviceStatus>(`/api/codex-accounts/${method}-login/${id}/status`); } catch { /* retry */ }
+      if (stopped) return;
+      if (status?.state === "done") {
+        cancelLogin(); setLabel(""); onDoneRef.current(); await load(); return;
+      }
+      if (status?.state === "error" || Date.now() > deadline) {
+        cancelLogin();
+        setErr(status?.state === "error" ? status.error : `${method === "browser" ? "Browser" : "Device"} login timed out.`);
+        return;
+      }
+      timer = setTimeout(tick, DEVICE_POLL_MS);
+    };
+    void tick();
+  }, [cancelLogin, load]);
+
+  useEffect(() => releaseLogin, [releaseLogin]);
+
+  const startLogin = async (method: LoginMethod) => {
+    if (startingRef.current || pendingLoginRef.current || addingRef.current) return;
+    startingRef.current = true;
+    const generation = ++loginGenerationRef.current;
+    setLoginStarting(true); setErr(null);
     try {
-      const d = await api.post<DevicePending>("/api/codex-accounts/device-login", { label: label.trim() || undefined });
-      setDevice(d); setDeviceWaiting(true); devicePendingIdRef.current = d.id;
-      pollDevice(d.id);
-    } catch (e) { setErr((e as Error).message); }
+      const result = await api.post<DevicePending | BrowserPending>(`/api/codex-accounts/${method}-login`, { label: label.trim() || undefined });
+      // Closing the dialog while startup is in flight still owes the server a cancel.
+      if (generation !== loginGenerationRef.current) {
+        void api.del(`/api/codex-accounts/${method}-login/${result.id}`).catch(() => {});
+        return;
+      }
+      pendingLoginRef.current = { id: result.id, method };
+      if (method === "device") { setDevice(result as DevicePending); setDeviceWaiting(true); }
+      else setBrowser(result as BrowserPending);
+      pollLogin(result.id, method);
+    } catch (e) {
+      if (generation === loginGenerationRef.current) setErr((e as Error).message);
+    } finally {
+      if (generation === loginGenerationRef.current) { startingRef.current = false; setLoginStarting(false); }
+    }
+  };
+
+  const submitCallback = async () => {
+    const pending = pendingLoginRef.current;
+    if (pending?.method !== "browser" || !callbackUrl.trim() || submittingRef.current) return;
+    const generation = loginGenerationRef.current;
+    submittingRef.current = true; setSubmittingCallback(true); setErr(null);
+    const submittedUrl = callbackUrl.trim();
+    setCallbackUrl("");
+    try {
+      await api.post(`/api/codex-accounts/browser-login/${pending.id}/callback`, { callbackUrl: submittedUrl });
+    } catch (e) {
+      if (generation === loginGenerationRef.current) setErr((e as Error).message);
+    } finally {
+      if (generation === loginGenerationRef.current) { submittingRef.current = false; setSubmittingCallback(false); }
+    }
   };
 
   const remove = async (id: string) => { await api.del(`/api/codex-accounts/${id}`); await load(); };
@@ -179,6 +224,7 @@ export function useCodexAccounts(onDone: () => void) {
     err, setErr, device, deviceWaiting, backupPassword, setBackupPassword,
     exporting, importing, msg, setMsg,
     toggling,
-    load, addApiKey, startDevice, remove, toggle, changeStrategy, doExport, doImport,
+    load, addApiKey, startDevice: () => startLogin("device"), startBrowser: () => startLogin("browser"),
+    browser, loginStarting, callbackUrl, setCallbackUrl, submittingCallback, submitCallback, cancelLogin, remove, toggle, changeStrategy, doExport, doImport,
   };
 }

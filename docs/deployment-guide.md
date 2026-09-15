@@ -69,6 +69,16 @@ ppm init -y       # non-interactive: defaults + auto-generated password
 Writes `~/.ppm/ppm.db` (SQLite) and generates an auth token. `ppm start` runs the wizard
 automatically if no config exists.
 
+### Add a Codex account
+
+In Settings → Accounts → Codex → Add account, choose one of three methods:
+
+- **Browser login:** Open the ChatGPT sign-in link. On the same computer, completion can be automatic. On a phone or another computer, copy the full `http://localhost:1455/auth/callback?...` URL from the address bar after sign-in, even if the page cannot load, and paste it into **Callback URL** in PPM. Submit it and keep the dialog open until the account appears. This method does not require enabling device-code login.
+- **Device code:** Open the verification link and enter the displayed code. Enable device-code login in ChatGPT first when required.
+- **API key:** Paste an OpenAI API key; this uses API billing rather than the ChatGPT subscription.
+
+Browser login expires after ten minutes. Closing the dialog cancels a pending login. Only one browser login can run at a time; if its callback port is busy, finish the other login or use device code. Callback URLs contain temporary credentials: paste them only into the login dialog.
+
 ### Dev vs Production Config
 
 | Profile | Database | Conventional port |

@@ -19,7 +19,7 @@ import { CodexUsageRows } from "./codex-usage-rows";
 import { useCodexAccounts } from "./use-codex-accounts";
 
 /** Codex multi-account management, separate from Claude accounts because codex auth is owned
- *  by the app-server per CODEX_HOME. Added by API key or ChatGPT device code. */
+ *  by the app-server per CODEX_HOME. Added by API key, browser login, or ChatGPT device code. */
 export function CodexAccountsSection() {
   const [dialog, setDialog] = useState<"add" | "export" | "import" | "rotation" | null>(null);
   const c = useCodexAccounts(() => setDialog(null));
@@ -120,7 +120,7 @@ export function CodexAccountsSection() {
 
       <CodexAddAccountDialog
         open={dialog === "add"}
-        onOpenChange={(v) => setDialog(v ? "add" : null)}
+        onOpenChange={(v) => { if (!v) c.cancelLogin(); setDialog(v ? "add" : null); }}
         label={c.label}
         onLabelChange={c.setLabel}
         apiKey={c.apiKey}
@@ -130,6 +130,13 @@ export function CodexAccountsSection() {
         deviceWaiting={c.deviceWaiting}
         onStartDevice={() => void c.startDevice()}
         device={c.device}
+        browser={c.browser}
+        onStartBrowser={() => void c.startBrowser()}
+        loginStarting={c.loginStarting}
+        callbackUrl={c.callbackUrl}
+        onCallbackUrlChange={c.setCallbackUrl}
+        submittingCallback={c.submittingCallback}
+        onSubmitCallback={() => void c.submitCallback()}
         error={c.err}
       />
       <CodexBackupDialog
