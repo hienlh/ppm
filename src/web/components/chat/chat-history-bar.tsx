@@ -279,8 +279,11 @@ export function ChatHistoryBar({
   // Usage badge display — Claude (SDK) and Codex both expose usage limits
   const isClaudeProvider = !providerId || providerId === "claude";
   const isCodexProvider = providerId === "codex";
-  const fiveHourPct = usageInfo.fiveHour != null ? Math.round(usageInfo.fiveHour * 100) : null;
-  const sevenDayPct = usageInfo.sevenDay != null ? Math.round(usageInfo.sevenDay * 100) : null;
+  // Account events can arrive before the new quota snapshot. Never attach the
+  // previous account's numbers to the newly selected account's name.
+  const usageMatchesAccount = !pickedAccountId || pickedAccountId === usageInfo.activeAccountId;
+  const fiveHourPct = usageMatchesAccount && usageInfo.fiveHour != null ? Math.round(usageInfo.fiveHour * 100) : null;
+  const sevenDayPct = usageMatchesAccount && usageInfo.sevenDay != null ? Math.round(usageInfo.sevenDay * 100) : null;
   const worstPct = Math.max(fiveHourPct ?? 0, sevenDayPct ?? 0);
   const usageColor = fiveHourPct != null || sevenDayPct != null ? pctColor(worstPct) : "text-text-subtle";
   // Order matters, and the obvious order is wrong. With no session, the usage endpoint has
@@ -288,7 +291,7 @@ export function ChatHistoryBar({
   // so letting it win would show a name that has nothing to do with this tab, which is the
   // exact confusion the claim exists to remove. The claim (and, once a turn is running, the
   // account the stream reports) is specific to this chat and outranks it.
-  const accountLabel = pickedAccountLabel ?? usageInfo.activeAccountLabel ?? null;
+  const accountLabel = pickedAccountLabel ?? (usageMatchesAccount ? usageInfo.activeAccountLabel : null) ?? null;
 
   return (
     <div className="border-b border-border/50">

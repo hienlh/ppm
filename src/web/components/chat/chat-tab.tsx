@@ -262,6 +262,13 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     if (liveAccount) setServingAccount(liveAccount);
   }, [liveAccount]);
 
+  // Automatic rotation keeps the same session id, so useUsage's polling scope
+  // does not change. Re-read its binding as soon as the stream names an account.
+  const liveAccountId = liveAccount?.id;
+  useEffect(() => {
+    if (liveAccountId) void reloadUsage();
+  }, [liveAccountId, reloadUsage]);
+
   // A different conversation has a different account; carrying this one's over would label
   // it wrongly until the next turn corrected it.
   useEffect(() => { setServingAccount(null); }, [sessionId]);
