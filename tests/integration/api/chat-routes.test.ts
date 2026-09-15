@@ -299,7 +299,9 @@ describe("PUT /chat/sessions/:id/account — the user picking an account by hand
     });
     expect(res.status).toBe(400);
     const json = await res.json() as any;
-    expect(json.error).toContain("cannot serve");
+    // The specific reason, not a generic refusal: "switched off" tells the user what to do,
+    // "cannot serve this session" leaves them guessing between four possible causes.
+    expect(json.error).toContain("switched off");
   });
 
   it("requires an accountId", async () => {
