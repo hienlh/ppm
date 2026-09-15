@@ -1301,10 +1301,24 @@ export function deleteSessionMetadata(sessionId: string): void {
  */
 export function setSessionMigratedTo(oldSessionId: string, newSessionId: string): void {
   if (oldSessionId === newSessionId) return;
-  getDb().query(
-    "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
-    "ON CONFLICT(session_id) DO UPDATE SET migrated_to = excluded.migrated_to",
-  ).run(oldSessionId, newSessionId);
+  const database = getDb();
+  database.transaction(() => {
+    // A provider's real thread id replaces the draft id on the first turn.
+    // Carry explicit choices with it before reconnect reads session_state.
+    // Keep any choices already made on the destination (including thinking OFF).
+    database.query(`
+      INSERT INTO session_metadata (session_id, model, effort, thinking_budget)
+      SELECT ?, model, effort, thinking_budget FROM session_metadata WHERE session_id = ?
+      ON CONFLICT(session_id) DO UPDATE SET
+        model = COALESCE(session_metadata.model, excluded.model),
+        effort = COALESCE(session_metadata.effort, excluded.effort),
+        thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget)
+    `).run(newSessionId, oldSessionId);
+    database.query(
+      "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
+      "ON CONFLICT(session_id) DO UPDATE SET migrated_to = excluded.migrated_to",
+    ).run(oldSessionId, newSessionId);
+  })();
 }
 
 /**

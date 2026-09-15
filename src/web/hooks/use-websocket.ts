@@ -21,9 +21,12 @@ export function useWebSocket({
   onConnectionChangeRef.current = onConnectionChange;
 
   useEffect(() => {
+    let active = true;
     const client = new WsClient(url, {
       idleTimeoutMs,
-      onConnectionChange: (connected) => onConnectionChangeRef.current?.(connected),
+      onConnectionChange: (connected) => {
+        if (active) onConnectionChangeRef.current?.(connected);
+      },
     });
     clientRef.current = client;
 
@@ -34,6 +37,9 @@ export function useWebSocket({
     }
 
     return () => {
+      // Replacing a session socket is intentional, not a connection failure.
+      // The old client's cleanup must not update the new session's UI.
+      active = false;
       client.disconnect();
       clientRef.current = null;
     };

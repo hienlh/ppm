@@ -18,7 +18,7 @@ class Socket {
   onopen: any; onclose: any; onmessage: any; onerror: any;
   constructor() { state.socket = this; setTimeout(() => { this.readyState = 1; this.onopen?.({}); }, 20); }
   send(data: string) {
-    if (JSON.parse(data).type === "ready") setTimeout(() => state.emit({ type: "session_state", phase: "idle", sessionId: state.sessionId }), 20);
+    if (JSON.parse(data).type === "ready") setTimeout(() => state.emit({ type: "session_state", phase: state.serverPhase ?? "idle", sessionId: state.sessionId }), 20);
   }
   close() { this.readyState = 3; this.onclose?.({}); }
 }
@@ -28,7 +28,7 @@ function Demo() {
   const [sessionId, setSession] = useState("realtime-test");
   state.sessionId = sessionId;
   state.setSession = setSession;
-  const chat = useChat(sessionId, "claude", "test");
+  const chat = useChat(sessionId, "claude", "test", setSession);
   state.chat = chat;
   return <pre id="state">{JSON.stringify({ phase: chat.phase, connected: chat.isConnected, messages: chat.messages }, null, 2)}</pre>;
 }
@@ -79,7 +79,18 @@ async function verify() {
   state.emit({ type: "phase_changed", phase: "idle" });
   await wait();
   assert(state.chat.messages.at(-1)?.content === "x".repeat(150) + "y", "Live events overtook replay");
-  state.result = "PASS: missing completion, healthy metadata, late history, ordered replay";
+  state.held = false;
+  state.serverPhase = "streaming";
+  state.emit({ type: "session_migrated", newSessionId: "provider-real-id" });
+  await wait();
+  state.emit({ type: "text", content: "first reply" });
+  await wait();
+  assert(!state.chat.isReconnecting, "Migration left reconnect overlay over live stream");
+  assert(state.chat.isConnected, "Migrated socket never connected");
+  state.chat.reconnect();
+  await wait();
+  assert(!state.chat.isReconnecting, "Active session without replay left reconnect overlay stuck");
+  state.result = "PASS: missing completion, healthy metadata, late history, ordered replay, migration and active reconnect";
   document.title = state.result;
 }
 verify().catch(error => { state.result = `FAIL: ${error.message}`; document.title = state.result; console.error(error); });

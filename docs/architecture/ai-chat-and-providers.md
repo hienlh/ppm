@@ -350,6 +350,10 @@ finishes before queued live frames are applied. If a turn becomes idle without a
 usable finalized answer, the client reloads history; healthy completions retain
 their richer live metadata. Recovery responses are discarded after new activity
 or a session switch, and older initial loads cannot overwrite applied recovery.
+Replacing a socket during a session ID migration does not signal a network
+failure. A `session_state` acknowledgement clears the reconnect overlay even
+when an active turn has no buffered events yet. Session ID migration carries
+explicit model, effort and thinking choices to the provider's real thread ID.
 
 ```
 FE WebSocket closes (network issue, tab closes)

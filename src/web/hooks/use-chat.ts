@@ -863,6 +863,9 @@ export function useChat(
     // Handle session state (replaces connected + status)
     if ((data as any).type === "session_state") {
       setIsConnected(true);
+      // A live session may have no buffered events yet, so no turn_events frame
+      // will follow. This acknowledgement already confirms the connection.
+      setIsReconnecting(false);
       setConnectedSessionId((data as any).sessionId ?? sessionIdRef.current);
       const state = data as any;
       const p = state.phase as SessionPhase;
@@ -1060,6 +1063,7 @@ export function useChat(
     if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
     setIsConnected(false);
     setConnectedSessionId(null);
+    setIsReconnecting(false);
     // Reset team state
     teamActivityRef.current = { teamNames: new Set(), messages: [] };
     teamUnreadRef.current = 0;
