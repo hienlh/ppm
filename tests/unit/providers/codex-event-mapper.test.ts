@@ -88,3 +88,37 @@ describe("mapCodexEvent", () => {
     expect(mapCodexEvent({ method: "item/started", params: null }, SID)).toEqual([]);
   });
 });
+
+describe("mapCodexEvent — spawned subagents", () => {
+  const SID2 = "s-sub";
+  const started = {
+    method: "item/started",
+    params: { item: { type: "subAgentActivity", id: "call_a", kind: "started", agentThreadId: "t-9", agentPath: "/root/review" } },
+  };
+  const completed = {
+    method: "item/completed",
+    params: { item: { type: "subAgentActivity", id: "subagent-completed-b", kind: "completed", agentThreadId: "t-9", agentPath: "/root/review" } },
+  };
+
+  it("start → one Agent card named after the agent", () => {
+    const out = mapCodexEvent(started, SID2);
+    expect(out.length).toBe(1);
+    expect((out[0] as any).tool).toBe("Agent");
+    expect((out[0] as any).input.description).toBe("/root/review");
+  });
+
+  it("completion answers that card, despite carrying a different item id", () => {
+    const use = mapCodexEvent(started, SID2)[0] as any;
+    const res = mapCodexEvent(completed, SID2)[0] as any;
+    expect(res.type).toBe("tool_result");
+    expect(res.toolUseId).toBe(use.toolUseId); // paired on the thread, not the item id
+  });
+
+  it("reads the rollout spelling of the same item", () => {
+    const out = mapCodexEvent({
+      method: "item/started",
+      params: { item: { type: "SubAgentActivity", id: "call_c", kind: "started", agent_thread_id: "t-9", agent_path: "/root/review" } },
+    }, SID2);
+    expect((out[0] as any).tool).toBe("Agent");
+  });
+});

@@ -10,7 +10,7 @@ import type {
   UsageInfo,
 } from "../provider.interface.ts";
 import { configService } from "../../services/config.service.ts";
-import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount } from "../../services/db.service.ts";
+import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles } from "../../services/db.service.ts";
 import { resolveCodexAccountForSession, getCodexAccount, listCodexAccounts, peekCodexAccount } from "../../services/codex-account.service.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
@@ -281,6 +281,11 @@ export class CodexAppServerProvider implements AIProvider {
         sessions.push(s);
       }
     }
+    // A title the user set by hand outranks the one derived from the opening
+    // prompt, and it is the only place a renamed codex session is recorded.
+    const customTitles = getSessionTitles(sessions.map((s) => s.id));
+    for (const s of sessions) s.title = customTitles[s.id] ?? s.title;
+
     // Backfill provider ownership so reopening a pre-existing codex thread routes
     // to codex (not the default provider) even after a restart.
     //

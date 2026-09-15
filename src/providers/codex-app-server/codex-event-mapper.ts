@@ -2,6 +2,7 @@ import type { ChatEvent } from "../provider.interface.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { diffToOldNew, changeToToolUse } from "./codex-patch.ts";
+import { parseSubagentActivity, subagentToolResult, subagentToolUse } from "./codex-subagent-thread.ts";
 
 /** ThreadItem variants that are NOT tool calls (text/metadata). Everything else
  * is treated as a tool so nothing is ever silently hidden — known types get a
@@ -172,6 +173,11 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/started": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compacting" }];
+      // A spawned agent is a card, not a tool: its start and its completion are
+      // two records naming one thread, and the generic mapping rendered each as
+      // a card of its own with the raw item as its body.
+      const subagent = parseSubagentActivity(item);
+      if (subagent) return [subagentToolUse(subagent)];
       if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) return [itemToToolUse(item)];
       return [];
     }
@@ -183,6 +189,11 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/completed": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compact_done" }];
+      const subagent = parseSubagentActivity(item);
+      // Answers the card opened at `started` — keyed on the thread, because the
+      // two records carry different item ids. The agent's own report is not on
+      // this record; the card picks it up when the transcript is read back.
+      if (subagent) return [subagent.done ? subagentToolResult(subagent) : subagentToolUse(subagent)];
       if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) {
         // Image generation is announced before the picture exists: at `started`
         // there is no saved file and no revised prompt, so the call it produced

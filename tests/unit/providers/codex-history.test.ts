@@ -151,3 +151,49 @@ describe("findRolloutByThreadId / getRolloutMessages (fail-closed resume/read pa
     expect(findRolloutByThreadId(FIXTURES, "019eded7", PPM_CWD)).toBeNull();
   });
 });
+
+describe("subagent threads (spawned agents are steps, not sessions)", () => {
+  const PARENT_ID = "11111111-1111-4111-8111-111111111111";
+  const CHILD_ID = "22222222-2222-4222-8222-222222222222";
+
+  it("excludes a spawned subagent's rollout from the session list", () => {
+    const ids = listCodexRollouts(FIXTURES, PPM_CWD, "codex").map((s) => s.id);
+    expect(ids).toContain(PARENT_ID);
+    expect(ids).not.toContain(CHILD_ID); // same cwd, but it is one step of the parent
+  });
+
+  it("titles a session with its opening prompt instead of a fixed label", () => {
+    const parent = listCodexRollouts(FIXTURES, PPM_CWD, "codex").find((s) => s.id === PARENT_ID);
+    expect(parent?.title).toBe("don dep lai codex login service giup minh"); // whitespace collapsed
+  });
+
+  it("nests the spawned thread's transcript under one Agent card in the parent", () => {
+    const msgs = getRolloutMessages(FIXTURES, PARENT_ID, PPM_CWD);
+    const events = msgs.flatMap((m) => m.events ?? []);
+    const cards = events.filter((e) => e.type === "tool_use" && (e as any).tool === "Agent") as any[];
+    // started + completed describe ONE card; the second spawn is the dead agent below
+    expect(cards.map((c) => c.input.description)).toEqual(["/root/simplify_login", "/root/review_login"]);
+
+    const childEvents = cards[0].children as any[];
+    expect(childEvents.some((e) => e.type === "tool_use" && e.tool === "Bash")).toBe(true);
+    expect(childEvents.some((e) => e.type === "text" && e.content.includes("simplify pass"))).toBe(true);
+
+    // The completion answers that card, carrying the agent's closing report.
+    const result = events.find((e) => e.type === "tool_result" && (e as any).toolUseId === cards[0].toolUseId) as any;
+    expect(result.output).toContain("Status: DONE");
+  });
+
+  it("says why an agent that died before reporting produced nothing", () => {
+    const events = getRolloutMessages(FIXTURES, PARENT_ID, PPM_CWD).flatMap((m) => m.events ?? []);
+    const dead = events.find((e: any) => e.input?.description === "/root/review_login") as any;
+    // No completion was ever recorded for it, so the reason has to live in the card.
+    expect(events.some((e: any) => e.toolUseId === dead.toolUseId && e.type === "tool_result")).toBe(false);
+    expect(dead.children[0].content).toBe(
+      "The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account.",
+    ); // unwrapped from the API error codex nests as JSON
+  });
+
+  it("still resolves the subagent rollout by id (the parent has to read it)", () => {
+    expect(findRolloutByThreadId(FIXTURES, CHILD_ID, PPM_CWD)).not.toBeNull();
+  });
+});
