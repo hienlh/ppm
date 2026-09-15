@@ -163,6 +163,60 @@ describe("POST /git/checkout — input validation", () => {
   });
 });
 
+describe("POST /git/checkout — mode and ref guards", () => {
+  it("rejects an unknown mode rather than passing it to git", async () => {
+    const res = await createApp().request("/git/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "main", mode: "force" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("Unknown checkout mode");
+  });
+
+  it("refuses a ref that would arrive as a flag", async () => {
+    // `mode` decides which flag precedes the ref, so an unchecked `-f` here is
+    // a forced checkout that discards the working tree.
+    for (const ref of ["-f", "--orphan", "a..b", "he^ad"]) {
+      const res = await createApp().request("/git/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ref }),
+      });
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toContain("Invalid git ref");
+    }
+  });
+
+  it("accepts the three real modes past validation", async () => {
+    // /tmp is not a repository, so git itself is what fails — the point is that
+    // none of these is rejected as a bad mode.
+    for (const mode of ["checkout", "detach", "track"]) {
+      const res = await createApp().request("/git/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ref: "main", mode }),
+      });
+      expect((await res.json()).error ?? "").not.toContain("Unknown checkout mode");
+    }
+  });
+});
+
+describe("POST /git/branch/create — ref guards", () => {
+  it("refuses a branch name or start point that would arrive as a flag", async () => {
+    // Both land as arguments of `git checkout -b`.
+    for (const body of [{ name: "-D" }, { name: "ok", from: "--orphan" }]) {
+      const res = await createApp().request("/git/branch/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toContain("Invalid git ref");
+    }
+  });
+});
+
 describe("POST /git/branch/delete — input validation", () => {
   it("rejects missing name", async () => {
     const app = createApp();
