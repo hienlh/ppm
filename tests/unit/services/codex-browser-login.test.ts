@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { createServer } from "node:net";
-import { buildCodexCallback, checkCodexLoginPort, parseBrowserLogin } from "../../../src/services/codex-login-callback.ts";
+import { buildCodexCallback, buildCodexSuccessCallback, checkCodexLoginPort, parseBrowserLogin } from "../../../src/services/codex-login-callback.ts";
 import { cancelBrowserLogin, getBrowserLoginStatus, startBrowserLogin, submitBrowserCallback, type LoginClient } from "../../../src/services/codex-account-login.ts";
 import { getCodexAccount, removeCodexAccount } from "../../../src/services/codex-account.service.ts";
 
@@ -53,6 +53,13 @@ describe("Codex browser callback validation", () => {
       .toBe("session-state.onboarding_entrypoint=life_sciences");
   });
 
+  it("only follows Codex's localhost success redirect", () => {
+    const login = parseBrowserLogin(authUrl);
+    const target = buildCodexSuccessCallback("http://localhost:1455/success?id_token=temporary", login);
+    expect(target.href).toBe("http://127.0.0.1:1455/success?id_token=temporary");
+    expect(() => buildCodexSuccessCallback("https://example.com/success", login)).toThrow();
+  });
+
   it("refuses an occupied login port without sending a cancellation request", async () => {
     let connections = 0;
     const server = createServer((socket) => { connections++; socket.destroy(); });
@@ -101,6 +108,7 @@ describe("Codex browser login lifecycle", () => {
       calls++;
       expect(url.hostname).toBe("127.0.0.1");
       expect(opts.redirect).toBe("manual");
+      expect(opts.headers).toEqual({ Host: "localhost:1455" });
       return new Response("error page also uses 200");
     }) as typeof fetch;
     try {
@@ -135,6 +143,48 @@ describe("Codex browser login lifecycle", () => {
       client.complete(true); await tick();
       expect(getBrowserLoginStatus(id).state).toBe("done");
     } finally { removeCodexAccount(id); cancelBrowserLogin(id); }
+  });
+
+  it("follows Codex's loopback success redirect", async () => {
+    const client = new Client();
+    const { id } = await startBrowserLogin(undefined, () => client);
+    const seen: URL[] = [];
+    const send = (async (url: URL) => {
+      seen.push(url);
+      return seen.length === 1
+        ? new Response(null, { status: 302, headers: { Location: "http://localhost:1455/success?id_token=temporary" } })
+        : new Response(null, { status: 200 });
+    }) as typeof fetch;
+    try {
+      submitBrowserCallback(id, callback, send);
+      await tick();
+      expect(seen.map((url) => url.href)).toEqual([
+        "http://127.0.0.1:1455/auth/callback?code=one-use-code&state=session-state",
+        "http://127.0.0.1:1455/success?id_token=temporary",
+      ]);
+    } finally { cancelBrowserLogin(id); }
+  });
+
+  it("reports a non-cooperative loopback callback timeout instead of polling forever", async () => {
+    const originalTimeout = globalThis.setTimeout;
+    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(((fn: TimerHandler, delay?: number, ...args: unknown[]) =>
+      originalTimeout(fn, delay === 30_000 ? 5 : delay, ...args)) as typeof setTimeout);
+    const client = new Client();
+    const { id } = await startBrowserLogin(undefined, () => client);
+    // Simulates Bun's observed failure mode: aborting the signal leaves fetch pending.
+    const send = (async () => new Promise<Response>(() => {})) as typeof fetch;
+    try {
+      submitBrowserCallback(id, callback, send);
+      await new Promise((resolve) => originalTimeout(resolve, 30));
+      expect(getBrowserLoginStatus(id)).toEqual({
+        state: "error",
+        error: "Codex did not finish the callback within 30 seconds. Start a new browser login and try again.",
+      });
+      expect(client.closed).toBe(true);
+    } finally {
+      timerSpy.mockRestore();
+      cancelBrowserLogin(id);
+    }
   });
 
   it("cancels forwarding and removes a pending flow", async () => {

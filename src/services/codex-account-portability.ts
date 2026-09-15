@@ -20,6 +20,7 @@ interface PortableCodexAccount {
   label: string;
   type: CodexAccountType;
   planType?: string | null;
+  dailyGuardEnabled?: boolean;
   authJson?: string | null; // contents of CODEX_HOME/auth.json
   creds?: CodexCreds | null; // apiKey creds (chatgpt auth lives in authJson)
 }
@@ -35,7 +36,7 @@ export function exportCodexEncrypted(password: string, accountIds?: string[]): s
       const authPath = join(a.home, "auth.json");
       if (existsSync(authPath)) authJson = readFileSync(authPath, "utf8");
     } catch { /* ignore unreadable home */ }
-    return { id: a.id, label: a.label, type: a.type, planType: a.planType ?? null, authJson, creds: getCodexAccountCreds(a.id) };
+    return { id: a.id, label: a.label, type: a.type, planType: a.planType ?? null, dailyGuardEnabled: a.dailyGuardEnabled, authJson, creds: getCodexAccountCreds(a.id) };
   });
   return encryptWithPassword(JSON.stringify({ magic: BACKUP_MAGIC, accounts: portable }), password);
 }
@@ -56,7 +57,7 @@ export function importCodexEncrypted(blob: string, password: string): { imported
     // createCodexAccount inserts the row and mkdirs the CODEX_HOME (0700).
     createCodexAccount({
       id: p.id, label: p.label || "Imported", type: p.type,
-      planType: p.planType ?? null, creds: p.creds ?? undefined,
+      planType: p.planType ?? null, creds: p.creds ?? undefined, dailyGuardEnabled: p.dailyGuardEnabled !== false,
     });
 
     // Restore auth.json so codex re-auths from it on next spawn.

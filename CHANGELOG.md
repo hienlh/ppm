@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.20.9] - 2026-09-16
+
+### Added
+- **Daily guard for weekly-only Codex accounts** â€” paces usage across the remaining weekly window, warns and pauses new turns after the daily cap, and can be switched off any time.
+
+### Fixed
+- **Codex browser sign-in follows its loopback success redirect** after a pasted callback, completing remote and tunnel-based login instead of waiting at the intermediate redirect.
+- **Codex web-search cards and subscription labels are readable** â€” search results now render their titles, links and snippets, while internal plan names show as ChatGPT plan labels.
+
 ## [0.20.8] - 2026-09-16
 
 ### Fixed

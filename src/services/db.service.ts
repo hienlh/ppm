@@ -1121,6 +1121,20 @@ export function runMigrations(database: Database): void {
     try { database.exec(`ALTER TABLE codex_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`); } catch { /* exists */ }
     database.exec(`PRAGMA user_version = 47;`);
   }
+
+  if (current < 48) {
+    // Optional per-account pacing for weekly-only Codex plans. Disabled by default so an
+    // upgrade never changes how an existing account is selected or used.
+    try { database.exec(`ALTER TABLE codex_accounts ADD COLUMN daily_guard_enabled INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 48;`);
+  }
+
+  if (current < 49) {
+    // Daily guard was introduced as an opt-in during development. Ship it enabled so every
+    // weekly-only account starts paced; Plus accounts simply do not surface or use it.
+    database.exec(`UPDATE codex_accounts SET daily_guard_enabled = 1`);
+    database.exec(`PRAGMA user_version = 49;`);
+  }
 }
 
 // ---------------------------------------------------------------------------

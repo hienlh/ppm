@@ -16,6 +16,7 @@ import { configService } from "./config.service.ts";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getOrFetchUsage } from "./provider-usage/usage-registry.ts";
 import { isCodexAccountUsageLimited } from "./codex-account-cooldown.ts";
+import { dailyGuardMessage, dailyGuardState } from "../shared/codex-daily-guard.ts";
 import type { UsageInfo } from "../providers/provider.interface.ts";
 
 export type CodexStrategy = "round-robin" | "fill-first" | "lowest-usage";
@@ -32,6 +33,7 @@ export interface CodexAccount {
   home: string;
   planType?: string | null;
   status: CodexAccountStatus;
+  dailyGuardEnabled: boolean;
   addedAt: string;
 }
 
@@ -44,6 +46,7 @@ interface Row {
   id: string; label: string | null; type: string; home: string;
   plan_type: string | null; creds_enc: string | null; added_at: string;
   status?: string | null;
+  daily_guard_enabled?: number | null;
 }
 
 function rowToAccount(r: Row): CodexAccount {
@@ -56,6 +59,7 @@ function rowToAccount(r: Row): CodexAccount {
     // A row written before the column existed reads as null; treat that as enabled, which
     // is what it effectively was.
     status: r.status === "disabled" ? "disabled" : "active",
+  dailyGuardEnabled: r.daily_guard_enabled !== 0,
     addedAt: r.added_at,
   };
 }
@@ -87,7 +91,7 @@ export function getCodexAccountCreds(id: string): CodexCreds | null {
  * verified label/planType and the creds to persist (encrypted). Idempotent dir create.
  */
 export function createCodexAccount(input: {
-  label: string; type: CodexAccountType; planType?: string | null; creds?: CodexCreds; id?: string;
+  label: string; type: CodexAccountType; planType?: string | null; creds?: CodexCreds; id?: string; dailyGuardEnabled?: boolean;
 }): CodexAccount {
   const id = input.id ?? randomUUID();
   const home = codexAccountHome(id);
@@ -98,8 +102,8 @@ export function createCodexAccount(input: {
   const credsEnc = input.creds ? encrypt(JSON.stringify(input.creds)) : null;
   try {
     getDb().query(
-      "INSERT INTO codex_accounts (id, label, type, home, plan_type, creds_enc) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(id, input.label, input.type, home, input.planType ?? null, credsEnc);
+      "INSERT INTO codex_accounts (id, label, type, home, plan_type, creds_enc, daily_guard_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(id, input.label, input.type, home, input.planType ?? null, credsEnc, input.dailyGuardEnabled === false ? 0 : 1);
   } catch (e) {
     // Keep the invariant row⟺home: drop the dir if the row didn't land.
     try { rmSync(home, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -135,6 +139,15 @@ export function setCodexAccountStatus(id: string, status: CodexAccountStatus): C
   getDb().query("UPDATE codex_accounts SET status = ? WHERE id = ?").run(status, id);
   return getCodexAccount(id);
 }
+
+/** Enable or disable the seven-day quota pacing guard for one account. */
+export function setCodexDailyGuard(id: string, enabled: boolean): CodexAccount | null {
+  if (!getCodexAccount(id)) return null;
+  getDb().query("UPDATE codex_accounts SET daily_guard_enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+  return getCodexAccount(id);
+}
+
+export class CodexDailyGuardError extends Error {}
 
 /** Remove the account row and its CODEX_HOME dir. */
 export function removeCodexAccount(id: string): void {
@@ -279,15 +292,43 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   // would do nothing for exactly the conversations already using it. An account parked for
   // an exhausted quota lets go for a different reason — it would refuse the turn, and
   // spending one to rediscover that is worse than starting on an account that can answer.
-  if (sticky) {
-    const a = getCodexAccount(sticky);
-    if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
-  }
   // Usage is only worth fetching when it can change the answer, and with at most one
   // account able to serve it cannot. Parked accounts count as unable for the same reason
   // they are skipped below, so a pool of two where one is out of quota resolves without a
   // network read at all.
   const usable = listCodexAccounts().filter((a) => a.status !== "disabled" && !isCodexAccountUsageLimited(a.id));
+  const guarded = usable.filter((a) => a.dailyGuardEnabled);
+  if (guarded.length > 0) {
+    const usages = await getAllCodexUsages();
+    const blocked = guarded.flatMap((a) => {
+      // Pacing is for plans that only expose the weekly bucket. A Plus account's separate
+      // five-hour window is already the useful short-term control and must not gain this row.
+      const usage = usages[a.id];
+      const state = usage?.session == null ? dailyGuardState(usage?.weekly) : null;
+      return state?.blocked ? [a.id] : [];
+    });
+    if (blocked.length > 0) {
+      const stickyAccount = sticky ? getCodexAccount(sticky) : null;
+      if (stickyAccount && !blocked.includes(stickyAccount.id)
+          && stickyAccount.status !== "disabled" && !isCodexAccountUsageLimited(stickyAccount.id)) return stickyAccount;
+      if (blocked.length === usable.length && sessionId) {
+        const account = getCodexAccount(blocked[0]!);
+        const usage = account ? usages[account.id] : undefined;
+        const state = usage?.session == null ? dailyGuardState(usage?.weekly) : null;
+        throw new CodexDailyGuardError(state ? dailyGuardMessage(state) : "Daily guard reached for every available Codex account.");
+      }
+      return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]), exclude: blocked });
+    }
+    if (sticky) {
+      const a = getCodexAccount(sticky);
+      if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
+    }
+    return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
+  }
+  if (sticky) {
+    const a = getCodexAccount(sticky);
+    if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
+  }
   if (usable.length <= 1) return selectCodexAccount();
   // Usage is read for every strategy, not just lowest-usage: it is also what lets the
   // selector skip an account with no five-hour room left. Reading it only for lowest-usage

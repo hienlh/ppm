@@ -6,7 +6,7 @@ import type { LimitBucket } from "../../../../types/chat";
 import type { CodexStrategy } from "./codex-rotation-dialog";
 
 export type Strategy = CodexStrategy;
-export interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled" }
+export interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled"; dailyGuardEnabled?: boolean }
 /**
  * One account's quota. The two percentages are what the bars read; the buckets carry the
  * reset clock the server already sends, so the Codex card can show "resets in" the way the
@@ -183,6 +183,18 @@ export function useCodexAccounts(onDone: () => void) {
       setToggling((prev) => { const n = new Set(prev); n.delete(id); return n; });
     }
   };
+  const toggleDailyGuard = async (id: string, enabled: boolean) => {
+    setToggling((prev) => new Set(prev).add(id));
+    setErr(null);
+    try {
+      await api.patch(`/api/codex-accounts/${id}`, { dailyGuardEnabled: !enabled });
+      await load();
+    } catch (e) {
+      setErr((e as Error).message || "Could not change Daily guard");
+    } finally {
+      setToggling((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    }
+  };
   const changeStrategy = async (s: Strategy) => { setStrategy(s); try { await api.put("/api/codex-accounts/strategy", { strategy: s }); } catch { /* revert on reload */ } };
 
   const doExport = async () => {
@@ -225,6 +237,6 @@ export function useCodexAccounts(onDone: () => void) {
     exporting, importing, msg, setMsg,
     toggling,
     load, addApiKey, startDevice: () => startLogin("device"), startBrowser: () => startLogin("browser"),
-    browser, loginStarting, callbackUrl, setCallbackUrl, submittingCallback, submitCallback, cancelLogin, remove, toggle, changeStrategy, doExport, doImport,
+    browser, loginStarting, callbackUrl, setCallbackUrl, submittingCallback, submitCallback, cancelLogin, remove, toggle, toggleDailyGuard, changeStrategy, doExport, doImport,
   };
 }

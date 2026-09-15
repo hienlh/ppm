@@ -22,9 +22,10 @@ import { formatResetTime } from "@/components/settings/accounts/account-usage-fo
 import type { AccountUsageEntry } from "@/lib/api-settings";
 import type { UsageInfo } from "../../../types/chat";
 import { codexPlanLabel } from "../../../shared/codex-plan-label.ts";
+import { dailyGuardState } from "../../../shared/codex-daily-guard.ts";
 import { UsagePanelShell } from "./usage-panel-shell";
 
-interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled" }
+interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled"; dailyGuardEnabled?: boolean }
 type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly">;
 
 /** Matches the whole-percent figure the bars show, so a refusal agrees with the card. */
@@ -138,6 +139,20 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
     }
   }, []);
 
+  const handleDailyGuardToggle = useCallback(async (id: string, enabled: boolean) => {
+    setTogglingId(id);
+    setPanelError(null);
+    try {
+      await api.patch(`/api/codex-accounts/${id}`, { dailyGuardEnabled: !enabled });
+      const d = await api.get<{ accounts: CodexAccount[] }>("/api/codex-accounts");
+      setAccounts(d.accounts);
+    } catch (e) {
+      setPanelError((e as Error).message || "Could not change Daily guard");
+    } finally {
+      setTogglingId(null);
+    }
+  }, []);
+
   /* No managed accounts → chats run on the ambient ~/.codex login, whose usage arrives on
      the session prop rather than from the accounts endpoint. */
   const ambient = loading && accounts.length === 0 ? (
@@ -172,6 +187,7 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
     >
       {(layout) => accounts.map((a) => {
         const u = usages[a.id] ?? {};
+        const guard = u.session == null ? dailyGuardState(u.weekly) : null;
         return (
           <AccountCard
             key={a.id}
@@ -186,6 +202,9 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
             selecting={selectingId === a.id}
             onToggle={handleToggle}
             toggling={togglingId === a.id}
+            dailyGuard={guard ? { enabled: !!a.dailyGuardEnabled, state: guard } : undefined}
+            onDailyGuardToggle={guard ? () => void handleDailyGuardToggle(a.id, !!a.dailyGuardEnabled) : undefined}
+            dailyGuardToggling={togglingId === a.id}
           />
         );
       })}

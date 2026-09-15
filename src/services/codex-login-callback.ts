@@ -55,3 +55,21 @@ export function buildCodexCallback(callbackUrl: string, login: BrowserLoginCallb
   expected.searchParams.set("state", state!);
   return expected;
 }
+
+/**
+ * Codex accepts the authorization callback, then redirects to its own loopback
+ * success endpoint with the exchanged id token. Follow exactly that endpoint
+ * while keeping the TCP connection on 127.0.0.1.
+ */
+export function buildCodexSuccessCallback(location: string, login: BrowserLoginCallback): URL {
+  let redirect: URL;
+  try { redirect = new URL(location); } catch { throw new Error("Codex returned an invalid callback redirect."); }
+  const expected = new URL(login.redirectUri);
+  if (redirect.protocol !== "http:" || redirect.hostname !== "localhost" || redirect.port !== expected.port
+    || redirect.pathname !== "/success" || redirect.username || redirect.password || redirect.hash
+    || redirect.searchParams.getAll("id_token").length !== 1) {
+    throw new Error("Codex returned an unsupported callback redirect.");
+  }
+  redirect.hostname = "127.0.0.1";
+  return redirect;
+}

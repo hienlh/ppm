@@ -15,7 +15,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
-import { buildCodexCallback, checkCodexLoginPort, parseBrowserLogin, type BrowserLoginCallback } from "./codex-login-callback.ts";
+import { buildCodexCallback, buildCodexSuccessCallback, checkCodexLoginPort, parseBrowserLogin, type BrowserLoginCallback } from "./codex-login-callback.ts";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "../providers/codex-app-server/codex-jsonrpc-client.ts";
 import { codexAccountHome, createCodexAccount, type CodexAccount } from "./codex-account.service.ts";
 
@@ -218,18 +218,46 @@ export function submitBrowserCallback(id: string, callbackUrl: string, send: typ
   browser.submitted = true;
   const controller = new AbortController();
   p.callbackAbort = controller;
-  const timeout = unref(setTimeout(() => controller.abort(), 30_000));
+  let timedOut = false;
+  const timeout = unref(setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    // Bun can leave a loopback fetch pending after its AbortSignal fires. Do not leave the
+    // browser polling forever: the callback code cannot safely be reused, so make the
+    // failure visible and let the user start a fresh authorization.
+    if (isCurrentPendingLogin(id, p)) {
+      settle(id, { state: "error", error: "Codex did not finish the callback within 30 seconds. Start a new browser login and try again." });
+    }
+  }, 30_000));
   void (async () => {
     try {
-      const response = await send(target, { redirect: "manual", signal: controller.signal });
-      // Do not render or log the OAuth response body or follow its redirect.
+      // Connect to 127.0.0.1 (never a user-controlled localhost resolution), but preserve
+      // the OAuth redirect's localhost Host header. Codex's loopback listener associates
+      // the callback with the redirect URI and otherwise accepts the socket without
+      // completing the login.
+      let response = await send(target, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: { Host: "localhost:1455" },
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        await response.body?.cancel();
+        if (!location) throw new Error("Codex returned a callback redirect without a destination.");
+        response = await send(buildCodexSuccessCallback(location, browser), {
+          redirect: "manual",
+          signal: controller.signal,
+          headers: { Host: "localhost:1455" },
+        });
+      }
+      // Do not render or log either loopback OAuth response body.
       await response.body?.cancel();
       if (response.status >= 400 && isCurrentPendingLogin(id, p)) {
         settle(id, { state: "error", error: "Codex rejected the callback. Start a new browser login." });
       }
     } catch {
       // A closed callback socket may mean successful login. Polling owns the result.
-      if (isCurrentPendingLogin(id, p)) browser.submitted = false;
+      if (!timedOut && isCurrentPendingLogin(id, p)) browser.submitted = false;
     } finally {
       clearTimeout(timeout);
       if (p.callbackAbort === controller) p.callbackAbort = undefined;

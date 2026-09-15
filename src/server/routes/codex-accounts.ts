@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
-import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, codexUsageLevel, type CodexStrategy } from "../../services/codex-account.service.ts";
+import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, setCodexDailyGuard, codexUsageLevel, type CodexStrategy } from "../../services/codex-account.service.ts";
 import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin, startBrowserLogin, submitBrowserCallback, getBrowserLoginStatus, cancelBrowserLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 
@@ -43,11 +43,15 @@ codexAccountsRoutes.post("/pick", async (c) => {
  * immediately instead of taking the better part of a minute.
  */
 codexAccountsRoutes.patch("/:id", async (c) => {
-  const body = await c.req.json<{ status?: string }>().catch(() => ({} as { status?: string }));
-  if (body.status !== "active" && body.status !== "disabled") {
-    return c.json(err("status must be active or disabled"), 400);
+  const body = await c.req.json<{ status?: string; dailyGuardEnabled?: unknown }>().catch(() => ({} as { status?: string; dailyGuardEnabled?: unknown }));
+  if (body.status !== undefined) {
+    if (body.status !== "active" && body.status !== "disabled") return c.json(err("status must be active or disabled"), 400);
+    const updated = setCodexAccountStatus(c.req.param("id"), body.status);
+    if (!updated) return c.json(err("Account not found"), 404);
+    return c.json(ok(updated));
   }
-  const updated = setCodexAccountStatus(c.req.param("id"), body.status);
+  if (typeof body.dailyGuardEnabled !== "boolean") return c.json(err("status or dailyGuardEnabled is required"), 400);
+  const updated = setCodexDailyGuard(c.req.param("id"), body.dailyGuardEnabled);
   if (!updated) return c.json(err("Account not found"), 404);
   return c.json(ok(updated));
 });

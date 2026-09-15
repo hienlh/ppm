@@ -19,9 +19,11 @@ import {
   peekCodexAccount,
   selectCodexAccount,
   getAllCodexUsages,
+  getCodexAccountUsage,
   codexUsageLevel,
   type CodexAccount,
 } from "../../services/codex-account.service.ts";
+import { dailyGuardMessage, dailyGuardState } from "../../shared/codex-daily-guard.ts";
 import { isCodexAccountUsageLimited, markCodexAccountUsageLimited } from "../../services/codex-account-cooldown.ts";
 import { isCodexUsageLimit, codexErrorMessage, parseCodexUsageLimitReset } from "./codex-usage-limit.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
@@ -157,6 +159,8 @@ interface LiveSession {
    *  nothing downstream can notice. Follow-ups therefore wait in `pendingTurns`
    *  and are sent when the running turn reports `turn/completed`. */
   turnInFlight?: boolean;
+  /** A daily-guard usage read is in progress before the next turn starts. */
+  checkingDailyGuard?: boolean;
   /** Id of the running turn — `turn/interrupt` needs it, `threadId` alone is rejected. */
   activeTurnId?: string | null;
   /** Interrupt asked for before `turn/started` named the turn; fired on arrival. */
@@ -397,7 +401,7 @@ export class CodexAppServerProvider implements AIProvider {
         return;
       }
     }
-    this.startTurn(live, message, opts);
+    void this.startTurn(live, message, opts);
     for await (const ev of live.channel.iterator) {
       yield ev;
     }
@@ -407,7 +411,23 @@ export class CodexAppServerProvider implements AIProvider {
   pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): void {
     const live = this.live.get(sessionId);
     if (!live || live.client.isClosed) return;
-    this.startTurn(live, content, opts);
+    void this.startTurn(live, content, opts);
+  }
+
+  /** Return a refusal only when this session's managed account opted into pacing. */
+  private async dailyGuardError(live: LiveSession): Promise<string | null> {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) : null;
+    const account = accountId ? getCodexAccount(accountId) : null;
+    if (!account?.dailyGuardEnabled) return null;
+    try {
+      const usage = await getCodexAccountUsage(account.id);
+      const state = usage.session == null ? dailyGuardState(usage.weekly) : null;
+      return state?.blocked ? dailyGuardMessage(state) : null;
+    } catch {
+      // An unreadable quota cannot honestly be called spent. Keep the account usable and let
+      // Codex's real quota refusal remain the authority until the next successful usage read.
+      return null;
+    }
   }
 
   /**
@@ -418,7 +438,7 @@ export class CodexAppServerProvider implements AIProvider {
    * second entry would both show it twice and shift every later `rollout-N` id, which
    * fork anchors resolve against.
    */
-  private startTurn(live: LiveSession, message: string, opts?: SendMessageOpts, replay = false): void {
+  private async startTurn(live: LiveSession, message: string, opts?: SendMessageOpts, replay = false): Promise<void> {
     if (!live.threadId) return;
     // One turn at a time — anything sent now would be dropped without a trace.
     // `now` additionally cuts the running turn short so this one answers next.
@@ -426,6 +446,19 @@ export class CodexAppServerProvider implements AIProvider {
       const priority = opts?.priority ?? "next";
       this.enqueueTurn(live, { message, opts, priority });
       if (priority === "now") this.interruptActiveTurn(live);
+      return;
+    }
+    if (live.checkingDailyGuard) {
+      this.enqueueTurn(live, { message, opts, priority: opts?.priority ?? "next" });
+      return;
+    }
+    live.checkingDailyGuard = true;
+    const guardError = await this.dailyGuardError(live);
+    live.checkingDailyGuard = false;
+    if (guardError) {
+      live.channel.push({ type: "error", message: guardError });
+      live.channel.push({ type: "done", sessionId: live.threadId, resultSubtype: "error_during_execution" });
+      this.endTurn(live);
       return;
     }
     live.turnInFlight = true;
@@ -516,7 +549,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.interruptRequested = false;
     live.lastTurnInput = undefined;
     const next = live.pendingTurns.shift();
-    if (next) this.startTurn(live, next.message, next.opts);
+    if (next) void this.startTurn(live, next.message, next.opts);
   }
 
   // ── Usage-limit rotation ──
@@ -593,7 +626,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.turnInFlight = false;
     live.activeTurnId = null;
     live.interruptRequested = false;
-    if (pending) this.startTurn(live, pending.message, pending.opts, true);
+    if (pending) void this.startTurn(live, pending.message, pending.opts, true);
     else this.endTurn(live);
   }
 

@@ -18,7 +18,7 @@
  * while every turn on them failed. The sign-in deadline replaced it.
  */
 
-import { Download, Eye, KeyRound, RefreshCw, Trash2 } from "lucide-react";
+import { CircleHelp, Download, Eye, KeyRound, RefreshCw, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { AccountInfo, AccountUsageEntry, OAuthProfileData } from "../../../lib/api-settings";
 import { AccountBucketRow } from "./account-bucket-row";
@@ -26,6 +26,7 @@ import { AccountHint } from "./account-hint";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AccountCardShell } from "./accounts-pane-header";
 import { formatExpiry, formatLastUpdated, tokenStatus } from "./account-usage-format";
+import type { DailyGuardState } from "../../../../shared/codex-daily-guard.ts";
 
 export interface AccountCardProps {
   entry: AccountUsageEntry;
@@ -55,6 +56,10 @@ export interface AccountCardProps {
    *  a plan ("plus", "team") and that decides which quota windows the account even has, so
    *  it belongs on the card; Claude reports none and the badge simply does not appear. */
   planLabel?: string | null;
+  /** Optional pacing control for Codex accounts that expose only a weekly quota. */
+  dailyGuard?: { enabled: boolean; state: DailyGuardState };
+  onDailyGuardToggle?: () => void;
+  dailyGuardToggling?: boolean;
 }
 
 // Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
@@ -64,7 +69,7 @@ const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } 
 
 export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
-  onSelect, unselectableReason, selecting, planLabel,
+  onSelect, unselectableReason, selecting, planLabel, dailyGuard, onDailyGuardToggle, dailyGuardToggling,
   layout = "list",
 }: AccountCardProps) {
   const { usage } = entry;
@@ -257,6 +262,42 @@ export function AccountCard({
         <p className="text-xs text-text-subtle">
           {entry.isOAuth ? "No usage data yet" : "Usage tracking not available for API keys"}
         </p>
+      )}
+
+      {dailyGuard && (
+        <div className={`flex min-h-12 items-center justify-between gap-3 rounded-md border px-2.5 py-1.5 ${
+          dailyGuard.enabled && dailyGuard.state.blocked ? "border-error/40 bg-error/5" : "border-border/50 bg-surface/40"
+        }`}>
+          <div className="min-w-0 space-y-0.5">
+            <div className={`flex items-center gap-1.5 text-xs font-medium ${dailyGuard.enabled && dailyGuard.state.blocked ? "text-error" : "text-text-secondary"}`}>
+              <span>Daily guard</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" aria-label="About Daily guard" className="text-text-subtle hover:text-text-primary cursor-help">
+                    <CircleHelp className="size-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-64 text-xs leading-relaxed">
+                  Keeps a weekly-only Codex account on pace to last until its reset. Each day adds one seventh of the weekly quota. When usage reaches that day's cap, PPM pauses new turns until the next day.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <p className={`text-[10px] tabular-nums ${dailyGuard.enabled && dailyGuard.state.blocked ? "text-error" : "text-text-subtle"}`}>
+              {dailyGuard.enabled && dailyGuard.state.blocked
+                ? `${Math.round(dailyGuard.state.used * 100)}% used / ${Math.round(dailyGuard.state.cap * 100)}% daily cap. New turns paused.`
+                : `Day ${dailyGuard.state.day}/7, ${Math.round(dailyGuard.state.cap * 100)}% daily cap`}
+            </p>
+          </div>
+          {onDailyGuardToggle && (
+            <Switch
+              checked={dailyGuard.enabled}
+              onCheckedChange={onDailyGuardToggle}
+              disabled={dailyGuardToggling}
+              aria-label={dailyGuard.enabled ? "Disable Daily guard" : "Enable Daily guard"}
+              className="cursor-pointer shrink-0"
+            />
+          )}
+        </div>
       )}
 
       <div className="flex items-center gap-2 text-[10px] text-text-subtle flex-wrap">
