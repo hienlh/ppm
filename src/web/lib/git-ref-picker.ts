@@ -67,13 +67,19 @@ export function buildRows(
   return rows;
 }
 
-/** The first row Enter may land on, or -1 when the filter matched nothing. */
-export function firstSelectable(rows: PickerRow[]): number {
+/**
+ * The first row Enter may land on, or -1 when the filter matched nothing.
+ *
+ * Typed on the `kind` alone rather than on `PickerRow`, so the branch select in
+ * Branch Review keyboard-navigates its own rows with this same pair instead of
+ * a second copy of the wrap-and-skip-headers arithmetic.
+ */
+export function firstSelectable(rows: readonly { kind: string }[]): number {
   return rows.findIndex((r) => r.kind !== "separator");
 }
 
 /** Arrow-key movement: wraps, and never stops on a group header. */
-export function moveSelection(rows: PickerRow[], current: number, step: 1 | -1): number {
+export function moveSelection(rows: readonly { kind: string }[], current: number, step: 1 | -1): number {
   const n = rows.length;
   if (!n) return -1;
   let idx = current;
