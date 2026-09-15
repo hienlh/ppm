@@ -343,6 +343,14 @@ if (entry.phase !== "idle" && entry.abort) {
 
 ### WebSocket Reconnection Sync
 
+Chat sockets receive a server heartbeat every 15 seconds. The client reconnects
+after 45 seconds without any incoming frame, including sockets that still report
+OPEN, and checks for a stale connection when the tab becomes visible. Replay
+finishes before queued live frames are applied. If a turn becomes idle without a
+usable finalized answer, the client reloads history; healthy completions retain
+their richer live metadata. Recovery responses are discarded after new activity
+or a session switch, and older initial loads cannot overwrite applied recovery.
+
 ```
 FE WebSocket closes (network issue, tab closes)
     ↓

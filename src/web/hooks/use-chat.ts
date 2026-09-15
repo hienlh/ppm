@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, startTransition } from "react";
 import { useWebSocket } from "./use-websocket";
-import { api, getAuthToken, projectUrl } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expansions";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -188,6 +188,12 @@ export function useChat(
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
   const refetchRef = useRef<(() => void) | null>(null);
+  const historyActivityRef = useRef(0);
+  const historyReconciledRef = useRef(0);
+  const turnFinalizedRef = useRef(false);
+  const historyRequestRef = useRef<AbortController | null>(null);
+  const queuedReplayMessagesRef = useRef<MessageEvent[]>([]);
+  const handleMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
   /** True while replaying turn_events — suppresses setPendingApproval */
   const isReplayingRef = useRef(false);
   /** toolUseIds of AskUserQuestion tool_use events. The approval_request event
@@ -712,6 +718,7 @@ export function useChat(
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
         const finalAccount = streamingAccountRef.current;
+        turnFinalizedRef.current = !!finalContent || finalEvents.length > 0;
         const doneUuid = ev.lastMessageUuid as string | undefined;
         const doneUsage = ev.usage;
         setMessages((prev) => {
@@ -765,6 +772,11 @@ export function useChat(
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
 
+    if (isReplayingRef.current) {
+      queuedReplayMessagesRef.current.push(event);
+      return;
+    }
+
     // file:changed, session:unread_changed and jira:* are app-wide and now arrive
     // on the global bus (`use-global-events.ts`) instead of here — a chat socket is
     // not guaranteed to exist since chat tabs mount lazily.
@@ -773,6 +785,7 @@ export function useChat(
     // bubble. The sender never receives this echo (server excludes the sender),
     // so no dedupe against the optimistic append is needed.
     if ((data as any).type === "user_message") {
+      historyActivityRef.current++;
       const content = (data as any).content as string;
       setMessages((prev) => {
         const last = prev[prev.length - 1];
@@ -829,12 +842,21 @@ export function useChat(
     // Handle phase transitions from BE
     if ((data as any).type === "phase_changed") {
       const p = (data as any).phase as SessionPhase;
+      const wasActive = phaseRef.current !== "idle";
+      if (!wasActive && p !== "idle") turnFinalizedRef.current = false;
+      if (p !== "idle") historyActivityRef.current++;
       setPhase(p);
       phaseRef.current = p;
       setConnectingElapsed(p === "connecting" ? ((data as any).elapsed ?? 0) : 0);
       // Safety: idle phase means no turn running — ensure compact indicator does not linger.
       // BE should broadcast compact_status=done too, but this is a belt-and-braces clear.
-      if (p === "idle") setCompactStatus(null);
+      if (p === "idle") {
+        setCompactStatus(null);
+        setStatusMessage(null);
+        // Completion can arrive after lost content/done frames. Reconcile once
+        // the turn is idle so the answer appears without a manual reload.
+        if (wasActive && !turnFinalizedRef.current) refetchRef.current?.();
+      }
       return;
     }
 
@@ -844,7 +866,9 @@ export function useChat(
       setConnectedSessionId((data as any).sessionId ?? sessionIdRef.current);
       const state = data as any;
       const p = state.phase as SessionPhase;
+      if (p !== "idle") historyActivityRef.current++;
       const wasIdle = phaseRef.current === "idle";
+      if (wasIdle && p !== "idle") turnFinalizedRef.current = false;
       setPhase(p);
       phaseRef.current = p;
       if (state.sessionTitle) setSessionTitle(state.sessionTitle);
@@ -895,6 +919,7 @@ export function useChat(
 
     // Handle turn_events (reconnect sync with rAF chunking)
     if ((data as any).type === "turn_events") {
+      historyActivityRef.current++;
       const events = (data as any).events as unknown[];
       const userMessage = (data as any).userMessage as string | null;
       if (!events?.length && !userMessage) { setIsReconnecting(false); return; }
@@ -961,6 +986,10 @@ export function useChat(
           replayRafRef.current = 0;
           isReplayingRef.current = false;
           setIsReconnecting(false);
+          // Preserve websocket order: live text/done must follow the snapshot,
+          // even when rebuilding a large snapshot takes several frames.
+          const queued = queuedReplayMessagesRef.current.splice(0);
+          for (const message of queued) handleMessageRef.current?.(message);
         }
       };
       replayRafRef.current = requestAnimationFrame(processChunk);
@@ -970,6 +999,7 @@ export function useChat(
     // Route content events through processStreamEvent
     processStreamEvent(data);
   }, [processStreamEvent]);
+  handleMessageRef.current = handleMessage;
 
   const wsUrl = sessionId && projectName
     ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}`
@@ -979,6 +1009,14 @@ export function useChat(
     url: wsUrl,
     onMessage: handleMessage,
     autoConnect: !!sessionId && !!projectName,
+    idleTimeoutMs: 45_000, // Server sends a heartbeat every 15 seconds.
+    onConnectionChange: (connected) => {
+      if (!connected) {
+        setIsConnected(false);
+        setIsReconnecting(true);
+      }
+      // session_state, rather than TCP open, confirms chat synchronization.
+    },
   });
 
   // Keep sendRef in sync so handleMessage can flush queued messages
@@ -987,6 +1025,9 @@ export function useChat(
   // Load history and reset state when session changes
   useEffect(() => {
     let cancelled = false;
+    const historyReconciled = historyReconciledRef.current;
+    turnFinalizedRef.current = false;
+    historyActivityRef.current++;
 
     // Keep the user's unconfirmed model/thinking picks across the draft→real transition
     // (null → id), but drop them when switching between two existing sessions so one
@@ -1060,7 +1101,7 @@ export function useChat(
           `${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`,
         )
         .then((data: any) => {
-          if (cancelled) return;
+          if (cancelled || historyReconciledRef.current !== historyReconciled) return;
           // Tolerate the pre-versionMap shape (a bare array): a browser running a
           // cached bundle from before the upgrade would otherwise render an empty
           // history with no error.
@@ -1093,7 +1134,9 @@ export function useChat(
           historyLoadedAtRef.current = Date.now();
         })
         .catch(() => {
-          if (!cancelled) setMessages((prev) => prev.filter((m) => !staleIds.has(m.id)));
+          if (!cancelled && historyReconciledRef.current === historyReconciled) {
+            setMessages((prev) => prev.filter((m) => !staleIds.has(m.id)));
+          }
         })
         .finally(() => {
           if (!cancelled) setMessagesLoading(false);
@@ -1104,6 +1147,14 @@ export function useChat(
 
     return () => {
       cancelled = true;
+      historyRequestRef.current?.abort();
+      historyRequestRef.current = null;
+      if (syncRafRef.current) clearTimeout(syncRafRef.current);
+      syncRafRef.current = 0;
+      if (replayRafRef.current) cancelAnimationFrame(replayRafRef.current);
+      replayRafRef.current = 0;
+      isReplayingRef.current = false;
+      queuedReplayMessagesRef.current = [];
     };
   }, [sessionId, providerId, projectName, updateTeamActivity, loadTeamDetail]);
 
@@ -1112,8 +1163,10 @@ export function useChat(
       // An attachment-only message is legitimate now that images travel with it: the
       // caller may have nothing to say beyond the picture.
       if (!content.trim() && !opts?.images?.length) return;
+      historyActivityRef.current++;
 
       const isFollowUp = phaseRef.current !== "idle";
+      turnFinalizedRef.current = false;
 
       if (isFollowUp) {
         // Cancel pending throttled sync before finalizing
@@ -1302,30 +1355,34 @@ export function useChat(
   }, [wsReconnect]);
 
   const refetchMessages = useCallback(() => {
-    if (!sessionId || !projectName) return;
+    if (!sessionId || !projectName || phaseRef.current !== "idle") return;
+    historyRequestRef.current?.abort();
+    const request = new AbortController();
+    historyRequestRef.current = request;
+    const activity = historyActivityRef.current;
     // No setMessagesLoading(true) here — keep current messages visible while
     // fetching in the background (stale-while-revalidate). The initial load
     // in the session-change useEffect already handles the first-time loading screen.
-    fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
-      headers: { Authorization: `Bearer ${getAuthToken()}` },
-    })
-      .then((r) => r.json())
-      .then((json: any) => {
+    api.get<any>(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, { signal: request.signal })
+      .then((data: any) => {
         // A turn may have started while this fetch was in flight (e.g. edit→fork
         // swaps the session, session_state arrives idle and triggers this refetch,
         // then the queued edited message sends and moves phase off idle). The
         // fetched history predates that send, so replacing now would drop the
         // just-sent user message — leaving it missing until a manual reload.
-        if (phaseRef.current !== "idle") return;
+        if (request.signal.aborted || historyRequestRef.current !== request
+          || historyActivityRef.current !== activity || phaseRef.current !== "idle"
+          || sessionIdRef.current !== sessionId || projectNameRef.current !== projectName
+          || isReplayingRef.current) return;
         // Same back-compat unwrap as the initial load above.
-        const payload = json.ok
-          ? (Array.isArray(json.data) ? { messages: json.data, versionMap: undefined } : json.data)
-          : null;
+        const payload = Array.isArray(data) ? { messages: data, versionMap: undefined } : data;
         // versionMap is refreshed independently of the length guard below: an
         // edit changes the branch tree without necessarily changing history
         // length, and the `n/m` counts must not go stale.
         if (payload?.versionMap) setVersionMap(payload.versionMap);
         if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
+          historyReconciledRef.current++;
+          if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
           setMessages(payload.messages);
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
