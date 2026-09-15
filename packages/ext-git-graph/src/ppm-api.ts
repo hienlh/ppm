@@ -2,6 +2,7 @@
  * Thin client for the PPM HTTP API, used to map a project path to the project
  * name that `window.openTab` needs. Initialised once from `activate`.
  */
+import { pickProject, toProjectRelative, type ProjectRef } from "./project-scope.ts";
 let baseUrl = "";
 let authToken = "";
 
@@ -33,16 +34,48 @@ export async function resolveProjectPath(): Promise<string | null> {
   return null;
 }
 
-/** Resolve project name from path via PPM API */
-export async function resolveProjectName(projectPath: string): Promise<string> {
+/**
+ * Resolve the registered project owning `dirPath` via the PPM API.
+ *
+ * `dirPath` is the panel's git root, which for a container workspace is a
+ * *subfolder* of the project — so an exact match is not enough. The basename
+ * fallback is kept for the case where the API cannot be reached at all, but it
+ * is a guess: it names no registered project, so anything built from it will
+ * 404.
+ */
+export async function resolveProject(dirPath: string): Promise<ProjectRef> {
   try {
     const res = await fetch(`${baseUrl}/api/projects`, authHeaders());
-    const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+    const json = await res.json() as { ok: boolean; data?: ProjectRef[] };
     if (json.ok && json.data) {
-      const match = json.data.find((p) => p.path === projectPath);
-      if (match) return match.name;
+      const match = pickProject(json.data, dirPath);
+      if (match) return match;
     }
   } catch {}
   // Fallback to directory name
-  return projectPath.split(/[\\/]/).filter(Boolean).pop() || "project";
+  return { name: dirPath.split(/[\\/]/).filter(Boolean).pop() || "project", path: dirPath };
+}
+
+/** Resolve project name from path via PPM API */
+export async function resolveProjectName(dirPath: string): Promise<string> {
+  return (await resolveProject(dirPath)).name;
+}
+
+/**
+ * What a tab needs to open a file git named: the project it belongs to, and the
+ * path expressed relative to *that* rather than to the repository git ran in.
+ *
+ * Both come from one lookup on purpose — the name and the rebasing depend on
+ * the same answer, and resolving them separately is how one of them gets
+ * forgotten.
+ */
+export async function resolveFileTab(
+  gitRoot: string,
+  filePath: string,
+): Promise<{ projectName: string; filePath: string }> {
+  const project = await resolveProject(gitRoot);
+  return {
+    projectName: project.name,
+    filePath: toProjectRelative(project.path, gitRoot, filePath),
+  };
 }

@@ -6,7 +6,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
+import { EDITOR_FONT_FAMILY, EDITOR_FONT_LIGATURES, EDITOR_FONT_SIZE } from "@/lib/editor-font";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { Loader2 } from "lucide-react";
 
@@ -363,8 +363,9 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
             onMount={handleMount}
             theme={monacoTheme}
             options={{
-              fontSize: 13,
+              fontSize: EDITOR_FONT_SIZE,
               fontFamily: EDITOR_FONT_FAMILY,
+              fontLigatures: EDITOR_FONT_LIGATURES,
               wordWrap: wrapOn ? "on" : "off",
               glyphMargin: true,
               readOnly: false,

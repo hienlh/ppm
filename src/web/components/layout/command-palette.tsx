@@ -38,6 +38,7 @@ import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
 import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
+import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
 
 /** Max results to display — prevents rendering thousands of matches */
 const MAX_RESULTS = 100;
@@ -293,11 +294,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         keywords: `extension ${cmd.command} ${cmd.category ?? ""}`,
         shortcut: shortcutCombo ? formatShortcut(shortcutCombo) : undefined,
         action: () => {
-          const args: unknown[] = [];
-          if (activeProject?.path) args.push(activeProject.path);
-          window.dispatchEvent(new CustomEvent("ext:command:execute", {
-            detail: { command: cmd.command, args },
-          }));
+          void dispatchExtCommand(cmd.command);
           onClose();
         },
       };

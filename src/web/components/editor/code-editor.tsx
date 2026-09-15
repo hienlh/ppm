@@ -12,7 +12,7 @@ import { useInlineBlame } from "@/hooks/use-inline-blame";
 import { disableBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
 import { useIsMobile, isMobileDevice } from "@/hooks/use-is-mobile";
 import type { EditorLspState } from "./editor-language-service";
-import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
+import { EDITOR_FONT_FAMILY, EDITOR_FONT_LIGATURES, EDITOR_FONT_SIZE } from "@/lib/editor-font";
 import { LspStatus } from "./lsp-status";
 import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal, ShieldCheck, ShieldOff } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
@@ -841,8 +841,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             onMount={handleEditorMount}
             theme={monacoTheme}
             options={{
-              fontSize: 13,
+              fontSize: EDITOR_FONT_SIZE,
               fontFamily: EDITOR_FONT_FAMILY,
+              fontLigatures: EDITOR_FONT_LIGATURES,
               wordWrap: wrapOn ? "on" : "off",
               minimap: { enabled: false },
               scrollBeyondLastLine: false,
