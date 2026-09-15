@@ -37,6 +37,16 @@ interface ChatHistoryBarProps {
   lastFetchedAt?: string | null;
   sessionId?: string | null;
   providerId?: string;
+  /**
+   * Account this tab claimed before it had a session, so the chip can name who will answer
+   * the first message instead of leaving a blank until after it is sent. Once the session
+   * exists its binding takes over and this goes unused.
+   */
+  pickedAccountLabel?: string | null;
+  /** Id of that same account, so the panel can mark which card is serving this chat. */
+  pickedAccountId?: string | null;
+  /** Route this chat onto another account. */
+  onSelectAccount?: (accountId: string, label: string | null) => void | Promise<void>;
   onSelectSession?: (session: SessionInfo) => void;
   onBugReport?: () => void;
   isConnected?: boolean;
@@ -63,7 +73,8 @@ function pctColor(pct: number): string {
 
 export function ChatHistoryBar({
   projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
-  sessionId, providerId, onSelectSession, onBugReport, isConnected, onReload,
+  sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
+  onSelectSession, onBugReport, isConnected, onReload,
   teamActivity, teamMessages, onTeamOpen,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
@@ -272,6 +283,12 @@ export function ChatHistoryBar({
   const sevenDayPct = usageInfo.sevenDay != null ? Math.round(usageInfo.sevenDay * 100) : null;
   const worstPct = Math.max(fiveHourPct ?? 0, sevenDayPct ?? 0);
   const usageColor = fiveHourPct != null || sevenDayPct != null ? pctColor(worstPct) : "text-text-subtle";
+  // Order matters, and the obvious order is wrong. With no session, the usage endpoint has
+  // no session to scope to and answers with whichever account ran last across every chat —
+  // so letting it win would show a name that has nothing to do with this tab, which is the
+  // exact confusion the claim exists to remove. The claim (and, once a turn is running, the
+  // account the stream reports) is specific to this chat and outranks it.
+  const accountLabel = pickedAccountLabel ?? usageInfo.activeAccountLabel ?? null;
 
   return (
     <div className="border-b border-border/50">
@@ -324,16 +341,20 @@ export function ChatHistoryBar({
               title="Usage limits"
             >
               <Activity className="size-3" />
-              {usageInfo.activeAccountLabel && (
+              {accountLabel && (
                 // Which account is serving this session, per provider. An email
                 // label is unreadable cut to 60px ("hienlh1298@…"), and the
                 // account is the thing a multi-account user checks here, so it
                 // gets the room and the full string on hover.
+                //
+                // Before the first message there is no session and so no binding to
+                // report; the tab's claimed account stands in, and it is the same one
+                // that message will run on.
                 <span
                   className="text-text-secondary font-normal truncate max-w-[110px]"
-                  title={usageInfo.activeAccountLabel}
+                  title={accountLabel}
                 >
-                  [{usageInfo.activeAccountLabel}]
+                  [{accountLabel}]
                 </span>
               )}
               <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
@@ -620,6 +641,8 @@ export function ChatHistoryBar({
       {activePanel === "usage" && isClaudeProvider && (
         <UsageDetailPanel
           usage={usageInfo}
+          onSelectAccount={onSelectAccount}
+          selectedAccountId={pickedAccountId ?? usageInfo.activeAccountId ?? null}
           visible={true}
           onClose={() => setActivePanel(null)}
           onReload={refreshUsage}
@@ -628,7 +651,13 @@ export function ChatHistoryBar({
         />
       )}
       {activePanel === "usage" && isCodexProvider && (
-        <CodexUsagePanel usage={usageInfo} onClose={() => setActivePanel(null)} onReload={refreshUsage} />
+        <CodexUsagePanel
+          usage={usageInfo}
+          onClose={() => setActivePanel(null)}
+          onReload={refreshUsage}
+          onSelectAccount={onSelectAccount}
+          selectedAccountId={pickedAccountId ?? usageInfo.activeAccountId ?? null}
+        />
       )}
 
     </div>

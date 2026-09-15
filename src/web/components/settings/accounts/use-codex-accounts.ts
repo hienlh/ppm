@@ -15,7 +15,7 @@ import type { LimitBucket } from "../../../../types/chat";
 import type { CodexStrategy } from "./codex-rotation-dialog";
 
 export type Strategy = CodexStrategy;
-export interface CodexAccount { id: string; label: string; type: string; planType?: string | null }
+export interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled" }
 /**
  * One account's quota. The two percentages are what the bars read; the buckets carry the
  * reset clock the server already sends, so the Codex card can show "resets in" the way the
@@ -41,6 +41,7 @@ export function useCodexAccounts(onDone: () => void) {
   const [strategy, setStrategy] = useState<Strategy>("round-robin");
   const [usages, setUsages] = useState<Record<string, Usage>>({});
   const [loading, setLoading] = useState(false);
+  const [toggling, setToggling] = useState<Set<string>>(new Set());
   const [apiKey, setApiKey] = useState("");
   const [label, setLabel] = useState("");
   const [adding, setAdding] = useState(false);
@@ -117,6 +118,26 @@ export function useCodexAccounts(onDone: () => void) {
   };
 
   const remove = async (id: string) => { await api.del(`/api/codex-accounts/${id}`); await load(); };
+
+  /**
+   * Switch an account on or off.
+   *
+   * Tracked per account rather than with one shared flag: the pane shows every account side
+   * by side, and a single flag would grey out all of them while one is changing.
+   */
+  const toggle = async (id: string, status: string) => {
+    const next = status === "disabled" ? "active" : "disabled";
+    setToggling((prev) => new Set(prev).add(id));
+    setErr(null);
+    try {
+      await api.patch(`/api/codex-accounts/${id}`, { status: next });
+      await load();
+    } catch (e) {
+      setErr((e as Error).message || "Could not change the account");
+    } finally {
+      setToggling((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    }
+  };
   const changeStrategy = async (s: Strategy) => { setStrategy(s); try { await api.put("/api/codex-accounts/strategy", { strategy: s }); } catch { /* revert on reload */ } };
 
   const doExport = async () => {
@@ -157,6 +178,7 @@ export function useCodexAccounts(onDone: () => void) {
     accounts, strategy, usages, loading, apiKey, setApiKey, label, setLabel, adding,
     err, setErr, device, deviceWaiting, backupPassword, setBackupPassword,
     exporting, importing, msg, setMsg,
-    load, addApiKey, startDevice, remove, changeStrategy, doExport, doImport,
+    toggling,
+    load, addApiKey, startDevice, remove, toggle, changeStrategy, doExport, doImport,
   };
 }

@@ -72,6 +72,24 @@ export function getActiveAccount(): Promise<AccountInfo | null> {
   return api.get<AccountInfo | null>("/api/accounts/active");
 }
 
+/** An account claimed for a chat tab — the one its first message will run on. */
+export interface PickedAccount {
+  id: string;
+  label: string | null;
+}
+
+/**
+ * Claim the account a new chat tab will use.
+ *
+ * Consumes a pick rather than previewing one, so call it once per tab and keep the answer.
+ * Null means nothing is usable right now (Claude) or no managed account exists (Codex, which
+ * then runs on the ambient ~/.codex login).
+ */
+export function pickAccountForTab(providerId: string): Promise<PickedAccount | null> {
+  const path = providerId === "codex" ? "/api/codex-accounts/pick" : "/api/accounts/pick";
+  return api.post<PickedAccount | null>(path);
+}
+
 export function addAccount(params: { apiKey: string; label?: string }): Promise<AccountInfo> {
   return api.post<AccountInfo>("/api/accounts", params);
 }

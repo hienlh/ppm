@@ -97,6 +97,61 @@ class AccountSelectorService {
   }
 
   /**
+   * Whether an account still holds a token it could authenticate with.
+   *
+   * An account with no refresh token whose access token has already expired cannot serve
+   * anything: there is no way back to a live token without a fresh sign-in. Picking one
+   * only moves the failure later, into the middle of a turn, where it costs a retry and
+   * an account switch instead of simply being skipped here.
+   *
+   * Same test the enable path and the account card use, so a card reading "Expired" and
+   * the router agreeing it is unusable can never drift apart.
+   *
+   * Three outcomes, not two. A token that cannot be decrypted is deliberately kept in the
+   * pool: that is the machine-key mismatch, which has its own diagnostic downstream ("copy
+   * ~/.ppm/account.key from the original machine"). Dropping those accounts here would
+   * leave the caller reporting them as merely disabled and swallow the one message that
+   * actually tells the user what went wrong.
+   *
+   * The decrypt only runs for an account whose access token has already expired, so the
+   * cipher stays off the hot path for the healthy case.
+   */
+  private hasUsableToken(accountId: string): boolean {
+    const acc = accountService.list().find((a) => a.id === accountId);
+    if (!acc) return false;
+    if (!acc.expiresAt) return true;
+    if (acc.expiresAt >= Math.floor(Date.now() / 1000)) return true;
+    const withTokens = accountService.getWithTokens(accountId);
+    if (!withTokens) return true; // undecryptable — not this filter's call to make
+    return withTokens.refreshToken.length > 0;
+  }
+
+  /**
+   * The hard test: an account that fails this cannot serve a turn at all.
+   *
+   * Kept separate from [[hasQuotaRoom]] on purpose. Quota is a soft limit — when every
+   * account is near its cap the router still hands one back, because a throttled turn beats
+   * no turn. A dead token has no such fallback: there is nothing on the other side of it,
+   * so it is filtered out with no escape hatch.
+   */
+  private isUsable(accountId: string): boolean {
+    return this.isSelectable(accountId) && this.hasUsableToken(accountId);
+  }
+
+  /**
+   * Whether this account could serve a turn if a caller asked for it by name.
+   *
+   * The hard test only. A caller naming a specific account — a user picking one in the
+   * panel, or a tab redeeming the account it claimed — is allowed to land on one that is
+   * near its cap; that is a choice to make a slower turn, not an impossible one. It is not
+   * allowed to land on one that is disabled or has no live token, which is the same line
+   * the router itself draws.
+   */
+  canServe(accountId: string): boolean {
+    return this.isUsable(accountId);
+  }
+
+  /**
    * Whether an account has quota left to serve a turn.
    *
    * Mirrors next()'s proactive 5-hour skip, and adds the weekly exhaustion that otherwise
@@ -118,10 +173,9 @@ class AccountSelectorService {
    * "everything is near the cap, take one anyway" — a distinction a binding must not ignore.
    */
   private anyAccountHasQuotaRoom(excludeIds?: Set<string>): boolean {
-    const cooldownOn = this.isCooldownEnabled();
     return accountService.list().some((a) => {
       if (excludeIds?.has(a.id)) return false;
-      if (!(a.status === "active" || (!cooldownOn && a.status === "cooldown"))) return false;
+      if (!this.isUsable(a.id)) return false;
       return this.hasQuotaRoom(a.id);
     });
   }
@@ -141,7 +195,7 @@ class AccountSelectorService {
   forSession(sessionId: string, excludeIds?: Set<string>): AccountWithTokens | null {
     this.clearExpiredCooldowns();
     const boundId = getSessionAccount(sessionId);
-    if (boundId && !excludeIds?.has(boundId) && this.isSelectable(boundId)) {
+    if (boundId && !excludeIds?.has(boundId) && this.isUsable(boundId)) {
       // Hold the binding while it has room, and also when nothing else does. In that second
       // case next() falls back to returning a near-capped account anyway, and round-robin
       // would hand back a different one each turn — paying a full cache write per turn to
@@ -173,12 +227,11 @@ class AccountSelectorService {
     this._lastFailReason = "none";
     this.clearExpiredCooldowns();
 
-    // When cooldown is disabled, treat parked (cooldown) accounts as selectable too —
-    // any leftover cooldown from before the flag flip shouldn't lock an account out.
-    const cooldownOn = this.isCooldownEnabled();
-    const active = accountService.list().filter(
-      (a) => a.status === "active" || (!cooldownOn && a.status === "cooldown"),
-    );
+    // Status and token together: isUsable() keeps a parked account in the running when
+    // cooldown is switched off, and drops one whose token is past saving. Dead tokens are
+    // filtered here rather than at the quota step below, because that step falls back to
+    // "take one anyway" and an unauthenticable account must not be reachable through it.
+    const active = accountService.list().filter((a) => this.isUsable(a.id));
     // Skip accounts excluded by caller (e.g., pre-flight loop)
     const notExcluded = excludeIds?.size ? active.filter((a) => !excludeIds.has(a.id)) : active;
     if (notExcluded.length === 0) {
@@ -186,12 +239,9 @@ class AccountSelectorService {
       return null;
     }
 
-    // Proactive: skip accounts whose 5-hour utilization >= 95%
-    const usable = notExcluded.filter((a) => {
-      const snap = getLatestSnapshotForAccount(a.id);
-      return !snap || (snap.five_hour_util ?? 0) < FIVE_HOUR_SKIP_THRESHOLD;
-    });
-    const candidates = usable.length > 0 ? usable : notExcluded; // fallback to all if every account is near limit
+    // Proactive: skip accounts that are out of 5-hour or weekly room
+    const withRoom = notExcluded.filter((a) => this.hasQuotaRoom(a.id));
+    const candidates = withRoom.length > 0 ? withRoom : notExcluded; // fallback to all if every account is near limit
 
     let pickedId: string;
     const strategy = this.getStrategy();
@@ -221,21 +271,29 @@ class AccountSelectorService {
   peek(): AccountWithTokens | null {
     const now = Math.floor(Date.now() / 1000);
     const cooldownOn = this.isCooldownEnabled();
+    // Same two-tier filter next() applies: dead tokens are out with no escape hatch,
+    // out-of-quota accounts are skipped but still reachable when nothing else is left.
+    // A preview that answers from a looser filter than the router is a preview that
+    // names an account the very next turn will refuse to use.
     const active = accountService.list().filter(
-      (a) => a.status === "active" || (a.status === "cooldown" && (!cooldownOn || (a.cooldownUntil ?? 0) <= now)),
+      (a) =>
+        (a.status === "active" || (a.status === "cooldown" && (!cooldownOn || (a.cooldownUntil ?? 0) <= now)))
+        && this.hasUsableToken(a.id),
     );
     if (active.length === 0) return null;
+    const withRoom = active.filter((a) => this.hasQuotaRoom(a.id));
+    const candidates = withRoom.length > 0 ? withRoom : active;
 
     const strategy = this.getStrategy();
     let pickedId: string;
     if (strategy === "lowest-usage") {
-      pickedId = this.pickLowestUsage(active);
+      pickedId = this.pickLowestUsage(candidates);
     } else if (strategy === "fill-first") {
-      const sorted = [...active].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
+      const sorted = [...candidates].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
       pickedId = sorted[0]!.id;
     } else {
-      const idx = this.cursor % active.length;
-      pickedId = active[idx]!.id;
+      const idx = this.cursor % candidates.length;
+      pickedId = candidates[idx]!.id;
     }
     return accountService.getWithTokens(pickedId);
   }

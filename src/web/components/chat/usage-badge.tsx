@@ -1,11 +1,15 @@
 /**
  * The chat header's usage chip and the panel it opens.
  *
- * Display only. Adding, removing, enabling, exporting and rotating accounts all live in
- * Settings → Accounts; this panel links there instead of carrying its own copy of those
- * controls, which is what let the two drift apart. The account cards are the same component
- * the Settings pane renders — passing no action callbacks is what makes them read-only, so
- * there is one card implementation rather than a display twin.
+ * Adding, removing, exporting and rotating accounts live in Settings → Accounts; this panel
+ * links there rather than carrying its own copy of them. What it does carry is the two
+ * decisions that belong to the conversation in front of you: which account serves it, and
+ * whether an account is available at all.
+ *
+ * The rule the original separation was protecting still holds, and is what makes those two
+ * safe to have here: the cards are the same component the Settings pane renders, and the
+ * switch drives the same `useAccountsData().toggle` that pane drives. One implementation, two
+ * places it appears — not a display twin that can drift.
  *
  * Accounts sit in a row that scrolls sideways, not a vertical stack: this panel exists to
  * compare them, and stacked in a 350px strip that meant scrolling past one account to see
@@ -60,17 +64,58 @@ interface UsageDetailPanelProps {
   onReload?: () => void;
   loading?: boolean;
   lastFetchedAt?: string | null;
+  /** Route this chat to a different account. Omitted when the caller cannot re-route. */
+  onSelectAccount?: (accountId: string, label: string | null) => void | Promise<void>;
+  /** Account currently claimed or bound for this chat, so the card can mark itself. */
+  selectedAccountId?: string | null;
 }
 
-export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, lastFetchedAt }: UsageDetailPanelProps) {
+export function UsageDetailPanel({
+  usage, visible, onClose, onReload, loading, lastFetchedAt,
+  onSelectAccount, selectedAccountId,
+}: UsageDetailPanelProps) {
+  const [selectingId, setSelectingId] = useState<string | null>(null);
   // Fetching is gated on visibility: the panel is collapsed most of the time, and its
   // usage endpoint is the expensive one.
-  const { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload } = useAccountsData(visible);
+  const { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload, toggle, togglingId } = useAccountsData(visible);
+  const [toggleError, setToggleError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   if (!visible) return null;
 
   const accountMap = new Map(accounts.map((a) => [a.id, a]));
+
+  /**
+   * Why an account cannot take this chat, in the words the card shows.
+   *
+   * Only the reasons the server itself refuses — disabled, or a token past saving. Being
+   * near a quota cap is not one of them: that is a slower turn, not an impossible one, and
+   * a user who picks a nearly-capped account on purpose is allowed to.
+   */
+  function unselectableReason(info?: (typeof accounts)[number]): string | null {
+    if (!info) return null;
+    if (info.status === "disabled") return "Disabled";
+    const expired = !info.hasRefreshToken && info.expiresAt && info.expiresAt < Math.floor(Date.now() / 1000);
+    return expired ? "Token expired — sign in again" : null;
+  }
+
+  async function handleToggle(id: string, status: string) {
+    setToggleError(await toggle(id, status));
+  }
+
+  async function handleSelect(accountId: string) {
+    if (!onSelectAccount) return;
+    setSelectingId(accountId);
+    try {
+      // The label travels with the id: a tab that has no session yet displays the choice
+      // straight away, and it is the only place that knows the human-readable name.
+      const label = usages.find((u) => u.accountId === accountId)?.accountLabel ?? null;
+      await onSelectAccount(accountId, label);
+    } finally {
+      setSelectingId(null);
+    }
+  }
+
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
   const hasPerAccountUsage = usages.length > 0;
 
@@ -133,6 +178,22 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         </div>
       </div>
 
+      {/* The server distinguishes "this login was rejected, sign in again" from "could not
+          reach Anthropic, try shortly", and the difference decides what the user should do.
+          Showing its words verbatim is the only way that survives to them. */}
+      {toggleError && (
+        <div className="shrink-0 flex items-start gap-2 rounded border border-error/40 bg-error/10 px-2 py-1.5 text-[11px] text-error">
+          <span className="flex-1">{toggleError}</span>
+          <button
+            onClick={() => setToggleError(null)}
+            className="shrink-0 text-error/70 hover:text-error cursor-pointer"
+            aria-label="Dismiss"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      )}
+
       {hasPerAccountUsage || initialLoading ? (
         <div
           className={isFullscreen
@@ -147,16 +208,26 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
           {initialLoading ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
           ) : (
-            usages.map((entry) => (
-              <AccountCard
-                key={entry.accountId}
-                entry={entry}
-                isActive={entry.accountId === (activeAccountId ?? usage.activeAccountId)}
-                accountInfo={accountMap.get(entry.accountId)}
-                flash={flashIds.has(entry.accountId)}
-                layout={isFullscreen ? "grid" : "strip"}
-              />
-            ))
+            usages.map((entry) => {
+              const info = accountMap.get(entry.accountId);
+              return (
+                <AccountCard
+                  key={entry.accountId}
+                  entry={entry}
+                  // What is serving THIS chat, not what the rotation would pick next —
+                  // those differ the moment a session is bound to an account.
+                  isActive={entry.accountId === (selectedAccountId ?? usage.activeAccountId ?? activeAccountId)}
+                  accountInfo={info}
+                  flash={flashIds.has(entry.accountId)}
+                  layout={isFullscreen ? "grid" : "strip"}
+                  onSelect={onSelectAccount ? handleSelect : undefined}
+                  unselectableReason={unselectableReason(info)}
+                  selecting={selectingId === entry.accountId}
+                  onToggle={handleToggle}
+                  toggling={togglingId === entry.accountId}
+                />
+              );
+            })
           )}
         </div>
       ) : usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet ? (

@@ -11,7 +11,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
-import { getAISettings } from "@/lib/api-settings";
+import { getAISettings, pickAccountForTab } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { TeamWorkingBar } from "./team-working-bar";
@@ -104,13 +104,94 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Persist sessionId, providerId, and permissionMode to tab metadata
+  // Persist sessionId, providerId, and permissionMode to tab metadata.
+  //
+  // The claimed account is dropped at the same moment: once a session exists, its binding
+  // is the only account that matters, and it is the one the server re-routes when an
+  // account goes bad. Keeping the tab's copy alongside it would give the chip a second,
+  // staler answer to the same question.
   useEffect(() => {
     if (!tabId || !sessionId) return;
     updateTab(tabId, {
-      metadata: { ...metadata, sessionId, providerId, permissionMode },
+      metadata: {
+        ...metadata,
+        sessionId,
+        providerId,
+        permissionMode,
+        pickedAccountId: undefined,
+        pickedAccountLabel: undefined,
+        pickedAccountProvider: undefined,
+      },
     });
   }, [sessionId, providerId, permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The account this tab claimed while it had no session yet, and who it was claimed from. */
+  const pickedAccountId = metadata?.pickedAccountId as string | undefined;
+  const pickedAccountLabel = metadata?.pickedAccountLabel as string | undefined;
+  const pickedAccountProvider = metadata?.pickedAccountProvider as string | undefined;
+  // A tab with no session can still switch provider, and accounts do not cross that line.
+  // Without this the claim from the old provider survives the switch and the chip names a
+  // Codex account on a Claude chat — confidently, and wrongly.
+  const claimMatchesProvider = Boolean(pickedAccountId) && pickedAccountProvider === providerId;
+
+  /**
+   * Claim an account the moment the tab opens, instead of at the first message.
+   *
+   * A tab with no session has no WebSocket and no row anywhere, so there is nothing
+   * server-side to hang this on. The tab's own metadata is the natural home: it is
+   * persisted with the panel layout, so the claim survives a reload, and it is discarded
+   * with the tab, which is exactly the lifetime asked for.
+   *
+   * Guarded on `pickedAccountId` being absent, not merely on having no session. Without
+   * that, every reload would claim a fresh account and the tab would keep changing its
+   * mind about who is answering. The claim is consumed — several tabs opened in a row
+   * deliberately spread across the pool, and are allowed to collide.
+   */
+  useEffect(() => {
+    if (!tabId || sessionId || claimMatchesProvider) return;
+    let cancelled = false;
+    pickAccountForTab(providerId)
+      .then((picked) => {
+        if (cancelled || !picked) return;
+        updateTab(tabId, {
+          metadata: {
+            ...metadata,
+            pickedAccountId: picked.id,
+            pickedAccountLabel: picked.label,
+            pickedAccountProvider: providerId,
+          },
+        });
+      })
+      .catch(() => { /* leave the chip blank rather than naming an account we did not get */ });
+    return () => { cancelled = true; };
+  }, [tabId, sessionId, providerId, claimMatchesProvider]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Move this chat onto an account the user picked in the panel.
+   *
+   * Two destinations, one for each half of a tab's life. Before the first message there is
+   * no session, so the choice replaces the tab's claim and is redeemed when the session is
+   * created. After that the session's binding is the only thing that decides, so it is
+   * written directly. Both end up in the same place — this is the same path the automatic
+   * route uses, not a parallel one.
+   */
+  const handleSelectAccount = useCallback(async (accountId: string, label: string | null) => {
+    if (sessionId) {
+      try {
+        await api.put(`${projectUrl(projectName)}/chat/sessions/${sessionId}/account`, { accountId });
+        // Switching costs a full prompt-cache write, so it is worth saying out loud rather
+        // than letting the chip quietly change.
+        toast.success("This chat will use the selected account from the next message.");
+      } catch (e) {
+        toast.error((e as Error).message || "Could not switch account");
+      }
+      return;
+    }
+    if (!tabId) return;
+    updateTab(tabId, {
+      metadata: { ...metadata, pickedAccountId: accountId, pickedAccountLabel: label, pickedAccountProvider: providerId },
+    });
+  }, [sessionId, projectName, tabId, metadata, providerId, updateTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
     messages,
@@ -130,6 +211,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     compactStatus,
     statusMessage,
     sessionTitle,
+    liveAccountLabel,
     model,
     setModel,
     effort,
@@ -429,6 +511,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             title: content.slice(0, 50),
             // Set by /clear — the session only exists now, so persist the lineage here.
             clearedFrom: metadata?.clearedFrom as string | undefined,
+            // The account this tab claimed on open and has been displaying since. Redeeming
+            // it here is what makes that display true rather than a guess.
+            accountId: pickedAccountId,
           });
           setSessionId(session.id);
           setProviderId(session.providerId);
@@ -688,6 +773,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           lastFetchedAt={lastFetchedAt}
           sessionId={sessionId}
           providerId={providerId}
+          pickedAccountLabel={liveAccountLabel ?? (claimMatchesProvider ? pickedAccountLabel : null)}
+          pickedAccountId={claimMatchesProvider ? pickedAccountId ?? null : null}
+          onSelectAccount={handleSelectAccount}
           onSelectSession={handleSelectSession}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}
           isConnected={isConnected}

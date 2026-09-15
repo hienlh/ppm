@@ -47,6 +47,25 @@ accountsRoutes.get("/active", (c) => {
   return c.json(ok(account));
 });
 
+/**
+ * POST /api/accounts/pick — claim the account that will serve a new chat tab.
+ *
+ * POST, not GET, because this consumes a pick: round-robin advances its cursor, so asking
+ * twice is meant to hand back two different accounts. That is the point — a tab asks once
+ * when it opens, keeps the answer for as long as it lives, and several tabs opened in a row
+ * spread across the pool instead of piling onto whichever account happens to be next.
+ *
+ * Unlike `/active`, which only previews, the answer here is the one the first message will
+ * actually run on: the client sends the id back when it creates the session, and it becomes
+ * that session's binding. Null means nothing is usable right now, and the caller must say so
+ * rather than showing a stale name.
+ */
+accountsRoutes.post("/pick", (c) => {
+  const picked = accountSelector.next();
+  if (!picked) return c.json(ok(null));
+  return c.json(ok({ id: picked.id, label: picked.label ?? picked.email ?? null }));
+});
+
 /** GET /api/accounts/settings */
 accountsRoutes.get("/settings", (c) => {
   return c.json(ok({

@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { AccountCardRow, AccountCardShell, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
 import { CodexAddAccountDialog } from "./codex-add-account-dialog";
 import { CodexBackupDialog } from "./codex-backup-dialog";
@@ -85,6 +86,15 @@ export function CodexAccountsSection() {
                       {a.type}
                     </span>
                     {a.planType && <span className="text-[10px] text-text-subtle shrink-0">{a.planType}</span>}
+                    {/* Same control the Claude card uses, in the same place, so the two
+                        sub-tabs read as one screen rather than two designs. */}
+                    <Switch
+                      checked={a.status !== "disabled"}
+                      onCheckedChange={() => void c.toggle(a.id, a.status ?? "active")}
+                      disabled={c.toggling.has(a.id)}
+                      aria-label={a.status === "disabled" ? "Enable account" : "Disable account"}
+                      className="cursor-pointer shrink-0"
+                    />
                     <button
                       type="button"
                       onClick={() => void c.remove(a.id)}

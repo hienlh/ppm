@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { X, Loader2, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { Switch } from "@/components/ui/switch";
 import { AccountUsageBar } from "@/components/settings/accounts/account-bucket-row";
 import { formatResetTime } from "@/components/settings/accounts/account-usage-format";
 import type { UsageInfo } from "../../../types/chat";
 
-interface CodexAccount { id: string; label: string; type: string; planType?: string | null }
+interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled" }
 type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly">;
 
 function UsageBar({ label, frac, bucket }: {
@@ -22,15 +23,53 @@ function UsageBar({ label, frac, bucket }: {
  * accounts exist, chats run on the ambient ~/.codex login — its usage comes
  * from the session `usage` prop. Login/management lives in Settings → AI
  * Provider → Codex. */
-export function CodexUsagePanel({ onClose, usage, onReload }: {
+export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, selectedAccountId }: {
   onClose: () => void;
   usage: UsageInfo;
   /** Forces the chat usage endpoint to bypass its provider-usage cache. */
   onReload?: () => void | Promise<void>;
+  /** Route this chat onto another Codex account. */
+  onSelectAccount?: (accountId: string, label: string | null) => void | Promise<void>;
+  /** Account currently claimed or bound for this chat. */
+  selectedAccountId?: string | null;
 }) {
   const [accounts, setAccounts] = useState<CodexAccount[]>([]);
   const [usages, setUsages] = useState<Record<string, Usage>>({});
   const [loading, setLoading] = useState(false);
+  const [selectingId, setSelectingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
+  // This panel draws its own cards rather than reusing Settings' AccountCard, so the
+  // selection control is rebuilt here. Kept visually the same as the Claude panel's on
+  // purpose — the two sub-tabs drifting apart is the thing the shared Settings layout was
+  // introduced to stop, and a differently-shaped button here would start it again.
+  const select = useCallback(async (id: string, label: string) => {
+    if (!onSelectAccount) return;
+    setSelectingId(id);
+    try { await onSelectAccount(id, label); } finally { setSelectingId(null); }
+  }, [onSelectAccount]);
+
+  /**
+   * Switch a Codex account on or off without leaving the chat.
+   *
+   * No pending-token dance like the Claude side: the Codex route answers immediately because
+   * there is no refresh token to prove. The pending id is still tracked so the switch cannot
+   * be double-fired on a slow connection.
+   */
+  const toggle = useCallback(async (id: string, status: string) => {
+    setTogglingId(id);
+    setToggleError(null);
+    try {
+      await api.patch(`/api/codex-accounts/${id}`, { status: status === "disabled" ? "active" : "disabled" });
+      const d = await api.get<{ accounts: CodexAccount[] }>("/api/codex-accounts");
+      setAccounts(d.accounts);
+    } catch (e) {
+      setToggleError((e as Error).message || "Could not change the account");
+    } finally {
+      setTogglingId(null);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,6 +112,15 @@ export function CodexUsagePanel({ onClose, usage, onReload }: {
         </div>
       </div>
 
+      {toggleError && (
+        <div className="flex items-start gap-2 rounded border border-error/40 bg-error/10 px-2 py-1.5 text-[11px] text-error">
+          <span className="flex-1">{toggleError}</span>
+          <button onClick={() => setToggleError(null)} className="shrink-0 text-error/70 hover:text-error cursor-pointer" aria-label="Dismiss">
+            <X className="size-3" />
+          </button>
+        </div>
+      )}
+
       {loading && accounts.length === 0 && (
         <div className="text-xs text-text-subtle flex items-center gap-2"><Loader2 className="size-3 animate-spin" /> Loading…</div>
       )}
@@ -94,15 +142,44 @@ export function CodexUsagePanel({ onClose, usage, onReload }: {
 
       {accounts.map((a) => {
         const u = usages[a.id] ?? {};
+        const isServing = a.id === (selectedAccountId ?? usage.activeAccountId);
         return (
-          <div key={a.id} className="rounded-md border border-border/50 bg-surface/40 p-2.5 space-y-2">
+          <div
+            key={a.id}
+            className={`rounded-md border bg-surface/40 p-2.5 space-y-2 ${isServing ? "border-primary/30 bg-primary/5" : "border-border/50"}`}
+          >
             <div className="flex items-center gap-2">
               <span className="text-sm text-text-primary truncate flex-1 min-w-0">{a.label}</span>
+              {isServing && <span className="text-[10px] text-primary shrink-0 font-medium">Active</span>}
+              {a.status === "disabled" && <span className="text-[10px] text-text-subtle shrink-0">Off</span>}
               <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1">{a.type}</span>
               {a.planType && <span className="text-[10px] text-text-subtle">{a.planType}</span>}
+              <Switch
+                checked={a.status !== "disabled"}
+                onCheckedChange={() => void toggle(a.id, a.status ?? "active")}
+                disabled={togglingId === a.id}
+                aria-label={a.status === "disabled" ? "Enable account" : "Disable account"}
+                className="cursor-pointer shrink-0"
+              />
             </div>
             <UsageBar label="5-Hour" frac={u.fiveHour} bucket={u.session} />
             <UsageBar label="Weekly" frac={u.sevenDay} bucket={u.weekly} />
+            {onSelectAccount && (
+              <button
+                type="button"
+                onClick={() => !isServing && select(a.id, a.label)}
+                disabled={isServing || selectingId === a.id}
+                title={isServing ? "Already serving this chat" : "Use this account for this chat"}
+                className={[
+                  "w-full min-h-[44px] rounded text-[11px] font-medium transition-colors",
+                  isServing
+                    ? "text-primary/70 cursor-default"
+                    : "text-text-secondary hover:text-foreground hover:bg-surface-elevated cursor-pointer",
+                ].join(" ")}
+              >
+                {isServing ? "Serving this chat" : selectingId === a.id ? "Switching…" : "Use for this chat"}
+              </button>
+            )}
           </div>
         );
       })}

@@ -66,6 +66,12 @@ interface UseChatReturn {
   compactStatus: "compacting" | null;
   statusMessage: string | null;
   sessionTitle: string | null;
+  /**
+   * Account the server last reported as serving this session, from the stream rather than
+   * the polled usage endpoint — so a forced account switch shows up immediately instead of
+   * up to two minutes later.
+   */
+  liveAccountLabel: string | null;
   /** Per-session model override (null = provider default) */
   model: string | null;
   /** Switch the per-session model (persists + recreates query on next message) */
@@ -166,6 +172,17 @@ export function useChat(
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const bashOutputRef = useRef<Map<string, BashPartialEntry>>(new Map());
   const streamingAccountRef = useRef<{ accountId: string; accountLabel: string } | null>(null);
+  /**
+   * Which account last reported serving this session, as state rather than a ref so the
+   * toolbar re-renders on it.
+   *
+   * Deliberately sticky across turns: it is cleared when the session changes, not when a
+   * turn ends. The account that just served is still the account bound to the session, and
+   * the only other source for that label is the usage endpoint on a two-minute poll — so
+   * dropping it at turn end would leave the chip showing a stale name for minutes after the
+   * server was forced onto a different account.
+   */
+  const [liveAccountLabel, setLiveAccountLabel] = useState<string | null>(null);
   const phaseRef = useRef<SessionPhase>("idle");
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
@@ -402,6 +419,7 @@ export function useChat(
     switch (evType) {
       case "account_info": {
         streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
+        setLiveAccountLabel(ev.accountLabel ?? null);
         setStatusMessage(null);
         break;
       }
@@ -410,6 +428,9 @@ export function useChat(
         // Update streaming account to the new one being tried
         if (ev.accountId && ev.accountLabel) {
           streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
+          // A retry means the server was forced off the account the toolbar is naming —
+          // rate limit, usage cap or auth. Say so now rather than at the next usage poll.
+          setLiveAccountLabel(ev.accountLabel);
         }
         // Clear previous streaming events (error text from failed attempt)
         // and start fresh with only the retry notification
@@ -961,6 +982,9 @@ export function useChat(
     if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
       pendingModelRef.current = null;
       thinkingRef.current = null;
+      // One session's account must not label another's. Only on a real session-to-session
+      // switch: the draft→real transition (null → id) keeps serving the same conversation.
+      setLiveAccountLabel(null);
     }
     prevSessionIdRef.current = sessionId ?? null;
 
@@ -1359,6 +1383,8 @@ export function useChat(
     compactStatus,
     statusMessage,
     sessionTitle,
+    /** Account the server last reported for this session — beats the polled usage label. */
+    liveAccountLabel,
     model,
     setModel,
     effort,

@@ -807,7 +807,12 @@ export class CodexAppServerProvider implements AIProvider {
 
     // Managed accounts are assigned on first send; don't show an unrelated
     // ambient login while that assignment is pending or the binding is missing.
-    if (accountId || listCodexAccounts().length > 0) return {};
+    //
+    // Disabled ones do not count towards "managed accounts exist": with every one switched
+    // off the selector returns null and chats really do run on the ambient ~/.codex login,
+    // so that is the login whose usage belongs here.
+    const selectable = listCodexAccounts().filter((a) => a.status !== "disabled");
+    if (accountId || selectable.length > 0) return {};
     return getOrFetchUsage(this.id, AMBIENT_ACCOUNT_KEY);
   }
 }

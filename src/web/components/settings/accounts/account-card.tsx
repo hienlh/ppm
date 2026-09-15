@@ -38,6 +38,16 @@ export interface AccountCardProps {
   onViewProfile?: (profile: OAuthProfileData, accountId: string) => void;
   /** Brief highlight when this account's usage numbers just changed. */
   flash?: boolean;
+  /**
+   * Move the current chat session onto this account. Omitted in Settings, where a card
+   * manages an account rather than routing a conversation to it — leaving it out is what
+   * keeps that screen behaving exactly as before.
+   */
+  onSelect?: (id: string) => void;
+  /** Why this account cannot be selected. Present means the choice is refused, and says so. */
+  unselectableReason?: string | null;
+  /** A selection is in flight for this card. */
+  selecting?: boolean;
   /** `list` fills the width, `strip` is a fixed-width card in a sideways scroller, `grid`
    *  fills a cell of the fullscreen grid. */
   layout?: "list" | "strip" | "grid";
@@ -50,6 +60,7 @@ const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } 
 
 export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
+  onSelect, unselectableReason, selecting,
   layout = "list",
 }: AccountCardProps) {
   const { usage } = entry;
@@ -78,6 +89,10 @@ export function AccountCard({
     ? new Date(grantExpiresAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
     : null;
   const hasActions = Boolean(onToggle || onDelete || onExport || onViewProfile);
+  // An expired account is already refused everywhere else on this card; folding it in here
+  // keeps one answer to "can this serve" rather than two that can disagree.
+  const refusedReason = isExpired ? "Token expired — sign in again" : unselectableReason ?? null;
+  const canSelect = Boolean(onSelect) && !isActive && !refusedReason && !selecting;
 
   const layoutClass = layout === "list"
     ? ""
@@ -220,6 +235,33 @@ export function AccountCard({
           <AccountHint className={ts.color} hint={ts.tip}>© {ts.label}</AccountHint>
         )}
       </div>
+
+      {/* Selection lives in its own full-width row rather than as another icon beside the
+          name: the header icons are 32px and already tight, while this is the one control
+          a thumb reaches for on a phone. Full width clears the 44px touch minimum without
+          resizing its neighbours. */}
+      {onSelect && (
+        <button
+          type="button"
+          onClick={() => canSelect && onSelect(entry.accountId)}
+          disabled={!canSelect}
+          title={refusedReason ?? (isActive ? "Already serving this chat" : "Use this account for this chat")}
+          className={[
+            "w-full min-h-[44px] rounded text-[11px] font-medium transition-colors",
+            isActive
+              ? "text-primary/70 cursor-default"
+              : canSelect
+                ? "text-text-secondary hover:text-foreground hover:bg-surface-elevated cursor-pointer"
+                : "text-text-subtle cursor-not-allowed",
+          ].join(" ")}
+        >
+          {isActive
+            ? "Serving this chat"
+            : selecting
+              ? "Switching…"
+              : refusedReason ?? "Use for this chat"}
+        </button>
+      )}
     </AccountCardShell>
   );
 }

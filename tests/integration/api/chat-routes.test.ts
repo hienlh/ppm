@@ -202,3 +202,112 @@ describe("Chat REST API", () => {
     });
   });
 });
+
+describe("POST /chat/sessions — redeeming the account a tab claimed", () => {
+  it("binds an account the server recognises", async () => {
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const acc = accountService.add({
+      email: "claimed@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", accountId: acc.id }),
+    });
+    const json = await res.json() as any;
+    expect(res.status).toBe(201);
+    expect(getSessionAccount(json.data.id)).toBe(acc.id);
+  });
+
+  it("ignores an unknown account id instead of failing the request", async () => {
+    // The id comes from a browser and can be stale — a tab left open while the account was
+    // deleted. Losing the message over it would be a far worse outcome than routing normally.
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", accountId: "no-such-account" }),
+    });
+    const json = await res.json() as any;
+    expect(res.status).toBe(201);
+    expect(getSessionAccount(json.data.id)).toBeNull();
+  });
+
+  it("ignores a disabled account id", async () => {
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const acc = accountService.add({
+      email: "parked@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+    accountService.setDisabled(acc.id);
+
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", accountId: acc.id }),
+    });
+    const json = await res.json() as any;
+    expect(getSessionAccount(json.data.id)).toBeNull();
+  });
+});
+
+describe("PUT /chat/sessions/:id/account — the user picking an account by hand", () => {
+  async function newSession() {
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock" }),
+    });
+    return ((await res.json()) as any).data.id as string;
+  }
+
+  it("moves a live session onto the chosen account", async () => {
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const target = accountService.add({
+      email: "chosen@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+    const sessionId = await newSession();
+
+    const res = await req(`/chat/sessions/${sessionId}/account`, {
+      method: "PUT",
+      body: JSON.stringify({ accountId: target.id }),
+    });
+    expect(res.status).toBe(200);
+    expect(getSessionAccount(sessionId)).toBe(target.id);
+  });
+
+  it("refuses a disabled account and says so, rather than failing silently", async () => {
+    // Unlike the same choice at session creation, this one is a button the user just
+    // pressed — swallowing it would read as a broken control.
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const parked = accountService.add({
+      email: "parked2@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+    accountService.setDisabled(parked.id);
+    const sessionId = await newSession();
+
+    const res = await req(`/chat/sessions/${sessionId}/account`, {
+      method: "PUT",
+      body: JSON.stringify({ accountId: parked.id }),
+    });
+    expect(res.status).toBe(400);
+    const json = await res.json() as any;
+    expect(json.error).toContain("cannot serve");
+  });
+
+  it("requires an accountId", async () => {
+    const sessionId = await newSession();
+    const res = await req(`/chat/sessions/${sessionId}/account`, {
+      method: "PUT",
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+});

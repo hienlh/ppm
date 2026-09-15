@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
-import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, type CodexStrategy } from "../../services/codex-account.service.ts";
+import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, type CodexStrategy } from "../../services/codex-account.service.ts";
 import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 
@@ -11,6 +11,46 @@ codexAccountsRoutes.get("/", (c) => c.json(ok({ accounts: listCodexAccounts(), s
 
 /** Per-account quota map { [accountId]: UsageInfo }. */
 codexAccountsRoutes.get("/usage", async (c) => c.json(ok(await getAllCodexUsages())));
+
+/**
+ * POST /api/codex-accounts/pick — claim the account that will serve a new chat tab.
+ *
+ * Mirrors the Claude side: a consuming pick, so round-robin advances and consecutive tabs
+ * land on different accounts. Usage is read once here and handed to the selector, which is
+ * what lets it skip accounts with no five-hour room left — the synchronous `peekCodexAccount`
+ * has no way to reach that data, which is why the toolbar could never name an account before
+ * the first turn under round-robin.
+ *
+ * Null when no account is managed: chats then run on the ambient ~/.codex login, which has
+ * no id to bind and nothing to choose between.
+ */
+codexAccountsRoutes.post("/pick", async (c) => {
+  if (listCodexAccounts().length === 0) return c.json(ok(null));
+  const usages = await getAllCodexUsages();
+  // A failed usage fetch yields {} → +Infinity, which the selector reads as "unknown", not
+  // as "capped": an account we could not measure stays a candidate.
+  const picked = selectCodexAccount({ usageOf: (id) => usages[id]?.fiveHour ?? Number.POSITIVE_INFINITY });
+  if (!picked) return c.json(ok(null));
+  return c.json(ok({ id: picked.id, label: picked.label }));
+});
+
+/**
+ * PATCH /api/codex-accounts/:id — switch an account on or off.
+ *
+ * Mirrors the shape of the Claude route so the two panels can share one control, but not its
+ * pre-flight token check: that exists for Anthropic OAuth refresh tokens, which have nothing
+ * to do with how a Codex account authenticates. Nothing to prove here means this answers
+ * immediately instead of taking the better part of a minute.
+ */
+codexAccountsRoutes.patch("/:id", async (c) => {
+  const body = await c.req.json<{ status?: string }>().catch(() => ({} as { status?: string }));
+  if (body.status !== "active" && body.status !== "disabled") {
+    return c.json(err("status must be active or disabled"), 400);
+  }
+  const updated = setCodexAccountStatus(c.req.param("id"), body.status);
+  if (!updated) return c.json(err("Account not found"), 404);
+  return c.json(ok(updated));
+});
 
 /** Set the selection strategy. */
 codexAccountsRoutes.put("/strategy", async (c) => {

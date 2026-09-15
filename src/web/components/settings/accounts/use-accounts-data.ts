@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  getAccounts, getActiveAccount, getAllAccountUsages,
+  getAccounts, getActiveAccount, getAllAccountUsages, patchAccount,
   type AccountInfo, type AccountUsageEntry,
 } from "../../../lib/api-settings";
 
@@ -22,6 +22,10 @@ export interface AccountsData {
   /** Accounts whose utilisation changed on the last refresh — briefly highlighted. */
   flashIds: Set<string>;
   reload: () => Promise<void>;
+  /** Switch an account on or off, reloading when it lands. Resolves to an error message, or null. */
+  toggle: (id: string, status: string) => Promise<string | null>;
+  /** Account whose switch is mid-flight, or null. */
+  togglingId: string | null;
 }
 
 /** Utilisation across all four buckets, as a comparable string. */
@@ -37,6 +41,7 @@ export function useAccountsData(enabled = true): AccountsData {
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const prevUsages = useRef<AccountUsageEntry[]>([]);
   const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -72,10 +77,35 @@ export function useAccountsData(enabled = true): AccountsData {
     setRefreshing(false);
   }, []);
 
+  /**
+   * Switch an account on or off.
+   *
+   * Lives here rather than in either pane so Settings and the chat toolbar drive one
+   * implementation. Two of them is how those screens drifted apart before, and the drift is
+   * invisible until someone notices the same switch behaving differently in two places.
+   *
+   * Returns the server's message instead of throwing: enabling a parked account makes the
+   * server prove its token first, which can take most of a minute and can come back 400 with
+   * a message worth reading — "sign in again" and "could not reach Anthropic" call for
+   * different actions, and swallowing the difference leaves the switch silently snapping back.
+   */
+  const toggle = useCallback(async (id: string, status: string): Promise<string | null> => {
+    setTogglingId(id);
+    let error: string | null = null;
+    try {
+      await patchAccount(id, { status: status === "disabled" ? "active" : "disabled" });
+    } catch (e) {
+      error = (e as Error).message;
+    }
+    setTogglingId(null);
+    await reload();
+    return error;
+  }, [reload]);
+
   useEffect(() => {
     if (enabled) void reload();
     return () => clearTimeout(flashTimer.current);
   }, [enabled, reload]);
 
-  return { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload };
+  return { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload, toggle, togglingId };
 }

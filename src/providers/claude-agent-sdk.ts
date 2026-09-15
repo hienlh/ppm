@@ -812,6 +812,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (oldCount != null) { this.messageCount.set(newId, oldCount); this.messageCount.delete(sessionId); }
       const oldStream = this.streamingSessions.get(sessionId);
       if (oldStream) { this.streamingSessions.set(newId, oldStream); this.streamingSessions.delete(sessionId); }
+      // The account binding lives in the database under the old id, and the lookup below
+      // runs after this block — so without moving it, a session that migrates silently
+      // loses whichever account was chosen for it and gets re-routed to another one. That
+      // costs a full prompt-cache write, and when the choice was the user's it also
+      // quietly overrides them.
+      const boundAccount = getSessionAccount(sessionId);
+      if (boundAccount) accountSelector.bindSession(newId, boundAccount);
       yield { type: "session_migrated" as const, oldSessionId: sessionId, newSessionId: newId };
       sessionId = newId;
     }

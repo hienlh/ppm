@@ -518,6 +518,114 @@ describe("peek()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Shared selectability filter.
+//
+// peek() answers the "which account will serve this" question the UI asks, and next()
+// answers it for the turn that actually runs. When the two filter differently, the UI
+// names an account the very next turn refuses — which is the bug this covers.
+// ---------------------------------------------------------------------------
+describe("selectability filter shared by next() and peek()", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+    accountSelector.setStrategy("round-robin");
+  });
+
+  afterEach(() => {
+    setDb(openTestDb());
+  });
+
+  /** Account whose access token has expired and which has no refresh token to recover with. */
+  function addDeadTokenAccount(email: string) {
+    return accountService.add({
+      email,
+      accessToken: `access-${email}`,
+      refreshToken: "",
+      expiresAt: Math.floor(Date.now() / 1000) - 3600,
+      label: email,
+    });
+  }
+
+  it("next() never picks an account whose token expired with no refresh token", () => {
+    const dead = addDeadTokenAccount("dead@test.com");
+    const live = addAccount("live@test.com");
+
+    for (let i = 0; i < 4; i++) {
+      expect(accountSelector.next()!.id).toBe(live.id);
+    }
+    expect(dead.id).not.toBe(live.id);
+  });
+
+  it("next() returns null when the only account has a dead token", () => {
+    addDeadTokenAccount("dead@test.com");
+    expect(accountSelector.next()).toBeNull();
+  });
+
+  it("peek() never names an account with a dead token", () => {
+    addDeadTokenAccount("dead@test.com");
+    const live = addAccount("live@test.com");
+    expect(accountSelector.peek()!.id).toBe(live.id);
+  });
+
+  it("a dead token is not reachable through the all-capped fallback", () => {
+    // The quota filter deliberately falls back to "take one anyway" when nothing has room.
+    // A dead token must not ride in on that fallback: it cannot serve a turn at all.
+    const dead = addDeadTokenAccount("dead@test.com");
+    const capped = addAccount("capped@test.com");
+    insertUsage(dead.id, { fiveHour: 0.10, weekly: 0.10 });
+    insertUsage(capped.id, { fiveHour: 0.99, weekly: 0.99 });
+
+    expect(accountSelector.next()!.id).toBe(capped.id);
+  });
+
+  it("next() skips an account over the weekly cap while another has room", () => {
+    const spent = addAccount("spent@test.com");
+    const fresh = addAccount("fresh@test.com");
+    insertUsage(spent.id, { fiveHour: 0.10, weekly: 1.0 });
+    insertUsage(fresh.id, { fiveHour: 0.10, weekly: 0.10 });
+
+    for (let i = 0; i < 4; i++) {
+      expect(accountSelector.next()!.id).toBe(fresh.id);
+    }
+  });
+
+  it("peek() agrees with next() when one account is over the 5-hour cap", () => {
+    const capped = addAccount("capped@test.com");
+    const fresh = addAccount("fresh@test.com");
+    insertUsage(capped.id, { fiveHour: 0.96, weekly: 0.10 });
+    insertUsage(fresh.id, { fiveHour: 0.10, weekly: 0.10 });
+
+    expect(accountSelector.peek()!.id).toBe(fresh.id);
+    expect(accountSelector.next()!.id).toBe(fresh.id);
+  });
+
+  it("leaves an undecryptable account in the pool so the machine-key diagnostic survives", () => {
+    // A token encrypted with a different machine key is a distinct failure with its own
+    // message ("copy ~/.ppm/account.key from the original machine"). The token filter must
+    // read whether a refresh token is stored, not whether it decrypts — otherwise such an
+    // account is filtered out here and the caller reports it as merely disabled.
+    const a = addAccount("a@test.com");
+    updateAccount(a.id, { expires_at: Math.floor(Date.now() / 1000) - 3600 });
+
+    // Refresh token is present but unreadable — garbage where ciphertext should be.
+    updateAccount(a.id, { access_token: "not-encrypted", refresh_token: "not-encrypted" });
+
+    expect(accountSelector.next()).toBeNull();
+    expect(accountSelector.lastFailReason).toBe("all_decrypt_failed");
+  });
+
+  it("still returns an account when every account is capped (fallback preserved)", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    insertUsage(a.id, { fiveHour: 0.99, weekly: 0.99 });
+    insertUsage(b.id, { fiveHour: 0.99, weekly: 0.99 });
+
+    const picked = accountSelector.next();
+    expect(picked).not.toBeNull();
+    expect([a.id, b.id]).toContain(picked!.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Rate-limit account switching (provider.switchOnRateLimit)
 // Regression: a rate-limited account must NOT be re-picked; when no alternate
 // account exists, the helper must return null (caller stops instead of looping).

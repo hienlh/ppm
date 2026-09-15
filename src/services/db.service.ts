@@ -1104,6 +1104,20 @@ export function runMigrations(database: Database): void {
     database.exec(`PRAGMA user_version = 46;`);
   }
   }
+
+  if (current < 46) {
+    // Codex accounts had no way to be switched off. Claude accounts have had `status` since
+    // the beginning, so the chat panel could offer a toggle there and not here — the same
+    // control meaning two different amounts of work depending on which provider you were
+    // looking at.
+    //
+    // Two states, not Claude's three: nothing puts a Codex account into cooldown, and adding
+    // a state no code can currently produce would just be a branch that never runs.
+    //
+    // Defaults to enabled so an upgrade changes nothing about which accounts are in play.
+    try { database.exec(`ALTER TABLE codex_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 46;`);
+  }
 }
 
 // ---------------------------------------------------------------------------
