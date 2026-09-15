@@ -77,8 +77,12 @@ interface FileStore {
   error: string | null;
   expandedPaths: Set<string>;
   loadedPaths: Set<string>;
-  /** In-flight AbortControllers keyed by folder path */
-  inflight: Map<string, AbortController>;
+  /**
+   * Directory loads on their way, by path. The promise is held alongside the
+   * controller so a second caller for the same path can wait for the answer
+   * already coming rather than asking for it again.
+   */
+  inflight: Map<string, InflightLoad>;
   indexStatus: "idle" | "loading" | "ready" | "error";
   selectedFiles: string[];
   inlineAction: InlineAction | null;
@@ -131,6 +135,11 @@ function queuePrefetchFor(
   );
 }
 
+interface InflightLoad {
+  controller: AbortController;
+  promise: Promise<void>;
+}
+
 export const useFileStore = create<FileStore>((set, get) => ({
   tree: [],
   fileIndex: [],
@@ -138,7 +147,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   error: null,
   expandedPaths: new Set<string>(),
   loadedPaths: new Set<string>(),
-  inflight: new Map<string, AbortController>(),
+  inflight: new Map<string, InflightLoad>(),
   indexStatus: "idle",
   selectedFiles: [],
   inlineAction: null,
@@ -174,45 +183,58 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
     // Idempotent guard — skip if already loaded
     if (state.loadedPaths.has(folderPath)) return;
-    // Prefetch never preempts an in-flight user-initiated request
-    if (opts?.prefetch && state.inflight.has(folderPath)) return;
 
-    // Abort any existing in-flight request for this path
+    // A request for this path is already on its way, and it is the same URL
+    // carrying the same answer — so wait for it. It used to be aborted and
+    // reissued, which meant clicking a folder while its prefetch was still in
+    // flight threw that work away and paid the round trip a second time. The
+    // prefetch exists to hide exactly that round trip, so the click that
+    // benefits most from it was the one that cancelled it.
     const existing = state.inflight.get(folderPath);
-    if (existing) existing.abort();
+    if (existing) return existing.promise;
 
     const controller = new AbortController();
+    // The entry goes into the map before the request starts, so anything asking
+    // for this path finds it; `promise` is filled in on the next line, and no
+    // other code can run in between.
+    const load: InflightLoad = { controller, promise: undefined as unknown as Promise<void> };
     const inflight = new Map(state.inflight);
-    inflight.set(folderPath, controller);
+    inflight.set(folderPath, load);
     set({ inflight });
 
-    try {
-      const encodedPath = encodeURIComponent(folderPath);
-      const data = await api.get<FileDirEntry[]>(
-        `${projectUrl(projectName)}/files/list?path=${encodedPath}`,
-        { signal: controller.signal },
-      );
+    const clearInflight = () => {
+      const next = new Map(get().inflight);
+      // Only our own entry — a reset may already have replaced the map.
+      if (next.get(folderPath) === load) next.delete(folderPath);
+      return next;
+    };
 
-      // Check if aborted between request start and completion (defense in depth)
-      if (controller.signal.aborted) return;
+    load.promise = (async () => {
+      try {
+        const encodedPath = encodeURIComponent(folderPath);
+        const data = await api.get<FileDirEntry[]>(
+          `${projectUrl(projectName)}/files/list?path=${encodedPath}`,
+          { signal: controller.signal },
+        );
 
-      const children = entriesToNodes(data, folderPath);
-      const currentState = get();
-      const newTree = mergeChildren(currentState.tree, folderPath, children);
-      const newLoadedPaths = new Set(currentState.loadedPaths);
-      newLoadedPaths.add(folderPath);
-      const newInflight = new Map(currentState.inflight);
-      newInflight.delete(folderPath);
-      set({ tree: newTree, loadedPaths: newLoadedPaths, inflight: newInflight });
-      // One level ahead only: prefetched loads don't cascade further
-      if (!opts?.prefetch) queuePrefetchFor(get, projectName, children);
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
-      // Remove from inflight on error
-      const newInflight = new Map(get().inflight);
-      newInflight.delete(folderPath);
-      set({ inflight: newInflight });
-    }
+        // Check if aborted between request start and completion (defense in depth)
+        if (controller.signal.aborted) return;
+
+        const children = entriesToNodes(data, folderPath);
+        const currentState = get();
+        const newTree = mergeChildren(currentState.tree, folderPath, children);
+        const newLoadedPaths = new Set(currentState.loadedPaths);
+        newLoadedPaths.add(folderPath);
+        set({ tree: newTree, loadedPaths: newLoadedPaths, inflight: clearInflight() });
+        // One level ahead only: prefetched loads don't cascade further
+        if (!opts?.prefetch) queuePrefetchFor(get, projectName, children);
+      } catch (err) {
+        set({ inflight: clearInflight() });
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    })();
+
+    return load.promise;
   },
 
   loadPathsBatch: async (projectName: string, paths: string[]) => {
@@ -334,7 +356,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   reset: () => {
     cancelPrefetch();
     // Abort all in-flight requests
-    for (const ctrl of get().inflight.values()) ctrl.abort();
+    for (const load of get().inflight.values()) load.controller.abort();
     set({
       tree: [],
       fileIndex: [],

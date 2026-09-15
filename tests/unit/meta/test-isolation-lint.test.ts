@@ -92,3 +92,35 @@ describe("e2e access to the real PPM directory", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("a test file names no one machine's checkout", () => {
+  /**
+   * An absolute path into somebody's home directory is not portable and does
+   * not fail loudly. `mock.module("/home/<user>/Projects/ppm/src/…")` in a
+   * different clone — or in a second worktree of the same clone — names a file
+   * that is not the one under test, so the mock silently does nothing and the
+   * real module is loaded instead. That is what happened here: the two
+   * explorer prefetch tests passed in one directory and failed in another, on
+   * a network call nobody made.
+   *
+   * The repository root is the only absolute path a test may compute, and it
+   * computes it from `import.meta.dir`.
+   */
+  test("no test imports or mocks through an absolute home path", () => {
+    const offenders: string[] = [];
+    const HOME_PATH = /["'](?:\/(?:home|Users)\/[^"'\s]+|[A-Za-z]:[\\/]Users[\\/][^"'\s]+)["']/g;
+    for (const file of FILES) {
+      const src = readFileSync(file, "utf8");
+      src.split("\n").forEach((line, i) => {
+        const trimmed = line.trim();
+        // Prose, including this rule's own example of the thing it forbids.
+        if (trimmed.startsWith("*") || trimmed.startsWith("//") || trimmed.startsWith("/*")) return;
+        // Only where it decides which module is loaded.
+        if (!/\b(?:import|require|mock\.module)\s*\(/.test(line)) return;
+        const hit = line.match(HOME_PATH);
+        if (hit) offenders.push(`${relative(TESTS_ROOT, file)}:${i + 1} → ${hit[0]}`);
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+});

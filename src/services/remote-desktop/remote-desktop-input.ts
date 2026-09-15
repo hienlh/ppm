@@ -3,11 +3,17 @@
  * from the registry below; the session and routes never import a platform module directly.
  *
  * Every backend module is safe to *import* anywhere (FFI is loaded lazily inside each), so the
- * registry can hold them all statically — only the selected one ever `dlopen`s. Adding Linux =
- * `remote-desktop-input-linux.ts` + one line in `BACKENDS`.
+ * registry can hold them all statically — only the selected one ever `dlopen`s.
+ *
+ * Linux is the one platform whose backend cannot be decided by `process.platform` alone: XTEST
+ * is an X server extension and a Wayland compositor has no equivalent, so the choice is made
+ * per *session* inside `linuxInputBackend`.
  */
 import { win32InputBackend } from "./remote-desktop-input-win32.ts";
 import { darwinInputBackend } from "./remote-desktop-input-darwin.ts";
+import { x11InputBackend } from "./remote-desktop-input-linux.ts";
+import { uinputInputBackend } from "./remote-desktop-input-uinput.ts";
+import { detectLinuxSession } from "./remote-desktop-linux-session.ts";
 import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 
 export { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend };
@@ -17,8 +23,23 @@ const BACKENDS: Partial<Record<NodeJS.Platform, RemoteInputBackend>> = {
   darwin: darwinInputBackend,
 };
 
-/** The backend for this host, or null when the platform has none. */
-export function getInputBackend(platform: NodeJS.Platform = process.platform): RemoteInputBackend | null {
+/** Linux picks by session, not by platform: XTEST is an X server extension, so a Wayland
+ *  compositor is driven as a virtual input device through uinput instead. Returns null on a
+ *  host with no graphical session at all (a headless server, a CI container) so
+ *  `isInputAvailable()` stays honest there. */
+function linuxInputBackend(session = detectLinuxSession()): RemoteInputBackend | null {
+  if (!session) return null;
+  return session.kind === "x11" ? x11InputBackend : uinputInputBackend;
+}
+
+/** The backend for this host, or null when the platform has none. `session` is only read on
+ *  Linux and is passed explicitly by tests — it otherwise probes the host, which a headless
+ *  runner answers differently from a desktop. */
+export function getInputBackend(
+  platform: NodeJS.Platform = process.platform,
+  session = platform === "linux" ? detectLinuxSession() : null,
+): RemoteInputBackend | null {
+  if (platform === "linux") return linuxInputBackend(session);
   return BACKENDS[platform] ?? null;
 }
 
@@ -29,25 +50,28 @@ export function isInputAvailable(): boolean {
   return getInputBackend() !== null;
 }
 
+/** Throws `RemoteInputUnavailableError`. Every caller below is `async` on purpose, so an
+ *  unsupported platform surfaces as a *rejected promise* rather than a synchronous throw —
+ *  the session forwards input from a WS message handler and only ever `await`s these. */
 function required(): RemoteInputBackend {
   const backend = getInputBackend();
   if (!backend) throw new RemoteInputUnavailableError();
   return backend;
 }
 
-export function injectPointer(
+export async function injectPointer(
   xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null, target: InputTargetRect | null = null,
 ): Promise<void> {
   return required().pointer(xFrac, yFrac, button, down, target);
 }
 
-export function injectWheel(deltaY: number): Promise<void> {
+export async function injectWheel(deltaY: number): Promise<void> {
   // A zero delta is a no-op on every OS — settle it here so no backend is even consulted.
-  if (Math.round(deltaY) === 0) return Promise.resolve();
+  if (Math.round(deltaY) === 0) return;
   return required().wheel(deltaY);
 }
 
-export function injectKey(code: string, down: boolean): Promise<boolean> {
+export async function injectKey(code: string, down: boolean): Promise<boolean> {
   return required().key(code, down);
 }
 

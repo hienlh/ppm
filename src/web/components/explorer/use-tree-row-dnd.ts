@@ -61,8 +61,6 @@ export interface TreeRowDndOptions {
   path: string;
   name: string;
   isDir: boolean;
-  /** Flat rows: dropping on a file targets its parent directory. */
-  effectivePath: string;
   isSelected: boolean;
   selectedFiles: string[];
   isExpanded: boolean;
@@ -88,7 +86,7 @@ export interface TreeRowDnd {
 
 export function useTreeRowDnd(options: TreeRowDndOptions): TreeRowDnd {
   const {
-    path, name, isDir, effectivePath, isSelected, selectedFiles, isExpanded,
+    path, name, isDir, isSelected, selectedFiles, isExpanded,
     projectName, projectRoot, toggleExpand, onFileDrop, transferRun,
   } = options;
 
@@ -111,7 +109,8 @@ export function useTreeRowDnd(options: TreeRowDndOptions): TreeRowDnd {
     extraData: { [TREE_LEGACY_DRAG_MIME]: isDir ? `${path}/` : path },
   });
 
-  const dropTargetDir = isDir ? effectivePath : parentDirOf(path);
+  // Dropping on a file targets its parent directory.
+  const dropTargetDir = isDir ? path : parentDirOf(path);
   const dropTargetAbsolute = isDir && projectRoot ? absoluteProjectPath(projectRoot, dropTargetDir) : null;
 
   const entryTarget = useEntryDropTarget({

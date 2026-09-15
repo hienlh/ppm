@@ -11,7 +11,20 @@
  *
  * Windows: gdigrab `desktop` grabs the whole virtual screen and SendInput maps 0..65535 onto
  * that same rectangle, so there is exactly one "display" and no offsets to apply.
+ *
+ * X11: monitors come from RandR 1.5 `XRRGetMonitors` through FFI, NOT from parsing `xrandr`.
+ * The binary is a separate package from the library and is genuinely absent on hosts that have
+ * the library (verified: this dev host has `libXrandr.so.2` and no `xrandr`), so a shell-out
+ * reports "no displays" on a working desktop. X11 puts every monitor in one root-window
+ * coordinate space — the same model as the Windows virtual desktop — so `x`/`y` are real
+ * offsets and a per-monitor capture is a crop of the root window, not a separate device.
+ *
+ * Wayland: deliberately empty. There is no client-side monitor list to offer — the desktop
+ * portal's own dialog is what picks the screen, and its answer arrives as a PipeWire node.
  */
+
+import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-session.ts";
+import { asPointer, getX11 } from "./remote-desktop-x11.ts";
 
 export interface RemoteDisplay {
   /** Stable per host session (`CGDirectDisplayID` on macOS, `"desktop"` on Windows). */
@@ -29,6 +42,56 @@ export interface RemoteDisplay {
 
 const CACHE_MS = 5000;
 let cache: { at: number; displays: RemoteDisplay[] } | null = null;
+
+/** `XRRMonitorInfo` on x86-64: `Atom name` (8), `Bool primary` (4), `Bool automatic` (4),
+ *  `int noutput` (4), `int x, y, width, height` (16), `int mwidth, mheight` (8), then a
+ *  pointer that forces the trailing 4 bytes of padding. Verified against a real 3440x1440
+ *  monitor: reading `primary`/`x`/`y`/`width`/`height` at these offsets returns 1/0/0/3440/1440. */
+const MONITOR_INFO_SIZE = 56;
+const MONITOR_OFF = { name: 0, primary: 8, x: 20, y: 24, width: 28, height: 32 } as const;
+
+async function listX11Displays(session: LinuxSession): Promise<RemoteDisplay[]> {
+  const conn = await getX11(session);
+  if (!conn) return [];
+  const { ffi, x11, xrandr, dpy } = conn;
+
+  /** No libXrandr: one display covering the whole root window, which is what x11grab
+   *  captures by default anyway. */
+  const wholeScreen = (): RemoteDisplay[] => [{
+    id: "screen", label: "Whole screen", primary: true, x: 0, y: 0,
+    width: x11.XDisplayWidth(dpy, conn.screen), height: x11.XDisplayHeight(dpy, conn.screen),
+    captureIndex: 0,
+  }];
+  if (!xrandr) return wholeScreen();
+
+  const countOut = new Int32Array(1);
+  const monitors = xrandr.XRRGetMonitors(dpy, conn.root, 1, ffi.ptr(countOut));
+  const count = countOut[0] ?? 0;
+  if (!monitors || count <= 0) return wholeScreen();
+
+  const displays: RemoteDisplay[] = [];
+  for (let i = 0; i < count; i++) {
+    const base = asPointer(Number(monitors) + i * MONITOR_INFO_SIZE);
+    const namePtr = x11.XGetAtomName(dpy, ffi.read.u64(base, MONITOR_OFF.name));
+    let label = `Display ${i + 1}`;
+    if (namePtr) {
+      label = new ffi.CString(namePtr).toString();
+      x11.XFree(namePtr);
+    }
+    displays.push({
+      id: label,
+      label,
+      primary: ffi.read.i32(base, MONITOR_OFF.primary) !== 0,
+      x: ffi.read.i32(base, MONITOR_OFF.x),
+      y: ffi.read.i32(base, MONITOR_OFF.y),
+      width: ffi.read.i32(base, MONITOR_OFF.width),
+      height: ffi.read.i32(base, MONITOR_OFF.height),
+      captureIndex: i,
+    });
+  }
+  xrandr.XRRFreeMonitors(monitors);
+  return displays.length > 0 ? displays : wholeScreen();
+}
 
 async function listDarwinDisplays(): Promise<RemoteDisplay[]> {
   const { dlopen, FFIType: T, ptr } = await import("bun:ffi");
@@ -71,9 +134,22 @@ async function listDarwinDisplays(): Promise<RemoteDisplay[]> {
   return displays;
 }
 
-export async function listDisplays(platform: NodeJS.Platform = process.platform): Promise<RemoteDisplay[]> {
+/** `linuxSession` is passed explicitly by tests: it otherwise probes the host, and "is there
+ *  an X server" is exactly what a headless runner answers differently from a desktop. */
+export async function listDisplays(
+  platform: NodeJS.Platform = process.platform,
+  linuxSession = platform === "linux" ? detectLinuxSession() : null,
+): Promise<RemoteDisplay[]> {
   if (platform === "win32") {
     return [{ id: "desktop", label: "All displays", primary: true, x: 0, y: 0, width: 0, height: 0, captureIndex: 0 }];
+  }
+  if (platform === "linux") {
+    // Wayland: the portal dialog picks the screen, so there is nothing to list here.
+    if (linuxSession?.kind !== "x11") return [];
+    if (cache && Date.now() - cache.at < CACHE_MS) return cache.displays;
+    const displays = await listX11Displays(linuxSession);
+    cache = { at: Date.now(), displays };
+    return displays;
   }
   if (platform !== "darwin") return [];
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.displays;
