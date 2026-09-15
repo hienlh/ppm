@@ -306,6 +306,58 @@ describe("a file that moved on after the hunks were listed", () => {
     expect(readFileSync(join(repo, "file.txt"), "utf-8")).toBe(edited);
   });
 
+  it("refuses to discard the surviving twin of an identical change", async () => {
+    // The wiring test for `refuseMoved`, not the arithmetic — that lives in
+    // unified-diff.test.ts. What this pins is that `discard` is the caller that
+    // asks for it, because the unit test passes happily if it stops.
+    //
+    // Two identical blocks under the same heading produce two hunks with the
+    // same fingerprint, so only the index tells them apart. Revert one copy by
+    // hand and the request still matches the *other* — which discard would throw
+    // away with nothing to recover it from.
+    const block = ["p", "q", "r", "beta", "s", "t", "u"];
+    // Indented, so git's funcname pattern skips these and both hunks take the
+    // same "def f():" heading; the heading is part of the fingerprint.
+    const gap = Array.from({ length: 10 }, (_, i) => `    filler-${i + 1}`);
+    const build = (first: string, second: string) => [
+      "def f():", ...block.map((l) => (l === "beta" ? first : l)),
+      ...gap,
+      "def f():", ...block.map((l) => (l === "beta" ? second : l)),
+    ].join("\n") + "\n";
+
+    writeFileSync(join(repo, "file.txt"), build("beta", "beta"));
+    await git(["add", "file.txt"]);
+    await git(["commit", "-qm", "twins"]);
+
+    writeFileSync(join(repo, "file.txt"), build("BETA", "BETA"));
+    const listed = await gitHunksService.getHunks(repo, "file.txt", "worktree");
+    expect(listed.hunks).toHaveLength(2);
+    expect(listed.hunks[0]!.id).toBe(listed.hunks[1]!.id);
+    const second = [{ hunk: 1, id: listed.hunks[1]!.id }];
+
+    // The user puts the second copy back; only the first edit is left, and it
+    // answers to the fingerprint the request carries.
+    const edited = build("BETA", "beta");
+    writeFileSync(join(repo, "file.txt"), edited);
+
+    await expect(gitHunksService.discard(repo, "file.txt", second))
+      .rejects.toThrow(/moved in the file since it was listed/);
+    expect(readFileSync(join(repo, "file.txt"), "utf-8")).toBe(edited);
+  });
+
+  it("still stages a hunk that only moved down the list", async () => {
+    // The counterpart: staging can be undone, so following a hunk that shifted
+    // is a convenience worth keeping. This is what a blanket refusal would cost.
+    makeTwoDistantChanges();
+    const second = await pick("file.txt", "worktree", [1]);
+
+    // Drop the earlier change, so the ticked hunk is now index 0 rather than 1.
+    writeFileSync(join(repo, "file.txt"), withChanges({ 18: "EIGHTEEN-changed" }));
+
+    await gitHunksService.stage(repo, "file.txt", second);
+    expect(await git(["diff", "--cached"])).toContain("EIGHTEEN-changed");
+  });
+
   it("refuses a selection from a client too old to send an id", async () => {
     makeTwoDistantChanges();
 

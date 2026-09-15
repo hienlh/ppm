@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Staging, unstaging and discarding at hunk / line granularity.
  *
  * Each operation is a patch fed to `git apply` on stdin. `simple-git` has no
@@ -51,7 +51,7 @@ interface GitResult {
  *
  * Chunks are collected as `Buffer` and decoded **once**. Decoding each chunk as
  * it arrives (`stdout += c.toString()`) splits any multi-byte sequence that
- * straddles a chunk boundary into two invalid halves, which become U+FFFD — and
+ * straddles a chunk boundary into two invalid halves, which become U+FFFD â€” and
  * because a patch built from that text still *applies*, the corruption lands in
  * the index with no error anywhere. Measured on a 2 MB all-Japanese diff: 43
  * mangled lines.
@@ -59,7 +59,7 @@ interface GitResult {
  * The decode is **latin1**, not utf8, so it is a lossless byte round-trip: the
  * patch written back to `git apply` is the bytes git gave us, whatever the
  * file's encoding actually is (a Latin-1 file could not be hunk-staged at all
- * before). Everything the parser looks at — `@@`, `+`, `-`, `\` — is ASCII and
+ * before). Everything the parser looks at â€” `@@`, `+`, `-`, `\` â€” is ASCII and
  * reads the same either way. Only text leaving for the browser is turned back
  * into UTF-8, by `toDisplay` below.
  */
@@ -136,7 +136,7 @@ class GitHunksService {
    * is describing a file rather than changing one: doing it to the user's index
    * turns `?? file` into `A file` behind their back, on nothing more than
    * opening a dialog, and the exit code went unread so a failure showed up as
-   * "no changes" instead. It goes into a throwaway index instead — git reads the
+   * "no changes" instead. It goes into a throwaway index instead â€” git reads the
    * same config and the same `.gitattributes`, normalises line endings the same
    * way and produces the same bytes, while the real index is never opened for
    * writing. `git apply --cached` needs no entry of its own to add a new file,
@@ -181,7 +181,7 @@ class GitHunksService {
       // Belt and braces: a future flag or a repository config that reintroduces
       // rename headers must fail loudly rather than reach `git apply --reverse`.
       if (/^rename (from|to) /m.test(res.stdout)) {
-        throw new Error("This file was renamed — stage or unstage it whole rather than by hunk.");
+        throw new Error("This file was renamed â€” stage or unstage it whole rather than by hunk.");
       }
       return res.stdout;
     } finally {
@@ -213,20 +213,23 @@ class GitHunksService {
     filePath: string,
     scope: HunkScope,
     requested: HunkRequest[],
-    apply: { cached: boolean; reverse: boolean },
+    apply: { cached: boolean; reverse: boolean; refuseMoved?: boolean },
   ): Promise<void> {
     assertSafeFilePath(filePath);
     if (requested.length === 0) throw new Error("No hunks were selected.");
 
     const parsed = parseUnifiedDiff(await this.rawDiff(projectPath, filePath, scope));
-    if (parsed.binary) throw new Error("A binary file cannot be staged by hunk — stage the whole file.");
+    if (parsed.binary) throw new Error("A binary file cannot be staged by hunk â€” stage the whole file.");
     if (parsed.hunks.length === 0) throw new Error("This file has no changes to apply.");
 
     // The client's indexes describe the diff it was *shown*; this diff was read
     // again just now. Resolving by content is what makes the two the same list
-    // — or refuses. `git apply` cannot be the guard here, because the patch is
+    // â€” or refuses. `git apply` cannot be the guard here, because the patch is
     // built from this fresh parse and therefore always applies cleanly.
-    const selection = selectionFromRequest(parsed, resolveRequestedHunks(parsed, requested));
+    const selection = selectionFromRequest(
+      parsed,
+      resolveRequestedHunks(parsed, requested, { refuseMoved: apply.refuseMoved }),
+    );
     const patch = buildPatch(parsed, selection, { reverse: apply.reverse });
     if (!patch) throw new Error("The selection contains no actual change.");
 
@@ -255,10 +258,22 @@ class GitHunksService {
     await this.applySelection(projectPath, filePath, "index", hunks, { cached: true, reverse: true });
   }
 
-  /** Throw away the selected worktree changes. Not recoverable. */
+  /**
+   * Throw away the selected worktree changes. Not recoverable.
+   *
+   * `refuseMoved` is what separates this from the other two: they can be undone
+   * by staging or unstaging again, so following a hunk that shifted position is
+   * a convenience. Here there is no reflog and no undo, so a hunk that is not
+   * where the client saw it is refused rather than guessed at.
+   */
   async discard(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<void> {
-    await this.applySelection(projectPath, filePath, "worktree", hunks, { cached: false, reverse: true });
+    await this.applySelection(projectPath, filePath, "worktree", hunks, {
+      cached: false,
+      reverse: true,
+      refuseMoved: true,
+    });
   }
 }
 
 export const gitHunksService = new GitHunksService();
+
