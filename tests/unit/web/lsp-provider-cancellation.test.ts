@@ -25,6 +25,10 @@ const monaco = {
   editor: { registerCommand: () => {} },
   languages: new Proxy({} as Record<string, unknown>, {
     get: (_target, name: string) => {
+      // Monaco's own numbering, which is not LSP's: Invoke = 0, TriggerCharacter = 1, where
+      // LSP counts from one. Returning a bare `{}` here made every trigger look like an
+      // invocation and the request went out either way — so the test hung instead of failing.
+      if (name === "CompletionTriggerKind") return { Invoke: 0, TriggerCharacter: 1, TriggerForIncompleteCompletions: 2 };
       if (!name.startsWith("register")) return {};
       return (_language: string, provider: Record<string, (...args: never[]) => unknown>) => {
         for (const key of Object.keys(provider)) {
@@ -151,5 +155,74 @@ describe("every provider forwards Monaco's cancellation", () => {
       }
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe("which characters open the suggest list", () => {
+  const TRIGGER = 1; // Monaco's CompletionTriggerKind.TriggerCharacter — LSP's is 2
+
+  /**
+   * A connection that answers at once.
+   *
+   * Deliberately not the never-settling one above: a regression here makes the request go out,
+   * and against a stub that never answers that shows up as a hung suite rather than a red test.
+   */
+  function answering(completionProvider: Record<string, unknown>) {
+    const asked: Array<Record<string, unknown>> = [];
+    const connection = {
+      statusOf: () => ({ state: "ready", capabilities: { completionProvider } }),
+      request: async (_path: string, _method: string, params: unknown) => {
+        asked.push(params as Record<string, unknown>);
+        return { items: [] };
+      },
+    } as unknown as LspConnection;
+    registerLspDocument(model, { connection, path: "src/a.ts" });
+    return { asked, done: () => unregisterLspDocument(model) };
+  }
+
+  async function complete(
+    context: { triggerKind: number; triggerCharacter?: string },
+    completionProvider: Record<string, unknown>,
+  ) {
+    const state = answering(completionProvider);
+    const result = await providers.get("provideCompletionItems")!.provideCompletionItems!(
+      model as never, { lineNumber: 1, column: 1 } as never, context as never, cancellation() as never,
+    );
+    state.done();
+    return { asked: state.asked, result };
+  }
+
+  it("ignores a character this server never asked for", async () => {
+    // Monaco is told a union of trigger characters, because the provider is registered before
+    // any server is known — and space is in it, for the servers that want it. Answering it for
+    // every server is what put the suggest widget on screen at every press of the space bar,
+    // in every string and every comment.
+    const { asked, result } = await complete(
+      { triggerKind: TRIGGER, triggerCharacter: " " },
+      { triggerCharacters: ["."] },
+    );
+
+    expect(result).toEqual({ suggestions: [] });
+    expect(asked).toEqual([]);
+  });
+
+  it("asks when the character is one the server advertised", async () => {
+    const { asked } = await complete(
+      { triggerKind: TRIGGER, triggerCharacter: "." },
+      { triggerCharacters: [".", " "] },
+    );
+
+    expect(asked).toHaveLength(1);
+    // LSP numbers these from one, Monaco from zero.
+    expect(asked[0]!.context).toEqual({ triggerKind: 2, triggerCharacter: "." });
+  });
+
+  it("still answers an explicit invocation, whatever the server advertised", async () => {
+    // Ctrl+Space arrives as an invocation rather than a character, so it must always go
+    // through — including for a server that advertises no trigger characters at all.
+    const { asked } = await complete({ triggerKind: 0 }, {});
+
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.context).toEqual({ triggerKind: 1, triggerCharacter: undefined });
   });
 });
