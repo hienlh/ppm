@@ -309,11 +309,13 @@ export function acquireLspConnection(projectName: string): LspConnection {
   return connection;
 }
 
-export function releaseLspConnection(projectName: string): void {
+/** True when that was the last holder, so the project has no editor open any more. */
+export function releaseLspConnection(projectName: string): boolean {
   const existing = connections.get(projectName);
-  if (!existing) return;
+  if (!existing) return false;
   existing.holders--;
-  if (existing.holders > 0) return;
+  if (existing.holders > 0) return false;
   connections.delete(projectName);
   existing.connection.dispose();
+  return true;
 }

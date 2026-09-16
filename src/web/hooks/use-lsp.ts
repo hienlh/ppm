@@ -21,6 +21,7 @@ import {
   type LspDocumentStatus,
 } from "@/lib/lsp/lsp-client";
 import { registerLspDocument, unregisterLspDocument } from "@/lib/lsp/lsp-documents";
+import { disposeShadowModels } from "@/lib/lsp/lsp-shadow-models";
 import { registerLspProviders } from "@/lib/lsp/register-providers";
 import { fromLspRange, markerSeverity } from "@/lib/lsp/lsp-monaco";
 import { registerSemanticTokens, semanticTokensLegendOf } from "@/lib/lsp/lsp-semantic-tokens";
@@ -155,7 +156,10 @@ export function useLsp({ editor, monaco, projectName, filePath, enabled }: UseLs
       useProblemsStore.getState().clear(projectName, filePath);
       unregisterLspDocument(model);
       connection.close(filePath);
-      releaseLspConnection(projectName);
+      // The shadow models exist only so Monaco can resolve a peek or an F12 into a file that
+      // is not open. Once the last editor for the project has gone there is nothing left to
+      // resolve them for, and forty files' contents are pure memory until the page reloads.
+      if (releaseLspConnection(projectName)) disposeShadowModels();
       connectionRef.current = null;
       setStatus(null);
       setDiagnostics([]);
