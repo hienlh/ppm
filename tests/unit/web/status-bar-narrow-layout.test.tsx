@@ -16,11 +16,13 @@
  * query. What the render buys is that the class is on the element that actually carries the
  * content, after `cn()` and every conditional have run.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { installDom, mount, eventSources, emitServerEvent, type Mounted } from "../../helpers/react-dom.tsx";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { installDom, uninstallDom, mount, eventSources, emitServerEvent, type Mounted } from "../../helpers/react-dom.tsx";
 import type { MetricsSnapshot } from "../../../src/types/system-metrics";
 
 installDom();
+// The DOM is process-wide; hand it back so the next file in this batch is not given one.
+afterAll(uninstallDom);
 // Latched at module load by `upgrade-button.tsx`, so it has to be set before the import below.
 sessionStorage.setItem("ppm-upgrade-test", "9.9.9");
 
