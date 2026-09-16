@@ -253,19 +253,42 @@ export function getIndexedCount(projectPath: string): number {
 }
 
 /**
- * Sessions this project has a row for at any version — the denominator when
- * nobody has enumerated.
+ * How many sessions the last enumeration saw, per project.
+ *
+ * Keyed by the index it describes rather than held for the process: a wiped search
+ * database — or a test's fresh one — must not inherit a total counted against rows
+ * that no longer exist.
+ */
+const enumerated = new WeakMap<object, Map<string, number>>();
+function enumeratedTotals(): Map<string, number> {
+  const db = getSearchIndexDb();
+  let totals = enumerated.get(db);
+  if (!totals) enumerated.set(db, (totals = new Map()));
+  return totals;
+}
+
+/**
+ * The indexing chip's denominator when nobody has enumerated.
  *
  * `GET /chat/search` knows the real total only because it lists the sessions to
  * match titles against. An empty query has no titles to match, so it should not
- * pay for a list that pages the SDK to exhaustion; this is what the index
- * already knows, and after one pass it is the same number.
+ * pay for a list that pages the SDK to exhaustion.
+ *
+ * Rows alone are not that number, though, and they are wrong in the direction
+ * that matters. On a fresh index a pass reads `RECONCILE_BUDGET` sessions and
+ * leaves the rest with no row at all, so the rows say 200 of 200 — finished —
+ * while the other 1484 were never read. So this is the larger of what the index
+ * holds and what the last enumeration saw. The error that remains runs the safe
+ * way: a session deleted since that enumeration still counts until the next
+ * query lists them again, which reads as "not quite done" rather than "done". And
+ * a restart forgets the enumeration, so between one and the next real query the
+ * rows are all there is.
  */
 export function getKnownSessionCount(projectPath: string): number {
   const row = getSearchIndexDb()
     .query("SELECT COUNT(*) AS n FROM session_meta WHERE project_path = ?")
     .get(projectPath) as { n: number };
-  return row.n;
+  return Math.max(row.n, enumeratedTotals().get(projectPath) ?? 0);
 }
 
 // --- Reconcile & backfill --------------------------------------------------
@@ -309,6 +332,7 @@ export async function reconcile(
   sessions?: { id: string; providerId: string; updatedAt?: string; createdAt?: string }[],
 ): Promise<{ total: number; indexed: number; remaining: number }> {
   const list = sessions ?? (await chatService.listSessions(undefined, projectPath));
+  enumeratedTotals().set(projectPath, list.length);
   let reindexed = 0;
   let remaining = 0;
   for (let i = 0; i < list.length; i++) {
