@@ -3,6 +3,7 @@ import {
   openTestSearchIndexDb,
   setSearchIndexDb,
   closeSearchIndexDb,
+  getSearchIndexDb,
 } from "../../../src/services/search-index-db.service.ts";
 import {
   reconcile,
@@ -11,6 +12,8 @@ import {
   getIndexStatus,
   search,
   getIndexedCount,
+  getKnownSessionCount,
+  INDEXER_VERSION,
 } from "../../../src/services/chat-search.service.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
 import type { ChatMessage, SessionInfo } from "../../../src/types/chat.ts";
@@ -174,5 +177,40 @@ describe("what one pass is allowed to cost", () => {
     } finally {
       (chatService as any).listSessions = inner;
     }
+  });
+});
+
+/**
+ * What the indexing chip counts.
+ *
+ * `indexed/total` is read at exactly the moment an `INDEXER_VERSION` bump has
+ * made every row stale, and a count that ignored the version answered
+ * "1684/1684" for the whole of the re-read — a progress indicator pinned at
+ * 100% through the work it exists to show.
+ */
+describe("the counts behind the indexing chip", () => {
+  test("a row from an older indexer is known but not indexed", async () => {
+    seed("s1", "2026-07-14T00:00:00.000Z", "alpha");
+    seed("s2", "2026-07-14T00:01:00.000Z", "beta");
+    await reconcile(PROJ);
+    expect(getIndexedCount(PROJ)).toBe(2);
+    expect(getKnownSessionCount(PROJ)).toBe(2);
+
+    // What an upgrade does to rows written by the previous version.
+    getSearchIndexDb()
+      .query("UPDATE session_meta SET indexer_version = ? WHERE session_id = ?")
+      .run(INDEXER_VERSION - 1, "s1");
+
+    expect(getIndexedCount(PROJ)).toBe(1);
+    // Still the right denominator: the session exists, it is just out of date.
+    expect(getKnownSessionCount(PROJ)).toBe(2);
+
+    // And the next pass brings it back, which is what the chip is tracking.
+    await reconcile(PROJ);
+    expect(getIndexedCount(PROJ)).toBe(2);
+  });
+
+  test("counts only this project", () => {
+    expect(getKnownSessionCount("/proj/somewhere-else")).toBe(0);
   });
 });

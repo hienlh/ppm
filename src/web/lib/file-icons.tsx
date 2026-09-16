@@ -20,6 +20,9 @@
  * both take an `icon: ElementType`.
  */
 import type { FC } from "react";
+// `?url` gives the built stylesheet's address without putting it on the module
+// graph: nothing is fetched until the `<link>` below is appended.
+import ICON_CSS_URL from "@/styles/file-icons.generated.css?url";
 import { basename, cn } from "@/lib/utils";
 import {
   DEFAULT_FILE_ICON,
@@ -42,22 +45,43 @@ import {
  * entire other stylesheet is 25,956 gzip, so the icons were 4.9x everything
  * else put together, in front of the first paint.
  *
- * A dynamic import makes it its own chunk with a `<link>` injected at runtime.
- * The cost is honest and visible: an icon that renders before the stylesheet
- * lands is a correctly-sized blank span for one round trip, so icons pop in a
- * beat after the text. That is the trade — paint the app now and the artwork
- * shortly, rather than neither until half a megabyte arrives — and a session
- * that never lists a file now never fetches it at all.
+ * So it is fetched at runtime by a `<link>` this function appends. The cost is
+ * honest and visible: an icon that renders before the stylesheet lands is a
+ * correctly-sized blank span for one round trip, so icons pop in a beat after
+ * the text. That is the trade — paint the app now and the artwork shortly,
+ * rather than neither until half a megabyte arrives — and a session that never
+ * lists a file never fetches it at all.
+ *
+ * A `<link>` rather than `import()`, which is what this used to be: a dynamic
+ * import that fails dispatches `vite:preloadError`, and `chunk-recovery.ts`
+ * answers that by purging the asset caches and reloading the page — a path that
+ * deliberately steps around the unsaved-work guard, because a missing *code*
+ * chunk means the app cannot run. A missing icon sheet means the icons are
+ * unstyled. A tunnel flap while someone scrolls a file tree must not reload the
+ * app out from under them, and `.catch()` would not have helped: the event is
+ * dispatched whether or not the promise is handled.
  *
  * Called from render rather than an effect because the point is to start the
  * fetch at the earliest moment anything wants an icon; it is idempotent and
  * touches no state, so a double invocation under StrictMode costs nothing.
  */
-let cssRequested = false;
+let cssPending = false;
+let cssAttempts = 0;
 function requestIconCss(): void {
-  if (cssRequested) return;
-  cssRequested = true;
-  void import("@/styles/file-icons.generated.css");
+  // Two attempts, not one: a tab left open through a network blip would
+  // otherwise show unstyled icons for the rest of its life. Not unlimited,
+  // because every icon that mounts comes through here.
+  if (cssPending || cssAttempts >= 2 || typeof document === "undefined") return;
+  cssPending = true;
+  cssAttempts++;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = ICON_CSS_URL;
+  link.addEventListener("error", () => {
+    link.remove();
+    cssPending = false;
+  });
+  document.head.appendChild(link);
 }
 
 /** The icon name for a file, by name alone. */

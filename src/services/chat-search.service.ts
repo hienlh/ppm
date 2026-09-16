@@ -236,8 +236,32 @@ export function search(projectPath: string, rawQuery: string, limit = 50): ChatS
   return rows;
 }
 
-/** Count of sessions indexed for a project. */
+/**
+ * Sessions indexed for a project *by this version of the indexer*.
+ *
+ * The version matters because it is exactly when the number is read: an
+ * `INDEXER_VERSION` bump makes every row stale at once, and counting them all
+ * reported "1684/1684" while the corpus was being re-read from scratch — a
+ * progress indicator sitting at 100% for the whole of the work it exists to
+ * show. `isStale` already compares the same column.
+ */
 export function getIndexedCount(projectPath: string): number {
+  const row = getSearchIndexDb()
+    .query("SELECT COUNT(*) AS n FROM session_meta WHERE project_path = ? AND indexer_version = ?")
+    .get(projectPath, INDEXER_VERSION) as { n: number };
+  return row.n;
+}
+
+/**
+ * Sessions this project has a row for at any version — the denominator when
+ * nobody has enumerated.
+ *
+ * `GET /chat/search` knows the real total only because it lists the sessions to
+ * match titles against. An empty query has no titles to match, so it should not
+ * pay for a list that pages the SDK to exhaustion; this is what the index
+ * already knows, and after one pass it is the same number.
+ */
+export function getKnownSessionCount(projectPath: string): number {
   const row = getSearchIndexDb()
     .query("SELECT COUNT(*) AS n FROM session_meta WHERE project_path = ?")
     .get(projectPath) as { n: number };

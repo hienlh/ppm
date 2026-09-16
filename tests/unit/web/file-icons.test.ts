@@ -20,7 +20,7 @@ import {
   FOLDER_OPEN_ICONS,
   ICON_NAMES,
 } from "../../../src/web/lib/file-icons.generated.ts";
-import { fileIconName, folderIconName } from "../../../src/web/lib/file-icons.tsx";
+import { fileIconElement, fileIconName, folderIconName } from "../../../src/web/lib/file-icons.tsx";
 
 const css = readFileSync(
   resolve(import.meta.dir, "../../../src/web/styles/file-icons.generated.css"),
@@ -151,7 +151,8 @@ describe("a filename is not a property name", () => {
 });
 
 /**
- * The artwork must stay off the entry's static graph.
+ * The artwork must stay off the entry's static graph — and off the code
+ * recovery path.
  *
  * One `import "@/styles/file-icons.generated.css"` anywhere the shell reaches
  * eagerly puts the whole 499 KB back into a render-blocking `<link>` in
@@ -159,49 +160,142 @@ describe("a filename is not a property name", () => {
  * is why this is enumerated rather than left to review. `file-icons.tsx` is
  * reached from `tab-type-icons.ts`, which the tab bar, the mobile nav and the
  * dock header all import at module scope.
+ *
+ * A *dynamic* import is no longer allowed either. Vite's preload helper
+ * dispatches `vite:preloadError` when a chunk fails, `chunk-recovery.ts`
+ * answers that by purging the asset caches and reloading the page, and that
+ * path deliberately steps around the unsaved-work guard — which is right for a
+ * missing code chunk and wrong for decorative artwork. The sheet is addressed
+ * by URL and fetched by a `<link>` instead.
  */
 describe("the artwork is not in the entry chunk", () => {
-  const WEB = resolve(import.meta.dir, "../../../src/web");
+  const ROOT = resolve(import.meta.dir, "../../..");
   const SHEET = "styles/file-icons.generated.css";
 
+  /**
+   * Everything that can put a file into the web bundle. `src/web` alone was too
+   * narrow twice over: `index.html` can carry a `<link>` of its own, and an
+   * importer one directory up is just as effective.
+   */
   function sources(): string[] {
     const out: string[] = [];
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === "dist") continue;
         const full = resolve(dir, entry.name);
         if (entry.isDirectory()) walk(full);
-        else if (/\.(ts|tsx|css)$/.test(entry.name)) out.push(full);
+        else if (/\.(ts|tsx|css|html)$/.test(entry.name)) out.push(full);
       }
     };
-    walk(WEB);
+    walk(resolve(ROOT, "src"));
+    walk(resolve(ROOT, "packages"));
     return out;
   }
 
-  it("is imported dynamically, and only from the icon module", () => {
+  it("is never imported as a module, statically or dynamically", () => {
     const offenders: string[] = [];
     for (const file of sources()) {
       const text = readFileSync(file, "utf8");
       // Only an import puts it on the graph — the name also appears in prose,
-      // and matching the bare string flagged a doc comment.
+      // and matching the bare string flagged a doc comment. `?url` is the one
+      // permitted specifier: it yields the address and fetches nothing.
       const statics = [
         ...text.matchAll(/^\s*import\s+(?:[^"';]*\s+from\s+)?["'][^"']*file-icons\.generated\.css["']/gm),
         ...text.matchAll(/@import\s+(?:url\()?["'][^"']*file-icons\.generated\.css["']/g),
         ...text.matchAll(/\brequire\(\s*["'][^"']*file-icons\.generated\.css["']/g),
+        ...text.matchAll(/\bimport\(\s*["'][^"']*file-icons\.generated\.css(?:\?[^"']*)?["']/g),
+        ...text.matchAll(/<link[^>]*file-icons\.generated\.css/g),
       ];
       for (const m of statics) {
-        offenders.push(`${relative(WEB, file).replaceAll("\\", "/")}: ${m[0].trim()}`);
+        offenders.push(`${relative(ROOT, file).replaceAll("\\", "/")}: ${m[0].trim()}`);
       }
     }
     expect(offenders).toEqual([]);
   });
 
-  it("is still reachable — the stylesheet the dynamic import names exists", () => {
+  it("is still reachable — the stylesheet the `?url` import names exists", () => {
     // A typo in the specifier is a silent no-op at build time and blank icons
     // at runtime, so resolve it rather than trusting the string.
-    const icons = readFileSync(resolve(WEB, "lib/file-icons.tsx"), "utf8");
-    const spec = icons.match(/import\("([^"]*file-icons\.generated\.css)"\)/)?.[1];
-    expect(spec, "file-icons.tsx no longer dynamically imports the artwork").toBeTruthy();
-    expect(existsSync(resolve(WEB, spec!.replace(/^@\//, "")))).toBe(true);
+    const icons = readFileSync(resolve(ROOT, "src/web/lib/file-icons.tsx"), "utf8");
+    const spec = icons.match(/from\s+"([^"]*file-icons\.generated\.css)\?url"/)?.[1];
+    expect(spec, "file-icons.tsx no longer imports the artwork's URL").toBeTruthy();
+    expect(existsSync(resolve(ROOT, "src/web", spec!.replace(/^@\//, "")))).toBe(true);
     expect(spec!.endsWith(SHEET)).toBe(true);
+  });
+});
+
+/**
+ * The fetch itself, driven rather than read.
+ *
+ * This suite owns `requestIconCss`'s module state — the attempt counter is not
+ * resettable from outside — so it is the only place that may call something
+ * which asks for an icon element, and it comes last for that reason.
+ */
+describe("the artwork is fetched by a link element", () => {
+  interface FakeLink {
+    rel: string;
+    href: string;
+    removed: boolean;
+    fail: () => void;
+  }
+
+  function withFakeDocument<T>(links: FakeLink[], run: () => T): T {
+    const previous = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => {
+        let onError = (): void => {};
+        const link: FakeLink & { addEventListener: (t: string, f: () => void) => void; remove: () => void } = {
+          rel: "",
+          href: "",
+          removed: false,
+          addEventListener: (type: string, handler: () => void) => {
+            if (type === "error") onError = handler;
+          },
+          remove: () => {
+            link.removed = true;
+          },
+          fail: () => onError(),
+        };
+        return link;
+      },
+      head: { appendChild: (link: FakeLink) => links.push(link) },
+    };
+    try {
+      return run();
+    } finally {
+      // Restored, because a global left behind is a failure in some other
+      // suite that shares this process — and one that only appears in a batch.
+      if (previous === undefined) delete (globalThis as { document?: unknown }).document;
+      else (globalThis as { document?: unknown }).document = previous;
+    }
+  }
+
+  it("appends one stylesheet, retries once if it fails, and never reloads the app", () => {
+    const links: FakeLink[] = [];
+    withFakeDocument(links, () => {
+      fileIconElement("a.ts");
+      expect(links).toHaveLength(1);
+      expect(links[0]!.rel).toBe("stylesheet");
+      expect(links[0]!.href).toContain("file-icons.generated");
+
+      // Every icon that mounts comes through here; one sheet is enough.
+      fileIconElement("b.ts");
+      fileIconElement("c.ts");
+      expect(links).toHaveLength(1);
+
+      // The failure path. A dynamic import would have dispatched
+      // `vite:preloadError` here, which purges the caches and reloads the page.
+      links[0]!.fail();
+      expect(links[0]!.removed).toBe(true);
+
+      // One retry, so a tab that lived through a network blip can recover...
+      fileIconElement("d.ts");
+      expect(links).toHaveLength(2);
+
+      // ...and then it stops, rather than one request per icon forever.
+      links[1]!.fail();
+      fileIconElement("e.ts");
+      expect(links).toHaveLength(2);
+    });
   });
 });

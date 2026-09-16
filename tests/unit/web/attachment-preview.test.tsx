@@ -19,6 +19,8 @@
  * on a revoked URL.
  */
 import { describe, it, expect } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AttachmentChips } from "../../../src/web/components/chat/attachment-chips.tsx";
 import type { ChatAttachment } from "../../../src/web/components/chat/message-input.tsx";
@@ -82,5 +84,63 @@ describe("an image chip opens the viewer", () => {
     ]);
     expect(html).toContain("1400");
     expect(html).toContain('aria-label="Remove screenshot.png"');
+  });
+});
+
+/**
+ * The 44px targets reach past the chip they belong to, and a wrapped row puts
+ * another chip right under that reach.
+ *
+ * Both controls are 44px tall while a chip is 26-30px, so each target overhangs
+ * by 7-9px on each side. Along a row that was measured and is clear; between two
+ * *wrapped* rows at `gap-1.5` it was an 8px overlap, and an overlap means the tap
+ * goes to whichever element paints last — a finger under one chip's X removing
+ * nothing and opening the preview of the chip below it.
+ *
+ * The numbers are computed from the classes rather than pinned as strings, so
+ * this fails when the bleed grows or the gap shrinks rather than when someone
+ * reformats the file.
+ */
+describe("a wrapped chip row leaves the targets room", () => {
+  const SOURCE = readFileSync(
+    resolve(import.meta.dir, "../../../src/web/components/chat/attachment-chips.tsx"),
+    "utf8",
+  );
+
+  /** Tailwind's spacing scale: one unit is 0.25rem at the app's 16px root. */
+  const px = (units: string): number => Number(units) * 4;
+
+  const TOUCH_TARGET = 44;
+  const CHIP_BORDER = 2; // 1px top + 1px bottom
+  const TEXT_XS_LEADING = 16;
+
+  function only(pattern: RegExp): string {
+    const found = SOURCE.match(pattern);
+    expect(found, `nothing in attachment-chips.tsx matches ${pattern}`).toBeTruthy();
+    return found![1]!;
+  }
+
+  it("keeps the row gap at least as large as the two overhangs it has to separate", () => {
+    const chipPaddingY = px(only(/rounded-md border border-border bg-surface px-2 py-([\d.]+)/)) * 2;
+    // The shortest chip is the one with no thumbnail: its tallest ink is the
+    // remove button, and it still carries a full-height target.
+    const removeInk = px(only(/<X className="size-([\d.]+)"/)) + px(only(/rounded-sm p-([\d.]+) hover:bg-border/)) * 2;
+    const shortestChip = Math.max(removeInk, TEXT_XS_LEADING) + chipPaddingY + CHIP_BORDER;
+    const overhang = (TOUCH_TARGET - shortestChip) / 2;
+
+    const gapY = px(only(/coarse && "gap-y-([\d.]+)"/));
+
+    expect(shortestChip).toBeLessThan(TOUCH_TARGET); // otherwise there is nothing to prove
+    expect(gapY).toBeGreaterThanOrEqual(overhang * 2);
+  });
+
+  it("gives both controls a real 44px of height to bleed into", () => {
+    const thumbInk = px(only(/<img[\s\S]*?className="size-([\d.]+) rounded object-cover"/));
+    const thumbBleed = px(only(/coarse && "before:absolute before:-inset-y-([\d.]+) before:-inset-x-[\d.]+ before:content/));
+    expect(thumbInk + thumbBleed * 2).toBe(TOUCH_TARGET);
+
+    const removeInk = px(only(/<X className="size-([\d.]+)"/)) + px(only(/rounded-sm p-([\d.]+) hover:bg-border/)) * 2;
+    const removeBleed = px([...SOURCE.matchAll(/before:-inset-y-([\d.]+)/g)].map((m) => m[1]!).at(-1)!);
+    expect(removeInk + removeBleed * 2).toBe(TOUCH_TARGET);
   });
 });
