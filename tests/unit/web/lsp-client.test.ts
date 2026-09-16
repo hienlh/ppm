@@ -1,5 +1,5 @@
 /**
- * What the browser half does when a provider stops caring about the answer.
+ * The browser half of the bridge: withdrawing a request, and the last editor going away.
  *
  * A language server answers one request at a time, so a superseded completion is not free —
  * it sits in front of the one the user is waiting for. Monaco hands every provider a
@@ -25,6 +25,7 @@ class FakeWs {
     this.sent.push(JSON.parse(data));
   }
   close(): void {}
+  disconnect(): void {}
   /** Deliver a message as if the bridge had sent it. */
   deliver(message: unknown): void {
     this.handler?.({ data: JSON.stringify(message) });
@@ -36,7 +37,8 @@ class FakeWs {
 
 mock.module("@/lib/ws-client", () => ({ WsClient: FakeWs }));
 
-const { LspConnection } = await import("../../../src/web/lib/lsp/lsp-client.ts");
+const { LspConnection, acquireLspConnection, releaseLspConnection } =
+  await import("../../../src/web/lib/lsp/lsp-client.ts");
 
 /** A connection with one document the bridge has already reported ready. */
 function connected() {
@@ -104,5 +106,32 @@ describe("LspConnection.request with a signal", () => {
 
     await expect(inflight).rejects.toThrow(/timed out/);
     expect(ws.ofType("cancel")).toHaveLength(1);
+  });
+});
+
+describe("the shared connection's holders", () => {
+  it("reports the release that was the last one", () => {
+    // Which is how anything gets to know a project has no editor open any more — the shadow
+    // models are forty files' contents that nothing can resolve after that point, and
+    // `disposeShadowModels` had been exported and never called.
+    acquireLspConnection("demo");
+    acquireLspConnection("demo");
+
+    expect(releaseLspConnection("demo")).toBe(false);
+    expect(releaseLspConnection("demo")).toBe(true);
+    // And a release with nothing to release is not the last one either.
+    expect(releaseLspConnection("demo")).toBe(false);
+  });
+
+  it("hands the same connection to every editor on one project", () => {
+    const first = acquireLspConnection("demo");
+    const second = acquireLspConnection("demo");
+
+    expect(second).toBe(first);
+    expect(acquireLspConnection("other")).not.toBe(first);
+
+    releaseLspConnection("demo");
+    releaseLspConnection("demo");
+    releaseLspConnection("other");
   });
 });

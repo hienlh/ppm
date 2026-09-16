@@ -25,17 +25,45 @@ import { fileUriToPath } from "../../../shared/lsp-uri";
 /** How many unopened files to keep resolvable at once. */
 const MAX_SHADOW_MODELS = 40;
 
+/**
+ * Bound on the negative cache.
+ *
+ * Every location outside the project lands here — `node_modules`, a toolchain's own library
+ * types — and a session spent following types through a dependency tree reaches thousands. It
+ * only exists to stop a miss being refetched per keystroke, so the recent ones are the only
+ * ones worth keeping.
+ */
+const MAX_FAILED = 500;
+
 /** Insertion-ordered, so the oldest is the first key. */
 const shadows = new Map<string, MonacoType.editor.ITextModel>();
 
 /** URIs already known to be unfetchable, so a miss is not retried per keystroke. */
 const failed = new Set<string>();
 
+function markFailed(uri: string): void {
+  failed.add(uri);
+  while (failed.size > MAX_FAILED) {
+    const oldest = failed.values().next().value as string | undefined;
+    if (oldest === undefined) return;
+    failed.delete(oldest);
+  }
+}
+
 function relativeTo(projectPath: string, absolute: string): string | null {
   const root = projectPath.replace(/\\/g, "/").replace(/\/+$/, "");
   const path = absolute.replace(/\\/g, "/");
-  if (!path.startsWith(root + "/")) return null;
-  return path.slice(root.length + 1);
+  const prefix = root + "/";
+  // Windows only, and it is the difference between F12-across-files working and doing nothing
+  // at all there: a language server answers with `file:///c%3A/Users/...` while the project is
+  // configured as `C:\Users\...`, so a case-sensitive compare says every location is outside
+  // the project, every one is cached as a failure, and no shadow model is ever created. The
+  // relaxation is keyed on the path *shape*, so a POSIX path — where two names differing only
+  // in case are two different files — is still compared exactly.
+  const driveLetter = /^[A-Za-z]:\//.test(prefix);
+  const head = path.slice(0, prefix.length);
+  if (driveLetter ? head.toLowerCase() !== prefix.toLowerCase() : head !== prefix) return null;
+  return path.slice(prefix.length);
 }
 
 /**
@@ -56,18 +84,32 @@ export async function ensureShadowModels(
 
   const wanted = [...new Set(uris)].filter((uri) => {
     if (failed.has(uri)) return false;
-    if (shadows.has(uri)) return false;
+    const existing = shadows.get(uri);
+    if (existing) {
+      // Re-insert so the cap means "the 40 most recently needed" rather than "the 40 created
+      // first": a file peeked at all afternoon stays the oldest key otherwise, and is the
+      // first thing thrown away.
+      shadows.delete(uri);
+      if (!existing.isDisposed()) {
+        shadows.set(uri, existing);
+        return false;
+      }
+      // Disposed from somewhere else; the entry is a stale promise that a model exists.
+    }
     // A URI the user has open already has a real model; the bridge rewrites
     // those to the model's own URI, so anything still `file:` is unopened.
     return uri.startsWith("file:") && !monaco.editor.getModel(monaco.Uri.parse(uri));
   });
   if (wanted.length === 0) return;
 
+  /** Created by this call, and therefore about to be returned to Monaco. */
+  const created = new Set<string>();
+
   await Promise.all(wanted.map(async (uri) => {
     const absolute = fileUriToPath(uri);
     const relative = absolute ? relativeTo(projectPath, absolute) : null;
     if (!relative) {
-      failed.add(uri);
+      markFailed(uri);
       return;
     }
     try {
@@ -76,7 +118,7 @@ export async function ensureShadowModels(
       );
       const content = result?.content;
       if (typeof content !== "string") {
-        failed.add(uri);
+        markFailed(uri);
         return;
       }
       const parsed = monaco.Uri.parse(uri);
@@ -85,19 +127,31 @@ export async function ensureShadowModels(
       // Language is left undefined so Monaco infers it from the URI's
       // extension, which is what gives the peek widget its highlighting.
       shadows.set(uri, monaco.editor.createModel(content, undefined, parsed));
-      evict();
+      created.add(uri);
     } catch {
-      failed.add(uri);
+      markFailed(uri);
     }
   }));
+
+  evict(created);
 }
 
-function evict(): void {
-  while (shadows.size > MAX_SHADOW_MODELS) {
-    const oldest = shadows.keys().next().value as string | undefined;
-    if (!oldest) return;
-    const model = shadows.get(oldest);
-    shadows.delete(oldest);
+/**
+ * Trim to the cap, oldest first — but never a model this call just created.
+ *
+ * This used to run inside the creation loop, once per model. Find-all-references on a widely
+ * used symbol asks for every location at once, so a result set larger than the cap disposed
+ * its own earliest models before the provider had returned them: peek and find-references
+ * opened empty for exactly the results that made the list long, which reads as a broken
+ * feature rather than a full cache. A batch bigger than the cap is kept whole — the models
+ * Monaco is about to resolve are the ones worth having.
+ */
+function evict(keep: ReadonlySet<string>): void {
+  for (const uri of [...shadows.keys()]) {
+    if (shadows.size <= MAX_SHADOW_MODELS) return;
+    if (keep.has(uri)) continue;
+    const model = shadows.get(uri);
+    shadows.delete(uri);
     // Disposing a model Monaco is currently showing in a peek widget would
     // blank it, but a shadow model is never the active editor's model, so the
     // only reader is a widget that has already rendered.
