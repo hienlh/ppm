@@ -62,6 +62,8 @@ interface Pending {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   method: string;
+  /** Detach the caller's abort listener; a request settles once, however it settles. */
+  detach?: () => void;
 }
 
 /**
@@ -230,10 +232,24 @@ export class LspSession {
     return (this.initializeResult?.capabilities as Record<string, unknown>) ?? {};
   }
 
-  request(method: string, params: unknown, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<unknown> {
+  /**
+   * `signal` is how a caller that has lost interest stops the work.
+   *
+   * A language server answers one request at a time, so a superseded one is not free: it is
+   * in front of the request somebody is still waiting for. Typing eight characters into a
+   * large TypeScript file queues eight completions behind each other, and the list that
+   * finally appears is the one for the prefix from several keystrokes ago.
+   */
+  request(
+    method: string,
+    params: unknown,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     if (this.state === "stopped" || this.state === "crashed") {
       return Promise.reject(new Error(`${this.definition.displayName} is not running`));
     }
+    if (signal?.aborted) return Promise.reject(new Error(`${method} was cancelled`));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -244,15 +260,35 @@ export class LspSession {
         reject(new Error(`${this.definition.displayName} did not answer ${method} within ${timeoutMs}ms`));
       }, timeoutMs);
 
-      this.pending.set(id, { resolve, reject, timer, method });
+      const onAbort = () => {
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        this.settle(pending);
+        this.pending.delete(id);
+        this.notify("$/cancelRequest", { id });
+        reject(new Error(`${method} was cancelled`));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      this.pending.set(id, {
+        resolve, reject, timer, method,
+        detach: signal ? () => signal.removeEventListener("abort", onAbort) : undefined,
+      });
       try {
         this.write({ jsonrpc: "2.0", id, method, params });
       } catch (e) {
-        clearTimeout(timer);
+        const pending = this.pending.get(id);
+        if (pending) this.settle(pending);
         this.pending.delete(id);
         reject(e instanceof Error ? e : new Error(String(e)));
       }
     });
+  }
+
+  /** Stop a pending request costing anything, whatever settles it. */
+  private settle(pending: Pending): void {
+    clearTimeout(pending.timer);
+    pending.detach?.();
   }
 
   notify(method: string, params: unknown): void {
@@ -276,8 +312,8 @@ export class LspSession {
     // A response: has an id and no method.
     if (message.id != null && message.method === undefined) {
       const pending = this.pending.get(message.id as number);
-      if (!pending) return; // already timed out, or never ours
-      clearTimeout(pending.timer);
+      if (!pending) return; // already timed out, cancelled, or never ours
+      this.settle(pending);
       this.pending.delete(message.id as number);
       if (message.error) {
         pending.reject(new Error(`${pending.method}: ${message.error.message} (${message.error.code})`));
@@ -346,7 +382,7 @@ export class LspSession {
 
   private rejectAllPending(error: Error): void {
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
+      this.settle(pending);
       pending.reject(error);
     }
     this.pending.clear();

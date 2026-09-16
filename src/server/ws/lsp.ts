@@ -46,6 +46,13 @@ interface Client {
   id: string;
   projectPath: string;
   docs: Map<string, OpenDoc>;
+  /**
+   * Requests this socket is still waiting on, by the id the browser gave them.
+   *
+   * A language server answers one request at a time, so a superseded one is not free — it
+   * sits in front of the one somebody is still waiting for.
+   */
+  inflight: Map<number, AbortController>;
 }
 
 interface WsLike {
@@ -96,7 +103,7 @@ function handleOpen(ws: WsLike): void {
     ws.close(1008, e instanceof Error ? e.message : "unknown project");
     return;
   }
-  const client: Client = { ws, id: `lsp-${nextClientId++}`, projectPath, docs: new Map() };
+  const client: Client = { ws, id: `lsp-${nextClientId++}`, projectPath, docs: new Map(), inflight: new Map() };
   clients.set(ws, client);
   // Announce the fresh socket. A reconnect gives the browser a server that has
   // never heard of its open documents, and nothing else would tell it that:
@@ -134,8 +141,7 @@ async function handleMessage(ws: WsLike, raw: string | Buffer): Promise<void> {
         await forwardRequest(client, msg);
         break;
       case "cancel":
-        // The session cancels on timeout by itself; an explicit cancel from a
-        // provider that lost interest just saves the server some work.
+        cancelRequest(client, msg);
         break;
     }
   } catch (e) {
@@ -258,11 +264,36 @@ async function forwardRequest(client: Client, msg: Record<string, unknown>): Pro
   // The browser addressed the document by its Monaco URI; the server only
   // knows the `file:` one.
   const params = withDocumentUri(msg.params, doc.uri);
-  const result = await session.request(String(msg.method), params);
+  const controller = new AbortController();
+  client.inflight.set(id, controller);
+  let result: unknown;
+  try {
+    result = await session.request(String(msg.method), params, undefined, controller.signal);
+  } catch (e) {
+    // A cancelled request has nobody waiting for it — Monaco dropped the provider's promise
+    // and the browser deleted its pending entry when it sent the cancel — so an error reply
+    // would name an id that no longer exists. Any other failure is real and goes back.
+    if (controller.signal.aborted) return;
+    throw e;
+  } finally {
+    client.inflight.delete(id);
+  }
   // And back: a location in this file has to come home as the model's URI or
   // Monaco treats its own file as a different one and tries to open an editor
   // for it instead of jumping.
   send(client, { t: "response", id, result: rewriteUris(result, uriMapFor(client)) });
+}
+
+/**
+ * Stop work the browser no longer wants the answer to.
+ *
+ * `$/cancelRequest` is the only thing that takes a request out of the server's queue; the
+ * session sends it, and until this arrived nothing ever asked it to. Typing eight characters
+ * into a large TypeScript file queued eight completions, and the list that finally opened was
+ * the one for a prefix several keystrokes old.
+ */
+function cancelRequest(client: Client, msg: Record<string, unknown>): void {
+  client.inflight.get(Number(msg.id))?.abort();
 }
 
 /** Replace `textDocument.uri` with the one the language server knows. */
@@ -331,6 +362,10 @@ function handleClose(ws: WsLike): void {
     lspManager.sessionFor(doc.key)?.notify("textDocument/didClose", { textDocument: { uri: doc.uri } });
   }
   client.docs.clear();
+  // A closed tab is not waiting for anything, and a server working on its questions is in
+  // front of the tabs that are still open.
+  for (const controller of client.inflight.values()) controller.abort();
+  client.inflight.clear();
   lspManager.releaseAll(client.id);
 }
 
