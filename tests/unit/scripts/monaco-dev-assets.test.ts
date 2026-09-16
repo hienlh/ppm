@@ -36,14 +36,26 @@ describe("monacoDevAsset", () => {
   });
 
   it("refuses the files the build does not ship, so dev cannot succeed on one", () => {
-    // Both are real files in `node_modules`; `copy-monaco.ts` leaves them out of `dist/web`.
-    const tsWorker = Bun.Glob ? [...new Bun.Glob("assets/ts.worker-*.js").scanSync(MONACO_VS)] : [];
-    expect(tsWorker.length).toBeGreaterThan(0);
-    for (const rel of tsWorker) {
+    // A real file in `node_modules`; `copy-monaco.ts` leaves the locale bundles out of
+    // `dist/web`, so serving one here would make dev work where an install does not.
+    const locales = [...new Bun.Glob("nls.messages.*.js").scanSync(MONACO_VS)];
+    expect(locales.length).toBeGreaterThan(0);
+    for (const rel of locales) {
       expect(isUnused(join(MONACO_VS, rel))).toBe(true);
       expect(monacoDevAsset(`/${rel.split(sep).join("/")}`)).toBeNull();
     }
-    expect(monacoDevAsset("/nls.messages.ja.js.js")).toBeNull();
+  });
+
+  it("serves the TypeScript worker, which is the fallback when no server is coming", () => {
+    // It was dropped from the build while Monaco's TypeScript service was unregistered
+    // unconditionally. It is not any more: with the setting off — the default, and the only
+    // state a phone has — this worker is what answers completions and hovers.
+    const tsWorker = [...new Bun.Glob("assets/ts.worker-*.js").scanSync(MONACO_VS)];
+    expect(tsWorker.length).toBeGreaterThan(0);
+    for (const rel of tsWorker) {
+      expect(isUnused(join(MONACO_VS, rel))).toBe(false);
+      expect(monacoDevAsset(`/${rel.split(sep).join("/")}`)?.file).toBe(join(MONACO_VS, rel));
+    }
   });
 
   it("leaves anything else to Vite", () => {

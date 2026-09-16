@@ -12,6 +12,8 @@
  * tsserver decides whether to parse JSX from the language id, so a `.tsx` file
  * announced as `typescript` gets a syntax error on its first tag.
  */
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 
 export interface LanguageServerDefinition {
@@ -30,6 +32,13 @@ export interface LanguageServerDefinition {
   rootMarkers: string[];
   /** Shown verbatim when the command cannot be found. */
   installHint: string;
+  /**
+   * The npm package PPM depends on for this server, when it ships one.
+   *
+   * Only set where the package is in PPM's own `dependencies` — naming one that is not there
+   * makes `bundledServerEntry` answer with a path nothing ever wrote.
+   */
+  bundledPackage?: string;
   initializationOptions?: Record<string, unknown>;
 }
 
@@ -101,6 +110,10 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     // start against it with "provides no tsserver" — which reads like a broken
     // install rather than the wrong major version.
     installHint: "bun add -g typescript-language-server typescript@5",
+    // Shipped with PPM, so this one works on a fresh install with nothing else done. The
+    // project's own copy still wins where there is one — a repository pinned to TypeScript 4
+    // has to be analysed by its own server, not by whatever PPM happens to carry.
+    bundledPackage: "typescript-language-server",
     initializationOptions: {
       // Matches what VS Code asks tsserver for: completions that can add an
       // import, and snippet text so a function completion fills its parens.
@@ -344,4 +357,45 @@ export function candidateCommandPaths(command: string, dirs: string[], platform:
   }
   candidates.push(command);
   return candidates;
+}
+
+/**
+ * The copy PPM ships itself, for servers listed in its own dependencies.
+ *
+ * The floor under the other two lookups, and the reason the TypeScript server works on a
+ * fresh install with nothing else done: PPM depends on `typescript-language-server`, so npm
+ * puts it in PPM's *own* `node_modules` — which is neither the project's nor on `PATH`, so
+ * without this it was installed and unreachable.
+ *
+ * This answers with the package's **entry script**, not npm's `.bin` shim, and that is the
+ * load-bearing part. The shim starts `#!/usr/bin/env node`; PPM runs on Bun, and someone who
+ * installed it with `bun install -g ppm` may have no `node` on the machine at all. Measured:
+ * spawning the shim with nothing named `node` on `PATH` exits **127** with `env: 'node': No
+ * such file or directory` — after the server had already been reported as installed. The
+ * caller runs this with `process.execPath` instead. It also retires the `.cmd`/`.exe` guessing
+ * on Windows, since the entry is the same `.mjs` file on every platform.
+ *
+ * Resolved through the package rather than built from `import.meta.dir`: PPM runs from a
+ * global install, from a checkout, and from a bundled binary, and only the resolver knows
+ * where its dependencies actually landed in each. `null` when the package is absent, which is
+ * every server PPM does not bundle.
+ */
+export function bundledServerEntry(
+  definition: LanguageServerDefinition,
+  resolve: (specifier: string) => string = createRequire(import.meta.url).resolve,
+): string | null {
+  const pkg = definition.bundledPackage;
+  if (!pkg) return null;
+  let manifestPath: string;
+  let manifest: { bin?: string | Record<string, string> };
+  try {
+    manifestPath = resolve(`${pkg}/package.json`);
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as typeof manifest;
+  } catch {
+    return null;
+  }
+  // `bin` is either a bare string — the package's own name — or a map of command to path.
+  const relative = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[definition.command];
+  if (!relative) return null;
+  return path.resolve(path.dirname(manifestPath), relative);
 }

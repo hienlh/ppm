@@ -20,9 +20,13 @@ import { dirname } from "node:path";
  */
 export const MONACO_VS = dirname(createRequire(import.meta.url).resolve("monaco-editor/min/vs/loader.js"));
 
-/** True for a file this build has no way to request. See `copy-monaco.ts` for the reasoning. */
+/**
+ * True for a file this build has no way to request. See `copy-monaco.ts` for the reasoning.
+ *
+ * `ts.worker-*.js` was on this list and is not any more: Monaco's TypeScript service is now
+ * unregistered only while a real language server is coming, so on a machine with no server —
+ * the default, and every phone — that worker is what answers completions and hovers.
+ */
 export function isUnused(path: string): boolean {
-  if (/[/\\]nls\.messages\.[a-z-]+\.js/.test(path)) return true;
-  if (/[/\\]ts\.worker-[^/\\]*\.js$/.test(path)) return true;
-  return false;
+  return /[/\\]nls\.messages\.[a-z-]+\.js/.test(path);
 }

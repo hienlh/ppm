@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo, memo, lazy, Suspense } from "react";
-import Editor, { type OnMount } from "@monaco-editor/react";
+import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
@@ -9,7 +9,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
-import { disableBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
+import { applyBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
 import { useIsMobile, isMobileDevice } from "@/hooks/use-is-mobile";
 import { useIsTouchOnly } from "@/hooks/use-is-touch-only";
 import type { EditorLspState } from "./editor-language-service";
@@ -89,9 +89,12 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   // Mirrors editorRef as state, so hooks that must react to the editor existing
   // (inline blame) re-run on mount instead of reading a ref that is still null.
+  // `Monaco` rather than `typeof MonacoType`: the bare `monaco-editor` types declare
+  // `languages.typescript` as a deprecated stub, and the TypeScript defaults this reaches for
+  // are only on the type that includes the language contributions.
   const [mounted, setMounted] = useState<{
     editor: MonacoType.editor.IStandaloneCodeEditor;
-    monaco: typeof MonacoType;
+    monaco: Monaco;
   } | null>(null);
   const { tabs, updateTab } = useTabStore(useShallow((s) => ({ tabs: s.tabs, updateTab: s.updateTab })));
   const { wordWrap, toggleWordWrap, mobileWordWrap, toggleMobileWordWrap } = useSettingsStore(
@@ -435,7 +438,13 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // desktop window past the breakpoint shut the language server down mid-session and dragging
   // it back cold-started another one. What a *machine* should be asked to run cannot depend on
   // how wide a window happens to be.
-  const lspOn = lspEnabled && lspServable && !isTouchOnly;
+  // Two questions, deliberately separated. `lspWanted` is about the *device*: the setting is
+  // on and this machine can run a server. `lspOn` adds the buffer. Monaco's TypeScript
+  // defaults are global to the page, so only the device half may decide them — a scratch
+  // buffer no server can serve must not switch the built-in worker back on underneath the
+  // project file in the next tab.
+  const lspWanted = lspEnabled && !isTouchOnly;
+  const lspOn = lspWanted && lspServable;
   const [lsp, setLsp] = useState<EditorLspState>({ status: null, diagnostics: [] });
   const handleLspState = useCallback((next: EditorLspState) => setLsp(next), []);
 
@@ -531,6 +540,25 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     revealTarget();
   }, [revealAt, revealTarget]);
 
+  /**
+   * Monaco's own TypeScript worker is not a fallback *beside* a real server — it is a
+   * slower, single-file second answer, and two answers is what put "Loading…" under a hover
+   * the server had already given. With no server coming it is the only answer there is, and
+   * unregistering it left a fresh desktop install and every phone with nothing at all.
+   *
+   * An effect rather than a line in the mount handler: the setting can be toggled while an
+   * editor is open, and this has to follow it.
+   */
+  useEffect(() => {
+    const monaco = mounted?.monaco;
+    if (!monaco) return;
+    applyBuiltinTypeScript(
+      lspWanted,
+      monaco.languages.typescript.typescriptDefaults,
+      monaco.languages.typescript.javascriptDefaults,
+    );
+  }, [mounted, lspWanted]);
+
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     monacoInstanceRef.current = monaco;
@@ -558,12 +586,6 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
       () => useSettingsStore.getState().toggleInlineBlame(),
-    );
-    // Monaco's own TypeScript worker is not a fallback beside a real server —
-    // it is a slower, single-file second answer. See the module for why.
-    disableBuiltinTypeScript(
-      monaco.languages.typescript.typescriptDefaults,
-      monaco.languages.typescript.javascriptDefaults,
     );
     // Register SQL completion if schema available
     if (sqlSchemaInfo) {

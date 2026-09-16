@@ -13,18 +13,19 @@
  * `precompress-web.ts` gives it brotli siblings — all three of which this gets
  * for free by living there rather than in a directory of its own.
  *
- * Two things are left behind, and the difference between them is worth reading
- * before adding a third:
+ * One thing is left behind: `nls.messages.<locale>.js`, 1.7 MB across 14
+ * languages. Monaco fetches one only when the loader is given a locale, and PPM
+ * never sets one.
  *
- * - `nls.messages.<locale>.js`, 1.7 MB across 14 languages. Monaco fetches one
- *   only when the loader is given a locale, and PPM never sets one.
- * - `assets/ts.worker-*.js`, 6.8 MB — the largest single file in the package.
- *   `monaco-builtin-typescript.ts` unregisters every provider of Monaco's
- *   TypeScript service, so nothing ever asks for it. Confirmed by driving a
- *   real Monaco with that service off and recording every `new Worker(...)`:
- *   one worker is created, `editor.worker`, and never this one. What keeps that
- *   true is `tests/unit/web/monaco-builtin-typescript.test.ts`, which fails if
- *   a provider comes back — including one added by a Monaco upgrade.
+ * `assets/ts.worker-*.js` used to be left behind too — 6.7 MB, the largest
+ * single file in the package — on the grounds that
+ * `monaco-builtin-typescript.ts` unregistered every provider of Monaco's
+ * TypeScript service, so nothing could ever ask for it. That is now only true
+ * while a real language server is coming. With the setting off, which is the
+ * default and the only state a phone has, that worker is the thing answering
+ * completions and hovers, and dropping it was the difference between a fallback
+ * and nothing at all. It costs 1.2 MB brotli over the wire, fetched once, on
+ * first use, by the machines that have no other answer.
  *
  * The other `assets/*.worker-*.js` files stay, and the reason they nearly did
  * not is instructive: `MonacoEnvironment.getWorkerUrl` mapped worker labels to

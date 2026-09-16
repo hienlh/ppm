@@ -66,8 +66,9 @@ describe("isTouchOnlyDevice", () => {
 describe("what the editor and the setting gate on", () => {
   it("gates the language server on the device, not the viewport", () => {
     const editor = SRC("components/editor/code-editor.tsx");
-    expect(editor).toContain("const lspOn = lspEnabled && lspServable && !isTouchOnly;");
-    expect(editor).not.toMatch(/lspOn = .*isPhone/);
+    expect(editor).toContain("const lspWanted = lspEnabled && !isTouchOnly;");
+    expect(editor).toContain("const lspOn = lspWanted && lspServable;");
+    expect(editor).not.toMatch(/lsp(On|Wanted) = .*isPhone/);
   });
 
   it("gates the setting's switch the same way, so the two cannot disagree", () => {

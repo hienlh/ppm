@@ -1,22 +1,28 @@
 /**
- * Monaco's bundled TypeScript providers stay unregistered.
+ * Which TypeScript service answers, and that the switch has two positions.
  *
- * The failure this guards against already happened once: `setDiagnosticsOptions`
- * silenced that worker's validator, which read like "the built-in TypeScript
- * support is off", while all thirteen of its providers stayed registered. The
- * visible symptom was a hover that showed the real server's answer and then
- * "Loading…" underneath it, because Monaco's hover widget waits for every
- * provider and that one first had to fetch a 13 MB worker.
+ * The failure this guards against already happened twice, in opposite
+ * directions. First, `setDiagnosticsOptions` silenced that worker's validator —
+ * which read like "the built-in TypeScript support is off" — while all thirteen
+ * of its providers stayed registered: a hover showed the real server's answer
+ * and then "Loading…" underneath it, because Monaco's hover widget waits for
+ * every provider and that one first had to fetch the whole compiler. Then the
+ * fix for it was applied unconditionally, so a machine with no language server
+ * at all — the default, and every phone — had no TypeScript completion or hover
+ * either, with no second answer for the first one to be worse than.
  *
- * So the assertion is against Monaco's own default list, read from the
- * installed package: a Monaco upgrade that adds a provider fails here instead
- * of quietly bringing it back.
+ * The provider assertions are against Monaco's own default list, read from the
+ * installed package: an upgrade that adds a provider fails here instead of
+ * quietly bringing it back on one side or missing it on the other.
  */
 import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   BUILTIN_TS_PROVIDERS_OFF,
+  BUILTIN_TS_PROVIDERS_ON,
+  applyBuiltinTypeScript,
   disableBuiltinTypeScript,
+  enableBuiltinTypeScript,
 } from "../../../src/web/lib/lsp/monaco-builtin-typescript.ts";
 
 const CONTRIBUTION = "node_modules/monaco-editor/esm/vs/language/typescript/monaco.contribution.js";
@@ -30,16 +36,24 @@ function monacoDefaultProviders(): string[] {
   return [...block.matchAll(/^\s*(\w+):\s*true/gm)].map((m) => m[1]!);
 }
 
-/** Records what was handed to Monaco. */
+/** Records what was handed to Monaco, starting from Monaco's own compiler defaults. */
 function fakeDefaults() {
-  const calls: { mode: Record<string, boolean>[]; diagnostics: Record<string, boolean>[] } = {
-    mode: [], diagnostics: [],
-  };
+  const calls: {
+    mode: Record<string, boolean>[];
+    diagnostics: Record<string, boolean>[];
+    compiler: Record<string, unknown>[];
+  } = { mode: [], diagnostics: [], compiler: [] };
+  let compilerOptions: Record<string, unknown> = { target: 99, allowNonTsExtensions: true };
   return {
     calls,
     defaults: {
       setModeConfiguration: (config: Record<string, boolean>) => calls.mode.push(config),
       setDiagnosticsOptions: (options: Record<string, boolean>) => calls.diagnostics.push(options),
+      getCompilerOptions: () => compilerOptions,
+      setCompilerOptions: (options: Record<string, unknown>) => {
+        compilerOptions = options;
+        calls.compiler.push(options);
+      },
     },
   };
 }
@@ -116,5 +130,118 @@ describe("disableBuiltinTypeScript", () => {
     disableBuiltinTypeScript(ts.defaults, js.defaults);
 
     expect(ts.calls.mode[0]).not.toBe(js.calls.mode[0]);
+  });
+});
+
+describe("BUILTIN_TS_PROVIDERS_ON", () => {
+  it("names exactly the same providers as the off table", () => {
+    // Two tables that can drift is how one position of the switch quietly stops covering a
+    // provider the other one does.
+    expect(Object.keys(BUILTIN_TS_PROVIDERS_ON).sort()).toEqual(Object.keys(BUILTIN_TS_PROVIDERS_OFF).sort());
+    expect(Object.keys(BUILTIN_TS_PROVIDERS_ON).sort()).toEqual(monacoDefaultProviders().sort());
+  });
+
+  it("sets every flag to true", () => {
+    expect(Object.values(BUILTIN_TS_PROVIDERS_ON).every((v) => v === true)).toBe(true);
+  });
+});
+
+describe("enableBuiltinTypeScript", () => {
+  it("registers every provider, for TypeScript and JavaScript both", () => {
+    const ts = fakeDefaults();
+    const js = fakeDefaults();
+
+    enableBuiltinTypeScript(ts.defaults, js.defaults);
+
+    expect(ts.calls.mode[0]).toEqual({ ...BUILTIN_TS_PROVIDERS_ON });
+    expect(js.calls.mode[0]).toEqual({ ...BUILTIN_TS_PROVIDERS_ON });
+  });
+
+  it("keeps every diagnostic off", () => {
+    // Semantic, because one file with no tsconfig.json and no node_modules reports "Cannot
+    // find module" for every real import. Syntax, because PPM's models are named
+    // `inmemory://model/N` with no extension and Monaco's defaults carry no `jsx` setting, so
+    // every JSX tag would parse as a syntax error — red on every React file.
+    const ts = fakeDefaults();
+    const js = fakeDefaults();
+
+    enableBuiltinTypeScript(ts.defaults, js.defaults);
+
+    expect(ts.calls.diagnostics[0]).toEqual({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+      noSuggestionDiagnostics: true,
+    });
+  });
+
+  it("teaches the worker about JSX, so completion survives the first tag", () => {
+    // Without `jsx`, the parse stops at `<div>` and everything below it in the file loses its
+    // completions — which reads as "the fallback does not work in React files".
+    const ts = fakeDefaults();
+    const js = fakeDefaults();
+
+    enableBuiltinTypeScript(ts.defaults, js.defaults);
+
+    expect(ts.calls.compiler[0]).toMatchObject({ jsx: 1, allowJs: true, allowNonTsExtensions: true });
+  });
+
+  it("merges into Monaco's own compiler options rather than replacing them", () => {
+    const ts = fakeDefaults();
+    const js = fakeDefaults();
+
+    enableBuiltinTypeScript(ts.defaults, js.defaults);
+
+    expect(ts.calls.compiler[0]).toMatchObject({ target: 99 });
+  });
+});
+
+describe("applyBuiltinTypeScript", () => {
+  it("unregisters the providers when a server is coming", () => {
+    const ts = fakeDefaults();
+    const js = fakeDefaults();
+
+    applyBuiltinTypeScript(true, ts.defaults, js.defaults);
+
+    expect(ts.calls.mode[0]).toEqual({ ...BUILTIN_TS_PROVIDERS_OFF });
+  });
+
+  it("registers them when none is", () => {
+    const ts = fakeDefaults();
+    const js = fakeDefaults();
+
+    applyBuiltinTypeScript(false, ts.defaults, js.defaults);
+
+    expect(ts.calls.mode[0]).toEqual({ ...BUILTIN_TS_PROVIDERS_ON });
+  });
+
+  it("follows the setting back and forth, since it can be toggled with an editor open", () => {
+    const ts = fakeDefaults();
+    const js = fakeDefaults();
+
+    applyBuiltinTypeScript(false, ts.defaults, js.defaults);
+    applyBuiltinTypeScript(true, ts.defaults, js.defaults);
+    applyBuiltinTypeScript(false, ts.defaults, js.defaults);
+
+    expect(ts.calls.mode.map((m) => m.hovers)).toEqual([true, false, true]);
+  });
+});
+
+describe("what the editor gates it on", () => {
+  const editor = readFileSync("src/web/components/editor/code-editor.tsx", "utf8");
+
+  it("passes the device question, not the buffer's", () => {
+    // Monaco's TypeScript defaults are global to the page. Gating on `lspOn` — which includes
+    // `lspServable` — would let a scratch buffer no server can serve switch the built-in
+    // worker back on underneath the project file in the next tab.
+    expect(editor).toContain("const lspWanted = lspEnabled && !isTouchOnly;");
+    expect(editor).toContain("const lspOn = lspWanted && lspServable;");
+    expect(editor).toMatch(/applyBuiltinTypeScript\(\s*lspWanted,/);
+  });
+
+  it("applies it from an effect, so toggling the setting takes effect at once", () => {
+    // In the mount handler it ran once per editor and never again; the Settings switch is
+    // three clicks away from the editor it governs.
+    expect(editor).toMatch(/applyBuiltinTypeScript\([^)]*\)[;\s]*\}, \[mounted, lspWanted\]\)/s);
+    expect(editor).not.toContain("disableBuiltinTypeScript(");
   });
 });
