@@ -408,14 +408,16 @@ function handleClose(ws: WsLike): void {
  * session between tabs, so a per-socket listener would deliver every other
  * tab's diagnostics too.
  */
-lspManager.onNotification((key, method, params) => {
+export function dispatchNotification(key: string, method: string, params: unknown): void {
   for (const client of clients.values()) {
     if (![...client.docs.values()].some((doc) => doc.key === key)) continue;
     // Diagnostics name their document by URI; unrewritten, the browser cannot
     // tell which model they belong to and would show none at all.
     send(client, { t: "notification", method, params: rewriteUris(params, uriMapFor(client)) });
   }
-});
+}
+
+lspManager.onNotification(dispatchNotification);
 
 export const lspWebSocket = {
   open: handleOpen,
