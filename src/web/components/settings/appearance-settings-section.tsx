@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useSettingsStore, type EditorTabStyle, type ExplorerSkinPref } from "@/stores/settings-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsTouchOnly } from "@/hooks/use-is-touch-only";
 import { cn } from "@/lib/utils";
 import { THEME_MODE_OPTIONS } from "@/theme/theme-mode-options";
 import { ThemeGrid } from "./theme-grid";
@@ -76,6 +77,9 @@ export function AppearanceSettingsSection() {
     })),
   );
   const isMobile = useIsMobile();
+  // Word wrap is about how wide the editor is; the language server is about what the machine
+  // is being asked to run. Two different questions, two different tests.
+  const isTouchOnly = useIsTouchOnly();
 
   return (
     <div className="space-y-6">
@@ -139,20 +143,24 @@ export function AppearanceSettingsSection() {
       </section>
 
       {/* Language server. Off until asked: it is a real process on the host (one was
-          854 MB resident), and a phone never starts one. */}
+          854 MB resident), and a touch-only device never starts one.
+
+          The switch follows the same test the editor does — a device one, not the 768px
+          viewport one, or narrowing a desktop window disabled the setting and told the user
+          they were on a phone. */}
       <section className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
           <Zap className="size-4 text-muted-foreground shrink-0" />
           <div className="min-w-0">
             <p className="text-sm font-medium">Language Server</p>
             <p className="text-xs text-muted-foreground">
-              {isMobile
-                ? "Off on a phone — it runs a server process per project"
+              {isTouchOnly
+                ? "Off on a touch device — it runs a server process per project"
                 : "Completions, hover, F12, rename and quick fix (this device)"}
             </p>
           </div>
         </div>
-        <Switch checked={lspEnabled && !isMobile} disabled={isMobile} onCheckedChange={setLspEnabled} />
+        <Switch checked={lspEnabled && !isTouchOnly} disabled={isTouchOnly} onCheckedChange={setLspEnabled} />
       </section>
 
       <section className="space-y-2">

@@ -58,11 +58,16 @@ function cancellation() {
   };
 }
 
-const model = {
-  uri: { toString: () => "inmemory://model/1" },
-  getLanguageId: () => "typescript",
-  getWordAtPosition: () => null,
-} as unknown as MonacoType.editor.ITextModel;
+function fakeModel(uri: string): MonacoType.editor.ITextModel {
+  return {
+    uri: { toString: () => uri },
+    getLanguageId: () => "typescript",
+    getWordAtPosition: () => null,
+    getWordUntilPosition: () => ({ word: "", startColumn: 1, endColumn: 1 }),
+  } as unknown as MonacoType.editor.ITextModel;
+}
+
+const model = fakeModel("inmemory://model/1");
 
 /** A connection that never answers, so a request is only ever ended by its signal. */
 function pending() {
@@ -224,5 +229,54 @@ describe("which characters open the suggest list", () => {
 
     expect(asked).toHaveLength(1);
     expect(asked[0]!.context).toEqual({ triggerKind: 1, triggerCharacter: undefined });
+  });
+});
+
+describe("resolving a suggestion", () => {
+  /** A connection that answers a completion list, then records the resolve it is asked for. */
+  function server(name: string, path: string) {
+    const asked: Array<{ method: string; params: unknown }> = [];
+    const connection = {
+      statusOf: () => ({ state: "ready", capabilities: { completionProvider: {} } }),
+      request: async (_path: string, method: string, params: unknown) => {
+        asked.push({ method, params });
+        return method === "textDocument/completion"
+          ? { items: [{ label: name, data: { from: name } }] }
+          : { detail: `resolved by ${name}` };
+      },
+    } as unknown as LspConnection;
+    return { asked, document: { connection, path } };
+  }
+
+  it("asks the server that issued the item, not whichever project came first", async () => {
+    // Two projects open on `src/index.ts` are two different files on two different servers.
+    // Looking the model back up by its project-relative path found whichever Monaco listed
+    // first, so a suggestion from one project could be resolved against the other's server.
+    const mine = server("mine", "src/index.ts");
+    const theirs = server("theirs", "src/index.ts");
+    const otherModel = fakeModel("inmemory://model/2");
+
+    // Monaco lists the other project's model first, which is what the old lookup found.
+    registerLspDocument(otherModel, theirs.document);
+    registerLspDocument(model, mine.document);
+
+    const provider = providers.get("provideCompletionItems")!;
+    const list = (await provider.provideCompletionItems!(
+      model as never,
+      { lineNumber: 1, column: 1 } as never,
+      { triggerKind: 0 } as never,
+      cancellation() as never,
+    )) as { suggestions: unknown[] };
+
+    const resolved = await provider.resolveCompletionItem!(list.suggestions[0] as never, cancellation() as never);
+
+    expect((resolved as { detail?: string }).detail).toBe("resolved by mine");
+    expect(theirs.asked).toEqual([]);
+    expect(mine.asked.map((a) => a.method)).toEqual(["textDocument/completion", "completionItem/resolve"]);
+    // The item goes back exactly as it arrived: `data` is the server's own token.
+    expect(mine.asked[1]!.params).toMatchObject({ label: "mine", data: { from: "mine" } });
+
+    unregisterLspDocument(model);
+    unregisterLspDocument(otherModel);
   });
 });
