@@ -7,10 +7,12 @@
  */
 import { describe, it, expect, afterEach } from "bun:test";
 import { resolve } from "node:path";
-import { LspSession } from "../../../../src/services/lsp/lsp-session.ts";
+import { LspSession, stopServerProcess } from "../../../../src/services/lsp/lsp-session.ts";
 import type { LanguageServerDefinition } from "../../../../src/services/lsp/server-registry.ts";
 
 const FIXTURE = resolve(import.meta.dir, "../../../fixtures/fake-language-server.ts");
+/** `SHUTDOWN_GRACE_MS` in `lsp-session.ts`; not exported, and not worth exporting for this. */
+const SHUTDOWN_GRACE_MS = 3_000;
 
 function definition(): LanguageServerDefinition {
   return {
@@ -197,5 +199,122 @@ describe("failure and cleanup", () => {
     await session.dispose();
 
     expect(session.state).toBe("stopped");
+  });
+
+  it("sends shutdown before exit, so the server can flush what it caches", async () => {
+    // The fixture exits by the specification's own rule — 0 when `shutdown` arrived first,
+    // 1 when only `exit` did — which is the one thing a client can observe from outside.
+    // `dispose()` used to set the state to `stopped` before asking, and `request()` refuses
+    // to send on a stopped session, so `shutdown` was rejected before it was ever written
+    // and rust-analyzer and gopls never got the chance the comment on `dispose()` promises.
+    const exits: Array<{ code: number | null; state: string }> = [];
+    const session = await start(undefined, { onExit: (info) => exits.push(info) });
+
+    await session.dispose();
+    await Bun.sleep(60);
+
+    expect(exits[0]?.code).toBe(0);
+  });
+
+  it("calls a clean shutdown stopped, not crashed", async () => {
+    // The process exits while `dispose()` is still in its handshake, so whoever wins that
+    // race decides what `onExit` reports — and a crash notice on every idle shutdown would
+    // reach the Problems panel through the bridge.
+    const exits: Array<{ code: number | null; state: string }> = [];
+    const session = await start(undefined, { onExit: (info) => exits.push(info) });
+
+    await session.dispose();
+    await Bun.sleep(60);
+
+    expect(exits[0]?.state).toBe("stopped");
+    expect(session.state).toBe("stopped");
+  });
+
+  it("gives up on a server that answers neither shutdown nor exit, in one grace period", async () => {
+    const session = await start("deaf-shutdown");
+    const pid = (session as unknown as { proc: { pid: number } }).proc.pid;
+
+    const started = Date.now();
+    await session.dispose();
+    const elapsed = Date.now() - started;
+
+    expect(session.state).toBe("stopped");
+    await Bun.sleep(250); // the signal is delivered asynchronously
+    expect(() => process.kill(pid, 0)).toThrow();
+    // One budget for the whole handshake, not one per step: waiting the full grace for
+    // `shutdown` and then again for the exit holds up PPM's own shutdown for twice as long,
+    // per hung server, in `disposeAll()`.
+    expect(elapsed).toBeLessThan(SHUTDOWN_GRACE_MS + 1_200);
+  });
+
+  it("calls a server that quits on shutdown stopped, not crashed", async () => {
+    // Some servers treat `shutdown` as "quit now" and go without replying, so the process is
+    // gone while `dispose()` is still in its handshake. Reporting that as a crash puts an
+    // error in front of someone who only closed a tab — the bridge forwards it to the
+    // browser, and the manager drops the entry either way.
+    const exits: Array<{ code: number | null; state: string }> = [];
+    const session = await start("quits-on-shutdown", { onExit: (info) => exits.push(info) });
+
+    await session.dispose();
+    await Bun.sleep(60);
+
+    expect(exits[0]?.state).toBe("stopped");
+    expect(session.state).toBe("stopped");
+  });
+});
+
+describe("stopServerProcess", () => {
+  /** A process that records what was done to it, standing in for `Bun.spawn`'s. */
+  function fake(exitCode: number | null = null) {
+    const calls: string[] = [];
+    const killedTrees: number[] = [];
+    const proc = { pid: 4242, exitCode, kill: () => calls.push("kill") };
+    return { proc, calls, killedTrees, killTree: (pid: number) => killedTrees.push(pid) };
+  }
+
+  it("signals the process directly off Windows", () => {
+    // Measured on Linux: the SIGTERM from `proc.kill()` reached all three `tsserver`
+    // children `typescript-language-server` forks, and all three exited. A tree kill here
+    // would be SIGKILL, taking away the flush the handshake just bought.
+    const f = fake();
+
+    stopServerProcess(f.proc, "linux", f.killTree);
+
+    expect(f.calls).toEqual(["kill"]);
+    expect(f.killedTrees).toEqual([]);
+  });
+
+  it("kills the whole tree on Windows, because the process PPM holds is a shim", () => {
+    // `server-registry.ts` prefers `node_modules/.bin/<server>.cmd`, and Windows runs a
+    // `.cmd` through `cmd.exe` — so terminating what Bun handed back leaves the real
+    // `node.exe`, and every `tsserver` under it, resident for the life of the machine.
+    const f = fake();
+
+    stopServerProcess(f.proc, "win32", f.killTree);
+
+    expect(f.killedTrees).toEqual([4242]);
+    expect(f.calls).toEqual([]);
+  });
+
+  it("leaves an already-reaped pid alone on both platforms", () => {
+    // Windows recycles pids aggressively, and `taskkill /T` on one that now belongs to
+    // something else takes that whole tree with it.
+    for (const platform of ["win32", "linux"] as const) {
+      const f = fake(0);
+      stopServerProcess(f.proc, platform, f.killTree);
+      expect(f.calls).toEqual([]);
+      expect(f.killedTrees).toEqual([]);
+    }
+  });
+
+  it("is the only thing in lsp-session.ts that terminates a process", () => {
+    // A bare `proc.kill()` added later would leak on Windows exactly as before, and look
+    // completely ordinary in review.
+    const src = require("node:fs").readFileSync(
+      resolve(import.meta.dir, "../../../../src/services/lsp/lsp-session.ts"),
+      "utf8",
+    );
+    const body = src.slice(src.indexOf("export class LspSession"));
+    expect(body).not.toMatch(/proc\??\.kill\(\)/);
   });
 });

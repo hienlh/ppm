@@ -12,6 +12,8 @@
  *   crash    exit non-zero right after initialize
  *   garbage  write unframed text to stdout
  *   needs-config  ask workspace/configuration before answering anything
+ *   deaf-shutdown ignore `shutdown` and `exit`, so only a kill ends it
+ *   quits-on-shutdown treat `shutdown` as "quit now" and go, without replying
  */
 const MODE = process.env.FAKE_LSP_MODE ?? "normal";
 
@@ -22,6 +24,7 @@ function send(message: unknown): void {
 }
 
 let configAnswered = false;
+let shutdownSeen = false;
 const held: Array<Parameters<typeof handle>[0]> = [];
 let buffer = Buffer.alloc(0);
 
@@ -101,12 +104,24 @@ function handle(message: { id?: number; method?: string; params?: unknown; resul
   }
 
   if (method === "shutdown") {
+    // A server PPM's own shutdown has to wait on, and cannot wait on twice.
+    if (MODE === "deaf-shutdown") return;
+    shutdownSeen = true;
+    // A server that does not wait to be told twice: it goes while the client is still in its
+    // handshake, so the exit is observed with the session mid-`dispose()`.
+    if (MODE === "quits-on-shutdown") {
+      setTimeout(() => process.exit(0), 20);
+      return;
+    }
     send({ jsonrpc: "2.0", id, result: null });
     return;
   }
 
   if (method === "exit") {
-    process.exit(0);
+    if (MODE === "deaf-shutdown") return;
+    // The specification's own rule, and the only way a client can tell from outside whether
+    // it was polite: exit 0 when `shutdown` came first, 1 when it did not.
+    process.exit(shutdownSeen ? 0 : 1);
   }
 
   if (method === "$/cancelRequest") return;

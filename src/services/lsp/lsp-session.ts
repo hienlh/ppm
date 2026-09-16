@@ -17,14 +17,22 @@
  *   way back. Rejecting is recoverable, hanging is not.
  * - **The process must not outlive the session.** A leaked rust-analyzer keeps
  *   a crate graph in memory indefinitely, and PPM runs on machines where that
- *   is the whole machine.
+ *   is the whole machine. On Windows the process PPM holds is not the server —
+ *   see `stopServerProcess`.
  */
 import { CLIENT_CAPABILITIES } from "./lsp-capabilities.ts";
 import { LspMessageDecoder, encodeMessage, type JsonRpcMessage } from "./lsp-protocol.ts";
 import type { LanguageServerDefinition } from "./server-registry.ts";
 import { pathToFileUri } from "../../shared/lsp-uri.ts";
+import { killProcessTree } from "../windows-process-tree.ts";
 
-export type LspSessionState = "starting" | "ready" | "stopped" | "crashed";
+/**
+ * `stopping` is the polite handshake in `dispose()` and nothing else. It is a state rather
+ * than a flag because two other places have to know about it: `request()` refuses to send on
+ * a session that is not running, and `shutdown` has to get through; and an exit during the
+ * handshake is the handshake working, not a crash.
+ */
+export type LspSessionState = "starting" | "ready" | "stopping" | "stopped" | "crashed";
 
 /** How long a normal request may take before it is treated as lost. */
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
@@ -54,6 +62,35 @@ interface Pending {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   method: string;
+}
+
+/**
+ * Stop a server process, including whatever the platform put between PPM and it.
+ *
+ * `server-registry.ts` prefers `node_modules/.bin/<server>.cmd` so a project's pinned server
+ * wins, and Windows runs a `.cmd` through `cmd.exe` — so the process Bun hands back is the
+ * shim. Terminating it leaves the real `node.exe` resident, and with it every `tsserver` that
+ * `typescript-language-server` forks (three of them, measured); one such server was 854 MB.
+ * They are not reachable by pid from here, only as a tree, which is what `taskkill /T` walks.
+ *
+ * POSIX needs none of it and gets none of it: measured on Linux, the SIGTERM from
+ * `proc.kill()` reached all three forked `tsserver` children and all three exited — and a
+ * tree kill there would be `SIGKILL`, taking away the cache flush the handshake just bought.
+ *
+ * An already-reaped pid is left alone in both branches. Windows recycles pids aggressively,
+ * and `taskkill /T` on one that now belongs to something else takes that whole tree with it.
+ */
+export function stopServerProcess(
+  proc: { pid: number; exitCode: number | null; kill: () => void },
+  platform: NodeJS.Platform = process.platform,
+  killTree: (pid: number) => void = killProcessTree,
+): void {
+  if (proc.exitCode !== null) return;
+  if (platform !== "win32") {
+    proc.kill();
+    return;
+  }
+  killTree(proc.pid);
 }
 
 export class LspSession {
@@ -147,7 +184,11 @@ export class LspSession {
 
   private async watchExit(): Promise<void> {
     const code = (await this.proc?.exited) ?? null;
-    if (this.state !== "stopped") this.state = "crashed";
+    // An exit during `dispose()`'s handshake is that handshake working, and it races the
+    // assignment at the end of `dispose()` — so settle it here rather than reporting whichever
+    // won as the session's final state.
+    if (this.state === "stopping") this.state = "stopped";
+    else if (this.state !== "stopped") this.state = "crashed";
     this.rejectAllPending(
       new Error(
         `${this.definition.displayName} exited (code ${code}).` +
@@ -297,10 +338,10 @@ export class LspSession {
   }
 
   private fail(reason: string): void {
-    if (this.state === "stopped") return;
+    if (this.state === "stopped" || this.state === "stopping") return;
     this.state = "crashed";
     this.rejectAllPending(new Error(`${this.definition.displayName} session failed: ${reason}`));
-    this.proc?.kill();
+    this.killProcess();
   }
 
   private rejectAllPending(error: Error): void {
@@ -319,7 +360,12 @@ export class LspSession {
   kill(): void {
     this.state = "stopped";
     this.rejectAllPending(new Error(`${this.definition.displayName} was killed`));
-    this.proc?.kill();
+    this.killProcess();
+  }
+
+  /** The one place this file terminates a process. See `stopServerProcess`. */
+  private killProcess(): void {
+    if (this.proc) stopServerProcess(this.proc);
   }
 
   /**
@@ -330,15 +376,24 @@ export class LspSession {
    * a hung server would otherwise stay resident for the life of PPM.
    */
   async dispose(): Promise<void> {
-    if (this.state === "stopped") return;
+    if (this.state === "stopped" || this.state === "stopping") return;
     const wasRunning = this.state === "ready" || this.state === "starting";
-    this.state = "stopped";
+    // One budget for the whole handshake rather than one per step: a server that will not
+    // answer `shutdown` is not going to act on `exit` either, and PPM's own shutdown waits
+    // on every session in `disposeAll()`.
+    const deadline = Date.now() + SHUTDOWN_GRACE_MS;
+    const remaining = () => Math.max(0, deadline - Date.now());
 
     if (wasRunning) {
+      // Not `stopped` yet: `request()` refuses to send on a stopped session, so setting it
+      // here made `shutdown` reject before it was ever written, and the paragraph above
+      // describe something that never happened — every server got a bare `exit`, which by
+      // the specification is the case where it may skip its own cleanup entirely.
+      this.state = "stopping";
       try {
         await Promise.race([
-          this.request("shutdown", null, SHUTDOWN_GRACE_MS).catch(() => undefined),
-          Bun.sleep(SHUTDOWN_GRACE_MS),
+          this.request("shutdown", null, remaining()).catch(() => undefined),
+          Bun.sleep(remaining()),
         ]);
         this.write({ jsonrpc: "2.0", method: "exit", params: undefined });
       } catch {
@@ -346,13 +401,14 @@ export class LspSession {
       }
     }
 
+    this.state = "stopped";
     this.rejectAllPending(new Error(`${this.definition.displayName} was shut down`));
 
     const proc = this.proc;
     if (!proc) return;
-    await Promise.race([proc.exited, Bun.sleep(SHUTDOWN_GRACE_MS)]);
+    await Promise.race([proc.exited, Bun.sleep(remaining())]);
     try {
-      proc.kill();
+      this.killProcess();
     } catch {
       // Already reaped.
     }
