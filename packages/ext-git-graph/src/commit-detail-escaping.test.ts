@@ -47,18 +47,33 @@ const functionSource = (name: string): string => declarationSource(`function ${n
 
 const NAMES = ["escHtml", "copyable", "hashCell", "personCell", "whenCell", "metaRow"] as const;
 
-const cells = new Function(`
-  ${declarationSource("const WHEN_FORMAT = {")}
-  ${NAMES.map(functionSource).join("\n")}
-  return { ${NAMES.join(", ")} };
-`)() as {
+interface Cells {
   escHtml(value: unknown): string;
   copyable(inner: string, text: string, cls: string): string;
   hashCell(hash: string): string;
   personCell(name: string, email: string): string;
   whenCell(ts: number): string;
   metaRow(label: string, cells: string[]): string;
-};
+}
+
+/**
+ * `Date` is a parameter of the sandbox so a test can hand `whenCell` a locale
+ * that returns something dangerous. Driven by the real one it cannot fail: a
+ * formatted date holds no `<`, so the assertion passes with the escape taken
+ * out — which is the same "green against the bug" this file exists to end.
+ */
+function buildCells(dateCtor: typeof Date = Date): Cells {
+  return new Function(
+    "Date",
+    `
+  ${declarationSource("const WHEN_FORMAT = {")}
+  ${NAMES.map(functionSource).join("\n")}
+  return { ${NAMES.join(", ")} };
+`,
+  )(dateCtor) as Cells;
+}
+
+const cells = buildCells();
 
 /** The shape of the thing this panel has to survive being handed. */
 const HOSTILE = '<img src=x onerror="alert(1)">';
@@ -69,9 +84,20 @@ describe("the detail panel's cells escape what the repository gave them", () => 
 
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img");
-    // The first eight characters are styled separately from the rest, so both
-    // halves have to be escaped — an unescaped tail is just as live.
     expect(html).toContain('data-copy="&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"');
+  });
+
+  it("escapes the tail of a hash, not only its first eight characters", () => {
+    // The first eight characters are styled separately from the rest, so both
+    // halves have to be escaped — an unescaped tail is just as live. A payload
+    // starting at index 0 cannot show that: it lands entirely in the lead, and
+    // dropping the tail's `escHtml` leaves every assertion above green. This
+    // one starts exactly where the tail does.
+    const html = cells.hashCell(`01234567${HOSTILE}`);
+
+    expect(html).toContain('<span class="hash-lead">01234567</span>');
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
   });
 
   it("escapes an author's name and email, and the copy target built from both", () => {
@@ -97,11 +123,23 @@ describe("the detail panel's cells escape what the repository gave them", () => 
     expect(cells.metaRow("Author", ["<b>cell</b>"])).toContain("<b>cell</b>");
   });
 
-  it("escapes a formatted date, which is locale data rather than repository data", () => {
-    // Not attacker-controllable, but it goes through the same door and the
-    // rule is easier to keep than to remember exceptions to.
+  it("wraps a formatted date in the row's own span", () => {
     expect(cells.whenCell(1_700_000_000)).toContain('<span class="meta-when">');
-    expect(cells.whenCell(1_700_000_000)).not.toContain("<img");
+  });
+
+  it("escapes a formatted date, which is locale data rather than repository data", () => {
+    // Not attacker-controllable, but it goes through the same door and the rule
+    // is easier to keep than to remember exceptions to. The locale is faked
+    // because a real formatted date contains nothing that needs escaping.
+    class HostileLocale {
+      toLocaleString(): string {
+        return HOSTILE;
+      }
+    }
+    const faked = buildCells(HostileLocale as unknown as typeof Date);
+
+    expect(faked.whenCell(1_700_000_000)).not.toContain("<img");
+    expect(faked.whenCell(1_700_000_000)).toContain("&lt;img");
   });
 
   it("escapes a bare ampersand once, not twice", () => {
@@ -122,9 +160,18 @@ describe("no field reaches the detail panel's markup unescaped", () => {
     return functionSource(name);
   }
 
+  /**
+   * The operator is `\+=?` rather than `\+`, because half of this markup is
+   * built by appending: `head += detail.author` is the same defect as
+   * `head + detail.author` and the narrower pattern walks straight past it.
+   */
+  function rawInterpolations(name: string, field: RegExp): string[] {
+    const pattern = new RegExp(`\\+=? *(${field.source})\\b(?!\\s*\\?)`, "g");
+    return [...bodyOf(name).matchAll(pattern)].map((match) => match[1]!);
+  }
+
   it("renderDetailPanel interpolates no `detail.*` value directly", () => {
-    const raw = [...bodyOf("renderDetailPanel").matchAll(/\+ *(detail\.\w+(?:\.\w+)?)/g)]
-      .map((match) => match[1]!)
+    const raw = rawInterpolations("renderDetailPanel", /detail\.\w+(?:\.\w+)?/)
       // `detail.fileChanges.length` and `detail.parents.length` are numbers the
       // panel counted, not text from the repository.
       .filter((expression) => !expression.endsWith(".length"));
@@ -134,15 +181,24 @@ describe("no field reaches the detail panel's markup unescaped", () => {
 
   it("renderFileListHtml interpolates no file field directly", () => {
     // A path is repository-supplied and lands in three attributes and the text.
-    const raw = [...bodyOf("renderFileListHtml").matchAll(/\+ *(f\.\w+|hash|parentHash|section)\b(?!\s*\?)/g)]
-      .map((match) => match[1]!)
+    const raw = rawInterpolations("renderFileListHtml", /f\.\w+|hash|parentHash|section/)
+      .filter((expression) => expression !== "f.additions" && expression !== "f.deletions");
+
+    expect(raw).toEqual([]);
+  });
+
+  it("renderFileTree interpolates no file field directly", () => {
+    // Tree mode renders the same rows through a different function, and a
+    // guard that only knows about the list leaves half the panel unwatched —
+    // including the directory name, which is a path segment from the repo.
+    const raw = rawInterpolations("renderFileTree", /f\.\w+|hash|parentHash|section|dir/)
       .filter((expression) => expression !== "f.additions" && expression !== "f.deletions");
 
     expect(raw).toEqual([]);
   });
 
   it("renderFileActions interpolates no file field directly", () => {
-    const raw = [...bodyOf("renderFileActions").matchAll(/\+ *(file\.\w+)\b/g)].map((match) => match[1]!);
+    const raw = rawInterpolations("renderFileActions", /file\.\w+/);
 
     expect(raw).toEqual([]);
   });

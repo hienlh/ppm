@@ -832,8 +832,13 @@ function parseStashes(stdout: string): import("./types.ts").Stash[] {
  * commit touching ten thousand files became ten thousand objects across
  * `postMessage` and ten thousand rows in one `innerHTML`. A repository you
  * clone can ship that commit.
+ *
+ * The cap has to be *said*, not just applied: a truncated list rendered as
+ * "500 files changed" is a wrong number presented as a fact, which is worse
+ * than a slow panel. `filesOmitted` carries what was dropped, the way the
+ * message cap appends its own `[… N more characters]`.
  */
-const MAX_DETAIL_FILES = 500;
+export const MAX_DETAIL_FILES = 500;
 
 /**
  * Characters of commit message the panel will render.
@@ -846,7 +851,7 @@ const MAX_DETAIL_FILES = 500;
  */
 const MAX_MESSAGE_CHARS = 100_000;
 
-function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
+export function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
   const [headerBlock, rest] = stdout.split("<END_MSG>");
   const lines = headerBlock.trim().split("\n");
   const hash = lines[0];
@@ -864,11 +869,17 @@ function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
 
   // Parse --numstat output for file changes (format: "adds\tdels\tpath")
   const fileChanges: import("./types.ts").FileChange[] = [];
+  let filesOmitted = 0;
   if (rest) {
     for (const line of rest.trim().split("\n").filter(Boolean)) {
-      if (fileChanges.length >= MAX_DETAIL_FILES) break;
       const numstatMatch = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
       if (numstatMatch) {
+        // Past the cap the rest of the walk is only counting, so that the panel
+        // can say how many files it is not showing.
+        if (fileChanges.length >= MAX_DETAIL_FILES) {
+          filesOmitted++;
+          continue;
+        }
         const additions = numstatMatch[1] === "-" ? 0 : parseInt(numstatMatch[1], 10);
         const deletions = numstatMatch[2] === "-" ? 0 : parseInt(numstatMatch[2], 10);
         let filePath = numstatMatch[3];
@@ -895,7 +906,7 @@ function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
     }
   }
 
-  return { hash, parents, author, authorEmail, authorDate, committer, committerEmail, commitDate, message, fileChanges };
+  return { hash, parents, author, authorEmail, authorDate, committer, committerEmail, commitDate, message, fileChanges, filesOmitted };
 }
 
 function buildGitActionArgs(action: string, args: Record<string, unknown>): string[] {

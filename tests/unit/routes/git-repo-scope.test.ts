@@ -112,7 +112,11 @@ describe("the ?repo= scope guard", () => {
     // is the one case discovery cannot protect against, because the parameter
     // does not have to be a path discovery returned.
     const link = join(project, "escape");
-    symlinkSync(outside, link, "dir");
+    // `"junction"` rather than `"dir"`: a Windows symlink needs Developer Mode or
+    // elevation, so the `"dir"` form makes this guard's own test red on the one
+    // platform nobody can fix it on — and an ignored test guards nothing. The
+    // type is ignored everywhere else.
+    symlinkSync(outside, link, "junction");
     try {
       const { status, body } = await repos(`?repo=${encodeURIComponent(link)}`);
       expect(status).toBe(400);
@@ -124,7 +128,7 @@ describe("the ?repo= scope guard", () => {
 
   it("still accepts a symlink that stays inside the project", async () => {
     const link = join(project, "alias");
-    symlinkSync(join(project, "frontend"), link, "dir");
+    symlinkSync(join(project, "frontend"), link, "junction");
     try {
       const { status, body } = await repos(`?repo=${encodeURIComponent(link)}`);
       expect(status).toBe(200);
