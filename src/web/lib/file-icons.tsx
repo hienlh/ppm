@@ -36,10 +36,16 @@ export { fileIconName, folderIconName };
  * Imported at module scope it was not lazy in any useful sense: this module is
  * reached from `tab-type-icons.ts`, which the tab bar, the mobile nav and the
  * dock header all import eagerly, so Vite hoisted the stylesheet into a
- * `<link rel="stylesheet">` in `index.html` — render-blocking on every load,
- * measured at 499,375 bytes raw / 127,333 gzip / 79,836 brotli. The app's
- * entire other stylesheet is 25,956 gzip, so the icons were 4.9x everything
- * else put together, in front of the first paint.
+ * `<link rel="stylesheet">` in `index.html` — render-blocking on every load.
+ * Re-measured against this branch's full 1193-glyph port rather than the 224 it
+ * was first written for: **1,952,181 bytes raw / 535,335 gzip / 391,418 brotli**
+ * against the app's entire other stylesheet at 26,340 gzip, so the icons are
+ * **20x** everything else put together. (The figure quoted here used to be
+ * 499,375 raw / 4.9x, which was the truth at 224 glyphs and is a quarter of the
+ * truth now.) It is a first-*use* cost rather than a first-load one, which is
+ * the whole point of the boundary — but a phone that opens one file listing
+ * downloads 382 KiB of artwork to do it, and that number belongs in the comment
+ * rather than in someone's memory.
  *
  * So it is fetched at runtime by a `<link>` this function appends. The cost is
  * honest and visible: an icon that renders before the stylesheet lands is a
@@ -146,6 +152,15 @@ export function FileIcon({ name, kind = "file", open, className }: FileIconProps
  * keeps insertion order, and clearing hands every caller a new component type
  * at once — remounting every icon on screen, which is the one thing this cache
  * exists to prevent.
+ *
+ * Insertion order, not recency: this is deliberately *not* an LRU, and the
+ * difference is visible exactly once. Scrolling back through a tree with more
+ * than 2000 distinct basenames can evict a name that is still on screen —
+ * whichever was cached first, however recently it was used — and remount those
+ * icons one time. Re-entering them puts them back at the end of the order.
+ * Keeping a real LRU would mean touching the Map on every `fileIconElement`
+ * call, which the palette makes hundreds of per keystroke, to avoid one
+ * remount in a tree that size.
  */
 const ELEMENT_CACHE_MAX = 2000;
 const elementCache = new Map<string, FC<{ className?: string }>>();

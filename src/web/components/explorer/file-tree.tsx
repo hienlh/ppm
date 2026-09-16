@@ -456,6 +456,34 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   useDragAutoScroll(scrollRef);
+
+  /**
+   * The keyboard's right-click.
+   *
+   * Focus lives on the panel container — the rows are virtualized and never take it — so a
+   * `ContextMenu` (or Shift+F10) press targets an element that is not inside the radix trigger
+   * at all: nothing opened, and there was no pointer position to open it at. Re-aiming the
+   * event at the focused row's own element produces exactly what right-clicking that row does,
+   * `rememberMenuTarget` included, so there is no second way of resolving the target to keep in
+   * step with the first. It is also why `menuNode` is not cleared when the menu closes: every
+   * path that opens this menu resolves the row first, and clearing on close would swap the
+   * content to the blank-area menu *during* the exit animation, in view.
+   */
+  const openMenuForFocusedRow = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return;
+    const index = rowsRef.current.findIndex((r) => r.kind === "node" && r.node.path === focusedPath);
+    const el = index >= 0 ? scrollRef.current?.querySelector(`[data-index="${index}"]`) : null;
+    if (!el) return; // no focused row, or it is outside the rendered range
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    el.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      clientX: Math.round(rect.left + 8),
+      clientY: Math.round(rect.top + rect.height / 2),
+    }));
+  }, [focusedPath]);
   const isMobile = useIsMobile();
   // `directDomUpdates` is what keeps React off the scroll path: without it every
   // scroll event ends in `flushSync(rerender)`, so the whole mounted row set is
@@ -556,7 +584,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       ref={treeContainerRef}
       className={cn("flex flex-col h-full outline-none", (isRootDragOver || backgroundDrop.isOver) && "bg-primary/5")}
       tabIndex={0}
-      onKeyDown={(e) => { handleClipboardKeyDown(e); handleTreeKeyDown(e); }}
+      onKeyDown={(e) => { handleClipboardKeyDown(e); handleTreeKeyDown(e); openMenuForFocusedRow(e); }}
       // Two independent drags share this background: OS files (handleRoot*, unchanged) and
       // a cross-surface entry drag (backgroundDrop, gated on its own MIME) — each ignores
       // the other's kind, so calling both in sequence is safe.

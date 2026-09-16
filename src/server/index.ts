@@ -45,7 +45,7 @@ async function setupLogFile() {
   const { resolve } = await import("node:path");
   const { appendFileSync, mkdirSync, existsSync } = await import("node:fs");
   const { getPpmDir } = await import("../services/ppm-dir.ts");
-  const { fdWritesTo } = await import("../services/log-rotate.ts");
+  const { stdioIsLogFile, consumeStdioIsLogEnv } = await import("../services/log-rotate.ts");
 
   const ppmDir = getPpmDir();
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
@@ -82,8 +82,11 @@ async function setupLogFile() {
   // and only the formatted, redacted line is written — one copy per event, and
   // the safe one. Run from a terminal (`bun dev:server`) stdout is a tty, both
   // checks are false, and the terminal keeps its output exactly as before.
-  const stdoutIsLogFile = fdWritesTo(1, logPath);
-  const stderrIsLogFile = fdWritesTo(2, logPath);
+  const stdoutIsLogFile = stdioIsLogFile(1, logPath);
+  const stderrIsLogFile = stdioIsLogFile(2, logPath);
+  // Read once, then dropped: the terminals, SDK children and `ppm` invocations this server
+  // spawns inherit its environment, and none of their stdouts is the log file.
+  consumeStdioIsLogEnv();
 
   console.log = (...args: unknown[]) => { if (!stdoutIsLogFile) origLog(...args); writeLog("INFO", args); };
   console.error = (...args: unknown[]) => { if (!stderrIsLogFile) origError(...args); writeLog("ERROR", args); };

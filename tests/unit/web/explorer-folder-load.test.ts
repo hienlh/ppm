@@ -15,7 +15,13 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 
 /** One controllable response per URL, so a test can hold a request open. */
-const pending: { url: string; resolve: (v: unknown) => void; aborted: boolean }[] = [];
+const pending: {
+  url: string;
+  resolve: (v: unknown) => void;
+  /** The real failure door: a 500, a dropped connection — anything that is not an abort. */
+  reject: (e: unknown) => void;
+  aborted: boolean;
+}[] = [];
 let getCalls: string[] = [];
 
 // Relative, like every other `mock.module` in the suite. An absolute path is
@@ -28,7 +34,12 @@ mock.module("../../../src/web/lib/api-client.ts", () => ({
     get: (url: string, opts?: { signal?: AbortSignal }) => {
       getCalls.push(url);
       return new Promise((resolve, reject) => {
-        const entry = { url, resolve: resolve as (v: unknown) => void, aborted: false };
+        const entry = {
+          url,
+          resolve: resolve as (v: unknown) => void,
+          reject: reject as (e: unknown) => void,
+          aborted: false,
+        };
         opts?.signal?.addEventListener("abort", () => {
           entry.aborted = true;
           const e = new Error("Aborted");
@@ -78,15 +89,39 @@ describe("clicking a folder whose prefetch is already in flight", () => {
   });
 
   it("still resolves the click when the request it waited on fails", async () => {
+    // Rejecting, not resolving with `[]`: an empty directory and a failed request take
+    // completely different paths through `loadChildren`, and only one of them is the one this
+    // is about — the `catch` that clears the inflight entry and swallows the error.
     const store = useFileStore.getState();
     store.loadChildren("p", FOLDER, { prefetch: true });
     await Promise.resolve();
 
     const click = store.loadChildren("p", FOLDER);
     await Promise.resolve();
-    pending[0]!.resolve([]);
-    await click; // must not hang or throw
+    pending[0]!.reject(new Error("500 Internal Server Error"));
+    await click; // must not hang, and must not reject into whoever clicked
 
-    expect(useFileStore.getState().loadedPaths.has(FOLDER)).toBe(true);
+    expect(useFileStore.getState().loadedPaths.has(FOLDER)).toBe(false);
+    // And the failed load must be out of the map, or every later click on this folder awaits
+    // a promise that has already settled and returns with no children at all.
+    expect(useFileStore.getState().inflight.has(FOLDER)).toBe(false);
+  });
+
+  it("keeps prefetching a level ahead of the folder the click opened", async () => {
+    // The prefetch deliberately does not cascade, so a click that *joins* one used to inherit
+    // that and stop the chain at the folder just opened — the one whose children are most
+    // likely to be wanted next.
+    const store = useFileStore.getState();
+    store.loadChildren("p", FOLDER, { prefetch: true });
+    await Promise.resolve();
+    const click = store.loadChildren("p", FOLDER);
+    await Promise.resolve();
+
+    pending[0]!.resolve([{ name: "dto", type: "directory" }]);
+    await click;
+
+    // The queue runs on idle, which off a browser is a 200ms timer.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(getCalls.some((u) => u.includes(encodeURIComponent(`${FOLDER}/dto`)))).toBe(true);
   });
 });

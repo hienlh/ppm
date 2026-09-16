@@ -186,6 +186,32 @@ function xtstPackage(): string {
   return "libXtst";
 }
 
+/** No Xlib connection at all — which is a different fault from a missing XTEST extension, and
+ *  used to be reported as one: `getX11()` answering null made the row below say "XTEST
+ *  extension (libXtst)" and offer `apt install libxtst6`, an instruction that cannot help on a
+ *  host whose libX11 is missing or whose server refused the connection. Capture is unaffected
+ *  either way — ffmpeg opens the display itself, in its own process. */
+function xlibRequirement(display: string): RemoteDesktopRequirement {
+  return {
+    id: "xlib",
+    ok: false,
+    gates: "input",
+    title: "A reachable X server (libX11)",
+    detail: `PPM could not open ${display} through Xlib: either libX11 is missing, or the server `
+      + "refused the connection because PPM cannot read its auth cookie. The picture can still "
+      + "arrive while this is unmet — it is mouse, keyboard and privacy mode that need it.",
+    actions: [linuxInstallAction(x11Package())].filter((a): a is RequirementAction => a !== undefined),
+  };
+}
+
+/** Same split as `xtstPackage`: Debian/Ubuntu `libx11-6`, Arch `libx11`, Fedora/openSUSE
+ *  `libX11`. */
+function x11Package(): string {
+  if (existsSync("/usr/bin/pacman")) return "libx11";
+  if (existsSync("/usr/bin/apt")) return "libx11-6";
+  return "libX11";
+}
+
 function clipboardSupport(platform: NodeJS.Platform, session: LinuxSession | null): ClipboardSupport {
   const tool = clipboardTool(platform, session);
   if (clipboardAvailable(tool)) return { available: true, action: null };
@@ -197,7 +223,7 @@ async function linuxRequirements(session: LinuxSession): Promise<RemoteDesktopRe
   const rows: RemoteDesktopRequirement[] = [linuxSessionRequirement(session)];
   if (session.kind === "x11") {
     const conn = await getX11(session);
-    rows.push(xtestRequirement(!!conn?.hasXTest));
+    rows.push(conn ? xtestRequirement(conn.hasXTest) : xlibRequirement(session.display));
   } else {
     rows.push(uinputRequirement());
   }

@@ -280,8 +280,28 @@ describe("a filename is not a property name", () => {
   });
 
   it("keeps the tables prototype-less so this cannot come back", () => {
-    for (const table of [EXTENSION_ICONS, FILENAME_ICONS, FOLDER_ICONS, FOLDER_OPEN_ICONS]) {
+    for (const table of [
+      EXTENSION_ICONS, FILENAME_ICONS, FOLDER_ICONS, FOLDER_OPEN_ICONS,
+      // The framework overlays are consulted *first*, so a plain object literal in one of them
+      // brings the whole hazard back with every assertion above still green: `fileIconName`
+      // would answer from `Object.prototype` before it reached the four tables on the line
+      // above. (Their containers are keyed by the `IconFramework` union rather than by a
+      // filename, so those are not a door.)
+      ...Object.values(FRAMEWORK_EXTENSION_ICONS),
+      ...Object.values(FRAMEWORK_FILENAME_ICONS),
+    ]) {
       expect(Object.getPrototypeOf(table)).toBeNull();
+    }
+  });
+
+  it("gives inherited property names the default icon under a framework too", () => {
+    // Every case above passes no framework, and the overlay is the first thing consulted.
+    for (const framework of FRAMEWORKS) {
+      for (const name of hazards) {
+        expect(fileIconName(name, framework), `${framework} file "${name}"`).toBe(DEFAULT_FILE_ICON);
+        expect(fileIconName(`x.${name}`, framework), `${framework} extension ".${name}"`).toBe(DEFAULT_FILE_ICON);
+        expect(typeof fileIconName(name, framework)).toBe("string");
+      }
     }
   });
 });
@@ -291,8 +311,9 @@ describe("a filename is not a property name", () => {
  * recovery path.
  *
  * One `import "@/styles/file-icons.generated.css"` anywhere the shell reaches
- * eagerly puts the whole 499 KB back into a render-blocking `<link>` in
- * `index.html`, and nothing about the app looks different when it does — which
+ * eagerly puts the whole sheet — 1.86 MB raw, 523 KiB gzip at this branch's 1193
+ * glyphs — back into a render-blocking `<link>` in `index.html`, and nothing
+ * about the app looks different when it does — which
  * is why this is enumerated rather than left to review. `file-icons.tsx` is
  * reached from `tab-type-icons.ts`, which the tab bar, the mobile nav and the
  * dock header all import at module scope.

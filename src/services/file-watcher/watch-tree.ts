@@ -152,8 +152,9 @@ export class WatchTree {
       : null;
   }
 
-  start(): Promise<void> {
-    return this.cover(this.options.root);
+  async start(): Promise<void> {
+    await this.cover(this.options.root);
+    await this.reconcile();
   }
 
   close(): void {
@@ -268,6 +269,48 @@ export class WatchTree {
     }
 
     return node;
+  }
+
+  /**
+   * Second pass: attach whatever appeared *during* the first one.
+   *
+   * `scan` takes a snapshot and `attach` then walks it, and both hand the event loop back
+   * every `YIELD_EVERY_DIRS` directories — so on a large project seconds pass between "X was
+   * read" and "X has a watcher". A directory created inside X in that window is in neither the
+   * snapshot nor under a live watcher, and nothing later finds it: `syncChildDir` only fires
+   * from a parent watcher that did not exist yet. That subtree would stay unwatched for the
+   * whole session — a file change that never arrives, which is the failure the budget comments
+   * in this file exist to avoid. Before the walk yielded at all the window was too small to
+   * matter; yielding is what opened it.
+   *
+   * Only non-recursive watchers are re-read, because a recursive handle covers what appears
+   * under it by definition. That is one extra `readdir` per *directory* on Linux and one per
+   * *subtree* on Windows and macOS.
+   */
+  private async reconcile(): Promise<void> {
+    if (this.closed) return;
+    this.sinceYield = 0;
+    for (const [dir, entry] of [...this.attached]) {
+      if (this.closed) return;
+      if (entry.recursive) continue;
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue; // deleted since it was attached; its watcher will say so
+      }
+      for (const child of entries) {
+        // Same rules as the walk: symlinks are not directories here, which keeps link cycles
+        // and doubly-covered pnpm stores out of this pass too.
+        if (!child.isDirectory() || isIgnoredDirName(child.name)) continue;
+        const abs = join(dir, child.name);
+        if (this.attached.has(abs)) continue;
+        // The whole subtree under it, budget and truncation accounted for — the same call
+        // `syncChildDir` makes for a directory that appears under a live watcher.
+        await this.cover(abs);
+      }
+      if (!(await this.yieldIfDue())) return;
+    }
   }
 
   private async attach(node: ScanNode): Promise<void> {

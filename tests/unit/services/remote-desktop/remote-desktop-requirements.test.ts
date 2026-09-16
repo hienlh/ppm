@@ -36,7 +36,13 @@ describe("remoteDesktopReadiness", () => {
     const r = await remoteDesktopReadiness("linux", { kind: "x11", display: ":0", xauthority: null });
     expect(r.platformSupported).toBe(true);
     expect(r.requirements.find((x) => x.id === "linux-session")).toMatchObject({ ok: true });
-    expect(r.requirements.find((x) => x.id === "xtest")).toMatchObject({ gates: "input" });
+    // Which of the two X11 input rows appears depends on whether this runner can reach an X
+    // server at all — `xtest` when Xlib answered, `xlib` when it did not, and that second case
+    // is the one a Windows or headless runner takes. Never `uinput`, which is the Wayland path.
+    // Both rows are pinned properly in `remote-desktop-x11-optional-symbols.test.ts`.
+    const input = r.requirements.filter((x) => x.gates === "input");
+    expect(input).toHaveLength(1);
+    expect(["xtest", "xlib"]).toContain(input[0]!.id);
     expect(r.requirements.find((x) => x.id === "uinput")).toBeUndefined();
   });
 
