@@ -17,6 +17,7 @@ const UPDATED = "2026-07-14T00:00:00.000Z";
 const MTIME = Date.parse(UPDATED); // matches staleKey(updatedAt) → reconcile treats as fresh
 
 const origList = chatService.listSessions.bind(chatService);
+let listCalls = 0;
 const origGet = chatService.getMessages.bind(chatService);
 
 function session(id: string, title: string): SessionInfo {
@@ -60,8 +61,10 @@ beforeAll(() => {
     registeredProject = true;
   }
   setSearchIndexDb(openTestSearchIndexDb());
-  (chatService as any).listSessions = async (_p?: string, dir?: string) =>
-    dir === PROJECT_PATH ? FIXTURES : [];
+  (chatService as any).listSessions = async (_p?: string, dir?: string) => {
+    listCalls++;
+    return dir === PROJECT_PATH ? FIXTURES : [];
+  };
   (chatService as any).getMessages = async (_pid: string, sid: string) => CONTENT[sid] ?? [];
 
   for (const [sid, msgs] of Object.entries(CONTENT)) {
@@ -79,9 +82,33 @@ afterAll(() => {
 });
 
 describe("GET /chat/search", () => {
-  it("empty query returns no results but reports indexing total", async () => {
+  /**
+   * An empty query renders the indexing chip and nothing else, so it must not
+   * enumerate: a dir-scoped list pages the SDK until it is exhausted. The price is
+   * that its total is only what this process has *seen* — and the two tests below
+   * pin both halves of that, in the order a user produces them.
+   *
+   * This one used to assert the enumerated total for a query that no longer
+   * enumerates. Two of the three fixtures have index rows (`s-title` has no
+   * content, so nothing seeded one), and the rows are all an empty query has
+   * before anything has listed the sessions.
+   */
+  it("empty query returns no results and answers from the index, without enumerating", async () => {
+    const before = listCalls;
     const data = await search("");
     expect(data.results).toEqual([]);
+    expect(listCalls).toBe(before);
+    expect(data.indexing.total).toBe(Object.keys(CONTENT).length);
+  });
+
+  it("an empty query after a real one reports what that query enumerated", async () => {
+    // The case that matters. Rows alone fall short of the session count whenever a
+    // session has not been read yet — here `s-title`, and on a fresh index every
+    // session a budgeted pass has not reached — and a denominator that low lets the
+    // chip read "finished" with work outstanding. Clearing the search box after
+    // typing is exactly when a user looks at it.
+    await search("webhook");
+    const data = await search("");
     expect(data.indexing.total).toBe(FIXTURES.length);
   });
 

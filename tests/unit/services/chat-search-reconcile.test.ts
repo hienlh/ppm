@@ -210,6 +210,35 @@ describe("the counts behind the indexing chip", () => {
     expect(getIndexedCount(PROJ)).toBe(2);
   });
 
+  test("a pass the budget cut short does not report itself finished", async () => {
+    // A *fresh* index — no rows at all, which is a first install or a wiped search
+    // database rather than a version bump. A bump leaves the old rows in place, so
+    // the any-version count stays whole; here there is nothing to count yet.
+    for (let i = 0; i < 250; i++) {
+      seed(`s${i}`, `2026-07-14T00:00:${String(i % 60).padStart(2, "0")}.000Z`, `content ${i}`);
+    }
+    const pass = await reconcile(PROJ);
+    expect(pass.remaining).toBe(50);
+
+    // The two numbers an empty query reads. Rows alone say 200 of 200 — "done" —
+    // while 50 sessions were never read, which is the chip claiming completion
+    // through the very work it exists to show.
+    expect(getIndexedCount(PROJ)).toBe(200);
+    expect(getKnownSessionCount(PROJ)).toBe(250);
+  });
+
+  test("forgets an enumeration when the index it described is replaced", async () => {
+    // Scoped to the index rather than the process, or a wiped search database —
+    // and every test here, which opens a fresh one — would inherit a total that
+    // describes rows that no longer exist.
+    for (let i = 0; i < 3; i++) seed(`s${i}`, "2026-07-14T00:00:00.000Z", `c ${i}`);
+    await reconcile(PROJ);
+    expect(getKnownSessionCount(PROJ)).toBe(3);
+
+    setSearchIndexDb(openTestSearchIndexDb());
+    expect(getKnownSessionCount(PROJ)).toBe(0);
+  });
+
   test("counts only this project", () => {
     expect(getKnownSessionCount("/proj/somewhere-else")).toBe(0);
   });
