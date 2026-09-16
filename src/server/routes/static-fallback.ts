@@ -23,7 +23,16 @@
  * under either.
  */
 
-/** Directories that hold build output and nothing else. */
+/**
+ * Directories that hold build output and nothing else.
+ *
+ * `/monacoeditorwork/` no longer holds anything — Monaco is staged under `/assets/monaco/`
+ * and the route that served the other path is gone — but it stays here rather than being
+ * tidied away, because this list exists for the requests a *stale client* makes. A tab
+ * carrying the old service worker across the upgrade still asks for it, and on an insecure
+ * origin there is no `Sec-Fetch-Dest` to refuse it by; answering that with the shell at
+ * `200 text/html` is the white screen this file exists to prevent.
+ */
 const ASSET_ROOTS = ["/assets/", "/monacoeditorwork/"];
 
 /**
