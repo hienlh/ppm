@@ -17,7 +17,7 @@
  * — with nothing anywhere reporting a problem. On a version gap the bridge
  * asks the browser to resend the whole document instead.
  */
-import { resolve, sep } from "node:path";
+import nodePath from "node:path";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { isUnavailable, lspManager } from "../../services/lsp/lsp-manager.ts";
 import { pathToFileUri, uriKey } from "../../shared/lsp-uri.ts";
@@ -64,19 +64,40 @@ interface WsLike {
 const clients = new Map<WsLike, Client>();
 let nextClientId = 1;
 
+/** The parts of `node:path` this guard uses, so the tests can hand it the other platform's. */
+export interface PathFlavour {
+  resolve: (...parts: string[]) => string;
+  sep: string;
+}
+
 /**
  * Resolve a project-relative path and refuse anything that leaves the project.
  *
  * The path arrives from the browser. Without this a document URI of
  * `../../../.ssh/id_rsa` would be handed to a language server as something to
  * read and report on.
+ *
+ * The base is resolved rather than trusted: a project path spelled with a
+ * trailing separator, or with forward slashes on Windows — which is how a
+ * pasted path usually arrives there — makes `startsWith(projectPath + sep)`
+ * false for *every* document, so the guard would refuse the whole project
+ * rather than let anything through. It fails closed, which is why it would have
+ * been reported as "the editor has no language server on Windows" and not as a
+ * path bug. `path` is injectable for the same reason `stopServerProcess` takes
+ * a platform: this is the only way a Linux CI run can prove the Windows
+ * behaviour.
  */
-export function resolveDocumentPath(projectPath: string, relativePath: string): string {
+export function resolveDocumentPath(
+  projectPath: string,
+  relativePath: string,
+  path: PathFlavour = nodePath,
+): string {
   if (!relativePath || /[\x00-\x1f]/.test(relativePath)) {
     throw new Error(`Invalid document path: ${JSON.stringify(relativePath)}`);
   }
-  const absolute = resolve(projectPath, relativePath);
-  if (absolute !== projectPath && !absolute.startsWith(projectPath + sep)) {
+  const root = path.resolve(projectPath);
+  const absolute = path.resolve(root, relativePath);
+  if (absolute !== root && !absolute.startsWith(root + path.sep)) {
     throw new Error(`Document path escapes the project: ${relativePath}`);
   }
   return absolute;

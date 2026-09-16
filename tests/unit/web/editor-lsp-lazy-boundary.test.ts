@@ -16,6 +16,15 @@ import { describe, it, expect } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+/**
+ * `join` answers with backslashes on Windows, and every path in this file is
+ * written with forward slashes — so there the `lib/lsp/` exclusion and the
+ * `INSIDE` list matched nothing and the lazy side of the boundary was scanned
+ * as if it were the static side. Red on Windows only, for a boundary that was
+ * perfectly intact.
+ */
+const toPosix = (path: string) => path.replace(/\\/g, "/");
+
 const WEB = "src/web";
 const EDITOR = `${WEB}/components/editor`;
 
@@ -42,7 +51,7 @@ function sourceFiles(dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) out.push(...sourceFiles(path));
-    else if (/\.tsx?$/.test(entry)) out.push(path);
+    else if (/\.tsx?$/.test(entry)) out.push(toPosix(path));
   }
   return out;
 }
@@ -65,6 +74,17 @@ function runtimeImports(files: string[]): StaticImport[] {
 describe("the editor's LSP boundary", () => {
   const files = sourceFiles(WEB).filter((f) => !f.startsWith(`${WEB}/lib/lsp/`) && !INSIDE.includes(f));
 
+  it("actually collected the web tree, and actually excluded the lazy side of it", () => {
+    // Both filters below are string comparisons against forward-slash paths. On
+    // Windows they matched nothing, so this asserts the walk agrees with them
+    // rather than trusting that an empty offender list means the walk worked.
+    expect(toPosix("src\\web\\lib\\lsp\\lsp-client.ts")).toBe("src/web/lib/lsp/lsp-client.ts");
+    expect(files.length).toBeGreaterThan(100);
+    expect(files.every((f) => !f.includes("\\"))).toBe(true);
+    expect(files.filter((f) => f.startsWith(`${WEB}/lib/lsp/`))).toEqual([]);
+    expect(sourceFiles(`${WEB}/lib/lsp`).length).toBeGreaterThan(5);
+  });
+
   it("is crossed statically by nothing but the built-in-TypeScript switch", () => {
     const offenders = runtimeImports(files)
       .filter((i) => isLspModule(i.specifier) && i.specifier !== STATIC_EXCEPTION)
@@ -81,7 +101,9 @@ describe("the editor's LSP boundary", () => {
 
   it("has the editor mount the service through lazy() and nothing else", () => {
     const source = readFileSync(`${EDITOR}/code-editor.tsx`, "utf8");
-    expect(source).toContain('lazy(() =>\n  import("./editor-language-service")');
+    // Not an exact string: a CRLF checkout — the Windows default — puts a \r in
+    // the middle of it, and the boundary is just as intact either way.
+    expect(source).toMatch(/lazy\(\(\) =>\s*import\("\.\/editor-language-service"\)/);
     // A static import of even a constant from that module would defeat it.
     expect(runtimeImports([`${EDITOR}/code-editor.tsx`]).map((i) => i.specifier))
       .not.toContain("./editor-language-service");
