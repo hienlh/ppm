@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lastLinesFromTail, tailLines, countLines } from "../../../src/services/file-lines.ts";
+import { lastLinesFromTail, tailLines, countLines, YIELD_EVERY_BYTES } from "../../../src/services/file-lines.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "ppm-file-lines-")); });
@@ -84,6 +84,33 @@ describe("countLines", () => {
     // be the case that breaks it.
     const p = write("vn.jsonl", '{"t":"đường dẫn"}\n{"t":"日本語"}\n{"t":"🎉"}\n');
     expect(await countLines(p)).toBe(3);
+  });
+
+  it("hands the thread back while it counts", async () => {
+    // The claim the header makes, which nothing checked — and which the obvious implementation
+    // gets wrong: awaiting the stream is not enough, because its chunks resolve as microtasks
+    // and a microtask queue drains without letting a single timer run. Measured on a 35 MB
+    // transcript, `for await` with no explicit yield allowed **0** fires of a 5 ms interval;
+    // only the macrotask below gives the loop back. `watch-tree.ts` makes the same claim and
+    // has had this test all along.
+    const line = `{"i":${"x".repeat(200)}}\n`;
+    const lines = Math.ceil((YIELD_EVERY_BYTES * 3) / line.length);
+    const p = write("yielding.jsonl", line.repeat(lines));
+
+    let fires = 0;
+    const probe = setInterval(() => { fires++; }, 1);
+    try {
+      // Prove the probe is alive first, or "0 fires during" means nothing.
+      await new Promise((r) => setTimeout(r, 20));
+      const before = fires;
+      expect(before).toBeGreaterThan(0);
+
+      expect(await countLines(p)).toBe(lines);
+
+      expect(fires - before).toBeGreaterThan(0);
+    } finally {
+      clearInterval(probe);
+    }
   });
 
   it("counts a file larger than one stream chunk", async () => {

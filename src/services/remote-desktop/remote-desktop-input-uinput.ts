@@ -173,6 +173,17 @@ async function ensureDevices(): Promise<Devices> {
   return created;
 }
 
+/** Destroy both virtual devices now, rather than at process exit.
+ *
+ *  They are process-wide, not per session: one Wayland session leaves a "PPM Remote Keyboard"
+ *  and a "PPM Remote Pointer" in the compositor's device list for the life of the server, where
+ *  they show up in system settings and in any tool that enumerates input devices. The next
+ *  session recreates them — including the ~120 ms `ensureDevices` waits for the compositor to
+ *  notice them — so the only cost is on the first event after a reconnect. */
+export function releaseUinputDevices(): void {
+  destroyDevices();
+}
+
 function destroyDevices(): void {
   if (!devices || !libc) return;
   for (const fd of [devices.pointer, devices.keyboard]) {

@@ -28,15 +28,42 @@ export const MAX_LOG_BYTES = 20 * 1024 * 1024;
 export const LOG_GENERATIONS = 3;
 
 /**
+ * Set by the supervisor on any child it hands `stdio: [\"ignore\", logFd, logFd]`.
+ *
+ * The inode comparison below cannot answer that question on Windows: `fstat` reports an inode
+ * of 0 for most handles there, so `fdWritesTo` says "not the same file" and both writers keep
+ * writing — which means the duplicate, **unredacted** stdout copy this module exists to remove
+ * was still being written on the one platform PPM is most often installed on. Detection cannot
+ * be made to work there, but the process doing the wiring knows for certain, so it says so.
+ */
+export const STDIO_IS_LOG_ENV = "PPM_STDIO_IS_LOG";
+
+/**
+ * Whether console output on `fd` already reaches `filePath` — by what the spawner declared,
+ * or, for a process nobody declared anything to, by inode.
+ */
+export function stdioIsLogFile(fd: number, filePath: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[STDIO_IS_LOG_ENV] === "1" || fdWritesTo(fd, filePath);
+}
+
+/**
+ * Drop the marker once it has been read.
+ *
+ * It is inherited like any other variable, and PPM spawns terminals, SDK children and
+ * `ppm` CLI invocations with its own environment — every one of which would otherwise start
+ * life believing its stdout is the log file and silently drop it.
+ */
+export function consumeStdioIsLogEnv(env: NodeJS.ProcessEnv = process.env): void {
+  delete env[STDIO_IS_LOG_ENV];
+}
+
+/**
  * Whether writing to `fd` lands in `filePath` — same inode, same device.
  *
- * Answers "is my stdout already this log file?", which is the only way a
- * process started by the supervisor can tell that appending would duplicate.
+ * Answers "is my stdout already this log file?" for a process the supervisor did not label.
  *
- * Returns false whenever it cannot be sure. An inode of 0 is what Windows
- * reports for most handles, so there the answer is always "not the same file"
- * and both writers keep their existing behaviour rather than one of them
- * silently going quiet.
+ * Returns false whenever it cannot be sure, which on Windows is always — see
+ * `STDIO_IS_LOG_ENV`, which is how the supervisor's children get a real answer there.
  */
 export function fdWritesTo(fd: number, filePath: string): boolean {
   try {
@@ -89,8 +116,27 @@ export function rotateIfOversized(
     copyFileSync(filePath, `${filePath}.1`);
     truncateSync(filePath, 0);
     return true;
-  } catch {
-    // A log that cannot be rotated must not take the process with it.
+  } catch (e) {
+    // A log that cannot be rotated must not take the process with it — but it must not do so
+    // in silence either. `truncateSync` on a file the supervisor and the server child both
+    // hold open fails with EBUSY on Windows, and a blanket `catch` turned "this log is
+    // unbounded from here on" into no signal at all. Once per process, because the caller is
+    // a one-minute timer and the second failure says nothing the first did not.
+    if (!rotateFailureReported) {
+      rotateFailureReported = true;
+      console.warn(
+        `[log-rotate] Could not rotate ${filePath} (${(e as Error).message}) — it will keep `
+        + "growing past its cap. On Windows this is usually another process holding the file open.",
+      );
+    }
     return false;
   }
 }
+
+/** One warning per process; see the `catch` above. Exported for tests, which need to be able
+ *  to observe the *first* failure rather than whichever one happens to run first. */
+export function resetRotateFailureWarning(): void {
+  rotateFailureReported = false;
+}
+
+let rotateFailureReported = false;

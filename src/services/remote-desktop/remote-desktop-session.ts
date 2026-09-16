@@ -14,7 +14,7 @@ import {
 } from "../../shared/remote-desktop-custom-quality.ts";
 import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
-import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
+import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable, releaseRemoteInput } from "./remote-desktop-input.ts";
 import { resolveDisplay, type RemoteDisplay } from "./remote-desktop-displays.ts";
 import {
   MAX_CLIPBOARD_CHARS, pasteComboCodes, readHostClipboard, writeHostClipboard,
@@ -582,6 +582,11 @@ export class RemoteDesktopSession {
       setHostResolution(restore).catch(() => {});
     }
     activeSessions.delete(this);
+    // The uinput virtual devices are per *process*, not per session, so a Wayland host was left
+    // with a "PPM Remote Keyboard" and a "PPM Remote Pointer" in its device list — visible in
+    // system settings, and to anything that enumerates input devices — for the life of the
+    // server after one connection. Released with the last session; the next one recreates them.
+    if (activeSessions.size === 0) releaseRemoteInput();
     if (this.heldKeyCodes.size > 0) {
       this.releaseHeldKeys().catch(() => {});
     }

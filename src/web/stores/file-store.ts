@@ -138,6 +138,8 @@ function queuePrefetchFor(
 interface InflightLoad {
   controller: AbortController;
   promise: Promise<void>;
+  /** Whether this load still counts as a prefetch — see the join in `loadChildren`. */
+  prefetch: boolean;
 }
 
 export const useFileStore = create<FileStore>((set, get) => ({
@@ -191,13 +193,25 @@ export const useFileStore = create<FileStore>((set, get) => ({
     // prefetch exists to hide exactly that round trip, so the click that
     // benefits most from it was the one that cancelled it.
     const existing = state.inflight.get(folderPath);
-    if (existing) return existing.promise;
+    if (existing) {
+      // Joining is not the same as inheriting. A prefetch deliberately does not cascade — one
+      // level ahead only — so a *click* that joined one used to end the chain at exactly the
+      // folder the user just opened, which is the folder whose children are most likely to be
+      // wanted next. The load has not resolved yet and the flag is read when it does, so
+      // upgrading it here is enough.
+      if (!opts?.prefetch) existing.prefetch = false;
+      return existing.promise;
+    }
 
     const controller = new AbortController();
     // The entry goes into the map before the request starts, so anything asking
     // for this path finds it; `promise` is filled in on the next line, and no
     // other code can run in between.
-    const load: InflightLoad = { controller, promise: undefined as unknown as Promise<void> };
+    const load: InflightLoad = {
+      controller,
+      promise: undefined as unknown as Promise<void>,
+      prefetch: !!opts?.prefetch,
+    };
     const inflight = new Map(state.inflight);
     inflight.set(folderPath, load);
     set({ inflight });
@@ -226,8 +240,10 @@ export const useFileStore = create<FileStore>((set, get) => ({
         const newLoadedPaths = new Set(currentState.loadedPaths);
         newLoadedPaths.add(folderPath);
         set({ tree: newTree, loadedPaths: newLoadedPaths, inflight: clearInflight() });
-        // One level ahead only: prefetched loads don't cascade further
-        if (!opts?.prefetch) queuePrefetchFor(get, projectName, children);
+        // One level ahead only: prefetched loads don't cascade further. Read off the load
+        // rather than off `opts`, because a click that joined this request has already said
+        // it is no longer only a prefetch.
+        if (!load.prefetch) queuePrefetchFor(get, projectName, children);
       } catch (err) {
         set({ inflight: clearInflight() });
         if (err instanceof Error && err.name === "AbortError") return;

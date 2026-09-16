@@ -21,6 +21,9 @@
 import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Virtualizer } from "@tanstack/virtual-core";
+import { rowKey, type FlatRow } from "../../../src/web/components/explorer/flatten-visible-tree.ts";
+import type { FileNode } from "../../../src/web/stores/file-store.ts";
 
 const read = (p: string) => readFileSync(resolve(import.meta.dir, "../../../src/web", p), "utf8");
 const tree = read("components/explorer/file-tree.tsx");
@@ -124,6 +127,20 @@ describe("one context menu for the tree, not one per row", () => {
     expect(body).toMatch(/prev === node \? prev : node/);
   });
 
+  it("gives the keyboard the same door, not a second way of resolving the row", () => {
+    // Focus is on the panel container — the rows are virtualized and never take it — so the
+    // Menu key targets an element outside the radix trigger and opened nothing at all. It is
+    // re-aimed at the focused row's element, which means `rememberMenuTarget` resolves it the
+    // same way a right-click does; a separate focused-row lookup here would be a second source
+    // of truth for which row the menu belongs to.
+    const fn = tree.slice(tree.indexOf("const openMenuForFocusedRow"));
+    const body = fn.slice(0, fn.indexOf("\n  }, ["));
+    expect(body).toMatch(/e\.key !== "ContextMenu"/);
+    expect(body).toMatch(/"F10" && e\.shiftKey/);
+    expect(body).toMatch(/el\.dispatchEvent\(new MouseEvent\("contextmenu"/);
+    expect(tree).toMatch(/openMenuForFocusedRow\(e\)/);
+  });
+
   it("listens on both of the events that precede it opening", () => {
     // `contextmenu` is the mouse. Touch resolves from `pointerdown`, which a
     // finger fires before `touchstart` — and the long-press timer that opens the
@@ -165,5 +182,104 @@ describe("a row's identity is its path, not its position", () => {
     // for a row React has not unmounted yet can ask for one past the end.
     expect(virtualizerOptions).not.toMatch(/rowKey\(rows\[index\]!\)/);
     expect(virtualizerOptions).toMatch(/r \? rowKey\(r\) : /);
+  });
+});
+
+/**
+ * The same four settings, against the library rather than against the file.
+ *
+ * Everything above is a regression lock on a set of options that only work together; none of
+ * it is evidence that they still *do* anything. `directDomUpdates` and `containerRef` are ours
+ * only in the sense that we pass them: they are `@tanstack/react-virtual`'s, and if an upgrade
+ * drops one the greps above stay green while rows stop being positioned at all. So this drives
+ * the real `Virtualizer` and asserts the two things the explorer depends on — that a range
+ * change yields one distinct offset per row, and that a row's DOM node is still found under
+ * its own key after the list shifts, which is the bug that shipped.
+ */
+describe("the virtualizer, not the source that configures it", () => {
+  const ROW = 26;
+  const VIEWPORT = 600;
+
+  const node = (path: string): FlatRow => ({
+    kind: "node",
+    node: { path, name: path.split("/").pop()!, type: "file" } as FileNode,
+    depth: 0,
+  });
+
+  /** What `measureElement` needs off a row: its index and a height. */
+  function element(index: number, path: string) {
+    return {
+      path,
+      isConnected: true,
+      offsetHeight: ROW,
+      getAttribute: (name: string) => (name === "data-index" ? String(index) : null),
+    };
+  }
+
+  function virtualizer(rows: FlatRow[]) {
+    let notifyOffset: ((offset: number, isScrolling: boolean) => void) | null = null;
+    // `window` without a ResizeObserver: the virtualizer's observer becomes a no-op, which is
+    // what lets this run with no DOM at all.
+    const scrollElement = { window: {} };
+    const v = new Virtualizer<object, object>({
+      count: rows.length,
+      getScrollElement: () => scrollElement,
+      estimateSize: () => ROW,
+      getItemKey: (index) => { const r = rows[index]; return r ? rowKey(r) : index; },
+      overscan: 2,
+      observeElementRect: (_i, cb) => { cb({ width: 300, height: VIEWPORT }); return () => {}; },
+      observeElementOffset: (_i, cb) => { notifyOffset = cb; cb(0, false); return () => {}; },
+      scrollToFn: () => {},
+    });
+    v._didMount();
+    v._willUpdate();
+    return { v, scrollTo: (offset: number) => notifyOffset!(offset, true) };
+  }
+
+  it("gives every row in the new range its own offset after a scroll", () => {
+    const rows = Array.from({ length: 1191 }, (_, i) => node(`src/f${i}.ts`));
+    const { v, scrollTo } = virtualizer(rows);
+
+    const first = v.getVirtualItems();
+    expect(first.length).toBeGreaterThan(VIEWPORT / ROW);
+    scrollTo(5000);
+    const after = v.getVirtualItems();
+
+    // It really moved, rather than answering with the same window.
+    expect(after[0]!.index).toBeGreaterThan(first.at(-1)!.index);
+    // This is the number the row's `transform` is written from. One per row, all distinct:
+    // the symptom of the bug below was two rows sharing one.
+    const offsets = after.map((item) => item.start);
+    expect(new Set(offsets).size).toBe(offsets.length);
+    expect(offsets).toEqual(after.map((item) => item.index * ROW));
+  });
+
+  it("still finds a row's own element after the list shifts under it", () => {
+    // Expanding a folder inserts rows above ones that are already mounted. React reuses their
+    // DOM nodes — it keys by path — and never calls the `measureElement` ref again, so the
+    // virtualizer only has what it was told before the insert. Keyed by index, those entries
+    // now describe different rows: the inserted ones overwrite them and the shifted ones match
+    // nothing, which is how expanding `.husky` put two pairs of rows on the same y.
+    const rows = Array.from({ length: 50 }, (_, i) => node(`src/f${i}.ts`));
+    const { v } = virtualizer(rows);
+
+    const mounted = new Map<string, ReturnType<typeof element>>();
+    for (const item of v.getVirtualItems()) {
+      const el = element(item.index, rowKey(rows[item.index]!));
+      mounted.set(el.path, el);
+      v.measureElement(el as never);
+    }
+
+    const inserted = [node("src/dir/a.ts"), node("src/dir/b.ts"), node("src/dir/c.ts")];
+    rows.splice(1, 0, ...inserted);
+    v.setOptions({ ...v.options, count: rows.length });
+
+    for (const item of v.getVirtualItems()) {
+      const row = rows[item.index]!;
+      const el = v.elementsCache.get(item.key) as { path?: string } | undefined;
+      // A row that was already mounted keeps its node; the three new ones have none yet.
+      if (!mounted.has(rowKey(row))) continue;
+      expect(el?.path).toBe(rowKey(row));
+    }
   });
 });

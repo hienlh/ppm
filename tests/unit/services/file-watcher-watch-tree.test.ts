@@ -298,6 +298,35 @@ describe("file watcher service", () => {
   });
 });
 
+describe("a directory created while the walk is running", () => {
+  it("is watched by the time start() resolves", async () => {
+    const root = makeRoot();
+    // `node_modules` forces the per-directory branch on every platform: with a clean tree,
+    // Windows and macOS would take one recursive handle over the root and cover anything that
+    // appears under it for free, so the window below would only exist on Linux.
+    mkdirSync(join(root, "node_modules"));
+    // Enough directories that the walk reaches a real `setImmediate` yield (it yields every 64)
+    // and suspends there, which is the whole point: before the walk yielded at all, the gap
+    // between reading the root and attaching its watcher was too small to lose anything in.
+    for (let i = 0; i < 200; i++) mkdirSync(join(root, `d${i}`));
+
+    const changes: string[] = [];
+    const tree = new WatchTree({ root, maxDirs: 1000, onChange: (p) => changes.push(p) });
+    trees.push(tree);
+
+    const started = tree.start();
+    // A macrotask, so it runs during that yield: the root's entries have been read into the
+    // snapshot and nothing has a watcher yet. `late` is therefore in neither — and with no
+    // watcher on its parent, no later event announces it.
+    const late = join(root, "late");
+    await new Promise<void>((resolve) => setImmediate(() => { mkdirSync(late); resolve(); }));
+    await started;
+
+    writeFileSync(join(late, "f.txt"), "hi");
+    expect(await waitFor(() => changes.some((c) => c.startsWith("late/")))).toBe(true);
+  });
+});
+
 describe("covering a tree does not hold the event loop", () => {
   it("hands the thread back while it walks and attaches", async () => {
     // The measured symptom this exists for: starting a 12,000-directory project

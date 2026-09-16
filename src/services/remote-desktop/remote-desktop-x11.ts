@@ -15,6 +15,14 @@
  *    The callbacks are held in module scope: a GC'd `JSCallback` would leave Xlib calling a
  *    freed trampoline, which is a segfault rather than the crash it was installed to prevent.
  *
+ *    On libX11 **1.6** that protection is only half there, and the code says so rather than
+ *    assuming otherwise: the third handler does not exist before 1.7 (2021), so an I/O error
+ *    still reaches the `exit()` the second handler returns into. It is loaded from its own
+ *    dlopen table for that reason — `bun:ffi`'s `dlopen` throws on the *first* missing symbol
+ *    and hands back none of the others, so one optional function in the main table would take
+ *    capture, input, privacy mode and monitor enumeration down together on every host older
+ *    than that (Ubuntu 20.04 ships 1.6.9).
+ *
  * 2. **A connection that took an I/O error is not reusable.** There is no safe call left on it,
  *    not even `XCloseDisplay`, so it is dropped un-closed (a few KB, once per X server
  *    lifetime) and the next caller opens a fresh one.
@@ -23,7 +31,7 @@
  * view-only) or no libXrandr (one whole-screen display instead of per-monitor). Neither is a
  * reason to fail capture, so both load into `null` rather than throwing.
  */
-import type { LinuxSession } from "./remote-desktop-linux-session.ts";
+import { resetLinuxSession, type LinuxSession } from "./remote-desktop-linux-session.ts";
 
 type Ffi = typeof import("bun:ffi");
 /** Xlib pointer/handle as bun:ffi hands it back. */
@@ -54,6 +62,12 @@ const X11_SYMBOLS = {
   XUngrabPointer: { args: ["ptr", "u64"], returns: "i32" },
   XSetErrorHandler: { args: ["ptr"], returns: "ptr" },
   XSetIOErrorHandler: { args: ["ptr"], returns: "ptr" },
+} as const;
+
+/** libX11 ≥ 1.7 only, which is why it is a table of its own rather than one more line above.
+ *  Exported so a test can assert the split still holds: moving this key back into
+ *  `X11_SYMBOLS` is a one-line change that costs every pre-1.7 host its input. */
+export const X11_EXIT_SYMBOLS = {
   XSetIOErrorExitHandler: { args: ["ptr", "ptr", "ptr"], returns: "void" },
 } as const;
 
@@ -97,6 +111,7 @@ const DPMS_SYMBOLS = {
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- dlopen's symbol types are per-call */
 type X11Lib = { [K in keyof typeof X11_SYMBOLS]: any };
+type X11ExitLib = { [K in keyof typeof X11_EXIT_SYMBOLS]: any };
 type XtstLib = { [K in keyof typeof XTST_SYMBOLS]: any };
 type XrandrLib = { [K in keyof typeof XRANDR_SYMBOLS]: any };
 type DpmsLib = { [K in keyof typeof DPMS_SYMBOLS]: any };
@@ -121,10 +136,15 @@ export interface X11Connection {
 
 let ffiModule: Ffi | null = null;
 let connection: X11Connection | null = null;
-/** Kept forever: Xlib holds raw pointers to these trampolines for the process lifetime. */
-const liveCallbacks: unknown[] = [];
-let handlersInstalled = false;
+/** Kept forever: Xlib holds raw pointers to these trampolines for the process lifetime. Named
+ *  rather than an array, because the one read outside `installErrorHandlers` used to be
+ *  `liveCallbacks[2]` — a fourth handler would have handed the wrong trampoline to Xlib, with
+ *  a wrong signature, and nothing to say so until it was called. */
+let errorCallbacks: { onError: Trampoline; onIoError: Trampoline; onIoExit: Trampoline } | null = null;
 let connectionLost = false;
+
+/** One `JSCallback`, whose `.ptr` is the address Xlib keeps for the process lifetime. */
+type Trampoline = InstanceType<Ffi["JSCallback"]>;
 
 function tryDlopen<T>(ffi: Ffi, names: string[], symbols: object): T | null {
   for (const name of names) {
@@ -135,8 +155,7 @@ function tryDlopen<T>(ffi: Ffi, names: string[], symbols: object): T | null {
 
 /** Replace the three handlers that would otherwise print to stderr or kill the process. */
 function installErrorHandlers(ffi: Ffi, x11: X11Lib): void {
-  if (handlersInstalled) return;
-  handlersInstalled = true;
+  if (errorCallbacks) return;
   const { JSCallback } = ffi;
 
   // Protocol error (BadWindow/BadMatch): return 0, the same as the default handler minus stderr.
@@ -145,10 +164,13 @@ function installErrorHandlers(ffi: Ffi, x11: X11Lib): void {
   const onIoError = new JSCallback(() => { connectionLost = true; return 0; }, { args: ["ptr"], returns: "i32" });
   // The exit that happens anyway once the handler above returns. Cancelled by doing nothing.
   const onIoExit = new JSCallback(() => { connectionLost = true; }, { args: ["ptr", "ptr"], returns: "void" });
-  liveCallbacks.push(onError, onIoError, onIoExit);
 
   x11.XSetErrorHandler(onError.ptr);
   x11.XSetIOErrorHandler(onIoError.ptr);
+  // Written last, and this is the whole of the "installed" flag: the old boolean was set
+  // *before* the two calls above, so anything that read it in between was told the process was
+  // protected while the default handlers were still in place.
+  errorCallbacks = { onError, onIoError, onIoExit };
 }
 
 /** The shared connection for `session`, or null when Xlib is missing or the server refuses us
@@ -162,6 +184,8 @@ export async function getX11(session: LinuxSession): Promise<X11Connection | nul
   const ffi = ffiModule;
   const x11 = tryDlopen<X11Lib>(ffi, ["libX11.so.6", "libX11.so"], X11_SYMBOLS);
   if (!x11) return null;
+  // Same library, second `dlopen`: null here means libX11 1.6, not a missing libX11.
+  const x11Exit = tryDlopen<X11ExitLib>(ffi, ["libX11.so.6", "libX11.so"], X11_EXIT_SYMBOLS);
   installErrorHandlers(ffi, x11);
 
   const dpy = x11.XOpenDisplay(Buffer.from(`${session.display}\0`));
@@ -177,9 +201,10 @@ export async function getX11(session: LinuxSession): Promise<X11Connection | nul
     hasXTest = xtst.XTestQueryExtension(dpy, ffi.ptr(out), ffi.ptr(out), ffi.ptr(out), ffi.ptr(out)) !== 0;
   }
 
-  // The exit handler needs the Display, so it is installed after the connection exists.
-  const onIoExit = liveCallbacks[2] as { ptr: number } | undefined;
-  if (onIoExit) x11.XSetIOErrorExitHandler(dpy, onIoExit.ptr, null);
+  // The exit handler needs the Display, so it is installed after the connection exists — and
+  // only where the symbol resolved. The guard was on whether a *callback* existed, which is
+  // always true and says nothing about whether libX11 has the function to pass it to.
+  if (x11Exit && errorCallbacks) x11Exit.XSetIOErrorExitHandler(dpy, errorCallbacks.onIoExit.ptr, null);
 
   // libXext being present is not enough: a server can be built without the DPMS extension, and
   // `DPMSForceLevel` against one of those is a no-op that returns success.
@@ -205,8 +230,10 @@ export function asPointer(address: number): import("bun:ffi").Pointer {
   return address as unknown as import("bun:ffi").Pointer;
 }
 
-/** Drop the cached connection (tests, and after a session change). */
+/** Drop the cached connection (tests, and after a session change) and, with it, the memoized
+ *  session it was opened against. */
 export function resetX11(): void {
   connection = null;
   connectionLost = false;
+  resetLinuxSession();
 }

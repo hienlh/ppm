@@ -71,9 +71,37 @@ function findXauthority(env: NodeJS.ProcessEnv): string | null {
   return existsSync(legacy) ? legacy : null;
 }
 
-/** The graphical session on this host, or null when there is none to capture (a headless
- *  server, a CI container). Pure w.r.t. `env` so callers can pin it in tests. */
+/** Memoized answer for `process.env`. See `detectLinuxSession`. */
+let cached: { session: LinuxSession | null } | null = null;
+
+/**
+ * The graphical session on this host, or null when there is none to capture (a headless
+ * server, a CI container). Pure w.r.t. `env` so callers can pin it in tests.
+ *
+ * The answer for the *ambient* environment is memoized, because this sits on the injected-input
+ * path: `remote-desktop-input.ts` picks a backend and `remote-desktop-input-linux.ts` resolves
+ * the display, so every pointer event detected twice. The client coalesces pointer moves to one
+ * per animation frame, so on the host this code exists for — PPM under a systemd user unit, no
+ * `DISPLAY` in its environment, every probe hitting the filesystem — that was ~240 blocking
+ * `readdirSync`/`existsSync` calls a second on the event loop the rest of this release spends
+ * effort keeping free. It cannot change without the X or Wayland socket changing; `resetX11()`
+ * drops the cache alongside the connection it belongs to.
+ *
+ * A caller that passes its own `env` is pinning a scenario and neither reads nor fills the cache.
+ */
 export function detectLinuxSession(env: NodeJS.ProcessEnv = process.env): LinuxSession | null {
+  if (env !== process.env) return probeLinuxSession(env);
+  cached ??= { session: probeLinuxSession(env) };
+  return cached.session;
+}
+
+/** Forget the memoized session. Called by `resetX11()`, which is the other half of the same
+ *  state: a session that changed invalidates the connection opened against it. */
+export function resetLinuxSession(): void {
+  cached = null;
+}
+
+function probeLinuxSession(env: NodeJS.ProcessEnv): LinuxSession | null {
   // `XDG_SESSION_TYPE` is authoritative when present and stops an XWayland `DISPLAY` from
   // outvoting a Wayland session; when absent, socket order below encodes the same preference.
   const declared = env.XDG_SESSION_TYPE?.trim().toLowerCase();

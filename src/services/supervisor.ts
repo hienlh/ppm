@@ -11,7 +11,7 @@ import {
   unlinkSync, statSync,
 } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
-import { fdWritesTo, rotateIfOversized, MAX_LOG_BYTES } from "./log-rotate.ts";
+import { stdioIsLogFile, consumeStdioIsLogEnv, rotateIfOversized, MAX_LOG_BYTES, STDIO_IS_LOG_ENV } from "./log-rotate.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { cleanupStaleBinaryUpgradeArtifacts } from "./binary-upgrade-swap.ts";
 import {
@@ -172,7 +172,10 @@ function log(level: string, msg: string) {
   const ts = new Date().toISOString();
   const line = `[${ts}] [${level}] [supervisor] ${msg}\n`;
   try { appendFileSync(logFile(), line); } catch {}
-  if (stderrIsLogFile === null) stderrIsLogFile = fdWritesTo(2, logFile());
+  if (stderrIsLogFile === null) {
+    stderrIsLogFile = stdioIsLogFile(2, logFile());
+    consumeStdioIsLogEnv();
+  }
   // Write supervisor logs to stderr so journalctl captures them — unless
   // stderr is the log file itself, where that is the same line again.
   if (!stderrIsLogFile) { try { process.stderr.write(line); } catch {} }
@@ -660,7 +663,8 @@ export async function spawnServer(
   serverChild = await withProbeSpawnGate(() => Bun.spawn({
     cmd,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    // The child cannot work out on Windows that fd 1 is already the log, so it is told.
+    env: { ...process.env, [STDIO_IS_LOG_ENV]: "1" },
     // No visible console window. Critical on Windows after an upgrade: the new
     // supervisor is spawned consoleless (detached), so without this its console
     // children — and the Claude SDK grandchildren they spawn — pop blank windows.
@@ -1547,7 +1551,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     const proc = await withProbeSpawnGate(() => nodeSpawn(cmd[0]!, cmd.slice(1), {
       detached: true,
       stdio: ["ignore", newLogFd, newLogFd] as any,
-      env: process.env as NodeJS.ProcessEnv,
+      env: { ...process.env, [STDIO_IS_LOG_ENV]: "1" } as NodeJS.ProcessEnv,
       windowsHide: true,
     }));
     const killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };

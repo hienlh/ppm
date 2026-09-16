@@ -12,7 +12,7 @@
 import { win32InputBackend } from "./remote-desktop-input-win32.ts";
 import { darwinInputBackend } from "./remote-desktop-input-darwin.ts";
 import { x11InputBackend } from "./remote-desktop-input-linux.ts";
-import { uinputInputBackend } from "./remote-desktop-input-uinput.ts";
+import { uinputInputBackend, releaseUinputDevices } from "./remote-desktop-input-uinput.ts";
 import { detectLinuxSession } from "./remote-desktop-linux-session.ts";
 import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 
@@ -41,6 +41,14 @@ export function getInputBackend(
 ): RemoteInputBackend | null {
   if (platform === "linux") return linuxInputBackend(session);
   return BACKENDS[platform] ?? null;
+}
+
+/** Give back anything the injector holds between calls, for when no session needs it.
+ *
+ *  Only uinput holds something: XTEST, `SendInput` and CoreGraphics own nothing between
+ *  events, so this is a no-op everywhere else and is safe to call unconditionally. */
+export function releaseRemoteInput(): void {
+  releaseUinputDevices();
 }
 
 /** Sync, cheap: does this platform have an injector at all? Used on the per-event hot path to
