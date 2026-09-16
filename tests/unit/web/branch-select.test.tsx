@@ -50,8 +50,8 @@ async function open(value = "master") {
 }
 
 const rowNames = () =>
-  [...document.querySelectorAll<HTMLElement>("[data-branch]")].map((el) => el.dataset.branch);
-const activeRow = () => document.querySelector<HTMLElement>('[data-active="true"]')?.dataset.branch;
+  [...document.querySelectorAll<HTMLElement>("[data-value]")].map((el) => el.dataset.value);
+const activeRow = () => document.querySelector<HTMLElement>('[data-active="true"]')?.dataset.value;
 const input = () => document.querySelector<HTMLInputElement>('input[aria-label="Search base branch"]');
 
 /** Type into a controlled input the way React hears it. */
@@ -111,7 +111,7 @@ describe("the branch select", () => {
 
   it("reports a clicked branch and closes", async () => {
     await open();
-    await click(document.querySelector('[data-branch="remotes/origin/NX-5175"]'));
+    await click(document.querySelector('[data-value="remotes/origin/NX-5175"]'));
     expect(picked).toEqual(["remotes/origin/NX-5175"]);
     expect(input()).toBeNull();
   });
@@ -148,7 +148,7 @@ describe("under a finger", () => {
 
   it("opens a sheet whose rows clear the 44px minimum", async () => {
     await open();
-    const rows = [...document.querySelectorAll<HTMLElement>("[data-branch]")];
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-value]")];
     expect(rows.length).toBe(branches.length);
     // happy-dom lays nothing out, so the class is the measurement — same
     // compromise as branch-review-touch-targets.test.tsx.
@@ -163,7 +163,7 @@ describe("under a finger", () => {
 
   it("still reports a pick", async () => {
     await open();
-    await click(document.querySelector('[data-branch="master"]'));
+    await click(document.querySelector('[data-value="master"]'));
     expect(picked).toEqual(["master"]);
   });
 });
