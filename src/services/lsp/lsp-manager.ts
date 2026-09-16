@@ -20,6 +20,7 @@ import { LspSession, type LspSessionState } from "./lsp-session.ts";
 import {
   LANGUAGE_SERVERS,
   ancestorDirs,
+  bundledServerEntry,
   candidateCommandPaths,
   lspLanguageForPath,
   type LanguageServerDefinition,
@@ -121,8 +122,8 @@ export class LspManager {
 
     let lastMissing: LanguageServerDefinition | null = null;
     for (const definition of candidates) {
-      const commandPath = await this.resolveCommand(definition, dirs);
-      if (!commandPath) {
+      const command = await this.resolveCommand(definition, dirs);
+      if (!command) {
         lastMissing = definition;
         continue;
       }
@@ -130,7 +131,7 @@ export class LspManager {
       const key = `${definition.id} ${rootPath}`;
 
       try {
-        const session = await this.startOrReuse(key, definition, commandPath, rootPath);
+        const session = await this.startOrReuse(key, definition, command, rootPath);
         // Subscribe *then* trim, so the session this call is about to hand out is never the
         // one the cap takes away.
         this.subscribe(key, subscriber);
@@ -156,7 +157,7 @@ export class LspManager {
   private async startOrReuse(
     key: string,
     definition: LanguageServerDefinition,
-    commandPath: string,
+    command: string[],
     rootPath: string,
   ): Promise<LspSession> {
     const existing = this.entries.get(key);
@@ -172,7 +173,7 @@ export class LspManager {
 
     const promise = LspSession.start({
       definition,
-      commandPath,
+      command,
       rootPath,
       onNotification: (method, params) => {
         for (const listener of this.notificationListeners) listener(key, method, params);
@@ -250,14 +251,30 @@ export class LspManager {
     for (const key of [...this.entries.keys()]) this.release(key, subscriber);
   }
 
-  /** Resolve the command, preferring a version the project ships itself. */
-  private async resolveCommand(definition: LanguageServerDefinition, dirs: string[]): Promise<string | null> {
+  /**
+   * Resolve the command, in the order the answers deserve.
+   *
+   * The project's own copy first, because a repository pinned to TypeScript 4 has to be
+   * analysed by its own server — the same reason VS Code offers "Use Workspace Version".
+   * Then `PATH`, which is whatever the user deliberately installed. Then the copy PPM ships,
+   * which is the floor rather than a preference: it is how a fresh install has a working
+   * TypeScript server with nothing else done, and it must never win over either of the two
+   * choices someone actually made.
+   */
+  private async resolveCommand(definition: LanguageServerDefinition, dirs: string[]): Promise<string[] | null> {
     const candidates = candidateCommandPaths(definition.command, dirs);
     for (const candidate of candidates.slice(0, -1)) {
-      if (await exists(candidate)) return candidate;
+      if (await exists(candidate)) return [candidate];
     }
     // The last candidate is the bare command, which means PATH.
-    return Bun.which(definition.command);
+    const onPath = Bun.which(definition.command);
+    if (onPath) return [onPath];
+
+    const bundled = bundledServerEntry(definition);
+    // Run by the runtime PPM is already using, not through npm's `.bin` shim: that shim is
+    // `#!/usr/bin/env node`, and someone who installed PPM with bun may have no node at all —
+    // which fails as exit code 127 at spawn time, long after the server looked installed.
+    return bundled && (await exists(bundled)) ? [process.execPath, bundled] : null;
   }
 
   /**

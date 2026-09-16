@@ -45,8 +45,15 @@ const STDERR_TAIL_BYTES = 8 * 1024;
 
 export interface LspSessionOptions {
   definition: LanguageServerDefinition;
-  /** Resolved command — an absolute path, or the bare command for PATH lookup. */
-  commandPath: string;
+  /**
+   * The resolved argv prefix, before the server's own arguments.
+   *
+   * Usually one entry — an absolute path, or the bare command for PATH lookup. Two for a
+   * server PPM ships itself: npm's `.bin` shim starts `#!/usr/bin/env node`, and a machine
+   * that installed PPM with bun may have no `node` at all, so the bundled copy is run as
+   * `[process.execPath, <cli entry>]` instead of through the shim.
+   */
+  command: string[];
   /** Directory the server is rooted at; becomes its rootUri. */
   rootPath: string;
   /** Server-initiated notifications (diagnostics, progress, logs). */
@@ -125,9 +132,9 @@ export class LspSession {
   }
 
   private async spawn(): Promise<void> {
-    const { definition, commandPath, rootPath } = this.options;
+    const { definition, command, rootPath } = this.options;
     try {
-      this.proc = Bun.spawn([commandPath, ...definition.args], {
+      this.proc = Bun.spawn([...command, ...definition.args], {
         cwd: rootPath,
         stdin: "pipe",
         stdout: "pipe",
@@ -138,7 +145,7 @@ export class LspSession {
       });
     } catch (e) {
       throw new Error(
-        `Could not start ${definition.displayName} (${commandPath}): ${e instanceof Error ? e.message : String(e)}. ` +
+        `Could not start ${definition.displayName} (${command.join(" ")}): ${e instanceof Error ? e.message : String(e)}. ` +
         `Install it with: ${definition.installHint}`,
       );
     }

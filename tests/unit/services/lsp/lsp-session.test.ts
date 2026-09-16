@@ -33,7 +33,7 @@ async function start(mode?: string, overrides: Partial<Parameters<typeof LspSess
   else delete process.env.FAKE_LSP_MODE;
   const session = await LspSession.start({
     definition: definition(),
-    commandPath: "bun",
+    command: ["bun"],
     rootPath: import.meta.dir,
     ...overrides,
   });
@@ -59,7 +59,7 @@ describe("LspSession.start", () => {
     await expect(
       LspSession.start({
         definition: definition(),
-        commandPath: "/nonexistent/definitely-not-a-language-server",
+        command: ["/nonexistent/definitely-not-a-language-server"],
         rootPath: import.meta.dir,
       }),
     ).rejects.toThrow(/it is a fixture/);

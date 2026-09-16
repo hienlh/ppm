@@ -1,7 +1,10 @@
 import { describe, it, expect } from "bun:test";
+import { readFileSync } from "node:fs";
+import { sep } from "node:path";
 import {
   LANGUAGE_SERVERS,
   ancestorDirs,
+  bundledServerEntry,
   candidateCommandPaths,
   lspLanguageForPath,
   serverById,
@@ -189,5 +192,94 @@ describe("candidateCommandPaths", () => {
       "C:\\repo\\node_modules\\.bin\\tsserver.exe",
       "C:\\repo\\node_modules\\.bin\\tsserver",
     ]);
+  });
+});
+
+describe("bundledServerEntry", () => {
+  const typescript = serverById("typescript")!;
+
+  it("finds the copy PPM ships, which is neither the project's nor on PATH", () => {
+    // `npm i -g ppm` puts it in PPM's *own* node_modules. Without this lookup the server PPM
+    // depends on is installed and unreachable, and a fresh install has no TypeScript until
+    // the user installs a second copy globally.
+    const entry = bundledServerEntry(typescript);
+
+    expect(entry).not.toBeNull();
+    expect(entry!.endsWith("/typescript-language-server/lib/cli.mjs")).toBe(true);
+    expect(Bun.file(entry!).size).toBeGreaterThan(0);
+  });
+
+  it("answers with the package's entry, never npm's .bin shim", () => {
+    // The shim is `#!/usr/bin/env node`, and someone who installed PPM with bun may have no
+    // node at all — measured: spawning it with nothing named `node` on PATH exits 127, long
+    // after the server was reported as installed. The caller runs this with `process.execPath`.
+    const entry = bundledServerEntry(typescript)!;
+
+    expect(entry).not.toContain(`${sep}.bin${sep}`);
+    expect(readFileSync(entry, "utf8").startsWith("#!/usr/bin/env node")).toBe(true);
+  });
+
+  it("is null for a server PPM does not ship", () => {
+    // Answering with a path nothing ever wrote would make every one of them look installed
+    // until the spawn failed.
+    for (const id of ["pyright", "gopls", "rust-analyzer", "clangd"]) {
+      expect(bundledServerEntry(serverById(id)!)).toBeNull();
+    }
+  });
+
+  it("only claims a package that is a real dependency of PPM", () => {
+    // A `bundledPackage` naming something absent is the same silent-wrong-path failure.
+    const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    const claimed = LANGUAGE_SERVERS.filter((s) => s.bundledPackage).map((s) => s.bundledPackage!);
+
+    expect(claimed).toEqual(["typescript-language-server"]);
+    for (const pkg of claimed) expect(manifest.dependencies[pkg]).toBeDefined();
+    // The server is useless without a tsserver.js to drive; 7.x is the native port and ships
+    // none, which is why the major is pinned rather than left to float.
+    expect(manifest.dependencies.typescript).toMatch(/^\^?5\./);
+  });
+
+  it("answers null rather than throwing when the package is not installed", () => {
+    const entry = bundledServerEntry(typescript, () => {
+      throw new Error("Cannot find module");
+    });
+
+    expect(entry).toBeNull();
+  });
+
+  it("answers null for a package with no bin entry for this command", () => {
+    // A `bundledPackage` that is a library rather than a server. Guessing a path here is the
+    // same silent-wrong-path failure as claiming a package that is not installed.
+    const entry = bundledServerEntry(
+      { ...typescript, command: "not-a-bin-of-this-package" },
+      (spec) => require.resolve(spec),
+    );
+
+    expect(entry).toBeNull();
+  });
+});
+
+describe("where the manager looks, in order", () => {
+  /** Just `resolveCommand`, so a failure here prints a function and not the whole file. */
+  function resolveCommandBody(): string {
+    const src = readFileSync("src/services/lsp/lsp-manager.ts", "utf8");
+    const start = src.indexOf("private async resolveCommand");
+    return src.slice(start, src.indexOf("\n  }\n", start));
+  }
+
+  it("puts the bundled copy last, behind the project's and PATH", () => {
+    // The floor, not a preference: a repository pinned to its own server, and a server the
+    // user deliberately installed, both have to win over whatever PPM happens to carry.
+    const body = resolveCommandBody();
+    const order = ["candidateCommandPaths", "Bun.which", "bundledServerEntry"];
+
+    expect(order.map((name) => body.indexOf(name))).toEqual([...order.map((n) => body.indexOf(n))].sort((a, b) => a - b));
+    for (const name of order) expect(body.indexOf(name)).toBeGreaterThan(-1);
+  });
+
+  it("runs the bundled copy with PPM's own runtime", () => {
+    expect(resolveCommandBody()).toContain("[process.execPath, bundled]");
   });
 });
