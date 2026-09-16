@@ -44,13 +44,21 @@ interface LspSemanticTokensDelta {
   edits: Array<{ start: number; deleteCount: number; data?: number[] }>;
 }
 
-interface Registration {
-  /** The legend this provider decodes with, to detect a server swap. */
-  fingerprint: string;
-  disposable: MonacoType.IDisposable;
-}
+/**
+ * Keyed by language *and* legend, not by language alone.
+ *
+ * Two projects can be open on one language and served by different servers — a repository
+ * that pins its own `typescript-language-server` next to one that does not — and a semantic
+ * token is an index into a legend, so one provider decoding both projects colours one of them
+ * as some other, arbitrary set of token types. Nothing fails; the file is simply wrong.
+ * A provider per legend, each answering only for the models whose server uses it, is what
+ * lets both be right at once.
+ */
+const registrations = new Map<string, MonacoType.IDisposable>();
 
-const registrations = new Map<string, Registration>();
+function registrationKey(language: string, fingerprint: string): string {
+  return `${language}\u0000${fingerprint}`;
+}
 
 /**
  * Read the legend a server offered, or nothing if it offered none.
@@ -72,11 +80,11 @@ export function supportsDelta(capabilities: Record<string, unknown>): boolean {
 }
 
 /**
- * Register the provider for a language, using this server's legend.
+ * Register the provider for a language served by a server with this legend.
  *
- * Idempotent for a given legend. If a different server takes over a language
- * and brings a different legend, the old provider is disposed and replaced —
- * keeping it would decode the new server's indices against the old table.
+ * Idempotent: every editor mount calls it, and a second server for the same language adds a
+ * provider rather than replacing the first. Monaco asks each of them in turn and takes the
+ * first non-null answer, which is what makes "answer only for my own models" sufficient.
  */
 export function registerSemanticTokens(
   monaco: typeof MonacoType,
@@ -84,9 +92,8 @@ export function registerSemanticTokens(
   legend: SemanticTokensLegend,
 ): void {
   const fingerprint = JSON.stringify(legend);
-  const existing = registrations.get(language);
-  if (existing?.fingerprint === fingerprint) return;
-  existing?.disposable.dispose();
+  const key = registrationKey(language, fingerprint);
+  if (registrations.has(key)) return;
 
   const disposable = monaco.languages.registerDocumentSemanticTokensProvider(language, {
     getLegend: () => legend,
@@ -94,6 +101,9 @@ export function registerSemanticTokens(
     provideDocumentSemanticTokens: async (model, lastResultId, token) => {
       const document = lspDocumentFor(model);
       if (!document) return null;
+      // This provider decodes with `legend`. A model whose server uses a different one has
+      // to be left to that server's provider, or its indices are read against this table.
+      if (legendFingerprintOf(document) !== fingerprint) return null;
 
       const result = await requestTokens(document, model, lastResultId, token);
       if (!result) return null;
@@ -118,7 +128,15 @@ export function registerSemanticTokens(
     releaseDocumentSemanticTokens: () => {},
   });
 
-  registrations.set(language, { fingerprint, disposable });
+  registrations.set(key, disposable);
+}
+
+/** The legend the server behind this document is currently using, as a comparable string. */
+function legendFingerprintOf(document: LspDocument): string | null {
+  const status = document.connection.statusOf(document.path);
+  if (status?.state !== "ready") return null;
+  const legend = semanticTokensLegendOf(status.capabilities);
+  return legend ? JSON.stringify(legend) : null;
 }
 
 async function requestTokens(
@@ -157,6 +175,6 @@ async function requestTokens(
 
 /** Drop every registration. Exported for tests; nothing in the app unregisters. */
 export function resetSemanticTokens(): void {
-  for (const registration of registrations.values()) registration.disposable.dispose();
+  for (const disposable of registrations.values()) disposable.dispose();
   registrations.clear();
 }

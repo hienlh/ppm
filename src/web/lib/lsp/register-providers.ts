@@ -75,6 +75,21 @@ function supports(document: LspDocument, capability: string): boolean {
   return Boolean(status.capabilities[capability]);
 }
 
+/**
+ * The characters *this* server asked to be woken on.
+ *
+ * Monaco reads `triggerCharacters` once, at registration, and the provider is registered
+ * before any server is known — so the registered set has to be the union of what every server
+ * PPM can start might want. The per-server set can only be applied here.
+ */
+function triggerCharacters(document: LspDocument): string[] {
+  const status = document.connection.statusOf(document.path);
+  if (status?.state !== "ready") return [];
+  const provider = status.capabilities.completionProvider as { triggerCharacters?: unknown } | undefined;
+  const characters = provider?.triggerCharacters;
+  return Array.isArray(characters) ? characters.filter((c): c is string => typeof c === "string") : [];
+}
+
 // ── Shapes a server can answer with ────────────────────────────────────────
 
 interface LspLocation {
@@ -319,15 +334,23 @@ export function registerLspProviders(monaco: typeof MonacoType): void {
 
 function registerForLanguage(monaco: typeof MonacoType, language: string): void {
   monaco.languages.registerCompletionItemProvider(language, {
-    // The characters that should open the list without a keystroke. This is a
-    // union across servers because the provider is registered before any
-    // server is known; a character the server does not care about simply
-    // returns nothing.
+    // The characters that should open the list without a keystroke. This is a union across
+    // servers, because the provider is registered before any server is known; which of them
+    // this server actually asked for is checked below.
     triggerCharacters: [".", ":", ">", "<", "\"", "'", "/", "@", "#", "$", "-", " "],
 
     async provideCompletionItems(model, position, context, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "completionProvider")) return { suggestions: [] };
+
+      // A character this server did not ask for is not a trigger at all, and answering one
+      // anyway is what put the suggest widget on screen at every press of the space bar —
+      // in every string and every comment, for every server, because one server somewhere
+      // wants it. Ctrl+Space still works: that arrives as an invocation, not a character.
+      const byCharacter = context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter;
+      if (byCharacter && !triggerCharacters(document).includes(context.triggerCharacter ?? "")) {
+        return { suggestions: [] };
+      }
 
       const result = await ask<{ items?: LspCompletionItem[]; isIncomplete?: boolean } | LspCompletionItem[]>(
         document,
@@ -336,8 +359,8 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
           textDocument: { uri: model.uri.toString() },
           position: toLspPosition(position),
           context: {
-            triggerKind: context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter ? 2 : 1,
-            triggerCharacter: context.triggerCharacter,
+            triggerKind: byCharacter ? 2 : 1,
+            triggerCharacter: byCharacter ? context.triggerCharacter : undefined,
           },
         },
         token,

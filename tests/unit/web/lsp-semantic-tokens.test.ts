@@ -160,16 +160,39 @@ describe("registerSemanticTokens", () => {
     expect(registrations).toHaveLength(1);
   });
 
-  it("replaces the provider when the legend changes", () => {
-    // A different server for the same language indexes into its own table.
+  it("adds a provider for a second legend rather than replacing the first", () => {
+    // Two projects can be open on one language and served by different servers — one
+    // repository pinning its own `typescript-language-server` beside one that does not — and
+    // both are live at the same time. Disposing the first meant whichever project last
+    // reported ready decoded both, so the other one's indices were read against the wrong
+    // table and its file was coloured as some other set of token types entirely.
     const { monaco, registrations } = fakeMonaco();
 
     registerSemanticTokens(monaco, "typescript", LEGEND);
     registerSemanticTokens(monaco, "typescript", { tokenTypes: ["variable"], tokenModifiers: [] });
 
     expect(registrations).toHaveLength(2);
-    expect(registrations[0]!.disposed).toBe(true);
-    expect(registrations[1]!.disposed).toBe(false);
+    expect(registrations.map((r) => r.disposed)).toEqual([false, false]);
+  });
+
+  it("answers only for the models whose server uses its legend", async () => {
+    // Monaco asks every provider registered for the language and takes the first non-null
+    // answer, so each one declining the other's models is what makes two of them safe.
+    const { monaco, registrations } = fakeMonaco();
+    const other = { tokenTypes: ["variable"], tokenModifiers: [] };
+    registerSemanticTokens(monaco, "typescript", LEGEND);
+    registerSemanticTokens(monaco, "typescript", other);
+
+    const model = fakeModel();
+    const { document } = fakeDocument({ resultId: "1", data: [0, 1, 2, 0, 0] });
+    registerLspDocument(model, document);
+
+    const mine = await registrations[0]!.provider.provideDocumentSemanticTokens(model, null, cancellation() as never);
+    const theirs = await registrations[1]!.provider.provideDocumentSemanticTokens(model, null, cancellation() as never);
+
+    expect(mine).not.toBeNull();
+    expect(theirs).toBeNull();
+    unregisterLspDocument(model);
   });
 
   it("keeps languages independent", () => {
