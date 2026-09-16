@@ -28,6 +28,7 @@ import {
   search as chatSearchQuery,
   startBackfill as chatSearchStartBackfill,
   getIndexStatus as chatSearchGetIndexStatus,
+  getKnownSessionCount as chatSearchKnownCount,
 } from "../../services/chat-search.service.ts";
 import type { ChatSearchResult, ChatSearchResponse } from "../../types/chat.ts";
 import { ok, err } from "../../types/api.ts";
@@ -250,12 +251,18 @@ chatRoutes.get("/search", async (c) => {
     const rawQuery = c.req.query("q")?.trim() || "";
     const limit = Math.min(parseInt(c.req.query("limit") ?? "30", 10) || 30, 100);
 
+    // An empty query has nothing to match, so it must not pay to enumerate: a
+    // dir-scoped `listSessions` pages the SDK until exhausted, and all this
+    // answer carries is the indexing chip's two numbers, which the index knows
+    // by itself.
+    if (!rawQuery) {
+      const indexing = { total: chatSearchKnownCount(projectPath), ...chatSearchGetIndexStatus(projectPath) };
+      return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
+    }
+
     // Enumerate sessions once (also drives title matches + metadata for content hits).
     const sessions = await chatService.listSessions(undefined, projectPath);
-    const total = sessions.length;
-    const indexing = { total, ...chatSearchGetIndexStatus(projectPath) };
-
-    if (!rawQuery) return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
+    const indexing = { total: sessions.length, ...chatSearchGetIndexStatus(projectPath) };
 
     // Lazy self-refresh; UI shows an indexing indicator while this runs. The
     // sessions are handed over rather than enumerated again: a dir-scoped list

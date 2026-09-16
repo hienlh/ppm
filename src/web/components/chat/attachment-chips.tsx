@@ -63,7 +63,20 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
 
   return (
     <div className="px-2 md:px-4 pt-2">
-      <div className="flex flex-wrap gap-1.5" {...{ [GALLERY_ROOT_ATTR]: "" }}>
+      {/*
+        The row gap is the wrapped case of the target arithmetic below. A chip is
+        26-30px tall and its targets are 44, so each one reaches ~7-9px past the
+        chip on both sides — which is fine along a single row, where the spacing
+        was measured, and is not fine once the chips wrap: at `gap-1.5` two rows'
+        targets overlapped by about 8px, and a tap under one chip's X landed on
+        the preview of the chip below it. 20px clears the worst case (a chip with
+        no thumbnail, which is shortest and still carries a 44px remove target),
+        and only on a coarse pointer, where the targets exist at all.
+      */}
+      <div
+        className={cn("flex flex-wrap gap-1.5", coarse && "gap-y-5")}
+        {...{ [GALLERY_ROOT_ATTR]: "" }}
+      >
         {attachments.map((att) => (
           <div
             key={att.id}
@@ -96,7 +109,9 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
               // scrolls vertically — and horizontal takes what is left over. Measured in a
               // browser at the real metrics, worst case being a one-character filename:
               // thumbnail target 32x44, remove target 28x44, 7px clear between them and
-              // 12px to the next chip's thumbnail, no overlap either way.
+              // 12px to the next chip's thumbnail. That is within one row; the gap between
+              // wrapped rows is what keeps the vertical bleed from reaching the row below,
+              // and it is set on the container above.
               <button
                 type="button"
                 title={`Preview ${att.name}`}

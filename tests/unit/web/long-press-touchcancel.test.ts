@@ -42,10 +42,37 @@ function sources(dir: string, out: string[] = []): string[] {
  * matters. A scan over the raw text is satisfied by either.
  */
 function codeOnly(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/[^\n]*/g, "")
-    .replace(/(?:export\s+)?(?:interface|type)\s+\w+[^{;]*\{[\s\S]*?\n\}/g, "");
+  return stripTypeBlocks(src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, ""));
+}
+
+/**
+ * Drop `interface X { … }` and `type X = { … }`, by counting braces.
+ *
+ * The previous form ended a declaration at the first `}` sitting in column 0,
+ * which is the right brace only by formatting convention. A one-line
+ * `interface Handlers { onTouchCancel?: () => void }` — a shape this repo uses
+ * everywhere — therefore ended *nowhere*, and the strip ate every line up to
+ * the next top-level `}`: real code, removed silently, which is this suite
+ * passing because it stopped looking.
+ */
+function stripTypeBlocks(src: string): string {
+  const declaration = /(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+\w+[^{;]*\{/g;
+  let out = "";
+  let kept = 0;
+  for (let match = declaration.exec(src); match; match = declaration.exec(src)) {
+    if (match.index < kept) continue;
+    let depth = 1;
+    let i = declaration.lastIndex;
+    while (i < src.length && depth > 0) {
+      const ch = src[i++];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    out += src.slice(kept, match.index);
+    kept = i;
+    declaration.lastIndex = i;
+  }
+  return out + src.slice(kept);
 }
 
 /** Files that both handle touchstart and arm a timer — i.e. hold a press open. */
@@ -86,6 +113,23 @@ describe("a long-press is disarmed when the browser takes the gesture", () => {
       .filter(({ src }) => !/onTouchCancel\s*[:=]|addEventListener\(\s*["']touchcancel["']/.test(codeOnly(src)))
       .map(({ file }) => file);
     expect(missing).toEqual([]);
+  });
+
+  it("strips a type declaration without swallowing the code under it", () => {
+    // The stripper is what makes the scan above meaningful, so its own failure
+    // mode is worth pinning: it must end a declaration where the declaration
+    // ends, not at the next brace that happens to start a line.
+    const src = [
+      "interface LongPressHandlers { onTouchCancel?: () => void }",
+      "export function useLongPress() {",
+      "  return { onTouchStart: start, onTouchCancel: cancel };",
+      "}",
+    ].join("\n");
+
+    const code = codeOnly(src);
+
+    expect(code).not.toContain("onTouchCancel?:");
+    expect(code).toContain("onTouchCancel: cancel");
   });
 
   it("clears the timer when the element goes away mid-press", () => {
