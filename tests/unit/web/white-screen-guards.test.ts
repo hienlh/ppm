@@ -44,12 +44,16 @@ describe("the root error boundary is actually at the root", () => {
 describe("the service worker cannot keep a white screen alive", () => {
   const sw = read("src/web/sw.ts");
 
-  it("guards both runtime caches against storing or serving HTML", () => {
+  it("guards every runtime cache against storing or serving HTML", () => {
     // `CacheFirst` stored the SPA fallback's `text/html` under a chunk's URL,
     // and because assets are never revalidated it stayed: restoring the file on
     // the server did not fix the tab, only deleting the cache did.
     const routes = sw.match(/new CacheFirst\(\{[^}]*\}\)/g) ?? [];
-    expect(routes.length).toBe(2);
+    // Counted rather than pinned to a number: the point is that no cache escapes the guard,
+    // and a hard count goes red for the *removal* of a guarded cache too — which is how this
+    // broke when the `/monacoeditorwork/` route it named was deleted.
+    expect(routes.length).toBe((sw.match(/new CacheFirst\(/g) ?? []).length);
+    expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) expect(route).toContain("plugins: [assetIsNeverHtml]");
     expect(sw).toContain("cacheWillUpdate");
     expect(sw).toContain("cachedResponseWillBeUsed");
