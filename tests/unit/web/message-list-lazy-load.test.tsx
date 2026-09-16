@@ -9,10 +9,11 @@
  * used to be invisible — the fetch rejected, nothing caught it, and scrolling to
  * the top of a long chat simply did nothing forever.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { installDom, mount, click, type Mounted } from "../../helpers/react-dom.tsx";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { installDom, uninstallDom, installGlobal, mount, click, type Mounted } from "../../helpers/react-dom.tsx";
 
 installDom();
+afterAll(uninstallDom);
 
 /**
  * happy-dom ships no `IntersectionObserver`, and a real one would need real
@@ -26,7 +27,9 @@ interface FakeIo {
   disconnected: boolean;
 }
 const observers: FakeIo[] = [];
-(globalThis as Record<string, unknown>).IntersectionObserver = class {
+// Through the harness, so `uninstallDom()` puts it back: a bare assignment here outlives this
+// file and hands the next suite in the process an observer that only this file understands.
+installGlobal("IntersectionObserver", class {
   private self: FakeIo;
   constructor(cb: (e: Array<{ isIntersecting: boolean }>) => void, options: FakeIo["options"] = {}) {
     this.self = {
@@ -38,10 +41,10 @@ const observers: FakeIo[] = [];
   observe(target: unknown) { this.self.observed.push(target); }
   disconnect() { this.self.disconnected = true; }
   unobserve() { /* not used */ }
-};
-(globalThis as Record<string, unknown>).ResizeObserver ??= class {
-  observe() {} unobserve() {} disconnect() {}
-};
+});
+if (!("ResizeObserver" in globalThis)) {
+  installGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+}
 
 /**
  * Observers still watching something — a rebuild disconnects the previous one.
@@ -108,7 +111,7 @@ describe("the top sentinel", () => {
     // callers pass `useCallback`s (`expandCompact`, `isCompactExpanded`).
     const { act } = await import("react");
     const { createRoot } = await import("react-dom/client");
-    const onExpandCompact = async () => {};
+    const onExpandCompact = async (): Promise<number> => 0;
     const isCompactExpanded = () => false;
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -148,7 +151,7 @@ describe("the top sentinel", () => {
   });
 
   it("watches the top once a compact summary names a transcript", async () => {
-    await render({ onExpandCompact: async () => {} });
+    await render({ onExpandCompact: async () => 0 });
     expect(live()).toHaveLength(1);
     // A screenful of lead time, so the next segment is usually there before the
     // reader reaches the end of this one.

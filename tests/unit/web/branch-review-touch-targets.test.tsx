@@ -17,10 +17,12 @@
  * zero everywhere. What the render buys is that the element exists, carries the
  * class after `cn()` has run, and responds to a real click.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { installDom, mount, click, type Mounted } from "../../helpers/react-dom.tsx";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom.tsx";
 
 installDom();
+// The DOM is process-wide; hand it back so the next file in this batch is not given one.
+afterAll(uninstallDom);
 
 const { TreeRow } = await import("../../../src/web/components/branch-review/branch-review-tree-row.tsx");
 const { buildTree, compactTree } = await import("../../../src/web/lib/git-file-tree.ts");
@@ -46,7 +48,11 @@ interface RenderOpts {
 async function render(opts: RenderOpts = {}) {
   const files = opts.files ?? [file("src/app.ts")];
   const byPath = new Map(files.map((f) => [f.path, f]));
-  const tree = compactTree(buildTree(files.map((f) => ({ path: f.path, status: f.status }))));
+  // Same narrowing the tab does: `T` (a mode-only change) has no Source Control equivalent.
+  const tree = compactTree(buildTree(files.map((f) => ({
+    path: f.path,
+    status: f.status === "T" ? "M" : f.status,
+  }))));
   view = await mount(
     <>
       {tree.map((node) => (

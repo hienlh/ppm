@@ -1,6 +1,9 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installDom, uninstallDom } from "../../helpers/react-dom.tsx";
 import {
   isReviewed,
+  loadReviewed,
+  saveReviewed,
   nextUnreviewed,
   pruneReviewed,
   nextRecent,
@@ -12,6 +15,11 @@ import {
   type ReviewState,
 } from "../../../src/web/lib/branch-review-state.ts";
 import type { BranchDiffFile } from "../../../src/types/git.ts";
+
+// Only the storage block below needs it, but it has to be installed before anything reads
+// `localStorage`, and the harness hands it back when this file is done.
+installDom();
+afterAll(uninstallDom);
 
 function file(path: string, blob: string): BranchDiffFile {
   return { path, status: "M", additions: 1, deletions: 0, binary: false, blob };
@@ -176,5 +184,58 @@ describe("nextRecent", () => {
     expect(evicted).toEqual([]);
     expect(recent).toHaveLength(20);
     expect(new Set(recent).size).toBe(20);
+  });
+});
+
+/**
+ * What actually reaches `localStorage`.
+ *
+ * `nextRecent` is pinned above as a pure decision, which is the half that is easy to test and
+ * was never the bug: the eviction only bounds anything if `saveReviewed` calls it, deletes
+ * exactly what it evicted, and writes the new order back. That wiring had no test at all — the
+ * same shape as the chip `onClick` this suite grew a DOM to close.
+ */
+describe("the review state on this device", () => {
+  const RECENT_KEY = "ppm:branch-review:recent";
+  const pair = (n: number) => reviewKey("ppm", "main", `feature-${n}`);
+
+  beforeEach(() => localStorage.clear());
+
+  it("remembers what it stored, across a reload", () => {
+    saveReviewed(pair(1), { "src/app.ts": "blob1" });
+    expect(loadReviewed(pair(1))).toEqual({ "src/app.ts": "blob1" });
+  });
+
+  it("keeps the twenty most recent ref pairs and deletes the rest", () => {
+    for (let i = 1; i <= 23; i++) saveReviewed(pair(i), { "src/app.ts": `blob${i}` });
+
+    // Three comparisons ago is gone, the newest twenty are not.
+    expect(loadReviewed(pair(1))).toEqual({});
+    expect(loadReviewed(pair(3))).toEqual({});
+    expect(loadReviewed(pair(4))).toEqual({ "src/app.ts": "blob4" });
+    expect(loadReviewed(pair(23))).toEqual({ "src/app.ts": "blob23" });
+
+    // And the keys are really gone rather than merely unreachable: this is a device-local
+    // store that used to accumulate one entry per ref pair ever compared, forever.
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i));
+    expect(keys).toHaveLength(21); // twenty pairs plus the order itself
+    expect(keys).toContain(RECENT_KEY);
+    expect(keys).not.toContain(pair(1));
+  });
+
+  it("moves a pair back to the front when it is reviewed again", () => {
+    for (let i = 1; i <= 20; i++) saveReviewed(pair(i), { "src/app.ts": `blob${i}` });
+    saveReviewed(pair(1), { "src/app.ts": "again" }); // oldest, touched
+    saveReviewed(pair(21), { "src/app.ts": "blob21" }); // evicts one — not that one
+
+    expect(loadReviewed(pair(1))).toEqual({ "src/app.ts": "again" });
+    expect(loadReviewed(pair(2))).toEqual({}); // the oldest untouched pair went instead
+  });
+
+  it("forgets a pair entirely when nothing in it is reviewed any more", () => {
+    saveReviewed(pair(1), { "src/app.ts": "blob1" });
+    saveReviewed(pair(1), {});
+    expect(localStorage.getItem(pair(1))).toBeNull();
+    expect(JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]")).not.toContain(pair(1));
   });
 });

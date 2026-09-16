@@ -13,10 +13,12 @@
  * afterwards is the image-overlay store, because "the viewer opened on this
  * image" is the actual behaviour and the store is where that becomes true.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { installDom, mount, click, type Mounted } from "../../helpers/react-dom.tsx";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom.tsx";
 
 installDom();
+// The DOM is process-wide; hand it back so the next file in this batch is not given one.
+afterAll(uninstallDom);
 
 const { AttachmentChips } = await import("../../../src/web/components/chat/attachment-chips.tsx");
 const { useImageOverlay } = await import("../../../src/web/stores/image-overlay-store.ts");

@@ -19,13 +19,27 @@
  */
 import { Window } from "happy-dom";
 
+/**
+ * What a DOM has to bring, and nothing more.
+ *
+ * Every name here is overwritten on `globalThis` for the whole test *process*, so the list is
+ * the blast radius. `File`, `Blob`, `FormData` and `URL` used to be on it and are not any more:
+ * Bun has real, spec-compliant ones, happy-dom's add nothing a component needs, and the server
+ * routes in the same process gate uploads on `x instanceof File` — so a DOM test file sorting
+ * before `tests/unit/routes/` would have made a correct `FormData` post fail with nothing to
+ * say why. Filename order was the only thing keeping that from firing.
+ *
+ * The event classes stay, and that is not an oversight: `dispatchEvent` on a happy-dom node
+ * rejects an event built by another realm's constructor, so a component that constructs its own
+ * `CustomEvent` needs the installed one. They are restored by `uninstallDom()` instead.
+ */
 const DOM_GLOBALS = [
   "window", "document", "navigator", "location", "history",
   "HTMLElement", "HTMLInputElement", "HTMLButtonElement", "Element", "Node", "NodeFilter",
   "Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "TouchEvent", "MessageEvent",
   "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
   "localStorage", "sessionStorage", "matchMedia", "ResizeObserver", "IntersectionObserver",
-  "DOMRect", "Image", "File", "Blob", "URL", "FormData",
+  "DOMRect", "Image",
 ] as const;
 
 /**
@@ -96,6 +110,44 @@ export async function emitServerEvent(source: FakeEventSource | undefined, type:
   });
 }
 
+/** What each replaced global held before the DOM went in, so `uninstallDom` can put it back. */
+const replaced = new Map<string, { value: unknown; existed: boolean }>();
+
+function replaceGlobal(key: string, value: unknown): void {
+  if (!replaced.has(key)) {
+    replaced.set(key, { value: (globalThis as Record<string, unknown>)[key], existed: key in globalThis });
+  }
+  (globalThis as Record<string, unknown>)[key] = value;
+}
+
+/**
+ * Put `globalThis` back the way it was.
+ *
+ * Every DOM test file calls this from `afterAll`, and the reason is the whole point of
+ * `dom-harness-isolation.test.ts`: these globals outlive the file that installed them, so
+ * whatever runs next in the same process inherits a browser it never asked for. That is how
+ * `os.cpus()` started answering 8 on a 24-core host — a failure that reads as flakiness,
+ * because it depends on which files happened to share a batch.
+ */
+export function uninstallDom(): void {
+  for (const [key, prev] of replaced) {
+    if (prev.existed) (globalThis as Record<string, unknown>)[key] = prev.value;
+    else delete (globalThis as Record<string, unknown>)[key];
+  }
+  replaced.clear();
+  delete (globalThis as Record<string, unknown>).__ppmDomInstalled;
+}
+
+/**
+ * Replace one more global for the life of the calling test file — a stub for something neither
+ * Bun nor happy-dom has, such as `IntersectionObserver`. Restored by `uninstallDom()` along
+ * with everything the DOM itself replaced, which a bare `globalThis.X = …` in a test file is
+ * not: that one outlives the file and lands on whatever runs next in the process.
+ */
+export function installGlobal(key: string, value: unknown): void {
+  replaceGlobal(key, value);
+}
+
 /** Install a DOM on `globalThis`. Safe to call from several test files. */
 export function installDom(url = "http://localhost/"): void {
   if ((globalThis as Record<string, unknown>).__ppmDomInstalled) return;
@@ -120,7 +172,7 @@ export function installDom(url = "http://localhost/"): void {
     ?.hardwareConcurrency;
   for (const key of DOM_GLOBALS) {
     const value = (w as unknown as Record<string, unknown>)[key];
-    if (value !== undefined) (globalThis as Record<string, unknown>)[key] = value;
+    if (value !== undefined) replaceGlobal(key, value);
   }
   if (typeof realConcurrency === "number") {
     for (const nav of [globalThis.navigator, (w as unknown as Record<string, unknown>).navigator]) {
@@ -132,10 +184,10 @@ export function installDom(url = "http://localhost/"): void {
   // off the global scope, and once `window` is installed above that is a
   // different object from `globalThis` — setting only one leaves the warning in
   // place and the flag doing nothing.
-  (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  replaceGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   (w as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   if ((w as unknown as Record<string, unknown>).EventSource === undefined) {
-    (globalThis as Record<string, unknown>).EventSource = InertEventSource;
+    replaceGlobal("EventSource", InertEventSource);
     (w as unknown as Record<string, unknown>).EventSource = InertEventSource;
   }
   (globalThis as Record<string, unknown>).__ppmDomInstalled = true;
