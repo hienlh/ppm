@@ -106,10 +106,11 @@ function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
  * tool calls come from `response_item` function_call / function_call_output and
  * are nested into the assistant turn's `events` so the chat UI renders tool cards.
  */
-export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean }): ChatMessage[] {
+export function parseRolloutJsonl(text: string, opts?: { preCompactIndex?: number }): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let i = 0;
   let pendingEvents: ChatEvent[] = [];
+  let compactionsSeen = 0;
 
   // Newer codex records every finished step as an `item_completed` event AND
   // keeps the raw model exchange in `response_item` records. Both describe the
@@ -177,8 +178,19 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
       else if (typeof p.type === "string" && p.type.endsWith("_call_output")) pendingEvents.push(fnOutputToToolResult(p));
       else if (typeof p.type === "string" && p.type.endsWith("_call")) pendingEvents.push(genericCallToToolUse(p));
     } else if (rec.type === "compacted") {
-      // Pre-compact mode: everything accumulated so far IS the pre-compact history.
-      if (opts?.preCompact) { if (pendingEvents.length) flushAssistant("", ts); break; }
+      if (opts?.preCompactIndex) {
+        // One segment per request, the way the Claude parser's `oneSegment` does.
+        // The requested boundary ends the walk; every boundary before it closes a
+        // stretch nobody asked for, so what was collected is dropped rather than
+        // prepended — the card at the head of the segment is what leads back to it.
+        if (++compactionsSeen === opts.preCompactIndex) {
+          if (pendingEvents.length) flushAssistant("", ts);
+          break;
+        }
+        pendingEvents = [];
+        messages.length = 0;
+        continue;
+      }
       // In-place compaction: `replacement_history` REPLACES everything before this
       // point. Reset to the post-compact base; turns after it append normally.
       pendingEvents = [];
@@ -301,16 +313,42 @@ export function findRolloutByThreadId(sessionsDir: string, threadId: string, req
   return null;
 }
 
-/** The compaction summary text if this rollout was compacted, else null. */
-function compactionSummary(text: string): string | null {
+/**
+ * Every compaction's summary text, in file order — `[]` when never compacted.
+ *
+ * All of them rather than the first, because a thread can be compacted more than
+ * once and each boundary has its own summary. The *last* is what the post-compact
+ * view's card shows, since that is the compaction which produced the view being
+ * rendered; reading the first showed a twice-compacted thread the summary of work
+ * two segments ago. The earlier ones head the segments the "load more" walk opens.
+ */
+function compactionSummaries(text: string): string[] {
+  const out: string[] = [];
   for (const line of completeLines(text)) {
     const rec = parseLine(line);
-    if (rec?.type === "compacted") {
-      const msg = (rec.payload as Record<string, unknown> | undefined)?.message;
-      return typeof msg === "string" ? msg : "";
-    }
+    if (rec?.type !== "compacted") continue;
+    const msg = (rec.payload as Record<string, unknown> | undefined)?.message;
+    out.push(typeof msg === "string" ? msg : "");
   }
-  return null;
+  return out;
+}
+
+/**
+ * The "earlier conversation was compacted" card that heads a compacted view.
+ *
+ * `#<index>` in the id is load-bearing, not decoration: the client sends the card's
+ * id back as `before`, and on a thread compacted more than once it is the only thing
+ * saying *which* boundary to walk back from. `#` rather than another `-` because a
+ * thread id is a uuid whose last group can be all digits, and a trailing `-12` would
+ * then be indistinguishable from an index.
+ */
+function compactCard(summary: string, threadId: string, index: number, file: string): ChatMessage {
+  return {
+    id: `codex-compact-${threadId}#${index}`,
+    role: "assistant",
+    content: `${summary || "_Earlier conversation was compacted to save context._"}\n\nread the full transcript at: ${file}`,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 /**
@@ -325,14 +363,9 @@ export function getRolloutMessages(sessionsDir: string, threadId: string, reques
   try {
     const text = readFileSync(file, "utf-8");
     const msgs = parseRolloutJsonl(text);
-    const summary = compactionSummary(text);
-    if (summary !== null) {
-      msgs.unshift({
-        id: `codex-compact-${threadId}`,
-        role: "assistant",
-        content: `${summary || "_Earlier conversation was compacted to save context._"}\n\nread the full transcript at: ${file}`,
-        timestamp: new Date().toISOString(),
-      });
+    const summaries = compactionSummaries(text);
+    if (summaries.length) {
+      msgs.unshift(compactCard(summaries[summaries.length - 1]!, threadId, summaries.length, file));
     }
     return msgs;
   } catch { return []; }
@@ -345,10 +378,17 @@ export function isCodexRolloutPath(p: string): boolean {
 }
 
 /**
- * Pre-compact slice for the "load more" feature. Jails to ~/.codex/sessions,
- * fail-closed on cwd, returns the messages BEFORE the compaction boundary.
+ * One pre-compact segment for the "load more" feature. Jails to ~/.codex/sessions,
+ * fail-closed on cwd.
+ *
+ * One segment per request rather than everything before the first boundary, which is
+ * what this used to return. A thread compacted twice has three stretches, and the old
+ * answer handed the newest card the *oldest* stretch while leaving the middle one
+ * reachable from nothing at all — not a short answer, a lost one. `before` names the
+ * card that was clicked, and the segment it opens is itself headed by the previous
+ * boundary's card, so the walk continues the way the Claude path's does.
  */
-export function getCodexPreCompactMessages(file: string, requestedCwd?: string): ChatMessage[] {
+export function getCodexPreCompactMessages(file: string, requestedCwd?: string, beforeId?: string): ChatMessage[] {
   if (!isCodexRolloutPath(file)) throw new Error("Access denied: not a codex rollout");
   const resolved = resolve(file);
   let text: string;
@@ -357,5 +397,15 @@ export function getCodexPreCompactMessages(file: string, requestedCwd?: string):
     const meta = readSessionMeta(resolved);
     if (!meta?.cwd || normPath(meta.cwd) !== normPath(requestedCwd)) return []; // fail-closed
   }
-  return parseRolloutJsonl(text, { preCompact: true });
+  const summaries = compactionSummaries(text);
+  if (!summaries.length) return [];
+  // A client holding a card from before the index existed sends the bare id. The newest
+  // boundary is the one that card came from, and on a thread compacted once — which is
+  // every thread that path was ever correct for — the two agree.
+  const asked = Number(beforeId?.match(/#(\d+)$/)?.[1]);
+  const index = asked >= 1 && asked <= summaries.length ? asked : summaries.length;
+  const segment = parseRolloutJsonl(text, { preCompactIndex: index });
+  if (index < 2) return segment;
+  const threadId = readSessionMeta(resolved)?.id ?? threadIdFromName(resolved) ?? "";
+  return [compactCard(summaries[index - 2]!, threadId, index - 1, resolved), ...segment];
 }
