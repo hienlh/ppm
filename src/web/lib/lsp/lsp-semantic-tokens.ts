@@ -18,6 +18,7 @@
  */
 import type * as MonacoType from "monaco-editor";
 import { lspDocumentFor, type LspDocument } from "./lsp-documents";
+import { abortSignalFor } from "./lsp-monaco";
 
 export interface SemanticTokensLegend {
   tokenTypes: string[];
@@ -90,11 +91,11 @@ export function registerSemanticTokens(
   const disposable = monaco.languages.registerDocumentSemanticTokensProvider(language, {
     getLegend: () => legend,
 
-    provideDocumentSemanticTokens: async (model, lastResultId) => {
+    provideDocumentSemanticTokens: async (model, lastResultId, token) => {
       const document = lspDocumentFor(model);
       if (!document) return null;
 
-      const result = await requestTokens(document, model, lastResultId);
+      const result = await requestTokens(document, model, lastResultId, token);
       if (!result) return null;
 
       // Monaco's own encoding is LSP's, so the numbers need no rewriting — only
@@ -124,23 +125,28 @@ async function requestTokens(
   document: LspDocument,
   model: MonacoType.editor.ITextModel,
   lastResultId: string | null,
+  token?: MonacoType.CancellationToken,
 ): Promise<LspSemanticTokens | LspSemanticTokensDelta | null> {
   const status = document.connection.statusOf(document.path);
   if (status?.state !== "ready") return null;
 
   const textDocument = { uri: model.uri.toString() };
   const useDelta = Boolean(lastResultId) && supportsDelta(status.capabilities);
+  // The most expensive question in the file — a whole-document colouring, asked again on
+  // every edit — so it is the one most worth taking out of the server's queue when Monaco
+  // gives up on it.
+  const options = { signal: abortSignalFor(token) };
 
   try {
     if (useDelta) {
       return await document.connection.request(document.path, "textDocument/semanticTokens/full/delta", {
         textDocument,
         previousResultId: lastResultId,
-      });
+      }, options);
     }
     return await document.connection.request(document.path, "textDocument/semanticTokens/full", {
       textDocument,
-    });
+    }, options);
   } catch {
     // Same rule as every other provider: a rejection makes Monaco stop asking,
     // and losing the colouring for the rest of the session is worse than one

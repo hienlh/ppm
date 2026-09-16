@@ -25,6 +25,8 @@ function send(message: unknown): void {
 
 let configAnswered = false;
 let shutdownSeen = false;
+/** Ids the client withdrew with `$/cancelRequest`, reportable through `fake/cancelled`. */
+const cancelled: number[] = [];
 const held: Array<Parameters<typeof handle>[0]> = [];
 let buffer = Buffer.alloc(0);
 
@@ -124,9 +126,20 @@ function handle(message: { id?: number; method?: string; params?: unknown; resul
     process.exit(shutdownSeen ? 0 : 1);
   }
 
-  if (method === "$/cancelRequest") return;
+  if (method === "$/cancelRequest") {
+    const target = (message.params as { id?: number } | undefined)?.id;
+    if (typeof target === "number") cancelled.push(target);
+    return;
+  }
 
   if (id == null) return; // any other notification
+
+  // Answered in every mode, `hang` included: it is how a test sees what was withdrawn while
+  // the request it withdrew is still unanswered.
+  if (method === "fake/cancelled") {
+    send({ jsonrpc: "2.0", id, result: { cancelled } });
+    return;
+  }
 
   if (MODE === "hang") return; // the point of this mode
 

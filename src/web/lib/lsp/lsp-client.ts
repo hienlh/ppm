@@ -56,6 +56,14 @@ interface Pending {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Detach the caller's abort listener; a request settles once, however it settles. */
+  detach?: () => void;
+}
+
+/** Stop a pending request costing anything, whatever settles it. */
+function settle(pending: Pending): void {
+  clearTimeout(pending.timer);
+  pending.detach?.();
 }
 
 interface Registered {
@@ -126,11 +134,27 @@ export class LspConnection {
 
   // ── Requests ────────────────────────────────────────────────────────────
 
-  request<T>(path: string, method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+  /**
+   * `signal` is how a provider whose answer is no longer wanted stops the work.
+   *
+   * It is not a nicety: a language server answers one request at a time, so every superseded
+   * completion sits in front of the one the user is actually waiting for. Monaco hands every
+   * provider a `CancellationToken` and cancels the moment the next keystroke arrives; until
+   * this existed, nothing here listened to it and `$/cancelRequest` was only ever sent on a
+   * 15-second timeout.
+   */
+  request<T>(
+    path: string,
+    method: string,
+    params: unknown,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<T> {
     const entry = this.docs.get(path);
     if (!entry || entry.status.state !== "ready") {
       return Promise.reject(new Error(`No language server is ready for ${path}`));
     }
+    const { timeoutMs = REQUEST_TIMEOUT_MS, signal } = options;
+    if (signal?.aborted) return Promise.reject(new Error(`${method} was cancelled`));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -138,7 +162,20 @@ export class LspConnection {
         this.send({ t: "cancel", id });
         reject(new Error(`${method} timed out`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
+      const onAbort = () => {
+        if (!this.pending.delete(id)) return;
+        clearTimeout(timer);
+        // no detach: the listener is `once`, and this is it
+        this.send({ t: "cancel", id });
+        reject(new Error(`${method} was cancelled`));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+        timer,
+        detach: signal ? () => signal.removeEventListener("abort", onAbort) : undefined,
+      });
       this.send({ t: "request", id, path, method, params });
     });
   }
@@ -208,7 +245,7 @@ export class LspConnection {
       case "response": {
         const pending = this.pending.get(Number(msg.id));
         if (!pending) return;
-        clearTimeout(pending.timer);
+        settle(pending);
         this.pending.delete(Number(msg.id));
         pending.resolve(msg.result);
         break;
@@ -217,7 +254,7 @@ export class LspConnection {
       case "error": {
         const pending = this.pending.get(Number(msg.id));
         if (!pending) return;
-        clearTimeout(pending.timer);
+        settle(pending);
         this.pending.delete(Number(msg.id));
         pending.reject(new Error(String(msg.message)));
         break;
@@ -239,7 +276,7 @@ export class LspConnection {
 
   dispose(): void {
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
+      settle(pending);
       pending.reject(new Error("The language server connection was closed"));
     }
     this.pending.clear();

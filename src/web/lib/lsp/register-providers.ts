@@ -20,6 +20,7 @@ import type * as MonacoType from "monaco-editor";
 import { lspDocumentFor, type LspDocument } from "./lsp-documents";
 import { ensureShadowModels } from "./lsp-shadow-models";
 import {
+  abortSignalFor,
   completionKind,
   fromLspRange,
   highlightKind,
@@ -48,10 +49,20 @@ let executeCommandId: string | null = null;
  * `null` means "no answer" for every caller here, which is what a provider
  * turns into an empty result. The alternative — letting the rejection through —
  * makes Monaco log an error per keystroke and can make it stop asking.
+ *
+ * `token` is Monaco's, and passing it is not a nicety. A language server answers one request
+ * at a time, so a superseded completion does not stop costing anything — it sits in front of
+ * the one the user is waiting for. Monaco cancels the moment the next keystroke arrives; what
+ * that has to reach is `$/cancelRequest`, at the far end of the bridge.
  */
-async function ask<T>(document: LspDocument, method: string, params: unknown): Promise<T | null> {
+async function ask<T>(
+  document: LspDocument,
+  method: string,
+  params: unknown,
+  token?: MonacoType.CancellationToken,
+): Promise<T | null> {
   try {
-    return await document.connection.request<T>(document.path, method, params);
+    return await document.connection.request<T>(document.path, method, params, { signal: abortSignalFor(token) });
   } catch {
     return null;
   }
@@ -314,7 +325,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
     // returns nothing.
     triggerCharacters: [".", ":", ">", "<", "\"", "'", "/", "@", "#", "$", "-", " "],
 
-    async provideCompletionItems(model, position, context) {
+    async provideCompletionItems(model, position, context, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "completionProvider")) return { suggestions: [] };
 
@@ -329,6 +340,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
             triggerCharacter: context.triggerCharacter,
           },
         },
+        token,
       );
       if (!result) return { suggestions: [] };
 
@@ -341,7 +353,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
       };
     },
 
-    async resolveCompletionItem(item) {
+    async resolveCompletionItem(item, token) {
       const original = (item as ResolvableItem).__lsp;
       const path = (item as ResolvableItem).__path;
       if (!original || !path) return item;
@@ -352,7 +364,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
       const document = model ? lspDocumentFor(model) : undefined;
       if (!document) return item;
 
-      const resolved = await ask<LspCompletionItem>(document, "completionItem/resolve", original);
+      const resolved = await ask<LspCompletionItem>(document, "completionItem/resolve", original, token);
       if (!resolved) return item;
 
       return {
@@ -368,7 +380,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
   });
 
   monaco.languages.registerHoverProvider(language, {
-    async provideHover(model, position) {
+    async provideHover(model, position, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "hoverProvider")) return null;
 
@@ -376,6 +388,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
         document,
         "textDocument/hover",
         { textDocument: { uri: model.uri.toString() }, position: toLspPosition(position) },
+        token,
       );
       const markdown = toMarkdown(result?.contents);
       if (!markdown?.value) return null;
@@ -391,7 +404,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
     signatureHelpTriggerCharacters: ["(", ","],
     signatureHelpRetriggerCharacters: [")"],
 
-    async provideSignatureHelp(model, position) {
+    async provideSignatureHelp(model, position, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "signatureHelpProvider")) return null;
 
@@ -402,7 +415,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
       }>(document, "textDocument/signatureHelp", {
         textDocument: { uri: model.uri.toString() },
         position: toLspPosition(position),
-      });
+      }, token);
       if (!result?.signatures?.length) return null;
 
       return {
@@ -424,13 +437,13 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
   });
 
   const locationProvider = (method: string, capability: string) =>
-    async (model: MonacoType.editor.ITextModel, position: MonacoType.Position) => {
+    async (model: MonacoType.editor.ITextModel, position: MonacoType.Position, token: MonacoType.CancellationToken) => {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, capability)) return [];
       const result = await ask<LspLocation | LspLocation[] | LspLocationLink[]>(document, method, {
         textDocument: { uri: model.uri.toString() },
         position: toLspPosition(position),
-      });
+      }, token);
       return toResolvableLocations(monaco, document, result);
     };
 
@@ -445,26 +458,26 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
   });
 
   monaco.languages.registerReferenceProvider(language, {
-    async provideReferences(model, position, context) {
+    async provideReferences(model, position, context, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "referencesProvider")) return [];
       const result = await ask<LspLocation[]>(document, "textDocument/references", {
         textDocument: { uri: model.uri.toString() },
         position: toLspPosition(position),
         context: { includeDeclaration: context.includeDeclaration },
-      });
+      }, token);
       return toResolvableLocations(monaco, document, result);
     },
   });
 
   monaco.languages.registerDocumentHighlightProvider(language, {
-    async provideDocumentHighlights(model, position) {
+    async provideDocumentHighlights(model, position, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "documentHighlightProvider")) return [];
       const result = await ask<Array<{ range: LspRange; kind?: number }>>(document, "textDocument/documentHighlight", {
         textDocument: { uri: model.uri.toString() },
         position: toLspPosition(position),
-      });
+      }, token);
       return (result ?? []).map((highlight) => ({
         range: fromLspRange(highlight.range),
         kind: highlightKind(monaco, highlight.kind),
@@ -473,18 +486,18 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
   });
 
   monaco.languages.registerDocumentSymbolProvider(language, {
-    async provideDocumentSymbols(model) {
+    async provideDocumentSymbols(model, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "documentSymbolProvider")) return [];
       const result = await ask<LspDocumentSymbol[]>(document, "textDocument/documentSymbol", {
         textDocument: { uri: model.uri.toString() },
-      });
+      }, token);
       return toMonacoSymbols(monaco, result ?? []);
     },
   });
 
   monaco.languages.registerRenameProvider(language, {
-    async provideRenameEdits(model, position, newName) {
+    async provideRenameEdits(model, position, newName, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "renameProvider")) {
         return { edits: [], rejectReason: "This language server cannot rename." };
@@ -493,12 +506,12 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
         textDocument: { uri: model.uri.toString() },
         position: toLspPosition(position),
         newName,
-      });
+      }, token);
       if (!result) return { edits: [], rejectReason: "The language server could not rename this." };
       return toMonacoWorkspaceEdit(monaco, result);
     },
 
-    async resolveRenameLocation(model, position) {
+    async resolveRenameLocation(model, position, token) {
       const document = lspDocumentFor(model);
       if (!document) return { range: emptyRangeAt(position), text: "" };
 
@@ -508,6 +521,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
         document,
         "textDocument/prepareRename",
         { textDocument: { uri: model.uri.toString() }, position: toLspPosition(position) },
+        token,
       );
       if (!prepare) {
         const word = model.getWordAtPosition(position);
@@ -530,13 +544,13 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
   });
 
   monaco.languages.registerDocumentFormattingEditProvider(language, {
-    async provideDocumentFormattingEdits(model, options) {
+    async provideDocumentFormattingEdits(model, options, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "documentFormattingProvider")) return [];
       const result = await ask<LspTextEdit[]>(document, "textDocument/formatting", {
         textDocument: { uri: model.uri.toString() },
         options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces },
-      });
+      }, token);
       // Monaco applies a returned edit set as one transaction, so the order it
       // is given in does not matter here the way it does for a manual apply.
       return (result ?? []).map((edit) => ({ range: fromLspRange(edit.range), text: edit.newText }));
@@ -544,20 +558,20 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
   });
 
   monaco.languages.registerDocumentRangeFormattingEditProvider(language, {
-    async provideDocumentRangeFormattingEdits(model, range, options) {
+    async provideDocumentRangeFormattingEdits(model, range, options, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "documentRangeFormattingProvider")) return [];
       const result = await ask<LspTextEdit[]>(document, "textDocument/rangeFormatting", {
         textDocument: { uri: model.uri.toString() },
         range: toLspRange(range),
         options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces },
-      });
+      }, token);
       return (result ?? []).map((edit) => ({ range: fromLspRange(edit.range), text: edit.newText }));
     },
   });
 
   monaco.languages.registerCodeActionProvider(language, {
-    async provideCodeActions(model, range, context) {
+    async provideCodeActions(model, range, context, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "codeActionProvider")) return { actions: [], dispose: () => {} };
 
@@ -574,7 +588,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
           diagnostics: [],
           only: context.only ? [context.only] : undefined,
         },
-      });
+      }, token);
 
       const actions: MonacoType.languages.CodeAction[] = (result ?? []).map((action) => {
         const command = typeof action.command === "object" ? action.command : undefined;
@@ -596,13 +610,14 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
   });
 
   monaco.languages.registerInlayHintsProvider(language, {
-    async provideInlayHints(model, range) {
+    async provideInlayHints(model, range, token) {
       const document = lspDocumentFor(model);
       if (!document || !supports(document, "inlayHintProvider")) return { hints: [], dispose: () => {} };
       const result = await ask<Array<{ position: { line: number; character: number }; label: string | Array<{ value: string }>; kind?: number; paddingLeft?: boolean; paddingRight?: boolean }>>(
         document,
         "textDocument/inlayHint",
         { textDocument: { uri: model.uri.toString() }, range: toLspRange(range) },
+        token,
       );
       return {
         hints: (result ?? []).map((hint) => ({

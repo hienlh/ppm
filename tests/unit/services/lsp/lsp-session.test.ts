@@ -115,6 +115,45 @@ describe("LspSession.request", () => {
     await expect(session.request("fake/echo", null, 250)).rejects.toThrow(/did not answer fake\/echo within 250ms/);
   });
 
+  it("withdraws a cancelled request from the server's queue", async () => {
+    // A language server answers one request at a time, so a superseded completion is not
+    // free — it sits in front of the one the user is waiting for. `$/cancelRequest` is the
+    // only thing that takes it out, and until this existed it was sent on timeout alone.
+    const session = await start("hang");
+    const controller = new AbortController();
+
+    const inflight = session.request("fake/echo", { a: 1 }, 20_000, controller.signal);
+    await Bun.sleep(40);
+    controller.abort();
+
+    await expect(inflight).rejects.toThrow(/fake\/echo was cancelled/);
+    const reported = (await session.request("fake/cancelled", null)) as { cancelled: number[] };
+    // The `initialize` request is id 1, so the cancelled one is id 2.
+    expect(reported.cancelled).toEqual([2]);
+  });
+
+  it("refuses a request that is cancelled before it is sent", async () => {
+    const session = await start();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(session.request("fake/echo", null, 20_000, controller.signal)).rejects.toThrow(/was cancelled/);
+    // Nothing to withdraw: it was never in the queue.
+    const reported = (await session.request("fake/cancelled", null)) as { cancelled: number[] };
+    expect(reported.cancelled).toEqual([]);
+  });
+
+  it("does not withdraw a request that answered normally", async () => {
+    const session = await start();
+    const controller = new AbortController();
+
+    await session.request("fake/echo", { a: 1 }, 20_000, controller.signal);
+    controller.abort(); // the caller lost interest after the answer arrived
+
+    const reported = (await session.request("fake/cancelled", null)) as { cancelled: number[] };
+    expect(reported.cancelled).toEqual([]);
+  });
+
   it("refuses a request once the session is disposed", async () => {
     const session = await start();
     await session.dispose();

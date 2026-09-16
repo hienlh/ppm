@@ -57,6 +57,25 @@ interface Asked {
   params: Record<string, unknown>;
 }
 
+/**
+ * What Monaco actually passes: even `CancellationToken.None` carries the event, so a stub
+ * without it hides the fact that the provider now reads the token.
+ */
+function cancellation() {
+  const listeners = new Set<() => void>();
+  return {
+    isCancellationRequested: false,
+    onCancellationRequested(cb: () => void) {
+      listeners.add(cb);
+      return { dispose: () => listeners.delete(cb) };
+    },
+    cancel() {
+      this.isCancellationRequested = true;
+      for (const cb of listeners) cb();
+    },
+  };
+}
+
 function fakeDocument(
   answer: unknown,
   capabilities: Record<string, unknown> = { semanticTokensProvider: { legend: LEGEND, full: true } },
@@ -175,7 +194,7 @@ describe("provideDocumentSemanticTokens", () => {
     registerSemanticTokens(monaco, "typescript", LEGEND);
 
     return registrations[0]!.provider
-      .provideDocumentSemanticTokens(model, null, {} as never)
+      .provideDocumentSemanticTokens(model, null, cancellation() as never)
       .then((result: unknown) => {
         const tokens = result as { resultId?: string; data: Uint32Array };
         expect(tokens.resultId).toBe("1");
@@ -191,7 +210,7 @@ describe("provideDocumentSemanticTokens", () => {
     registerLspDocument(model, document);
     registerSemanticTokens(monaco, "typescript", LEGEND);
 
-    await registrations[0]!.provider.provideDocumentSemanticTokens(model, null, {} as never);
+    await registrations[0]!.provider.provideDocumentSemanticTokens(model, null, cancellation() as never);
 
     expect(asked[0]!.method).toBe("textDocument/semanticTokens/full");
     expect(asked[0]!.params.textDocument).toEqual({ uri: "inmemory://model/1" });
@@ -207,7 +226,7 @@ describe("provideDocumentSemanticTokens", () => {
     registerLspDocument(model, document);
     registerSemanticTokens(monaco, "typescript", LEGEND);
 
-    const result = (await registrations[0]!.provider.provideDocumentSemanticTokens(model, "1", {} as never)) as {
+    const result = (await registrations[0]!.provider.provideDocumentSemanticTokens(model, "1", cancellation() as never)) as {
       edits: Array<{ start: number; deleteCount: number; data?: Uint32Array }>;
     };
 
@@ -225,7 +244,7 @@ describe("provideDocumentSemanticTokens", () => {
     registerLspDocument(model, document);
     registerSemanticTokens(monaco, "typescript", LEGEND);
 
-    await registrations[0]!.provider.provideDocumentSemanticTokens(model, "1", {} as never);
+    await registrations[0]!.provider.provideDocumentSemanticTokens(model, "1", cancellation() as never);
 
     expect(asked[0]!.method).toBe("textDocument/semanticTokens/full");
     unregisterLspDocument(model);
@@ -240,7 +259,7 @@ describe("provideDocumentSemanticTokens", () => {
     registerLspDocument(model, document);
     registerSemanticTokens(monaco, "typescript", LEGEND);
 
-    const result = (await registrations[0]!.provider.provideDocumentSemanticTokens(model, "1", {} as never)) as {
+    const result = (await registrations[0]!.provider.provideDocumentSemanticTokens(model, "1", cancellation() as never)) as {
       edits: Array<{ data?: Uint32Array }>;
     };
 
@@ -255,7 +274,7 @@ describe("provideDocumentSemanticTokens", () => {
     const result = await registrations[0]!.provider.provideDocumentSemanticTokens(
       fakeModel("inmemory://model/99"),
       null,
-      {} as never,
+      cancellation() as never,
     );
 
     expect(result).toBeNull();
@@ -267,7 +286,7 @@ describe("provideDocumentSemanticTokens", () => {
     registerLspDocument(model, document);
     registerSemanticTokens(monaco, "typescript", LEGEND);
 
-    expect(await registrations[0]!.provider.provideDocumentSemanticTokens(model, null, {} as never)).toBeNull();
+    expect(await registrations[0]!.provider.provideDocumentSemanticTokens(model, null, cancellation() as never)).toBeNull();
     unregisterLspDocument(model);
   });
 });

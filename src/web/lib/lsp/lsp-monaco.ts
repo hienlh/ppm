@@ -33,6 +33,23 @@ export interface LspRange {
 }
 
 /** Monaco position (1-based) to LSP position (0-based). */
+/**
+ * Monaco's cancellation as an `AbortSignal`.
+ *
+ * Everything below the providers — the client, the socket, the session — is plain web
+ * platform and knows nothing about Monaco, so this is where the two meet. Passing it on is
+ * not a nicety: a language server answers one request at a time, so a superseded completion
+ * sits in front of the one the user is waiting for, and `$/cancelRequest` is the only thing
+ * that takes it out of the queue.
+ */
+export function abortSignalFor(token: MonacoType.CancellationToken | undefined): AbortSignal | undefined {
+  if (!token) return undefined;
+  const controller = new AbortController();
+  if (token.isCancellationRequested) controller.abort();
+  else token.onCancellationRequested(() => controller.abort());
+  return controller.signal;
+}
+
 export function toLspPosition(position: MonacoType.IPosition): LspPosition {
   return { line: position.lineNumber - 1, character: position.column - 1 };
 }
