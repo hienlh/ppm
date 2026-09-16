@@ -130,8 +130,34 @@ describe("ancestorDirs", () => {
       .toEqual(["C:\\repo\\src", "C:\\repo"]);
   });
 
-  it("still offers the root for a file outside the project", () => {
-    expect(ancestorDirs("/elsewhere/a.ts", "/repo", "linux")).toContain("/repo");
+  it("offers only the root for a file outside the project", () => {
+    // Every directory this answers with is searched for `node_modules/.bin/<server>` and the
+    // binary found there is *executed*, and searched for a root marker that becomes a
+    // server's rootUri. So a directory the user never registered has no business being here.
+    // The walk used to stop by comparing path *lengths*, which holds for a file inside the
+    // project and not at all for one outside it.
+    expect(ancestorDirs("/elsewhere/a.ts", "/repo", "linux")).toEqual(["/repo"]);
+    expect(ancestorDirs("/home/ada/notes/x.ts", "/home/ada/repo", "linux")).toEqual(["/home/ada/repo"]);
+    expect(ancestorDirs("/home/ada/repo-other/deep/nested/x.ts", "/home/ada/repo", "linux"))
+      .toEqual(["/home/ada/repo"]);
+  });
+
+  it("does not take a sibling sharing the project's name as being inside it", () => {
+    expect(ancestorDirs("/home/ada/repository/a.ts", "/home/ada/repo", "linux"))
+      .toEqual(["/home/ada/repo"]);
+  });
+
+  it("recognises its own root through Windows' case-insensitivity", () => {
+    // A project registered as `c:\users\ada\repo` and a file arriving as `C:\Users\Ada\...`
+    // are one directory. Case-sensitively the walk never matches its root, so it climbs to
+    // `C:\` — putting `C:\Users\node_modules\.bin` on the list of binaries to run.
+    expect(ancestorDirs("C:\\Users\\Ada\\Repo\\src\\a.ts", "c:\\users\\ada\\repo", "win32"))
+      .toEqual(["C:\\Users\\Ada\\Repo\\src", "C:\\Users\\Ada\\Repo"]);
+  });
+
+  it("offers only the root for a Windows file outside the project", () => {
+    expect(ancestorDirs("C:\\Users\\ada\\repo-other\\a.ts", "C:\\Users\\ada\\repo", "win32"))
+      .toEqual(["C:\\Users\\ada\\repo"]);
   });
 });
 

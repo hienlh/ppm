@@ -273,26 +273,41 @@ export function serverById(id: string): LanguageServerDefinition | undefined {
  * Directories to search, nearest first, from the file's own directory up to and
  * including the project root.
  *
- * Bounded by the project root on purpose: walking past it would find a
- * `tsconfig.json` in the user's home directory and root a server there, which
- * makes it index everything they own.
+ * Every directory here is both searched for `node_modules/.bin/<server>` — which
+ * is then *executed* — and searched for a root marker that would become a
+ * server's rootUri. So the bound is the whole trust story: without it a file at
+ * `~/notes/x.ts` puts `~/node_modules/.bin` on the list and roots a server at
+ * the user's home directory, indexing everything they own.
+ *
+ * The bound is enforced rather than assumed. The walk used to stop by comparing
+ * *lengths*, which happens to hold for a file inside the project and not at all
+ * for one outside it: `/home/ada/repo-other/deep/x.ts` against a project at
+ * `/home/ada/repo` yielded three `repo-other` directories and `/home/ada`. The
+ * bridge confines the path before this is reached, so nothing could reach it —
+ * but a guard whose comment claims more than its code does is one caller away
+ * from being a real hole.
  */
 export function ancestorDirs(filePath: string, projectPath: string, platform: NodeJS.Platform = process.platform): string[] {
   const p = platform === "win32" ? path.win32 : path.posix;
   const root = p.normalize(projectPath).replace(/[\\/]+$/, "");
-  let dir = p.dirname(p.normalize(filePath));
+  const start = p.dirname(p.normalize(filePath));
+  // Windows paths are case-insensitive, so `C:\Users\Ada\Repo` and `c:\users\ada\repo` name
+  // one directory. Comparing them case-sensitively refuses the project outright — and, once
+  // the walk can no longer recognise its own root, lets it climb straight past it to `C:\`.
+  const fold = (dir: string) => (platform === "win32" ? dir.toLowerCase() : dir);
+  const foldedRoot = fold(root);
+  const inside = (dir: string) => fold(dir) === foldedRoot || fold(dir).startsWith(foldedRoot + p.sep);
+  if (!inside(start)) return [root];
 
   const dirs: string[] = [];
-  for (;;) {
+  for (let dir = start; ; ) {
     dirs.push(dir);
-    if (dir === root || dir.length <= root.length) break;
+    if (fold(dir) === foldedRoot) return dirs;
     const parent = p.dirname(dir);
     if (parent === dir) break; // hit the filesystem root
     dir = parent;
   }
-  // A file outside the project root yields only its own directory chain up to
-  // the point the loop stopped; keep the root itself reachable either way.
-  if (!dirs.includes(root)) dirs.push(root);
+  dirs.push(root);
   return dirs;
 }
 
@@ -304,6 +319,16 @@ export function ancestorDirs(filePath: string, projectPath: string, platform: No
  * language server gets that version — the same reason VS Code offers "Use
  * Workspace Version" for TypeScript. Getting this backwards means a project
  * pinned to TypeScript 4 is analysed by whatever is installed globally.
+ *
+ * That does mean opening a file runs a binary the repository supplied, so it is
+ * worth being explicit about what bounds it. Registering a project in PPM
+ * already hands that directory a terminal and an agent running in
+ * `bypassPermissions`; a `postinstall` script has run long before any of this.
+ * The setting is off by default and per device, so a language server exists only
+ * where someone asked for one. And `dirs` comes from `ancestorDirs`, which
+ * answers with directories inside the project and nothing else — that is the
+ * part that had to be enforced rather than assumed, and it is where the
+ * confinement actually lives.
  */
 export function candidateCommandPaths(command: string, dirs: string[], platform: NodeJS.Platform = process.platform): string[] {
   const p = platform === "win32" ? path.win32 : path.posix;
