@@ -67,6 +67,8 @@ export interface CommitDetail {
   message: string;
   parents: string[];
   fileChanges: FileChange[];
+  /** Files the `MAX_DETAIL_FILES` cap dropped, so the panel can say it capped. */
+  filesOmitted: number;
 }
 
 export interface FileChange {

@@ -2232,7 +2232,7 @@ function renderFileTree(node, depth, hash, parentHash, section) {
   const sortedFiles = [...node.files].sort((a, b) => a.fileName.localeCompare(b.fileName));
   for (const f of sortedFiles) {
     html += '<div class="file-item file-clickable" style="padding-left:' + (depth * 16) + 'px" ';
-    html += 'data-path="' + escHtml(f.path) + '" data-hash="' + escHtml(hash) + '" data-parent="' + escHtml(parentHash) + '">';
+    html += 'data-path="' + escHtml(f.path) + '" data-hash="' + escHtml(hash) + '" data-parent="' + escHtml(parentHash || '') + '">';
     html += '<span class="file-status file-status-' + escHtml(f.status) + '">' + escHtml(f.status) + '</span>';
     html += '<span class="file-name">' + escHtml(f.fileName) + '</span>';
     if (f.additions > 0 || f.deletions > 0) {
@@ -2275,6 +2275,15 @@ function renderFileListHtml(files, hash, parentHash, section) {
       (section ? renderFileActions(f, section) : '') +
     '</div>'
   ).join('');
+}
+
+/* A cap that does not say it capped states a wrong number as a fact: a commit
+   touching ten thousand files rendered as "500 files changed", which is a
+   sentence the panel has no evidence for. The message cap already spells its
+   own truncation out, so this says it the same way. */
+function fileCountLabel(shown, omitted) {
+  return shown + (shown === 1 ? ' file' : ' files') + ' changed'
+    + (omitted > 0 ? ' [… ' + omitted + ' more]' : '');
 }
 
 function renderFileActions(file, section) {
@@ -2481,7 +2490,7 @@ function renderDetailPanel(detail) {
     let added = 0, removed = 0;
     for (const f of detail.fileChanges) { added += f.additions || 0; removed += f.deletions || 0; }
     right = '<div class="detail-files"><div class="file-list"><div class="files-head">'
-      + '<span>' + detail.fileChanges.length + (detail.fileChanges.length === 1 ? ' file' : ' files') + ' changed</span>'
+      + '<span>' + fileCountLabel(detail.fileChanges.length, detail.filesOmitted || 0) + '</span>'
       + '<span class="files-total">'
       + (added > 0 ? '<span class="add">+' + added + '</span> ' : '')
       + (removed > 0 ? '<span class="del">-' + removed + '</span>' : '')

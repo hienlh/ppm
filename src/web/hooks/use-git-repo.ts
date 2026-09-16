@@ -98,12 +98,13 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
   // loop. Every field is already stable: the store's own values, or a
   // `useCallback` keyed on the resolved repo.
   //
-  // `loading` is deliberately not one of them. It is the store's in-flight
-  // flag, it went false → true → false on every mount, and nothing read it —
-  // so all it did was hand every consumer three identities where one would do
-  // and fire the first `git blame`, `git status` and file diff three times.
-  // The two identities left are the ones that mean something: before discovery
-  // answers, and after.
+  // The store's in-flight flag used to be one of them. It went false → true →
+  // false on every mount and nothing ever read it, so all it did was hand every
+  // consumer three identities where one would do — and fire the first
+  // `git blame`, `git status` and file diff three times. It is gone from the
+  // store entirely now rather than merely left out here. The two identities
+  // that remain are the ones that mean something: before discovery answers,
+  // and after.
   return useMemo(
     () => ({
       repo,

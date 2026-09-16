@@ -54,8 +54,6 @@ interface GitRepoStore {
   discovery: Record<string, GitRepoDiscovery>;
   /** projectName → chosen repository path. */
   chosen: Record<string, string>;
-  /** projectName → a request is in flight. */
-  loading: Record<string, boolean>;
   /** Fetch once per project unless `force`. */
   load: (projectName: string, force?: boolean) => Promise<void>;
   choose: (projectName: string, repoPath: string) => void;
@@ -64,7 +62,6 @@ interface GitRepoStore {
 export const useGitRepoStore = create<GitRepoStore>((set, get) => ({
   discovery: {},
   chosen: loadChoices(),
-  loading: {},
 
   load: async (projectName, force = false) => {
     if (!force && get().discovery[projectName]) return;
@@ -73,7 +70,6 @@ export const useGitRepoStore = create<GitRepoStore>((set, get) => ({
     // unscoped path while the answer was one tick away.
     const existing = inflight.get(projectName);
     if (existing && !force) return existing;
-    set((s) => ({ loading: { ...s.loading, [projectName]: true } }));
     const request = (async () => {
       try {
         const data = await api.get<GitRepoDiscovery>(`${projectUrl(projectName)}/git/repos`);
@@ -82,12 +78,16 @@ export const useGitRepoStore = create<GitRepoStore>((set, get) => ({
         // A project whose directory has gone, or an offline tab. Leaving the
         // entry absent keeps the surfaces in their loading state rather than
         // asserting "no repository here", which would be a guess.
-      } finally {
-        inflight.delete(projectName);
-        set((s) => ({ loading: { ...s.loading, [projectName]: false } }));
       }
     })();
     inflight.set(projectName, request);
+    // Cleared by identity, not unconditionally: a `force` reload puts a second
+    // request in the map while the first is still running, and the first one's
+    // own cleanup would then delete the *second* entry — after which a
+    // concurrent caller joins nothing and starts a third directory walk.
+    void request.finally(() => {
+      if (inflight.get(projectName) === request) inflight.delete(projectName);
+    });
     return request;
   },
 

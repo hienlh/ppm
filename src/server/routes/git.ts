@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { gitService } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
-import { gitBlameService } from "../../services/git-blame/git-blame.service.ts";
+import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
-import { realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
+import { isInsideDir, realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -30,13 +30,17 @@ export const gitRoutes = new Hono<Env>();
  * resolves to an in-project path, passes, and git runs in the link's target.
  * Discovery refuses to *offer* such a path, but this parameter comes straight
  * from the client and is not obliged to be one discovery returned.
+ *
+ * Containment is `isInsideDir`, which folds case on Windows: `c:\users\pc\ppm`
+ * and `C:\Users\PC\ppm` are one directory, and a case-sensitive prefix test
+ * answers 400 for the second — a path this server handed out itself.
  */
 gitRoutes.use("*", async (c, next) => {
   const repo = c.req.query("repo");
   if (repo) {
     const root = realPathOrSelfSync(resolve(c.get("projectPath")));
     const target = realPathOrSelfSync(resolve(repo));
-    if (target !== root && !target.startsWith(root + sep)) {
+    if (!isInsideDir(target, root)) {
       return c.json(err("repo is outside the project"), 400);
     }
     if (!isGitRepo(target)) {
@@ -46,6 +50,28 @@ gitRoutes.use("*", async (c, next) => {
   }
   await next();
 });
+
+/**
+ * The `ref`-ish query parameters, refused at the boundary rather than handed on.
+ *
+ * A revision reaches git as its own argv word, so the hazard is not a shell
+ * metacharacter but a value that changes what the command *is*: `?ref1=--output=/tmp/x`
+ * is an option, not a revision, and `git diff` honours it. `assertSafeRev` is
+ * the rule the blame path already states — no leading dash, no `..` range, none
+ * of what `check-ref-format` forbids — and `HEAD~1` and `main^` still pass,
+ * because those are what the diff viewer actually asks for.
+ */
+function invalidRev(...revs: Array<string | undefined>): string | null {
+  for (const rev of revs) {
+    if (rev === undefined) continue;
+    try {
+      assertSafeRev(rev);
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+  return null;
+}
 
 /**
  * GET /git/repos — the repositories under this project.
@@ -78,6 +104,8 @@ gitRoutes.get("/diff", async (c) => {
     const projectPath = c.get("projectPath");
     const ref1 = c.req.query("ref1") || undefined;
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref1, ref2);
+    if (bad) return c.json(err(bad), 400);
     const diff = await gitService.diff(projectPath, ref1, ref2);
     return c.json(ok({ diff }));
   } catch (e) {
@@ -91,6 +119,8 @@ gitRoutes.get("/diff-stat", async (c) => {
     const projectPath = c.get("projectPath");
     const ref1 = c.req.query("ref1") || undefined;
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref1, ref2);
+    if (bad) return c.json(err(bad), 400);
     const files = await gitService.diffStat(projectPath, ref1, ref2);
     return c.json(ok(files));
   } catch (e) {
@@ -105,6 +135,8 @@ gitRoutes.get("/file-diff", async (c) => {
     const file = c.req.query("file");
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || undefined;
+    const bad = invalidRev(ref);
+    if (bad) return c.json(err(bad), 400);
     const diff = await gitService.fileDiff(projectPath, file, ref);
     return c.json(ok({ diff }));
   } catch (e) {
@@ -122,6 +154,8 @@ gitRoutes.get("/file-full-diff", async (c) => {
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || "HEAD";
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref, ref2);
+    if (bad) return c.json(err(bad), 400);
     const result = await gitService.fileFullDiff(projectPath, file, ref, ref2);
     return c.json(ok(result));
   } catch (e) {
