@@ -36,16 +36,11 @@
  */
 import { cpSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+// Shared with the dev server, which serves the same files from `node_modules` — see
+// `monaco-staging.ts` for why the exclusion list cannot live in only one of the two.
+import { MONACO_VS as SOURCE, isUnused } from "./monaco-staging.ts";
 
-const SOURCE = resolve(import.meta.dir, "../node_modules/monaco-editor/min/vs");
 const TARGET = resolve(import.meta.dir, "../dist/web/assets/monaco/vs");
-
-/** True for a file this build has no way to request. See the module comment. */
-function isUnused(path: string): boolean {
-  if (/[/\\]nls\.messages\.[a-z-]+\.js/.test(path)) return true;
-  if (/[/\\]ts\.worker-[^/\\]*\.js$/.test(path)) return true;
-  return false;
-}
 
 rmSync(TARGET, { recursive: true, force: true });
 mkdirSync(TARGET, { recursive: true });
