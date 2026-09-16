@@ -11,6 +11,7 @@ import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
 import { disableBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
 import { useIsMobile, isMobileDevice } from "@/hooks/use-is-mobile";
+import { useIsTouchOnly } from "@/hooks/use-is-touch-only";
 import type { EditorLspState } from "./editor-language-service";
 import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
 import { LspStatus } from "./lsp-status";
@@ -107,6 +108,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // `ontouchstart`, which is also true of a touch-screen laptop with every
   // reason to run a language server and enough width to read unwrapped code.
   const isPhone = useIsMobile();
+  const isTouchOnly = useIsTouchOnly();
   // A phone's wrap state is its own pref. The toggle for `wordWrap` lives in
   // the desktop-only breadcrumb bar, so a phone had no way to reach it and
   // defaulted to off — the one shape of this setting a narrow screen cannot use.
@@ -425,10 +427,15 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // tsconfig or go.mod would tell a server what it is looking at, so it gets
   // nothing rather than a server rooted somewhere arbitrary.
   const lspServable = !isUntitled && !isExternalFile && inlineContent == null && !!filePath && !!projectName;
-  // Off until asked, and never on a phone. A server is a real process on the
-  // host — one `typescript-language-server` was 854 MB resident — so it starts
-  // because someone wanted it, not because a file was opened.
-  const lspOn = lspEnabled && lspServable && !isPhone;
+  // Off until asked, and never on a touch-only device. A server is a real process on the
+  // host — one `typescript-language-server` was 854 MB resident — so it starts because
+  // someone wanted it, not because a file was opened.
+  //
+  // `useIsTouchOnly` rather than `isPhone`: that one is a 768px viewport test, so narrowing a
+  // desktop window past the breakpoint shut the language server down mid-session and dragging
+  // it back cold-started another one. What a *machine* should be asked to run cannot depend on
+  // how wide a window happens to be.
+  const lspOn = lspEnabled && lspServable && !isTouchOnly;
   const [lsp, setLsp] = useState<EditorLspState>({ status: null, diagnostics: [] });
   const handleLspState = useCallback((next: EditorLspState) => setLsp(next), []);
 

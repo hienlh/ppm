@@ -138,7 +138,18 @@ interface LspWorkspaceEdit {
 }
 
 /** Monaco items carry the original so `resolve` can send it back. */
-type ResolvableItem = MonacoType.languages.CompletionItem & { __lsp?: LspCompletionItem; __path?: string };
+/**
+ * What a suggestion has to carry to be resolvable.
+ *
+ * The document itself, not its path: a path is project-relative, and two projects open on
+ * `src/index.ts` are two different files on two different servers. Looking the model back up
+ * by path found whichever of them Monaco listed first, so resolving a suggestion could ask the
+ * wrong project's server — for a completion item it has never issued.
+ */
+type ResolvableItem = MonacoType.languages.CompletionItem & {
+  __lsp?: LspCompletionItem;
+  __document?: LspDocument;
+};
 
 // ── Conversions that need Monaco ───────────────────────────────────────────
 
@@ -248,7 +259,7 @@ function toMonacoCompletion(
   model: MonacoType.editor.ITextModel,
   position: MonacoType.IPosition,
   item: LspCompletionItem,
-  path: string,
+  document: LspDocument,
 ): ResolvableItem {
   const label = typeof item.label === "string" ? item.label : item.label.label;
   const insertText = item.textEdit?.newText ?? item.insertText ?? label;
@@ -272,7 +283,7 @@ function toMonacoCompletion(
       text: e.newText,
     })),
     __lsp: item,
-    __path: path,
+    __document: document,
   };
 
   // 2 = Snippet. Without this rule the placeholders arrive as literal `${1:x}`.
@@ -369,7 +380,7 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
 
       const items = Array.isArray(result) ? result : (result.items ?? []);
       return {
-        suggestions: items.map((item) => toMonacoCompletion(monaco, model, position, item, document.path)),
+        suggestions: items.map((item) => toMonacoCompletion(monaco, model, position, item, document)),
         // An incomplete list must be re-requested as the user keeps typing, or
         // the suggestions freeze at whatever the first prefix matched.
         incomplete: Array.isArray(result) ? false : Boolean(result.isIncomplete),
@@ -378,14 +389,12 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
 
     async resolveCompletionItem(item, token) {
       const original = (item as ResolvableItem).__lsp;
-      const path = (item as ResolvableItem).__path;
-      if (!original || !path) return item;
-
-      // Resolve is where the documentation and the auto-import edit arrive;
-      // asking for them up front would make the whole list slow.
-      const model = monaco.editor.getModels().find((m) => lspDocumentFor(m)?.path === path);
-      const document = model ? lspDocumentFor(model) : undefined;
-      if (!document) return item;
+      // Resolve is where the documentation and the auto-import edit arrive; asking for them
+      // up front would make the whole list slow. The document came with the item, so a
+      // suggestion is always resolved against the server that issued it — and a document
+      // whose editor has closed since answers "not ready", which `ask` turns into no answer.
+      const document = (item as ResolvableItem).__document;
+      if (!original || !document) return item;
 
       const resolved = await ask<LspCompletionItem>(document, "completionItem/resolve", original, token);
       if (!resolved) return item;
