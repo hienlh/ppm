@@ -328,6 +328,16 @@ export function rewriteUris(value: unknown, map: Map<string, string>): unknown {
 
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    // `data` is opaque by specification: a completion item, code action, code lens or inlay
+    // hint carries it so the server gets it back *verbatim* on the matching resolve request.
+    // rust-analyzer puts a whole `TextDocumentPositionParams` in a completion item's `data`,
+    // so rewriting it hands the server `inmemory://model/1` on resolve — and the auto-import
+    // edit and the documentation that resolve exists to fetch never arrive, with no error
+    // anywhere. The browser sends the item back unchanged, so this side must not change it.
+    if (key === "data") {
+      out[key] = entry;
+      continue;
+    }
     if ((key === "uri" || key === "targetUri") && typeof entry === "string") {
       out[key] = map.get(uriKey(entry)) ?? entry;
       continue;

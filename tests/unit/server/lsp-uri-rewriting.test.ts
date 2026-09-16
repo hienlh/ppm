@@ -110,6 +110,34 @@ describe("rewriteUris", () => {
     expect(out[0]!.uri).toBe(MODEL_URI);
   });
 
+  it("leaves a completion item's opaque data alone", () => {
+    // `data` exists so the server gets it back verbatim on `completionItem/resolve`.
+    // rust-analyzer puts a whole `TextDocumentPositionParams` in there, so rewriting it hands
+    // the server `inmemory://model/1` on resolve and the auto-import edit and documentation
+    // that resolve exists to fetch never arrive — with nothing reporting a problem.
+    const item = {
+      label: "use_state",
+      data: { position: { textDocument: { uri: FILE_URI }, position: { line: 1, character: 2 } }, imports: [] },
+    };
+
+    const out = rewriteUris(item, map) as typeof item;
+
+    expect(out.data).toEqual(item.data);
+  });
+
+  it("still rewrites the uri beside an item that has data", () => {
+    const action = {
+      title: "Add import",
+      data: { id: FILE_URI },
+      edit: { changes: { [FILE_URI]: [{ newText: "x" }] } },
+    };
+
+    const out = rewriteUris(action, map) as { data: { id: string }; edit: { changes: Record<string, unknown> } };
+
+    expect(out.data.id).toBe(FILE_URI);
+    expect(Object.keys(out.edit.changes)).toEqual([MODEL_URI]);
+  });
+
   it("does nothing when no documents are open", () => {
     const payload = [{ uri: FILE_URI, range: {} }];
 

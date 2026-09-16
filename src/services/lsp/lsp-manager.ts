@@ -28,6 +28,16 @@ import {
 /** How long a session with no subscribers is kept before being shut down. */
 const IDLE_GRACE_MS = 5 * 60 * 1000;
 
+/**
+ * How many language servers may exist at once.
+ *
+ * A session is started per server *and root directory*, so opening one file in each of a
+ * dozen projects starts a dozen servers — and the idle grace above keeps every one of them
+ * alive for five minutes after the tab closes. One `typescript-language-server` was 854 MB
+ * resident, and PPM is routinely self-hosted on a machine where that is the whole machine.
+ */
+const MAX_SESSIONS = 6;
+
 export interface LspHandle {
   session: LspSession;
   /** LSP language id for the file that asked, e.g. `typescriptreact`. */
@@ -53,6 +63,8 @@ interface Entry {
   session: LspSession;
   subscribers: Set<string>;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /** Monotonic, so "least recently used" is exact rather than at the clock's resolution. */
+  lastUsed: number;
 }
 
 async function exists(candidate: string): Promise<boolean> {
@@ -69,15 +81,17 @@ export class LspManager {
   /** In-flight starts, so two tabs opening at once do not spawn two servers. */
   private readonly starting = new Map<string, Promise<LspSession>>();
   private readonly notificationListeners = new Set<(key: string, method: string, params: unknown) => void>();
+  private useCounter = 0;
 
   /**
-   * The server table to consult. Only the idle grace period and this are
-   * parameterised, both so tests get an isolated manager rather than sharing
-   * the singleton's live processes between cases.
+   * The server table to consult. That, the idle grace period and the session cap are
+   * parameterised so tests get an isolated manager rather than sharing the singleton's live
+   * processes between cases.
    */
   constructor(
     private readonly servers: LanguageServerDefinition[] = LANGUAGE_SERVERS,
     private readonly idleGraceMs: number = IDLE_GRACE_MS,
+    private readonly maxSessions: number = MAX_SESSIONS,
   ) {}
 
   onNotification(listener: (key: string, method: string, params: unknown) => void): () => void {
@@ -117,7 +131,10 @@ export class LspManager {
 
       try {
         const session = await this.startOrReuse(key, definition, commandPath, rootPath);
+        // Subscribe *then* trim, so the session this call is about to hand out is never the
+        // one the cap takes away.
         this.subscribe(key, subscriber);
+        this.enforceSessionCap();
         return { session, language, key };
       } catch (e) {
         return {
@@ -168,7 +185,7 @@ export class LspManager {
       },
     })
       .then((session) => {
-        this.entries.set(key, { session, subscribers: new Set(), idleTimer: null });
+        this.entries.set(key, { session, subscribers: new Set(), idleTimer: null, lastUsed: ++this.useCounter });
         return session;
       })
       .finally(() => this.starting.delete(key));
@@ -177,9 +194,33 @@ export class LspManager {
     return promise;
   }
 
+  /**
+   * Shut down least-recently-used servers until the cap is met.
+   *
+   * Only servers with no subscriber are taken. One with an editor open is being used, and the
+   * bridge cannot re-open its documents on a session that vanished underneath it — that tab
+   * would answer "the language server is no longer running" for every request until it was
+   * closed and opened again, which is worse than the memory. So this bounds how many *idle*
+   * servers survive their grace period, and the grace period is what made that number
+   * unbounded: browsing a dozen projects in five minutes left a dozen servers resident.
+   */
+  private enforceSessionCap(): void {
+    if (this.entries.size <= this.maxSessions) return;
+    const idle = [...this.entries.entries()]
+      .filter(([, entry]) => entry.subscribers.size === 0)
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    for (const [key, entry] of idle) {
+      if (this.entries.size <= this.maxSessions) return;
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      this.entries.delete(key);
+      void entry.session.dispose();
+    }
+  }
+
   private subscribe(key: string, subscriber: string): void {
     const entry = this.entries.get(key);
     if (!entry) return;
+    entry.lastUsed = ++this.useCounter;
     entry.subscribers.add(subscriber);
     if (entry.idleTimer) {
       clearTimeout(entry.idleTimer);

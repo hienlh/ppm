@@ -37,10 +37,21 @@ const MISSING: LanguageServerDefinition = {
 let project: string;
 let manager: LspManager;
 
-function make(servers: LanguageServerDefinition[] = [FAKE], graceMs = 60_000): LspManager {
-  manager = new LspManager(servers, graceMs);
+function make(servers: LanguageServerDefinition[] = [FAKE], graceMs = 60_000, maxSessions = 6): LspManager {
+  manager = new LspManager(servers, graceMs, maxSessions);
   return manager;
 }
+
+/** A second, third… project root, so one manager starts more than one server. */
+function anotherProject(): string {
+  const dir = mkdtempSync(join(tmpdir(), "ppm-lsp-"));
+  extraProjects.push(dir);
+  writeFileSync(join(dir, ".fakeroot"), "");
+  writeFileSync(join(dir, "a.lua"), "print('a')\n");
+  return dir;
+}
+
+const extraProjects: string[] = [];
 
 beforeEach(() => {
   project = mkdtempSync(join(tmpdir(), "ppm-lsp-"));
@@ -51,6 +62,7 @@ beforeEach(() => {
 afterEach(async () => {
   await manager?.disposeAll();
   rmSync(project, { recursive: true, force: true });
+  for (const dir of extraProjects.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 describe("LspManager.acquire", () => {
@@ -234,5 +246,63 @@ describe("LspManager.disposeAll", () => {
 
     expect(m.running()).toHaveLength(0);
     expect(() => process.kill(pid, 0)).toThrow();
+  });
+});
+
+describe("the session cap", () => {
+  it("shuts down the least recently used idle server once the cap is passed", async () => {
+    // A session is started per server *and root directory*, so one file open in each of a
+    // dozen projects is a dozen servers — and the idle grace keeps every one of them for five
+    // minutes after the tab closes. One `typescript-language-server` was 854 MB resident.
+    const m = make([FAKE], 60_000, 2);
+    const roots = [project, anotherProject(), anotherProject()];
+
+    const handles: LspHandle[] = [];
+    for (const [i, root] of roots.entries()) {
+      const handle = (await m.acquire(root, "a.lua", `s${i}`)) as LspHandle;
+      handles.push(handle);
+      m.release(handle.key, `s${i}`); // the tab closed; the grace period is what kept it alive
+    }
+
+    expect(m.running()).toHaveLength(2);
+    // The first root is the one that has gone.
+    expect(m.running().map((r) => r.rootPath)).toEqual([roots[1]!, roots[2]!]);
+    // The eviction does not block the acquire that triggered it, so the polite handshake is
+    // still in flight at this point.
+    for (let i = 0; i < 40 && handles[0]!.session.state !== "stopped"; i++) await Bun.sleep(25);
+    expect(handles[0]!.session.state).toBe("stopped");
+  });
+
+  it("never takes a server an editor is still open on", async () => {
+    // The bridge cannot re-open a document on a session that vanished underneath it: that tab
+    // would answer "the language server is no longer running" until it was closed and opened
+    // again, which is worse than the memory.
+    const m = make([FAKE], 60_000, 1);
+    const roots = [project, anotherProject(), anotherProject()];
+
+    const held: LspHandle[] = [];
+    for (const [i, root] of roots.entries()) held.push((await m.acquire(root, "a.lua", `s${i}`)) as LspHandle);
+
+    expect(m.running()).toHaveLength(3);
+    expect(held.every((h) => h.session.state === "ready")).toBe(true);
+  });
+
+  it("counts a reused server as recently used", async () => {
+    const m = make([FAKE], 60_000, 2);
+    const roots = [project, anotherProject(), anotherProject()];
+    const keys: string[] = [];
+    for (const [i, root] of roots.slice(0, 2).entries()) {
+      const handle = (await m.acquire(root, "a.lua", `s${i}`)) as LspHandle;
+      keys.push(handle.key);
+      m.release(handle.key, `s${i}`);
+    }
+
+    // Touch the older one, then start a third: the untouched one is what goes.
+    const reused = (await m.acquire(roots[0]!, "a.lua", "again")) as LspHandle;
+    m.release(reused.key, "again");
+    const third = (await m.acquire(roots[2]!, "a.lua", "s2")) as LspHandle;
+    m.release(third.key, "s2");
+
+    expect(m.running().map((r) => r.rootPath).sort()).toEqual([roots[0]!, roots[2]!].sort());
   });
 });
