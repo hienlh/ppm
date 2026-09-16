@@ -3,10 +3,13 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
+import { monacoDevAssets } from "./scripts/vite-monaco-dev-assets.ts";
 
 export default defineConfig({
   plugins: [
     react(),
+    // Without this the editor never paints under `bun dev:web` — see the plugin's own comment.
+    monacoDevAssets(),
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
@@ -33,10 +36,11 @@ export default defineConfig({
         // use instead. `index-*` is Vite's entry chunk.
         // Named individually rather than by extension: a `*.png` glob pulled in
         // `donate-qr.png`, 104 KB downloaded before first paint by everyone.
+        // Monaco needs no exclusion here: `copy-monaco.ts` stages it into
+        // `dist/web/assets/monaco/` *after* `vite build`, so nothing of it can
+        // reach the manifest — it is cached on use by the `/assets/` route in
+        // `sw.ts`, workers included.
         globPatterns: ["index.html", "manifest.webmanifest", "icon-*.svg", "assets/index-*.{js,css}"],
-        // Belt and braces: the Monaco workers must never come back into the
-        // precache, whatever the patterns above grow into.
-        globIgnores: ["**/monacoeditorwork/**"],
         // No shell file is anywhere near this. A cap in the megabytes is what
         // let a 12.7 MB worker in.
         maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,

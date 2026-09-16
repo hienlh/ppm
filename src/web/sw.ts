@@ -27,9 +27,3 @@ registerRoute(
   ({ url }) => url.pathname.startsWith("/assets/"),
   new CacheFirst({ cacheName: "ppm-assets" }),
 );
-
-// Monaco's workers, which only exist once a file of that language is opened.
-registerRoute(
-  ({ url }) => url.pathname.startsWith("/monacoeditorwork/"),
-  new CacheFirst({ cacheName: "ppm-monaco-workers" }),
-);
