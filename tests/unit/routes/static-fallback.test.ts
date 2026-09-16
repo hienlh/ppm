@@ -28,6 +28,8 @@ describe("a subresource is never answered with the app shell", () => {
       expect(shouldServeAppShell("/assets/index-abc123.js", dest), String(dest)).toBe(false);
       expect(shouldServeAppShell("/assets/file-icons-abc.css", dest), String(dest)).toBe(false);
       expect(shouldServeAppShell("/assets/monaco/vs/loader.js", dest), String(dest)).toBe(false);
+      // Nothing builds this path any more; it is here for the tab that carries an old
+      // service worker across the upgrade and asks for it anyway.
       expect(shouldServeAppShell("/monacoeditorwork/ts.worker.bundle.js", dest), String(dest)).toBe(false);
     }
   });
