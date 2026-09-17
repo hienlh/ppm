@@ -12,6 +12,7 @@ import { api } from "../../../src/web/lib/api-client.ts";
 import { ensureShadowModels, disposeShadowModels } from "../../../src/web/lib/lsp/lsp-shadow-models.ts";
 
 const MAX_SHADOW_MODELS = 40; // mirrors the module; not exported, and not worth exporting
+const MAX_FETCH_ATTEMPTS = 3; // likewise
 
 /** A Monaco whose models are plain objects, so a test can see which were disposed. */
 function fakeMonaco() {
@@ -169,9 +170,10 @@ describe("the negative cache", () => {
     };
     const first = "file:///p/gone.ts";
 
+    for (let i = 0; i < MAX_FETCH_ATTEMPTS; i++) await ensureShadowModels(monaco, "demo", "/p", [first]);
+    requested = [];
     await ensureShadowModels(monaco, "demo", "/p", [first]);
-    await ensureShadowModels(monaco, "demo", "/p", [first]);
-    expect(requested).toHaveLength(1); // remembered, so it is not asked for twice
+    expect(requested).toEqual([]); // given up on, so not asked for again
 
     await ensureShadowModels(
       monaco, "demo", "/p",
@@ -184,9 +186,98 @@ describe("the negative cache", () => {
     expect(requested).toEqual([expect.stringContaining(encodeURIComponent("gone.ts"))]);
 
     // ...whereas a recent one is still remembered, which is what the cache is for.
+    const recent = "file:///p/later-599.ts";
+    for (let i = 0; i < MAX_FETCH_ATTEMPTS; i++) await ensureShadowModels(monaco, "demo", "/p", [recent]);
     requested = [];
-    await ensureShadowModels(monaco, "demo", "/p", ["file:///p/later-599.ts"]);
+    await ensureShadowModels(monaco, "demo", "/p", [recent]);
     expect(requested).toEqual([]);
+  });
+
+  it("recovers from a failure that was only transient", async () => {
+    // A 500, a dropped socket or a tunnel that blinked arrive in the same `catch` as a file
+    // that is genuinely absent, and `api.get` throws a bare `Error` either way. Giving up on
+    // the first one disabled go-to-definition into that file for the life of the page — for a
+    // blip that was over before the user tried again.
+    const { monaco, alive } = fakeMonaco();
+    let failuresLeft = 1;
+    (api as unknown as { get: unknown }).get = async (path: string) => {
+      requested.push(path);
+      if (failuresLeft-- > 0) throw new Error("Server error (HTTP 500)");
+      return { content: "// contents\n" };
+    };
+
+    await ensureShadowModels(monaco, "demo", "/p", ["file:///p/blip.ts"]);
+    expect(alive()).toEqual([]);
+
+    await ensureShadowModels(monaco, "demo", "/p", ["file:///p/blip.ts"]);
+    expect(alive()).toEqual(["file:///p/blip.ts"]);
+  });
+
+  it("stops asking once a file has failed often enough to mean it", async () => {
+    const { monaco } = fakeMonaco();
+    (api as unknown as { get: unknown }).get = async (path: string) => {
+      requested.push(path);
+      throw new Error("Server error (HTTP 500)");
+    };
+
+    for (let i = 0; i < MAX_FETCH_ATTEMPTS + 4; i++) {
+      await ensureShadowModels(monaco, "demo", "/p", ["file:///p/never.ts"]);
+    }
+
+    expect(requested).toHaveLength(MAX_FETCH_ATTEMPTS);
+  });
+
+  it("forgets the failures of a file that later answers", async () => {
+    // Otherwise a file that blinked twice is one blip away from being given up on for good,
+    // however long it has been serving fine since.
+    const { monaco, models } = fakeMonaco();
+    const uri = "file:///p/flaky.ts";
+    let failNext = true;
+    (api as unknown as { get: unknown }).get = async (path: string) => {
+      requested.push(path);
+      if (failNext) throw new Error("Server error (HTTP 500)");
+      return { content: "// contents\n" };
+    };
+
+    await ensureShadowModels(monaco, "demo", "/p", [uri]); // blip
+    await ensureShadowModels(monaco, "demo", "/p", [uri]); // blip
+    failNext = false;
+    await ensureShadowModels(monaco, "demo", "/p", [uri]); // and then it answers
+    expect(models.get(uri)?.disposed).toBe(false);
+
+    // Evicted later, so the file has to be fetched again — and it is flaky again. Had the two
+    // earlier blips still counted, this would give up after a single attempt.
+    models.get(uri)!.dispose();
+    models.delete(uri);
+    requested = [];
+    failNext = true;
+    for (let i = 0; i < MAX_FETCH_ATTEMPTS; i++) {
+      await ensureShadowModels(monaco, "demo", "/p", [uri]);
+    }
+    expect(requested).toHaveLength(MAX_FETCH_ATTEMPTS);
+  });
+});
+
+describe("how many files it fetches at once", () => {
+  it("never has more than a handful in flight", async () => {
+    // Find-all-references over a widely used symbol arrives as hundreds of locations, and one
+    // request each is a burst the server answers slowly and the browser queues anyway.
+    const { monaco } = fakeMonaco();
+    let inFlight = 0;
+    let peak = 0;
+    (api as unknown as { get: unknown }).get = async (path: string) => {
+      requested.push(path);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return { content: "// contents\n" };
+    };
+
+    await ensureShadowModels(monaco, "demo", "/p", uris("/p", 0, 60));
+
+    expect(requested).toHaveLength(60); // all of them still fetched...
+    expect(peak).toBeLessThanOrEqual(6); // ...just not all at once
   });
 });
 

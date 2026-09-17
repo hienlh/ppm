@@ -81,6 +81,18 @@ export class LspManager {
   private readonly entries = new Map<string, Entry>();
   /** In-flight starts, so two tabs opening at once do not spawn two servers. */
   private readonly starting = new Map<string, Promise<LspSession>>();
+  /**
+   * Keys an acquire is currently waiting on, and who is waiting.
+   *
+   * A session becomes evictable the instant it is stored and stays that way until the acquire
+   * that asked for it resumes and subscribes — and resuming takes a turn of the loop, which is
+   * long enough for a *different* acquire to finish and sweep the cap. It would find a brand
+   * new entry with no subscriber, rank it least-recently-used, and dispose it; the first
+   * acquire then subscribed to nothing and handed its tab a session that was already gone.
+   * Claiming the key up front makes "asked for" count as "in use", which is what the cap
+   * always meant.
+   */
+  private readonly claims = new Map<string, Set<string>>();
   private readonly notificationListeners = new Set<(key: string, method: string, params: unknown) => void>();
   private useCounter = 0;
 
@@ -130,11 +142,18 @@ export class LspManager {
       const rootPath = await this.findRoot(definition, dirs, projectPath);
       const key = `${definition.id} ${rootPath}`;
 
+      this.claim(key, subscriber);
       try {
         const session = await this.startOrReuse(key, definition, command, rootPath);
         // Subscribe *then* trim, so the session this call is about to hand out is never the
         // one the cap takes away.
-        this.subscribe(key, subscriber);
+        if (!this.subscribe(key, subscriber)) {
+          // The entry went away while this call was waiting — the server exited on its own, or
+          // the idle reaper fired. Reporting that beats handing back a dead session: the tab
+          // would take it, ask for capabilities, and answer "no longer running" to every
+          // request from then on, with nothing short of closing the tab to recover.
+          throw new Error(`${definition.displayName} stopped while starting up.`);
+        }
         this.enforceSessionCap();
         return { session, language, key };
       } catch (e) {
@@ -143,6 +162,8 @@ export class LspManager {
           server: { id: definition.id, displayName: definition.displayName, installHint: definition.installHint },
           message: e instanceof Error ? e.message : String(e),
         };
+      } finally {
+        this.unclaim(key, subscriber);
       }
     }
 
@@ -208,7 +229,7 @@ export class LspManager {
   private enforceSessionCap(): void {
     if (this.entries.size <= this.maxSessions) return;
     const idle = [...this.entries.entries()]
-      .filter(([, entry]) => entry.subscribers.size === 0)
+      .filter(([key, entry]) => entry.subscribers.size === 0 && !this.claims.has(key))
       .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
     for (const [key, entry] of idle) {
       if (this.entries.size <= this.maxSessions) return;
@@ -218,15 +239,32 @@ export class LspManager {
     }
   }
 
-  private subscribe(key: string, subscriber: string): void {
+  private claim(key: string, subscriber: string): void {
+    const holders = this.claims.get(key);
+    if (holders) holders.add(subscriber);
+    else this.claims.set(key, new Set([subscriber]));
+  }
+
+  private unclaim(key: string, subscriber: string): void {
+    const holders = this.claims.get(key);
+    if (!holders) return;
+    holders.delete(subscriber);
+    // Dropped entirely rather than left empty, so `claims.has(key)` alone answers
+    // "someone is waiting on this" for the cap sweep.
+    if (holders.size === 0) this.claims.delete(key);
+  }
+
+  /** False when the entry is gone, i.e. there is no running session to hold. */
+  private subscribe(key: string, subscriber: string): boolean {
     const entry = this.entries.get(key);
-    if (!entry) return;
+    if (!entry) return false;
     entry.lastUsed = ++this.useCounter;
     entry.subscribers.add(subscriber);
     if (entry.idleTimer) {
       clearTimeout(entry.idleTimer);
       entry.idleTimer = null;
     }
+    return true;
   }
 
   /** Give up one subscriber's hold. The server keeps running for the grace period. */

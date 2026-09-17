@@ -287,6 +287,31 @@ describe("the session cap", () => {
     expect(held.every((h) => h.session.state === "ready")).toBe(true);
   });
 
+  it("gives every tab a live session when several open at once under a tight cap", async () => {
+    // Two tabs opening together interleave across the cap sweep, which runs while the other
+    // acquire is still in flight and its session is sitting there with no subscriber yet. What
+    // this pins down is the outcome: whatever the sweep takes, no acquire may come back
+    // holding a session the manager has already disposed — a tab given one answers "the
+    // language server is no longer running" to every request until it is closed and reopened.
+    const m = make([FAKE], 60_000, 1);
+    const roots = [project, anotherProject()];
+
+    // Warm both while holding both, since the cap never takes a server an editor is open on;
+    // then let go, so both are idle and evictable when the two acquires below interleave.
+    const warm: LspHandle[] = [];
+    for (const [i, root] of roots.entries()) warm.push((await m.acquire(root, "a.lua", `warm${i}`)) as LspHandle);
+    expect(m.running()).toHaveLength(2);
+    for (const [i, handle] of warm.entries()) m.release(handle.key, `warm${i}`);
+
+    const results = await Promise.all(roots.map((root, i) => m.acquire(root, "a.lua", `s${i}`)));
+
+    const handles = results.filter((r): r is LspHandle => !isUnavailable(r));
+    expect(handles).toHaveLength(2);
+    expect(handles.every((h) => h.session.state === "ready")).toBe(true);
+    // Both are still the manager's, not handles to something it has already forgotten.
+    expect(m.running()).toHaveLength(2);
+  });
+
   it("counts a reused server as recently used", async () => {
     const m = make([FAKE], 60_000, 2);
     const roots = [project, anotherProject(), anotherProject()];
