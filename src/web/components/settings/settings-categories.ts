@@ -20,6 +20,7 @@ import {
   Keyboard,
   FolderSearch,
   DatabaseZap,
+  Mic,
   Zap,
 } from "@/lib/icons";
 
@@ -35,6 +36,7 @@ export type SettingsCategoryId =
   | "language-servers"
   | "ai-provider"
   | "accounts"
+  | "voice"
   | "ppmbot"
   | "notifications"
   | "jira"
@@ -80,6 +82,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },
+  { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 
   { id: "ppmbot", group: "integrations", label: "PPMBot", subtitle: "Telegram AI bot", icon: BotMessageSquare },
   { id: "notifications", group: "integrations", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
