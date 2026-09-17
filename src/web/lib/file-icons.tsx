@@ -14,25 +14,21 @@
  * nodes for React to reconcile on every expand. And a row is draggable — an
  * inner `<img>` supplies its own drag image and has to be talked out of it.
  *
- * Resolution order is the extension theme's own: whole filename, then double
- * extension (`.spec.ts`), then extension. `fileIconElement` is for the slots
- * that want a component rather than an element — the tab bar and the palette
- * both take an `icon: ElementType`.
+ * Name resolution is next door in `file-icon-name.ts`, which is pure and
+ * testable; this file is the drawing and the one subscription that decides
+ * whether `.service.ts` is a Nest provider or an Angular service.
+ * `fileIconElement` is for the slots that want a component rather than an
+ * element — the tab bar and the palette both take an `icon: ElementType`.
  */
 import type { FC } from "react";
 // `?url` gives the built stylesheet's address without putting it on the module
 // graph: nothing is fetched until the `<link>` below is appended.
 import ICON_CSS_URL from "@/styles/file-icons.generated.css?url";
 import { basename, cn } from "@/lib/utils";
-import {
-  DEFAULT_FILE_ICON,
-  DEFAULT_FOLDER_ICON,
-  DEFAULT_FOLDER_OPEN_ICON,
-  EXTENSION_ICONS,
-  FILENAME_ICONS,
-  FOLDER_ICONS,
-  FOLDER_OPEN_ICONS,
-} from "./file-icons.generated";
+import { fileIconName, folderIconName } from "./file-icon-name";
+import { useIconFramework } from "@/stores/project-framework-store";
+
+export { fileIconName, folderIconName };
 
 /**
  * The artwork is fetched when something first asks for an icon, not before.
@@ -40,10 +36,16 @@ import {
  * Imported at module scope it was not lazy in any useful sense: this module is
  * reached from `tab-type-icons.ts`, which the tab bar, the mobile nav and the
  * dock header all import eagerly, so Vite hoisted the stylesheet into a
- * `<link rel="stylesheet">` in `index.html` — render-blocking on every load,
- * measured at 499,375 bytes raw / 127,333 gzip / 79,836 brotli. The app's
- * entire other stylesheet is 25,956 gzip, so the icons were 4.9x everything
- * else put together, in front of the first paint.
+ * `<link rel="stylesheet">` in `index.html` — render-blocking on every load.
+ * Re-measured against this branch's full 1193-glyph port rather than the 224 it
+ * was first written for: **1,952,181 bytes raw / 535,335 gzip / 391,418 brotli**
+ * against the app's entire other stylesheet at 26,340 gzip, so the icons are
+ * **20x** everything else put together. (The figure quoted here used to be
+ * 499,375 raw / 4.9x, which was the truth at 224 glyphs and is a quarter of the
+ * truth now.) It is a first-*use* cost rather than a first-load one, which is
+ * the whole point of the boundary — but a phone that opens one file listing
+ * downloads 382 KiB of artwork to do it, and that number belongs in the comment
+ * rather than in someone's memory.
  *
  * So it is fetched at runtime by a `<link>` this function appends. The cost is
  * honest and visible: an icon that renders before the stylesheet lands is a
@@ -84,40 +86,6 @@ function requestIconCss(): void {
   document.head.appendChild(link);
 }
 
-/** The icon name for a file, by name alone. */
-export function fileIconName(path: string): string {
-  const name = basename(path).toLowerCase();
-  const byName = FILENAME_ICONS[name];
-  if (byName) return byName;
-
-  const parts = name.split(".");
-  if (parts.length > 2) {
-    // `.spec.ts`, `.d.ts`, `.config.js` — the theme gives these their own
-    // glyphs, and matching only the last extension would lose them.
-    const double = `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
-    const byDouble = EXTENSION_ICONS[double];
-    if (byDouble) return byDouble;
-  }
-  if (parts.length > 1) {
-    const byExt = EXTENSION_ICONS[parts[parts.length - 1]!];
-    if (byExt) return byExt;
-  }
-  // A dotfile with no extension (`.gitignore` handled above, `.foorc` not) has
-  // its name as its only extension.
-  if (name.startsWith(".")) {
-    const byDot = EXTENSION_ICONS[name.slice(1)];
-    if (byDot) return byDot;
-  }
-  return DEFAULT_FILE_ICON;
-}
-
-/** The icon name for a folder, open or closed. */
-export function folderIconName(path: string, open = false): string {
-  const name = basename(path).toLowerCase();
-  const table = open ? FOLDER_OPEN_ICONS : FOLDER_ICONS;
-  return table[name] ?? (open ? DEFAULT_FOLDER_OPEN_ICON : DEFAULT_FOLDER_ICON);
-}
-
 export type FileIconKind = "file" | "directory";
 
 export interface FileIconProps {
@@ -140,19 +108,28 @@ export interface FileIconProps {
  * blockify it for free; the tab strip wraps its icon in a `<span class="relative">`
  * for the notification dot, and there the icon simply did not render — the one
  * place an inline `<svg>` would have worked without saying so.
+ *
+ * The framework overlay is read here rather than threaded through as a prop
+ * because there are eight call sites and two of them — the tab bar and the
+ * command palette — go through `fileIconElement`, which hands out a *component*
+ * and has no project in scope at all. The subscription costs nothing: the tree
+ * is virtualised, so only the ~40 visible rows are mounted, and `TreeRow`
+ * already reads four stores.
  */
-function iconClass(icon: string, className?: string): string {
-  return cn(
-    "inline-block shrink-0 size-4 bg-center bg-no-repeat bg-contain",
-    `vsi-${icon}`,
-    className,
-  );
-}
-
 export function FileIcon({ name, kind = "file", open, className }: FileIconProps) {
   requestIconCss();
-  const icon = kind === "directory" ? folderIconName(name, open) : fileIconName(name);
-  return <span aria-hidden="true" className={iconClass(icon, className)} />;
+  const framework = useIconFramework();
+  const icon = kind === "directory" ? folderIconName(name, open) : fileIconName(name, framework);
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-block shrink-0 size-4 bg-center bg-no-repeat bg-contain",
+        `vsi-${icon}`,
+        className,
+      )}
+    />
+  );
 }
 
 /**
@@ -163,14 +140,29 @@ export function FileIcon({ name, kind = "file", open, className }: FileIconProps
  * function per render would unmount and remount the node on every keystroke in
  * the palette's filter.
  *
- * Keyed by the resolved glyph rather than by the path that resolved to it. A
- * path key is wrong twice over: `src/a/index.ts` and `src/b/index.ts` are two
- * entries rendering the same span, and a repository indexed by the palette has
- * as many keys as it has files — which is why the old key needed an eviction
- * rule, and why that rule was `clear()`, remounting every icon on screen at the
- * 501st distinct path. There are 224 glyphs, so keying on those makes the cache
- * bounded by construction and eviction unnecessary.
+ * Keyed by the *basename*, not the whole path, because the basename is all
+ * `fileIconName` reads. A path key made `src/a/index.ts` and `src/b/index.ts`
+ * two entries rendering the same span, so a repository indexed by the palette
+ * had as many keys as it had files — which is why the key needed an eviction
+ * rule at all. It cannot be keyed by the resolved glyph: `FileIcon` subscribes
+ * to the project's framework preset, so the glyph a name resolves to changes
+ * under it and a precomputed one would stop following.
+ *
+ * Eviction drops the oldest quarter rather than calling `clear()`. A `Map`
+ * keeps insertion order, and clearing hands every caller a new component type
+ * at once — remounting every icon on screen, which is the one thing this cache
+ * exists to prevent.
+ *
+ * Insertion order, not recency: this is deliberately *not* an LRU, and the
+ * difference is visible exactly once. Scrolling back through a tree with more
+ * than 2000 distinct basenames can evict a name that is still on screen —
+ * whichever was cached first, however recently it was used — and remount those
+ * icons one time. Re-entering them puts them back at the end of the order.
+ * Keeping a real LRU would mean touching the Map on every `fileIconElement`
+ * call, which the palette makes hundreds of per keystroke, to avoid one
+ * remount in a tree that size.
  */
+const ELEMENT_CACHE_MAX = 2000;
 const elementCache = new Map<string, FC<{ className?: string }>>();
 
 export function fileIconElement(
@@ -180,13 +172,19 @@ export function fileIconElement(
   // The palette asks for hundreds of these before any of them renders, so the
   // fetch starts here too rather than waiting for the first mount.
   requestIconCss();
-  const icon = kind === "directory" ? folderIconName(name) : fileIconName(name);
-  const cached = elementCache.get(icon);
+  const base = basename(name).toLowerCase();
+  const key = `${kind}:${base}`;
+  const cached = elementCache.get(key);
   if (cached) return cached;
   const Bound: FC<{ className?: string }> = ({ className }) => (
-    <span aria-hidden="true" className={iconClass(icon, className)} />
+    <FileIcon name={name} kind={kind} className={className} />
   );
-  Bound.displayName = `FileIcon(${icon})`;
-  elementCache.set(icon, Bound);
+  Bound.displayName = `FileIcon(${base})`;
+  if (elementCache.size >= ELEMENT_CACHE_MAX) {
+    for (const stale of [...elementCache.keys()].slice(0, ELEMENT_CACHE_MAX >> 2)) {
+      elementCache.delete(stale);
+    }
+  }
+  elementCache.set(key, Bound);
   return Bound;
 }

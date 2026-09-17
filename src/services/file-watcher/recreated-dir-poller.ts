@@ -22,6 +22,7 @@
  * there.
  */
 import { lstatSync, readdirSync } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Slow enough to be invisible next to inotify, fast enough for a save-and-see loop. */
@@ -33,6 +34,15 @@ const POLL_INTERVAL_MS = 1000;
  * blowup once.
  */
 const MAX_POLLED_DIRS = 64;
+/**
+ * Entries stat'ed per turn of the loop.
+ *
+ * A recreated `dist` or `node_modules` holds tens of thousands of files, and statting them in
+ * one go is the stall this whole release is about — once a second, forever, for as long as the
+ * directory stays polled. The reads are async so they run off the loop thread anyway; the batch
+ * is what stops their *completions* arriving as one unbroken run of callbacks.
+ */
+const STAT_BATCH = 256;
 
 export interface RecreatedDirPollerOptions {
   /** Absolute path of every entry that appeared, vanished or changed. */
@@ -50,6 +60,8 @@ export class RecreatedDirPoller {
   private readonly intervalMs: number;
   private readonly maxDirs: number;
   private droppedForBudget = false;
+  /** True while a sweep is in flight, so the interval cannot stack them. */
+  private sweeping = false;
 
   constructor(private readonly options: RecreatedDirPollerOptions) {
     this.intervalMs = options.intervalMs ?? POLL_INTERVAL_MS;
@@ -109,24 +121,114 @@ export class RecreatedDirPoller {
   }
 
   private tick(): void {
-    for (const [dir, previous] of this.snapshots) {
-      const current = this.readDir(dir);
+    // A sweep that outlasts the interval must not be joined by the next one: two sweeps over
+    // the same directories would double the syscalls and race each other's snapshot writes,
+    // and the slower the host the worse it would get — the opposite of what polling is for.
+    if (this.sweeping) return;
+    this.sweeping = true;
+    void this.sweep().finally(() => {
+      this.sweeping = false;
+    });
+  }
+
+  private async sweep(): Promise<void> {
+    // Copied, because a directory can be added or removed while this awaits.
+    let first = true;
+    for (const dir of [...this.snapshots.keys()]) {
+      if (!first) await new Promise((resolve) => setImmediate(resolve));
+      first = false;
+      const previous = this.snapshots.get(dir);
+      if (!previous) continue; // removed while we were reading something else
+      const current = await this.readDirAsync(dir);
+      // Identity, not presence. A directory can be removed *and added back* while this reads,
+      // which is the ordinary rebuild path on Linux — `scheduleRebuild` calls `closeSubtree`
+      // (which removes) and then `cover` (which adds), and the new `add` installs a fresh
+      // baseline synchronously. Diffing against the baseline that has since been replaced
+      // reports changes the new one already accounts for.
+      //
+      // Reasoned rather than measured: the window is inside the await above, and no test here
+      // reaches it. The severe half of the same hazard — storing the stale read over the new
+      // baseline, which makes the *next* sweep report the whole directory — is the check below,
+      // and that one is covered.
+      if (this.snapshots.get(dir) !== previous) continue;
 
       for (const [name, mtime] of current) {
         const before = previous.get(name);
         if (before === undefined || before !== mtime) {
-          this.options.onChange(join(dir, name));
+          this.report(join(dir, name));
         }
       }
       for (const name of previous.keys()) {
-        if (!current.has(name)) this.options.onChange(join(dir, name));
+        if (!current.has(name)) this.report(join(dir, name));
       }
 
-      this.snapshots.set(dir, current);
+      // Checked again: `onChange` runs synchronously between the two, and this class is
+      // exported with a caller-supplied callback that may close or re-register the directory.
+      if (this.snapshots.get(dir) === previous) this.snapshots.set(dir, current);
     }
   }
 
-  /** Direct entries of `absDir` with their mtimes. Empty when it is unreadable. */
+  /**
+   * One change, reported without letting a bad listener take the process down.
+   *
+   * The sweep runs from a `void`ed promise, so a throwing `onChange` becomes an unhandled
+   * rejection — and the server treats three of those in a minute as fatal, which a poller
+   * ticking once a second reaches in three. Swallowing is right here: the listener's failure
+   * is the listener's business, and the alternative is that one bad path stops the directory
+   * being watched at all.
+   */
+  private report(absPath: string): void {
+    try {
+      this.options.onChange(absPath);
+    } catch {
+      // The caller's problem, not a reason to stop polling.
+    }
+  }
+
+  /**
+   * Direct entries of `absDir` with their mtimes, without holding the loop.
+   *
+   * Empty when unreadable — deleted again, or permissions.
+   */
+  private async readDirAsync(absDir: string): Promise<DirSnapshot> {
+    const snapshot: DirSnapshot = new Map();
+    let names: string[];
+    try {
+      names = await readdir(absDir);
+    } catch {
+      return snapshot;
+    }
+    for (let i = 0; i < names.length; i += STAT_BATCH) {
+      // Measured, not assumed: on 10k entries, async reads alone took the worst loop gap from
+      // 341ms to 194ms, because the completions still arrived as one unbroken run. Handing the
+      // loop a turn between batches is what takes it to single digits.
+      if (i > 0) await new Promise((resolve) => setImmediate(resolve));
+      const batch = names.slice(i, i + STAT_BATCH);
+      const stats = await Promise.all(
+        batch.map(async (name) => {
+          try {
+            // lstat, not stat: a symlink's own mtime, never its target's, matching
+            // the scan that decides coverage.
+            return [name, (await lstat(join(absDir, name))).mtimeMs] as const;
+          } catch {
+            // Vanished between readdir and lstat; the next tick reports it.
+            return null;
+          }
+        }),
+      );
+      for (const entry of stats) if (entry) snapshot.set(entry[0], entry[1]);
+    }
+    return snapshot;
+  }
+
+  /**
+   * The same read, synchronously, for the baseline taken at registration.
+   *
+   * It stays sync so the baseline is the directory as it was at the moment `add` was called:
+   * a `git checkout` writes into a recreated directory immediately, and those writes are
+   * exactly what the poller exists to report. Taking the baseline a turn later would fold them
+   * into it and report nothing. It is one read per directory, not one per second.
+   */
   private readDir(absDir: string): DirSnapshot {
     const snapshot: DirSnapshot = new Map();
     let names: string[];
