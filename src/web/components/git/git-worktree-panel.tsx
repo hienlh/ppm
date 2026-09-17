@@ -12,6 +12,7 @@ import {
   Check,
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -33,6 +34,7 @@ interface GitWorktreePanelProps {
 
 /** Collapsible panel listing git worktrees with add/remove actions. */
 export function GitWorktreePanel({ projectName, projectPath }: GitWorktreePanelProps) {
+  const { gitUrl } = useGitRepo(projectName);
   const [expanded, setExpanded] = useState(false);
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,7 +49,7 @@ export function GitWorktreePanel({ projectName, projectPath }: GitWorktreePanelP
     setError(null);
     try {
       const data = await api.get<GitWorktree[]>(
-        `${projectUrl(projectName)}/git/worktrees`,
+        gitUrl("/worktrees"),
       );
       setWorktrees(data);
     } catch (e) {
@@ -66,7 +68,7 @@ export function GitWorktreePanel({ projectName, projectPath }: GitWorktreePanelP
     if (!removeTarget) return;
     setRemoving(true);
     try {
-      await api.post(`${projectUrl(projectName)}/git/worktree/remove`, {
+      await api.post(gitUrl("/worktree/remove"), {
         path: removeTarget.path,
         force,
       });
@@ -82,7 +84,7 @@ export function GitWorktreePanel({ projectName, projectPath }: GitWorktreePanelP
 
   async function handlePrune() {
     try {
-      await api.post(`${projectUrl(projectName)}/git/worktree/prune`, {});
+      await api.post(gitUrl("/worktree/prune"), {});
       await fetchWorktrees();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Prune failed");

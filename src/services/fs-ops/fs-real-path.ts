@@ -42,3 +42,26 @@ export function realPathOrSelfSync(target: string): string {
     }
   }
 }
+
+/**
+ * Is `child` the same directory as `parent`, or somewhere inside it?
+ *
+ * Case-folded on Windows, where `C:\Users\PC\ppm` and `c:\users\pc\ppm` are
+ * one directory under two spellings: a case-sensitive prefix test refuses the
+ * second, which reads to the caller as "outside the project" for a path the
+ * server itself handed out. Nowhere else — on Linux two spellings really are
+ * two directories.
+ *
+ * The separator follows the platform rather than `sep`, and `platform` is a
+ * parameter, so win32 semantics can be asserted from a Linux test run the way
+ * `assertSafeFilePaths` takes its `PathApi`. A backslash is a separator only on
+ * Windows: on Linux `/home/x\evil` is a file *beside* `/home/x`, not inside it.
+ */
+export function isInsideDir(child: string, parent: string, platform: string = process.platform): boolean {
+  const separators = platform === "win32" ? ["\\", "/"] : ["/"];
+  const fold = (path: string) => (platform === "win32" ? path.toLowerCase() : path);
+  const from = fold(parent).replace(/[\\/]+$/, "");
+  const to = fold(child);
+  if (to === from) return true;
+  return to.startsWith(from) && separators.includes(to.charAt(from.length));
+}

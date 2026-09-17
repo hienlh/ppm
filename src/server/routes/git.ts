@@ -1,12 +1,91 @@
 import { Hono } from "hono";
+import { resolve } from "node:path";
 import { gitService } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
-import { gitBlameService } from "../../services/git-blame/git-blame.service.ts";
+import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
+import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
+import { isInsideDir, realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const gitRoutes = new Hono<Env>();
+
+/**
+ * `?repo=` scopes every git route below to one repository inside the project.
+ *
+ * A workspace folder is often a container whose *children* are the
+ * repositories, so the project path and the git root are not the same
+ * directory. Rather than teach each of the twenty-odd handlers, the parameter
+ * is resolved once here and `projectPath` is replaced — every handler already
+ * reads that, and `git.service` already takes the directory to run in.
+ *
+ * It is validated, and a bad value is a 400 rather than a fallback to the
+ * project root. Falling back would run the command one directory up and answer
+ * with *a* history — the wrong one — which is indistinguishable from a working
+ * feature until someone acts on it.
+ *
+ * Both sides go through `realPathOrSelfSync` first. `resolve` is purely
+ * textual, so a symlink inside the project pointing anywhere on the host
+ * resolves to an in-project path, passes, and git runs in the link's target.
+ * Discovery refuses to *offer* such a path, but this parameter comes straight
+ * from the client and is not obliged to be one discovery returned.
+ *
+ * Containment is `isInsideDir`, which folds case on Windows: `c:\users\pc\ppm`
+ * and `C:\Users\PC\ppm` are one directory, and a case-sensitive prefix test
+ * answers 400 for the second — a path this server handed out itself.
+ */
+gitRoutes.use("*", async (c, next) => {
+  const repo = c.req.query("repo");
+  if (repo) {
+    const root = realPathOrSelfSync(resolve(c.get("projectPath")));
+    const target = realPathOrSelfSync(resolve(repo));
+    if (!isInsideDir(target, root)) {
+      return c.json(err("repo is outside the project"), 400);
+    }
+    if (!isGitRepo(target)) {
+      return c.json(err("repo is not a git repository"), 400);
+    }
+    c.set("projectPath", target);
+  }
+  await next();
+});
+
+/**
+ * The `ref`-ish query parameters, refused at the boundary rather than handed on.
+ *
+ * A revision reaches git as its own argv word, so the hazard is not a shell
+ * metacharacter but a value that changes what the command *is*: `?ref1=--output=/tmp/x`
+ * is an option, not a revision, and `git diff` honours it. `assertSafeRev` is
+ * the rule the blame path already states — no leading dash, no `..` range, none
+ * of what `check-ref-format` forbids — and `HEAD~1` and `main^` still pass,
+ * because those are what the diff viewer actually asks for.
+ */
+function invalidRev(...revs: Array<string | undefined>): string | null {
+  for (const rev of revs) {
+    if (rev === undefined) continue;
+    try {
+      assertSafeRev(rev);
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+  return null;
+}
+
+/**
+ * GET /git/repos — the repositories under this project.
+ *
+ * Answers for a project whose root is not a repository, which is the case the
+ * git surfaces used to report as an error.
+ */
+gitRoutes.get("/repos", (c) => {
+  try {
+    return c.json(ok(discoverGitRepos(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
 
 /** GET /git/status */
 gitRoutes.get("/status", async (c) => {
@@ -25,6 +104,8 @@ gitRoutes.get("/diff", async (c) => {
     const projectPath = c.get("projectPath");
     const ref1 = c.req.query("ref1") || undefined;
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref1, ref2);
+    if (bad) return c.json(err(bad), 400);
     const diff = await gitService.diff(projectPath, ref1, ref2);
     return c.json(ok({ diff }));
   } catch (e) {
@@ -38,6 +119,8 @@ gitRoutes.get("/diff-stat", async (c) => {
     const projectPath = c.get("projectPath");
     const ref1 = c.req.query("ref1") || undefined;
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref1, ref2);
+    if (bad) return c.json(err(bad), 400);
     const files = await gitService.diffStat(projectPath, ref1, ref2);
     return c.json(ok(files));
   } catch (e) {
@@ -52,6 +135,8 @@ gitRoutes.get("/file-diff", async (c) => {
     const file = c.req.query("file");
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || undefined;
+    const bad = invalidRev(ref);
+    if (bad) return c.json(err(bad), 400);
     const diff = await gitService.fileDiff(projectPath, file, ref);
     return c.json(ok({ diff }));
   } catch (e) {
@@ -69,6 +154,8 @@ gitRoutes.get("/file-full-diff", async (c) => {
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || "HEAD";
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref, ref2);
+    if (bad) return c.json(err(bad), 400);
     const result = await gitService.fileFullDiff(projectPath, file, ref, ref2);
     return c.json(ok(result));
   } catch (e) {
