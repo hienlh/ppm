@@ -123,6 +123,54 @@ describe("codex device-code login (poll-based)", () => {
     cancelDeviceLogin(id);
   });
 
+  it("waits for codex to reload the auth it wrote instead of reporting an empty account", async () => {
+    // codex sends account/login/completed BEFORE reloading the auth the login wrote and
+    // announces the reload with account/updated, so a read in between answers
+    // `account: null` for a sign-in that succeeded. That surfaced as
+    // "login completed but account is empty" and threw the authorization away.
+    const fake = new FakeClient();
+    const signedIn = fake.accountRead;
+    fake.accountRead = { account: null, requiresOpenaiAuth: true };
+    const { id } = await startDeviceLogin("reload", () => fake);
+    fake.complete({ success: true });
+    await settled();
+    expect(getDeviceLoginStatus(id)).toEqual({ state: "pending" });
+
+    fake.accountRead = signedIn;
+    fake.notif({ method: "account/updated", params: { authMode: "chatgpt", planType: "plus" } });
+    await settled();
+
+    expect(getDeviceLoginStatus(id).state).toBe("done");
+    expect(getCodexAccount(id)?.label).toBe("reload");
+    removeCodexAccount(id);
+  });
+
+  it("does not miss a reload announced while the first account/read is still in flight", async () => {
+    const fake = new FakeClient();
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((r) => { releaseRead = r; });
+    let reads = 0;
+    fake.request = (async <T,>(method: string): Promise<T> => {
+      if (method !== "account/read") return {} as T;
+      if (++reads === 1) {
+        await readGate;
+        return { account: null, requiresOpenaiAuth: true } as T;
+      }
+      return { account: { type: "chatgpt", email: "user@example.com", planType: "plus" } } as T;
+    }) as typeof fake.request;
+
+    const { id } = await startDeviceLogin("early", () => fake);
+    fake.complete({ success: true });
+    await settled(); // the first read is parked
+    fake.notif({ method: "account/updated", params: { authMode: "chatgpt", planType: "plus" } });
+    releaseRead(); // ...and answers from before the reload
+    await settled();
+
+    // Done at once: waiting for an announcement that already came would stall for the full bound.
+    expect(getDeviceLoginStatus(id).state).toBe("done");
+    removeCodexAccount(id);
+  });
+
   it("cancel during finalize cannot destroy an authorization already granted", async () => {
     const fake = new FakeClient();
     let releaseRead!: () => void;

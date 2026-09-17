@@ -83,6 +83,8 @@ interface ChatGptLogin {
   /** True from the completion notification until the account is written. The
    * home must survive this window even if the browser walks away. */
   finalizing: boolean;
+  /** Settles on the app-server's account/updated — see finalizeLogin for why it matters. */
+  authReloaded: Promise<void>;
 }
 const pendingLogins = new Map<string, ChatGptLogin>();
 
@@ -135,6 +137,14 @@ function settle(id: string, status: Exclude<DeviceLoginStatus, { state: "pending
   p.timer = unref(setTimeout(() => { pendingLogins.delete(id); }, RESULT_GRACE_MS));
 }
 
+/** Bounded: an app-server that never announces the reload still gets its second read. */
+function waitForAuthReload(p: ChatGptLogin): Promise<void> {
+  return new Promise((resolve) => {
+    const t = unref(setTimeout(resolve, CONTROL_REQUEST_TIMEOUT_MS));
+    void p.authReloaded.then(() => { clearTimeout(t); resolve(); });
+  });
+}
+
 /** Turn the app-server's completion notification into a persisted account. */
 async function finalizeLogin(id: string, notif: CompletionNotification): Promise<void> {
   const p = pendingLogins.get(id);
@@ -144,7 +154,15 @@ async function finalizeLogin(id: string, notif: CompletionNotification): Promise
   // Authorization has completed; account/read has its own bounded timeout.
   clearTimeout(p.timer);
   try {
-    const read = await p.client.request<AccountRead>("account/read", {}, CONTROL_REQUEST_TIMEOUT_MS);
+    let read = await p.client.request<AccountRead>("account/read", {}, CONTROL_REQUEST_TIMEOUT_MS);
+    if (!read?.account) {
+      // codex sends account/login/completed BEFORE it reloads the auth the login just wrote,
+      // and announces the reload with account/updated (send_chatgpt_login_completion_notifications,
+      // rust-v0.154.0). A read that lands in between finds no account, although the sign-in
+      // succeeded — so an empty answer waits for the reload and asks once more.
+      await waitForAuthReload(p);
+      read = await p.client.request<AccountRead>("account/read", {}, CONTROL_REQUEST_TIMEOUT_MS);
+    }
     if (!read?.account) throw new Error("login completed but account is empty");
     if (p.status.state !== "pending") return;
     const account = createCodexAccount({
@@ -171,14 +189,20 @@ async function startChatGptLogin(
   const home = codexAccountHome(id);
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const client = makeClient();
+  // Registered with the completion handler, not after it: the reload can be announced
+  // before the first account/read has even answered.
+  let markAuthReloaded!: () => void;
+  const authReloaded = new Promise<void>((resolve) => { markAuthReloaded = resolve; });
   client.onNotification((n) => {
     if (n.method === "account/login/completed") {
       void finalizeLogin(id, (n.params ?? {}) as CompletionNotification);
+    } else if (n.method === "account/updated") {
+      markAuthReloaded();
     }
   });
   client.onClose(() => settle(id, { state: "error", error: "login process exited" }));
   const timer = unref(setTimeout(() => settle(id, { state: "error", error: "timed out" }), method === "browser" ? BROWSER_LOGIN_TTL : DEVICE_LOGIN_TTL));
-  const pending: ChatGptLogin = { method, client, home, label, status: { state: "pending" }, timer, finalizing: false };
+  const pending: ChatGptLogin = { method, client, home, label, status: { state: "pending" }, timer, finalizing: false, authReloaded };
   pendingLogins.set(id, pending);
   try {
     if (method === "browser") await checkCodexLoginPort();
