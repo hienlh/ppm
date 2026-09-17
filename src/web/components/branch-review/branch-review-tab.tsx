@@ -145,23 +145,36 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
     setReviewed(stateKey ? loadReviewed(stateKey) : {});
   }, [stateKey]);
 
+  /**
+   * The diff for the pair that is selected *now*, or null while one is being fetched.
+   *
+   * `stateKey` changes with the picker; `diff` only changes when a fetch lands. For the turns
+   * in between they describe two different comparisons, and everything downstream would be
+   * reading one pair's file list under the other pair's key — the prune below would keep only
+   * the paths the two happen to share and write that back, silently deleting review progress
+   * that had been recorded against the pair just switched to.
+   */
+  const currentDiff = diff && diff.base === base && diff.head === head ? diff : null;
+
   // Prune once the file list arrives: paths a rebase removed would otherwise
   // stay in localStorage forever.
   useEffect(() => {
-    if (!stateKey || !diff) return;
+    if (!stateKey || !currentDiff) return;
     setReviewed((current) => {
-      const pruned = pruneReviewed(current, diff.files);
+      const pruned = pruneReviewed(current, currentDiff.files);
       if (Object.keys(pruned).length !== Object.keys(current).length) saveReviewed(stateKey, pruned);
       return pruned;
     });
-  }, [stateKey, diff]);
+  }, [stateKey, currentDiff]);
 
   const commitReviewed = useCallback((next: ReviewState) => {
     setReviewed(next);
     if (stateKey) saveReviewed(stateKey, next);
   }, [stateKey]);
 
-  const files = diff?.files ?? [];
+  // The stale list is not rendered either: a tick on it would write the old pair's path and
+  // blob id under the new pair's key, which is the same bug seen from the other end.
+  const files = currentDiff?.files ?? [];
   const byPath = useMemo(() => new Map(files.map((f) => [f.path, f])), [files]);
   const doneCount = useMemo(() => reviewedCount(reviewed, files), [reviewed, files]);
 
@@ -214,12 +227,12 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
             onToggleReviewed={(file) => commitReviewed(toggleReviewed(reviewed, file))}
           />
         ))}
-        {!!diff?.omitted && (
+        {!!currentDiff?.omitted && (
           // Said rather than silently dropped: a list that simply ends looks
           // like a branch with fewer changes than it has, and the count is the
           // only clue that reviewing this one file-by-file is the wrong tool.
           <div className="px-3 py-3 text-center text-xs text-text-3">
-            {diff.omitted.toLocaleString()} more {diff.omitted === 1 ? "file" : "files"} not listed.
+            {currentDiff.omitted.toLocaleString()} more {currentDiff.omitted === 1 ? "file" : "files"} not listed.
           </div>
         )}
       </div>
@@ -294,15 +307,15 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
               // Remount per file: the viewer keys its fetch off the props it was
               // mounted with, and a shared instance would keep the previous
               // file's contents while the next one loads.
-              key={`${selected.path}:${diff?.mergeBase}:${diff?.headCommit}`}
+              key={`${selected.path}:${currentDiff?.mergeBase}:${currentDiff?.headCommit}`}
               metadata={{
                 filePath: gitRepo.projectFile(selected.path),
                 projectName,
-                ref1: diff?.mergeBase,
+                ref1: currentDiff?.mergeBase,
                 // The resolved commit, never `head` itself: a ref name moves,
                 // and a commit landing mid-review would show the new tip beside
                 // a row whose counts and blob id describe the old one.
-                ref2: diff?.headCommit,
+                ref2: currentDiff?.headCommit,
               }}
             />
           ) : (

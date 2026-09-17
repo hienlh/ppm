@@ -206,6 +206,25 @@ describe("the review state on this device", () => {
     expect(loadReviewed(pair(1))).toEqual({ "src/app.ts": "blob1" });
   });
 
+  it("is destroyed by pruning one pair's progress against another pair's file list", () => {
+    // Not a defect in these functions — it is the composition that has to be got right, and
+    // the tab got it wrong: the storage key changes the instant the picker does, while the
+    // file list only changes when the fetch lands, so for a turn the prune sees one pair's
+    // ticks and the other pair's files. This pins what that costs, so the guard in
+    // `branch-review-tab.tsx` (`currentDiff`) has a reason recorded next to it.
+    const featB = pair(2);
+    saveReviewed(featB, { "src/only-in-b.ts": "blobB1", "src/also-b.ts": "blobB2" });
+
+    const featAFiles: BranchDiffFile[] = [
+      { path: "src/only-in-a.ts", status: "M", additions: 1, deletions: 0, binary: false, blob: "blobA1" },
+    ];
+    const survives = pruneReviewed(loadReviewed(featB), featAFiles);
+    saveReviewed(featB, survives);
+
+    expect(survives).toEqual({});
+    expect(loadReviewed(featB)).toEqual({}); // both files' progress gone, and nothing said so
+  });
+
   it("keeps the twenty most recent ref pairs and deletes the rest", () => {
     for (let i = 1; i <= 23; i++) saveReviewed(pair(i), { "src/app.ts": `blob${i}` });
 

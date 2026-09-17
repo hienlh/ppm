@@ -471,8 +471,11 @@ export function getCodexPreCompactMessages(file: string, requestedCwd?: string, 
   const resolved = resolve(file);
   let text: string;
   try { text = readFileSync(resolved, "utf-8"); } catch { throw new Error("File not found"); }
+  // Read once and reused below. `readSessionMeta` opens and reads the whole rollout again, and
+  // this path is already reading a file that reaches tens of megabytes on the very sessions
+  // the feature exists for — asking for it twice per click was a third of the cost for nothing.
+  const meta = readSessionMeta(resolved);
   if (requestedCwd != null) {
-    const meta = readSessionMeta(resolved);
     if (!meta?.cwd || normPath(meta.cwd) !== normPath(requestedCwd)) return []; // fail-closed
   }
   const summaries = compactionSummaries(text);
@@ -484,6 +487,6 @@ export function getCodexPreCompactMessages(file: string, requestedCwd?: string, 
   const index = asked >= 1 && asked <= summaries.length ? asked : summaries.length;
   const segment = parseRolloutJsonl(text, { preCompactIndex: index });
   if (index < 2) return segment;
-  const threadId = readSessionMeta(resolved)?.id ?? threadIdFromName(resolved) ?? "";
+  const threadId = meta?.id ?? threadIdFromName(resolved) ?? "";
   return [compactCard(summaries[index - 2]!, threadId, index - 1, resolved), ...segment];
 }
