@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSharedContext } from "../../../src/shared/provider-context.ts";
 import { readRolloutHeader } from "../../../src/providers/codex-app-server/codex-rollout-header.ts";
-import { parseRolloutJsonl, listCodexRollouts, findRolloutByThreadId, getRolloutMessages } from "../../../src/providers/codex-app-server/codex-history.ts";
+import { parseRolloutJsonl, listCodexRollouts, findRolloutByThreadId, getRolloutMessages, getCodexPreCompactMessages } from "../../../src/providers/codex-app-server/codex-history.ts";
 
 const FIXTURES = join(import.meta.dir, "../../fixtures/codex");
 const PPM_CWD = "C:\\Users\\PC\\ppm";
@@ -205,6 +205,101 @@ describe("the compact card on a twice-compacted thread", () => {
 
   it("carries the transcript marker the client greps for", () => {
     expect(getRolloutMessages(dir, THREAD, CWD)[0]!.content).toMatch(/read the full transcript at:\s*\S+\.jsonl/);
+  });
+});
+
+/**
+ * The "load more" walk, which had no test at all.
+ *
+ * `isCodexRolloutPath` jails to `~/.codex/sessions` via `homedir()`, and `homedir()` reads
+ * `USERPROFILE`/`HOME` — so the home is pointed at a temp directory for the duration rather
+ * than the real one being written to, and both variables are put back afterwards.
+ */
+describe("getCodexPreCompactMessages", () => {
+  const THREAD = "019eded7-aaaa-bbbb-cccc-ddddeeeeffff";
+  const CWD = "/tmp/ppm-codex-walk";
+  let home: string;
+  let file: string;
+  const saved = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+
+  const turn = (u: string) =>
+    `{"type":"event_msg","payload":{"type":"user_message","message":${JSON.stringify(u)}}}\n`;
+  const compact = (msg: string) =>
+    `{"type":"compacted","payload":{"message":${JSON.stringify(msg)},"replacement_history":[` +
+    `{"type":"message","role":"user","content":[{"type":"input_text","text":"rh"}]}]}}\n`;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "ppm-codex-home-"));
+    const sessions = join(home, ".codex", "sessions");
+    mkdirSync(sessions, { recursive: true });
+    file = join(sessions, `rollout-2026-09-16T10-00-00-${THREAD}.jsonl`);
+    writeFileSync(
+      file,
+      `{"type":"session_meta","payload":{"id":"${THREAD}","cwd":"${CWD}"}}\n` +
+        turn("q1") + compact("summary-1") + turn("q2") + compact("summary-2") + turn("q3"),
+      "utf-8",
+    );
+    process.env.USERPROFILE = home;
+    process.env.HOME = home;
+  });
+
+  afterEach(() => {
+    if (saved.USERPROFILE === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = saved.USERPROFILE;
+    if (saved.HOME === undefined) delete process.env.HOME;
+    else process.env.HOME = saved.HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const texts = (msgs: { content: string }[]) => msgs.map((m) => m.content).join("\n");
+
+  it("opens one segment per request, not everything before the first boundary", () => {
+    // Three stretches, two boundaries. Clicking the newest card must hand back the *middle*
+    // stretch — returning the oldest left the middle one reachable from nothing at all.
+    const segment = getCodexPreCompactMessages(file, CWD, `codex-compact-${THREAD}#2`);
+    const body = texts(segment);
+    expect(body).toContain("q2");
+    expect(body).not.toContain("q3");
+  });
+
+  it("heads that segment with the previous boundary's card, so the walk continues", () => {
+    const segment = getCodexPreCompactMessages(file, CWD, `codex-compact-${THREAD}#2`);
+    expect(segment[0]!.id).toBe(`codex-compact-${THREAD}#1`);
+    expect(segment[0]!.content).toContain("summary-1");
+  });
+
+  it("stops at the oldest segment rather than offering a card that leads nowhere", () => {
+    const segment = getCodexPreCompactMessages(file, CWD, `codex-compact-${THREAD}#1`);
+    expect(texts(segment)).toContain("q1");
+    expect(segment.some((m) => m.id.startsWith("codex-compact-"))).toBe(false);
+  });
+
+  it("treats a card id from before the index existed as the newest boundary", () => {
+    // A client holding an old bare id must not get a different answer from a `#2` one.
+    const bare = getCodexPreCompactMessages(file, CWD, `codex-compact-${THREAD}`);
+    const numbered = getCodexPreCompactMessages(file, CWD, `codex-compact-${THREAD}#2`);
+    expect(texts(bare)).toBe(texts(numbered));
+  });
+
+  it("clamps an index that names a boundary this thread does not have", () => {
+    const asked = getCodexPreCompactMessages(file, CWD, `codex-compact-${THREAD}#9`);
+    expect(texts(asked)).toBe(texts(getCodexPreCompactMessages(file, CWD, `codex-compact-${THREAD}#2`)));
+  });
+
+  it("answers nothing for a thread belonging to another project (fail-closed)", () => {
+    expect(getCodexPreCompactMessages(file, "/some/other/project")).toEqual([]);
+  });
+
+  it("refuses a path outside the sessions directory", () => {
+    const outside = join(home, "not-a-session.jsonl");
+    writeFileSync(outside, "{}\n", "utf-8");
+    expect(() => getCodexPreCompactMessages(outside, CWD)).toThrow(/Access denied/);
+  });
+
+  it("answers nothing when the thread was never compacted", () => {
+    const plain = join(home, ".codex", "sessions", `rollout-2026-09-16T11-00-00-${THREAD}.jsonl`);
+    writeFileSync(plain, `{"type":"session_meta","payload":{"id":"x","cwd":"${CWD}"}}\n` + turn("only"), "utf-8");
+    expect(getCodexPreCompactMessages(plain, CWD)).toEqual([]);
   });
 });
 

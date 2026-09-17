@@ -219,6 +219,13 @@ gitRoutes.get("/file-blob", async (c) => {
     const file = c.req.query("file");
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || "HEAD";
+    // The same guard as every sibling route, and it is not decoration here: `ref` reaches
+    // `git show` as its own argv word, so `?ref=--output=<path>` is an option rather than a
+    // revision. Measured on a scratch repository, `git show --output=<victim> HEAD:a.txt`
+    // exits 0 and leaves the victim at zero bytes — arbitrary file destruction, on a server
+    // that is routinely reachable through a public tunnel URL.
+    const bad = invalidRev(ref);
+    if (bad) return c.json(err(bad), 400);
     const bytes = await gitService.fileBlob(projectPath, file, ref);
     if (!bytes) return c.json(err("File does not exist at that revision"), 404);
     const ext = file.split(".").pop()?.toLowerCase() ?? "";

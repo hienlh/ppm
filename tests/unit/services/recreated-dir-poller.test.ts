@@ -92,6 +92,121 @@ describe("RecreatedDirPoller", () => {
     expect(seen.some((p) => p.endsWith("after.ts"))).toBe(false);
   });
 
+  /** Big enough that one sweep spans several turns of the loop, which is the whole question. */
+  const BUSY_DIR_ENTRIES = 6000;
+
+  function makeBusyDir(): string {
+    const dir = makeDir();
+    for (let i = 0; i < BUSY_DIR_ENTRIES; i++) writeFileSync(join(dir, `f${i}.ts`), "a");
+    return dir;
+  }
+
+  it("does not start a sweep while one is still running", async () => {
+    // Two sweeps over the same directory read the same snapshot before either writes it back,
+    // so both see the change and both report it. Measured here at 6000 entries on a 2ms
+    // interval: without the guard the one new file arrives three times, and the slower the
+    // host the more copies — the opposite of what a poller should do under load.
+    const dir = makeBusyDir();
+    const { poller, seen } = open(2);
+    poller.add(dir);
+
+    writeFileSync(join(dir, "once.ts"), "a");
+    expect(await waitFor(() => seen.some((p) => p.endsWith("once.ts")))).toBe(true);
+    await new Promise((r) => setTimeout(r, 200)); // let any stacked sweeps report too
+
+    expect(seen.filter((p) => p.endsWith("once.ts"))).toHaveLength(1);
+  });
+
+  it("hands the loop back while it sweeps, rather than statting a directory in one go", async () => {
+    // A `dist` or `node_modules` recreated by a checkout holds thousands of files, and statting
+    // them synchronously stalled the loop once a second for as long as the directory stayed
+    // polled — in the release whose subject is an event loop that answers.
+    //
+    // The baseline `add()` takes is deliberately excluded: it is one read per directory, not
+    // one per second, and measuring it here would drown out what this is about. Measured at
+    // 6000 entries: 26-27ms of worst-case delay this way, 126-127ms statting synchronously.
+    const dir = makeBusyDir();
+    const { poller } = open(20);
+    poller.add(dir);
+    await new Promise((r) => setTimeout(r, 300)); // let the baseline finish
+
+    let worst = 0;
+    let previous = Date.now();
+    const beat = setInterval(() => {
+      const now = Date.now();
+      worst = Math.max(worst, now - previous);
+      previous = now;
+    }, 5);
+    writeFileSync(join(dir, "once.ts"), "a");
+    await new Promise((r) => setTimeout(r, 800));
+    clearInterval(beat);
+
+    expect(worst).toBeLessThan(70);
+  });
+
+  it("does not let a sweep already in flight overwrite a baseline taken since", async () => {
+    // Remove-then-add of the same directory is the ordinary rebuild path on Linux: a recreated
+    // directory gets `closeSubtree` (which removes it here) and then `cover` (which adds it
+    // back with a fresh baseline). A sweep that started before that must not write what it saw
+    // mid-delete over the new baseline — the tick after would then report every file in the
+    // directory as new, which for a recreated `dist` is thousands of spurious events.
+    // The re-registration is driven from inside `onChange`, which the sweep calls between
+    // reading the directory and storing what it read — so this lands in the window every run
+    // rather than when the timing happens to suit.
+    const dir = makeDir();
+    for (let i = 0; i < 12; i++) writeFileSync(join(dir, `f${i}.ts`), "a");
+
+    const seen: string[] = [];
+    let reregistered = false;
+    const poller: RecreatedDirPoller = new RecreatedDirPoller({
+      onChange: (p) => {
+        seen.push(p);
+        if (reregistered) return;
+        reregistered = true;
+        // The directory changes, and a fresh baseline is taken that knows about it. The sweep
+        // still running holds the directory as it was a moment ago.
+        for (let i = 0; i < 12; i++) unlinkSync(join(dir, `f${i}.ts`));
+        poller.remove(dir);
+        poller.add(dir);
+      },
+      intervalMs: 20,
+    });
+    pollers.push(poller);
+    poller.add(dir);
+
+    writeFileSync(join(dir, "trigger.ts"), "a");
+    expect(await waitFor(() => reregistered)).toBe(true);
+    seen.length = 0;
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The new baseline already knows those twelve files are gone. Letting the older view win
+    // reports every one of them as a deletion that has already been accounted for.
+    expect(seen).toEqual([]);
+  });
+
+  it("keeps sweeping when a listener throws", async () => {
+    // The sweep runs from a `void`ed promise, so a throwing listener became an unhandled
+    // rejection — and the server counts three of those in a minute as fatal.
+    const dir = makeDir();
+    const thrown: string[] = [];
+    const poller = new RecreatedDirPoller({
+      onChange: (p) => {
+        thrown.push(p);
+        throw new Error("listener is broken");
+      },
+      intervalMs: 20,
+    });
+    pollers.push(poller);
+    poller.add(dir);
+
+    writeFileSync(join(dir, "a.ts"), "a");
+    expect(await waitFor(() => thrown.some((p) => p.endsWith("a.ts")))).toBe(true);
+    // Still alive afterwards: a second change is still reported.
+    thrown.length = 0;
+    writeFileSync(join(dir, "b.ts"), "b");
+    expect(await waitFor(() => thrown.some((p) => p.endsWith("b.ts")))).toBe(true);
+  });
+
   it("refuses to grow past the budget and says so", () => {
     const { poller } = open(40, 2);
     for (let i = 0; i < 5; i++) {

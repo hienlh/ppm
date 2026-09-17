@@ -132,6 +132,8 @@ export interface X11Connection {
   screen: number;
   /** XTEST is present AND usable on this connection. */
   hasXTest: boolean;
+  /** Which display this was opened against, so a later session change cannot reuse it. */
+  display: string;
 }
 
 let ffiModule: Ffi | null = null;
@@ -178,6 +180,14 @@ function installErrorHandlers(ffi: Ffi, x11: X11Lib): void {
 export async function getX11(session: LinuxSession): Promise<X11Connection | null> {
   if (session.kind !== "x11") return null;
   if (connectionLost) { connection = null; connectionLost = false; }
+  // Matched on the display, not merely on there being a connection. The session is re-probed
+  // periodically now, so it can name a different display on a still-live server — a second
+  // seat, a nested Xephyr, `:0` becoming `:1`. Handing back the old `Display*` then sends
+  // every keystroke and click into the display nobody is looking at, silently and for good:
+  // nothing errors, because the old server is still there.
+  // Dropped rather than closed, the way `resetX11` and the module header already decide: Xlib's
+  // I/O error handler can `exit()` the server process, so `XCloseDisplay` is never called here.
+  if (connection && connection.display !== session.display) connection = null;
   if (connection) return connection;
 
   if (!ffiModule) ffiModule = await import("bun:ffi");
@@ -220,6 +230,7 @@ export async function getX11(session: LinuxSession): Promise<X11Connection | nul
     root: BigInt(x11.XDefaultRootWindow(dpy)),
     screen: x11.XDefaultScreen(dpy),
     hasXTest,
+    display: session.display,
   };
   return connection;
 }

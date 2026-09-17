@@ -71,8 +71,17 @@ function findXauthority(env: NodeJS.ProcessEnv): string | null {
   return existsSync(legacy) ? legacy : null;
 }
 
+/**
+ * How long a probe result is reused before the filesystem is asked again.
+ *
+ * Short enough that the answer follows the host, long enough that the saving is the whole
+ * point: pointer input arrives at roughly 120 probes a second, so five seconds removes about
+ * 99.6% of them and still lets a session that appears — or changes kind — be seen within one.
+ */
+const SESSION_TTL_MS = 5_000;
+
 /** Memoized answer for `process.env`. See `detectLinuxSession`. */
-let cached: { session: LinuxSession | null } | null = null;
+let cached: { session: LinuxSession | null; at: number } | null = null;
 
 /**
  * The graphical session on this host, or null when there is none to capture (a headless
@@ -84,14 +93,22 @@ let cached: { session: LinuxSession | null } | null = null;
  * per animation frame, so on the host this code exists for — PPM under a systemd user unit, no
  * `DISPLAY` in its environment, every probe hitting the filesystem — that was ~240 blocking
  * `readdirSync`/`existsSync` calls a second on the event loop the rest of this release spends
- * effort keeping free. It cannot change without the X or Wayland socket changing; `resetX11()`
- * drops the cache alongside the connection it belongs to.
+ * effort keeping free.
+ *
+ * The memo expires, and the negative answer is the reason. PPM can easily start before the
+ * graphical session — a boot-time systemd unit, an ssh start, a login screen — and a null
+ * cached for the life of the process would report Remote Desktop unsupported on a host that
+ * has a desktop by the time anyone asks. The same expiry is what lets an X11 → Wayland
+ * re-login stop routing input at a display that is gone. `resetX11()` still drops it eagerly
+ * alongside the connection it belongs to, but nothing depends on that being called.
  *
  * A caller that passes its own `env` is pinning a scenario and neither reads nor fills the cache.
  */
 export function detectLinuxSession(env: NodeJS.ProcessEnv = process.env): LinuxSession | null {
   if (env !== process.env) return probeLinuxSession(env);
-  cached ??= { session: probeLinuxSession(env) };
+  const now = Date.now();
+  if (cached && now - cached.at < SESSION_TTL_MS) return cached.session;
+  cached = { session: probeLinuxSession(env), at: now };
   return cached.session;
 }
 
