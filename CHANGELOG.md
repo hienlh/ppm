@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-17
+
 ### Added
 - **Env files are highlighted, so a commented-out setting looks like one.** `.env`, `.env.local`, `.env.test.example` and every other variant opened as plain text — one colour for the whole file — which meant a line switched off with a `#` was indistinguishable from a live one. In a file whose entire purpose is "which of these are on", that was the only distinction the editor had to make and it made none. Comments are now dimmed, keys, values, `export` and `${INTERPOLATIONS}` each get their own colour, and `Ctrl+/` comments a line out.
   - Monaco ships 82 languages and none of them is `.env` — VS Code has none either, it comes from an extension — so this is a grammar PPM registers itself, in the editor, the diff viewer and the conflict resolver alike. It takes its colours from whichever theme is applied rather than a palette of its own, so it matches all six built-in themes and any custom one.
