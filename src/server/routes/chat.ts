@@ -1002,11 +1002,13 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     // Codex rollouts live under ~/.codex/sessions (different format + jail than Claude JSONL).
     const { isCodexRolloutPath, getCodexPreCompactMessages } = await import("../../providers/codex-app-server/codex-history.ts");
     if (isCodexRolloutPath(jsonlPath)) {
-      const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"));
+      const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"), beforeUuid);
       return c.json(ok(messages));
     }
     const validated = validateJsonlPath(jsonlPath);
-    const messages = await parseJsonlTranscript(validated, beforeUuid);
+    // One compaction segment per request: the client walks further back by
+    // expanding the summary that arrives at the head of each one.
+    const messages = await parseJsonlTranscript(validated, beforeUuid, { oneSegment: true });
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

@@ -125,6 +125,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     });
   }, [sessionId, providerId, permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * The tab's icon is this provider's logo, and the effect above only persists
+   * the provider once a session exists — which is after the provider can no
+   * longer be changed. Without this, a Codex or Cursor chat wears the Claude
+   * logo for as long as its first message is being written.
+   */
+  const handleProviderChange = useCallback((id: string) => {
+    setProviderId(id);
+    if (tabId) updateTab(tabId, { metadata: { ...metadata, providerId: id } });
+  }, [tabId, metadata, updateTab]);
+
   /** The account this tab claimed while it had no session yet, and who it was claimed from. */
   const pickedAccountId = metadata?.pickedAccountId as string | undefined;
   const pickedAccountLabel = metadata?.pickedAccountLabel as string | undefined;
@@ -900,7 +911,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             onModeChange={setPermissionMode}
             providerId={providerId}
             sessionId={sessionId ?? undefined}
-            onProviderChange={!sessionId ? setProviderId : undefined}
+            onProviderChange={!sessionId ? handleProviderChange : undefined}
             model={model}
             onModelChange={setModel}
             effort={effort}

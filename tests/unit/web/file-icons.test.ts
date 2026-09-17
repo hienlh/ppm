@@ -427,7 +427,13 @@ describe("the artwork is fetched by a link element", () => {
     }
   }
 
-  it("appends one stylesheet, retries once if it fails, and never reloads the app", () => {
+  it("appends one stylesheet, retries once if it fails, and never reloads the app", async () => {
+    // A fresh copy of the module, because "appends one" is a statement about the *first* use
+    // and the pending/attempt counters live at module scope. Any other file in the batch that
+    // renders a file icon — several mount components that do — trips them first, and this then
+    // sees no link appended at all: green alone, red in a full run, for a reason that has
+    // nothing to do with stylesheets.
+    const { fileIconElement } = await import("../../../src/web/lib/file-icons.tsx?fresh-sheet");
     const links: FakeLink[] = [];
     withFakeDocument(links, () => {
       fileIconElement("a.ts");

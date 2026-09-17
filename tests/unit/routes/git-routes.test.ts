@@ -349,9 +349,14 @@ describe("GET /git/pr-url?branch= — query validation", () => {
 /**
  * A revision reaches git as its own argv word, so the hazard is not a shell
  * metacharacter but a value that changes what the command *is*: `--output=…`
- * is an option and `git diff` honours it. These four routes take a revision
- * straight from the query string, and the `?repo=` middleware added above them
- * sits on exactly these paths.
+ * is an option and `git diff` honours it. These routes take a revision straight
+ * from the query string, and the `?repo=` middleware added above them sits on
+ * exactly these paths.
+ *
+ * The list is the point of the test, and it was short by one: `/git/file-blob`
+ * reached `git show` unguarded, where `--output=<path>` truncates that path to
+ * zero bytes and exits 0. Measured on a scratch repository: a 19-byte file left
+ * at 0. Anything added here that takes a ref belongs in this list too.
  */
 describe("the ref query parameters — input validation", () => {
   const OPTION = encodeURIComponent("--output=/tmp/pwned");
@@ -364,6 +369,7 @@ describe("the ref query parameters — input validation", () => {
     `/git/file-diff?file=a.txt&ref=${OPTION}`,
     `/git/file-full-diff?file=a.txt&ref=${OPTION}`,
     `/git/file-full-diff?file=a.txt&ref2=${OPTION}`,
+    `/git/file-blob?file=a.txt&ref=${OPTION}`,
   ];
 
   it("refuses an option where a revision belongs, on every route that takes one", async () => {

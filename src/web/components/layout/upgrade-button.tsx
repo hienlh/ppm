@@ -281,7 +281,11 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         )}
       >
         {hasUpdate && <ArrowUpCircle className="size-3" />}
-        <span>{hasUpdate ? `New version · v${effectiveAvailable}` : `v${current}`}</span>
+        <span>
+          {/* Dropped on a status bar under 48rem (its `@container`); the icon and colour still say "update". */}
+          {hasUpdate && <span className="@max-3xl:hidden">New version · </span>}
+          v{hasUpdate ? effectiveAvailable : current}
+        </span>
       </button>
 
       {open && current && (

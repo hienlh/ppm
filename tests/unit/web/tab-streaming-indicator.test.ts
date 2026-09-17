@@ -56,10 +56,11 @@ describe("the glyph behind the typing dots is empty", () => {
     expect(subpathCount("MessageCircle")).toBe(2);
   });
 
-  it("is the same bubble as the resting chat icon, not a different shape", () => {
-    // The two must be interchangeable at a glance, or the tab appears to swap
-    // icons when a reply starts. `chat-empty` is `chat` minus its contents, so
-    // the outline subpaths are identical.
+  it("is the same bubble as the generic chat icon, not a different shape", () => {
+    // A chat tab at rest wears its provider's logo (`provider-logos.tsx`) and
+    // falls back to `MessageSquare` for a provider with no artwork. Those two
+    // must be interchangeable at a glance, so `chat-empty` is `chat` minus its
+    // contents and the outline subpaths are identical.
     const [empty, chat] = [pathsOf("MessageCircle"), pathsOf("MessageSquare")].map((ps) =>
       ps.flatMap((d) => d.split(/(?=[Mm])/)).filter((s) => s.trim() !== ""),
     );
