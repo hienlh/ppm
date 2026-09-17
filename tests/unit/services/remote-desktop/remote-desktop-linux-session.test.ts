@@ -1,4 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   detectLinuxSession, linuxSessionEnv, resetLinuxSession,
 } from "../../../../src/services/remote-desktop/remote-desktop-linux-session.ts";
@@ -43,6 +46,7 @@ describe("the memo for the ambient environment", () => {
   const SESSION_TTL_MS = 5_000; // mirrors the module
   const realNow = Date.now;
   const saved = { ...process.env };
+  const emptyRuntimeDirs: string[] = [];
 
   afterEach(() => {
     Date.now = realNow;
@@ -50,11 +54,24 @@ describe("the memo for the ambient environment", () => {
       if (key in saved) process.env[key] = saved[key];
       else delete process.env[key];
     }
+    for (const dir of emptyRuntimeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
     resetLinuxSession();
   });
 
+  /**
+   * No session, on any host.
+   *
+   * Deleting the variables is not enough: with none set, the probe falls through to the
+   * filesystem — `/tmp/.X11-unix` and the runtime dir — and answers truthfully on a Linux
+   * workstation, so these cases would be green here and red on the platform they are about.
+   * Declaring `wayland` skips the X11 branch outright, and an empty runtime dir leaves the
+   * Wayland branch nothing to find.
+   */
   function pretendNoSession(): void {
-    for (const key of ["DISPLAY", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY", "XAUTHORITY"]) delete process.env[key];
+    for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"]) delete process.env[key];
+    process.env.XDG_SESSION_TYPE = "wayland";
+    process.env.XDG_RUNTIME_DIR = mkdtempSync(join(tmpdir(), "ppm-rd-empty-"));
+    emptyRuntimeDirs.push(process.env.XDG_RUNTIME_DIR);
   }
 
   it("reuses the answer within the window, so input does not re-probe the filesystem per event", () => {

@@ -176,7 +176,28 @@ function findScratchKeycode(conn: X11Connection): number | null {
   return found;
 }
 
-async function text(str: string): Promise<void> {
+/**
+ * One string at a time.
+ *
+ * The slow path borrows a spare keycode, and `findScratchKeycode` is deterministic — two
+ * overlapping calls pick the *same* one. They then interleave at the two settle sleeps, and
+ * whichever finishes first unbinds the keycode the other is still using, so the loser taps a
+ * key bound to nothing and types silence, or types the winner's character.
+ *
+ * The client makes this ordinary rather than exotic: the virtual keyboard sends one `text`
+ * message per keystroke and another at `compositionend`, and the slow path is exactly the
+ * non-ASCII input — Vietnamese, CJK — where those arrive fastest.
+ */
+let textQueue: Promise<void> = Promise.resolve();
+
+function text(str: string): Promise<void> {
+  const next = textQueue.then(() => injectText(str));
+  // The chain must survive a failed string, or one error would wedge every later one.
+  textQueue = next.catch(() => undefined);
+  return next;
+}
+
+async function injectText(str: string): Promise<void> {
   const conn = await connect();
   const { ffi, x11, xtst, dpy } = conn;
   const index = buildKeysymIndex(conn);

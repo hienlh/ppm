@@ -140,19 +140,48 @@ export class RecreatedDirPoller {
       const previous = this.snapshots.get(dir);
       if (!previous) continue; // removed while we were reading something else
       const current = await this.readDirAsync(dir);
-      if (!this.snapshots.has(dir)) continue; // removed while we were reading it
+      // Identity, not presence. A directory can be removed *and added back* while this reads,
+      // which is the ordinary rebuild path on Linux — `scheduleRebuild` calls `closeSubtree`
+      // (which removes) and then `cover` (which adds), and the new `add` installs a fresh
+      // baseline synchronously. Diffing against the baseline that has since been replaced
+      // reports changes the new one already accounts for.
+      //
+      // Reasoned rather than measured: the window is inside the await above, and no test here
+      // reaches it. The severe half of the same hazard — storing the stale read over the new
+      // baseline, which makes the *next* sweep report the whole directory — is the check below,
+      // and that one is covered.
+      if (this.snapshots.get(dir) !== previous) continue;
 
       for (const [name, mtime] of current) {
         const before = previous.get(name);
         if (before === undefined || before !== mtime) {
-          this.options.onChange(join(dir, name));
+          this.report(join(dir, name));
         }
       }
       for (const name of previous.keys()) {
-        if (!current.has(name)) this.options.onChange(join(dir, name));
+        if (!current.has(name)) this.report(join(dir, name));
       }
 
-      this.snapshots.set(dir, current);
+      // Checked again: `onChange` runs synchronously between the two, and this class is
+      // exported with a caller-supplied callback that may close or re-register the directory.
+      if (this.snapshots.get(dir) === previous) this.snapshots.set(dir, current);
+    }
+  }
+
+  /**
+   * One change, reported without letting a bad listener take the process down.
+   *
+   * The sweep runs from a `void`ed promise, so a throwing `onChange` becomes an unhandled
+   * rejection — and the server treats three of those in a minute as fatal, which a poller
+   * ticking once a second reaches in three. Swallowing is right here: the listener's failure
+   * is the listener's business, and the alternative is that one bad path stops the directory
+   * being watched at all.
+   */
+  private report(absPath: string): void {
+    try {
+      this.options.onChange(absPath);
+    } catch {
+      // The caller's problem, not a reason to stop polling.
     }
   }
 
