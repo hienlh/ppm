@@ -269,6 +269,10 @@ app.route("/api/upgrade", upgradeRoutes);
 import { cloudRoutes } from "./routes/cloud.ts";
 app.route("/api/cloud", cloudRoutes);
 
+// Speech-to-text (Whisper on the host) for the chat mic
+import { speechRoutes } from "./routes/speech.ts";
+app.route("/api/speech", speechRoutes);
+
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);
 
