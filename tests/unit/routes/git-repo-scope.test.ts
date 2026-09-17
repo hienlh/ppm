@@ -122,7 +122,7 @@ describe("the ?repo= scope guard", () => {
       expect(status).toBe(400);
       expect(body.error).toContain("outside the project");
     } finally {
-      rmSync(link, { force: true });
+      rmSync(link, { recursive: true, force: true });
     }
   });
 
@@ -134,7 +134,7 @@ describe("the ?repo= scope guard", () => {
       expect(status).toBe(200);
       expect(body.data.rootIsRepo).toBe(true);
     } finally {
-      rmSync(link, { force: true });
+      rmSync(link, { recursive: true, force: true });
     }
   });
 
