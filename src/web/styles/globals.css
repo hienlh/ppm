@@ -471,6 +471,25 @@ html, body {
   .markdown-content.is-streaming > *:last-child { animation: none; }
 }
 
+/*
+ * Hover labels that stand in for a tooltip wait the same beat as the real one.
+ *
+ * These labels are toggled with `display`, which no transition can reach, so the wait is an
+ * animation instead: `both` holds the zero-opacity first frame through the delay, and the
+ * element going from `display: none` to shown is what starts it over each time. The delay
+ * matches TOOLTIP_DELAY_MS in components/ui/tooltip.tsx.
+ */
+@keyframes hoverLabelIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.hover-label-delayed {
+  animation: hoverLabelIn 0.12s ease-out 0.5s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hover-label-delayed { animation-duration: 0.01s; }
+}
+
 /* Tab streaming indicator — 3 dots bouncing inside chat bubble icon (Messenger typing style) */
 @keyframes tabTypingBounce {
   0%, 60%, 100% { transform: translateY(0); }

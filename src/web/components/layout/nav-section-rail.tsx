@@ -22,6 +22,15 @@ import { openBugReportPopup } from "@/lib/report-bug";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 
+/**
+ * The rail's own hover label, standing in for a tooltip on an icon-only button.
+ *
+ * `hover-label-delayed` (globals.css) is what keeps it from firing as the pointer merely
+ * sweeps down the rail, the same wait the shared tooltip takes.
+ */
+const HOVER_LABEL_CLASS =
+  "pointer-events-none absolute left-[calc(100%+8px)] z-50 hidden can-hover:group-hover:block hover-label-delayed whitespace-nowrap rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs font-medium text-foreground shadow-[0_4px_12px_rgba(0,0,0,.4)]";
+
 function Badge({ count }: { count: number }) {
   return (
     <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-medium leading-none">
@@ -60,7 +69,7 @@ function NavItem({ icon: Icon, label, active, badge, featureBadge, onClick, drag
       {badge != null && badge > 0 && <Badge count={badge} />}
       <FeatureBadge id={featureBadge} variant="corner" />
       {/* hover tooltip (pointer devices only) */}
-      <span className="pointer-events-none absolute left-[calc(100%+8px)] z-50 hidden can-hover:group-hover:block whitespace-nowrap rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs font-medium text-foreground shadow-[0_4px_12px_rgba(0,0,0,.4)]">
+      <span className={HOVER_LABEL_CLASS}>
         {label}
       </span>
     </button>
@@ -84,7 +93,7 @@ function FooterUtil({ icon: Icon, label, onClick, active, featureBadge }: {
     >
       <Icon className="size-4" />
       <FeatureBadge id={featureBadge} variant="corner" />
-      <span className="pointer-events-none absolute left-[calc(100%+8px)] z-50 hidden can-hover:group-hover:block whitespace-nowrap rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs font-medium text-foreground shadow-[0_4px_12px_rgba(0,0,0,.4)]">
+      <span className={HOVER_LABEL_CLASS}>
         {label}
       </span>
     </button>
@@ -202,7 +211,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           )}
         >
           <Cloud className="size-4" />
-          <span className="pointer-events-none absolute left-[calc(100%+8px)] z-50 hidden can-hover:group-hover:block whitespace-nowrap rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs font-medium text-foreground shadow-[0_4px_12px_rgba(0,0,0,.4)]">
+          <span className={HOVER_LABEL_CLASS}>
             Cloud &amp; Share
           </span>
         </button>
