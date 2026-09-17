@@ -78,6 +78,20 @@ describe("what the editor and the setting gate on", () => {
     expect(settings).not.toContain("disabled={isMobile}");
   });
 
+  it("gates the status chip on the device too, so it is not offered where it cannot run", () => {
+    // The chip both reports the server and toggles it. Rendering it on a touch-only device
+    // showed a control whose switch does nothing there, and reported a state no server backs.
+    const editor = SRC("components/editor/code-editor.tsx");
+    expect(editor).toContain("lspServable && !isTouchOnly");
+  });
+
+  it("gates the command-palette entry on the device, not the viewport", () => {
+    // A wide tablet is not a phone by width, so a viewport test offered the toggle there.
+    const palette = SRC("components/layout/command-palette.tsx");
+    expect(palette).toContain("...(isTouchOnly ? [] : [{");
+    expect(palette).not.toContain("...(isMobile ? [] : [{");
+  });
+
   it("leaves word wrap on the viewport test, which is the right question for it", () => {
     // How wide the editor is, not what kind of machine it is on.
     const settings = SRC("components/settings/appearance-settings-section.tsx");

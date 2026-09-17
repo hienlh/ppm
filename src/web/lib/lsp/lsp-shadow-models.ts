@@ -69,7 +69,25 @@ function givenUpOn(uri: string): boolean {
 }
 
 function noteFailure(uri: string): void {
-  failures.set(uri, (failures.get(uri) ?? 0) + 1);
+  recordFailure(uri, (failures.get(uri) ?? 0) + 1);
+}
+
+/**
+ * A URI that can never be fetched, so it is not worth an attempt, let alone three.
+ *
+ * Goes through the same bookkeeping as an ordinary failure rather than writing the map
+ * directly: every location outside the project lands here, which is the population the bound
+ * below was written for, and a direct `set` would have left exactly that population uncapped.
+ */
+function giveUpOn(uri: string): void {
+  recordFailure(uri, MAX_FETCH_ATTEMPTS);
+}
+
+function recordFailure(uri: string, count: number): void {
+  // Deleted first so the entry moves to the end: a URI failing over and over would otherwise
+  // keep the position of its first failure and be dropped before a colder one.
+  failures.delete(uri);
+  failures.set(uri, count);
   while (failures.size > MAX_FAILED) {
     const oldest = failures.keys().next().value as string | undefined;
     if (oldest === undefined) return;
@@ -88,9 +106,10 @@ async function inBatches<T>(items: T[], limit: number, task: (item: T) => Promis
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     for (;;) {
       const index = next++;
-      const item = items[index];
-      if (item === undefined) return;
-      await task(item);
+      // Bounded by the index, not by a sentinel value: stopping at the first `undefined`
+      // element would silently drop the rest of the list.
+      if (index >= items.length) return;
+      await task(items[index]!);
     }
   });
   await Promise.all(workers);
@@ -128,6 +147,9 @@ export async function ensureShadowModels(
 ): Promise<void> {
   if (!projectPath) return;
 
+  /** Every URI this call resolves, and therefore about to be returned to Monaco. */
+  const resolved = new Set<string>();
+
   const wanted = [...new Set(uris)].filter((uri) => {
     if (givenUpOn(uri)) return false;
     const existing = shadows.get(uri);
@@ -138,6 +160,9 @@ export async function ensureShadowModels(
       shadows.delete(uri);
       if (!existing.isDisposed()) {
         shadows.set(uri, existing);
+        // Part of this result set even though it cost no fetch — it was skipped *because* it
+        // was already here, so disposing it below would blank the very locations it resolved.
+        resolved.add(uri);
         return false;
       }
       // Disposed from somewhere else; the entry is a stale promise that a model exists.
@@ -146,20 +171,18 @@ export async function ensureShadowModels(
     // those to the model's own URI, so anything still `file:` is unopened.
     return uri.startsWith("file:") && !monaco.editor.getModel(monaco.Uri.parse(uri));
   });
+  // Nothing to fetch means nothing was added, so the map cannot be over the cap.
   if (wanted.length === 0) return;
 
-  /** Created by this call, and therefore about to be returned to Monaco. */
-  const created = new Set<string>();
-
   await inBatches(wanted, MAX_CONCURRENT_FETCHES, async (uri) => {
-    const absolute = fileUriToPath(uri);
-    const relative = absolute ? relativeTo(projectPath, absolute) : null;
-    if (!relative) {
-      // Outside the project: not a failure to retry, it can never be fetched.
-      failures.set(uri, MAX_FETCH_ATTEMPTS);
-      return;
-    }
     try {
+      const absolute = fileUriToPath(uri);
+      const relative = absolute ? relativeTo(projectPath, absolute) : null;
+      if (!relative) {
+        // Outside the project: not a failure to retry, it can never be fetched.
+        giveUpOn(uri);
+        return;
+      }
       const result = await api.get<{ content?: string }>(
         `${projectUrl(projectName)}/files/read?path=${encodeURIComponent(relative)}`,
       );
@@ -171,21 +194,27 @@ export async function ensureShadowModels(
       noteSuccess(uri);
       const parsed = monaco.Uri.parse(uri);
       // Another provider may have created it while this fetch was in flight.
-      if (monaco.editor.getModel(parsed)) return;
+      if (monaco.editor.getModel(parsed)) {
+        resolved.add(uri);
+        return;
+      }
       // Language is left undefined so Monaco infers it from the URI's
       // extension, which is what gives the peek widget its highlighting.
       shadows.set(uri, monaco.editor.createModel(content, undefined, parsed));
-      created.add(uri);
+      resolved.add(uri);
     } catch {
+      // Everything is inside the try, not only the fetch: one URI must never be able to
+      // reject the batch, because that would fail the provider and lose the whole result
+      // list rather than the one entry.
       noteFailure(uri);
     }
   });
 
-  evict(created);
+  evict(resolved);
 }
 
 /**
- * Trim to the cap, oldest first — but never a model this call just created.
+ * Trim to the cap, oldest first — but never a model this call is about to return.
  *
  * This used to run inside the creation loop, once per model. Find-all-references on a widely
  * used symbol asks for every location at once, so a result set larger than the cap disposed

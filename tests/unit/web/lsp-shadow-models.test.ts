@@ -69,6 +69,25 @@ describe("ensureShadowModels", () => {
     expect(alive().sort()).toEqual([...batch].sort());
   });
 
+  it("keeps the models it already had for this batch, not only the ones it created", async () => {
+    // The batch a provider is about to return is not only the files this call fetched: a
+    // location it already had a model for is in the result set just the same, and it was
+    // spared the fetch precisely because it was there. Protecting only the newly created ones
+    // left the cached half of a large result to be disposed by the same call that resolved
+    // it — peek and find-references opened empty for exactly the files that were warm.
+    const { monaco, models } = fakeMonaco();
+    const warm = uris("/p", 0, 20);
+    await ensureShadowModels(monaco, "demo", "/p", warm);
+    await ensureShadowModels(monaco, "demo", "/p", uris("/p", 100, MAX_SHADOW_MODELS - 20));
+
+    // One result set: the 20 warm files plus enough new ones to push the total past the cap.
+    const batch = [...warm, ...uris("/p", 200, MAX_SHADOW_MODELS)];
+    await ensureShadowModels(monaco, "demo", "/p", batch);
+
+    const gone = batch.filter((uri) => models.get(uri)?.disposed !== false);
+    expect(gone).toEqual([]);
+  });
+
   it("evicts the oldest once a later call has room to", async () => {
     const { monaco, models } = fakeMonaco();
     await ensureShadowModels(monaco, "demo", "/p", uris("/p", 0, MAX_SHADOW_MODELS));
@@ -193,6 +212,29 @@ describe("the negative cache", () => {
     expect(requested).toEqual([]);
   });
 
+  it("bounds the locations outside the project too, which are most of them", async () => {
+    // Following types into a dependency tree produces thousands of `node_modules` and
+    // toolchain-library locations, and every one of them is remembered as unfetchable. That is
+    // the population the bound was written for, so writing those straight into the map — the
+    // one path that skipped the eviction — left it uncapped for the only case that fills it.
+    const { monaco } = fakeMonaco();
+    (api as unknown as { get: unknown }).get = async (path: string) => {
+      requested.push(path);
+      return {}; // the host has no such file
+    };
+    const first = "file:///p/gone.ts";
+    for (let i = 0; i < MAX_FETCH_ATTEMPTS; i++) await ensureShadowModels(monaco, "demo", "/p", [first]);
+
+    await ensureShadowModels(
+      monaco, "demo", "/p",
+      Array.from({ length: 600 }, (_, i) => `file:///elsewhere/dep-${i}.ts`),
+    );
+    requested = [];
+
+    await ensureShadowModels(monaco, "demo", "/p", [first]);
+    expect(requested).toEqual([expect.stringContaining(encodeURIComponent("gone.ts"))]);
+  });
+
   it("recovers from a failure that was only transient", async () => {
     // A 500, a dropped socket or a tunnel that blinked arrive in the same `catch` as a file
     // that is genuinely absent, and `api.get` throws a bare `Error` either way. Giving up on
@@ -276,7 +318,10 @@ describe("how many files it fetches at once", () => {
 
     await ensureShadowModels(monaco, "demo", "/p", uris("/p", 0, 60));
 
-    expect(requested).toHaveLength(60); // all of them still fetched...
+    // Every file fetched exactly once — a scheduler that skipped one and ran another twice
+    // would keep the count right, so the set is what pins it.
+    expect(new Set(requested).size).toBe(60);
+    expect(requested).toHaveLength(60);
     expect(peak).toBeLessThanOrEqual(6); // ...just not all at once
   });
 });

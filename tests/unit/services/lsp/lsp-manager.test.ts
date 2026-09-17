@@ -247,6 +247,23 @@ describe("LspManager.disposeAll", () => {
     expect(m.running()).toHaveLength(0);
     expect(() => process.kill(pid, 0)).toThrow();
   });
+
+  it("does not let a server that was still starting survive the shutdown", async () => {
+    // Shutting down empties the table, but a start already in flight stores its session
+    // afterwards — into a manager that now believes it has none. The sibling of this method
+    // runs immediately before `process.exit`, so that server and every process it forked
+    // would outlive PPM with nothing left holding a handle to them.
+    const m = make();
+    const pending = m.acquire(project, "a.lua", "s1");
+    await m.disposeAll();
+    const result = (await pending) as LspHandle;
+
+    expect(m.running()).toHaveLength(0);
+    if (!isUnavailable(result)) {
+      for (let i = 0; i < 40 && result.session.state !== "stopped"; i++) await Bun.sleep(25);
+      expect(result.session.state).toBe("stopped");
+    }
+  });
 });
 
 describe("the session cap", () => {

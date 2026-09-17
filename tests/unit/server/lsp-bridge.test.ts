@@ -56,7 +56,9 @@ let pythonSession: FakeSession;
  */
 const TS_KEY = "typescript /p";
 const PY_KEY = "pyright /p";
-const keyFor = (absolute: string) => (absolute.endsWith(".py") ? PY_KEY : TS_KEY);
+/** Set by a test that needs one path to resolve to a different server than it did before. */
+let keyOverride: string | null = null;
+const keyFor = (absolute: string) => keyOverride ?? (absolute.endsWith(".py") ? PY_KEY : TS_KEY);
 const sessionFor = (key: string) => (key === PY_KEY ? pythonSession : session);
 
 /** What the bridge told the manager to let go of. */
@@ -118,6 +120,7 @@ beforeEach(() => {
   pythonSession = new FakeSession();
   released = [];
   releasedAll = [];
+  keyOverride = null;
 });
 
 describe("a request in flight", () => {
@@ -249,6 +252,23 @@ describe("an incremental change", () => {
 });
 
 describe("the hold on a session", () => {
+  it("is moved, not duplicated, when a file re-opens on a different server", async () => {
+    // The same path does not always resolve to the same root: a `tsconfig.json` appearing in a
+    // subdirectory moves it, and the browser re-opens every tab on reconnect. Overwriting the
+    // entry without letting go left this socket subscribed to the old key for as long as it
+    // lived, and the reaper never takes a server that still has a subscriber — so that one
+    // stayed resident with nothing using it.
+    const s = socket();
+    await Bun.sleep(0);
+    expect(released).toEqual([]);
+
+    keyOverride = "typescript /p/packages/app";
+    s.open("src/a.ts", "inmemory://model/1");
+    await Bun.sleep(0);
+
+    expect(released.map((r) => r.key)).toEqual([TS_KEY]);
+  });
+
   it("survives closing one of two documents that share it", async () => {
     // Closing one of ten TypeScript tabs would otherwise start the five-minute reap timer on
     // a server the other nine are still using.
