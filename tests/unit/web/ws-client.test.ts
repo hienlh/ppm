@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { WsClient } from "../../../src/web/lib/ws-client";
+// `?real` so this suite always gets the class, never a stub. `mock.module` is process-wide and
+// cannot be undone once other files have bound their copy, so a sibling that fakes the socket
+// to test something built on it — `lsp-client.test.ts` does — would otherwise hand every case
+// here a fake whenever it happened to load first, and they would all fail with no clue why.
+import { WsClient } from "../../../src/web/lib/ws-client.ts?real";
 
 let now = 0;
 let nextTimer = 0;

@@ -4,6 +4,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { Loader2, FileCode, WrapText, UserRound } from "lucide-react";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
@@ -43,7 +44,12 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const [fullFileDiff, setFullFileDiff] = useState<{ original: string; modified: string } | null>(null);
   const [loading, setLoading] = useState(!isInline);
   const [error, setError] = useState<string | null>(null);
-  const { wordWrap, toggleWordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap })));
+  const { wordWrap, toggleWordWrap, mobileWordWrap, toggleMobileWordWrap } = useSettingsStore(
+    useShallow((s) => ({
+      wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap,
+      mobileWordWrap: s.mobileWordWrap, toggleMobileWordWrap: s.toggleMobileWordWrap,
+    })),
+  );
   const monacoTheme = useMonacoTheme();
 
   // Measure container height — Monaco needs explicit pixel height on mobile
@@ -152,6 +158,13 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const inlineBlame = useSettingsStore((s) => s.inlineBlame);
   const toggleInlineBlame = useSettingsStore((s) => s.toggleInlineBlame);
 
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+  // A phone wraps by default and keeps its own answer: the desktop pref is
+  // shared across devices, and a 27-inch monitor's "no wrap" is not a 6-inch
+  // screen's.
+  const wrapOn = isMobile ? mobileWordWrap : wordWrap;
+  const toggleWrap = isMobile ? toggleMobileWordWrap : toggleWordWrap;
+
   /**
    * Blame is only honest on the full-file path.
    *
@@ -162,7 +175,9 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
    * its line 40 is not the file's line 40 — annotating it would confidently
    * name the wrong commit.
    */
-  const canBlame = Boolean(projectName && filePath && fullFileDiff);
+  // Not on a phone: an annotation on every focused line is a `git blame` per
+  // file and a `git show` per hover, on the device least able to pay for either.
+  const canBlame = Boolean(projectName && filePath && fullFileDiff) && !isMobile;
 
   // The left pane is the file at `ref1` (the route defaults to HEAD); the right
   // is `ref2`, or the working tree when there is none.
@@ -186,7 +201,6 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   });
 
   // Force inline on mobile (<768px) since side-by-side is too narrow
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
   const renderSideBySide = !isMobile;
 
   // Sync word wrap on both sub-editors.
@@ -198,11 +212,11 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   useEffect(() => {
     const editor = diffEditorRef.current;
     if (!editor) return;
-    const val: "on" | "off" = isMobile ? "on" : wordWrap ? "on" : "off";
+    const val: "on" | "off" = wrapOn ? "on" : "off";
     editor.updateOptions({ diffWordWrap: val });
     editor.getOriginalEditor().updateOptions({ wordWrapOverride2: val } as any);
     editor.getModifiedEditor().updateOptions({ wordWrapOverride2: val } as any);
-  }, [wordWrap, isMobile, editorReady]);
+  }, [wrapOn, editorReady]);
 
   if (!projectName && !isInline) {
     return (
@@ -241,28 +255,26 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      {(!isMobile || canBlame) && (
-        <div className="flex items-center justify-end gap-0.5 px-2 py-0.5 border-b border-border shrink-0">
-          {canBlame && (
-            <button type="button" onClick={toggleInlineBlame}
-              title="Inline blame (Alt+B) — who last touched the cursor's line. Click a pane to annotate that side."
-              className={`flex items-center justify-center rounded hover:bg-muted active:scale-95 transition-colors ${
-                isMobile ? "size-11" : "p-1"
-              } ${inlineBlame ? "bg-muted text-foreground" : ""}`}
-            >
-              <UserRound className="size-3.5" />
-            </button>
-          )}
-          {/* Word wrap is forced on below `md`, so its toggle would be a lie. */}
-          {!isMobile && (
-            <button type="button" onClick={toggleWordWrap} title="Toggle word wrap"
-              className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
-            >
-              <WrapText className="size-3.5" />
-            </button>
-          )}
-        </div>
-      )}
+      <div className="flex items-center justify-end gap-0.5 px-2 py-0.5 border-b border-border shrink-0">
+        {canBlame && (
+          <button type="button" onClick={toggleInlineBlame}
+            title="Inline blame (Alt+B) — who last touched the cursor's line. Click a pane to annotate that side."
+            className={`flex items-center justify-center rounded hover:bg-muted active:scale-95 transition-colors p-1 ${
+              inlineBlame ? "bg-muted text-foreground" : ""
+            }`}
+          >
+            <UserRound className="size-3.5" />
+          </button>
+        )}
+        <button type="button" onClick={toggleWrap}
+          title={wrapOn ? "Wrapping long lines — tap to scroll sideways instead" : "Toggle word wrap"}
+          className={`flex items-center justify-center rounded hover:bg-muted active:scale-95 transition-colors ${
+            isMobile ? "size-11" : "p-1"
+          } ${wrapOn ? "bg-muted text-foreground" : ""}`}
+        >
+          <WrapText className="size-3.5" />
+        </button>
+      </div>
       {/* Monaco DiffEditor */}
       <div ref={containerRef} className="flex-1 overflow-hidden">
         {containerHeight && containerHeight > 0 ? (
@@ -289,8 +301,8 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
             }}
             options={{
               fontSize: isMobile ? 11 : 13,
-              fontFamily: "Menlo, Monaco, Consolas, monospace",
-              diffWordWrap: isMobile ? "on" : wordWrap ? "on" : "off",
+              fontFamily: EDITOR_FONT_FAMILY,
+              diffWordWrap: wrapOn ? "on" : "off",
               renderSideBySide,
               useInlineViewWhenSpaceIsLimited: false,
               readOnly: true,

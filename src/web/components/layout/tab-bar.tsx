@@ -13,6 +13,7 @@ import {
   GitCommitHorizontal,
   Sparkles,
   Users,
+  CircleX,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -70,6 +71,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   "git-log": GitCommitHorizontal,
   "ai-resource": Sparkles,
   group: Users,
+  problems: CircleX,
 };
 
 interface TabBarProps {

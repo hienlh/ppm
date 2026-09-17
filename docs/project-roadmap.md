@@ -86,6 +86,8 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 - Git-Graph UI (v0.9.85+) — faithful SVG graph (vscode-git-graph port), interactive stage/unstage/commit/stash, branch filters, auto-fetch, mobile support
 - Git Workflow (v0.9.86+) — stash management, rebase from context menu, conflict detection, inline Monaco conflict resolution, worktree CRUD
 - Git Insights (ext 0.3.0) — blame with age heatmap, file/line history, compare refs, interactive rebase (incl. reword/edit), reflog with undo, submodules, whole-history commit search, author avatars, drag-to-merge/rebase. Each is its own panel because the extension API exposes no editor to annotate.
+- Language servers in the editor — real completions, hover, go to definition, references, rename, quick fix, formatting and inlay hints from the same server binaries VS Code drives, hosted by the PPM server and reached over a thin bridge. Core rather than an extension because it needs the editor, which the extension API does not expose. Not installed automatically: a missing server is reported with the command that installs it.
+  Also a Problems panel in the dock, opened from the status bar counts (VS Code's placement for both), and semantic highlighting driven by each server's own token legend.
 - Git in the core app — inline blame on the cursor's line in the Monaco editor (`Alt+B`), and hunk/line-level stage, unstage and discard from Source Control. Both live in core rather than the extension precisely because they need the editor and the panel the extension cannot reach.
 
 ### v0.10.0 — "Enhanced Workflow" (Released)

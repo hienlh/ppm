@@ -3,6 +3,8 @@ import type { PpmTheme } from "../types";
 import { THEME_CHANGE_EVENT, getCurrentAppliedTheme } from "../apply-theme";
 import { resolveTheme } from "../resolve-theme";
 import { useSettingsStore } from "@/stores/settings-store";
+import { semanticTokenRules } from "../semantic-token-rules";
+import { diffTokenRules } from "../diff-token-rules";
 
 /**
  * Monaco theming driven by PpmTheme. Monaco rejects `rgba()` color strings, so
@@ -37,6 +39,21 @@ function deriveColors(theme: PpmTheme): Record<string, string> {
   return { ...colors, ...theme.editor?.colors };
 }
 
+/**
+ * Where Monaco itself comes from.
+ *
+ * `@monaco-editor/react` defaults to `cdn.jsdelivr.net` — nothing in PPM had
+ * ever told it otherwise, so the editor did not work without the public
+ * internet. `scripts/copy-monaco.ts` stages the same files under `assets/`, so
+ * they arrive from PPM, `immutable` and brotli-compressed.
+ *
+ * This has to run before the first `loader.init()`, which is why it is at module
+ * scope in a module `app.tsx` imports eagerly rather than inside a component:
+ * `loader.config` after init is ignored, and the failure would be a silent
+ * return to the CDN.
+ */
+loader.config({ paths: { vs: "/assets/monaco/vs" } });
+
 let monacoRef: typeof import("monaco-editor") | null = null;
 
 async function ensureDefined(theme: PpmTheme): Promise<string> {
@@ -45,7 +62,9 @@ async function ensureDefined(theme: PpmTheme): Promise<string> {
   monaco.editor.defineTheme(name, {
     base: theme.mode === "dark" ? "vs-dark" : "vs",
     inherit: true,
-    rules: theme.editor?.rules ?? [],
+    // Semantic rules first, so a theme's own rules still win. Monaco resolves
+    // a language server's token types through this same table.
+    rules: [...semanticTokenRules(theme.mode), ...diffTokenRules(theme.mode), ...(theme.editor?.rules ?? [])],
     colors: deriveColors(theme),
   });
   return name;

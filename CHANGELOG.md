@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- **Language servers in the editor** — real completions, hover types, go to definition, find references, rename, quick fixes, formatting, document symbols and inlay hints, from the same language server binaries VS Code drives. PPM's server hosts the language server processes and the browser talks a thin bridge to them, which is the seam VS Code puts between its renderer and its extension host. Ships support for TypeScript/JavaScript (including the `.tsx` and `.jsx` variants), Python, Go, Rust, C/C++, JSON, HTML, CSS/SCSS/LESS, YAML, Bash, PHP, Ruby, Lua, Vue and Svelte.
+  - Nothing is installed for you. A missing server is reported in the editor toolbar with the one command that installs it, because an editor that fetches and runs a binary because you opened a file is doing something you did not ask for. A project that ships its own server in `node_modules/.bin` is preferred over a global one, the way VS Code's "Use Workspace Version" works.
+  - One server process is shared by every tab on the same project root, and a monorepo package with its own `tsconfig.json` gets its own — that is a different root and a different set of types. A released server stays up for five minutes, because closing and reopening a tab is the commonest thing anyone does and a cold rust-analyzer start is expensive.
+  - Monaco's built-in TypeScript validation stays off. It sees one file with no `tsconfig.json` and no `node_modules`, so it reports "Cannot find module" for every real import; the diagnostics now come from a server that can actually see the project.
+  - **A Problems panel**, in the dock under the editor and opened from the error and warning counts at the left of the status bar — where VS Code puts both. Every diagnostic across the files you have open, grouped by file and ordered by position, with the rule that produced it (`ts(2322)`) and a click to jump to the line. On a phone, where there is no status bar, it opens from the row that already appears above the editor when something is wrong. It lists the files that are open, because that is what a language server has told us about — a file never opened has never been checked, and the empty state says so rather than implying the project is clean.
+  - **Semantic highlighting** — a name is coloured by what it *is* rather than by what it looks like, so a class, a type parameter, a parameter and a read-only local are told apart where Monaco's regular expressions see four identifiers. The server's own legend is read from its initialize result and the provider registered against it, because a token is an index into that table: decoding with the wrong one does not fail, it colours the file confidently and wrongly.
+
 ## [0.20.10] - 2026-09-17
 
 ### Fixed
