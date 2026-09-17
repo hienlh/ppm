@@ -312,7 +312,14 @@ export class LspSession {
     const stdin = this.proc?.stdin;
     if (!stdin || typeof stdin === "number") throw new Error("Language server stdin is not writable");
     stdin.write(encodeMessage(message));
-    stdin.flush();
+    // `flush()` can hand back a promise, and that promise rejects with EPIPE when
+    // the pipe closed between the write and the flush — which is the normal case
+    // for the `exit` sent to a server that is about to be killed. Unhandled, it
+    // escapes the caller's try/catch entirely and surfaces as a broken-pipe
+    // rejection attributed to whatever happens to be running. The synchronous
+    // throw from `write()` above is the failure callers actually handle.
+    const flushed = stdin.flush();
+    if (flushed instanceof Promise) void flushed.catch(() => undefined);
   }
 
   private dispatch(message: JsonRpcMessage): void {
