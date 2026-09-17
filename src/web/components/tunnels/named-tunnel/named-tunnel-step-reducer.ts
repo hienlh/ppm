@@ -116,8 +116,20 @@ function stepFromLoginState(state: LoginState, url: string | null, message: stri
 
 export function reduceStep(step: Step, action: Action): Step {
   switch (action.type) {
-    case "status":
-      return STATUS_RESETTABLE.has(step.k) ? initialStepFromStatus(action.status) : step;
+    case "status": {
+      if (!STATUS_RESETTABLE.has(step.k)) return step;
+      // `dismissed` only means "do not open the first-run popup on its own".
+      // Once a card is on screen it must not close it again: the Tunnel
+      // Manager's "Set up" button puts the same login-wait step there on an
+      // install that dismissed the popup long ago, and the `/status` refetch
+      // that follows a cert-shortcut login ("already logged in", no browser
+      // round-trip) would otherwise collapse the flow straight back to the
+      // button one spinner later — no zone step, no error, nothing to show for
+      // the click. Everything else a refresh can say (auth turned off, mode
+      // already named elsewhere) still hides the card as before.
+      const snapshot = step.k === "hidden" ? action.status : { ...action.status, dismissed: false };
+      return initialStepFromStatus(snapshot);
+    }
 
     case "answer-yes":
       return { k: "login-wait", url: null, slow: false };

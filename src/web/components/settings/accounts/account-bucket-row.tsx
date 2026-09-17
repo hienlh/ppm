@@ -8,21 +8,36 @@
  */
 
 import type { LimitBucket } from "../../../../types/chat";
-import { barColor, formatResetTime, pctColor } from "./account-usage-format";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { barColor, formatResetAt, formatResetTime, pctColor } from "./account-usage-format";
 
-export function AccountUsageBar({ label, pct, reset }: {
+export function AccountUsageBar({ label, pct, reset, resetsAt }: {
   label: string;
   /** 0-100. Null renders the row with an em dash instead of a bar. */
   pct: number | null;
   /** "Resets in" text, when the source knows it. */
   reset?: string | null;
+  /** The same moment as an absolute timestamp, shown on hover. Optional: a caller holding
+   *  only a percentage has no bucket to take it from. */
+  resetsAt?: string | null;
 }) {
+  const resetOn = formatResetAt(resetsAt);
   return (
     <div className="space-y-1" data-testid="account-usage-bar">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-text-primary">{label}</span>
         {reset && (
-          <span className="text-[10px] text-text-subtle" title="Resets in">↻ {reset}</span>
+          // The relative figure stays on the card and the exact moment sits behind it: one
+          // answers "can I keep going", the other "will it be back by three", and only the
+          // first is worth the width.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-[10px] text-text-subtle cursor-default">↻ {reset}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {resetOn ? `Resets ${resetOn}` : "Resets in"}
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
       <div className="flex items-center gap-2">
@@ -50,6 +65,7 @@ export function AccountBucketRow({ label, bucket }: { label: string; bucket?: Li
       label={label}
       pct={Math.round(bucket.utilization * 100)}
       reset={formatResetTime(bucket)}
+      resetsAt={bucket.resetsAt}
     />
   );
 }

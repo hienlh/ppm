@@ -164,27 +164,31 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
 }
 
 /**
- * Drop a session's live subprocess so its next turn is rebuilt from the transcript on disk.
+ * Drop a session's live subprocess so its next turn is rebuilt from what is on disk.
  *
- * Routes that rewrite the JSONL need this. The subprocess holds the conversation in memory,
- * so a rewrite it never learns about simply does not apply: the user strips an oversized
- * image, sends again, and the same image is re-sent from memory and fails identically.
- * `listRunningSessions()` does not cover it — that skips `phase === "idle"`, and a warm idle
- * subprocess is exactly this case. Unlike `releaseSubprocess` it does not require the session
- * to be clientless, because the tab being open is the normal way to reach the strip button.
+ * Two kinds of caller need this, both because the subprocess holds state that a change
+ * made behind its back cannot reach. A route that rewrites the JSONL: the user strips an
+ * oversized image, sends again, and the same image is re-sent from memory and fails
+ * identically. And a codex account switch: the app-server was spawned with one account's
+ * CODEX_HOME and keeps serving that account no matter what the session's binding now says.
+ *
+ * `listRunningSessions()` does not cover either case — that skips `phase === "idle"`, and a
+ * warm idle subprocess is exactly what both are about. Unlike `releaseSubprocess` this does
+ * not require the session to be clientless, because having the tab open is the normal way
+ * to reach both buttons.
  */
-export function dropSubprocessForTranscriptRewrite(sessionId: string): void {
+export function dropIdleSubprocess(sessionId: string, reason: string, note: string): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
-  provider.abortQuery?.(sessionId, "transcript_rewritten");
+  provider.abortQuery?.(sessionId, reason);
   if (entry.cacheReleaseTimer) {
     clearTimeout(entry.cacheReleaseTimer);
     entry.cacheReleaseTimer = undefined;
   }
-  console.log(`[chat] session=${sessionId} released subprocess (transcript_rewritten)`);
-  logSessionEvent(sessionId, "INFO", "Subprocess released: the transcript was rewritten, so the next turn is rebuilt from disk");
+  console.log(`[chat] session=${sessionId} released subprocess (${reason})`);
+  logSessionEvent(sessionId, "INFO", note);
 }
 
 /** Tear down the longest-idle subprocesses once too many sessions are holding one. */
@@ -329,7 +333,7 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
         for (let i = entry.turnEvents.length - 1; i >= 0; i--) {
           const buffered = entry.turnEvents[i] as any;
           if (buffered.type === "tool_use" && buffered.toolUseId === toolUseId) {
-            buffered.result = { output: (event as any).output, isError: (event as any).isError };
+            buffered.result = { output: (event as any).output, isError: (event as any).isError, exitCode: (event as any).exitCode };
             break;
           }
         }
@@ -1282,10 +1286,15 @@ export const chatWebSocket = {
       } else {
         // Follow-up: push into existing generator via provider
         if (provider && "pushMessage" in provider && parsed.type === "message") {
-          (provider as any).pushMessage(sessionId, parsed.content, {
+          const effort = getSessionEffort(sessionId) ?? undefined;
+          const thinkingBudget = getSessionThinking(sessionId);
+          await chatService.pushMessage(providerId, sessionId, parsed.content, {
             priority: parsed.priority ?? 'next',
             images: parsed.images,
             imagePaths: parsed.imagePaths,
+            ...(entry.model ? { model: entry.model } : {}),
+            ...(effort ? { effort } : {}),
+            ...(thinkingBudget != null ? { thinkingBudget } : {}),
           });
         }
         // Clear turn events for new turn display + transition phase
@@ -1404,7 +1413,7 @@ export const chatWebSocket = {
           }, 0);
         });
       } else if (provider && "pushMessage" in provider) {
-        (provider as any).pushMessage(sessionId, instruction, { priority: "next" });
+        await chatService.pushMessage(providerId, sessionId, instruction, { priority: "next" });
         entry.turnEvents = [];
         entry.pendingApprovalEvent = undefined;
         setPhase(sessionId, "thinking");

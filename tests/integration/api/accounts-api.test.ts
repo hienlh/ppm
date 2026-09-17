@@ -319,3 +319,42 @@ describe("POST /api/accounts/export + POST /api/accounts/import", () => {
     expect(importRes.status).toBe(400);
   });
 });
+
+describe("POST /api/accounts/pick", () => {
+  it("returns null when there is no usable account", async () => {
+    const res = await req("/api/accounts/pick", { method: "POST" });
+    const json = await res.json() as any;
+    expect(res.status).toBe(200);
+    expect(json.data).toBeNull();
+  });
+
+  it("returns the id and label of the account that will serve the tab", async () => {
+    const a = accountService.add({ email: "a@example.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999999999, label: "Account A" });
+    const res = await req("/api/accounts/pick", { method: "POST" });
+    const json = await res.json() as any;
+    expect(json.data.id).toBe(a.id);
+    expect(json.data.label).toBe("Account A");
+  });
+
+  it("consumes the pick so consecutive tabs spread across accounts", async () => {
+    // This is the difference from /active, which previews without advancing. Two tabs
+    // opened in a row must not both be told the same account under round-robin.
+    accountService.add({ email: "a@example.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999999999 });
+    accountService.add({ email: "b@example.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999999999 });
+
+    const first = await (await req("/api/accounts/pick", { method: "POST" })).json() as any;
+    const second = await (await req("/api/accounts/pick", { method: "POST" })).json() as any;
+    expect(first.data.id).not.toBe(second.data.id);
+  });
+
+  it("never claims a disabled account", async () => {
+    const a = accountService.add({ email: "a@example.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999999999 });
+    const b = accountService.add({ email: "b@example.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999999999 });
+    accountService.setDisabled(a.id);
+
+    for (let i = 0; i < 4; i++) {
+      const json = await (await req("/api/accounts/pick", { method: "POST" })).json() as any;
+      expect(json.data.id).toBe(b.id);
+    }
+  });
+});

@@ -72,6 +72,7 @@ export const namedTunnelCopy = {
   error: {
     title: "Something went wrong",
     retry: "Retry",
+    relogin: "Sign in again",
     close: "Close",
   },
   section: {

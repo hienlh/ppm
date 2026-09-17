@@ -81,8 +81,22 @@ export class LspManager {
   private readonly entries = new Map<string, Entry>();
   /** In-flight starts, so two tabs opening at once do not spawn two servers. */
   private readonly starting = new Map<string, Promise<LspSession>>();
+  /**
+   * Keys an acquire is currently waiting on, and who is waiting.
+   *
+   * A session becomes evictable the instant it is stored and stays that way until the acquire
+   * that asked for it resumes and subscribes — and resuming takes a turn of the loop, which is
+   * long enough for a *different* acquire to finish and sweep the cap. It would find a brand
+   * new entry with no subscriber, rank it least-recently-used, and dispose it; the first
+   * acquire then subscribed to nothing and handed its tab a session that was already gone.
+   * Claiming the key up front makes "asked for" count as "in use", which is what the cap
+   * always meant.
+   */
+  private readonly claims = new Map<string, number>();
   private readonly notificationListeners = new Set<(key: string, method: string, params: unknown) => void>();
   private useCounter = 0;
+  /** Set once everything has been shut down; both ways of doing that are terminal. */
+  private disposed = false;
 
   /**
    * The server table to consult. That, the idle grace period and the session cap are
@@ -130,11 +144,18 @@ export class LspManager {
       const rootPath = await this.findRoot(definition, dirs, projectPath);
       const key = `${definition.id} ${rootPath}`;
 
+      this.claim(key);
       try {
         const session = await this.startOrReuse(key, definition, command, rootPath);
         // Subscribe *then* trim, so the session this call is about to hand out is never the
         // one the cap takes away.
-        this.subscribe(key, subscriber);
+        if (!this.subscribe(key, subscriber)) {
+          // The entry went away while this call was waiting — the server exited on its own, or
+          // the idle reaper fired. Reporting that beats handing back a dead session: the tab
+          // would take it, ask for capabilities, and answer "no longer running" to every
+          // request from then on, with nothing short of closing the tab to recover.
+          throw new Error(`${definition.displayName} stopped while starting up.`);
+        }
         this.enforceSessionCap();
         return { session, language, key };
       } catch (e) {
@@ -143,6 +164,8 @@ export class LspManager {
           server: { id: definition.id, displayName: definition.displayName, installHint: definition.installHint },
           message: e instanceof Error ? e.message : String(e),
         };
+      } finally {
+        this.unclaim(key);
       }
     }
 
@@ -171,6 +194,12 @@ export class LspManager {
     const inFlight = this.starting.get(key);
     if (inFlight) return inFlight;
 
+    // Checked here rather than only at the top of `acquire`: resolving the command and finding
+    // the root are several round trips to the filesystem, and a shutdown lands inside them
+    // often enough. Spawning now would put a language server behind a process that has already
+    // reported itself down.
+    if (this.disposed) throw new Error("PPM is shutting down.");
+
     const promise = LspSession.start({
       definition,
       command,
@@ -186,6 +215,14 @@ export class LspManager {
       },
     })
       .then((session) => {
+        // A shutdown that ran while this was starting has already emptied `entries`, and
+        // storing it now would put a live server into a manager that believes it has none —
+        // `killAllSync` runs immediately before `process.exit`, so the server and every
+        // `tsserver` it forked would outlive PPM with nothing left holding a handle to them.
+        if (this.disposed) {
+          void session.dispose();
+          return session;
+        }
         this.entries.set(key, { session, subscribers: new Set(), idleTimer: null, lastUsed: ++this.useCounter });
         return session;
       })
@@ -208,7 +245,7 @@ export class LspManager {
   private enforceSessionCap(): void {
     if (this.entries.size <= this.maxSessions) return;
     const idle = [...this.entries.entries()]
-      .filter(([, entry]) => entry.subscribers.size === 0)
+      .filter(([key, entry]) => entry.subscribers.size === 0 && !this.claims.has(key))
       .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
     for (const [key, entry] of idle) {
       if (this.entries.size <= this.maxSessions) return;
@@ -218,15 +255,44 @@ export class LspManager {
     }
   }
 
-  private subscribe(key: string, subscriber: string): void {
+  /**
+   * Counted, not a set of subscriber ids.
+   *
+   * One socket opening two files in the same project — restoring a session's tabs is the
+   * ordinary case — makes two concurrent acquires with the same key *and* the same subscriber.
+   * A set would dedupe them, so the first to finish would drop the claim while the second was
+   * still in flight, leaving it unprotected for exactly the reason the claim exists.
+   */
+  private claim(key: string): void {
+    this.claims.set(key, (this.claims.get(key) ?? 0) + 1);
+  }
+
+  private unclaim(key: string): void {
+    const holders = this.claims.get(key) ?? 0;
+    if (holders > 1) {
+      this.claims.set(key, holders - 1);
+      return;
+    }
+    // Deleted rather than left at zero, so `claims.has(key)` alone answers "someone is waiting
+    // on this" for the cap sweep.
+    this.claims.delete(key);
+    // The sweep skips a claimed key rather than deferring it, so whatever it declined to take
+    // is still over the cap until something else acquires. Re-running here is what keeps the
+    // cap a bound rather than a suggestion.
+    this.enforceSessionCap();
+  }
+
+  /** False when the entry is gone, i.e. there is no running session to hold. */
+  private subscribe(key: string, subscriber: string): boolean {
     const entry = this.entries.get(key);
-    if (!entry) return;
+    if (!entry) return false;
     entry.lastUsed = ++this.useCounter;
     entry.subscribers.add(subscriber);
     if (entry.idleTimer) {
       clearTimeout(entry.idleTimer);
       entry.idleTimer = null;
     }
+    return true;
   }
 
   /** Give up one subscriber's hold. The server keeps running for the grace period. */
@@ -344,6 +410,7 @@ export class LspManager {
    * "most" is not a guarantee worth leaving a rust-analyzer resident on.
    */
   killAllSync(): void {
+    this.disposed = true;
     for (const entry of this.entries.values()) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       try {
@@ -357,10 +424,18 @@ export class LspManager {
 
   /** Shut everything down, for when the server process is going away. */
   async disposeAll(): Promise<void> {
+    this.disposed = true;
     const entries = [...this.entries.values()];
+    const inFlight = [...this.starting.values()];
     this.entries.clear();
     for (const entry of entries) if (entry.idleTimer) clearTimeout(entry.idleTimer);
-    await Promise.all(entries.map((entry) => entry.session.dispose()));
+    await Promise.all([
+      ...entries.map((entry) => entry.session.dispose()),
+      // A start still in flight is refused the table above, but refusing it does not stop the
+      // process it is about to finish spawning. Returning before that one is down would report
+      // a clean shutdown with a language server still running behind it.
+      ...inFlight.map((starting) => starting.then((session) => session.dispose(), () => undefined)),
+    ]);
   }
 }
 

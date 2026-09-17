@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
 import { highlightToHtml, highlightSync, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -80,11 +80,14 @@ export function MdPre({ children, node, ...rest }: any) {
   // Highlight once the block is done streaming; render raw code until then to
   // avoid re-highlighting on every token (and Shiki being async).
   const shikiHtml = useShikiHtml(text, lang, !isStreaming);
+  // Stable object: React 19 re-sets innerHTML whenever this prop's identity changes, which
+  // would rebuild the highlighted subtree on every re-render of the surrounding message.
+  const shikiProp = useMemo(() => (shikiHtml ? { __html: shikiHtml } : null), [shikiHtml]);
 
   return (
     <div className="relative group">
-      {shikiHtml
-        ? <div className="shiki-block" dangerouslySetInnerHTML={{ __html: shikiHtml }} />
+      {shikiProp
+        ? <div className="shiki-block" dangerouslySetInnerHTML={shikiProp} />
         : <pre {...rest}>{children}</pre>}
       {codeActions && (
         <div className="code-actions absolute top-1 right-1 flex gap-1">
@@ -151,6 +154,8 @@ export function MdCode({ className, children, node, ...rest }: any) {
 function MermaidDiagram({ source }: { source: string }) {
   const { openDiagramOverlay } = useMdContext();
   const [svg, setSvg] = useState<string | null>(null);
+  // Same identity rule as the Shiki block: a fresh `{ __html }` per render re-parses the SVG.
+  const svgProp = useMemo(() => (svg ? { __html: svg } : null), [svg]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,14 +179,14 @@ function MermaidDiagram({ source }: { source: string }) {
     };
   }, [source]);
 
-  if (!svg) return <pre><code>{source}</code></pre>;
+  if (!svg || !svgProp) return <pre><code>{source}</code></pre>;
 
   return (
     <div
       className="mermaid-diagram group relative cursor-pointer rounded-lg border border-border bg-white dark:bg-panel-2 p-3 overflow-x-auto my-2"
       onClick={() => openDiagramOverlay(svg)}
     >
-      <div dangerouslySetInnerHTML={{ __html: svg }} />
+      <div dangerouslySetInnerHTML={svgProp} />
       <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/60 text-white text-xs can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity pointer-events-none">
         Click to expand
       </div>

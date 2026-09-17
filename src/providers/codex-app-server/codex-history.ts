@@ -1,10 +1,16 @@
 import type { ChatMessage, ChatEvent, SessionInfo } from "../provider.interface.ts";
+import { stripSharedContext } from "../../shared/provider-context.ts";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseApplyPatch, changeToToolUse } from "./codex-patch.ts";
 import { mapRolloutItem } from "./codex-rollout-items.ts";
+import { completeLines, parseLine, readRolloutHeader, type RolloutHeader } from "./codex-rollout-header.ts";
+import {
+  finalAssistantText, subagentToolResult, subagentToolUse, transcriptToEvents,
+  type SubagentTranscript,
+} from "./codex-subagent-thread.ts";
 
 /**
  * Independent parser for Codex rollout JSONL transcripts
@@ -18,28 +24,10 @@ import { mapRolloutItem } from "./codex-rollout-items.ts";
  * scaffolding).
  */
 
-interface RolloutLine {
-  timestamp?: string;
-  type?: string;
-  payload?: Record<string, unknown>;
-}
-
 /** Normalize a path for cross-platform comparison (case-insensitive on win32). */
 function normPath(p: string): string {
   const r = resolve(p);
   return process.platform === "win32" ? r.toLowerCase() : r;
-}
-
-/** Split into complete, newline-terminated lines only (drop a trailing partial). */
-function completeLines(text: string): string[] {
-  const lines = text.split("\n");
-  // If the text does not end in a newline, the last element is a partial line.
-  if (!text.endsWith("\n")) lines.pop();
-  return lines.filter((l) => l.trim() !== "");
-}
-
-function parseLine(line: string): RolloutLine | null {
-  try { return JSON.parse(line) as RolloutLine; } catch { return null; }
 }
 
 /** Extract plain text from a response_item message content array. */
@@ -106,10 +94,20 @@ function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
  * tool calls come from `response_item` function_call / function_call_output and
  * are nested into the assistant turn's `events` so the chat UI renders tool cards.
  */
-export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean }): ChatMessage[] {
+export function parseRolloutJsonl(
+  text: string,
+  opts?: {
+    preCompact?: boolean;
+    /** Reads a spawned thread's transcript so its card can nest it. */
+    loadSubagent?: (threadId: string) => SubagentTranscript | null;
+  },
+): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let i = 0;
   let pendingEvents: ChatEvent[] = [];
+  // Kept so the completion can answer the card the spawn opened, with the
+  // report the child ended on.
+  const subagentTranscripts = new Map<string, SubagentTranscript | null>();
 
   // Newer codex records every finished step as an `item_completed` event AND
   // keeps the raw model exchange in `response_item` records. Both describe the
@@ -138,7 +136,7 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
     if (rec.type === "event_msg") {
       if (p.type === "user_message" && typeof p.message === "string") {
         if (pendingEvents.length) flushAssistant("", ts); // tools with no final text
-        messages.push({ id: `rollout-${i++}`, role: "user", content: p.message, timestamp: ts });
+        messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(p.message), timestamp: ts });
       } else if (p.type === "agent_message" && typeof p.message === "string") {
         flushAssistant(p.message, ts);
       } else if (p.type === "item_completed") {
@@ -148,11 +146,20 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
         const mapped = mapRolloutItem(p.item);
         if (mapped.kind === "user") {
           if (pendingEvents.length) flushAssistant("", ts);
-          messages.push({ id: `rollout-${i++}`, role: "user", content: mapped.text, timestamp: ts });
+          messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(mapped.text), timestamp: ts });
         } else if (mapped.kind === "assistant") {
           flushAssistant(mapped.text, ts);
         } else if (mapped.kind === "events") {
           pendingEvents.push(...mapped.events);
+        } else if (mapped.kind === "subagent") {
+          const { activity } = mapped;
+          if (!subagentTranscripts.has(activity.threadId)) {
+            subagentTranscripts.set(activity.threadId, opts?.loadSubagent?.(activity.threadId) ?? null);
+          }
+          const transcript = subagentTranscripts.get(activity.threadId) ?? null;
+          pendingEvents.push(activity.done
+            ? subagentToolResult(activity, transcript)
+            : subagentToolUse(activity, transcript));
         }
       } else if (p.type === "thread_rolled_back") {
         // codex doesn't truncate the rollout file on rollback/fork — it appends this
@@ -190,7 +197,8 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
         if (item.type !== "message") continue;
         const role = item.role === "assistant" ? "assistant" : item.role === "user" ? "user" : null;
         if (!role) continue;
-        const content = contentToText(item.content);
+        const rawContent = contentToText(item.content);
+        const content = role === "user" ? stripSharedContext(rawContent) : rawContent;
         if (content) messages.push({ id: `rollout-${i++}`, role, content, timestamp: ts });
       }
     }
@@ -199,21 +207,10 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
   return messages;
 }
 
-/** Read the session_meta header (first record) from a rollout file. */
-function readSessionMeta(file: string): { id?: string; cwd?: string; timestamp?: string } | null {
+/** Read a rollout file's header (session_meta, plus its title when asked). */
+function readSessionMeta(file: string, opts?: { withTitle?: boolean }): RolloutHeader | null {
   try {
-    const text = readFileSync(file, "utf-8");
-    for (const line of completeLines(text)) {
-      const rec = parseLine(line);
-      if (rec?.type === "session_meta") {
-        const p = rec.payload ?? {};
-        return {
-          id: typeof p.id === "string" ? p.id : undefined,
-          cwd: typeof p.cwd === "string" ? p.cwd : undefined,
-          timestamp: typeof p.timestamp === "string" ? p.timestamp : rec.timestamp,
-        };
-      }
-    }
+    return readRolloutHeader(readFileSync(file, "utf-8"), opts);
   } catch { /* unreadable file → excluded (fail-closed) */ }
   return null;
 }
@@ -241,6 +238,12 @@ function threadIdFromName(file: string): string | null {
  * is included ONLY when its session_meta cwd resolves and matches `requestedCwd`
  * (normalized; case-insensitive on win32). Unattributable rollouts are excluded
  * — `~/.codex/sessions` holds every project's transcripts.
+ *
+ * A spawned subagent's rollout is excluded too. It carries the same cwd as the
+ * conversation that spawned it, so cwd alone let one subagent per spawn into the
+ * session list — each opening with no prompt and no ending, because a subagent's
+ * task never appears in its own transcript. Its work shows in the parent, on the
+ * Agent card for that spawn.
  */
 export function listCodexRollouts(
   sessionsDir: string,
@@ -253,9 +256,10 @@ export function listCodexRollouts(
   const sessions: SessionInfo[] = [];
 
   for (const file of files) {
-    const meta = readSessionMeta(file);
+    const meta = readSessionMeta(file, { withTitle: true });
     if (!meta?.cwd) continue;            // fail-closed: no cwd → exclude
     if (normPath(meta.cwd) !== target) continue;
+    if (meta.parentThreadId) continue;   // one step of another session, not a session
 
     const id = meta.id ?? threadIdFromName(file);
     if (!id) continue;
@@ -266,7 +270,7 @@ export function listCodexRollouts(
     sessions.push({
       id,
       providerId,
-      title: "Codex session",
+      title: meta.title ?? "Codex session",
       createdAt: meta.timestamp ?? new Date().toISOString(),
       updatedAt,
     });
@@ -287,18 +291,87 @@ export function listCodexRollouts(
  */
 export function findRolloutByThreadId(sessionsDir: string, threadId: string, requestedCwd?: string): string | null {
   const target = requestedCwd != null ? normPath(requestedCwd) : null;
-  for (const file of findRolloutFiles(sessionsDir)) {
-    if (threadIdFromName(file) !== threadId) {
-      const meta = readSessionMeta(file);
-      if (meta?.id !== threadId) continue;
-    }
-    if (target != null) {
-      const meta = readSessionMeta(file);
-      if (!meta?.cwd || normPath(meta.cwd) !== target) continue; // fail-closed
-    }
+  const files = findRolloutFiles(sessionsDir);
+  // The filename carries the thread id, so try those first and read nothing for
+  // the rest unless the name match is rejected. Reading a transcript to identify
+  // it costs megabytes, and resolving one is now per spawned subagent too.
+  const named = (f: string) => threadIdFromName(f) === threadId;
+  for (const file of [...files.filter(named), ...files.filter((f) => !named(f))]) {
+    const byName = named(file);
+    const meta = byName && target == null ? null : readSessionMeta(file);
+    if (!byName && meta?.id !== threadId) continue;
+    if (target != null && (!meta?.cwd || normPath(meta.cwd) !== target)) continue; // fail-closed
     return file;
   }
   return null;
+}
+
+/**
+ * Why a thread stopped, when it produced no message of its own.
+ *
+ * A subagent that dies on startup (a model its account cannot use, a transport
+ * failure) writes a transcript with nothing in it but the error, so without this
+ * its card in the parent is blank and says nothing about what went wrong.
+ */
+function terminalError(text: string): string {
+  for (const line of completeLines(text).reverse()) {
+    const rec = parseLine(line);
+    if (rec?.type !== "event_msg") continue;
+    const p = rec.payload ?? {};
+    if (p.type !== "task_complete" && p.type !== "error") continue;
+    const err = p.error;
+    const message = typeof err === "string" ? err
+      : (err && typeof err === "object" ? (err as Record<string, unknown>).message : undefined);
+    if (typeof message === "string" && message) return unwrapErrorJson(message);
+  }
+  return "";
+}
+
+/** Codex nests the upstream API error verbatim, as JSON, inside its own message. */
+function unwrapErrorJson(message: string): string {
+  if (!message.startsWith("{")) return message;
+  try {
+    const inner = (JSON.parse(message) as { error?: { message?: unknown } }).error?.message;
+    return typeof inner === "string" && inner ? inner : message;
+  } catch { return message; }
+}
+
+/** How deep a chain of spawned agents is followed into the parent's transcript. */
+const SUBAGENT_DEPTH = 2;
+
+/**
+ * Reader for a spawned thread's transcript, bound to the same sessions dir and
+ * the same fail-closed cwd guard as the conversation that spawned it.
+ *
+ * `seen` covers both the cycle a malformed pair of rollouts could describe and
+ * the same agent being named by its start and its completion.
+ */
+function subagentLoader(
+  sessionsDir: string,
+  requestedCwd: string | undefined,
+  seen: Set<string>,
+  depth: number,
+): (threadId: string) => SubagentTranscript | null {
+  return (threadId) => {
+    if (depth <= 0 || seen.has(threadId)) return null;
+    seen.add(threadId);
+    const file = findRolloutByThreadId(sessionsDir, threadId, requestedCwd);
+    if (!file) return null;
+    try {
+      const text = readFileSync(file, "utf-8");
+      const msgs = parseRolloutJsonl(text, {
+        loadSubagent: subagentLoader(sessionsDir, requestedCwd, seen, depth - 1),
+      });
+      const finalText = finalAssistantText(msgs) || terminalError(text);
+      const events = transcriptToEvents(msgs);
+      // An agent that died before saying anything is answered by its own error
+      // record, and the parent may never have written a completion for it — so
+      // the reason goes inside the card rather than waiting for a result event
+      // that is not coming.
+      if (events.length === 0 && finalText) events.push({ type: "text", content: finalText });
+      return { events, finalText };
+    } catch { return null; }
+  };
 }
 
 /** The compaction summary text if this rollout was compacted, else null. */
@@ -324,7 +397,9 @@ export function getRolloutMessages(sessionsDir: string, threadId: string, reques
   if (!file) return [];
   try {
     const text = readFileSync(file, "utf-8");
-    const msgs = parseRolloutJsonl(text);
+    const msgs = parseRolloutJsonl(text, {
+      loadSubagent: subagentLoader(sessionsDir, requestedCwd, new Set([threadId]), SUBAGENT_DEPTH),
+    });
     const summary = compactionSummary(text);
     if (summary !== null) {
       msgs.unshift({
@@ -338,10 +413,12 @@ export function getRolloutMessages(sessionsDir: string, threadId: string, reques
   } catch { return []; }
 }
 
-/** True when a path points at a codex rollout under ~/.codex/sessions. */
+/** True when a path points at a codex rollout in the ambient or a PPM account home. */
 export function isCodexRolloutPath(p: string): boolean {
   const n = normPath(p);
-  return n.endsWith(".jsonl") && n.includes(normPath(join(homedir(), ".codex", "sessions")));
+  const ambient = normPath(join(homedir(), ".codex", "sessions"));
+  const managed = normPath(join(homedir(), ".ppm", "codex-accounts"));
+  return n.endsWith(".jsonl") && (n.includes(ambient) || (n.includes(managed) && n.includes("/sessions/")));
 }
 
 /**

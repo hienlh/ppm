@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { openTestDb, setDb } from "../../../src/services/db.service.ts";
+import { openTestDb, setDb, getConfigValue } from "../../../src/services/db.service.ts";
 import { settingsRoutes } from "../../../src/server/routes/settings.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
@@ -12,6 +12,7 @@ function createApp() {
 /** Set config to known defaults — uses in-memory DB to avoid corrupting prod */
 function resetConfig() {
   setDb(openTestDb());
+  configService.load();
   (configService as any).config.ai = structuredClone(DEFAULT_CONFIG.ai);
 }
 
@@ -24,6 +25,7 @@ describe("GET /settings/ai", () => {
     const json = await res.json();
     expect(json.ok).toBe(true);
     expect(json.data.default_provider).toBe("claude");
+    expect(json.data.share_provider_context).toBe(true);
     expect(json.data.providers.claude.type).toBe("agent-sdk");
     expect(json.data.providers.claude.model).toBe("claude-opus-5");
     expect(json.data.providers.claude.effort).toBe("high");
@@ -35,6 +37,74 @@ describe("GET /settings/ai", () => {
 
 describe("PUT /settings/ai", () => {
   beforeEach(resetConfig);
+
+  it("persists Codex token limits and resets overrides with null", async () => {
+    const app = createApp();
+    const put = (codex: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providers: { codex } }),
+    });
+    expect((await put({ type: "cli", cli_command: "codex", model_context_window: 872000,
+      model_auto_compact_token_limit: 800000 })).status).toBe(200);
+    expect(configService.load().ai.providers.codex!.model_context_window).toBe(872000);
+    expect((await put({ model_context_window: null, model_auto_compact_token_limit: null })).status).toBe(200);
+    const saved = JSON.parse(getConfigValue("ai")!).providers.codex;
+    expect(saved).not.toHaveProperty("model_context_window");
+    expect(saved).not.toHaveProperty("model_auto_compact_token_limit");
+    expect(saved.cli_command).toBe("codex");
+  });
+
+  it("rejects malformed and inconsistent token limits atomically, including partial updates", async () => {
+    const app = createApp();
+    const put = (codex: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providers: { codex } }),
+    });
+    const initialConfig = getConfigValue("ai");
+    for (const key of ["model_context_window", "model_auto_compact_token_limit"]) {
+      for (const value of [0, -1, 2.5, "800000", true, {}, Number.MAX_SAFE_INTEGER + 1]) {
+        expect((await put({ [key]: value })).status).toBe(400);
+        expect(getConfigValue("ai")).toBe(initialConfig);
+      }
+    }
+    expect((await put({ type: "cli", cli_command: "codex", model_context_window: 872000,
+      model_auto_compact_token_limit: 800000 })).status).toBe(200);
+    const before = getConfigValue("ai");
+    expect((await put({ model_context_window: 700000 })).status).toBe(400);
+    expect((await put({ model_auto_compact_token_limit: 900000 })).status).toBe(400);
+    expect(getConfigValue("ai")).toBe(before);
+    expect(configService.get("ai").providers.codex!.model_context_window).toBe(872000);
+  });
+
+  it("persists sharing off and on without modifying provider settings", async () => {
+    const app = createApp();
+    const providers = structuredClone(configService.get("ai").providers);
+    for (const enabled of [false, true]) {
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ share_provider_context: enabled }),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.share_provider_context).toBe(enabled);
+      expect(JSON.parse(getConfigValue("ai")!).share_provider_context).toBe(enabled);
+      expect(configService.load().ai.share_provider_context).toBe(enabled);
+      expect(configService.get("ai").providers).toEqual(providers);
+    }
+  });
+
+  it("rejects invalid sharing values without changing stored settings", async () => {
+    const app = createApp();
+    for (const value of ["false", 0, null, {}]) {
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ share_provider_context: value }),
+      });
+      expect(res.status).toBe(400);
+      expect(configService.get("ai").share_provider_context).toBe(true);
+    }
+  });
 
   it("updates provider config and returns merged result", async () => {
     const app = createApp();

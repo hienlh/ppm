@@ -1,13 +1,4 @@
-/**
- * Add a Codex account: sign in with ChatGPT, or paste an API key.
- *
- * Presentational only — every piece of state and each handler stays in the pane. The
- * device-code login owns a server-side app-server that has to be released if the user walks
- * away, and the pane's unmount effect is what does that; moving the flow's state in here
- * would tie that release to closing a dialog instead.
- *
- * Mirrors the Claude add dialog: recommended sign-in first, divider, manual key below.
- */
+/** Add a Codex account through browser login, device code, or an API key. */
 
 import { ExternalLink, KeyRound, Loader2, MonitorSmartphone } from "@/lib/icons";
 import {
@@ -25,6 +16,7 @@ export interface CodexDevicePrompt {
 export function CodexAddAccountDialog({
   open, onOpenChange, label, onLabelChange, apiKey, onApiKeyChange,
   adding, onAddApiKey, deviceWaiting, onStartDevice, device, error,
+  browser, onStartBrowser, loginStarting, callbackUrl, onCallbackUrlChange, submittingCallback, onSubmitCallback,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -38,29 +30,66 @@ export function CodexAddAccountDialog({
   onStartDevice: () => void;
   device: CodexDevicePrompt | null;
   error: string | null;
+  browser: { authUrl: string } | null;
+  onStartBrowser: () => void;
+  loginStarting: boolean;
+  callbackUrl: string;
+  onCallbackUrlChange: (value: string) => void;
+  submittingCallback: boolean;
+  onSubmitCallback: () => void;
 }) {
+  const loginBusy = loginStarting || deviceWaiting || !!browser || adding;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-sm">Add Codex Account</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
-            Each account keeps its own login (its own <code>CODEX_HOME</code>).
+            Choose browser login, a device code, or an OpenAI API key.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="codex-label" className="text-xs">Label (optional)</Label>
+            <Input id="codex-label" placeholder="e.g. Personal, Work" value={label}
+              onChange={(e) => onLabelChange(e.target.value)} disabled={loginBusy} className="text-xs" />
+          </div>
           <div className="rounded-md border p-3 space-y-2">
-            <p className="text-[11px] font-medium">Recommended: sign in with ChatGPT</p>
+            <p className="text-[11px] font-medium">Browser login</p>
+            <Button size="sm" className="w-full cursor-pointer gap-1.5" onClick={onStartBrowser} disabled={loginBusy}>
+              <ExternalLink className="size-4" /> Sign in with browser
+            </Button>
+            {browser && (
+              <div className="space-y-2 text-xs">
+                <a href={browser.authUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                  <ExternalLink className="size-3" /> Open ChatGPT sign-in
+                </a>
+                <p>Sign in, then copy the full localhost callback URL from the address bar and paste it below. On a phone, copy it even if the page fails to load.</p>
+                <Label htmlFor="codex-callback-url">Callback URL</Label>
+                <Input id="codex-callback-url" type="password" autoComplete="off" spellCheck={false}
+                  placeholder="http://localhost:.../auth/callback?..." value={callbackUrl}
+                  onChange={(e) => onCallbackUrlChange(e.target.value)} disabled={submittingCallback} />
+                <Button size="sm" onClick={onSubmitCallback} disabled={!callbackUrl.trim() || submittingCallback}>
+                  {submittingCallback && <Loader2 className="size-3 animate-spin" />} Submit callback URL
+                </Button>
+                <p role="status" className="flex items-center gap-1.5 text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" /> Waiting for authorization. This may complete automatically on this computer.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-[11px] font-medium">Device code</p>
             <Button
               size="sm"
               className="w-full cursor-pointer gap-1.5"
               onClick={onStartDevice}
-              disabled={deviceWaiting}
+              disabled={loginBusy}
             >
               {deviceWaiting
                 ? <><Loader2 className="size-4 animate-spin" /> Waiting for authorization...</>
-                : <><MonitorSmartphone className="size-4" /> Sign in with ChatGPT</>}
+                : <><MonitorSmartphone className="size-4" /> Sign in with device code</>}
             </Button>
 
             {device && (
@@ -96,19 +125,10 @@ export function CodexAddAccountDialog({
               className="text-xs font-mono"
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="codex-label" className="text-xs">Label (optional)</Label>
-            <Input
-              id="codex-label"
-              placeholder="e.g. Personal, Work"
-              value={label}
-              onChange={(e) => onLabelChange(e.target.value)}
-              className="text-xs"
-            />
-          </div>
         </div>
 
-        {error && <div className="text-[11px] p-2 rounded bg-error/10 text-error">{error}</div>}
+        {loginStarting && <p role="status" className="text-xs">Starting login...</p>}
+        {error && <div role="alert" className="text-[11px] p-2 rounded bg-error/10 text-error">{error}</div>}
 
         <DialogFooter>
           <Button size="sm" variant="outline" className="text-xs cursor-pointer" onClick={() => onOpenChange(false)}>
@@ -118,7 +138,7 @@ export function CodexAddAccountDialog({
             size="sm"
             className="text-xs cursor-pointer gap-1.5"
             onClick={onAddApiKey}
-            disabled={!apiKey.trim() || adding}
+            disabled={!apiKey.trim() || loginBusy}
           >
             {adding ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
             Add key
