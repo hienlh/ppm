@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
+import { stripSharedContext } from "../shared/provider-context.ts";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const TEAMMATE_MSG_RE = /<teammate-message[^>]*>[\s\S]*?<\/teammate-message>/g;
@@ -117,7 +118,7 @@ export function parseSessionMessage(
   return {
     id: msg.uuid,
     role,
-    content: textContent,
+    content: role === "user" ? stripSharedContext(textContent) : textContent,
     events: events.length > 0 ? events : undefined,
     timestamp: msg.timestamp ?? new Date().toISOString(),
     sdkUuid: msg.uuid,

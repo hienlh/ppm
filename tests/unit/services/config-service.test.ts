@@ -25,6 +25,17 @@ describe("ConfigService (SQLite-backed)", () => {
   });
 
   describe("load()", () => {
+    it("migrates legacy AI settings to sharing enabled and preserves an explicit opt-out", () => {
+      const config = configService.load();
+      delete config.ai.share_provider_context;
+      setConfigValue("ai", JSON.stringify(config.ai));
+      expect(configService.load().ai.share_provider_context).toBe(true);
+      expect(JSON.parse(getConfigValue("ai")!).share_provider_context).toBe(true);
+
+      configService.set("ai", { ...configService.get("ai"), share_provider_context: false });
+      expect(configService.load().ai.share_provider_context).toBe(false);
+    });
+
     it("creates default config in empty DB", () => {
       const config = configService.load();
       expect(config.port).toBe(8080);

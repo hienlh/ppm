@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import { defaultUrlTransform } from "react-markdown";
 
 /** Common text file extensions that PPM can open as editor tabs */
 const FILE_EXTS = "ts|tsx|js|jsx|mjs|cjs|py|json|md|mdx|yaml|yml|toml|css|scss|less|html|htm|sh|bash|zsh|go|rs|sql|rb|java|kt|swift|c|cpp|h|hpp|cs|vue|svelte|txt|env|cfg|conf|ini|xml|csv|log|dockerfile|makefile|gradle|output";
@@ -7,6 +8,11 @@ export const FILE_EXT_RE = new RegExp(`\\.(${FILE_EXTS})$`, "i");
 export const GLOB_CHARS_RE = /[*?{}\[\]]/;
 /** Detect local absolute file paths (Unix or Windows) */
 export const LOCAL_PATH_RE = /^(\/|[A-Za-z]:[/\\])/;
+
+/** Keep Windows absolute file links intact; defer all other URL safety filtering to react-markdown. */
+export function markdownUrlTransform(url: string): string {
+  return LOCAL_PATH_RE.test(url) ? url : defaultUrlTransform(url);
+}
 
 export interface MdContextValue {
   projectName?: string;

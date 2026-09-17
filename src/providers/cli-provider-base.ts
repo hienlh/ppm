@@ -9,6 +9,7 @@ import type {
 import { spawn, type ChildProcess } from "node:child_process";
 import { parseNdjsonLines } from "../utils/ndjson-line-parser.ts";
 import { configService } from "../services/config.service.ts";
+import { withSharedContext } from "../shared/provider-context.ts";
 
 /**
  * Abstract base class for CLI-spawning AI providers.
@@ -16,6 +17,7 @@ import { configService } from "../services/config.service.ts";
  * Subclasses only implement event mapping + arg building.
  */
 export abstract class CliProvider implements AIProvider {
+  readonly supportsSharedContext = true;
   abstract readonly id: string;
   abstract readonly name: string;
   abstract readonly cliCommand: string;
@@ -118,7 +120,7 @@ export abstract class CliProvider implements AIProvider {
     const config = this.getProviderConfig();
     const args = this.buildArgs({
       sessionId: isResume ? sessionId : undefined,
-      message,
+      message: withSharedContext(message, opts?.sharedContext),
       model: config?.model,
       permissionMode: opts?.permissionMode || config?.permission_mode,
       isResume,

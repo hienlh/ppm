@@ -811,9 +811,13 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             tabId={tabId}
             className="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none px-2 gap-0.5"
           />
-          {lspServable && (
+          {/* `lspWanted`, not `lspServable` alone: on a touch-only device no server
+              runs whatever the setting says, so a chip there offers a switch that
+              changes nothing — and turning it on hides the chip itself, leaving no
+              way back to it. */}
+          {lspServable && !isTouchOnly && (
             <LspStatus
-              enabled={lspEnabled}
+              enabled={lspWanted}
               onToggle={setLspEnabled}
               status={lsp.status}
               diagnostics={lsp.diagnostics}

@@ -2,6 +2,7 @@ import type { ChatEvent } from "../provider.interface.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { diffToOldNew, changeToToolUse } from "./codex-patch.ts";
+import { parseSubagentActivity, subagentToolResult, subagentToolUse } from "./codex-subagent-thread.ts";
 
 /** ThreadItem variants that are NOT tool calls (text/metadata). Everything else
  * is treated as a tool so nothing is ever silently hidden — known types get a
@@ -26,6 +27,30 @@ type Item = Record<string, unknown> & { type?: string; id?: string };
 
 function asObj(v: unknown): Record<string, unknown> {
   return (v && typeof v === "object") ? (v as Record<string, unknown>) : {};
+}
+
+function text(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** Keep web-search cards readable: Codex returns structured results, not terminal output. */
+function webSearchOutput(item: Item): string {
+  const error = text(item.error);
+  if (error) return error;
+  const results = Array.isArray(item.results) ? item.results : [];
+  if (results.length === 0) return "Search completed with no results.";
+  const lines = results.slice(0, 8).flatMap((value, index) => {
+    const result = asObj(value);
+    const url = text(result.url) || text(result.href) || text(result.link);
+    const title = text(result.title) || text(result.name) || text(result.domain) || url || `Result ${index + 1}`;
+    const snippet = text(result.snippet) || text(result.description) || text(result.text);
+    return [
+      `${index + 1}. ${title}`,
+      ...(url ? [`   ${url}`] : []),
+      ...(snippet ? [`   ${snippet}`] : []),
+    ];
+  });
+  return [`Found ${results.length} result${results.length === 1 ? "" : "s"}.`, ...lines].join("\n");
 }
 
 /**
@@ -125,11 +150,13 @@ export function itemToToolResult(item: Item): ChatEvent {
   const type = item.type;
   let output = "";
   let isError = false;
+  let exitCode: number | undefined;
 
   if (type === "commandExecution") {
     output = redactTruncate(item.aggregatedOutput ?? "");
     const exit = item.exitCode;
-    isError = typeof exit === "number" && exit !== 0;
+    exitCode = typeof exit === "number" ? exit : undefined;
+    isError = exitCode != null && exitCode !== 0;
   } else if (type === "mcpToolCall") {
     output = redactTruncate(item.result ?? item.error ?? "");
     isError = item.error != null;
@@ -148,11 +175,14 @@ export function itemToToolResult(item: Item): ChatEvent {
     const failure = item.failure;
     isError = failure != null;
     output = isError ? redactTruncate(failure) : String(item.savedPath ?? "generated");
+  } else if (type === "webSearch") {
+    output = redactTruncate(webSearchOutput(item));
+    isError = item.error != null;
   } else {
     output = redactTruncate(item);
   }
 
-  return { type: "tool_result", output, isError, toolUseId: item.id };
+  return { type: "tool_result", output, isError, ...(exitCode != null ? { exitCode } : {}), toolUseId: item.id };
 }
 
 /**
@@ -167,11 +197,20 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
       return typeof p.delta === "string" ? [{ type: "text", content: p.delta }] : [];
 
     case "item/reasoning/textDelta":
+    // `summary` is what turn/start requests for PPM's Thinking switch. Recent
+    // app-server builds stream it under this method, while older builds used
+    // textDelta directly. Both are safe, user-visible reasoning summaries.
+    case "item/reasoning/summaryTextDelta":
       return typeof p.delta === "string" ? [{ type: "thinking", content: p.delta }] : [];
 
     case "item/started": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compacting" }];
+      // A spawned agent is a card, not a tool: its start and its completion are
+      // two records naming one thread, and the generic mapping rendered each as
+      // a card of its own with the raw item as its body.
+      const subagent = parseSubagentActivity(item);
+      if (subagent) return [subagentToolUse(subagent)];
       if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) return [itemToToolUse(item)];
       return [];
     }
@@ -183,6 +222,11 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/completed": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compact_done" }];
+      const subagent = parseSubagentActivity(item);
+      // Answers the card opened at `started` — keyed on the thread, because the
+      // two records carry different item ids. The agent's own report is not on
+      // this record; the card picks it up when the transcript is read back.
+      if (subagent) return [subagent.done ? subagentToolResult(subagent) : subagentToolUse(subagent)];
       if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) {
         // Image generation is announced before the picture exists: at `started`
         // there is no saved file and no revised prompt, so the call it produced
@@ -191,7 +235,7 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
         // Other tools describe themselves fully at `started`; re-sending those
         // would only cost a second event in the buffer, the log and every
         // client's socket.
-        if (item.type === "imageGeneration") return [itemToToolUse(item), itemToToolResult(item)];
+        if (item.type === "imageGeneration" || item.type === "webSearch") return [itemToToolUse(item), itemToToolResult(item)];
         return [itemToToolResult(item)];
       }
       return [];

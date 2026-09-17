@@ -62,7 +62,7 @@ export type ChatWsServerMessage =
   | { type: "text"; content: string; parentToolUseId?: string }
   | { type: "thinking"; content: string; parentToolUseId?: string }
   | { type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string }
-  | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
+  | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string }
   | { type: "bash_output"; toolUseId: string; content: string; lineCount: number }
   | { type: "background_registry"; sessionId: string; shells: BackgroundShell[] }
   | { type: "subagent_status"; toolUseId: string; status: import("../shared/background-agent-status").BackgroundAgentStatus }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
-import { openTestDb, setDb, closeDb } from "../../../src/services/db.service.ts";
+import { openTestDb, setDb, closeDb, updateAccount } from "../../../src/services/db.service.ts";
 import { setKeyPath } from "../../../src/lib/account-crypto.ts";
 import { accountService } from "../../../src/services/account.service.ts";
 
@@ -423,5 +423,134 @@ describe("AccountService.refreshAccessToken", () => {
 
     await expect(accountService.refreshAccessToken(acc.id, false, false, 3600)).rejects.toThrow("invalid_grant");
     expect(calls).toBe(1);
+  });
+});
+
+describe("AccountService grant lifetime", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function mockOnce(body: Record<string, unknown>, status = 200) {
+    let calls = 0;
+    globalThis.fetch = mock(() => {
+      calls++;
+      return Promise.resolve(new Response(JSON.stringify(body), { status }));
+    }) as any;
+    return () => calls;
+  }
+
+  function oauthAccount(email: string, expiresInS: number) {
+    return accountService.add({
+      email,
+      accessToken: "sk-ant-oat-access",
+      refreshToken: "refresh-token",
+      expiresAt: Math.floor(Date.now() / 1000) + expiresInS,
+    });
+  }
+
+  it("signing in again moves the grant date forward on an existing row", () => {
+    // The bug this exists for: re-authenticating an account reaches add() → findDuplicate →
+    // updateTokens, which never touched created_at. The row therefore kept claiming it was
+    // created months ago while its sign-in was minutes old, leaving nothing to date the
+    // 28-day expiry from.
+    const acc = accountService.add({
+      email: "regrant@test.com",
+      accessToken: "a",
+      refreshToken: "r",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+    const stale = Math.floor(Date.now() / 1000) - 20 * 86400;
+    updateAccount(acc.id, { granted_at: stale });
+
+    const again = accountService.add({
+      email: "regrant@test.com",
+      accessToken: "a2",
+      refreshToken: "r2",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+
+    expect(again.id).toBe(acc.id);
+    expect(again.grantedAt!).toBeGreaterThan(stale);
+    expect(again.createdAt).toBe(acc.createdAt);
+  });
+
+  it("grantExpiresAt() prefers the server's figure over the 28-day fallback", () => {
+    const acc = oauthAccount("expiry@test.com", 3600);
+    const fallback = accountService.grantExpiresAt(accountService.list()[0])!;
+    expect(fallback).toBe(acc.grantedAt! + 28 * 86400);
+
+    const reported = Math.floor(Date.now() / 1000) + 12345;
+    updateAccount(acc.id, { refresh_expires_at: reported });
+    expect(accountService.grantExpiresAt(accountService.list()[0])).toBe(reported);
+  });
+
+  it("grantExpiresAt() reports unknown rather than inventing a date for a legacy row", () => {
+    const acc = oauthAccount("legacy@test.com", 3600);
+    updateAccount(acc.id, { granted_at: null, refresh_expires_at: null });
+    expect(accountService.grantExpiresAt(accountService.list()[0])).toBeNull();
+  });
+
+  it("stores the refresh-token expiry when the token endpoint reports one", async () => {
+    const acc = oauthAccount("reported@test.com", -100);
+    mockOnce({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 28800,
+      refresh_token_expires_in: 2419200,
+    });
+
+    await accountService.refreshAccessToken(acc.id, false);
+
+    const after = accountService.list()[0];
+    expect(after.refreshExpiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000) + 2419000);
+    expect(accountService.grantExpiresAt(after)).toBe(after.refreshExpiresAt);
+  });
+
+  it("marks an account for re-auth when the server rejects its refresh token, and clears it on success", async () => {
+    const acc = oauthAccount("dead@test.com", -100);
+    mockOnce({ error: "invalid_grant", error_description: "Refresh token expired" }, 400);
+
+    await expect(accountService.refreshAccessToken(acc.id, false)).rejects.toThrow();
+    expect(accountService.list()[0].reauthRequired).toBe(true);
+
+    mockOnce({ access_token: "revived", refresh_token: "r2", expires_in: 28800 });
+    await accountService.refreshAccessToken(acc.id, false, true);
+    expect(accountService.list()[0].reauthRequired).toBe(false);
+  });
+
+  it("stops retrying a rejected grant on the poller path but still retries on a user gesture", async () => {
+    const acc = oauthAccount("rejected@test.com", 60);
+    const rejectCalls = mockOnce({ error: "invalid_grant" }, 400);
+    await expect(accountService.refreshAccessToken(acc.id, false)).rejects.toThrow();
+    expect(rejectCalls()).toBeGreaterThan(0);
+
+    // Background/poller call: no network at all, and the caller is told it was a rejection
+    // rather than a transient failure.
+    const silent = mockOnce({ error: "invalid_grant" }, 400);
+    const auto = await accountService.ensureFreshTokenChecked(acc.id);
+    expect(silent()).toBe(0);
+    expect(auto.account).toBeNull();
+    expect(auto.rejected).toBe(true);
+
+    // Deliberate gesture (enable / test token) re-tests it against the server.
+    const gesture = mockOnce({ access_token: "ok-now", refresh_token: "r", expires_in: 28800 });
+    const retried = await accountService.ensureFreshTokenChecked(acc.id, { retryRejected: true });
+    expect(gesture()).toBe(1);
+    expect(retried.account?.accessToken).toBe("ok-now");
+  });
+
+  it("refreshes only inside the 5-minute point-of-use buffer", async () => {
+    const outside = oauthAccount("outside@test.com", 900);
+    const untouched = mockOnce({ access_token: "x", refresh_token: "y", expires_in: 28800 });
+    await accountService.ensureFreshTokenChecked(outside.id);
+    expect(untouched()).toBe(0);
+
+    accountService.remove(outside.id);
+    const inside = oauthAccount("inside@test.com", 120);
+    const used = mockOnce({ access_token: "refreshed", refresh_token: "y", expires_in: 28800 });
+    await accountService.ensureFreshTokenChecked(inside.id);
+    expect(used()).toBe(1);
   });
 });

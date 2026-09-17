@@ -1180,7 +1180,7 @@ function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput
     if (g.kind === "tool" && !g.result && g.tool.type === "tool_use") {
       const embedded = (g.tool as any).result;
       if (embedded) {
-        g.result = { type: "tool_result", output: embedded.output, isError: embedded.isError } as ChatEvent;
+        g.result = { type: "tool_result", output: embedded.output, isError: embedded.isError, exitCode: embedded.exitCode } as ChatEvent;
       }
     }
   }

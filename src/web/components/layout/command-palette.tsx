@@ -29,6 +29,7 @@ import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useIsTouchOnly } from "@/hooks/use-is-touch-only";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useExtensionStore } from "@/stores/extension-store";
@@ -147,6 +148,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const getBinding = useKeybindingsStore((s) => s.getBinding);
   const extContributions = useExtensionStore((s) => s.contributions);
   const isMobile = useIsMobile();
+  const isTouchOnly = useIsTouchOnly();
   const lspEnabled = useSettingsStore((s) => s.lspEnabled);
 
   // Fetch filesystem files when path query changes directory
@@ -246,7 +248,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
           onClose();
         },
       },
-      ...(isMobile ? [] : [{
+      // `isTouchOnly`, not `isMobile`: the editor gates the server on the device
+      // rather than on the viewport, so a wide touch-only tablet was offered this
+      // entry while the setting it toggles did nothing there. The two have to ask
+      // the same question or the palette advertises a switch with no effect.
+      ...(isTouchOnly ? [] : [{
         id: "language-server",
         label: lspEnabled ? "Turn Off Language Server" : "Turn On Language Server",
         icon: Zap,
@@ -301,7 +307,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     });
 
     return [...builtIn, ...extCmds];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, lspEnabled]);
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled]);
 
   // File commands — from index when ready, fallback to flattened tree
   const fileCommands = useMemo<CommandItem[]>(() => {

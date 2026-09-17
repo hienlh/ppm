@@ -282,8 +282,10 @@ describe("failure and cleanup", () => {
     expect(() => process.kill(pid, 0)).toThrow();
     // One budget for the whole handshake, not one per step: waiting the full grace for
     // `shutdown` and then again for the exit holds up PPM's own shutdown for twice as long,
-    // per hung server, in `disposeAll()`.
-    expect(elapsed).toBeLessThan(SHUTDOWN_GRACE_MS + 1_200);
+    // per hung server, in `disposeAll()`. The slack is generous on purpose — the failure this
+    // guards against costs a whole extra budget (6s, not 4.3s), so a tighter bound only buys
+    // the chance of going red on a loaded machine, which is what it did.
+    expect(elapsed).toBeLessThan(SHUTDOWN_GRACE_MS + 2_000);
   });
 
   it("calls a server that quits on shutdown stopped, not crashed", async () => {

@@ -183,9 +183,15 @@ export function NamedTunnelSetupContent({ step, t }: Props) {
               <p className="mt-1 text-sm text-text-secondary leading-relaxed">{step.message}</p>
             </div>
           </div>
-          <div className="flex gap-2">
+          {/* Retry reuses the existing cert, so it can only ever fix a transient
+              failure. When the credential itself is the problem — a cert whose
+              zone no longer resolves still verifies as a live token, so the
+              shortcut keeps reporting "already logged in" — retrying loops on
+              the same error forever, and a fresh sign-in is the only way out. */}
+          <div className="flex flex-wrap gap-2">
             <button type="button" onClick={t.close} className={secondaryBtn}>{c.close}</button>
-            <button type="button" onClick={t.retryLogin} className={primaryBtn}>{c.retry}</button>
+            <button type="button" onClick={t.retryLogin} className={secondaryBtn}>{c.retry}</button>
+            <button type="button" onClick={t.requestRelogin} className={primaryBtn}>{c.relogin}</button>
           </div>
         </div>
       );

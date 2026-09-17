@@ -40,6 +40,12 @@ export interface AccountInfo {
   profileData: OAuthProfileData | null;
   createdAt: number;
   hasRefreshToken: boolean;
+  /** When the current sign-in was made. Null for accounts added before PPM recorded it. */
+  grantedAt: number | null;
+  /** The OAuth server rejected this account's refresh token; only signing in again fixes it. */
+  reauthRequired: boolean;
+  /** When the sign-in stops working, server-reported where available. Null when unknown. */
+  grantExpiresAt: number | null;
 }
 
 export interface VerifyResult {
@@ -64,6 +70,24 @@ export function getAccounts(): Promise<AccountInfo[]> {
 
 export function getActiveAccount(): Promise<AccountInfo | null> {
   return api.get<AccountInfo | null>("/api/accounts/active");
+}
+
+/** An account claimed for a chat tab — the one its first message will run on. */
+export interface PickedAccount {
+  id: string;
+  label: string | null;
+}
+
+/**
+ * Claim the account a new chat tab will use.
+ *
+ * Consumes a pick rather than previewing one, so call it once per tab and keep the answer.
+ * Null means nothing is usable right now (Claude) or no managed account exists (Codex, which
+ * then runs on the ambient ~/.codex login).
+ */
+export function pickAccountForTab(providerId: string): Promise<PickedAccount | null> {
+  const path = providerId === "codex" ? "/api/codex-accounts/pick" : "/api/accounts/pick";
+  return api.post<PickedAccount | null>(path);
 }
 
 export function addAccount(params: { apiKey: string; label?: string }): Promise<AccountInfo> {
@@ -181,11 +205,14 @@ export interface AIProviderSettings {
   system_prompt?: string;
   agent_teams?: boolean;
   context_1m?: boolean;
+  model_context_window?: number | null;
+  model_auto_compact_token_limit?: number | null;
   inherit_claude_mcp?: boolean;
 }
 
 export interface AISettings {
   default_provider: string;
+  share_provider_context?: boolean;
   providers: Record<string, AIProviderSettings>;
 }
 

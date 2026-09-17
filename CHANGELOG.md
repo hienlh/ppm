@@ -10,22 +10,11 @@
   - **A Problems panel**, in the dock under the editor and opened from the error and warning counts at the left of the status bar — where VS Code puts both. Every diagnostic across the files you have open, grouped by file and ordered by position, with the rule that produced it (`ts(2322)`) and a click to jump to the line. On a phone, where there is no status bar, it opens from the row that already appears above the editor when something is wrong. It lists the files that are open, because that is what a language server has told us about — a file never opened has never been checked, and the empty state says so rather than implying the project is clean.
   - **Semantic highlighting** — a name is coloured by what it *is* rather than by what it looks like, so a class, a type parameter, a parameter and a read-only local are told apart where Monaco's regular expressions see four identifiers. The server's own legend is read from its initialize result and the provider registered against it, because a token is an index into that table: decoding with the wrong one does not fail, it colours the file confidently and wrongly.
 
-- **Blame** (`@ppm/ext-git-graph` 0.3.0, `Mod+Shift+B`) — who last touched each line of a file, with an age heatmap down the gutter, an author card per commit, "blame before this commit" to walk back through the file's past, and a jump to that commit's diff. It is a panel of its own rather than annotations inside the editor: PPM's extension API exposes no editor, so an extension cannot draw in the gutter. Reachable from the command palette or by right-clicking a file in the graph's commit details.
-- **File history** — every commit that touched one file, following it through renames (`--follow`), or the history of just a line range (`-L`). Click a commit for its diff of that file, or blame the file as it stood at that commit.
-- **Compare refs** — pick two branches, tags or remotes and see the commits between them beside the files that differ, with ahead/behind counts. Defaults to comparing against the merge base ("since divergence"), which is what a review wants; a direct ref-to-ref diff is one dropdown away.
-- **Interactive rebase** — drag commits to reorder them, then reword, edit, squash, fixup or drop, and run it. Reachable from a commit's context menu ("Interactive rebase from here…"). Reword asks for the new message up front, in the panel: git's own `reword` opens an editor mid-rebase and blocks, which the extension API cannot answer, so the message is applied by an `exec git commit --amend` that reads it from the environment — nothing about the message can be re-read as a shell command.
-- **Inline blame in the code editor** — the line the cursor is on gets a dimmed "Ada, 3 days ago • fix the parser" after its text, the way GitLens does it. Toggle it from the editor toolbar or with `Alt+B`. The whole file is blamed once and indexed by line rather than re-run per keystroke; because that mapping goes stale the moment you type, the annotation hides itself until the file is saved rather than confidently naming the wrong commit.
 - **A GitLens-style hover on the inline blame annotation** — hovering the dimmed "Ada, 3 days ago • fix the parser" opens the whole commit: an initials avatar, both readings of the date ("9 months ago (December 2nd, 2025 4:17 PM)"), the full commit message rather than just its subject, and the diff of *that line* at that commit, coloured. Plus buttons to copy the hash and to open the file's history, its blame or the graph. On a phone, where there is no hover, a tap on the annotation opens the same thing.
   - The line's diff comes from one `git show --unified=0` per commit and line, fetched as the cursor moves rather than when the hover opens, because Monaco reads a hover's content synchronously — fetching lazily would put the answer behind a spinner, which is a mistake this editor has already made once.
   - Monaco ships no `diff` language, so a fenced diff block rendered as plain text: registering one is what makes removals red and additions green.
   - A commit message is not trusted input. Monaco strips `command:` links from untrusted markdown, so a hover needs trust for its own buttons to work — and blanket trust would let anyone who can land a commit put a working button in a hover. The trust is narrowed to this hover's own four commands, and the message is escaped besides.
 
-- **Stage, unstage and discard individual hunks and lines** — the Source Control panel's file rows gain a "Stage lines…" action that opens the file's diff with a checkbox per changed line. The patch is rebuilt server-side with the `@@` counts recomputed and unselected deletions demoted to context, so `git apply` accepts it; untracked files work too, through a throwaway index that leaves the real one alone. Each hunk is identified by a hash of its own content, so if the file changed since the hunks were listed the selection is refused instead of being resolved against a different diff. A file that is not UTF-8 — or a diff bigger than git hands over in one go — is staged byte for byte rather than mangled.
-- **Reflog** — everywhere HEAD has been, and the way back from a bad rebase, a mistaken reset or a deleted branch. Filter by action, then create a branch at any entry (the safe recovery, offered first), check it out, or reset to it. `reset --hard` needs the short hash typed to confirm *and* refuses to run at all on a dirty worktree — there is no reflog for uncommitted work.
-- **Submodules** — a dropdown in the graph toolbar, shown only when the repository has any, listing each submodule with whether it is checked out, has drifted from the recorded commit, or is conflicted. Update one or all of them, or open one as its own PPM project.
-- **Commit search across the whole history** — the graph's find bar previously matched only the rows already loaded, so a match older than the current page simply did not appear. It can now search messages, authors, code changes (`git log -S`) or a file's history in git itself.
-- **Author avatars and hover cards in the graph** — initials-based, coloured deterministically from the email. Nothing is sent anywhere; a real avatar service would mean handing every committer's email to a third party.
-- **Merge and rebase by dragging a branch badge onto a commit** in the graph, with a confirmation naming exactly what will happen.
 - **The commit graph, rebuilt to look like one.** Every commit's node is now its author's avatar ringed in that lane's colour, so a run of commits reads as *who* rather than as a column of identical dots — initials drawn as SVG, never a fetched image, because an avatar service would mean handing every committer's email address to a third party. Branches and tags moved into a **Branch / Tag** column of their own, which is what gives every message the same left edge instead of one that jumps by however long the branch name was. Rows are taller and banded and carry a tick of their lane's colour where the eye starts reading, and the selected row is unmistakable rather than a shade apart from the row above it.
   - On a phone the six columns collapse to one: the graph, the subject, and the author, date and hash on a second line under it, in a 44px row. Six columns of fragments on a 390px screen was not a list of commits — and the alternative already in place, scrolling the whole table sideways, is right for a tablet and wrong for a phone.
   - **A Changes column**, added lines in green and removed in red, the way GitLens shows them. It is a second `git log --shortstat` after the commits have already been drawn: asking the first log for it makes git diff every commit in the window (~100ms for 300 commits here, far more on a large repository) and that wait would land before anything appeared at all. A merge commit has no diffstat, so its cell is empty rather than claiming it changed nothing.
@@ -65,9 +54,110 @@
 - **Inlay hints were switched on and never appeared.** tsserver returns hints per *kind*, each off unless asked for, so the editor requested them, the server answered "none", and a feature that looked enabled produced nothing — measured as 0 hints across a 2233-line file, now 462. Parameter names only, which is what makes a bare `true` or a positional index readable at a call site; the type hints VS Code also ships off stay off, because they restate what the line already says.
 - **The editor was not using a font that exists.** All three Monaco surfaces asked for `Menlo, Monaco, Consolas` — none of which is present on Linux — so they fell through to whatever generic `monospace` resolves to. The terminal already carried a platform-complete stack; all four now share one, so they cannot drift apart again and render in different fonts on the same machine.
 - **A hover in a TypeScript file sat on "Loading…" for seconds** after showing the right answer. Monaco's hover widget merges every registered provider and waits for the slowest; PPM had silenced the bundled TypeScript worker's diagnostics but left its other twelve providers registered, and that worker cannot answer anything before fetching the whole TypeScript compiler. So the language server's answer arrived in milliseconds and then waited behind a download. Monaco's TypeScript service is now unregistered **while a language server is running** — which is what VS Code's renderer does, having no TypeScript worker in it at all — so completions in `.ts` files stop being two merged lists, one of which only ever knew the current file. With no server running it is the only answer there is, so it stays registered, with its diagnostics off: one file with no `tsconfig.json` reports "Cannot find module" for every real import.
+
+## [0.20.10] - 2026-09-17
+
+### Fixed
+- **"Set up named tunnel" no longer falls back to the button after a spinner** — on an install that had dismissed the first-run popup, the status refresh following an already-valid Cloudflare sign-in closed the flow before the zone step could open it.
+- **A failed setup now offers "Sign in again"** — retrying reuses the existing certificate, so a certificate whose zone no longer exists could only ever repeat the same error.
+
+## [0.20.9] - 2026-09-16
+
+### Added
+- **Daily guard for weekly-only Codex accounts** â€” paces usage across the remaining weekly window, warns and pauses new turns after the daily cap, and can be switched off any time.
+
+### Fixed
+- **Codex browser sign-in follows its loopback success redirect** after a pasted callback, completing remote and tunnel-based login instead of waiting at the intermediate redirect.
+- **Codex web-search cards and subscription labels are readable** â€” search results now render their titles, links and snippets, while internal plan names show as ChatGPT plan labels.
+
+## [0.20.8] - 2026-09-16
+
+### Fixed
+- **Windows file links in chat now open in PPM** â€” Markdown links such as `D:/Projects/app/report.md` retain their path instead of being cleared as an unsafe URL scheme.
+
+## [0.20.7] - 2026-09-15
+
+### Fixed
+- **Reconnecting overlay clears while chat streams** after the provider assigns a new session ID or reconnects before any events are buffered.
+- **Selected model survives the first turn and reload** — model, effort and thinking settings follow the provider's new session ID.
+
+## [0.20.6] - 2026-09-15
+
+### Added
+- **Codex context settings with presets** — choose a context window and auto-compaction threshold, enter a custom value, or keep Codex defaults.
+- **Shared native provider memory** — Claude and Codex can share provider memory with bounded session context.
+
+### Fixed
+- **Chat recovers from stalled realtime connections** — reconnects silent sockets, restores missing completed replies, and applies replay before live events without duplicating history or discarding healthy completion metadata.
+- **Session usage follows the selected account** — the toolbar no longer combines one account's name with another account's quota after switching accounts.
+
+## [0.20.5] - 2026-09-15
+
+### Fixed
+- **Codex shell cards now show their exit code** ? PowerShell can emit useful table output while still returning a nonzero status for a hidden non-terminating error. PPM preserves and displays that code so a red status is explainable.
+
+## [0.20.4] - 2026-09-15
+
+### Fixed
+- **Codex session titles can now be renamed** — renaming no longer sends a Codex session through the Claude SDK; PPM's saved title is used directly.
+- **Codex subagent work now stays inside its Agent card while it streams** — each event is linked to the thread that owns it, including nested subagents, so tools no longer spill into the parent transcript or remain stuck loading after completion.
+- **Codex Thinking, effort and model changes now carry into every turn** — PPM sends the app-server's reasoning effort and summary settings, displays reasoning summaries, and applies a selected model to follow-up turns as well as the first message.
+- **Codex token/cache history and transcript debugging now work** — per-turn token and cache splits are saved for Debug, and managed-account rollouts are found for transcript and image inspection.
+
+## [0.20.3] - 2026-09-15
+
+### Fixed
+- **An existing Codex conversation no longer silently starts over when its transcript cannot be found** — resuming or rotating accounts now reports the missing history instead of creating a replacement thread and redirecting the original session to it. New chats still start normally, and a failed initial connection can be retried.
+
+## [0.20.2] - 2026-09-15
+
+### Added
+- **Sign in to Codex through the browser** — paste the `localhost` callback URL after signing in and PPM completes the login, so you no longer need device-code login enabled on the ChatGPT account. Works from a phone or another machine, where the callback could never reach this host on its own.
+
+### Fixed
+- **Codex switches account by itself when one hits its usage limit** — the exhausted account is parked until its quota returns, the conversation moves to one with room, and the same turn is sent again instead of stopping in front of you.
+- **Switching a Codex account by hand now takes effect** — a live app-server keeps serving the account it was spawned on, so the choice used to do nothing until something else happened to kill it.
+- **Continuing a Codex chat on another account no longer loses the conversation** — codex resolves a thread only inside its own account directory, so the chat silently started over as an empty one. Its transcript is now carried across first.
+- **A ChatGPT Business account no longer shows a phantom "5-Hour" limit** — that plan has a weekly quota and no shorter one, and its weekly figure was being labelled and counted as the 5-hour one, complete with a reset nearly seven days out.
+- **Codex's usage panel is the same panel as Claude's** — accounts sit in a sideways strip with a fullscreen grid for comparing them, instead of stacked so that seeing the second meant scrolling past the first, and both now draw the same account cards.
+- **The usage chip updates as soon as you switch account** — it used to sit at `--%` for up to two minutes beside a panel already showing the chosen account's quota.
+- **Spawned Codex subagents no longer appear as sessions of their own** — each one was listed as a top-level chat that opened with no prompt and never ended; their transcripts now fold into the parent's Agent card, and a session is titled by its opening prompt.
+- **A tooltip works wherever it is rendered** — Radix throws rather than warns without a provider above it, which made any component that gained a tooltip in 0.20.0 unrenderable outside the app shell.
+
+
+## [0.20.1] - 2026-09-15
+
+### Fixed
+- **A streaming chat no longer rebuilds every diff line and code block on each tick** — React 19 re-parses `innerHTML` whenever the markup object is recreated, even when the markup is identical (about 1,600 rebuilds per turn, 82% of them no-ops). The objects are now memoised, which cuts the DOM churn of a turn roughly eightfold and most of the CPU a streaming tab burned.
+
+## [0.20.0] - 2026-09-15
+
+### Added
+- **Pick the account a chat runs on, before you send anything** — a new chat tab claims an account when it opens and names it in the toolbar, instead of leaving you to send a message to find out. Any other account can be chosen from the usage panel, before or during a conversation.
+- **Quick account on/off in the chat panel** — switch an account out of rotation without opening Settings. Codex accounts can now be switched off at all; only Claude accounts could before.
+- **Exact reset times on hover** — the relative "resets in 2h 10m" beside each usage bar now carries the precise date and time in your own timezone.
+- **Blame** (`@ppm/ext-git-graph` 0.3.0, `Mod+Shift+B`) — who last touched each line of a file, with an age heatmap down the gutter, an author card per commit, "blame before this commit" to walk back through the file's past, and a jump to that commit's diff. It is a panel of its own rather than annotations inside the editor: PPM's extension API exposes no editor, so an extension cannot draw in the gutter. Reachable from the command palette or by right-clicking a file in the graph's commit details.
+- **File history** — every commit that touched one file, following it through renames (`--follow`), or the history of just a line range (`-L`). Click a commit for its diff of that file, or blame the file as it stood at that commit.
+- **Compare refs** — pick two branches, tags or remotes and see the commits between them beside the files that differ, with ahead/behind counts. Defaults to comparing against the merge base ("since divergence"), which is what a review wants; a direct ref-to-ref diff is one dropdown away.
+- **Interactive rebase** — drag commits to reorder them, then reword, edit, squash, fixup or drop, and run it. Reachable from a commit's context menu ("Interactive rebase from here…"). Reword asks for the new message up front, in the panel: git's own `reword` opens an editor mid-rebase and blocks, which the extension API cannot answer, so the message is applied by an `exec git commit --amend` that reads it from the environment — nothing about the message can be re-read as a shell command.
+- **Inline blame in the code editor** — the line the cursor is on gets a dimmed "Ada, 3 days ago • fix the parser" after its text, the way GitLens does it. Toggle it from the editor toolbar or with `Alt+B`. The whole file is blamed once and indexed by line rather than re-run per keystroke; because that mapping goes stale the moment you type, the annotation hides itself until the file is saved rather than confidently naming the wrong commit.
+- **Stage, unstage and discard individual hunks and lines** — the Source Control panel's file rows gain a "Stage lines…" action that opens the file's diff with a checkbox per changed line. The patch is rebuilt server-side with the `@@` counts recomputed and unselected deletions demoted to context, so `git apply` accepts it; untracked files work too, through a throwaway index that leaves the real one alone. Each hunk is identified by a hash of its own content, so if the file changed since the hunks were listed the selection is refused instead of being resolved against a different diff. A file that is not UTF-8 — or a diff bigger than git hands over in one go — is staged byte for byte rather than mangled.
+- **Reflog** — everywhere HEAD has been, and the way back from a bad rebase, a mistaken reset or a deleted branch. Filter by action, then create a branch at any entry (the safe recovery, offered first), check it out, or reset to it. `reset --hard` needs the short hash typed to confirm *and* refuses to run at all on a dirty worktree — there is no reflog for uncommitted work.
+- **Submodules** — a dropdown in the graph toolbar, shown only when the repository has any, listing each submodule with whether it is checked out, has drifted from the recorded commit, or is conflicted. Update one or all of them, or open one as its own PPM project.
+- **Commit search across the whole history** — the graph's find bar previously matched only the rows already loaded, so a match older than the current page simply did not appear. It can now search messages, authors, code changes (`git log -S`) or a file's history in git itself.
+- **Author avatars and hover cards in the graph** — initials-based, coloured deterministically from the email. Nothing is sent anywhere; a real avatar service would mean handing every committer's email to a third party.
+- **Merge and rebase by dragging a branch badge onto a commit** in the graph, with a confirmation naming exactly what will happen.
+
+### Fixed
 - **Git Graph's integration tests no longer depend on your git config** — they spawn git with a replacing environment, which drops `HOME`, so git never read `init.defaultBranch` and created `master` while every assertion named `main`. The test repository now asks for `main` explicitly.
 - **Conflict detection worked nowhere** — the git-graph extension detected an in-progress merge, rebase or cherry-pick by spawning `test` and `cat`, but extensions may only spawn git, node, bun, npx and sqlite3, so the call threw. The caller's `catch` then discarded the whole uncommitted-changes payload, so a repository with conflicts showed no staged or unstaged files at all — the one case where the panel mattered most. The markers are now read through the workspace filesystem API.
 - **`ppm upgrade` right after a release no longer fails with "No version matching … (but package exists)"** — bun resolved the new version against a cached package manifest that predated it; the upgrade install now bypasses that cache.
+- **A sign-in that Anthropic has revoked is now visible and stops being retried** — the deadline is recorded per sign-in and shown on the card, and a rejected grant is no longer polled every few minutes nor routed to.
+- **A schema upgrade skipped its own migration** — the v46 block sat inside the v45 block, so it ran only for a database coming from 44 or below. Every install already at 45 silently skipped it and then read columns that were never created.
+- **An account at its 5-hour or weekly cap can no longer be picked** — the cap test now matches the whole-percent figure the usage bars display, so a card reading 100% and a button that accepts the choice can no longer disagree.
+- **A chat keeps its account when the session id changes** — the binding was left behind under the old id and the conversation was silently re-routed, which costs a full prompt-cache write.
+- **Codex follow-ups typed mid-turn are no longer dropped** — Codex serves one turn per thread and discarded the second without erroring; they are queued and sent when the running turn finishes, and "now" interrupts as the input promises.
+- **A teammate's window follows their session live** — it read the transcript once on mount, so a teammate that kept working appeared frozen until you pressed refresh.
 
 ## [0.19.12] - 2026-09-14
 

@@ -44,7 +44,13 @@ teamRoutes.get("/:name/activity", async (c) => {
   return c.json(ok({ members, outbound }));
 });
 
-/** Full transcript of one teammate's work session, for the member window. */
+/**
+ * One teammate's work session, for the member window.
+ *
+ * `sinceBytes` makes this pollable: the window keeps the offset it has consumed
+ * and gets back only the steps appended since, because a teammate transcript is
+ * several MB and a working teammate appends to it continuously.
+ */
 teamRoutes.get("/:name/members/:member/transcript", async (c) => {
   const name = c.req.param("name");
   const member = c.req.param("member");
@@ -55,8 +61,13 @@ teamRoutes.get("/:name/members/:member/transcript", async (c) => {
   );
   const path = resolveMemberTranscript(name, member, c.req.query("projectPath") ?? null);
   if (!path) return c.json(err("Member transcript not found"), 404);
-  const { parseAgentTranscript } = await import("../../services/subagent-transcript-merger.ts");
-  return c.json(ok({ member, events: parseAgentTranscript(path) }));
+  const parsedSince = Number(c.req.query("sinceBytes") ?? 0);
+  const sinceBytes = Number.isFinite(parsedSince) && parsedSince > 0 ? Math.floor(parsedSince) : 0;
+  const { readMemberTranscriptSlice } = await import(
+    "../../services/team-member-activity/member-transcript-tail.ts"
+  );
+  const slice = readMemberTranscriptSlice(path, sinceBytes);
+  return c.json(ok({ member, ...slice }));
 });
 
 teamRoutes.delete("/:name", async (c) => {
