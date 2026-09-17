@@ -235,6 +235,35 @@ describe("reduceStep — a later status refresh must not clobber committed progr
   }
 });
 
+describe("reduceStep — a dismissed popup must not close a flow the user opened", () => {
+  // The Tunnel Manager's "Set up" button jumps straight to login-wait. On a
+  // cert that is already valid the login POST answers "success" without a
+  // browser round-trip, and the refetch that follows carries `dismissed: true`
+  // from whenever the user silenced the first-run popup.
+  const dismissed = status({
+    dismissed: true,
+    certState: "ok",
+    login: { state: "success", url: null, message: "already logged in" },
+  });
+
+  it("keeps login-wait on screen instead of collapsing back to the button", () => {
+    const step: Step = { k: "login-wait", url: null, slow: false };
+    expect(reduceStep(step, { type: "status", status: dismissed })).toEqual(step);
+  });
+
+  it("still lets the zone answer land after that refresh", () => {
+    let s: Step = reduceStep({ k: "hidden" }, { type: "answer-yes" });
+    s = reduceStep(s, { type: "login-state", state: "success", message: "already logged in" });
+    s = reduceStep(s, { type: "status", status: dismissed });
+    expect(reduceStep(s, { type: "zone-loaded", zone: "example.com" }))
+      .toEqual({ k: "confirm-zone", zone: "example.com" });
+  });
+
+  it("keeps the popup itself closed — dismissed still wins from hidden", () => {
+    expect(reduceStep({ k: "hidden" }, { type: "status", status: dismissed })).toEqual({ k: "hidden" });
+  });
+});
+
 describe("reduceStep — zone-loaded/zone-error only fire for a step that is actually expecting them (R1)", () => {
   // A login session's `state` reads "success" long after that moment fired —
   // it is not reset — so a later, unrelated status refresh can still see

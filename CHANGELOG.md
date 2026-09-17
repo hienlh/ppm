@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.20.10] - 2026-09-17
+
+### Fixed
+- **"Set up named tunnel" no longer falls back to the button after a spinner** — on an install that had dismissed the first-run popup, the status refresh following an already-valid Cloudflare sign-in closed the flow before the zone step could open it.
+- **A failed setup now offers "Sign in again"** — retrying reuses the existing certificate, so a certificate whose zone no longer exists could only ever repeat the same error.
+
 ## [0.20.9] - 2026-09-16
 
 ### Added
