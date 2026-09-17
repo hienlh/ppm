@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-18
+
 ### Added
 - **The Git Graph's columns can be turned off** — right-click the table header, or Settings → Columns. Hiding one gives its width to the graph.
 - **Review a whole branch against another as one list.** A feature branch with sixty commits could only be read one commit at a time, and the alternative — squashing them into one — is not a review. A new tab lists every file that differs between two refs, with the tree on the left, a diff on the right, and a per-file reviewed tick.
