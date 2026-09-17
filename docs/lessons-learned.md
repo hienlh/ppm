@@ -347,8 +347,7 @@ manifest). Separately, extensions are npm packages `await import()`ed in a Bun W
 (`extension-host-worker.ts:57`) and v1.0 carries a Marketplace as High priority — Go would need a
 second runtime just to keep them. And `src/web` (~90k lines) does not move in any scenario.
 
-**The measurement nobody had read** (it lands with the event-loop work in #26, not on `main`
-yet): `src/services/event-loop-lag.ts` splits stalls into
+**The measurement nobody had read**: `src/services/event-loop-lag.ts` splits stalls into
 `self` (our synchronous work) and `starved` (the CPU went to a compiler, a browser, or the `claude`
 process each session spawns). Its own comment says moving work to another thread cannot fix
 `starved`. Read `byCause` from `GET /api/system/event-loop` before any language argument — if it
