@@ -362,6 +362,32 @@ describe("resolveRequestedHunks", () => {
     expect(resolveRequestedHunks(twins, [{ hunk: 1, id }, { hunk: 1, id }]))
       .toEqual([{ hunk: 1 }, { hunk: 0 }]);
   });
+
+  it("follows a hunk that moved, unless the caller cannot undo the result", () => {
+    // One hunk, listed at index 1, now sitting at index 0 because the hunk above
+    // it went away. Following it is right for stage and unstage — both can be
+    // reversed — and `refuseMoved` is what stops discard guessing, since from
+    // content alone this is indistinguishable from "the copy you ticked is gone
+    // and this is its twin".
+    const moved = parseUnifiedDiff([
+      ...HEADER,
+      "@@ -20,3 +20,3 @@",
+      " const a = 1;",
+      "-dup();",
+      "+dup(1);",
+      " const c = 3;",
+      "",
+    ].join("\n"));
+    const id = hunkFingerprint(moved.hunks[0]!);
+
+    expect(resolveRequestedHunks(moved, [{ hunk: 1, id }])).toEqual([{ hunk: 0 }]);
+    expect(() => resolveRequestedHunks(moved, [{ hunk: 1, id }], { refuseMoved: true }))
+      .toThrow(/moved in the file since it was listed/);
+
+    // Where the client's index still holds, `refuseMoved` changes nothing.
+    expect(resolveRequestedHunks(moved, [{ hunk: 0, id }], { refuseMoved: true }))
+      .toEqual([{ hunk: 0 }]);
+  });
 });
 
 /** What `git diff` says about a file it has never seen. */
