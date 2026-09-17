@@ -28,6 +28,13 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Reads and scans every checked-in source file, so it grows with the tree and is slow by
+ * nature. It had outgrown bun's 5s default and was timing out in a full run while passing on
+ * its own — a red suite that says nothing about NUL bytes.
+ */
+const SCAN_TIMEOUT_MS = 60_000;
+
 describe("source files stay text", () => {
   test("no checked-in source file contains a NUL byte", () => {
     const offenders: string[] = [];
@@ -39,5 +46,5 @@ describe("source files stay text", () => {
     }
 
     expect(offenders).toEqual([]);
-  });
+  }, SCAN_TIMEOUT_MS);
 });
