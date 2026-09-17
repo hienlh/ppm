@@ -19,10 +19,23 @@ function TooltipProvider({
   )
 }
 
+/**
+ * Carries its own provider, so a tooltip works wherever it is rendered.
+ *
+ * Radix throws outright — not a warning, a thrown error — when a Tooltip has no provider
+ * above it. That made any component holding one unrenderable outside the app shell: three
+ * component tests went red the moment a shared usage bar gained a tooltip, and nothing about
+ * the failure pointed at the tooltip. Nesting is cheap and supported; an outer provider still
+ * governs timing for everything beneath it.
+ */
 function Tooltip({
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+  return (
+    <TooltipProvider>
+      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+    </TooltipProvider>
+  )
 }
 
 function TooltipTrigger({

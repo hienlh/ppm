@@ -14,6 +14,12 @@ describe("mapCodexEvent", () => {
       .toEqual([{ type: "thinking", content: "hmm" }]);
   });
 
+  it("reasoning/summaryTextDelta → thinking", () => {
+    expect(mapCodexEvent({ method: "item/reasoning/summaryTextDelta", params: { delta: "Checking the request" } }, "s")).toEqual([
+      { type: "thinking", content: "Checking the request" },
+    ]);
+  });
+
   it("item/started(commandExecution) → Bash tool_use with toolUseId", () => {
     const out = mapCodexEvent({
       method: "item/started",
@@ -39,12 +45,33 @@ describe("mapCodexEvent", () => {
     expect(out).toEqual([{ type: "tool_use", tool: "WebSearch", input: { query: "bun test" }, toolUseId: "w1" }]);
   });
 
+  it("completed webSearch updates an initially blank query and formats results", () => {
+    const out = mapCodexEvent({
+      method: "item/completed",
+      params: { item: {
+        type: "webSearch", id: "w1", query: "OpenAI Codex docs",
+        results: [{ title: "Codex", url: "https://learn.chatgpt.com/codex", snippet: "Build with Codex." }],
+      } },
+    }, SID) as any[];
+    expect(out[0]).toMatchObject({ type: "tool_use", tool: "WebSearch", input: { query: "OpenAI Codex docs" }, toolUseId: "w1" });
+    expect(out[1]).toMatchObject({ type: "tool_result", toolUseId: "w1", isError: false });
+    expect(out[1].output).toBe("Found 1 result.\n1. Codex\n   https://learn.chatgpt.com/codex\n   Build with Codex.");
+  });
+
+  it("completed webSearch reports an empty result set without dumping its item JSON", () => {
+    const out = mapCodexEvent({
+      method: "item/completed", params: { item: { type: "webSearch", id: "w2", query: "nothing", results: [] } },
+    }, SID) as any[];
+    expect(out[1].output).toBe("Search completed with no results.");
+    expect(out[1].output).not.toContain('"type"');
+  });
+
   it("item/completed(commandExecution exit!=0) → tool_result isError", () => {
     const out = mapCodexEvent({
       method: "item/completed",
       params: { item: { type: "commandExecution", id: "i1", aggregatedOutput: "boom", exitCode: 1 } },
     }, SID);
-    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, toolUseId: "i1" });
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, exitCode: 1, toolUseId: "i1" });
   });
 
   it("item/completed(commandExecution exit 0) → tool_result not error", () => {
@@ -52,7 +79,7 @@ describe("mapCodexEvent", () => {
       method: "item/completed",
       params: { item: { type: "commandExecution", id: "i2", aggregatedOutput: "ok", exitCode: 0 } },
     }, SID);
-    expect(out[0]).toMatchObject({ type: "tool_result", isError: false, toolUseId: "i2" });
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: false, exitCode: 0, toolUseId: "i2" });
   });
 
   it("turn/completed → done", () => {
@@ -86,5 +113,39 @@ describe("mapCodexEvent", () => {
   it("never throws on malformed params", () => {
     expect(() => mapCodexEvent({ method: "item/started", params: null }, SID)).not.toThrow();
     expect(mapCodexEvent({ method: "item/started", params: null }, SID)).toEqual([]);
+  });
+});
+
+describe("mapCodexEvent — spawned subagents", () => {
+  const SID2 = "s-sub";
+  const started = {
+    method: "item/started",
+    params: { item: { type: "subAgentActivity", id: "call_a", kind: "started", agentThreadId: "t-9", agentPath: "/root/review" } },
+  };
+  const completed = {
+    method: "item/completed",
+    params: { item: { type: "subAgentActivity", id: "subagent-completed-b", kind: "completed", agentThreadId: "t-9", agentPath: "/root/review" } },
+  };
+
+  it("start → one Agent card named after the agent", () => {
+    const out = mapCodexEvent(started, SID2);
+    expect(out.length).toBe(1);
+    expect((out[0] as any).tool).toBe("Agent");
+    expect((out[0] as any).input.description).toBe("/root/review");
+  });
+
+  it("completion answers that card, despite carrying a different item id", () => {
+    const use = mapCodexEvent(started, SID2)[0] as any;
+    const res = mapCodexEvent(completed, SID2)[0] as any;
+    expect(res.type).toBe("tool_result");
+    expect(res.toolUseId).toBe(use.toolUseId); // paired on the thread, not the item id
+  });
+
+  it("reads the rollout spelling of the same item", () => {
+    const out = mapCodexEvent({
+      method: "item/started",
+      params: { item: { type: "SubAgentActivity", id: "call_c", kind: "started", agent_thread_id: "t-9", agent_path: "/root/review" } },
+    }, SID2);
+    expect((out[0] as any).tool).toBe("Agent");
   });
 });

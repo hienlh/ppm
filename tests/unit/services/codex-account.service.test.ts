@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import {
   createCodexAccount, listCodexAccounts, getCodexAccount,
   getCodexAccountCreds, removeCodexAccount, updateCodexAccountMeta,
+  setCodexDailyGuard,
 } from "../../../src/services/codex-account.service.ts";
 import { getDb } from "../../../src/services/db.service.ts";
 
@@ -17,6 +18,7 @@ describe("codex-account.service", () => {
     expect(listCodexAccounts().some((a) => a.id === acct.id)).toBe(true);
     expect(getCodexAccount(acct.id)?.label).toBe("work");
     expect(getCodexAccountCreds(acct.id)).toEqual({ type: "apiKey", apiKey: "sk-secret-ABC123" });
+    expect(acct.dailyGuardEnabled).toBe(true);
 
     // encrypted at rest: the raw secret must not appear in the stored column
     const row = getDb().query("SELECT creds_enc FROM codex_accounts WHERE id = ?").get(acct.id) as { creds_enc: string };
@@ -25,6 +27,8 @@ describe("codex-account.service", () => {
     updateCodexAccountMeta(acct.id, { label: "renamed", planType: "pro" });
     expect(getCodexAccount(acct.id)?.label).toBe("renamed");
     expect(getCodexAccount(acct.id)?.planType).toBe("pro");
+
+    expect(setCodexDailyGuard(acct.id, false)?.dailyGuardEnabled).toBe(false);
 
     removeCodexAccount(acct.id);
     expect(getCodexAccount(acct.id)).toBeNull();

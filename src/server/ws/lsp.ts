@@ -192,6 +192,13 @@ async function openDocument(client: Client, msg: Record<string, unknown>): Promi
 
   const uri = pathToFileUri(absolute);
   const clientUri = String(msg.clientUri ?? uri);
+  const previous = client.docs.get(path);
+  // The same path can resolve to a different server between two opens — a `tsconfig.json`
+  // appearing in a subdirectory moves the root, and the browser re-opens every tab on
+  // reconnect. Overwriting the entry without letting go leaves this socket subscribed to the
+  // old key for as long as it lives, and the idle reaper never takes a server with a
+  // subscriber, so that one would stay resident until the tab was closed.
+  if (previous && previous.key !== result.key) lspManager.release(previous.key, client.id);
   client.docs.set(path, { key: result.key, languageId: result.language, version, uri, clientUri });
 
   result.session.notify("textDocument/didOpen", {

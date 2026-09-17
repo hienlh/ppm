@@ -3,13 +3,21 @@ import { Database } from "bun:sqlite";
 import { runMigrations, CURRENT_SCHEMA_VERSION } from "../../../src/services/db.service.ts";
 import { CODEX_DEFAULT_MODEL } from "../../../src/types/config.ts";
 
+/** The migration under test is v45, so a database has to start at 44 for it to run. */
+const VERSION_BEFORE_CODEX_MODEL_MIGRATION = 44;
+
 /**
  * Upgrading an install that configured codex before there was a default model.
  *
  * Built at the version just before the migration so the upgrade really runs,
  * rather than starting from a fresh database where there is no config to patch.
+ *
+ * Pinned to a literal rather than `CURRENT_SCHEMA_VERSION - 1`: that spelling tracks the
+ * newest migration, not this one, so the day a v46 was added these tests quietly started
+ * from 45 — past the migration they exist to exercise — and failed for a reason that had
+ * nothing to do with what they check.
  */
-function dbWithAiConfig(ai: unknown, version = CURRENT_SCHEMA_VERSION - 1): Database {
+function dbWithAiConfig(ai: unknown, version = VERSION_BEFORE_CODEX_MODEL_MIGRATION): Database {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)");
   if (ai !== undefined) {

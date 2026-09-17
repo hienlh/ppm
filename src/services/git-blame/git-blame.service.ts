@@ -124,34 +124,52 @@ class GitBlameService {
     assertCommitHash(hash);
     assertSafeFilePath(filePath);
     const git = simpleGit(projectPath);
-    const args = [
+    // Two commands, not one, and the reason is not obvious: a pathspec puts
+    // `git show` through the diff machinery, which drops the commit entirely
+    // when that path is unchanged — the same filtering that makes `git log --
+    // <path>` skip it. So `show --format=… <hash> -- <path>` prints *nothing*,
+    // not a header with an empty diff, and asking one command for both loses
+    // the fields exactly when the hover still wants them: a line the commit
+    // never touched should still say who wrote the commit and why.
+    const metaArgs = [
       "show",
-      // NUL-separated fields ahead of the diff. See `commit-line-diff.ts`.
+      // NUL-separated fields, no diff. See `commit-line-diff.ts`.
       "--format=%H%x00%an%x00%ae%x00%at%x00%B%x00",
-      "--unified=0",
+      "--no-patch",
       hash,
-      "--",
-      filePath,
     ];
+    // `--unified=0` so every line in a hunk body is a real change.
+    const diffArgs = ["show", "--format=", "--unified=0", hash, "--", filePath];
 
-    let raw: string;
-    try {
-      raw = await git.raw(args);
-    } catch (e) {
+    /** True for the family of git errors that all mean "nothing to show here". */
+    const isAbsent = (e: unknown): boolean => {
       const message = e instanceof Error ? e.message : String(e);
       // git's wording varies by which lookup failed: a hash it cannot resolve is
       // "bad revision", one that resolves to nothing is "bad object", and a path
-      // that commit never had is "exists on disk, but not in". All three mean the
-      // same thing here — no hover.
-      if (/bad revision|unknown revision|bad object|not a valid object name|no such path|does not exist|but not in/i.test(message)) {
-        return null;
-      }
+      // that commit never had is "exists on disk, but not in".
+      return /bad revision|unknown revision|bad object|not a valid object name|no such path|does not exist|but not in/i.test(message);
+    };
+
+    let metaRaw: string;
+    try {
+      metaRaw = await git.raw(metaArgs);
+    } catch (e) {
+      if (isAbsent(e)) return null;
       throw e;
     }
 
-    const fields = parseShow(raw);
+    const fields = parseShow(metaRaw);
     if (!fields) return null;
-    const change = lineChangeAt(fields.diff, origLine);
+
+    let diffRaw = "";
+    try {
+      diffRaw = await git.raw(diffArgs);
+    } catch (e) {
+      // A path this commit never had is not a failed hover, just an absent diff
+      // section. Anything else is still worth reporting.
+      if (!isAbsent(e)) throw e;
+    }
+    const change = lineChangeAt(diffRaw, origLine);
     return {
       hash: fields.hash,
       author: fields.author,

@@ -5,7 +5,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { accountService } from "../../../src/services/account.service.ts";
-import { setSessionAccount } from "../../../src/services/db.service.ts";
+import { setSessionAccount, getSessionTitle, setSessionTitle } from "../../../src/services/db.service.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -169,6 +169,28 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(firstPushed.message.content).toBe("hi");
     });
 
+
+    it("sends shared context to Claude without changing the session title", async () => {
+      let firstPushed: any;
+      mockQueryFn.mockImplementation((args: any) => {
+        void args.prompt[Symbol.asyncIterator]().next().then((r: any) => { firstPushed = r.value; });
+        return createMockQueryIterator([{ type: "result" }]);
+      });
+      const session = await provider.createSession({});
+      for await (const _ of provider.sendMessage(session.id, "Fix the login", { sharedContext: "Read project memory" })) { /* drain */ }
+      expect(firstPushed.message.content).toContain("Read project memory");
+      expect(firstPushed.message.content).toEndWith("Fix the login");
+      expect(session.title).toBe("Fix the login");
+      expect(getSessionTitle(session.id)).toBe("Fix the login");
+    });
+
+    it("preserves an existing custom title when sending shared context", async () => {
+      mockQueryFn.mockImplementation(() => createMockQueryIterator([{ type: "result" }]));
+      const session = await provider.createSession({});
+      setSessionTitle(session.id, "My renamed session");
+      for await (const _ of provider.sendMessage(session.id, "Fix login", { sharedContext: "Project memory" })) { /* drain */ }
+      expect(getSessionTitle(session.id)).toBe("My renamed session");
+    });
 
     it("yields tool_use events from assistant messages", async () => {
       const iter = createMockQueryIterator([
