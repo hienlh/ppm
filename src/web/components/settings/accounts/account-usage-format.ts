@@ -49,6 +49,24 @@ export function formatResetTime(bucket?: LimitBucket): string | null {
 }
 
 /** Time until a token expires. Takes milliseconds. */
+/**
+ * The exact moment a bucket resets, for the tooltip behind the relative "↻ 2h 10m".
+ *
+ * The relative figure is the right thing on the card — it answers "can I keep working" at a
+ * glance — but it cannot answer "will this be back before my meeting", and it goes stale as
+ * soon as it is rendered. The absolute time answers both, so it belongs one hover away rather
+ * than competing for the same few pixels.
+ *
+ * Rendered in the viewer's own locale and zone: the server sends UTC, and a reset time shown
+ * in UTC is a small puzzle to solve at exactly the moment someone is in a hurry.
+ */
+export function formatResetAt(resetsAt?: string | null): string | null {
+  if (!resetsAt) return null;
+  const ms = new Date(resetsAt).getTime();
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 export function formatExpiry(expiresAtMs: number): string {
   const diff = expiresAtMs - Date.now();
   if (diff <= 0) return "expired";
@@ -65,10 +83,18 @@ export function formatExpiry(expiresAtMs: number): string {
  *
  * An expired token with a refresh token is only a warning, not an error: the server renews
  * it on the next call. Without one it is genuinely dead, which is why the two cases differ.
+ *
+ * Unless the server has already refused to renew it. PPM kept a rejected account holding its
+ * refresh token — deliberately, so a re-import can recover it — and this function read that
+ * as "will auto-renew" for six days while every turn on the account failed. A rejection
+ * outranks both other cases.
  */
 export function tokenStatus(info?: AccountInfo): { label: string; tip: string; color: string } {
   if (!info) return { label: "unknown", tip: "No account info available", color: "text-text-subtle" };
   if (!info.expiresAt) return { label: "key", tip: "API key (no expiry)", color: "text-text-subtle" };
+  if (info.reauthRequired) {
+    return { label: "sign in again", tip: "Anthropic rejected this account's refresh token. Sign in again to restore it.", color: "text-error" };
+  }
   const expired = info.expiresAt * 1000 < Date.now(); // expiresAt is seconds
   if (expired && info.hasRefreshToken) return { label: "expired", tip: "Token expired but has refresh token — will auto-renew", color: "text-warning" };
   if (expired) return { label: "expired", tip: "Token expired, no refresh token", color: "text-error" };

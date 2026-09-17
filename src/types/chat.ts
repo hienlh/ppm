@@ -1,4 +1,6 @@
 export interface SendMessageOpts {
+  /** PPM's bounded, project-scoped shared instructions; kept separate from user text. */
+  sharedContext?: string;
   permissionMode?: import("./config").PermissionMode | string;
   priority?: 'now' | 'next' | 'later';
   images?: Array<{ data: string; mediaType: string }>;
@@ -25,6 +27,10 @@ export interface SendMessageOpts {
 export interface AIProvider {
   id: string;
   name: string;
+  /** Handles opts.sharedContext without using it as the user's saved message/title. */
+  supportsSharedContext?: boolean;
+  /** Additional instruction/memory sources; never return credentials or transcripts. */
+  getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
 
   // Session lifecycle (required)
   createSession(config: SessionConfig): Promise<Session>;
@@ -184,7 +190,7 @@ export type ChatEvent =
        *  Absent on a launched-but-unfinished agent — the card renders that as still running. */
       bgStatus?: import("../shared/background-agent-status").BackgroundAgentStatus;
     }
-  | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
+  | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }

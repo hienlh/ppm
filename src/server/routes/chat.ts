@@ -14,11 +14,14 @@ import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-d
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
+import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
+import { listCodexAccounts } from "../../services/codex-account.service.ts";
+import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
@@ -372,13 +375,19 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string }>();
     const session = await chatService.createSession(body.providerId, {
       projectName,
       projectPath,
       title: body.title,
     });
     if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
+    // The tab claimed an account when it opened and showed its name; honour that here so
+    // the first message runs on the account the user was actually looking at. Advisory,
+    // never authoritative: bindPickedAccount re-checks the id against the server's own
+    // pool and simply declines an id it does not recognise, because this arrives from a
+    // client and selecting a token by client-supplied id is not something to allow.
+    if (body.accountId) bindPickedAccount(session.id, session.providerId, body.accountId);
     // Auto-assign default tag if project has one
     const defaultTagId = getProjectDefaultTagId(projectPath);
     if (defaultTagId) setSessionTag(session.id, defaultTagId, projectPath);
@@ -473,8 +482,11 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const projectPath = c.get("projectPath");
     // Persist to PPM DB (authoritative source for user-set titles)
     setSessionTitle(id, title);
-    // Also persist to SDK so Claude Code CLI sees the custom title
-    await sdkRenameSession(id, title, { dir: projectPath });
+    // Codex owns its rollout title and has no Claude SDK session to rename.
+    // PPM's title table is the authoritative title for both providers.
+    if (getSessionProvider(id) !== "codex") {
+      await sdkRenameSession(id, title, { dir: projectPath });
+    }
     // Also update in-memory session
     const session = chatService.getSession(id);
     if (session) session.title = title;
@@ -482,6 +494,44 @@ chatRoutes.patch("/sessions/:id", async (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
+});
+
+/**
+ * PUT /chat/sessions/:id/account — move a live session onto an account the user picked.
+ *
+ * Unlike the same choice made at session creation, this one answers: the user is looking at
+ * a panel and pressed something, so a silently ignored pick would read as a broken button.
+ *
+ * Worth knowing before calling: the prompt cache is scoped per account, so moving a session
+ * mid-conversation re-sends its whole transcript as a cache write rather than a read. On a
+ * long session that is a real cost, not a formality.
+ */
+chatRoutes.put("/sessions/:id/account", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json<{ accountId?: string }>().catch(() => ({} as { accountId?: string }));
+  if (!body.accountId) return c.json(err("accountId is required"), 400);
+  const providerId = getSessionProvider(sessionId) ?? "claude";
+  if (!bindPickedAccount(sessionId, providerId, body.accountId)) {
+    return c.json(err(bindRefusalReason(providerId, body.accountId)), 400);
+  }
+  // Codex binds an account by spawning its app-server with that account's CODEX_HOME, so a
+  // subprocess already running keeps serving the old account however the binding reads — the
+  // switch appeared to do nothing until something else happened to kill it. Dropping it while
+  // idle makes the next message respawn on the account the user just picked. Claude needs
+  // none of this: it reads the binding per turn, and there is nothing stale to clear.
+  if (providerId === "codex") {
+    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
+    // Never mid-turn. The answer being streamed would be lost, and the switch takes effect
+    // on the next message either way — which is exactly what the picker promises.
+    if (!listRunningSessions().some((s) => s.sessionId === sessionId)) {
+      dropIdleSubprocess(
+        sessionId,
+        "account_switch",
+        "Subprocess released: the session was moved to another Codex account",
+      );
+    }
+  }
+  return c.json(ok({ accountId: body.accountId }));
 });
 
 /** PUT /chat/sessions/:id/pin — pin a session */
@@ -729,9 +779,22 @@ chatRoutes.get("/sessions/:id/logs", (c) => {
  */
 function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlDir: string; projectPath: string; exists: boolean } {
   const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const providerId = getSessionProvider(sessionId);
+  const storedProjectPath = getSessionProjectPath(sessionId) ?? "";
+  if (providerId === "codex") {
+    const dirs = [
+      ...listCodexAccounts().map((account) => join(account.home, "sessions")),
+      ...(homedir ? [resolve(homedir, ".codex", "sessions")] : []),
+    ];
+    for (const dir of dirs) {
+      const found = findRolloutByThreadId(dir, sessionId, storedProjectPath || undefined);
+      if (found) return { jsonlPath: found, jsonlDir: dir, projectPath: storedProjectPath, exists: true };
+    }
+    return { jsonlPath: "", jsonlDir: "", projectPath: storedProjectPath, exists: false };
+  }
   const provider = providerRegistry.get("claude") as any;
   const projectPath = provider?.activeSessions?.get(sessionId)?.projectPath
-    ?? getSessionProjectPath(sessionId)
+    ?? storedProjectPath
     ?? "";
   const projectsRoot = homedir ? resolve(homedir, ".claude", "projects") : "";
   // SDK encodes cwd by replacing path separators + drive colon with "-".
@@ -782,6 +845,7 @@ chatRoutes.get("/sessions/:id/debug", async (c) => {
   return c.json(ok({
     ppmSessionId: sessionId,
     sdkSessionId: sessionId,
+    providerId: getSessionProvider(sessionId) ?? "claude",
     sessionId,
     jsonlPath: exists ? jsonlPath : null,
     jsonlDir,
@@ -877,7 +941,7 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     const mode: StripMode = (body as { mode?: unknown }).mode === "all" ? "all" : "oversized";
     const includeAttachments = (body as { includeAttachments?: unknown }).includeAttachments === true;
 
-    const { listRunningSessions, dropSubprocessForTranscriptRewrite } = await import("../ws/chat.ts");
+    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
     if (listRunningSessions().some((s) => s.sessionId === sessionId)) {
       return c.json(err("Session is running — wait for the turn to finish"), 409);
     }
@@ -890,7 +954,11 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     // re-sends the oversized attachment from memory and fails exactly as before, which is the
     // failure this endpoint exists to clear. Drop it so the turn is rebuilt from the file we
     // are about to rewrite.
-    dropSubprocessForTranscriptRewrite(sessionId);
+    dropIdleSubprocess(
+      sessionId,
+      "transcript_rewritten",
+      "Subprocess released: the transcript was rewritten, so the next turn is rebuilt from disk",
+    );
 
     const result = await stripTranscriptImagesFile(found.path, mode, { includeAttachments });
     return c.json(ok({

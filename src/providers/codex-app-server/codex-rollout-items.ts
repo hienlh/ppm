@@ -1,5 +1,6 @@
 import type { ChatEvent } from "../provider.interface.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { parseSubagentActivity, type SubagentActivity } from "./codex-subagent-thread.ts";
 
 /**
  * Rollout `item_completed` records → PPM chat events.
@@ -25,6 +26,9 @@ export type RolloutItemMapping =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "events"; events: ChatEvent[] }
+  // A spawned thread: the parser turns it into a card and hangs the child
+  // transcript under it, which needs the sessions dir it cannot reach itself.
+  | { kind: "subagent"; activity: SubagentActivity }
   | { kind: "ignore" };
 
 const IGNORED_ITEM_TYPES = new Set([
@@ -129,6 +133,8 @@ export function mapRolloutItem(item: unknown): RolloutItemMapping {
   const type = typeof it.type === "string" ? it.type : "";
 
   if (IGNORED_ITEM_TYPES.has(type)) return { kind: "ignore" };
+  const subagent = parseSubagentActivity(it);
+  if (subagent) return { kind: "subagent", activity: subagent };
   if (type === "UserMessage") {
     const text = textFrom(it.content);
     return text ? { kind: "user", text } : { kind: "ignore" };

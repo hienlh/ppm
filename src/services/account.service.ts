@@ -23,6 +23,12 @@ export interface Account {
   lastUsedAt: number | null;
   profileData: OAuthProfileData | null;
   createdAt: number;
+  /** When the current OAuth grant was issued. Null for rows that predate the column. */
+  grantedAt: number | null;
+  /** Refresh-token expiry as reported by the token endpoint, when it reports one. */
+  refreshExpiresAt: number | null;
+  /** The OAuth server rejected the refresh token; nothing but a fresh sign-in clears it. */
+  reauthRequired: boolean;
 }
 
 export interface AccountWithTokens extends Account {
@@ -69,6 +75,72 @@ const OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
 const OAUTH_SCOPE = "org:create_api_key user:profile user:inference";
 const OAUTH_PLATFORM_REDIRECT = "https://platform.claude.com/oauth/code/callback";
 
+/**
+ * Anthropic invalidates the entire refresh-token family this long after the original
+ * grant, whether or not the token kept rotating in between. Measured twice on a live
+ * install: developers@ signed in 2026-08-11 and was rejected 2026-09-08 (28d 2h);
+ * victor@ signed in 2026-08-18 and was rejected 2026-09-15 (27d 15h). Both died on the
+ * first use of a token minted hours earlier, so this is grant age, not token age.
+ *
+ * Only a fallback: if the token endpoint reports the refresh token's own expiry we use
+ * that instead, because a guessed constant silently rots if Anthropic changes it.
+ */
+const GRANT_LIFETIME_S = 28 * 86400;
+
+/**
+ * How close to expiry a token may be before use forces a refresh. Claude Code uses
+ * 5 minutes (`g0e = 300000` in its bundle) and refreshes at the point of use rather
+ * than on a timer; PPM now does the same.
+ *
+ * A buffer this small can hand a long turn a token that lapses mid-run. That is
+ * survivable here, and only here, because the 401 path in claude-agent-sdk.ts force-
+ * refreshes and retries the turn instead of failing it. Shrink that safety net and this
+ * number has to grow again.
+ */
+const PREFLIGHT_REFRESH_BUFFER_S = 300;
+
+/** Response fields we already understand; anything else is worth learning about. */
+const KNOWN_TOKEN_FIELDS = new Set([
+  "access_token", "refresh_token", "expires_in", "token_type", "scope", "account", "organization",
+  "refresh_token_expires_in", "refresh_expires_in", "refresh_token_expires_at", "refresh_expires_at",
+]);
+const loggedUnknownTokenFields = new Set<string>();
+
+/**
+ * Log response fields we do not consume, once per field name.
+ *
+ * The refresh-token expiry is the one number that would let PPM warn before a grant
+ * dies, and Claude Code stores it (`claudeAiOauth.refreshTokenExpiresAt`), but its own
+ * wire format is not public. Rather than hard-code a guess, read whichever field shows
+ * up and surface the rest so an unknown name is a log line instead of a silent miss.
+ */
+function noteUnknownTokenFields(data: Record<string, unknown>, context: string): void {
+  for (const key of Object.keys(data)) {
+    if (KNOWN_TOKEN_FIELDS.has(key) || loggedUnknownTokenFields.has(key)) continue;
+    loggedUnknownTokenFields.add(key);
+    const value = data[key];
+    const shown = typeof value === "string" && /token|secret|key/i.test(key)
+      ? `<redacted len=${value.length}>`
+      : JSON.stringify(value);
+    console.log(`[accounts] ${context} response carries unhandled field "${key}" = ${shown}`);
+  }
+}
+
+/** Pull the refresh token's own expiry out of a token response, in whatever shape it arrives. */
+function readRefreshExpiry(data: Record<string, unknown>): number | null {
+  const nowS = Math.floor(Date.now() / 1000);
+  for (const key of ["refresh_token_expires_in", "refresh_expires_in"]) {
+    const v = data[key];
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return nowS + Math.floor(v);
+  }
+  for (const key of ["refresh_token_expires_at", "refresh_expires_at"]) {
+    const v = data[key];
+    // Milliseconds if it is far past any plausible epoch-seconds value.
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return v > 1e11 ? Math.floor(v / 1000) : Math.floor(v);
+  }
+  return null;
+}
+
 // Survive Bun --hot reloads: persist timer ref across module re-evaluations
 const ACCT_HOT_KEY = "__PPM_ACCT_REFRESH__" as const;
 const acctHotState = ((globalThis as any)[ACCT_HOT_KEY] ??= {
@@ -97,7 +169,23 @@ class AccountService {
       lastUsedAt: row.last_used_at,
       profileData,
       createdAt: row.created_at,
+      grantedAt: row.granted_at,
+      refreshExpiresAt: row.refresh_expires_at,
+      reauthRequired: row.reauth_required === 1,
     };
+  }
+
+  /**
+   * When this account's refresh token family is expected to die, or null if unknowable.
+   *
+   * Prefers whatever the server reported. Falls back to grant age, which is only
+   * available for accounts signed in since PPM started recording it — an older row
+   * reads as "unknown" rather than being given a fabricated date.
+   */
+  grantExpiresAt(acc: Account): number | null {
+    if (acc.refreshExpiresAt) return acc.refreshExpiresAt;
+    if (acc.grantedAt) return acc.grantedAt + GRANT_LIFETIME_S;
+    return null;
   }
 
   private toAccountWithTokens(row: AccountRow): AccountWithTokens {
@@ -144,18 +232,25 @@ class AccountService {
    * the two because its callers are background loops with nobody to tell; the one caller
    * that has a user in front of it (`PATCH /api/accounts/:id`) uses this.
    */
-  async ensureFreshTokenChecked(id: string): Promise<{ account: AccountWithTokens | null; rejected: boolean }> {
+  async ensureFreshTokenChecked(
+    id: string,
+    opts?: { retryRejected?: boolean },
+  ): Promise<{ account: AccountWithTokens | null; rejected: boolean }> {
     const acc = this.getWithTokens(id);
     if (!acc) return { account: null, rejected: false };
     // Only OAuth tokens need refresh
     if (!acc.accessToken.startsWith("sk-ant-oat")) return { account: acc, rejected: false };
     if (!acc.expiresAt) return { account: acc, rejected: false };
+    // A grant the server already rejected cannot come back on its own, and this method is
+    // on the usage poller's five-minute path. Callers acting on a deliberate user gesture
+    // (enable, test token) pass retryRejected so a false positive is always one click from
+    // being re-tested.
+    if (acc.reauthRequired && !opts?.retryRejected) return { account: null, rejected: true };
     const nowS = Math.floor(Date.now() / 1000);
-    const REFRESH_BUFFER_S = 3600; // 1 hour — refresh proactively before expiry
-    if (acc.expiresAt - nowS > REFRESH_BUFFER_S) return { account: acc, rejected: false }; // still fresh
+    if (acc.expiresAt - nowS > PREFLIGHT_REFRESH_BUFFER_S) return { account: acc, rejected: false }; // still fresh
     try {
-      console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s, buffer=${REFRESH_BUFFER_S}s)`);
-      await this.refreshAccessToken(id, false, false, REFRESH_BUFFER_S);
+      console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s, buffer=${PREFLIGHT_REFRESH_BUFFER_S}s)`);
+      await this.refreshAccessToken(id, false, false, PREFLIGHT_REFRESH_BUFFER_S);
       return { account: this.getWithTokens(id), rejected: false };
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
@@ -186,13 +281,24 @@ class AccountService {
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
+    refreshExpiresAt?: number | null;
     label?: string;
     profileData?: OAuthProfileData;
   }): Account {
+    const grantedAt = Math.floor(Date.now() / 1000);
     // Check for duplicate — update existing account tokens instead of creating new
     const dup = this.findDuplicate(params.email, params.profileData);
     if (dup) {
       this.updateTokens(dup.id, params.accessToken, params.refreshToken, params.expiresAt);
+      // Signing in again starts a brand new grant, so the 28-day clock restarts here.
+      // This is the branch that matters in practice: re-authenticating an account that
+      // already exists is how every expiry is recovered from, and it is exactly where
+      // created_at stays frozen at the row's original insert.
+      updateAccount(dup.id, {
+        granted_at: grantedAt,
+        refresh_expires_at: params.refreshExpiresAt ?? null,
+        reauth_required: 0,
+      });
       if (params.profileData) {
         updateAccount(dup.id, { profile_json: JSON.stringify(params.profileData) });
       }
@@ -217,6 +323,10 @@ class AccountService {
       total_requests: 0,
       last_used_at: null,
       profile_json: params.profileData ? JSON.stringify(params.profileData) : null,
+      granted_at: grantedAt,
+      refresh_expires_at: params.refreshExpiresAt ?? null,
+      reauth_required: 0,
+      last_refresh_attempt_at: null,
     });
     return this.toAccount(getAccountById(id)!);
   }
@@ -347,6 +457,11 @@ class AccountService {
       total_requests: 0,
       last_used_at: null,
       profile_json: info.profileData ? JSON.stringify(info.profileData) : null,
+      // An API key is not an OAuth grant: it has no family to expire and no sign-in to date.
+      granted_at: null,
+      refresh_expires_at: null,
+      reauth_required: 0,
+      last_refresh_attempt_at: null,
     });
     return this.toAccount(getAccountById(id)!);
   }
@@ -366,6 +481,10 @@ class AccountService {
       // The cooldown clears either way — a fresh token is what ends one, and leaving the
       // timestamp on a parked account would resurrect it the moment the park is lifted.
       cooldown_until: null,
+      // Holding live tokens is the only thing that clears a re-auth demand. Every door
+      // that lands here — sign-in, import, a successful refresh — has just proved the
+      // credential works, which is exactly the condition the flag was tracking.
+      reauth_required: 0,
       ...(parked ? {} : { status: "active" as const }),
     });
   }
@@ -515,6 +634,7 @@ class AccountService {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
+      refreshExpiresAt: tokens.refreshExpiresAt,
       label,
       profileData,
     });
@@ -533,6 +653,7 @@ class AccountService {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
+      refreshExpiresAt: tokens.refreshExpiresAt,
       profileData,
     });
   }
@@ -541,6 +662,7 @@ class AccountService {
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
+    refreshExpiresAt: number | null;
     email: string;
   }> {
     const body: Record<string, string> = {
@@ -560,16 +682,18 @@ class AccountService {
       const text = await res.text();
       throw new Error(`OAuth token exchange failed: ${res.status} ${text}`);
     }
-    const data = await res.json() as {
+    const data = await res.json() as Record<string, unknown> & {
       access_token: string;
       refresh_token: string;
       expires_in: number;
       account?: { email_address?: string };
     };
+    noteUnknownTokenFields(data, "authorization_code");
     return {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       expiresAt: Math.floor(Date.now() / 1000) + data.expires_in,
+      refreshExpiresAt: readRefreshExpiry(data),
       email: data.account?.email_address ?? "",
     };
   }
@@ -606,15 +730,18 @@ class AccountService {
 
   /**
    * POST the refresh grant, retrying transient failures with backoff.
-   * A network blip (e.g. waking from sleep) must not cost a whole refresh cycle: this
-   * runs at or past access-token expiry, so a dropped attempt leaves the account unable
-   * to serve a turn until the next sweep.
    *
-   * It is *not* that the refresh token is about to lapse with it. Measured against a
-   * live install's history: 324 refreshes, zero `invalid_grant`, and one that succeeded
-   * after a 58-hour gap — 50 hours past the 8-hour access-token expiry. Refresh tokens
-   * outlive their access tokens by days, which is what makes freezing a parked account
-   * (see `startAutoRefresh`) safe rather than a slow way to kill it.
+   * Retrying matters more now than it used to. This runs at the point of use, inside a
+   * five-minute window before the token is needed, so a network blip that burns the
+   * attempt costs the turn rather than merely deferring to the next sweep — there is no
+   * next sweep.
+   *
+   * An earlier version of this comment claimed refresh tokens outlive their access tokens
+   * by days, citing 324 refreshes with zero `invalid_grant`. That held only inside one
+   * grant's lifetime. Across grants it is wrong in the way that matters: the family is
+   * revoked on a fixed schedule from sign-in (GRANT_LIFETIME_S), and when it goes, the
+   * refresh token is rejected on its first use while the access token minted alongside it
+   * is still valid. No amount of retrying recovers that — only a new sign-in does.
    */
   private async postRefreshGrant(refreshToken: string, label: string): Promise<Response> {
     const backoffMs = [2_000, 6_000];
@@ -661,11 +788,13 @@ class AccountService {
       console.log(`[accounts] Token for ${account.email ?? accountId} is already fresh (expires in ${account.expiresAt - nowS}s, threshold=${freshThresholdS}s) — skipping OAuth refresh`);
       return;
     }
+    updateAccount(accountId, { last_refresh_attempt_at: nowS });
     const res = await this.postRefreshGrant(account.refreshToken, account.email ?? accountId);
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
       console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
-      if (errorBody.includes("invalid_grant") || errorBody.includes("invalid_request")) {
+      const rejected = errorBody.includes("invalid_grant") || errorBody.includes("invalid_request");
+      if (rejected) {
         // Another session/process may have refreshed (and rotated) the token between our read
         // and this OAuth call, making this failure stale. Detect that by comparing against the
         // expiry we read — testing "is it fresh" instead would swallow genuine rejections
@@ -680,24 +809,35 @@ class AccountService {
         // permanently with no recovery path (esp. for parked/disabled accounts). Preserve
         // it so re-enable / re-import / re-sync can restore access.
         console.warn(`[accounts] Refresh token rejected for ${account.email ?? accountId} — preserving token for recovery (not clearing)`);
+        // Anthropic ends the refresh-token family a fixed time after the grant, so a
+        // rejection here is terminal: every subsequent attempt returns the same 400.
+        // Recording it stops the retry loop that otherwise runs every few minutes for
+        // days — one live install logged 17,510 of them — and gives the UI something to
+        // show besides an account that still claims to be active.
+        updateAccount(accountId, { reauth_required: 1 });
       }
       if (disableOnFail) {
         this.setDisabled(accountId);
       }
       throw new Error(`Token refresh failed for account ${accountId}: ${res.status} ${errorBody}`);
     }
-    const data = await res.json() as {
+    const data = await res.json() as Record<string, unknown> & {
       access_token: string;
       refresh_token?: string;
       expires_in: number;
     };
-    console.log(`[accounts] Token refreshed for ${account.email ?? accountId} (expires_in=${data.expires_in}s, new_refresh=${!!data.refresh_token})`);
+    noteUnknownTokenFields(data, "refresh_token");
+    const refreshExpiresAt = readRefreshExpiry(data);
+    console.log(`[accounts] Token refreshed for ${account.email ?? accountId} (expires_in=${data.expires_in}s, new_refresh=${!!data.refresh_token}, refresh_expires_at=${refreshExpiresAt ?? "not reported"})`);
     this.updateTokens(
       accountId,
       data.access_token,
       data.refresh_token ?? account.refreshToken,
       Math.floor(Date.now() / 1000) + data.expires_in,
     );
+    // Only overwrite when the server said something. A rotation that reports nothing
+    // must not erase an expiry an earlier response did report.
+    if (refreshExpiresAt) updateAccount(accountId, { refresh_expires_at: refreshExpiresAt });
   }
 
   // ---------------------------------------------------------------------------
@@ -816,6 +956,12 @@ class AccountService {
         total_requests: row.total_requests ?? 0,
         last_used_at: row.last_used_at,
         profile_json: row.profile_json ?? null,
+        // A backup written before these columns existed has none of this; null means
+        // "unknown", which is what the import genuinely knows.
+        granted_at: row.granted_at ?? null,
+        refresh_expires_at: row.refresh_expires_at ?? null,
+        reauth_required: 0,
+        last_refresh_attempt_at: null,
       });
       imported++;
       if (hasRefresh && importedStatus !== "disabled") fullTransferIds.push(row.id);
@@ -846,43 +992,21 @@ class AccountService {
   // Auto-refresh background timer
   // ---------------------------------------------------------------------------
 
-  startAutoRefresh(): void {
+  startAccountMaintenance(): void {
     if (acctHotState.refreshTimer) return;
     const CHECK_INTERVAL_MS = 5 * 60_000;
-    // Refresh a full hour early: Anthropic's refresh token lapses soon after the access
-    // token expires, so waiting until the last minutes leaves no room to recover from a
-    // network outage. An hour of headroom gives ~12 retry ticks before the token is lost.
-    const REFRESH_BUFFER_S = 60 * 60;
 
-    const refreshExpiring = async () => {
-      const accounts = this.list();
-      const nowS = Math.floor(Date.now() / 1000);
-      for (const acc of accounts) {
-        // Skip disabled accounts: this timer exists to keep the chat rotation supplied and
-        // a parked account is not in it. Refreshing rotates the OAuth refresh token; when
-        // the same account is shared across machines the rotation races and one side gets
-        // invalid_grant, killing an account the user only meant to park.
-        //
-        // A preference, not a guarantee, and worth knowing before relying on it: the usage
-        // poller runs on the same 5-minute cadence with the same 1-hour buffer and does not
-        // skip parked accounts — deliberately, because a token nothing ever refreshes does
-        // eventually die. So while polling is on, a parked account's token still rotates
-        // here-or-there; this skip only declines to be the one that does it. Enabling the
-        // account proves the token either way (`PATCH /api/accounts/:id`).
-        if (acc.status === "disabled") continue;
-        if (!acc.expiresAt) continue;
-        if (acc.expiresAt - nowS > REFRESH_BUFFER_S) continue;
-        // Skip temporary accounts (no refresh token) — they can't be refreshed
-        const withTokens = this.getWithTokens(acc.id);
-        if (!withTokens?.refreshToken) continue;
-        console.log(`[accounts] Auto-refreshing token for ${acc.email ?? acc.id}`);
-        try {
-          await this.refreshAccessToken(acc.id, false, false, REFRESH_BUFFER_S);
-        } catch (e) {
-          console.error(`[accounts] Auto-refresh failed for ${acc.id}: ${(e as Error).message ?? e}`);
-        }
-      }
-    };
+    // There is deliberately no token-refresh sweep here any more.
+    //
+    // It used to refresh every account an hour before expiry, which rotated an idle
+    // account's token three or four times a day for nothing. That bought no safety: the
+    // refresh-token family dies on grant age (see GRANT_LIFETIME_S), not on idleness, so
+    // keeping a parked token warm never extended its life — it only widened the window in
+    // which two holders of the same credential could rotate over each other.
+    //
+    // Claude Code refreshes where the token is consumed and nowhere else, and PPM now
+    // matches: ensureFreshTokenChecked() on the turn path, the proxy, and the usage
+    // poller. What survives on this timer is the one job no request path covers.
 
     // Cleanup: auto-delete expired temporary accounts (no refresh token) after 7 days
     const TEMP_EXPIRY_DAYS = 7;
@@ -902,10 +1026,8 @@ class AccountService {
     };
 
     // Run immediately on startup, then every 5 minutes
-    refreshExpiring().catch(() => {});
     cleanupExpiredTemporary();
     acctHotState.refreshTimer = setInterval(() => {
-      refreshExpiring().catch(() => {});
       cleanupExpiredTemporary();
     }, CHECK_INTERVAL_MS);
 
@@ -914,7 +1036,7 @@ class AccountService {
     }
   }
 
-  stopAutoRefresh(): void {
+  stopAccountMaintenance(): void {
     if (acctHotState.refreshTimer) {
       clearInterval(acctHotState.refreshTimer);
       acctHotState.refreshTimer = null;

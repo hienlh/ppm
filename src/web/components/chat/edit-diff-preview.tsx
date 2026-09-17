@@ -22,16 +22,23 @@ export default function EditDiffPreview({ oldStr, newStr, filePath, maxLines = 1
     [oldStr, newStr, maxLines],
   );
 
+  // The `{ __html }` objects live inside the memo on purpose. React 19 compares that prop by
+  // identity, not by the string inside, so an inline `{{ __html: html }}` re-parses and
+  // rebuilds every line's subtree on every render of this card — and a card re-renders on
+  // each flush of the streaming turn it sits in. Measured at ~20 identical rewrites per line
+  // per turn (tests/e2e/chat-dom-leak-trace.mjs), all of it garbage for the DOM allocator.
   const lines = useMemo(
     () =>
       rows.map((row) => ({
         row,
-        html: renderLine(
-          row.text,
-          language,
-          row.kind === "equal" ? [] : row.ranges,
-          row.kind === "del" ? "bg-diff-removed-word" : "bg-diff-added-word",
-        ),
+        html: {
+          __html: renderLine(
+            row.text,
+            language,
+            row.kind === "equal" ? [] : row.ranges,
+            row.kind === "del" ? "bg-diff-removed-word" : "bg-diff-added-word",
+          ),
+        },
       })),
     [rows, language],
   );
@@ -51,7 +58,7 @@ export default function EditDiffPreview({ oldStr, newStr, filePath, maxLines = 1
             <span className={`select-none shrink-0 w-3 pl-1.5 ${s.gutter}`}>{s.prefix}</span>
             <code
               className="whitespace-pre-wrap break-all text-text-primary pr-1.5"
-              dangerouslySetInnerHTML={{ __html: html }}
+              dangerouslySetInnerHTML={html}
             />
           </div>
         );

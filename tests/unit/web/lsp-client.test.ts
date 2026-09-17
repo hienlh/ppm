@@ -35,6 +35,10 @@ class FakeWs {
   }
 }
 
+// Process-wide, and not undone by anything this file can run: `mock.module` replaces the
+// module for every test file, and restoring it in `afterAll` is far too late, because the
+// suites that import it have already bound their copy. `ws-client.test.ts` therefore asks for
+// the module by a specifier this cannot reach — see the note on its import.
 mock.module("@/lib/ws-client", () => ({ WsClient: FakeWs }));
 
 const { LspConnection, acquireLspConnection, releaseLspConnection } =

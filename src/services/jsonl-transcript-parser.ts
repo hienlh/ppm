@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
+import { stripSharedContext } from "../shared/provider-context.ts";
 
 /**
  * How large a transcript this module will look at, for the callers that go
@@ -155,7 +156,7 @@ export function parseSessionMessage(
   return {
     id: msg.uuid,
     role,
-    content: textContent,
+    content: role === "user" ? stripSharedContext(textContent) : textContent,
     events: events.length > 0 ? events : undefined,
     timestamp: msg.timestamp ?? new Date().toISOString(),
     sdkUuid: msg.uuid,

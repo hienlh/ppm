@@ -14,7 +14,7 @@ import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { useBackgroundOutputStore } from "@/stores/background-output-store";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
-import { MdContext, useMdContext, FILE_EXT_RE, GLOB_CHARS_RE, LOCAL_PATH_RE } from "./markdown-context";
+import { MdContext, useMdContext, FILE_EXT_RE, GLOB_CHARS_RE, LOCAL_PATH_RE, markdownUrlTransform } from "./markdown-context";
 import { MdPre, MdCode } from "./markdown-code-block";
 
 interface MarkdownRendererProps {
@@ -28,7 +28,6 @@ interface MarkdownRendererProps {
 /** Plugin arrays — stable references to avoid re-creating on each render */
 const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
 const rehypePlugins = [rehypeRaw, rehypeKatex] as any;
-
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
@@ -110,7 +109,12 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
   return (
     <MdContext.Provider value={ctx}>
       <div className={`markdown-content prose-sm ${isStreaming ? "is-streaming" : ""} ${className}`}>
-        <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          urlTransform={markdownUrlTransform}
+          components={mdComponents}
+        >
           {content}
         </ReactMarkdown>
       </div>

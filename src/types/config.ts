@@ -76,6 +76,8 @@ export interface ProjectConfig {
 
 export interface AIConfig {
   default_provider: string;
+  /** Share project rules and memory between providers. Unset defaults to true. */
+  share_provider_context?: boolean;
   providers: Record<string, AIProviderConfig>;
 }
 
@@ -109,6 +111,10 @@ export interface AIProviderConfig {
 
   // CLI-specific (Cursor, Codex, Gemini)
   cli_command?: string;
+
+  // Codex config overrides in tokens. Null/unset inherits Codex's configuration.
+  model_context_window?: number | null;
+  model_auto_compact_token_limit?: number | null;
 }
 
 /**
@@ -134,6 +140,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   projects: [],
   ai: {
     default_provider: "claude",
+    share_provider_context: true,
     providers: {
       claude: {
         type: "agent-sdk",
@@ -203,6 +210,7 @@ function migrateThemeValue(theme: unknown): ThemeConfig | null {
 /** Validate AI provider config fields. Returns array of error messages (empty = valid). */
 export function validateAIProviderConfig(config: Partial<AIProviderConfig>): string[] {
   const errors: string[] = [];
+  errors.push(...validateCodexContextConfig(config));
   if (config.type != null && !VALID_TYPES.includes(config.type as any)) {
     errors.push(`type must be one of: ${VALID_TYPES.join(", ")}`);
   }
@@ -254,6 +262,22 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
   return errors;
 }
 
+/** Also validate the merged provider config so partial updates cannot break the pair. */
+export function validateCodexContextConfig(config: Partial<AIProviderConfig>): string[] {
+  const errors: string[] = [];
+  for (const key of ["model_context_window", "model_auto_compact_token_limit"] as const) {
+    const value = config[key];
+    if (value != null && (!Number.isSafeInteger(value) || value < 1)) {
+      errors.push(`${key} must be a positive safe integer or null`);
+    }
+  }
+  if (config.model_context_window != null && config.model_auto_compact_token_limit != null
+    && config.model_auto_compact_token_limit > config.model_context_window) {
+    errors.push("model_auto_compact_token_limit must not exceed model_context_window");
+  }
+  return errors;
+}
+
 /** Validate default_provider references an existing provider key */
 export function validateDefaultProvider(defaultProvider: string, providers: Record<string, unknown>): string | null {
   if (!providers[defaultProvider]) {
@@ -268,6 +292,11 @@ export function validateDefaultProvider(defaultProvider: string, providers: Reco
  */
 export function sanitizeConfig(config: PpmConfig): boolean {
   let dirty = false;
+
+  if (typeof config.ai.share_provider_context !== "boolean") {
+    config.ai.share_provider_context = true;
+    dirty = true;
+  }
 
   // Migrate/repair theme (legacy string → {style, mode})
   const migrated = migrateThemeValue(config.theme);
