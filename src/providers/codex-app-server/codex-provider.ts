@@ -29,7 +29,7 @@ import { isCodexUsageLimit, codexErrorMessage, parseCodexUsageLimitReset } from 
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
+import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
@@ -1059,7 +1059,7 @@ export class CodexAppServerProvider implements AIProvider {
   // ── Capability probes ──
   async isAvailable(): Promise<boolean> {
     try {
-      const proc = Bun.spawn([process.execPath, "x", "@openai/codex", "--version"], {
+      const proc = Bun.spawn(codexCommand("--version"), {
         stdout: "pipe", stderr: "pipe",
       });
       // 30s: a cold `bun x` may download the package, and the probe runs during
