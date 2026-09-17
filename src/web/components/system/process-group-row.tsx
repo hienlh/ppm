@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, X } from "lucide-react";
+import { ChevronRight, ChevronDown, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRam } from "@/lib/format-bytes";
 import { cpuColor, formatDiskCell, formatGpuCell, formatNetCell, sumOptionalBps } from "./process-row-format";

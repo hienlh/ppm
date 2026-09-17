@@ -426,13 +426,22 @@ button:active { background: var(--surface); }
 .detail-when { font-size: 11px; color: var(--subtext); white-space: nowrap; }
 .detail-head-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
-/* A hash is a chip you can copy, not a 40-character field label. */
-.chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border: 1px solid var(--border2); border-radius: 5px; background: var(--bg); color: var(--subtext); font-family: var(--mono-font); font-size: 10px; }
-.chip-label { font-family: var(--ui-font); font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--subtle); }
-.chip.copyable { cursor: pointer; }
-.chip.copyable:hover { color: var(--text); border-color: var(--blue); }
-.chip.copied { color: var(--green); border-color: var(--green); }
-.chip.copy-failed { color: var(--red); border-color: var(--red); }
+/* The panel's only dismiss. Escape closes it too, but a touch screen has no
+   Escape key, so a panel opened by a tap could not be put away at all — it
+   sits over a third of the graph until another commit is tapped. It took the
+   place of the two hash chips, which were a convenience: the metadata grid
+   two lines below carries the hash and the parents in full.
+
+   It stays 24px of ink on every device. The generic pointer: coarse button rule
+   further down took it to 32, which is still under the 44 a finger needs, and
+   growing the button itself would grow the header with it - this sits in a
+   sticky bar above a panel that is already capped at 35vh on a phone. So the
+   tap area grows instead, through an invisible overlay, which is the same thing
+   the app does for its own 20px controls. Nothing else lives in
+   .detail-head-actions, and what it reaches on the left is the committed-when
+   text, which is not clickable. */
+.detail-close { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 5px; background: none; color: var(--subtext); }
+.detail-close:hover { background: var(--surface-hover); color: var(--text); }
 
 /* Two columns when there is room. A commit message is hard-wrapped by whoever
    wrote it, so on a wide panel it fills half the width and the rest of the row
@@ -613,6 +622,11 @@ button:active { background: var(--surface); }
   .commit-row { height: 32px; }
   .ctx-item { padding: 8px 12px; min-height: 36px; }
   button { min-width: 32px; min-height: 32px; padding: 2px 6px; }
+  /* The one way out of the detail panel, and the only place 32 is not enough:
+     a phone has no Escape key, so a panel opened by a tap is closed by this
+     button or not at all. 10px each side takes the 24px box to 44, and the 32px
+     the rule above gives it to 52. */
+  .detail-close::before { content: ''; position: absolute; inset: -10px; }
   #app { flex-direction: column; }
   #toolbar { order: 10; border-bottom: none; border-top: 1px solid var(--border); padding: 2px 6px; }
   #toolbar button { font-size: 10px; }
@@ -644,10 +658,6 @@ button:active { background: var(--surface); }
   .col-message { gap: 1px; }
   .msg-meta { display: block; font-size: 10px; color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .col-message .ref-badge { max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
-  /* Two hash chips take half a phone's width and left the author's name as
-     "t." with an ellipsis. They are a convenience, not the only copy of the
-     hash — the metadata grid two lines below has both, in full. */
-  .detail-head-actions { display: none; }
 }
 `;
 }
@@ -933,8 +943,10 @@ document.getElementById('detail-panel').addEventListener('contextmenu', (e) => {
 
 // --- File click delegation (opens diff tab) ---
 document.getElementById('detail-panel').addEventListener('click', (e) => {
-  // Hash chips and metadata values. The clipboard write is silent, so the
-  // thing clicked says it happened.
+  // The header's dismiss.
+  if (e.target.closest('.detail-close')) { e.stopPropagation(); closeDetailPanel(); return; }
+  // Metadata values. The clipboard write is silent, so the thing clicked says
+  // it happened.
   const copySource = e.target.closest('[data-copy]');
   if (copySource) {
     e.stopPropagation();
@@ -2198,6 +2210,17 @@ function selectCommit(hash) {
   vscode.postMessage({ command: 'requestCommitDetails', hash });
 }
 
+/* One dismiss for the close button and for Escape. They have to leave exactly
+   the same state behind: a row still marked selected, or a marker still in
+   the scroll bar, outlives the panel that explained it. */
+function closeDetailPanel() {
+  state.selectedCommit = null;
+  state.expandedCommit = null;
+  document.getElementById('detail-panel').classList.add('hidden');
+  document.querySelectorAll('.commit-row.selected').forEach(el => el.classList.remove('selected'));
+  renderScrollMarkers();
+}
+
 // --- File tree helpers ---
 function buildFileTree(files) {
   const root = { name: '', children: {}, files: [] };
@@ -2433,7 +2456,7 @@ function renderDetailPanel(detail) {
   const panel = document.getElementById('detail-panel');
   panel.classList.remove('hidden');
 
-  // Who and when, then the hashes as chips: the glanceable half.
+  // Who and when, then the way out: the glanceable half.
   let head = '<div class="detail-head">' + avatarHtml(detail.author, detail.authorEmail);
   head += '<div class="detail-who">';
   head += '<span class="detail-author" title="' + escHtml(detail.authorEmail) + '">' + escHtml(detail.author) + '</span>';
@@ -2442,15 +2465,11 @@ function renderDetailPanel(detail) {
     head += '<span class="detail-when" title="' + escHtml(detail.committerEmail) + '">via ' + escHtml(detail.committer) + '</span>';
   }
   head += '</div><div class="detail-head-actions">';
-  head += '<span class="chip copyable" data-copy="' + escHtml(detail.hash) + '" title="Copy ' + escHtml(detail.hash) + '">' + escHtml(detail.hash.substring(0, 8)) + '</span>';
-  for (const parent of detail.parents) {
-    head += '<span class="chip copyable" data-copy="' + escHtml(parent) + '" title="Parent ' + escHtml(parent) + '">'
-      + '<span class="chip-label">parent</span>' + escHtml(parent.substring(0, 7)) + '</span>';
-  }
+  head += '<button class="detail-close" title="Close (Esc)" aria-label="Close commit details">' + ICONS.x + '</button>';
   head += '</div></div>';
 
-  // Then the full values. The chips above are what you glance at and copy; a
-  // hash you have to *read* is forty characters. Every row is always here, in
+  // Then the values themselves, which since the chips gave up the header is
+  // where both hashes are. Every row is always here, in
   // the same order, even when the committer repeats the author: a field that
   // comes and goes cannot be found by muscle memory, and the two dates only
   // mean anything next to each other — which is what a rebase or an amend does
@@ -2810,8 +2829,8 @@ function promptResetMode(hash) {
    Chromium with the iframe focused and a real click: writeText rejects with
    NotAllowedError ("blocked because of a permissions policy"), while a textarea
    plus execCommand('copy') returns true and the text really does land on the
-   system clipboard (pasted it back out to check). So every copy chip in every
-   panel had been copying nothing, and saying that it had.
+   system clipboard (pasted it back out to check). So every click-to-copy value
+   in every panel had been copying nothing, and saying that it had.
 
    The modern call is still tried first, for the day the policy changes. The
    textarea has to stay RENDERED — display:none or visibility:hidden give an
@@ -3067,7 +3086,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     hideContextMenu();
     if (!findBar.classList.contains('hidden')) { findBar.classList.add('hidden'); clearSearch(); }
-    else if (state.expandedCommit) { state.selectedCommit = null; state.expandedCommit = null; document.getElementById('detail-panel').classList.add('hidden'); document.querySelectorAll('.commit-row.selected').forEach(el => el.classList.remove('selected')); }
+    else if (state.expandedCommit) closeDetailPanel();
   }
 });
 

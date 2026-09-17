@@ -17,7 +17,7 @@
  */
 
 import { useState } from "react";
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw } from "@/lib/icons";
 import type { UsageInfo } from "../../../types/chat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AccountCard } from "@/components/settings/accounts/account-card";

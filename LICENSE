@@ -4,6 +4,11 @@ Copyright (c) 2026 hienlh
 
 URL: https://www.elastic.co/licensing/elastic-license
 
+These terms cover PPM itself. PPM also redistributes third-party components —
+icon artwork and font subsets — each under its own licence, which continues to
+apply to that component and is unaffected by anything below. They are listed in
+THIRD-PARTY-NOTICES.md, with the full licence texts under licenses/.
+
 ## Acceptance
 
 By using the software, you agree to all of the terms and conditions below.

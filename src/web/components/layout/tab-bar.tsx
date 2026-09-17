@@ -14,11 +14,11 @@ import {
   Sparkles,
   Users,
   CircleX,
-} from "lucide-react";
+} from "@/lib/icons";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { DOCK_PANEL_ID, visibleTabs } from "@/stores/panel-utils";
-import { PanelBottom, Grid2x2 } from "lucide-react";
+import { PanelBottom, Grid2x2 } from "@/lib/icons";
 import { useProjectStore } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useCompareStore } from "@/stores/compare-store";
@@ -33,7 +33,7 @@ import {
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
   ContextMenuItem, ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import { Tag, Check, Columns2, Circle } from "lucide-react";
+import { Tag, Check, Columns2, Circle } from "@/lib/icons";
 import { basename } from "@/lib/utils";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
@@ -47,6 +47,7 @@ import type { Tab } from "@/stores/tab-store";
 import { downloadFile } from "@/lib/file-download";
 import { copyToClipboard } from "@/lib/clipboard";
 import { FileActions } from "@/components/explorer/file-actions";
+import { getTabIcon } from "@/lib/tab-type-icons";
 import {
   ContextMenu as BarContextMenu,
   ContextMenuContent as BarContextMenuContent,
@@ -54,25 +55,6 @@ import {
   ContextMenuTrigger as BarContextMenuTrigger,
   ContextMenuSeparator as BarContextMenuSeparator,
 } from "@/components/ui/context-menu";
-
-const TAB_ICONS: Record<TabType, React.ElementType> = {
-  terminal: Terminal,
-  chat: MessageSquare,
-  editor: FileCode,
-  database: Database,
-  sqlite: Database,
-  postgres: Database,
-  "git-diff": FileDiff,
-  settings: Settings,
-  extension: Puzzle,
-  "extension-webview": Puzzle,
-  "conflict-editor": FileDiff,
-  "system-monitor": Settings,
-  "git-log": GitCommitHorizontal,
-  "ai-resource": Sparkles,
-  group: Users,
-  problems: CircleX,
-};
 
 interface TabBarProps {
   panelId?: string;
@@ -94,7 +76,8 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
 
   const { dropIndex, handleDragStart, handleDragOver, handleDragOverBar, handleDrop, handleDragEnd } =
     useTabDrag(effectivePanelId);
-  const { handleTouchStart, handleTouchMove, handleTouchEnd } = useTouchTabDrag(effectivePanelId);
+  const { handleTouchStart, handleTouchMove, handleTouchEnd, handleTouchCancel } =
+    useTouchTabDrag(effectivePanelId);
 
   const { projectTags, loadTags } = useProjectTags(activeProject?.name);
   const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
@@ -371,7 +354,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               key={tab.id}
               tab={tab}
               isActive={tab.id === activeTabId}
-              icon={TAB_ICONS[tab.type] || Puzzle}
+              icon={getTabIcon(tab)}
               showDropBefore={dropIndex === i}
               notificationType={notiType}
               notificationManual={notiManual}
@@ -388,6 +371,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               onTouchStart={(e) => handleTouchStart(e, tab.id, tab.title)}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
+              onTouchCancel={handleTouchCancel}
               tabRef={(el) => {
                 if (el) tabRefs.current.set(tab.id, el);
                 else tabRefs.current.delete(tab.id);

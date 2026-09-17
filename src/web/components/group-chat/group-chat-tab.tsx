@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Send, Square, Play, Users, Loader2 } from "lucide-react";
+import { Send, Square, Play, Users, Loader2 } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";

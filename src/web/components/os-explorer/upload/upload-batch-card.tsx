@@ -4,7 +4,7 @@
  * chrome differs between them (see `upload-progress-panel.tsx`).
  */
 
-import { X } from "lucide-react";
+import { X } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { summarizeBatch } from "./upload-batch-progress";
 import { UploadBatchRow } from "./upload-batch-row";

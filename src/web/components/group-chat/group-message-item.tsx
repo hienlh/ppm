@@ -1,5 +1,5 @@
 import { memo, type ReactNode } from "react";
-import { ScrollText } from "lucide-react";
+import { ScrollText } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import {
   ContextMenu,

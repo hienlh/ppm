@@ -1,4 +1,4 @@
-import { Plus, Hexagon, Bot, SquareTerminal, Plug, Download } from "lucide-react";
+import { Plus, Hexagon, Bot, SquareTerminal, Plug, Download } from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";

@@ -9,7 +9,7 @@
  * so a teammate's session looks identical wherever it is read.
  */
 
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useMemberTranscriptTail } from "@/hooks/use-member-transcript-tail";
 import type { WindowContentProps } from "@/components/floating-window/window-content-registry";

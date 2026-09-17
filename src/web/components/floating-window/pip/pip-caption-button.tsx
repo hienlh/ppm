@@ -23,7 +23,7 @@
  *    afterwards (a chat acquiring a name) keeps the old caption until it is popped out again.
  */
 
-import { PictureInPicture2 } from "lucide-react";
+import { PictureInPicture2 } from "@/lib/icons";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT } from "../window-chrome-contract";

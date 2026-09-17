@@ -1,4 +1,4 @@
-import { WifiOff, ServerOff, RefreshCw, Home } from "lucide-react";
+import { WifiOff, ServerOff, RefreshCw, Home } from "@/lib/icons";
 import { useState } from "react";
 import { useConnectionStore } from "@/stores/connection-store";
 import { getCachedNamedHostname } from "@/components/tunnels/named-tunnel/use-named-tunnel-setup";

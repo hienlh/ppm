@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Power, PowerOff, Puzzle, FolderSymlink, Loader2 } from "lucide-react";
+import { Plus, Trash2, Power, PowerOff, Puzzle, FolderSymlink, Loader2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";

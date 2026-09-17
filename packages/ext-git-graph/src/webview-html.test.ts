@@ -411,18 +411,48 @@ describe("getWebviewHtml commit details", () => {
     expect(when.slice(0, when.indexOf("}"))).not.toContain("grid-column");
   });
 
-  it("drops the header chips on a phone rather than truncating the author", () => {
-    // Two chips take half a 390px header and the name came out as "t." with an
-    // ellipsis. The metadata grid two lines below carries both hashes in full,
-    // so nothing is lost by hiding them.
+  it("closes from the header, because a tap is the only way in", () => {
+    // The panel opens on a tap and used to close on Escape or on tapping the
+    // same commit again — neither of which is findable, and the first of which
+    // a phone does not have. It took the chips' place rather than joining
+    // them: they were a convenience, and the grid below has both hashes whole.
+    expect(render).toContain('class="detail-close"');
+    expect(render).toContain("ICONS.x");
+    expect(render).not.toContain('class="chip copyable"');
+    expect(css).not.toContain(".chip {");
+    expect(render).toContain("metaRow('Commit'");
+  });
+
+  it("keeps that button on a phone, where the panel is a third of the screen", () => {
+    // This row used to be hidden below the breakpoint, because two hash chips
+    // took half a 390px header and left the author's name as "t." with an
+    // ellipsis. Hiding a close button is a different thing entirely: it is the
+    // only way out on the device with no Escape key.
     const phone = css.slice(css.indexOf("@media (max-width: 640px)"));
-    expect(phone.slice(0, phone.indexOf("\n}"))).toContain(".detail-head-actions { display: none; }");
+    expect(phone.slice(0, phone.indexOf("\n}"))).not.toContain(".detail-head-actions");
+    expect(css).not.toContain(".detail-head-actions { display: none; }");
+  });
+
+  it("closes the same way from the button and from Escape", () => {
+    // Two copies of this drift, and the way it shows is a row left marked
+    // selected — a highlight explaining a panel that is no longer there.
+    const close = html.slice(html.indexOf("function closeDetailPanel"));
+    const body = close.slice(0, close.indexOf("\n}"));
+    expect(body).toContain("state.selectedCommit = null");
+    expect(body).toContain("state.expandedCommit = null");
+    expect(body).toContain("classList.add('hidden')");
+    expect(body).toContain(".commit-row.selected");
+    expect(body).toContain("renderScrollMarkers()");
+    expect(html).toContain("else if (state.expandedCommit) closeDetailPanel();");
+    const handler = html.slice(html.indexOf("// The header's dismiss."), 0 + html.indexOf("const copySource"));
+    expect(handler).toContain("closest('.detail-close')");
+    expect(handler).toContain("closeDetailPanel()");
   });
 
   it("copies any value it shows, by one delegate", () => {
     // The hash chips and the metadata values are the same affordance; two
     // handlers would be two chances for one of them to stop working.
-    const handler = html.slice(html.indexOf("// Hash chips and metadata values"));
+    const handler = html.slice(html.indexOf("// Metadata values."));
     expect(handler.slice(0, 400)).toContain("closest('[data-copy]')");
     // Both helpers route through the same one, and a person copies as the
     // canonical form git wants back rather than as what is on screen.
@@ -492,10 +522,14 @@ describe("getWebviewHtml commit details", () => {
     expect(uncommitted).toContain('detail-pad');
   });
 
-  it("copies the whole hash from a chip that shows eight characters", () => {
-    // A short hash is what you read; a full one is what you paste.
-    expect(render).toContain("data-copy=\"' + escHtml(detail.hash)");
-    expect(render).toContain("escHtml(detail.hash.substring(0, 8))");
+  it("copies the whole hash from the cell that sets off its first eight", () => {
+    // A short hash is what you read; a full one is what you paste. Since the
+    // header's chips became the close button, this cell is where both are.
+    const cell = html.slice(html.indexOf("function hashCell(hash)"));
+    const body = cell.slice(0, cell.indexOf("\n}"));
+    expect(body).toContain("String(hash).slice(0, 8)");
+    expect(body).toContain("copyable(");
+    expect(body).toContain(", hash, 'mono')");
   });
 
   it("shows the file name before the directory it is in", () => {

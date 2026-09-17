@@ -1,4 +1,4 @@
-import { Loader2, FileWarning } from "lucide-react";
+import { Loader2, FileWarning } from "@/lib/icons";
 import { useBlobUrl } from "@/hooks/use-blob-url";
 
 export function ImagePreview({ filePath, projectName }: { filePath: string; projectName: string }) {

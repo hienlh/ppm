@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { PanelBottom, GitBranch, ArrowUp, ArrowDown, Check } from "lucide-react";
+import { PanelBottom, GitBranch, ArrowUp, ArrowDown, Check } from "@/lib/icons";
 import { useExtensionStore, type StatusBarItemUI } from "@/stores/extension-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";

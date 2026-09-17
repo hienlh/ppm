@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo } from "react";
-import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft, Image as ImageIcon, Search, ExternalLink, Copy } from "lucide-react";
+import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft, Image as ImageIcon, Search, ExternalLink, Copy } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder, loadRecentTimes } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -296,6 +296,9 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
                 onTouchStart={() => startLongPress(project.name)}
                 onTouchEnd={cancelLongPress}
                 onTouchMove={cancelLongPress}
+                // A scroll fires `touchcancel` and then delivers no further
+                // move/end, so the timer has to be disarmed here too.
+                onTouchCancel={cancelLongPress}
               >
                 <ProjectAvatar name={project.name} color={color} image={project.image} size={40} allNames={allNames} />
 

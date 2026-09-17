@@ -12,7 +12,7 @@ import {
   ChevronsDownUp,
   Crosshair,
   Loader2,
-} from "lucide-react";
+} from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useShallow } from "zustand/react/shallow";

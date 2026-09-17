@@ -32,6 +32,7 @@ export interface LongPressHandlers {
   onTouchStart?(event: TouchEvent): void;
   onTouchMove?(event: TouchEvent): void;
   onTouchEnd?(event: TouchEvent): void;
+  onTouchCancel?(event: TouchEvent): void;
   onContextMenu?(event: MouseEvent): void;
 }
 
@@ -93,5 +94,12 @@ export function useCoarseLongPress(onBeforeOpen?: () => void): LongPressHandlers
     onTouchStart: start,
     onTouchMove: move,
     onTouchEnd: cancel,
+    // `touchcancel` is the one that matters, and it is the easiest to leave out.
+    // Once the browser claims the gesture for scrolling it fires this and then
+    // sends **no further** `touchmove` or `touchend` to the element — so a timer
+    // armed on touchstart survives the scroll and fires into it, opening a menu
+    // over a list the finger is already moving. The move tolerance above cannot
+    // catch it, because the moves it would have measured are never delivered.
+    onTouchCancel: cancel,
   };
 }
