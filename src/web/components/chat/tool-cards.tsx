@@ -36,8 +36,8 @@ import {
   Clock,
   Send,
   Users,
-  ImagePlus,
-} from "lucide-react";
+} from "@/lib/icons";
+import { ImagePlus } from "@/lib/icons";
 
 /**
  * Handle of an agent that can be addressed later, or null for a one-shot subagent.
@@ -175,6 +175,11 @@ export function ToolCard({
   const { toolName, input } = extractToolInfo(tool);
   const hasResult = result?.type === "tool_result";
   const isError = hasResult && !!(result as any).isError;
+  // Codex sends an exit code for shell tools. Keep it visible: output can contain
+  // useful rows even when PowerShell recorded a non-terminating error and exited 1.
+  const exitCode = hasResult && typeof (result as any).exitCode === "number"
+    ? (result as any).exitCode as number
+    : undefined;
   const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
   const wasApproved = tool.type === "approval_request" && (tool as any).approved != null;
   const isSubagent = (toolName === "Agent" || toolName === "Task") && tool.type === "tool_use";
@@ -255,6 +260,11 @@ export function ToolCard({
           )}
           {bgRunning && (
             <span className="text-[10px] text-primary">running…</span>
+          )}
+          {exitCode != null && (
+            <span className={`text-[10px] font-mono ${exitCode === 0 ? "text-text-3" : "text-error"}`}>
+              exit {exitCode}
+            </span>
           )}
           {isError || bgFailed
             ? <XCircle className="size-3.5 text-error" />

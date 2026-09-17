@@ -8,7 +8,7 @@
  * the item would move a tab somewhere the user cannot see (a scaled-down window is never
  * the answer — see the mobile-first UI rules).
  */
-import { ExternalLink, PictureInPicture2 } from "lucide-react";
+import { ExternalLink, PictureInPicture2 } from "@/lib/icons";
 import { toast } from "sonner";
 import { openTabInPip } from "@/components/floating-window/open-tab-in-pip";
 import { isDocumentPipSupported } from "@/components/floating-window/pip/pip-support";

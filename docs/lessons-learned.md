@@ -4,6 +4,20 @@ Knowledge and gotchas discovered during PPM development.
 
 ---
 
+## A missing Codex rollout must not restart an existing conversation
+
+Each Codex account has its own history directory. Search all managed accounts,
+preferring the session's current account, and copy the located rollout into the
+serving account's directory before resuming. Only a session freshly created by
+PPM may start a new thread without a rollout. An existing thread with missing
+history must report an error, including during account rotation.
+
+Starting a replacement thread and recording `migrated_to` hides the original
+history behind the replacement while a tab can retain the original title.
+For affected historical data, verify both transcripts and the migration log,
+take a verified SQLite snapshot, then remove only the incorrect redirect.
+Keep both transcripts; verify the live messages API returns each independently.
+
 ## Chat usage must stay scoped to its provider and session
 
 Usage API responses are snapshots: replace them instead of merging into previous
@@ -312,3 +326,34 @@ on paths the runtime still honours. Windows and macOS never construct the poller
 being hit sets `truncated` — so a churn storm shows up in stats instead of silently growing the
 poll set. Given this watcher once reached ~360k inotify watches, refusing to grow without limit
 matters more than perfect coverage.
+
+## A Go rewrite was considered and rejected (2026-09-11)
+
+**Question**: the server runs everything on one event loop and `/api/health` has been seen taking
+18.9 s on a busy instance. Would the backend be better off in Go?
+
+**Evidence, against the obvious blocker**: "no Go SDK" turned out to be the *weakest* argument. The
+Claude Agent SDK is a wrapper that spawns a ~214 MB native `claude` binary and speaks
+`--output-format stream-json` to it (`node_modules/@anthropic-ai/claude-agent-sdk/manifest.json`),
+Codex is already `codex app-server` over NDJSON-RPC, Cursor is `CliProvider` over NDJSON — and
+Anthropic documents driving the loop from any language via `claude -p`. Every provider PPM has is a
+subprocess protocol. The transport was never the cost.
+
+**Evidence, for the real blockers**: the *inbound* direction is. `canUseTool` is Python/TypeScript
+only; from another language the permission host is an MCP server behind `--permission-prompt-tool`,
+so a Go provider trades one callback (18 call sites in `claude-agent-sdk.ts`) for one server per
+provider, against a wrapper↔binary pair Anthropic tests as a matched set (`sdkCompat` in the
+manifest). Separately, extensions are npm packages `await import()`ed in a Bun Worker
+(`extension-host-worker.ts:57`) and v1.0 carries a Marketplace as High priority — Go would need a
+second runtime just to keep them. And `src/web` (~90k lines) does not move in any scenario.
+
+**The measurement nobody had read**: `src/services/event-loop-lag.ts` splits stalls into
+`self` (our synchronous work) and `starved` (the CPU went to a compiler, a browser, or the `claude`
+process each session spawns). Its own comment says moving work to another thread cannot fix
+`starved`. Read `byCause` from `GET /api/system/event-loop` before any language argument — if it
+says `starved`, no rewrite helps; if `self`, the fix is the blocking call (bun:sqlite is
+synchronous) and a Worker comes long before a new language.
+
+**Decision**: stay on Bun. If a non-JS provider is ever wanted, make `AIProvider` a process
+boundary and try it as *one provider* — the seam gives the experiment for free, a rewrite has to be
+right first time. Design: `docs/architecture/plugins-and-tracing.md`.

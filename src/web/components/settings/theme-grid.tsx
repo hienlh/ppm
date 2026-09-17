@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check } from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 import { BUILTIN_ORDER, BUILTIN_THEMES } from "@/theme/builtin";
 import { resolveTheme } from "@/theme/resolve-theme";

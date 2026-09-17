@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown } from "@/lib/icons";
 import type { Connection, CachedTable } from "./use-connections";
 import type { ColumnInfo } from "./schema-table-tree";
 import { ConnectionRow } from "./connection-row";

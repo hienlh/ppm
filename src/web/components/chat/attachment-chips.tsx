@@ -1,5 +1,8 @@
-import { useState } from "react";
-import { X, FileText, Image as ImageIcon, Loader2, TerminalSquare, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { X, FileText, Image as ImageIcon, Loader2, TerminalSquare, ChevronDown } from "@/lib/icons";
+import { useImageOverlay } from "@/stores/image-overlay-store";
+import { collectGallery, GALLERY_ITEM_ATTR, GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
+import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
 import { cn } from "@/lib/utils";
 import type { ChatAttachment } from "./message-input";
 
@@ -8,31 +11,149 @@ interface AttachmentChipsProps {
   onRemove: (id: string) => void;
 }
 
+/**
+ * What a click on the chip *body* should do.
+ *
+ * A named function rather than an inline condition because the bug it fixes was
+ * the condition itself: the handler asked only about `textContent`, which an
+ * image never has, so the chip did nothing for exactly the attachment you most
+ * want to look at before sending. This suite has no DOM renderer, so a decision
+ * left inline here is untestable by construction.
+ *
+ * The remove button is not a case: it stops the event before it gets here.
+ */
+export function chipBodyAction(att: ChatAttachment): "expand" | "preview" | "none" {
+  if (att.textContent) return "expand";
+  if (att.previewUrl) return "preview";
+  return "none";
+}
+
 export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const coarse = usePrefersCoarsePointer();
+
+  // Every preview URL this component has handed to the lightbox, mapped back to the
+  // attachment it belongs to. Keyed by URL rather than tracking one "currently
+  // viewing" id, because the arrow keys move the viewer between attachments and a
+  // single remembered id stops describing what is on screen the moment they are used.
+  const owned = useRef(new Map<string, string>());
+  const openOverlay = useImageOverlay((s) => s.open);
+  const closeOverlay = useImageOverlay((s) => s.close);
+  const overlaySrc = useImageOverlay((s) => s.src);
+
+  /**
+   * A preview URL is not stable for the life of the attachment, so an open lightbox has
+   * to follow it. `processFiles` creates one from the file as pasted, then downscales,
+   * then revokes the first and points the chip at the reduced copy — and clicking the
+   * thumbnail the moment a screenshot is pasted lands inside exactly that window.
+   * Removing the attachment, or sending the message, revokes it outright.
+   *
+   * A revoked blob URL does not raise anything. It renders as a broken image inside the
+   * viewer, with nothing to say why, so the two cases are handled apart: a URL that was
+   * replaced is followed, and one whose attachment is gone closes the viewer.
+   */
+  useEffect(() => {
+    if (!overlaySrc) return;
+    const id = owned.current.get(overlaySrc);
+    if (!id) return; // Showing something else entirely — a transcript image.
+    const att = attachments.find((a) => a.id === id);
+    if (!att?.previewUrl) return closeOverlay();
+    if (att.previewUrl !== overlaySrc) {
+      owned.current.set(att.previewUrl, att.id);
+      openOverlay(att.previewUrl, att.name);
+    }
+  }, [attachments, overlaySrc, openOverlay, closeOverlay]);
 
   if (attachments.length === 0) return null;
 
   const expanded = expandedId ? attachments.find((a) => a.id === expandedId) : null;
 
+  function preview(att: ChatAttachment, target: Element) {
+    if (!att.previewUrl) return;
+    // The gallery is every other image waiting in the composer, so a batch of pasted
+    // screenshots is walked with the arrow keys instead of closed and reopened one at a
+    // time. Every one of them is claimed, not just the one clicked, because any of them
+    // can become the image on screen without this component hearing about it.
+    for (const a of attachments) if (a.previewUrl) owned.current.set(a.previewUrl, a.id);
+    openOverlay(att.previewUrl, att.name, collectGallery(target));
+  }
+
   return (
     <div className="px-2 md:px-4 pt-2">
-      <div className="flex flex-wrap gap-1.5">
+      {/*
+        The row gap is the wrapped case of the target arithmetic below. A chip is
+        26-30px tall and its targets are 44, so each one reaches ~7-9px past the
+        chip on both sides — which is fine along a single row, where the spacing
+        was measured, and is not fine once the chips wrap: at `gap-1.5` two rows'
+        targets overlapped by about 8px, and a tap under one chip's X landed on
+        the preview of the chip below it. 20px clears the worst case (a chip with
+        no thumbnail, which is shortest and still carries a 44px remove target),
+        and only on a coarse pointer, where the targets exist at all.
+      */}
+      <div
+        className={cn("flex flex-wrap gap-1.5", coarse && "gap-y-5")}
+        {...{ [GALLERY_ROOT_ATTR]: "" }}
+      >
         {attachments.map((att) => (
           <div
             key={att.id}
             className={cn(
               "flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-secondary max-w-48",
-              att.textContent && "cursor-pointer hover:border-primary/50",
+              chipBodyAction(att) !== "none" && "cursor-pointer hover:border-primary/50",
               expandedId === att.id && "border-primary/50 bg-surface-elevated",
             )}
-            onClick={() => {
-              if (att.textContent) setExpandedId(expandedId === att.id ? null : att.id);
+            // The whole chip opens the preview, not just the 20px thumbnail — the
+            // filename beside it is most of the chip's width and reads as part of
+            // the same control, so clicking it doing nothing is the bug. Only the
+            // remove button opts out, which it already does by stopping the event.
+            onClick={(e) => {
+              const action = chipBodyAction(att);
+              if (action === "expand") setExpandedId(expandedId === att.id ? null : att.id);
+              else if (action === "preview") preview(att, e.currentTarget);
             }}
           >
             {/* Thumbnail or icon */}
             {att.previewUrl ? (
-              <img src={att.previewUrl} alt={att.name} className="size-5 rounded object-cover shrink-0" />
+              // Still a real button even though the chip around it now opens the same
+              // preview, and for the one thing the chip cannot do: reach it by keyboard.
+              // The chip has to stay a `div` — it carries the remove button, and a button
+              // inside a button is invalid — so this is the only focusable way in.
+              //
+              // The visible thumbnail stays 20px and only the tap-registering area grows,
+              // through the same invisible `::before` the explorer toolbar uses — a chip
+              // that changed size on a phone would push the composer around.
+              //
+              // Vertical and horizontal are deliberately different. A symmetric `-inset-3`
+              // is 44x44, and was fine while it was the only grown target — but the remove
+              // button below now needs one too, and a chip row is horizontally dense by
+              // construction. Two targets each reaching 12px towards the other overlap, and
+              // an overlap means the tap goes to whichever paints last.
+              //
+              // So the full 44px goes on the axis a finger actually misses on — a list
+              // scrolls vertically — and horizontal takes what is left over. Measured in a
+              // browser at the real metrics, worst case being a one-character filename:
+              // thumbnail target 32x44, remove target 28x44, 7px clear between them and
+              // 12px to the next chip's thumbnail. That is within one row; the gap between
+              // wrapped rows is what keeps the vertical bleed from reaching the row below,
+              // and it is set on the container above.
+              <button
+                type="button"
+                title={`Preview ${att.name}`}
+                aria-label={`Preview ${att.name}`}
+                onClick={(e) => { e.stopPropagation(); preview(att, e.currentTarget); }}
+                className={cn(
+                  "relative shrink-0 rounded",
+                  "can-hover:hover:ring-2 can-hover:hover:ring-primary/60 transition-shadow",
+                  coarse && "before:absolute before:-inset-y-3 before:-inset-x-1.5 before:content-['']",
+                )}
+              >
+                <img
+                  src={att.previewUrl}
+                  alt={att.name}
+                  {...{ [GALLERY_ITEM_ATTR]: "" }}
+                  className="size-5 rounded object-cover"
+                />
+              </button>
             ) : att.textContent ? (
               <TerminalSquare className="size-3.5 shrink-0 text-text-subtle" />
             ) : att.isImage ? (
@@ -65,10 +186,21 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
             ) : null}
 
             {/* Remove button */}
+            {/*
+              16x16 of ink, and until now 16x16 of target — the smallest thing a finger
+              was asked to hit anywhere in the composer, on the one control that throws
+              work away. Same treatment as the thumbnail above: 14px of vertical bleed
+              takes it to the full 44px, and 6px horizontal keeps it clear of both the
+              thumbnail to its left and the next chip's thumbnail to its right. 28x44
+              measured, not 44x44 — see the note above for why the width gives way.
+            */}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onRemove(att.id); if (expandedId === att.id) setExpandedId(null); }}
-              className="shrink-0 rounded-sm p-0.5 hover:bg-border/50 transition-colors"
+              className={cn(
+                "relative shrink-0 rounded-sm p-0.5 hover:bg-border/50 transition-colors",
+                coarse && "before:absolute before:-inset-y-3.5 before:-inset-x-1.5 before:content-['']",
+              )}
               aria-label={`Remove ${att.name}`}
             >
               <X className="size-3" />

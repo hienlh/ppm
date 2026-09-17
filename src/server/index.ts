@@ -31,6 +31,8 @@ import { extensionWebSocket } from "./ws/extensions.ts";
 import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
+import { lspWebSocket } from "./ws/lsp.ts";
+import { lspManager } from "../services/lsp/lsp-manager.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
 import { ok, err } from "../types/api.ts";
 
@@ -43,6 +45,7 @@ async function setupLogFile() {
   const { resolve } = await import("node:path");
   const { appendFileSync, mkdirSync, existsSync } = await import("node:fs");
   const { getPpmDir } = await import("../services/ppm-dir.ts");
+  const { stdioIsLogFile, consumeStdioIsLogEnv } = await import("../services/log-rotate.ts");
 
   const ppmDir = getPpmDir();
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
@@ -68,9 +71,26 @@ async function setupLogFile() {
     try { appendFileSync(logPath, `[${ts}] [${level}] ${redact(msg)}\n`); } catch {}
   };
 
-  console.log = (...args: unknown[]) => { origLog(...args); writeLog("INFO", args); };
-  console.error = (...args: unknown[]) => { origError(...args); writeLog("ERROR", args); };
-  console.warn = (...args: unknown[]) => { origWarn(...args); writeLog("WARN", args); };
+  // The supervisor spawns this process with `stdio: ["ignore", logFd, logFd]`
+  // where logFd is ppm.log itself, so console output already lands in the log
+  // through fd 1 — with no timestamp, no level, and crucially *unredacted*,
+  // because `redact()` above only ever ran on the appended copy. That is how
+  // ppm.log came to hold 1,395,012 lines of which only 532,792 carried the
+  // prefix: the other 862,220 were the same events arriving raw.
+  //
+  // Where the console already reaches the file, the original call is dropped
+  // and only the formatted, redacted line is written — one copy per event, and
+  // the safe one. Run from a terminal (`bun dev:server`) stdout is a tty, both
+  // checks are false, and the terminal keeps its output exactly as before.
+  const stdoutIsLogFile = stdioIsLogFile(1, logPath);
+  const stderrIsLogFile = stdioIsLogFile(2, logPath);
+  // Read once, then dropped: the terminals, SDK children and `ppm` invocations this server
+  // spawns inherit its environment, and none of their stdouts is the log file.
+  consumeStdioIsLogEnv();
+
+  console.log = (...args: unknown[]) => { if (!stdoutIsLogFile) origLog(...args); writeLog("INFO", args); };
+  console.error = (...args: unknown[]) => { if (!stderrIsLogFile) origError(...args); writeLog("ERROR", args); };
+  console.warn = (...args: unknown[]) => { if (!stderrIsLogFile) origWarn(...args); writeLog("WARN", args); };
 
   // Capture uncaught errors — count-based exit for supervisor restart
   let exceptionCount = 0;
@@ -129,16 +149,21 @@ app.get("/api/info", (c) => c.json(ok({
   tunnel_active: !!tunnelService.getTunnelUrl(),
 })));
 
-// Public: recent logs for bug reports (last 30 lines)
+// Public: recent logs for bug reports (last 30 lines).
+//
+// Reads a bounded tail, never the file. This route sits *before*
+// authMiddleware, and `readFileSync` + `split("\n")` on the 276 MB ppm.log this
+// was found on cost 356 ms of blocked event loop and a 644 MB resident spike —
+// per call, unauthenticated, and growing with the log.
 app.get("/api/logs/recent", async (c) => {
   const { resolve } = await import("node:path");
-  const { existsSync, readFileSync } = await import("node:fs");
+  const { existsSync } = await import("node:fs");
   const { getPpmDir } = await import("../services/ppm-dir.ts");
   const { redactSecrets } = await import("../services/redact-secrets.ts");
+  const { tailLines } = await import("../services/file-lines.ts");
   const logFile = resolve(getPpmDir(), "ppm.log");
   if (!existsSync(logFile)) return c.json(ok({ logs: "" }));
-  const content = readFileSync(logFile, "utf-8");
-  const lines = content.split("\n").slice(-30).join("\n").trim();
+  const lines = await tailLines(logFile, 30);
   // Double-redact in case old logs have unredacted content
   return c.json(ok({ logs: redactSecrets(lines) }));
 });
@@ -176,6 +201,15 @@ app.route("/api/system", resourceRoutes);
 // Host OS facts for the file explorer (platform, drives, known + pinned folders)
 import { hostInfoRoutes } from "./routes/host-info.ts";
 app.route("/api/system", hostInfoRoutes);
+
+// Event-loop lag. One process serves every request and all of the chat work, so
+// a stall here is a stall everywhere; the report says whether the time was spent
+// on our own synchronous work or off the CPU entirely, which is what decides
+// whether the answer is in this repository at all.
+app.get("/api/system/event-loop", async (c) => {
+  const { lagReport } = await import("../services/event-loop-lag.ts");
+  return c.json(ok(lagReport()));
+});
 
 // Remote desktop (video capture + input) — on by default, opt-out via REMOTE_DESKTOP_ENABLED=0, see remote-desktop-flag.ts
 import { remoteDesktopRoutes } from "./routes/remote-desktop.ts";
@@ -912,6 +946,14 @@ if (process.argv.includes("__serve__")) {
           if (upgraded) return undefined;
           return new Response("WebSocket upgrade failed", { status: 400 });
         }
+
+        if (wsType === "lsp") {
+          const upgraded = server.upgrade(req, {
+            data: { type: "lsp", projectName },
+          });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
       }
 
       return app.fetch(req, server);
@@ -928,6 +970,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "global") globalWebSocket.open(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.open(ws);
         else if (t === "terminal") terminalWebSocket.open(ws);
+        else if (t === "lsp") lspWebSocket.open(ws);
         else ws.close(1008, "unknown socket type");
       },
       message(ws: any, msg: any) {
@@ -938,6 +981,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "global") globalWebSocket.message(ws, msg);
         else if (t === "remote-desktop") remoteDesktopWebSocket.message(ws, msg);
         else if (t === "terminal") terminalWebSocket.message(ws, msg);
+        else if (t === "lsp") lspWebSocket.message(ws, msg);
       },
       close(ws: any) {
         const t = ws.data?.type;
@@ -947,15 +991,19 @@ if (process.argv.includes("__serve__")) {
         else if (t === "global") globalWebSocket.close(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.close(ws);
         else if (t === "terminal") terminalWebSocket.close(ws);
+        else if (t === "lsp") lspWebSocket.close(ws);
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
 
   // Start background account token refresh in daemon child
-  import("../services/account.service.ts").then(({ accountService }) => accountService.startAutoRefresh()).catch(() => {});
+  import("../services/account.service.ts").then(({ accountService }) => accountService.startAccountMaintenance()).catch(() => {});
 
   // Start background usage limit polling (every 5 min)
   import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
+
+  // Watch how long the loop is unavailable for, and whose fault that is
+  import("../services/event-loop-lag.ts").then(({ startLagMonitor }) => startLagMonitor()).catch(() => {});
 
   // Discover + activate enabled extensions
   import("../services/extension.service.ts").then(({ extensionService }) => extensionService.startup()).catch((e) => {
@@ -997,6 +1045,10 @@ if (process.argv.includes("__serve__")) {
   const gracefulShutdown = () => {
     try { schedulerStop?.(); } catch {}
     try { codexCleanupRef?.(); } catch {}
+    // Language servers are long-lived children; most exit on stdin EOF, but a
+    // resident rust-analyzer holding a crate graph is too expensive to leave
+    // to chance. Synchronous because process.exit follows immediately.
+    try { lspManager.killAllSync(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

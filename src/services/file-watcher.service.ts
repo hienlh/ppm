@@ -36,6 +36,12 @@ interface WatchEntry {
   refCount: number;
   timer?: ReturnType<typeof setTimeout>;
   pending: Set<string>;
+  /** Resolves once the first walk has attached its watchers. Never rejects. */
+  ready: Promise<void>;
+  /** The cap this tree was given — what it counts as while it is still walking. */
+  maxDirs: number;
+  /** True until the first walk lands, successfully or not. */
+  walking: boolean;
 }
 
 const watchers = new Map<string, WatchEntry>();
@@ -47,9 +53,21 @@ export function onFileChange(cb: ChangeCallback): void {
   changeCallbacks.push(cb);
 }
 
+/**
+ * How many directories the live trees account for, for sizing the next project's budget.
+ *
+ * A tree that is still walking counts as the whole cap it was given rather than as what it has
+ * reached so far. The walk hands the event loop back every few hundred directories, so its
+ * count climbs for seconds — and a second project opened during one used to size its budget
+ * against that unfinished number, which is how two projects starting together could each be
+ * told there was room and overshoot `MAX_DIRS_TOTAL` between them. Over-counting is the safe
+ * direction: the reservation is released the moment the walk lands and reports its real size.
+ */
 function totalCoveredDirs(): number {
   let total = 0;
-  for (const entry of watchers.values()) total += entry.tree.stats().dirs;
+  for (const entry of watchers.values()) {
+    total += entry.walking ? entry.maxDirs : entry.tree.stats().dirs;
+  }
   return total;
 }
 
@@ -71,12 +89,25 @@ function queue(entry: WatchEntry, projectName: string, relPath: string): void {
   }, DEBOUNCE_MS);
 }
 
-/** Start watching a project directory (ref-counted — safe to call multiple times) */
-export function startWatching(projectName: string, projectPath: string): void {
+/**
+ * Start watching a project directory (ref-counted — safe to call multiple times).
+ *
+ * The returned promise resolves once the tree's watchers are attached, which is
+ * no longer the moment this returns: covering yields the event loop every few
+ * hundred directories, so a change made in between is not reported. Callers that
+ * act on the filesystem immediately afterwards have to await it. It never
+ * rejects — a failed walk is logged and leaves the project unwatched.
+ *
+ * What those yields cost is *events*, not coverage: a directory created while the
+ * walk is running would otherwise end up in neither the snapshot nor under a live
+ * watcher and stay unwatched for the session, so `WatchTree.start()` makes a
+ * reconciliation pass before resolving. Both halves are why awaiting this matters.
+ */
+export function startWatching(projectName: string, projectPath: string): Promise<void> {
   const existing = watchers.get(projectName);
   if (existing) {
     existing.refCount++;
-    return;
+    return existing.ready;
   }
 
   const maxDirs = Math.max(
@@ -95,28 +126,47 @@ export function startWatching(projectName: string, projectPath: string): void {
     }),
     refCount: 1,
     pending: new Set(),
+    ready: Promise.resolve(),
+    maxDirs,
+    walking: true,
   };
   watchers.set(projectName, entry);
 
-  try {
-    entry.tree.start();
-  } catch (e) {
-    entry.tree.close(); // release whatever attached before the failure
-    watchers.delete(projectName);
-    console.warn(`[file-watcher] Failed to watch ${projectPath}: ${(e as Error).message}`);
-    return;
-  }
-
-  const { dirs, watchers: handles, truncated } = entry.tree.stats();
-  console.log(
-    `[file-watcher] Started watching: ${projectName} (${dirs} dirs, ${handles} handles${truncated ? ", capped" : ""})`,
-  );
-  if (truncated) {
-    console.warn(
-      `[file-watcher] ${projectName} exceeded the ${maxDirs}-directory budget — ` +
-      `parts of the tree are not watched. Add build/cache directories to the ignore list.`,
-    );
-  }
+  // The entry is already in `watchers`, so a second caller arriving while the
+  // walk is still running finds it and bumps the ref count rather than starting
+  // a second tree. Covering is asynchronous now — it hands the event loop back
+  // every few hundred directories instead of holding it for the whole walk — so
+  // the count and the truncation warning can only be reported once it lands.
+  entry.ready = entry.tree
+    .start()
+    .then(() => {
+      entry.walking = false;
+      // Stopped while the walk was still running: `stopWatching` closed this tree, so the
+      // stats are now zeroes and the line would read "Started watching: proj (0 dirs, 0
+      // handles)" for a project nothing is watching.
+      if (watchers.get(projectName) !== entry) return;
+      const { dirs, watchers: handles, truncated } = entry.tree.stats();
+      console.log(
+        `[file-watcher] Started watching: ${projectName} (${dirs} dirs, ${handles} handles${truncated ? ", capped" : ""})`,
+      );
+      if (truncated) {
+        console.warn(
+          `[file-watcher] ${projectName} exceeded the ${maxDirs}-directory budget — ` +
+          `parts of the tree are not watched. Add build/cache directories to the ignore list.`,
+        );
+      }
+    })
+    .catch((e) => {
+      entry.walking = false;
+      entry.tree.close(); // release whatever attached before the failure
+      // By identity: a stop-then-start of the same project while this walk was in flight put
+      // a *new* entry in the map, and deleting unconditionally would drop that one — leaving
+      // its handles unclosed and letting the next `startWatching` build a second tree over
+      // the same directories.
+      if (watchers.get(projectName) === entry) watchers.delete(projectName);
+      console.warn(`[file-watcher] Failed to watch ${projectPath}: ${(e as Error).message}`);
+    });
+  return entry.ready;
 }
 
 /** Decrement ref count — stops watcher when no clients remain */

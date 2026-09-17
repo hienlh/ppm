@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import type { ChatMessage, SessionInfo } from "../provider.interface.ts";
+import { stripSharedContext } from "../../shared/provider-context.ts";
 
 const DEFAULT_CHATS_DIR = join(homedir(), ".cursor", "chats");
 
@@ -38,7 +39,7 @@ export async function listCursorSessions(providerId: string, chatsDir?: string):
               const hex = typeof row.value === "string" ? row.value : Buffer.from(row.value).toString("utf-8");
               const json = Buffer.from(hex, "hex").toString("utf-8");
               const meta = JSON.parse(json);
-              if (meta.name) title = meta.name.split("\n")[0].slice(0, 80);
+              if (meta.name) title = stripSharedContext(meta.name).split("\n")[0]?.slice(0, 80) || title;
               if (meta.createdAt) createdAt = new Date(meta.createdAt).toISOString();
             }
           } catch { /* use defaults */ }
@@ -139,6 +140,7 @@ function parseDagBlobs(
           if (parsed.role === "user") {
             const match = content.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/);
             if (match?.[1]) content = match[1];
+            content = stripSharedContext(content);
           }
           messages.push({
             id: blob.id,
@@ -159,7 +161,7 @@ function parseDagBlobs(
             messages.push({
               id: blob.id,
               role: messages.length % 2 === 0 ? "user" : "assistant",
-              content: textParts,
+              content: messages.length % 2 === 0 ? stripSharedContext(textParts) : textParts,
               timestamp: new Date().toISOString(),
             });
             continue;

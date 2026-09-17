@@ -2,16 +2,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
-import monacoEditorPlugin from "vite-plugin-monaco-editor";
 import { resolve } from "path";
+import { monacoDevAssets } from "./scripts/vite-monaco-dev-assets.ts";
 
 export default defineConfig({
   plugins: [
     react(),
+    // Without this the editor never paints under `bun dev:web` — see the plugin's own comment.
+    monacoDevAssets(),
     tailwindcss(),
-    ((monacoEditorPlugin as unknown as { default?: (opts: object) => object }).default ?? (monacoEditorPlugin as unknown as (opts: object) => object))({
-      languages: ["javascript", "typescript", "python", "html", "css", "json", "markdown", "yaml", "shell"],
-    }),
     VitePWA({
       registerType: "autoUpdate",
       strategies: "injectManifest",
@@ -31,8 +30,20 @@ export default defineConfig({
         ],
       },
       injectManifest: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
+        // The shell only. Globbing everything meant a phone's first visit
+        // downloaded 488 files and 33.3 MB before the app was usable; the rest
+        // is content-hashed and immutable, so `sw.ts` caches it on first real
+        // use instead. `index-*` is Vite's entry chunk.
+        // Named individually rather than by extension: a `*.png` glob pulled in
+        // `donate-qr.png`, 104 KB downloaded before first paint by everyone.
+        // Monaco needs no exclusion here: `copy-monaco.ts` stages it into
+        // `dist/web/assets/monaco/` *after* `vite build`, so nothing of it can
+        // reach the manifest — it is cached on use by the `/assets/` route in
+        // `sw.ts`, workers included.
+        globPatterns: ["index.html", "manifest.webmanifest", "icon-*.svg", "assets/index-*.{js,css}"],
+        // No shell file is anywhere near this. A cap in the megabytes is what
+        // let a 12.7 MB worker in.
+        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
       },
     }),
   ],
@@ -46,10 +57,16 @@ export default defineConfig({
     outDir: "../../dist/web",
     emptyOutDir: true,
     sourcemap: false,
+    // A font is never worth inlining. The whole reason a `@font-face` carries a
+    // `unicode-range` is that it is fetched only for text that actually needs
+    // it — base64 in the stylesheet turns that into an unconditional download,
+    // inside the one file the service worker precaches. Under Vite's 4 KB
+    // default, four subsets were being inlined into the shell, three of them
+    // the *rarest* Nerd Font blocks (IEC power symbols, Pomicons).
+    assetsInlineLimit: (file: string) => (file.endsWith(".woff2") ? false : undefined),
     rollupOptions: {
       output: {
         manualChunks(id: string) {
-          if (id.includes("node_modules/monaco-editor")) return "vendor-monaco";
           if (id.includes("node_modules/mermaid")) return "vendor-mermaid";
           if (id.includes("node_modules/@xterm")) return "vendor-xterm";
           if (

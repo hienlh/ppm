@@ -9,7 +9,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { parseCsv, serializeCsv } from "@/lib/csv-parser";
-import { ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUp, ArrowDown } from "@/lib/icons";
 
 interface CsvPreviewProps {
   content: string;

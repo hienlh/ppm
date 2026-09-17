@@ -8,7 +8,7 @@
  * It also carries the way out of a login started here but finished on another
  * device: see TerminalFinishLogin.
  */
-import { ExternalLink, Copy, Link2Off } from "lucide-react";
+import { ExternalLink, Copy, Link2Off } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { copyToClipboard } from "@/lib/clipboard";
 import { loopbackRedirectPort } from "@/lib/oauth-loopback-url";

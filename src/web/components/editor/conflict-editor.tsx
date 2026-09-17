@@ -4,9 +4,12 @@ import type * as MonacoType from "monaco-editor";
 import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { EDITOR_FONT_FAMILY, EDITOR_FONT_LIGATURES, EDITOR_FONT_SIZE } from "@/lib/editor-font";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
+import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
 
 function getMonacoLanguage(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -22,7 +25,7 @@ function getMonacoLanguage(filename: string): string {
     rb: "ruby", php: "php", swift: "swift",
     sql: "sql", xml: "xml", toml: "toml",
   };
-  return map[ext] ?? "plaintext";
+  return map[ext] ?? (isDotenvFile(filename) ? DOTENV_LANGUAGE_ID : "plaintext");
 }
 
 interface ConflictRegion {
@@ -102,7 +105,11 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
   const widgetsRef = useRef<MonacoType.editor.IContentWidget[]>([]);
   const decorationsRef = useRef<MonacoType.editor.IEditorDecorationsCollection | null>(null);
 
-  const { wordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap })));
+  // A phone keeps its own wrap answer, and defaults to wrapping.
+  const { wordWrap, mobileWordWrap } = useSettingsStore(
+    useShallow((s) => ({ wordWrap: s.wordWrap, mobileWordWrap: s.mobileWordWrap })),
+  );
+  const wrapOn = useIsMobile() ? mobileWordWrap : wordWrap;
   const monacoTheme = useMonacoTheme();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -353,13 +360,15 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
           <Editor
             height={containerHeight}
             language={language}
+            beforeMount={registerDotenvLanguage}
             value={content}
             onMount={handleMount}
             theme={monacoTheme}
             options={{
-              fontSize: 13,
-              fontFamily: "Menlo, Monaco, Consolas, monospace",
-              wordWrap: wordWrap ? "on" : "off",
+              fontSize: EDITOR_FONT_SIZE,
+              fontFamily: EDITOR_FONT_FAMILY,
+              fontLigatures: EDITOR_FONT_LIGATURES,
+              wordWrap: wrapOn ? "on" : "off",
               glyphMargin: true,
               readOnly: false,
               automaticLayout: true,

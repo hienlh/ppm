@@ -1,6 +1,8 @@
 import path from "node:path";
 import simpleGit, { type SimpleGit } from "simple-git";
+import { isBinaryContent } from "./binary-content.ts";
 import type {
+  FileFullDiff,
   GitStatus,
   GitFileChange,
   GitCommit,
@@ -8,6 +10,23 @@ import type {
   GitGraphData,
   GitWorktree,
 } from "../types/git.ts";
+
+
+/**
+ * `filePath` resolved inside `projectPath`, or null when it escapes.
+ *
+ * Containment is asked of `relative`, not of a string prefix: a prefix compare
+ * built with a forward slash rejects every path on Windows, where `resolve`
+ * answers with backslashes — the same trap `assertSafeFilePaths` in the git
+ * graph extension documents.
+ */
+function insideProject(projectPath: string, filePath: string): string | null {
+  if (!filePath || path.isAbsolute(filePath) || filePath.includes("\0")) return null;
+  const resolved = path.resolve(projectPath, filePath);
+  const rel = path.relative(projectPath, resolved);
+  if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+  return resolved;
+}
 
 class GitService {
   private git(projectPath: string): SimpleGit {
@@ -126,47 +145,78 @@ class GitService {
   }
 
   /**
+   * The file at a revision, as bytes — null when it does not exist there.
+   *
+   * `showBuffer` rather than `show`: the string form is stdout decoded as
+   * UTF-8, which destroys every byte of a binary file before anything can even
+   * tell that it is one.
+   */
+  async fileBlob(projectPath: string, filePath: string, ref: string): Promise<Uint8Array | null> {
+    try {
+      return await this.git(projectPath).showBuffer([`${ref}:${filePath}`]);
+    } catch {
+      // Absent at that revision (added, renamed, or a ref that resolves to
+      // nothing), which is not an error — the other side still has content.
+      return null;
+    }
+  }
+
+  /**
    * Returns full file contents for both sides of a diff (VSCode-style).
    * - original: file at HEAD (empty if new/untracked/ref missing)
    * - modified: working tree content (empty if deleted on disk)
    * Monaco DiffEditor will compute/render the diff from these full contents.
+   *
+   * Both sides are read as bytes so a binary file can be *recognised* as one,
+   * and its content is then withheld unless `opts.text` asks for it — see
+   * `FileFullDiff`.
    */
   async fileFullDiff(
     projectPath: string,
     filePath: string,
     ref: string = "HEAD",
     ref2?: string,
-  ): Promise<{ original: string; modified: string }> {
-    const git = this.git(projectPath);
+    opts: { text?: boolean } = {},
+  ): Promise<FileFullDiff> {
+    const original = await this.fileBlob(projectPath, filePath, ref);
 
-    let original = "";
-    try {
-      original = await git.show([`${ref}:${filePath}`]);
-    } catch {
-      // File does not exist at ref (new/untracked/added) → empty original
-      original = "";
-    }
-
-    let modified = "";
+    let modified: Uint8Array | null = null;
     if (ref2) {
       // Commit-to-commit diff: read modified from git object store
-      try {
-        modified = await git.show([`${ref2}:${filePath}`]);
-      } catch {
-        modified = "";
-      }
+      modified = await this.fileBlob(projectPath, filePath, ref2);
     } else {
-      // Working tree diff: read from disk
-      try {
-        const absPath = path.resolve(projectPath, filePath);
-        const f = Bun.file(absPath);
-        if (await f.exists()) modified = await f.text();
-      } catch {
-        modified = "";
+      // Working tree diff: read from disk.
+      //
+      // The only side of this function that touches the filesystem directly,
+      // and therefore the only one needing a containment check: git refuses
+      // `HEAD:../secret.txt` itself, but `path.resolve` is happy to answer with
+      // anything the caller asks for and `filePath` arrives from a query
+      // string. `fileFullDiff(repo, "../secret.txt", "HEAD")` returned that
+      // file's contents. PPM is routinely reached through a public tunnel URL,
+      // so "behind auth" is not the whole story.
+      const onDisk = insideProject(projectPath, filePath);
+      if (onDisk) {
+        try {
+          const f = Bun.file(onDisk);
+          if (await f.exists()) modified = await f.bytes();
+        } catch {
+          modified = null;
+        }
       }
     }
 
-    return { original, modified };
+    const binary = isBinaryContent(original) || isBinaryContent(modified);
+    const withhold = binary && !opts.text;
+    const decode = (bytes: Uint8Array | null) =>
+      bytes && !withhold ? new TextDecoder().decode(bytes) : "";
+
+    return {
+      original: decode(original),
+      modified: decode(modified),
+      binary,
+      originalSize: original?.length ?? null,
+      modifiedSize: modified?.length ?? null,
+    };
   }
 
   async fileDiff(

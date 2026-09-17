@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Copy, ExternalLink, X, Check } from "lucide-react";
+import { Copy, ExternalLink, X, Check } from "@/lib/icons";
 import { openGithubIssue } from "@/lib/report-bug";
 import { copyToClipboard } from "@/lib/clipboard";
 

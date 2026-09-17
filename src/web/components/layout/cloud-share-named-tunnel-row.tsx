@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Globe, Loader2, Plus, Square } from "lucide-react";
+import { Globe, Loader2, Plus, Square } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { namedTunnelApi, type NamedTunnelStatus } from "@/lib/api-named-tunnel";
 

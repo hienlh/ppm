@@ -5,7 +5,7 @@ import { useTerminalCommandQueue } from "@/hooks/use-terminal-command-queue";
 import { sendToChat } from "@/lib/send-to-chat";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
-import { RotateCcw, MessageSquare } from "lucide-react";
+import { RotateCcw, MessageSquare } from "@/lib/icons";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 

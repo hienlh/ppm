@@ -10,6 +10,7 @@ import { resolveTheme as resolvePpmTheme } from "@/theme/resolve-theme";
 import { getCurrentAppliedTheme, THEME_CHANGE_EVENT } from "@/theme/apply-theme";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import type { PpmTheme } from "@/theme/types";
+import { TERMINAL_FONT_FAMILY } from "@/lib/editor-font";
 
 /** Current active PpmTheme → xterm ITheme (prefers the live applied theme). */
 function currentXtermTheme(): ITheme {
@@ -347,9 +348,25 @@ export function useTerminal(
       fontSize: 13,
       scrollback: 50000,
       // Explicit terminal-grade stack: the WebGL renderer builds its glyph
-      // atlas via ctx.font and cannot resolve CSS var() values.
-      fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', 'Courier New', monospace",
+      // atlas via ctx.font and cannot resolve CSS var() values. Its own stack
+      // rather than the editor's, because a prompt needs the powerline and
+      // devicon glyphs only a patched Nerd Font has.
+      fontFamily: TERMINAL_FONT_FAMILY,
       theme: currentXtermTheme(),
+      // The two ends of an ANSI palette collapse into the background, and a
+      // prompt cannot know which way round the terminal is. On PPM's light
+      // themes `white` is #e9edf5 against a #f3f7ff background — 1.09:1, i.e.
+      // invisible — and on the dark ones `black` is 1.10:1. oh-my-posh writes
+      // its second prompt line in plain SGR 37, which is correct on the dark
+      // terminal it was designed for and disappeared entirely here.
+      //
+      // Repainting those palette slots is the wrong fix: the same `white` is
+      // also the text *on* a coloured powerline segment, where it is right.
+      // xterm adjusts the foreground per cell against that cell's real
+      // background instead, which leaves every segment untouched and only
+      // rescues the text that had nothing behind it. 4.5 is WCAG AA, and the
+      // value VS Code ships as its own default.
+      minimumContrastRatio: 4.5,
     });
 
     const fitAddon = new FitAddon();
@@ -381,6 +398,23 @@ export function useTerminal(
 
     termRef.current = term;
     fitRef.current = fitAddon;
+
+    // A webfont that is still in flight is not in the stack yet: xterm measures
+    // the cell and bakes the glyph atlas from ctx.font at open(), so a terminal
+    // opened during the first paint would keep whatever fallback was resolved
+    // then, for the rest of the session. Re-measuring once the face lands is
+    // the whole fix; the atlas is rebuilt from the new metrics by fit().
+    let fontsSettled = false;
+    document.fonts.ready.then(() => {
+      if (fontsSettled || termRef.current !== term) return;
+      fontsSettled = true;
+      try {
+        term.options.fontFamily = TERMINAL_FONT_FAMILY;
+        fitAddon.fit();
+      } catch {
+        // A terminal disposed between the promise and here; nothing to redraw.
+      }
+    });
 
     // Wire input to WS + track command boundaries
     term.onData((data) => {
@@ -452,8 +486,32 @@ export function useTerminal(
     window.addEventListener(THEME_CHANGE_EVENT, onThemeChange);
     const unsubTheme = () => window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
 
+    // The icon faces are fetched on demand — a `unicode-range` face is not
+    // requested until something lays out a character inside it, which for a
+    // prompt's Private Use Area glyphs is the first time the prompt is drawn.
+    // That is long after `document.fonts.ready` above has resolved, so the
+    // one-shot re-measure cannot see it.
+    //
+    // And nothing else redraws: measured in Chromium, a canvas `fillText` does
+    // start the fetch, but the glyph it painted is tofu and the canvas never
+    // repaints itself — ink stayed identical after the face finished loading
+    // and only tripled on a redraw. So the atlas the WebGL and canvas renderers
+    // baked has to be thrown away by hand, or the prompt is tofu for the rest
+    // of the session with the right font sitting loaded in the page.
+    const onFontLoaded = () => {
+      if (termRef.current !== term) return;
+      try {
+        term.clearTextureAtlas();
+        term.refresh(0, term.rows - 1);
+      } catch {
+        // Disposed between the event and here; nothing left to redraw.
+      }
+    };
+    document.fonts.addEventListener("loadingdone", onFontLoaded);
+
     return () => {
       unsubTheme();
+      document.fonts.removeEventListener("loadingdone", onFontLoaded);
       unsubHostResize();
       if (fitTimer) clearTimeout(fitTimer);
       resizeObserver.disconnect();

@@ -40,6 +40,7 @@ import { useExtensionWs } from "@/hooks/use-extension-ws";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { UploadProgressPanel } from "@/components/os-explorer/upload/upload-progress-panel";
 import { cn } from "@/lib/utils";
+import { isRecoveryReloadPending } from "@/lib/chunk-recovery";
 
 // Lazy: the explorer feature (views, actions, skins, icon map) is the same heavy bundle the
 // desktop floating window already keeps out of the initial chunk (see `WINDOW_CONTENT`) —
@@ -148,6 +149,11 @@ export function App() {
   useEffect(() => {
     if (authState !== "authenticated") return;
     const handler = (e: BeforeUnloadEvent) => {
+      // Except when the app is reloading itself out of a missing chunk. This
+      // fires from `vite:preloadError`, before the throw unmounts anything, so
+      // the guard is still installed — and "Leave site?" in front of an
+      // automatic recovery is a question the user cannot answer usefully.
+      if (isRecoveryReloadPending()) return;
       e.preventDefault();
     };
     window.addEventListener("beforeunload", handler);

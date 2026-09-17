@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Pencil, Trash2, UserPlus } from "lucide-react";
+import { Pencil, Trash2, UserPlus } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { GroupMember, MemberStatus } from "../../../types/group-chat";
 

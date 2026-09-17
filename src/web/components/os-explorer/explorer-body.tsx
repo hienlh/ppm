@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo } from "react";
-import { AlertTriangle, Home } from "lucide-react";
+import { AlertTriangle, Home } from "@/lib/icons";
 import { useFileStore } from "@/stores/file-store";
 import { useExplorerActions } from "./actions/use-explorer-actions";
 import { ExplorerDialogs } from "./explorer-dialogs";

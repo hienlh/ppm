@@ -1,10 +1,16 @@
 import type { ChatMessage, ChatEvent, SessionInfo } from "../provider.interface.ts";
+import { stripSharedContext } from "../../shared/provider-context.ts";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseApplyPatch, changeToToolUse } from "./codex-patch.ts";
 import { mapRolloutItem } from "./codex-rollout-items.ts";
+import { completeLines, parseLine, readRolloutHeader, type RolloutHeader } from "./codex-rollout-header.ts";
+import {
+  finalAssistantText, subagentToolResult, subagentToolUse, transcriptToEvents,
+  type SubagentTranscript,
+} from "./codex-subagent-thread.ts";
 
 /**
  * Independent parser for Codex rollout JSONL transcripts
@@ -18,28 +24,10 @@ import { mapRolloutItem } from "./codex-rollout-items.ts";
  * scaffolding).
  */
 
-interface RolloutLine {
-  timestamp?: string;
-  type?: string;
-  payload?: Record<string, unknown>;
-}
-
 /** Normalize a path for cross-platform comparison (case-insensitive on win32). */
 function normPath(p: string): string {
   const r = resolve(p);
   return process.platform === "win32" ? r.toLowerCase() : r;
-}
-
-/** Split into complete, newline-terminated lines only (drop a trailing partial). */
-function completeLines(text: string): string[] {
-  const lines = text.split("\n");
-  // If the text does not end in a newline, the last element is a partial line.
-  if (!text.endsWith("\n")) lines.pop();
-  return lines.filter((l) => l.trim() !== "");
-}
-
-function parseLine(line: string): RolloutLine | null {
-  try { return JSON.parse(line) as RolloutLine; } catch { return null; }
 }
 
 /** Extract plain text from a response_item message content array. */
@@ -106,10 +94,22 @@ function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
  * tool calls come from `response_item` function_call / function_call_output and
  * are nested into the assistant turn's `events` so the chat UI renders tool cards.
  */
-export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean }): ChatMessage[] {
+export function parseRolloutJsonl(
+  text: string,
+  opts?: {
+    /** Which compaction boundary to stop at, counting from the start of the file. */
+    preCompactIndex?: number;
+    /** Reads a spawned thread's transcript so its card can nest it. */
+    loadSubagent?: (threadId: string) => SubagentTranscript | null;
+  },
+): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let i = 0;
   let pendingEvents: ChatEvent[] = [];
+  let compactionsSeen = 0;
+  // Kept so the completion can answer the card the spawn opened, with the
+  // report the child ended on.
+  const subagentTranscripts = new Map<string, SubagentTranscript | null>();
 
   // Newer codex records every finished step as an `item_completed` event AND
   // keeps the raw model exchange in `response_item` records. Both describe the
@@ -138,7 +138,7 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
     if (rec.type === "event_msg") {
       if (p.type === "user_message" && typeof p.message === "string") {
         if (pendingEvents.length) flushAssistant("", ts); // tools with no final text
-        messages.push({ id: `rollout-${i++}`, role: "user", content: p.message, timestamp: ts });
+        messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(p.message), timestamp: ts });
       } else if (p.type === "agent_message" && typeof p.message === "string") {
         flushAssistant(p.message, ts);
       } else if (p.type === "item_completed") {
@@ -148,11 +148,20 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
         const mapped = mapRolloutItem(p.item);
         if (mapped.kind === "user") {
           if (pendingEvents.length) flushAssistant("", ts);
-          messages.push({ id: `rollout-${i++}`, role: "user", content: mapped.text, timestamp: ts });
+          messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(mapped.text), timestamp: ts });
         } else if (mapped.kind === "assistant") {
           flushAssistant(mapped.text, ts);
         } else if (mapped.kind === "events") {
           pendingEvents.push(...mapped.events);
+        } else if (mapped.kind === "subagent") {
+          const { activity } = mapped;
+          if (!subagentTranscripts.has(activity.threadId)) {
+            subagentTranscripts.set(activity.threadId, opts?.loadSubagent?.(activity.threadId) ?? null);
+          }
+          const transcript = subagentTranscripts.get(activity.threadId) ?? null;
+          pendingEvents.push(activity.done
+            ? subagentToolResult(activity, transcript)
+            : subagentToolUse(activity, transcript));
         }
       } else if (p.type === "thread_rolled_back") {
         // codex doesn't truncate the rollout file on rollback/fork — it appends this
@@ -177,8 +186,19 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
       else if (typeof p.type === "string" && p.type.endsWith("_call_output")) pendingEvents.push(fnOutputToToolResult(p));
       else if (typeof p.type === "string" && p.type.endsWith("_call")) pendingEvents.push(genericCallToToolUse(p));
     } else if (rec.type === "compacted") {
-      // Pre-compact mode: everything accumulated so far IS the pre-compact history.
-      if (opts?.preCompact) { if (pendingEvents.length) flushAssistant("", ts); break; }
+      if (opts?.preCompactIndex) {
+        // One segment per request, the way the Claude parser's `oneSegment` does.
+        // The requested boundary ends the walk; every boundary before it closes a
+        // stretch nobody asked for, so what was collected is dropped rather than
+        // prepended — the card at the head of the segment is what leads back to it.
+        if (++compactionsSeen === opts.preCompactIndex) {
+          if (pendingEvents.length) flushAssistant("", ts);
+          break;
+        }
+        pendingEvents = [];
+        messages.length = 0;
+        continue;
+      }
       // In-place compaction: `replacement_history` REPLACES everything before this
       // point. Reset to the post-compact base; turns after it append normally.
       pendingEvents = [];
@@ -190,7 +210,8 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
         if (item.type !== "message") continue;
         const role = item.role === "assistant" ? "assistant" : item.role === "user" ? "user" : null;
         if (!role) continue;
-        const content = contentToText(item.content);
+        const rawContent = contentToText(item.content);
+        const content = role === "user" ? stripSharedContext(rawContent) : rawContent;
         if (content) messages.push({ id: `rollout-${i++}`, role, content, timestamp: ts });
       }
     }
@@ -199,21 +220,10 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
   return messages;
 }
 
-/** Read the session_meta header (first record) from a rollout file. */
-function readSessionMeta(file: string): { id?: string; cwd?: string; timestamp?: string } | null {
+/** Read a rollout file's header (session_meta, plus its title when asked). */
+function readSessionMeta(file: string, opts?: { withTitle?: boolean }): RolloutHeader | null {
   try {
-    const text = readFileSync(file, "utf-8");
-    for (const line of completeLines(text)) {
-      const rec = parseLine(line);
-      if (rec?.type === "session_meta") {
-        const p = rec.payload ?? {};
-        return {
-          id: typeof p.id === "string" ? p.id : undefined,
-          cwd: typeof p.cwd === "string" ? p.cwd : undefined,
-          timestamp: typeof p.timestamp === "string" ? p.timestamp : rec.timestamp,
-        };
-      }
-    }
+    return readRolloutHeader(readFileSync(file, "utf-8"), opts);
   } catch { /* unreadable file → excluded (fail-closed) */ }
   return null;
 }
@@ -241,6 +251,12 @@ function threadIdFromName(file: string): string | null {
  * is included ONLY when its session_meta cwd resolves and matches `requestedCwd`
  * (normalized; case-insensitive on win32). Unattributable rollouts are excluded
  * — `~/.codex/sessions` holds every project's transcripts.
+ *
+ * A spawned subagent's rollout is excluded too. It carries the same cwd as the
+ * conversation that spawned it, so cwd alone let one subagent per spawn into the
+ * session list — each opening with no prompt and no ending, because a subagent's
+ * task never appears in its own transcript. Its work shows in the parent, on the
+ * Agent card for that spawn.
  */
 export function listCodexRollouts(
   sessionsDir: string,
@@ -253,9 +269,10 @@ export function listCodexRollouts(
   const sessions: SessionInfo[] = [];
 
   for (const file of files) {
-    const meta = readSessionMeta(file);
+    const meta = readSessionMeta(file, { withTitle: true });
     if (!meta?.cwd) continue;            // fail-closed: no cwd → exclude
     if (normPath(meta.cwd) !== target) continue;
+    if (meta.parentThreadId) continue;   // one step of another session, not a session
 
     const id = meta.id ?? threadIdFromName(file);
     if (!id) continue;
@@ -266,7 +283,7 @@ export function listCodexRollouts(
     sessions.push({
       id,
       providerId,
-      title: "Codex session",
+      title: meta.title ?? "Codex session",
       createdAt: meta.timestamp ?? new Date().toISOString(),
       updatedAt,
     });
@@ -287,30 +304,125 @@ export function listCodexRollouts(
  */
 export function findRolloutByThreadId(sessionsDir: string, threadId: string, requestedCwd?: string): string | null {
   const target = requestedCwd != null ? normPath(requestedCwd) : null;
-  for (const file of findRolloutFiles(sessionsDir)) {
-    if (threadIdFromName(file) !== threadId) {
-      const meta = readSessionMeta(file);
-      if (meta?.id !== threadId) continue;
-    }
-    if (target != null) {
-      const meta = readSessionMeta(file);
-      if (!meta?.cwd || normPath(meta.cwd) !== target) continue; // fail-closed
-    }
+  const files = findRolloutFiles(sessionsDir);
+  // The filename carries the thread id, so try those first and read nothing for
+  // the rest unless the name match is rejected. Reading a transcript to identify
+  // it costs megabytes, and resolving one is now per spawned subagent too.
+  const named = (f: string) => threadIdFromName(f) === threadId;
+  for (const file of [...files.filter(named), ...files.filter((f) => !named(f))]) {
+    const byName = named(file);
+    const meta = byName && target == null ? null : readSessionMeta(file);
+    if (!byName && meta?.id !== threadId) continue;
+    if (target != null && (!meta?.cwd || normPath(meta.cwd) !== target)) continue; // fail-closed
     return file;
   }
   return null;
 }
 
-/** The compaction summary text if this rollout was compacted, else null. */
-function compactionSummary(text: string): string | null {
+/**
+ * Why a thread stopped, when it produced no message of its own.
+ *
+ * A subagent that dies on startup (a model its account cannot use, a transport
+ * failure) writes a transcript with nothing in it but the error, so without this
+ * its card in the parent is blank and says nothing about what went wrong.
+ */
+function terminalError(text: string): string {
+  for (const line of completeLines(text).reverse()) {
+    const rec = parseLine(line);
+    if (rec?.type !== "event_msg") continue;
+    const p = rec.payload ?? {};
+    if (p.type !== "task_complete" && p.type !== "error") continue;
+    const err = p.error;
+    const message = typeof err === "string" ? err
+      : (err && typeof err === "object" ? (err as Record<string, unknown>).message : undefined);
+    if (typeof message === "string" && message) return unwrapErrorJson(message);
+  }
+  return "";
+}
+
+/** Codex nests the upstream API error verbatim, as JSON, inside its own message. */
+function unwrapErrorJson(message: string): string {
+  if (!message.startsWith("{")) return message;
+  try {
+    const inner = (JSON.parse(message) as { error?: { message?: unknown } }).error?.message;
+    return typeof inner === "string" && inner ? inner : message;
+  } catch { return message; }
+}
+
+/** How deep a chain of spawned agents is followed into the parent's transcript. */
+const SUBAGENT_DEPTH = 2;
+
+/**
+ * Reader for a spawned thread's transcript, bound to the same sessions dir and
+ * the same fail-closed cwd guard as the conversation that spawned it.
+ *
+ * `seen` covers both the cycle a malformed pair of rollouts could describe and
+ * the same agent being named by its start and its completion.
+ */
+function subagentLoader(
+  sessionsDir: string,
+  requestedCwd: string | undefined,
+  seen: Set<string>,
+  depth: number,
+): (threadId: string) => SubagentTranscript | null {
+  return (threadId) => {
+    if (depth <= 0 || seen.has(threadId)) return null;
+    seen.add(threadId);
+    const file = findRolloutByThreadId(sessionsDir, threadId, requestedCwd);
+    if (!file) return null;
+    try {
+      const text = readFileSync(file, "utf-8");
+      const msgs = parseRolloutJsonl(text, {
+        loadSubagent: subagentLoader(sessionsDir, requestedCwd, seen, depth - 1),
+      });
+      const finalText = finalAssistantText(msgs) || terminalError(text);
+      const events = transcriptToEvents(msgs);
+      // An agent that died before saying anything is answered by its own error
+      // record, and the parent may never have written a completion for it — so
+      // the reason goes inside the card rather than waiting for a result event
+      // that is not coming.
+      if (events.length === 0 && finalText) events.push({ type: "text", content: finalText });
+      return { events, finalText };
+    } catch { return null; }
+  };
+}
+
+/**
+ * Every compaction's summary text, in file order — `[]` when never compacted.
+ *
+ * All of them rather than the first, because a thread can be compacted more than
+ * once and each boundary has its own summary. The *last* is what the post-compact
+ * view's card shows, since that is the compaction which produced the view being
+ * rendered; reading the first showed a twice-compacted thread the summary of work
+ * two segments ago. The earlier ones head the segments the "load more" walk opens.
+ */
+function compactionSummaries(text: string): string[] {
+  const out: string[] = [];
   for (const line of completeLines(text)) {
     const rec = parseLine(line);
-    if (rec?.type === "compacted") {
-      const msg = (rec.payload as Record<string, unknown> | undefined)?.message;
-      return typeof msg === "string" ? msg : "";
-    }
+    if (rec?.type !== "compacted") continue;
+    const msg = (rec.payload as Record<string, unknown> | undefined)?.message;
+    out.push(typeof msg === "string" ? msg : "");
   }
-  return null;
+  return out;
+}
+
+/**
+ * The "earlier conversation was compacted" card that heads a compacted view.
+ *
+ * `#<index>` in the id is load-bearing, not decoration: the client sends the card's
+ * id back as `before`, and on a thread compacted more than once it is the only thing
+ * saying *which* boundary to walk back from. `#` rather than another `-` because a
+ * thread id is a uuid whose last group can be all digits, and a trailing `-12` would
+ * then be indistinguishable from an index.
+ */
+function compactCard(summary: string, threadId: string, index: number, file: string): ChatMessage {
+  return {
+    id: `codex-compact-${threadId}#${index}`,
+    role: "assistant",
+    content: `${summary || "_Earlier conversation was compacted to save context._"}\n\nread the full transcript at: ${file}`,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 /**
@@ -324,38 +436,57 @@ export function getRolloutMessages(sessionsDir: string, threadId: string, reques
   if (!file) return [];
   try {
     const text = readFileSync(file, "utf-8");
-    const msgs = parseRolloutJsonl(text);
-    const summary = compactionSummary(text);
-    if (summary !== null) {
-      msgs.unshift({
-        id: `codex-compact-${threadId}`,
-        role: "assistant",
-        content: `${summary || "_Earlier conversation was compacted to save context._"}\n\nread the full transcript at: ${file}`,
-        timestamp: new Date().toISOString(),
-      });
+    const msgs = parseRolloutJsonl(text, {
+      loadSubagent: subagentLoader(sessionsDir, requestedCwd, new Set([threadId]), SUBAGENT_DEPTH),
+    });
+    const summaries = compactionSummaries(text);
+    if (summaries.length) {
+      msgs.unshift(compactCard(summaries[summaries.length - 1]!, threadId, summaries.length, file));
     }
     return msgs;
   } catch { return []; }
 }
 
-/** True when a path points at a codex rollout under ~/.codex/sessions. */
+/** True when a path points at a codex rollout in the ambient or a PPM account home. */
 export function isCodexRolloutPath(p: string): boolean {
   const n = normPath(p);
-  return n.endsWith(".jsonl") && n.includes(normPath(join(homedir(), ".codex", "sessions")));
+  const ambient = normPath(join(homedir(), ".codex", "sessions"));
+  const managed = normPath(join(homedir(), ".ppm", "codex-accounts"));
+  return n.endsWith(".jsonl") && (n.includes(ambient) || (n.includes(managed) && n.includes("/sessions/")));
 }
 
 /**
- * Pre-compact slice for the "load more" feature. Jails to ~/.codex/sessions,
- * fail-closed on cwd, returns the messages BEFORE the compaction boundary.
+ * One pre-compact segment for the "load more" feature. Jails to ~/.codex/sessions,
+ * fail-closed on cwd.
+ *
+ * One segment per request rather than everything before the first boundary, which is
+ * what this used to return. A thread compacted twice has three stretches, and the old
+ * answer handed the newest card the *oldest* stretch while leaving the middle one
+ * reachable from nothing at all — not a short answer, a lost one. `before` names the
+ * card that was clicked, and the segment it opens is itself headed by the previous
+ * boundary's card, so the walk continues the way the Claude path's does.
  */
-export function getCodexPreCompactMessages(file: string, requestedCwd?: string): ChatMessage[] {
+export function getCodexPreCompactMessages(file: string, requestedCwd?: string, beforeId?: string): ChatMessage[] {
   if (!isCodexRolloutPath(file)) throw new Error("Access denied: not a codex rollout");
   const resolved = resolve(file);
   let text: string;
   try { text = readFileSync(resolved, "utf-8"); } catch { throw new Error("File not found"); }
+  // Read once and reused below. `readSessionMeta` opens and reads the whole rollout again, and
+  // this path is already reading a file that reaches tens of megabytes on the very sessions
+  // the feature exists for — asking for it twice per click was a third of the cost for nothing.
+  const meta = readSessionMeta(resolved);
   if (requestedCwd != null) {
-    const meta = readSessionMeta(resolved);
     if (!meta?.cwd || normPath(meta.cwd) !== normPath(requestedCwd)) return []; // fail-closed
   }
-  return parseRolloutJsonl(text, { preCompact: true });
+  const summaries = compactionSummaries(text);
+  if (!summaries.length) return [];
+  // A client holding a card from before the index existed sends the bare id. The newest
+  // boundary is the one that card came from, and on a thread compacted once — which is
+  // every thread that path was ever correct for — the two agree.
+  const asked = Number(beforeId?.match(/#(\d+)$/)?.[1]);
+  const index = asked >= 1 && asked <= summaries.length ? asked : summaries.length;
+  const segment = parseRolloutJsonl(text, { preCompactIndex: index });
+  if (index < 2) return segment;
+  const threadId = meta?.id ?? threadIdFromName(resolved) ?? "";
+  return [compactCard(summaries[index - 2]!, threadId, index - 1, resolved), ...segment];
 }

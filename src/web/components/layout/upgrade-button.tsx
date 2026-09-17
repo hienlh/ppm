@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink, History } from "lucide-react";
+import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink, History } from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 import { fetchRecentChangelog, newestSectionVersion, compareSemver, type ChangelogSection } from "@/lib/changelog";
 import { cn } from "@/lib/utils";
@@ -281,7 +281,11 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         )}
       >
         {hasUpdate && <ArrowUpCircle className="size-3" />}
-        <span>{hasUpdate ? `New version · v${effectiveAvailable}` : `v${current}`}</span>
+        <span>
+          {/* Dropped on a status bar under 48rem (its `@container`); the icon and colour still say "update". */}
+          {hasUpdate && <span className="@max-3xl:hidden">New version · </span>}
+          v{hasUpdate ? effectiveAvailable : current}
+        </span>
       </button>
 
       {open && current && (

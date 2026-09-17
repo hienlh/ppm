@@ -345,3 +345,56 @@ describe("GET /git/pr-url?branch= — query validation", () => {
     expect(json.ok).toBe(false);
   });
 });
+
+/**
+ * A revision reaches git as its own argv word, so the hazard is not a shell
+ * metacharacter but a value that changes what the command *is*: `--output=…`
+ * is an option and `git diff` honours it. These routes take a revision straight
+ * from the query string, and the `?repo=` middleware added above them sits on
+ * exactly these paths.
+ *
+ * The list is the point of the test, and it was short by one: `/git/file-blob`
+ * reached `git show` unguarded, where `--output=<path>` truncates that path to
+ * zero bytes and exits 0. Measured on a scratch repository: a 19-byte file left
+ * at 0. Anything added here that takes a ref belongs in this list too.
+ */
+describe("the ref query parameters — input validation", () => {
+  const OPTION = encodeURIComponent("--output=/tmp/pwned");
+
+  const optionUrls = [
+    `/git/diff?ref1=${OPTION}`,
+    `/git/diff?ref2=${OPTION}`,
+    `/git/diff-stat?ref1=${OPTION}`,
+    `/git/diff-stat?ref2=${OPTION}`,
+    `/git/file-diff?file=a.txt&ref=${OPTION}`,
+    `/git/file-full-diff?file=a.txt&ref=${OPTION}`,
+    `/git/file-full-diff?file=a.txt&ref2=${OPTION}`,
+    `/git/file-blob?file=a.txt&ref=${OPTION}`,
+  ];
+
+  it("refuses an option where a revision belongs, on every route that takes one", async () => {
+    for (const url of optionUrls) {
+      const res = await createApp().request(url);
+      const json = await res.json();
+      // The url rides along in the assertion so a failure names the route.
+      expect([url, res.status]).toEqual([url, 400]);
+      expect(json.error).toContain("Invalid revision");
+    }
+  });
+
+  it("refuses a range, which is two revisions in the slot for one", async () => {
+    const res = await createApp().request(`/git/diff?ref1=${encodeURIComponent("main..HEAD")}`);
+    expect(res.status).toBe(400);
+  });
+
+  it("does not refuse the revisions the diff viewer actually sends", async () => {
+    // `/tmp` is not a repository, so this fails in git rather than at the
+    // guard — which is the point: `HEAD~1` and `main^` must reach it.
+    for (const rev of ["HEAD", "HEAD~1", "main^", "0123456789abcdef0123456789abcdef01234567"]) {
+      const res = await createApp().request(`/git/diff?ref1=${encodeURIComponent(rev)}`);
+      const json = await res.json();
+      expect([rev, res.status === 400]).toEqual([rev, false]);
+      expect(String(json.error ?? "")).not.toContain("Invalid revision");
+    }
+  });
+});

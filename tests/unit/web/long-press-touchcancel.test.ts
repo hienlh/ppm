@@ -1,0 +1,151 @@
+/**
+ * Every long-press must be disarmed on `touchcancel`, and there is no way to see
+ * that it is not.
+ *
+ * A press that opens a menu is a timer armed on `touchstart` and cleared on
+ * `touchmove`/`touchend`, which reads as complete. It is not: once the browser
+ * decides the gesture belongs to a scroll it fires **`touchcancel`** and then
+ * delivers no further `touchmove` or `touchend` to that element. The timer
+ * survives the scroll and fires into it — a context menu over a list the finger
+ * is already moving, with nothing the reader did to ask for one. A movement
+ * tolerance cannot catch it either, because the moves it would have measured are
+ * never delivered.
+ *
+ * It reproduces on a phone and on nothing else: a mouse has no touch events, and
+ * a desktop browser's device emulation dispatches move/end faithfully. So it
+ * cannot be caught by a rendered test, and it was live in **six** separate
+ * hand-rolled long-presses at once — which is the other half of the problem. The
+ * check is therefore on the source: a file that arms a timer from `onTouchStart`
+ * has to name `onTouchCancel` too.
+ */
+import { describe, it, expect } from "bun:test";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+
+const WEB = resolve(import.meta.dir, "../../../src/web");
+
+function sources(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) sources(p, out);
+    else if (/\.tsx?$/.test(entry)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Source with comments and type declarations removed.
+ *
+ * Both are places a handler name appears without anything being wired to it,
+ * and both are exactly where these names *do* appear: an interface declaring
+ * the handler is optional, and a comment explaining why it is the one that
+ * matters. A scan over the raw text is satisfied by either.
+ */
+function codeOnly(src: string): string {
+  return stripTypeBlocks(src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, ""));
+}
+
+/**
+ * Drop `interface X { … }` and `type X = { … }`, by counting braces.
+ *
+ * The previous form ended a declaration at the first `}` sitting in column 0,
+ * which is the right brace only by formatting convention. A one-line
+ * `interface Handlers { onTouchCancel?: () => void }` — a shape this repo uses
+ * everywhere — therefore ended *nowhere*, and the strip ate every line up to
+ * the next top-level `}`: real code, removed silently, which is this suite
+ * passing because it stopped looking.
+ */
+function stripTypeBlocks(src: string): string {
+  const declaration = /(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+\w+[^{;]*\{/g;
+  let out = "";
+  let kept = 0;
+  for (let match = declaration.exec(src); match; match = declaration.exec(src)) {
+    if (match.index < kept) continue;
+    let depth = 1;
+    let i = declaration.lastIndex;
+    while (i < src.length && depth > 0) {
+      const ch = src[i++];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    out += src.slice(kept, match.index);
+    kept = i;
+    declaration.lastIndex = i;
+  }
+  return out + src.slice(kept);
+}
+
+/** Files that both handle touchstart and arm a timer — i.e. hold a press open. */
+function pressSites(): { file: string; src: string }[] {
+  return sources(WEB)
+    // Separators are normalised: `relative` answers with backslashes on Windows,
+    // so every `toContain` below would miss and the suite would go red there
+    // while passing here.
+    .map((file) => ({
+      file: relative(WEB, file).replaceAll("\\", "/"),
+      src: readFileSync(file, "utf8"),
+    }))
+    .filter(({ src }) => /onTouchStart/.test(src) && /setTimeout/.test(src));
+}
+
+describe("a long-press is disarmed when the browser takes the gesture", () => {
+  it("finds the press sites it is meant to be checking", () => {
+    // Guards the guard: a rename of the handler prop would otherwise make this
+    // suite pass by matching nothing at all.
+    const sites = pressSites().map((s) => s.file);
+    // Six, down from seven: the git panel used to hand-roll its own press and
+    // now goes through the adaptive menu, which holds one for it. That is a
+    // press site *removed*, not one that stopped being checked — and
+    // `git-panel-context-menu.test.ts` is what keeps it from coming back.
+    expect(sites.length).toBeGreaterThanOrEqual(6);
+    expect(sites).toContain("components/ui/adaptive-context-menu.tsx");
+    expect(sites).toContain("components/os-explorer/use-coarse-long-press.ts");
+  });
+
+  it("handles touchcancel everywhere a press is armed", () => {
+    // Matched against code with comments and type declarations removed, and
+    // against a *binding* rather than a mention. `use-coarse-long-press.ts`
+    // names `onTouchCancel` three times — once in `LongPressHandlers`, once in
+    // the comment explaining why it matters, and once where it is actually
+    // wired — so scanning the raw text stayed green with the wiring deleted,
+    // which is the single line this whole suite exists to protect.
+    const missing = pressSites()
+      .filter(({ src }) => !/onTouchCancel\s*[:=]|addEventListener\(\s*["']touchcancel["']/.test(codeOnly(src)))
+      .map(({ file }) => file);
+    expect(missing).toEqual([]);
+  });
+
+  it("strips a type declaration without swallowing the code under it", () => {
+    // The stripper is what makes the scan above meaningful, so its own failure
+    // mode is worth pinning: it must end a declaration where the declaration
+    // ends, not at the next brace that happens to start a line.
+    const src = [
+      "interface LongPressHandlers { onTouchCancel?: () => void }",
+      "export function useLongPress() {",
+      "  return { onTouchStart: start, onTouchCancel: cancel };",
+      "}",
+    ].join("\n");
+
+    const code = codeOnly(src);
+
+    expect(code).not.toContain("onTouchCancel?:");
+    expect(code).toContain("onTouchCancel: cancel");
+  });
+
+  it("clears the timer when the element goes away mid-press", () => {
+    // The git panel refreshes its file list on every save, so a row can unmount
+    // under a finger; the timer would then fire for a row that no longer exists.
+    // That press now lives in the adaptive menu, which is why it is the entry
+    // that has to carry the cleanup.
+    const guarded = [
+      "components/ui/adaptive-context-menu.tsx",
+      "components/os-explorer/use-coarse-long-press.ts",
+      "../web/hooks/use-touch-tab-drag.ts",
+    ];
+    for (const file of guarded) {
+      const src = readFileSync(join(WEB, file), "utf8");
+      // Any shape of cleanup will do — `() => clear`, `() => () => clearTimeout(...)`.
+      expect(/useEffect\(\s*\(\)\s*=>[\s\S]{0,90}?(clearTimeout|clear\b|cancel\b)/.test(src), file).toBe(true);
+    }
+  });
+});

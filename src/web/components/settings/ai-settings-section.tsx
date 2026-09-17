@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { ExternalLink, RefreshCw, Trash2 } from "lucide-react";
+import { ExternalLink, RefreshCw, Trash2 } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -14,6 +14,7 @@ import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-sett
 import { api } from "@/lib/api-client";
 import { ProviderBadge } from "@/components/chat/provider-selector";
 import { openSettings } from "./open-settings";
+import { CodexContextSettings } from "./codex-context-settings";
 import type { ModelOption } from "../../../types/chat";
 
 const EFFORT_OPTIONS = [
@@ -73,22 +74,25 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   const config = settings?.providers[activeTab];
   const isSdkProvider = config?.type === "agent-sdk" || (!config?.type && activeTab === "claude");
 
-  const handleSave = async (field: string, value: unknown) => {
-    if (!settings) return;
+  const handleSettingsSave = async (patch: Partial<AISettings>) => {
+    if (!settings) return false;
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateAISettings({
-        providers: { [activeTab]: { [field]: value } },
-      });
+      const updated = await updateAISettings(patch);
       setSettings(updated);
       setRevision((r) => r + 1);
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const handleSave = (field: string, value: unknown) =>
+    handleSettingsSave({ providers: { [activeTab]: { [field]: value } } });
 
   const labelSize = compact ? "text-[11px]" : "text-sm";
   const headingSize = compact ? "text-xs" : "text-sm";
@@ -115,6 +119,25 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   return (
     <div className={gapSize}>
       <h3 className={`${headingSize} font-medium text-text-secondary`}>AI Settings</h3>
+
+      <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
+        <div className={fieldGap}>
+          <Label htmlFor="ai-share-provider-context" className={compact ? labelSize : undefined}>
+            Share rules and memory between providers
+          </Label>
+          <p id="ai-share-provider-context-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+            Share project rules and memory, plus global instruction files, across providers.
+            Applies from the next project-chat message. Turning off keeps context already sent.
+          </p>
+        </div>
+        <Switch
+          id="ai-share-provider-context"
+          aria-describedby="ai-share-provider-context-description"
+          checked={settings.share_provider_context ?? true}
+          disabled={saving}
+          onCheckedChange={(checked) => handleSettingsSave({ share_provider_context: checked })}
+        />
+      </div>
 
       {/* Provider tabs */}
       {providerTabs.length > 1 && (
@@ -171,6 +194,12 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
               </SelectContent>
             </Select>
           </div>
+        )}
+
+        {activeTab === "codex" && (
+          <CodexContextSettings key={JSON.stringify([config?.model_context_window, config?.model_auto_compact_token_limit])} config={config}
+            compact={compact} saving={saving}
+            onSave={(patch) => handleSettingsSave({ providers: { codex: patch } })} />
         )}
 
         {/* SDK-specific fields */}

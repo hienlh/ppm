@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api, projectUrl } from "@/lib/api-client";
-import { Plus, Trash2, MessageSquare, ChevronDown, Pin, PinOff, Search, X } from "lucide-react";
+import { Plus, Trash2, MessageSquare, ChevronDown, Pin, PinOff, Search, X } from "@/lib/icons";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ProviderBadge } from "./provider-selector";
 import type { SessionInfo } from "../../../types/chat";

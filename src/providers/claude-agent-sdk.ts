@@ -18,15 +18,16 @@ import type {
   ModelOption,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
+import { withSharedContext, stripSharedContext } from "../shared/provider-context.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionProjectPath, setSessionMetadata, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, getSessionTitle, setSessionTitle, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
 import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from "../services/subprocess-retention.ts";
 import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
-import { parseSessionMessage, nestChildEventsAcrossMessages } from "../services/jsonl-transcript-parser.ts";
+import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
@@ -213,6 +214,7 @@ interface PendingApproval {
  * Uses canUseTool callback for tool approvals and AskUserQuestion.
  */
 export class ClaudeAgentSdkProvider implements AIProvider {
+  readonly supportsSharedContext = true;
   id = "claude";
   name = "Claude";
 
@@ -562,16 +564,25 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   async listSessionsByDir(dir?: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]> {
     try {
-      const limit = opts?.limit ?? 50;
       const offset = opts?.offset ?? 0;
-      const sdkSessions = await sdkListSessions({ dir, limit, offset });
+      // A dir-scoped call with no explicit limit means "every session in this
+      // project" — chat search and the search-index backfill both ask that way.
+      // It has to be answered by paging the SDK, not by taking its first page:
+      // everything past that page fell through to the recovery scan below,
+      // which can only reconstruct a title from the transcript's first 512
+      // bytes. So 165 of 228 sessions here were listed under their opening
+      // prompt ("/recap") instead of the name they had been given, and no
+      // search for that name could match them.
+      const sdkSessions = dir !== undefined && opts?.limit === undefined
+        ? await listAllSdkSessions(dir)
+        : await sdkListSessions({ dir, limit: opts?.limit ?? 50, offset });
       // Overlay DB titles (user-set) over SDK titles
       const ids = sdkSessions.map((s) => s.sessionId);
       const dbTitles = getSessionTitles(ids);
       const sessions: SessionInfo[] = sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
+        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (stripSharedContext(s.firstPrompt ?? "") || "Chat"),
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
@@ -619,7 +630,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         return {
           id: info.sessionId,
           providerId: this.id,
-          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? info.firstPrompt ?? "Chat",
+          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (stripSharedContext(info.firstPrompt ?? "") || "Chat"),
           createdAt: new Date(info.lastModified).toISOString(),
           updatedAt: new Date(info.lastModified).toISOString(),
         };
@@ -725,13 +736,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * Push a follow-up message into an existing streaming session's generator.
    * Called by WS handler for follow-up messages (Phase 2).
    */
-  pushMessage(sessionId: string, content: string, opts?: { priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }): void {
+  pushMessage(sessionId: string, content: string, opts?: import("./provider.interface.ts").SendMessageOpts): void {
     const ss = this.streamingSessions.get(sessionId);
     if (!ss) {
       console.warn(`[sdk] pushMessage: no streaming session for ${sessionId}`);
       return;
     }
-    const msgContent = buildMessageParam(content, opts?.images);
+    const modelInput = withSharedContext(content, opts?.sharedContext);
+    const msgContent = buildMessageParam(modelInput, opts?.images);
     ss.controller.push({
       type: 'user',
       message: msgContent,
@@ -740,7 +752,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       priority: opts?.priority ?? 'next',
     });
     // Track latest message for retry paths (fixes stale firstMsg bug)
-    ss.lastUserContent = content;
+    ss.lastUserContent = modelInput;
     ss.lastUserImages = opts?.images;
     console.log(`[sdk] pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
   }
@@ -794,6 +806,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     message: string,
     opts?: import("./provider.interface.ts").SendMessageOpts & { forkSession?: boolean; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> },
   ): AsyncIterable<ChatEvent> {
+    const modelInput = withSharedContext(message, opts?.sharedContext);
     // SDK requires valid UUID session IDs. Short/random IDs can leak from
     // tab derivation or URL parsing — migrate to a real UUID early.
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -812,6 +825,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (oldCount != null) { this.messageCount.set(newId, oldCount); this.messageCount.delete(sessionId); }
       const oldStream = this.streamingSessions.get(sessionId);
       if (oldStream) { this.streamingSessions.set(newId, oldStream); this.streamingSessions.delete(sessionId); }
+      // The account binding lives in the database under the old id, and the lookup below
+      // runs after this block — so without moving it, a session that migrates silently
+      // loses whichever account was chosen for it and gets re-routed to another one. That
+      // costs a full prompt-cache write, and when the choice was the user's it also
+      // quietly overrides them.
+      const boundAccount = getSessionAccount(sessionId);
+      if (boundAccount) accountSelector.bindSession(newId, boundAccount);
       yield { type: "session_migrated" as const, oldSessionId: sessionId, newSessionId: newId };
       sessionId = newId;
     }
@@ -819,7 +839,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // Follow-up: push into existing streaming session, yield nothing
     const existingStream = this.streamingSessions.get(sessionId);
     if (existingStream) {
-      const msgContent = buildMessageParam(message, opts?.images);
+      const msgContent = buildMessageParam(modelInput, opts?.images);
       existingStream.controller.push({
         type: 'user',
         message: msgContent,
@@ -828,7 +848,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         priority: opts?.priority ?? 'next',
       });
       // Track latest message for retry paths (fixes stale firstMsg bug)
-      existingStream.lastUserContent = message;
+      existingStream.lastUserContent = modelInput;
       existingStream.lastUserImages = opts?.images;
       console.log(`[sdk] sendMessage follow-up: session=${sessionId} pushed to generator`);
       return; // Events flow through first-message's consumer loop
@@ -846,6 +866,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const count = this.messageCount.get(sessionId) ?? 0;
     const isFirstMessage = count === 0;
     this.messageCount.set(sessionId, count + 1);
+    // Native firstPrompt may truncate before the shared-context block ends.
+    // Keep the opening user title available after restart without replacing a rename.
+    if (isFirstMessage && opts?.sharedContext && getSessionTitle(sessionId) === null) {
+      setSessionTitle(sessionId, meta.title);
+    }
 
     // Check if this session should fork from another
     const forkSourceId = this.forkSources.get(sessionId);
@@ -1138,7 +1163,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // model a bare path instead — the round trip the caller passed them in to avoid.
       const firstMsg = {
         type: 'user' as const,
-        message: buildMessageParam(message, opts?.images),
+        message: buildMessageParam(modelInput, opts?.images),
         parent_tool_use_id: null,
         session_id: sessionId,
       };
@@ -1158,7 +1183,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Also returns the raw content/images for re-populating the new streaming session.
       const buildRetryMsg = () => {
         const ss = this.streamingSessions.get(sessionId);
-        const content = ss?.lastUserContent ?? message;
+        const content = ss?.lastUserContent ?? modelInput;
         const images = ss?.lastUserImages;
         const retryContent = turnProgressed ? "Continue from where you left off." : content;
         return {
@@ -1177,7 +1202,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg)
       const initRetry = crashRetryCount > 0 ? buildRetryMsg() : null;
       initialCtrl.push(initRetry?.msg ?? firstMsg);
-      const initContent = initRetry?.lastUserContent ?? message;
+      const initContent = initRetry?.lastUserContent ?? modelInput;
       const initImages = initRetry?.lastUserImages ?? opts?.images;
 
       const initialQuery = query({
@@ -2108,6 +2133,47 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     }
   }
 
+  /**
+   * Every message in the transcript, compacted-away segments included.
+   *
+   * `getSessionMessages` walks back from the newest message through
+   * `parentUuid`, and the `compact_boundary` record Claude Code writes when it
+   * compacts carries `parentUuid: null` — so the walk stops there and
+   * `getMessages` answers with the last segment only. That is right for the
+   * chat view, which shows the compact summary with a "Load previous
+   * conversation" button beside it. The search index has no such affordance:
+   * asking it the same question indexed 179 of one session's 1084 messages and
+   * left the oldest 18 hours of it unfindable by any query. Reading the file
+   * linearly ignores the `parentUuid` chain and costs less than the SDK call
+   * (40ms for a 6.9MB transcript).
+   */
+  async getFullMessages(sessionId: string, opts?: { maxBytes?: number }): Promise<ChatMessage[]> {
+    const transcriptDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
+    if (transcriptDir) {
+      const file = `${transcriptDir}.jsonl`;
+      // Nothing else bounds this path. `validateJsonlPath` guards the route
+      // that serves one chat's pre-compact scroll; the search indexer arrives
+      // here instead, unattended and once per stale session — and a bumped
+      // INDEXER_VERSION makes that every session on disk. Parsing costs about
+      // 4.3× the file in transient allocator growth (measured: 88.6MB → +355MB
+      // RSS, which neither a forced GC nor dropping the array gives back), so
+      // past the bound the newest `FULL_PARSE_MAX_BYTES` are read and the rest
+      // of the history is left out of the index rather than out of memory.
+      // `maxBytes` is a parameter only so a test can assert the window against a
+      // one-byte-over fixture: a real 128MB transcript is a 12s read even when
+      // the point is that most of it goes unread.
+      const fromByte = fullParseWindow(file, opts?.maxBytes);
+      if (fromByte > 0) {
+        console.warn(`[sdk] getFullMessages: ${sessionId} transcript is over the full-parse bound — indexing from byte ${fromByte} on, older segments stay out of the index`);
+      }
+      try {
+        const fromFile = await parseJsonlTranscript(file, undefined, { fromByte });
+        if (fromFile.length > 0) return fromFile;
+      } catch { /* unreadable or malformed — fall back to the conversation */ }
+    }
+    return this.getMessages(sessionId);
+  }
+
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
       const messages = await getSessionMessages(sessionId);
@@ -2149,6 +2215,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return [];
     }
   }
+}
+
+const SDK_SESSION_PAGE = 200;
+/** Hard stop so a pathological directory cannot spin here. */
+const SDK_SESSION_MAX_PAGES = 100;
+
+/** Every session the SDK can parse in `dir`, paged until exhausted. */
+async function listAllSdkSessions(
+  dir: string,
+): Promise<Awaited<ReturnType<typeof sdkListSessions>>> {
+  const all: Awaited<ReturnType<typeof sdkListSessions>> = [];
+  for (let page = 0; page < SDK_SESSION_MAX_PAGES; page++) {
+    const batch = await sdkListSessions({
+      dir,
+      limit: SDK_SESSION_PAGE,
+      offset: page * SDK_SESSION_PAGE,
+    });
+    all.push(...batch);
+    if (batch.length < SDK_SESSION_PAGE) break;
+  }
+  return all;
 }
 
 /**
@@ -2212,7 +2299,7 @@ function findMissingSessions(
           if (head[end] === '"') break;
           end++;
         }
-        const raw = head.slice(start, end).replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
+        const raw = stripSharedContext(head.slice(start, end).replace(/\\n/g, "\n").replace(/\\"/g, '"').trim()).replace(/\n/g, " ");
         if (raw.length > 0) {
           title = raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
         }
@@ -2229,4 +2316,3 @@ function findMissingSessions(
   }
   return results;
 }
-

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Cpu } from "lucide-react";
+import { Cpu } from "@/lib/icons";
 import { useResourceMonitor } from "@/hooks/use-resource-monitor";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";

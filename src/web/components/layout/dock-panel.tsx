@@ -8,13 +8,13 @@
  * Close calls setDockVisible(false); real kill = close-from-dock / shell exit / idle-grace.
  */
 import { useCallback } from "react";
-import { X, Terminal, Plus, Maximize2, Minimize2 } from "lucide-react";
+import { X, Terminal, Plus, Maximize2, Minimize2 } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { useProjectStore } from "@/stores/project-store";
 import { registerPanelSlot } from "./tab-pool";
 import { DockHeader } from "./dock-header";
-import { getTabTypeIcon } from "@/lib/tab-type-icons";
+import { getTabIcon } from "@/lib/tab-type-icons";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ function MobileDockHeader() {
       {/* Scrollable session pill strip */}
       <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
         {tabs.map((tab) => {
-          const Icon = getTabTypeIcon(tab.type);
+          const Icon = getTabIcon(tab);
           const isActive = tab.id === activeTabId;
           return (
             <div

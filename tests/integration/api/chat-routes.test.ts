@@ -53,6 +53,23 @@ describe("Chat REST API", () => {
     expect(json.data.providerId).toBe("mock");
   });
 
+  it("PATCH /chat/sessions/:id renames a Codex session without invoking the Claude SDK", async () => {
+    const createRes = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", title: "Before" }),
+    });
+    const { data: session } = await createRes.json() as any;
+    const { setSessionProvider } = require("../../../src/services/db.service.ts");
+    setSessionProvider(session.id, "codex");
+
+    const renamed = await req(`/chat/sessions/${session.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title: "Codex renamed" }),
+    });
+    expect(renamed.status).toBe(200);
+    expect((await renamed.json() as any).data.title).toBe("Codex renamed");
+  });
+
   it("GET /chat/sessions lists sessions", async () => {
     await req("/chat/sessions", {
       method: "POST",
@@ -200,5 +217,146 @@ describe("Chat REST API", () => {
       expect(json.data[1].sdkUuid).toBe("pre2");
       try { rmSync(BOUNDARY_FILE, { force: true }); } catch { /* ignore */ }
     });
+
+    it("200 with two compactions returns one segment, headed by the earlier summary", async () => {
+      // Two is the smallest fixture in which `oneSegment` does anything at all:
+      // with one compaction the route answers identically whether the flag is
+      // there or not, so removing it would have broken the feature silently.
+      //
+      // Without the flag this is [pre1, pre2, compactA, mid1] — a single expand
+      // answering with the whole history before the boundary, which on a real
+      // session with thirteen compactions was 5626 messages prepended into a
+      // view already carrying 3553 DOM nodes.
+      const TWO_COMPACTIONS = resolve(TRANSCRIPT_DIR, "two-compactions.jsonl");
+      writeFileSync(TWO_COMPACTIONS, [
+        JSON.stringify({ uuid: "pre1", type: "user", message: { content: "oldest question" } }),
+        JSON.stringify({ uuid: "pre2", type: "assistant", message: { content: [{ type: "text", text: "oldest reply" }] } }),
+        JSON.stringify({ uuid: "compactA", type: "user", isCompactSummary: true, message: { content: "summary of the oldest stretch" } }),
+        JSON.stringify({ uuid: "mid1", type: "assistant", message: { content: [{ type: "text", text: "middle reply" }] } }),
+        JSON.stringify({ uuid: "compactB", type: "user", isCompactSummary: true, message: { content: "summary of everything so far" } }),
+        JSON.stringify({ uuid: "post1", type: "assistant", message: { content: [{ type: "text", text: "newest reply" }] } }),
+      ].join("\n") + "\n");
+
+      const res = await req(`/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(TWO_COMPACTIONS)}&before=compactB`);
+      const json = await res.json() as any;
+      expect(res.status).toBe(200);
+      expect(json.data.map((m: any) => m.sdkUuid)).toEqual(["compactA", "mid1"]);
+      // The summary is the segment's first message on purpose: it is what
+      // carries the transcript path, so it is what lets the next scroll expand
+      // the segment before it.
+      expect(json.data[0].content).toContain("summary of the oldest stretch");
+      try { rmSync(TWO_COMPACTIONS, { force: true }); } catch { /* ignore */ }
+    });
+  });
+});
+
+describe("POST /chat/sessions — redeeming the account a tab claimed", () => {
+  it("binds an account the server recognises", async () => {
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const acc = accountService.add({
+      email: "claimed@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", accountId: acc.id }),
+    });
+    const json = await res.json() as any;
+    expect(res.status).toBe(201);
+    expect(getSessionAccount(json.data.id)).toBe(acc.id);
+  });
+
+  it("ignores an unknown account id instead of failing the request", async () => {
+    // The id comes from a browser and can be stale — a tab left open while the account was
+    // deleted. Losing the message over it would be a far worse outcome than routing normally.
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", accountId: "no-such-account" }),
+    });
+    const json = await res.json() as any;
+    expect(res.status).toBe(201);
+    expect(getSessionAccount(json.data.id)).toBeNull();
+  });
+
+  it("ignores a disabled account id", async () => {
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const acc = accountService.add({
+      email: "parked@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+    accountService.setDisabled(acc.id);
+
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", accountId: acc.id }),
+    });
+    const json = await res.json() as any;
+    expect(getSessionAccount(json.data.id)).toBeNull();
+  });
+});
+
+describe("PUT /chat/sessions/:id/account — the user picking an account by hand", () => {
+  async function newSession() {
+    const res = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock" }),
+    });
+    return ((await res.json()) as any).data.id as string;
+  }
+
+  it("moves a live session onto the chosen account", async () => {
+    const { getSessionAccount } = require("../../../src/services/db.service.ts");
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const target = accountService.add({
+      email: "chosen@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+    const sessionId = await newSession();
+
+    const res = await req(`/chat/sessions/${sessionId}/account`, {
+      method: "PUT",
+      body: JSON.stringify({ accountId: target.id }),
+    });
+    expect(res.status).toBe(200);
+    expect(getSessionAccount(sessionId)).toBe(target.id);
+  });
+
+  it("refuses a disabled account and says so, rather than failing silently", async () => {
+    // Unlike the same choice at session creation, this one is a button the user just
+    // pressed — swallowing it would read as a broken control.
+    const { accountService } = require("../../../src/services/account.service.ts");
+    const parked = accountService.add({
+      email: "parked2@example.com",
+      accessToken: "tok", refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+    });
+    accountService.setDisabled(parked.id);
+    const sessionId = await newSession();
+
+    const res = await req(`/chat/sessions/${sessionId}/account`, {
+      method: "PUT",
+      body: JSON.stringify({ accountId: parked.id }),
+    });
+    expect(res.status).toBe(400);
+    const json = await res.json() as any;
+    // The specific reason, not a generic refusal: "switched off" tells the user what to do,
+    // "cannot serve this session" leaves them guessing between four possible causes.
+    expect(json.error).toContain("switched off");
+  });
+
+  it("requires an accountId", async () => {
+    const sessionId = await newSession();
+    const res = await req(`/chat/sessions/${sessionId}/account`, {
+      method: "PUT",
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
   });
 });

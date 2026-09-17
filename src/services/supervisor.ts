@@ -11,6 +11,7 @@ import {
   unlinkSync, statSync,
 } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
+import { stdioIsLogFile, consumeStdioIsLogEnv, rotateIfOversized, MAX_LOG_BYTES, STDIO_IS_LOG_ENV } from "./log-rotate.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { cleanupStaleBinaryUpgradeArtifacts } from "./binary-upgrade-swap.ts";
 import {
@@ -60,6 +61,7 @@ const DB_BACKUP_STALE_WARN_MS = 21_600_000; // 6h — snapshots stopped happenin
 const SELF_REPLACE_TIMEOUT_MS = 30_000;     // 30s to wait for new supervisor
 const EDGE_PROBE_INTERVAL_MS = 10_000;      // the public port is dark while the edge is down — check often
 const SERVER_PORT_MIRROR_TIMEOUT_MS = 30_000; // how long to wait for the server to publish its port
+const LOG_ROTATE_INTERVAL_MS = 60_000;      // how often ppm.log is checked against its cap
 
 const logFile = () => resolve(getPpmDir(), "ppm.log");
 const restartingFlag = () => resolve(getPpmDir(), ".restarting");
@@ -154,12 +156,51 @@ let cloudConnected = false; // tracks whether we've initiated a cloud WS connect
 let originalArgv: string[] = [];
 
 // ─── Logging ───────────────────────────────────────────────────────────
+
+/**
+ * Whether this process's own stderr already lands in ppm.log.
+ *
+ * Normally it does not — under systemd stderr is the journal, and the
+ * supervisor's lines belong there as well as in the log. But the replacement
+ * supervisor of a self-upgrade is spawned with `stdio: ["ignore", newLogFd,
+ * newLogFd]`, and from then on every line would be written to the file twice.
+ * Resolved once, lazily: fd 2 does not change underneath a running process.
+ */
+let stderrIsLogFile: boolean | null = null;
+
 function log(level: string, msg: string) {
   const ts = new Date().toISOString();
   const line = `[${ts}] [${level}] [supervisor] ${msg}\n`;
   try { appendFileSync(logFile(), line); } catch {}
-  // Always write supervisor logs to stderr so journalctl captures them
-  try { process.stderr.write(line); } catch {}
+  if (stderrIsLogFile === null) {
+    stderrIsLogFile = stdioIsLogFile(2, logFile());
+    consumeStdioIsLogEnv();
+  }
+  // Write supervisor logs to stderr so journalctl captures them — unless
+  // stderr is the log file itself, where that is the same line again.
+  if (!stderrIsLogFile) { try { process.stderr.write(line); } catch {} }
+}
+
+let logRotateTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Keep ppm.log under its cap. Only the supervisor does this.
+ *
+ * It is the long-lived owner of the descriptor every child was handed, and two
+ * processes truncating one file would race. Deliberately *not* run once at
+ * startup: the first rotation of a log that has been left to grow copies the
+ * whole of it, and doing that during boot adds to the one stall this work is
+ * trying to remove. The first tick is a minute away and nothing is worse for
+ * waiting.
+ */
+function startLogRotation() {
+  if (logRotateTimer) return;
+  logRotateTimer = setInterval(() => {
+    if (rotateIfOversized(logFile())) {
+      log("INFO", `Rotated ppm.log at cap ${Math.round(MAX_LOG_BYTES / 1048576)} MB`);
+    }
+  }, LOG_ROTATE_INTERVAL_MS);
+  logRotateTimer.unref?.();
 }
 
 // ─── Backoff calc ──────────────────────────────────────────────────────
@@ -622,7 +663,8 @@ export async function spawnServer(
   serverChild = await withProbeSpawnGate(() => Bun.spawn({
     cmd,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    // The child cannot work out on Windows that fd 1 is already the log, so it is told.
+    env: { ...process.env, [STDIO_IS_LOG_ENV]: "1" },
     // No visible console window. Critical on Windows after an upgrade: the new
     // supervisor is spawned consoleless (detached), so without this its console
     // children — and the Claude SDK grandchildren they spawn — pop blank windows.
@@ -1509,7 +1551,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     const proc = await withProbeSpawnGate(() => nodeSpawn(cmd[0]!, cmd.slice(1), {
       detached: true,
       stdio: ["ignore", newLogFd, newLogFd] as any,
-      env: process.env as NodeJS.ProcessEnv,
+      env: { ...process.env, [STDIO_IS_LOG_ENV]: "1" } as NodeJS.ProcessEnv,
       windowsHide: true,
     }));
     const killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };
@@ -1873,6 +1915,7 @@ export async function runSupervisor(opts: {
   originalArgv = [...process.argv];
 
   const logFd = openSync(logFile(), "a");
+  startLogRotation();
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
 
   // ── Systemd self-heal: if the unit file is stale (e.g. still has

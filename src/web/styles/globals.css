@@ -24,6 +24,13 @@
   --color-text: var(--text);
   --color-text-2: var(--text-2);
   --color-text-3: var(--text-3);
+  /* A de-emphasised name (the explorer's gitignored rows). Halfway between
+     text-2 and text-3 as a *colour*, never an opacity: a fade toward the
+     background is not symmetric between light and dark — at 40% it put a
+     gitignored file name at 1.72:1 against the panel on the light themes and
+     2.07:1 on the dark ones. This mix measures 3.59–5.21:1 across all six.
+     See tests/unit/web/explorer-ignored-contrast.test.ts. */
+  --color-text-dim: color-mix(in srgb, var(--text-2) 50%, var(--text-3));
   --color-accent-2: var(--accent-2);
   --color-accent-wash: var(--accent-wash);
   --color-accent-wash-border: var(--accent-wash-border);
@@ -62,9 +69,18 @@
   --color-text-secondary: var(--text-2);
   --color-text-subtle: var(--text-3);
 
-  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "Helvetica Neue", sans-serif;
-  --font-mono: "Geist Mono", "Monaco", "Courier New", monospace;
+  /* Geist and Monaspace are bundled (see main.tsx); everything after them is
+     for the case where a face fails to load. system-ui before the named
+     families because it asks the desktop what it uses, and a bare sans-serif
+     last because fontconfig can answer that with a *serif*. */
+  --font-sans: "Geist Variable", "Geist", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", "Inter", "Noto Sans", Cantarell,
+    "Helvetica Neue", Arial, sans-serif;
+  /* The same code font as the editor, so a fenced block in a chat message and
+     the file it came from are set in one typeface. */
+  --font-mono: "Monaspace Argon", "Monaspace Argon Var", ui-monospace,
+    "SF Mono", "Cascadia Code", "Noto Sans Mono", "DejaVu Sans Mono", Consolas,
+    monospace;
 
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -465,4 +481,22 @@ html, body {
 }
 @media (prefers-reduced-motion: reduce) {
   .tab-typing-dot { animation: none; }
+}
+
+/*
+ * Inline suggestions in Monaspace Krypton — a different face at the same
+ * metrics, which is what says "this is not your code yet" without moving a
+ * character. Monaco has no `inlineSuggest.fontFamily` option (that is a VS Code
+ * setting), so this is the only lever, and it needs `!important`: Monaco's own
+ * `.monaco-editor .ghost-text-decoration` rule is the same specificity and its
+ * stylesheet is appended by the AMD loader *after* this bundle, so it would
+ * otherwise win on source order. Safe only because Monaspace's five families
+ * share one set of metrics — Monaco places every character at column times
+ * character width, and a family with a different advance would slide out of the
+ * grid it measured with.
+ */
+.monaco-editor .ghost-text-decoration,
+.monaco-editor .ghost-text-decoration-preview,
+.monaco-editor .suggest-preview-text .ghost-text {
+  font-family: "Monaspace Krypton", var(--font-mono) !important;
 }

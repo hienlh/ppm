@@ -7,17 +7,30 @@
  */
 
 import { useState } from "react";
-import { Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "lucide-react";
+import {
+  CircleHelp,
+  Download,
+  KeyRound,
+  Loader2,
+  Plus,
+  Settings,
+  Trash2,
+  Upload,
+} from "@/lib/icons";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AccountCardRow, AccountCardShell, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
 import { CodexAddAccountDialog } from "./codex-add-account-dialog";
 import { CodexBackupDialog } from "./codex-backup-dialog";
 import { CodexRotationDialog } from "./codex-rotation-dialog";
 import { CodexUsageRows } from "./codex-usage-rows";
 import { useCodexAccounts } from "./use-codex-accounts";
+import { codexPlanLabel } from "../../../../shared/codex-plan-label.ts";
+import { dailyGuardState } from "../../../../shared/codex-daily-guard.ts";
 
 /** Codex multi-account management, separate from Claude accounts because codex auth is owned
- *  by the app-server per CODEX_HOME. Added by API key or ChatGPT device code. */
+ *  by the app-server per CODEX_HOME. Added by API key, browser login, or ChatGPT device code. */
 export function CodexAccountsSection() {
   const [dialog, setDialog] = useState<"add" | "export" | "import" | "rotation" | null>(null);
   const c = useCodexAccounts(() => setDialog(null));
@@ -84,18 +97,70 @@ export function CodexAccountsSection() {
                     <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1 shrink-0">
                       {a.type}
                     </span>
-                    {a.planType && <span className="text-[10px] text-text-subtle shrink-0">{a.planType}</span>}
-                    <button
-                      type="button"
-                      onClick={() => void c.remove(a.id)}
-                      title="Remove account"
-                      aria-label="Remove account"
-                      className="p-2 rounded cursor-pointer text-text-subtle hover:text-error hover:bg-surface-elevated transition-colors shrink-0"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
+                    {codexPlanLabel(a.planType) && <span className="text-[10px] text-text-subtle shrink-0">{codexPlanLabel(a.planType)}</span>}
+                    {/* Same control the Claude card uses, in the same place, so the two
+                        sub-tabs read as one screen rather than two designs. */}
+                    <Switch
+                      checked={a.status !== "disabled"}
+                      onCheckedChange={() => void c.toggle(a.id, a.status ?? "active")}
+                      disabled={c.toggling.has(a.id)}
+                      aria-label={a.status === "disabled" ? "Enable account" : "Disable account"}
+                      className="cursor-pointer shrink-0"
+                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => void c.remove(a.id)}
+                          aria-label="Remove account"
+                          className="p-2 rounded cursor-pointer text-text-subtle hover:text-error hover:bg-surface-elevated transition-colors shrink-0"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">Remove account</TooltipContent>
+                    </Tooltip>
                   </div>
                   <CodexUsageRows usage={u} />
+                  {u.session == null && (() => {
+                    const guard = dailyGuardState(u.weekly);
+                    return guard ? (
+                      <div className={`flex min-h-12 items-center justify-between gap-3 rounded-md border px-2.5 py-1.5 ${
+                        a.dailyGuardEnabled && guard.blocked ? "border-error/40 bg-error/5" : "border-border/50 bg-surface/40"
+                      }`}>
+                        <div className="min-w-0 space-y-0.5">
+                          <div className={`flex items-center gap-1.5 text-xs font-medium ${a.dailyGuardEnabled && guard.blocked ? "text-error" : "text-text-secondary"}`}>
+                            <span>Daily guard</span>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button type="button" aria-label="About Daily guard" className="text-text-subtle hover:text-text-primary cursor-help">
+                                  <CircleHelp className="size-3.5" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-64 text-xs leading-relaxed">
+                                Keeps a weekly-only Codex account on pace to last until its reset. Each day adds one seventh of the weekly quota. When usage reaches that day's cap, PPM pauses new turns until the next day. Turn it off any time to use the remaining quota freely.
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                          <p className={`text-[10px] tabular-nums ${a.dailyGuardEnabled && guard.blocked ? "text-error" : "text-text-subtle"}`}>
+                            {a.dailyGuardEnabled && guard.blocked
+                              ? `${Math.round(guard.used * 100)}% used / ${Math.round(guard.cap * 100)}% daily cap. New turns paused.`
+                              : `Day ${guard.day}/7, ${Math.round(guard.cap * 100)}% daily cap`}
+                          </p>
+                        </div>
+                        <span className="hidden" title={`Day ${guard.day}/7: hold weekly usage at or below ${Math.round(guard.cap * 100)}% to last until reset.`}>
+                          Daily guard {a.dailyGuardEnabled ? `· Day ${guard.day}/7 cap ${Math.round(guard.cap * 100)}%` : ""}
+                        </span>
+                        <Switch
+                          checked={!!a.dailyGuardEnabled}
+                          onCheckedChange={() => void c.toggleDailyGuard(a.id, !!a.dailyGuardEnabled)}
+                          disabled={c.toggling.has(a.id)}
+                          aria-label={a.dailyGuardEnabled ? "Disable Daily guard" : "Enable Daily guard"}
+                          className="cursor-pointer shrink-0"
+                        />
+                      </div>
+                    ) : null;
+                  })()}
                 </AccountCardShell>
               );
             })}
@@ -105,7 +170,7 @@ export function CodexAccountsSection() {
 
       <CodexAddAccountDialog
         open={dialog === "add"}
-        onOpenChange={(v) => setDialog(v ? "add" : null)}
+        onOpenChange={(v) => { if (!v) c.cancelLogin(); setDialog(v ? "add" : null); }}
         label={c.label}
         onLabelChange={c.setLabel}
         apiKey={c.apiKey}
@@ -115,6 +180,13 @@ export function CodexAccountsSection() {
         deviceWaiting={c.deviceWaiting}
         onStartDevice={() => void c.startDevice()}
         device={c.device}
+        browser={c.browser}
+        onStartBrowser={() => void c.startBrowser()}
+        loginStarting={c.loginStarting}
+        callbackUrl={c.callbackUrl}
+        onCallbackUrlChange={c.setCallbackUrl}
+        submittingCallback={c.submittingCallback}
+        onSubmitCallback={() => void c.submitCallback()}
         error={c.err}
       />
       <CodexBackupDialog

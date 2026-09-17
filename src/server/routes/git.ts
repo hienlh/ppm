@@ -1,12 +1,92 @@
 import { Hono } from "hono";
+import { resolve } from "node:path";
 import { gitService } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
-import { gitBlameService } from "../../services/git-blame/git-blame.service.ts";
+import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
+import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
+import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
+import { isInsideDir, realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const gitRoutes = new Hono<Env>();
+
+/**
+ * `?repo=` scopes every git route below to one repository inside the project.
+ *
+ * A workspace folder is often a container whose *children* are the
+ * repositories, so the project path and the git root are not the same
+ * directory. Rather than teach each of the twenty-odd handlers, the parameter
+ * is resolved once here and `projectPath` is replaced — every handler already
+ * reads that, and `git.service` already takes the directory to run in.
+ *
+ * It is validated, and a bad value is a 400 rather than a fallback to the
+ * project root. Falling back would run the command one directory up and answer
+ * with *a* history — the wrong one — which is indistinguishable from a working
+ * feature until someone acts on it.
+ *
+ * Both sides go through `realPathOrSelfSync` first. `resolve` is purely
+ * textual, so a symlink inside the project pointing anywhere on the host
+ * resolves to an in-project path, passes, and git runs in the link's target.
+ * Discovery refuses to *offer* such a path, but this parameter comes straight
+ * from the client and is not obliged to be one discovery returned.
+ *
+ * Containment is `isInsideDir`, which folds case on Windows: `c:\users\pc\ppm`
+ * and `C:\Users\PC\ppm` are one directory, and a case-sensitive prefix test
+ * answers 400 for the second — a path this server handed out itself.
+ */
+gitRoutes.use("*", async (c, next) => {
+  const repo = c.req.query("repo");
+  if (repo) {
+    const root = realPathOrSelfSync(resolve(c.get("projectPath")));
+    const target = realPathOrSelfSync(resolve(repo));
+    if (!isInsideDir(target, root)) {
+      return c.json(err("repo is outside the project"), 400);
+    }
+    if (!isGitRepo(target)) {
+      return c.json(err("repo is not a git repository"), 400);
+    }
+    c.set("projectPath", target);
+  }
+  await next();
+});
+
+/**
+ * The `ref`-ish query parameters, refused at the boundary rather than handed on.
+ *
+ * A revision reaches git as its own argv word, so the hazard is not a shell
+ * metacharacter but a value that changes what the command *is*: `?ref1=--output=/tmp/x`
+ * is an option, not a revision, and `git diff` honours it. `assertSafeRev` is
+ * the rule the blame path already states — no leading dash, no `..` range, none
+ * of what `check-ref-format` forbids — and `HEAD~1` and `main^` still pass,
+ * because those are what the diff viewer actually asks for.
+ */
+function invalidRev(...revs: Array<string | undefined>): string | null {
+  for (const rev of revs) {
+    if (rev === undefined) continue;
+    try {
+      assertSafeRev(rev);
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+  return null;
+}
+
+/**
+ * GET /git/repos — the repositories under this project.
+ *
+ * Answers for a project whose root is not a repository, which is the case the
+ * git surfaces used to report as an error.
+ */
+gitRoutes.get("/repos", (c) => {
+  try {
+    return c.json(ok(discoverGitRepos(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
 
 /** GET /git/status */
 gitRoutes.get("/status", async (c) => {
@@ -25,6 +105,8 @@ gitRoutes.get("/diff", async (c) => {
     const projectPath = c.get("projectPath");
     const ref1 = c.req.query("ref1") || undefined;
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref1, ref2);
+    if (bad) return c.json(err(bad), 400);
     const diff = await gitService.diff(projectPath, ref1, ref2);
     return c.json(ok({ diff }));
   } catch (e) {
@@ -38,10 +120,38 @@ gitRoutes.get("/diff-stat", async (c) => {
     const projectPath = c.get("projectPath");
     const ref1 = c.req.query("ref1") || undefined;
     const ref2 = c.req.query("ref2") || undefined;
+    const bad = invalidRev(ref1, ref2);
+    if (bad) return c.json(err(bad), 400);
     const files = await gitService.diffStat(projectPath, ref1, ref2);
     return c.json(ok(files));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /git/branch-diff?base=&head=&mode=three-dot|two-dot
+ *
+ * Every file a branch changed, in one answer, plus the commit those changes
+ * were measured against. The Branch Review tab opens each file's diff at
+ * `mergeBase`, so the list and the viewer can never disagree about the base.
+ *
+ * A bad ref is a 400, not a 500: `base` and `head` come straight from a picker,
+ * and a branch deleted since it was rendered is an ordinary thing to ask about.
+ */
+gitRoutes.get("/branch-diff", async (c) => {
+  const projectPath = c.get("projectPath");
+  const mode = c.req.query("mode") === "two-dot" ? "two-dot" : "three-dot";
+  try {
+    const result = await branchDiff(
+      projectPath,
+      c.req.query("base"),
+      c.req.query("head"),
+      mode,
+    );
+    return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
   }
 });
 
@@ -52,6 +162,8 @@ gitRoutes.get("/file-diff", async (c) => {
     const file = c.req.query("file");
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || undefined;
+    const bad = invalidRev(ref);
+    if (bad) return c.json(err(bad), 400);
     const diff = await gitService.fileDiff(projectPath, file, ref);
     return c.json(ok({ diff }));
   } catch (e) {
@@ -59,9 +171,11 @@ gitRoutes.get("/file-diff", async (c) => {
   }
 });
 
-/** GET /git/file-full-diff?file=&ref=
+/** GET /git/file-full-diff?file=&ref=&ref2=&text=1
  *  Returns full file contents (VSCode-style) for both sides:
- *  { original: <ref version>, modified: <working tree> } */
+ *  { original: <ref version>, modified: <working tree> }
+ *  A binary file answers `binary: true` with both sides empty; `text=1` is the
+ *  viewer's "Open Anyway" and asks for the decoded bytes regardless. */
 gitRoutes.get("/file-full-diff", async (c) => {
   try {
     const projectPath = c.get("projectPath");
@@ -69,8 +183,61 @@ gitRoutes.get("/file-full-diff", async (c) => {
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || "HEAD";
     const ref2 = c.req.query("ref2") || undefined;
-    const result = await gitService.fileFullDiff(projectPath, file, ref, ref2);
+    const bad = invalidRev(ref, ref2);
+    if (bad) return c.json(err(bad), 400);
+    const result = await gitService.fileFullDiff(projectPath, file, ref, ref2, {
+      text: c.req.query("text") === "1",
+    });
     return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * The content types `/git/file-blob` will name. Everything outside this list is
+ * served as `application/octet-stream`: a blob URL inherits *this* origin, so
+ * answering with the repository's own `text/html` — or `image/svg+xml`, which
+ * carries script — would let a committed file run code inside the app.
+ */
+const BLOB_IMAGE_TYPES: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif",
+};
+
+/**
+ * GET /git/file-blob?file=&ref=HEAD — the file's bytes at a revision.
+ *
+ * What the binary diff view draws its left-hand pane from: `/files/raw` serves
+ * the working tree, and nothing else reaches the version a commit holds. The
+ * path needs no traversal check of its own — git resolves `ref:path` inside the
+ * repository and refuses anything above it ("is outside repository").
+ */
+gitRoutes.get("/file-blob", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const file = c.req.query("file");
+    if (!file) return c.json(err("Missing query: file"), 400);
+    const ref = c.req.query("ref") || "HEAD";
+    // The same guard as every sibling route, and it is not decoration here: `ref` reaches
+    // `git show` as its own argv word, so `?ref=--output=<path>` is an option rather than a
+    // revision. Measured on a scratch repository, `git show --output=<victim> HEAD:a.txt`
+    // exits 0 and leaves the victim at zero bytes — arbitrary file destruction, on a server
+    // that is routinely reachable through a public tunnel URL.
+    const bad = invalidRev(ref);
+    if (bad) return c.json(err(bad), 400);
+    const bytes = await gitService.fileBlob(projectPath, file, ref);
+    if (!bytes) return c.json(err("File does not exist at that revision"), 404);
+    const ext = file.split(".").pop()?.toLowerCase() ?? "";
+    // Copied into a plain Uint8Array because a Buffer is typed over
+    // ArrayBufferLike, which BodyInit does not accept.
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        "Content-Type": BLOB_IMAGE_TYPES[ext] ?? "application/octet-stream",
+        "Content-Length": String(bytes.length),
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -180,6 +347,31 @@ gitRoutes.get("/blame", async (c) => {
     const result = await gitBlameService.blameFile(projectPath, filePath, rev);
     // Untracked, or absent at that revision — not an error the UI should show.
     return c.json(ok(result ?? { lines: [], commits: {} }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /git/commit-line?hash=&path=&line= — the commit message and the one-line
+ * diff behind a blamed line, for the editor's hover.
+ *
+ * `path` and `line` are the path and line number *at that commit*, which is
+ * what `git blame --porcelain` reports; the browser passes them straight back
+ * from the blame it already has.
+ */
+gitRoutes.get("/commit-line", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const hash = c.req.query("hash");
+    const filePath = c.req.query("path");
+    const line = Number(c.req.query("line"));
+    if (!hash) return c.json(err("Missing: hash"), 400);
+    if (!filePath) return c.json(err("Missing: path"), 400);
+    if (!Number.isInteger(line) || line < 1) return c.json(err("Invalid: line"), 400);
+    const result = await gitBlameService.lineDetail(projectPath, hash, filePath, line);
+    // An unknown hash or a path git never had is "no hover", not an error.
+    return c.json(ok(result));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

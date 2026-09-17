@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Check, Pin, PinOff, Pencil, Trash2, Tag, Circle } from "lucide-react";
+import { Check, Pin, PinOff, Pencil, Trash2, Tag, Circle } from "@/lib/icons";
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,

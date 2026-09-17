@@ -1,7 +1,7 @@
 import { Suspense, lazy } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore, type TabType } from "@/stores/tab-store";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 
 const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
   terminal: lazy(() =>
@@ -37,6 +37,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   "git-diff": lazy(() =>
     import("@/components/editor/diff-viewer").then((m) => ({
       default: m.DiffViewer,
+    })),
+  ),
+  "branch-review": lazy(() =>
+    import("@/components/branch-review/branch-review-tab").then((m) => ({
+      default: m.BranchReviewTab,
     })),
   ),
   settings: lazy(() =>
@@ -77,6 +82,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   group: lazy(() =>
     import("@/components/group-chat/group-chat-tab").then((m) => ({
       default: m.GroupChatTab,
+    })),
+  ),
+  problems: lazy(() =>
+    import("@/components/problems/problems-panel").then((m) => ({
+      default: m.ProblemsPanel,
     })),
   ),
 };

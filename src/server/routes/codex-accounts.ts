@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
-import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, type CodexStrategy } from "../../services/codex-account.service.ts";
-import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin } from "../../services/codex-account-login.ts";
+import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, setCodexDailyGuard, codexUsageLevel, type CodexStrategy } from "../../services/codex-account.service.ts";
+import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin, startBrowserLogin, submitBrowserCallback, getBrowserLoginStatus, cancelBrowserLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
@@ -11,6 +11,50 @@ codexAccountsRoutes.get("/", (c) => c.json(ok({ accounts: listCodexAccounts(), s
 
 /** Per-account quota map { [accountId]: UsageInfo }. */
 codexAccountsRoutes.get("/usage", async (c) => c.json(ok(await getAllCodexUsages())));
+
+/**
+ * POST /api/codex-accounts/pick — claim the account that will serve a new chat tab.
+ *
+ * Mirrors the Claude side: a consuming pick, so round-robin advances and consecutive tabs
+ * land on different accounts. Usage is read once here and handed to the selector, which is
+ * what lets it skip accounts with no five-hour room left — the synchronous `peekCodexAccount`
+ * has no way to reach that data, which is why the toolbar could never name an account before
+ * the first turn under round-robin.
+ *
+ * Null when no account is managed: chats then run on the ambient ~/.codex login, which has
+ * no id to bind and nothing to choose between.
+ */
+codexAccountsRoutes.post("/pick", async (c) => {
+  if (listCodexAccounts().length === 0) return c.json(ok(null));
+  const usages = await getAllCodexUsages();
+  // A failed usage fetch yields {} → +Infinity, which the selector reads as "unknown", not
+  // as "capped": an account we could not measure stays a candidate.
+  const picked = selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
+  if (!picked) return c.json(ok(null));
+  return c.json(ok({ id: picked.id, label: picked.label }));
+});
+
+/**
+ * PATCH /api/codex-accounts/:id — switch an account on or off.
+ *
+ * Mirrors the shape of the Claude route so the two panels can share one control, but not its
+ * pre-flight token check: that exists for Anthropic OAuth refresh tokens, which have nothing
+ * to do with how a Codex account authenticates. Nothing to prove here means this answers
+ * immediately instead of taking the better part of a minute.
+ */
+codexAccountsRoutes.patch("/:id", async (c) => {
+  const body = await c.req.json<{ status?: string; dailyGuardEnabled?: unknown }>().catch(() => ({} as { status?: string; dailyGuardEnabled?: unknown }));
+  if (body.status !== undefined) {
+    if (body.status !== "active" && body.status !== "disabled") return c.json(err("status must be active or disabled"), 400);
+    const updated = setCodexAccountStatus(c.req.param("id"), body.status);
+    if (!updated) return c.json(err("Account not found"), 404);
+    return c.json(ok(updated));
+  }
+  if (typeof body.dailyGuardEnabled !== "boolean") return c.json(err("status or dailyGuardEnabled is required"), 400);
+  const updated = setCodexDailyGuard(c.req.param("id"), body.dailyGuardEnabled);
+  if (!updated) return c.json(err("Account not found"), 404);
+  return c.json(ok(updated));
+});
 
 /** Set the selection strategy. */
 codexAccountsRoutes.put("/strategy", async (c) => {
@@ -43,6 +87,35 @@ codexAccountsRoutes.get("/device-login/:id/status", (c) => c.json(ok(getDeviceLo
 /** Abandon a device login the user closed out of. */
 codexAccountsRoutes.delete("/device-login/:id", (c) => {
   cancelDeviceLogin(c.req.param("id"));
+  return c.json(ok({ cancelled: true }));
+});
+
+/** Browser OAuth uses the same durable polling as device-code login. */
+codexAccountsRoutes.post("/browser-login", async (c) => {
+  const body = await c.req.json<{ label?: string }>().catch(() => ({} as { label?: string }));
+  if (body.label !== undefined && typeof body.label !== "string") return c.json(err("label must be a string"), 400);
+  c.header("Cache-Control", "no-store");
+  try { return c.json(ok(await startBrowserLogin(body.label))); }
+  catch (e) { return c.json(err((e as Error).message), 400); }
+});
+
+codexAccountsRoutes.post("/browser-login/:id/callback", async (c) => {
+  const body = await c.req.json<{ callbackUrl?: string }>().catch(() => ({} as { callbackUrl?: string }));
+  c.header("Cache-Control", "no-store");
+  if (typeof body.callbackUrl !== "string") return c.json(err("callbackUrl is required"), 400);
+  try {
+    submitBrowserCallback(c.req.param("id"), body.callbackUrl);
+    return c.json(ok({ submitted: true }));
+  } catch (e) { return c.json(err((e as Error).message), 400); }
+});
+
+codexAccountsRoutes.get("/browser-login/:id/status", (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(ok(getBrowserLoginStatus(c.req.param("id"))));
+});
+
+codexAccountsRoutes.delete("/browser-login/:id", (c) => {
+  cancelBrowserLogin(c.req.param("id"));
   return c.json(ok({ cancelled: true }));
 });
 

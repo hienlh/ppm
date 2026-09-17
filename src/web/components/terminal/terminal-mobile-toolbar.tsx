@@ -7,7 +7,7 @@
  * past the right edge. Without it the last keys look absent rather than
  * off-screen.
  */
-import { Copy, ClipboardPaste, MessageSquare, Link, TextSelect } from "lucide-react";
+import { Copy, ClipboardPaste, MessageSquare, Link, TextSelect } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 
 export interface MobileKey {

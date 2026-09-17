@@ -10,20 +10,36 @@ import type {
   UsageInfo,
 } from "../provider.interface.ts";
 import { configService } from "../../services/config.service.ts";
-import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount } from "../../services/db.service.ts";
-import { resolveCodexAccountForSession, getCodexAccount, listCodexAccounts, peekCodexAccount } from "../../services/codex-account.service.ts";
+import { withSharedContext } from "../../shared/provider-context.ts";
+import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles, insertTurnUsage } from "../../services/db.service.ts";
+import {
+  resolveCodexAccountForSession,
+  getCodexAccount,
+  listCodexAccounts,
+  peekCodexAccount,
+  selectCodexAccount,
+  getAllCodexUsages,
+  getCodexAccountUsage,
+  codexUsageLevel,
+  type CodexAccount,
+} from "../../services/codex-account.service.ts";
+import { dailyGuardMessage, dailyGuardState } from "../../shared/codex-daily-guard.ts";
+import { isCodexAccountUsageLimited, markCodexAccountUsageLimited } from "../../services/codex-account-cooldown.ts";
+import { isCodexUsageLimit, codexErrorMessage, parseCodexUsageLimitReset } from "./codex-usage-limit.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
+import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
 import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { codexUsageSource } from "./codex-usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { localizeRollout } from "./codex-rollout-transfer.ts";
 import {
   listCodexRollouts,
   findRolloutByThreadId,
@@ -54,16 +70,22 @@ const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
  * being served from the in-process transcript, and nothing on disk was ever
  * found for it.
  *
- * `sessionId` narrows to the bound account when there is one; without it the
- * caller gets every account, which is what listing a project's sessions needs.
+ * `sessionId` puts the bound account's directory FIRST, because a thread that
+ * has been continued on that account has its newest rollout there. It no longer
+ * restricts the search to it: an account switch — manual, or forced by a usage
+ * limit — leaves the conversation's history in the home of whichever account
+ * was serving when it was written. Searching the bound account alone is what
+ * made a switched session come back empty and silently start over as a new
+ * thread, since resume is only attempted when a rollout is found.
  */
 function codexSessionsDirs(sessionId?: string): string[] {
   const dirs: string[] = [];
   const boundId = sessionId ? getSessionCodexAccount(sessionId) : null;
-  const accounts = boundId
-    ? [getCodexAccount(boundId)].filter((a): a is NonNullable<typeof a> => a != null)
-    : listCodexAccounts();
-  for (const account of accounts) dirs.push(join(account.home, "sessions"));
+  const accounts = listCodexAccounts();
+  const ordered = boundId
+    ? [...accounts.filter((a) => a.id === boundId), ...accounts.filter((a) => a.id !== boundId)]
+    : accounts;
+  for (const account of ordered) dirs.push(join(account.home, "sessions"));
   dirs.push(CODEX_SESSIONS_DIR);
   return dirs;
 }
@@ -75,6 +97,29 @@ function fromCodexSessionsDirs<T>(sessionId: string | undefined, read: (dir: str
     if (found != null) return found;
   }
   return null;
+}
+
+/**
+ * The rollout for a thread AND the sessions directory it was found in.
+ *
+ * The directory is what a plain path cannot tell us, and resuming needs it: a rollout
+ * belonging to another account has to be copied into the serving account's own home before
+ * codex will resolve it, and the copy has to keep its position relative to that directory.
+ */
+function locateRollout(
+  sessionId: string,
+  cwd: string,
+): { path: string; sessionsDir: string } | null {
+  for (const dir of codexSessionsDirs(sessionId)) {
+    const found = findRolloutByThreadId(dir, sessionId, cwd);
+    if (found) return { path: found, sessionsDir: dir };
+  }
+  return null;
+}
+
+/** Where the app-server on this account writes and looks for rollouts. */
+function sessionsDirForHome(codexHome?: string): string {
+  return codexHome ? join(codexHome, "sessions") : CODEX_SESSIONS_DIR;
 }
 const CLIENT_INFO = { name: "ppm", title: "PPM", version: "0.0.0" };
 const CAPABILITIES = { experimentalApi: true, requestAttestation: false, optOutNotificationMethods: null };
@@ -106,18 +151,29 @@ interface LiveSession {
   compactRequested?: boolean;
   /** Token counts from the most recent usage notification, attached to `done`. */
   lastUsage?: import("../../shared/turn-usage.ts").TurnUsage;
+  /** Spawned thread ids. Notifications from these threads belong inside their Agent card. */
+  subagentThreadIds: Set<string>;
   /** A turn is running on the thread. Codex accepts exactly one at a time: a
    *  second `turn/start` resolves with the ALREADY-RUNNING turn (same id,
    *  status `inProgress`) and silently discards the new input — no error, so
    *  nothing downstream can notice. Follow-ups therefore wait in `pendingTurns`
    *  and are sent when the running turn reports `turn/completed`. */
   turnInFlight?: boolean;
+  /** A daily-guard usage read is in progress before the next turn starts. */
+  checkingDailyGuard?: boolean;
   /** Id of the running turn — `turn/interrupt` needs it, `threadId` alone is rejected. */
   activeTurnId?: string | null;
   /** Interrupt asked for before `turn/started` named the turn; fired on arrival. */
   interruptRequested?: boolean;
   /** Follow-ups waiting for the current turn, in the order they will be sent. */
   pendingTurns: QueuedTurn[];
+  /** A usage-limit rotation is underway: the old app-server is being torn down and
+   *  replaced by one running on another account. Everything the dying subprocess still
+   *  emits belongs to the turn being abandoned, so it is dropped rather than shown. */
+  rotating?: boolean;
+  /** The turn currently in flight, kept so a rotation can send it again on the new
+   *  account. Cleared when the turn ends — there is then nothing to replay. */
+  lastTurnInput?: { message: string; opts?: SendMessageOpts };
 }
 
 /** A follow-up held back because a turn was already running. */
@@ -171,6 +227,21 @@ function createEventChannel(): EventChannel {
   };
 }
 
+/** The app-server puts the owner thread on every item notification.  An
+ * `agentThreadId` inside a SubAgentActivity is the newly spawned child, so it
+ * must never be used here: that would nest the launch card inside itself. */
+export function threadIdFromNotification(params: unknown): string | null {
+  if (!params || typeof params !== "object") return null;
+  const p = params as Record<string, unknown>;
+  const direct = p.threadId ?? p.thread_id;
+  if (typeof direct === "string" && direct) return direct;
+  const thread = p.thread;
+  if (thread && typeof thread === "object" && typeof (thread as Record<string, unknown>).id === "string") {
+    return (thread as Record<string, unknown>).id as string;
+  }
+  return null;
+}
+
 /**
  * Drop a model id that isn't a codex model. PPM's per-session model can fall back
  * to the global Claude default (e.g. `claude-opus-4-8`), which codex rejects
@@ -185,6 +256,10 @@ function codexModel(model?: string): string | undefined {
 function extractThreadId(result: unknown): string | null {
   const r = result as { thread?: Thread; threadId?: string; id?: string } | undefined;
   return r?.thread?.id ?? r?.threadId ?? r?.id ?? null;
+}
+
+function missingRolloutError(sessionId: string): Error {
+  return new Error(`Cannot resume Codex session ${sessionId}: its transcript was not found in the available account homes for this project. Restore the original account/transcript and retry, or explicitly open a new chat.`);
 }
 
 /** Human label for an approval prompt (dormant in MVP under default bypass). */
@@ -221,10 +296,13 @@ function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestU
  * notification stream. Token-by-token streaming is the load-bearing capability.
  */
 export class CodexAppServerProvider implements AIProvider {
+  readonly supportsSharedContext = true;
   readonly id = "codex";
   readonly name = "Codex";
 
   private sessions = new Map<string, Session>();
+  /** Only IDs minted here may start a thread. Missing history is never proof of a new chat. */
+  private unstartedSessions = new Set<string>();
   private live = new Map<string, LiveSession>();
   private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
   /** Keyed by `cwd\0codexHome` — skills differ per workspace AND per account. */
@@ -246,6 +324,7 @@ export class CodexAppServerProvider implements AIProvider {
       createdAt: new Date().toISOString(),
     };
     this.sessions.set(id, session);
+    this.unstartedSessions.add(id);
     if (config.projectPath) setSessionMetadata(id, config.projectName, config.projectPath);
     return session;
   }
@@ -281,6 +360,11 @@ export class CodexAppServerProvider implements AIProvider {
         sessions.push(s);
       }
     }
+    // A title the user set by hand outranks the one derived from the opening
+    // prompt, and it is the only place a renamed codex session is recorded.
+    const customTitles = getSessionTitles(sessions.map((s) => s.id));
+    for (const s of sessions) s.title = customTitles[s.id] ?? s.title;
+
     // Backfill provider ownership so reopening a pre-existing codex thread routes
     // to codex (not the default provider) even after a restart.
     //
@@ -301,6 +385,7 @@ export class CodexAppServerProvider implements AIProvider {
   async deleteSession(sessionId: string): Promise<void> {
     this.abortQuery(sessionId, "delete");
     this.sessions.delete(sessionId);
+    this.unstartedSessions.delete(sessionId);
   }
 
   // ── Streaming (multi-turn) ──
@@ -310,12 +395,13 @@ export class CodexAppServerProvider implements AIProvider {
       try {
         live = await this.connect(sessionId, opts);
       } catch (err) {
+        this.abortQuery(sessionId, "connect_failed");
         yield { type: "error", message: redactTruncate((err as Error)?.message ?? String(err), 512) };
         yield { type: "done", sessionId, resultSubtype: "error_during_execution" };
         return;
       }
     }
-    this.startTurn(live, message, opts);
+    void this.startTurn(live, message, opts);
     for await (const ev of live.channel.iterator) {
       yield ev;
     }
@@ -325,10 +411,34 @@ export class CodexAppServerProvider implements AIProvider {
   pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): void {
     const live = this.live.get(sessionId);
     if (!live || live.client.isClosed) return;
-    this.startTurn(live, content, opts);
+    void this.startTurn(live, content, opts);
   }
 
-  private startTurn(live: LiveSession, message: string, opts?: SendMessageOpts): void {
+  /** Return a refusal only when this session's managed account opted into pacing. */
+  private async dailyGuardError(live: LiveSession): Promise<string | null> {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) : null;
+    const account = accountId ? getCodexAccount(accountId) : null;
+    if (!account?.dailyGuardEnabled) return null;
+    try {
+      const usage = await getCodexAccountUsage(account.id);
+      const state = usage.session == null ? dailyGuardState(usage.weekly) : null;
+      return state?.blocked ? dailyGuardMessage(state) : null;
+    } catch {
+      // An unreadable quota cannot honestly be called spent. Keep the account usable and let
+      // Codex's real quota refusal remain the authority until the next successful usage read.
+      return null;
+    }
+  }
+
+  /**
+   * Send a turn on the live thread.
+   *
+   * `replay` marks the same turn being sent again on a different account after a usage
+   * limit. It skips the transcript append only: the user typed the message once, and a
+   * second entry would both show it twice and shift every later `rollout-N` id, which
+   * fork anchors resolve against.
+   */
+  private async startTurn(live: LiveSession, message: string, opts?: SendMessageOpts, replay = false): Promise<void> {
     if (!live.threadId) return;
     // One turn at a time — anything sent now would be dropped without a trace.
     // `now` additionally cuts the running turn short so this one answers next.
@@ -336,6 +446,19 @@ export class CodexAppServerProvider implements AIProvider {
       const priority = opts?.priority ?? "next";
       this.enqueueTurn(live, { message, opts, priority });
       if (priority === "now") this.interruptActiveTurn(live);
+      return;
+    }
+    if (live.checkingDailyGuard) {
+      this.enqueueTurn(live, { message, opts, priority: opts?.priority ?? "next" });
+      return;
+    }
+    live.checkingDailyGuard = true;
+    const guardError = await this.dailyGuardError(live);
+    live.checkingDailyGuard = false;
+    if (guardError) {
+      live.channel.push({ type: "error", message: guardError });
+      live.channel.push({ type: "done", sessionId: live.threadId, resultSubtype: "error_during_execution" });
+      this.endTurn(live);
       return;
     }
     live.turnInFlight = true;
@@ -351,27 +474,41 @@ export class CodexAppServerProvider implements AIProvider {
       });
       return;
     }
-    live.transcript.push({ id: nextRolloutId(live), role: "user", content: message, timestamp: new Date().toISOString() });
+    if (!replay) live.transcript.push({ id: nextRolloutId(live), role: "user", content: message, timestamp: new Date().toISOString() });
+    live.lastTurnInput = { message, opts };
     live.currentAssistant = "";
     live.currentEvents = [];
+    live.lastUsage = undefined;
     // Codex takes an image as a path, never as a payload, so the uploaded copy is what it
     // gets. Images lead: the text usually refers to them ("what is this?").
     const input: UserInput[] = [
       ...(opts?.imagePaths ?? []).map((path) => ({ type: "localImage" as const, path })),
-      { type: "text" as const, text: message, text_elements: [] },
+      { type: "text" as const, text: withSharedContext(message, opts?.sharedContext), text_elements: [] },
     ];
     const turnModel = codexModel(opts?.model);
+    const turnEffort = opts?.effort ?? this.config?.effort;
+    const configuredThinking = this.config?.thinking_budget_tokens;
+    // Codex does not accept a token budget. Its equivalent is an effort level,
+    // while `summary` controls the safe thinking text the UI can show.
+    const thinkingEnabled = (opts?.thinkingBudget ?? configuredThinking ?? -1) !== 0;
     live.client.request("turn/start", {
       threadId: live.threadId,
       input,
       ...(turnModel ? { model: turnModel } : {}),
+      ...(turnEffort ? { effort: turnEffort } : {}),
+      summary: thinkingEnabled ? "detailed" : "none",
     }).then((res) => {
       // Backup for the `turn/started` notification, which is what normally names
       // the turn — an interrupt arriving in between has nothing to address.
       const id = (res as { turn?: { id?: string } })?.turn?.id;
       if (id && !live.activeTurnId) this.setActiveTurn(live, id);
     }).catch((err) => {
-      if (!live.client.isClosed) live.channel.push({ type: "error", message: redactTruncate((err as Error)?.message ?? String(err), 256) });
+      const reason = (err as Error)?.message ?? String(err);
+      // A quota refusal can come back as the rejection of the request itself rather than
+      // as an `error` notification, and it is the same situation either way — move the
+      // turn to an account that still has room instead of showing the refusal.
+      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason)) return;
+      if (!live.client.isClosed) live.channel.push({ type: "error", message: redactTruncate(reason, 256) });
       // No turn is running, so nothing will report `turn/completed` — release the
       // queue here or every later follow-up waits on a turn that never existed.
       this.endTurn(live);
@@ -410,8 +547,191 @@ export class CodexAppServerProvider implements AIProvider {
     live.turnInFlight = false;
     live.activeTurnId = null;
     live.interruptRequested = false;
+    live.lastTurnInput = undefined;
     const next = live.pendingTurns.shift();
-    if (next) this.startTurn(live, next.message, next.opts);
+    if (next) void this.startTurn(live, next.message, next.opts);
+  }
+
+  // ── Usage-limit rotation ──
+
+  /**
+   * Take over a turn Codex refused for an exhausted quota, if another account can serve it.
+   *
+   * Answers synchronously so the caller knows, before it decides what to show, whether the
+   * refusal is being handled or has to be reported. The rotation itself is asynchronous —
+   * it respawns a subprocess and resumes the thread — but whether one is possible is a
+   * question about which accounts exist, which needs no I/O.
+   *
+   * Returns false when nothing else could serve the turn, and the refusal then reaches the
+   * user untouched. That is the honest outcome: an error saying the quota is spent is worth
+   * more than a silent retry on the account that just said so.
+   */
+  private beginRotation(live: LiveSession, reason: string): boolean {
+    const threadId = live.threadId;
+    if (!threadId || live.rotating) return false;
+    const currentId = getSessionCodexAccount(threadId);
+    const candidates = listCodexAccounts().filter(
+      (a) => a.status !== "disabled" && a.id !== currentId && !isCodexAccountUsageLimited(a.id),
+    );
+    if (candidates.length === 0) return false;
+    live.rotating = true;
+    void this.rotateAccount(live, threadId, currentId, reason);
+    return true;
+  }
+
+  /** Park the spent account, move the session onto a fresh one, and send the turn again. */
+  private async rotateAccount(
+    live: LiveSession,
+    threadId: string,
+    currentId: string | null,
+    reason: string,
+  ): Promise<void> {
+    const pending = live.lastTurnInput;
+    const reset = parseCodexUsageLimitReset(reason);
+    if (currentId) markCodexAccountUsageLimited(currentId, reset?.atMs);
+
+    let next: CodexAccount | null = null;
+    try {
+      // Usage picks the emptiest of the remaining accounts rather than merely the next one,
+      // so a rotation forced by a limit does not land on an account that is nearly at its own.
+      const usages = await getAllCodexUsages();
+      next = selectCodexAccount({
+        usageOf: (id) => codexUsageLevel(usages[id]),
+        ...(currentId ? { exclude: [currentId] } : {}),
+      });
+    } catch {
+      next = selectCodexAccount(currentId ? { exclude: [currentId] } : undefined);
+    }
+
+    if (!next) { this.abandonRotation(live, reason, reset?.text); return; }
+
+    console.warn(`[codex] session=${threadId} usage limit — switching to ${next.id} (${next.label})`);
+    live.channel.push({
+      type: "account_retry",
+      reason: "Usage limit reached — switching account",
+      accountId: next.id,
+      accountLabel: next.label,
+    });
+
+    try {
+      await this.respawnOn(live, threadId, next);
+    } catch (e) {
+      console.error(`[codex] session=${threadId} rotation to ${next.id} failed: ${redactTruncate((e as Error)?.message, 200)}`);
+      this.abandonRotation(live, reason, reset?.text);
+      return;
+    }
+
+    live.rotating = false;
+    // The refused turn never reached `turn/completed`, so the flags it set are still on.
+    live.turnInFlight = false;
+    live.activeTurnId = null;
+    live.interruptRequested = false;
+    if (pending) void this.startTurn(live, pending.message, pending.opts, true);
+    else this.endTurn(live);
+  }
+
+  /** No account could take the turn — report the refusal and close the turn out. */
+  private abandonRotation(live: LiveSession, reason: string, resetText?: string): void {
+    live.rotating = false;
+    const suffix = resetText ? ` Try again ${resetText}.` : "";
+    live.channel.push({
+      type: "error",
+      message: `${redactTruncate(reason, 512)}${suffix} Add another account in Settings → Accounts, or wait for the reset.`,
+    });
+    live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
+    this.endTurn(live);
+  }
+
+  /**
+   * Put this session's app-server on another account, keeping the session itself intact.
+   *
+   * The subprocess is replaced, not the `LiveSession`: the caller of `sendMessage` is
+   * iterating this session's channel, and handing it a new one would end its stream mid-turn
+   * and leave the rest of the answer with nobody listening. Transcript, history and pending
+   * follow-ups all survive for the same reason.
+   *
+   * The outgoing client's handlers are cleared before it is closed. `close()` only asks the
+   * process to exit, so its `close` event lands well after this returns — by which time
+   * `rotating` is off again, and the inherited `onClose` would tear down the session that
+   * had just been repaired.
+   */
+  private async respawnOn(live: LiveSession, threadId: string, account: CodexAccount): Promise<void> {
+    // Validate before replacing the client or its account binding. A missing file
+    // can mean inaccessible history, including on the first turn; it cannot justify
+    // migrating an existing provider thread onto an empty conversation.
+    const found = locateRollout(threadId, live.cwd);
+    if (!found) throw missingRolloutError(threadId);
+    const old = live.client;
+    old.onNotification(() => {});
+    old.onServerRequest(() => {});
+    old.onClose(() => {});
+    const pid = old.pid;
+    const proc = old.process;
+    old.close();
+    if (process.platform === "win32" && pid) killProcessTree(pid);
+    else if (proc) setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* dead */ } }, 2000).unref?.();
+
+    // Locate history while the outgoing account is still bound, so its current
+    // transcript wins. Then bind the account that will receive the localized copy.
+    setSessionCodexAccount(threadId, account.id);
+
+    const client = new CodexJsonRpcClient();
+    client.onNotification((n) => this.handleNotification(live, n));
+    client.onServerRequest((r) => this.handleServerRequest(live, r));
+    client.onClose(() => this.handleClose(live));
+    client.start({ cwd: live.cwd, codexHome: account.home });
+    live.client = client;
+
+    await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
+    client.notify("initialized");
+
+    const resumeBase = {
+      ...this.contextConfigOverrides(),
+      cwd: live.cwd,
+      sandbox: live.permission.sandbox,
+      approvalPolicy: live.permission.approvalPolicy,
+      ...(live.model ? { model: live.model } : {}),
+    };
+    await this.resumeThread(client, threadId, found, account.home, resumeBase);
+  }
+
+  /**
+   * Resume a thread from the rollout file we located, wherever it lives.
+   *
+   * The `path` matters because a rollout is written inside the CODEX_HOME of whichever
+   * account served the turn, and this app-server is running on the account serving the
+   * session NOW. Asked by thread id alone, it searches only its own home and answers "no
+   * rollout found for thread id …" for a conversation that plainly exists — which is how
+   * an account switch used to lose the history and open a brand-new thread instead.
+   *
+   * The id-only form is kept as a fallback for a codex build that predates `path`: there
+   * the argument is rejected outright, and a resume that can still work by id should not
+   * be downgraded into a new thread over a field name.
+   */
+  private async resumeThread(
+    client: CodexJsonRpcClient,
+    threadId: string,
+    found: { path: string; sessionsDir: string },
+    codexHome: string | undefined,
+    resumeBase: Record<string, unknown>,
+  ): Promise<unknown> {
+    const target = sessionsDirForHome(codexHome);
+    const path = localizeRollout(found.path, found.sessionsDir, target);
+    if (path !== found.path) {
+      console.log(`[codex] thread=${threadId} rollout copied into the serving account's home to resume`);
+    }
+    return client.request("thread/resume", { threadId, path, ...resumeBase });
+  }
+
+  /** Read on connect/resume only; changing settings never interrupts a live turn. */
+  private contextConfigOverrides(): { config?: Record<string, number> } {
+    const providerConfig = this.config;
+    const config: Record<string, number> = {};
+    for (const key of ["model_context_window", "model_auto_compact_token_limit"] as const) {
+      const value = providerConfig?.[key];
+      if (value != null) config[key] = value;
+    }
+    return Object.keys(config).length ? { config } : {};
   }
 
   private async connect(sessionId: string, opts?: SendMessageOpts): Promise<LiveSession> {
@@ -420,13 +740,18 @@ export class CodexAppServerProvider implements AIProvider {
     const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode);
     const model = codexModel(opts?.model ?? this.config?.model);
 
+    // Only resume a rollout attributable to this project. An unknown/resumed ID
+    // without one must not silently become a fresh thread with a different identity.
+    const found = locateRollout(sessionId, cwd);
+    if (!found && !this.unstartedSessions.has(sessionId)) throw missingRolloutError(sessionId);
+
     const client = new CodexJsonRpcClient();
     const channel = createEventChannel();
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
-      pendingTurns: [],
+      pendingTurns: [], subagentThreadIds: new Set(),
     };
     this.live.set(sessionId, live);
 
@@ -442,16 +767,16 @@ export class CodexAppServerProvider implements AIProvider {
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
 
-    const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}) };
+    const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}), ...this.contextConfigOverrides() };
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
-    const isResume = !!fromCodexSessionsDirs(sessionId, (d) => findRolloutByThreadId(d, sessionId, cwd));
-    const result = isResume
-      ? await client.request("thread/resume", { threadId: sessionId, ...resumeBase })
+    const result = found
+      ? await this.resumeThread(client, sessionId, found, account?.home, resumeBase)
       : await client.request("thread/start", resumeBase);
 
-    const threadId = extractThreadId(result) ?? (isResume ? sessionId : null);
+    const threadId = extractThreadId(result) ?? (found ? sessionId : null);
     if (!threadId) throw new Error("codex thread/start returned no thread id");
+    this.unstartedSessions.delete(sessionId);
     live.threadId = threadId;
 
     if (threadId !== sessionId) {
@@ -480,6 +805,16 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   private handleNotification(live: LiveSession, notif: JsonRpcNotification): void {
+    // A quota refusal is an ordinary `error` notification, so it has to be recognised
+    // before the mapper turns it into a plain error card in front of the user.
+    if (notif.method === "error" && !live.rotating) {
+      const reason = codexErrorMessage(notif.params);
+      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason)) return;
+    }
+    // Mid-rotation the subprocess behind this session is being replaced. Anything it still
+    // emits describes the turn that was refused — including its `turn/completed`, which
+    // would close the turn the caller is about to be given a second time.
+    if (live.rotating) return;
     if (notif.method === "item/agentMessage/delta") {
       const d = (notif.params as { delta?: string })?.delta;
       if (typeof d === "string") live.currentAssistant += d;
@@ -488,14 +823,26 @@ export class CodexAppServerProvider implements AIProvider {
       const usage = parseTokenUsage(notif.params, live.model);
       if (usage) live.lastUsage = usage;
     }
+    const notificationThreadId = threadIdFromNotification(notif.params);
+    const parentToolUseId = notificationThreadId && live.subagentThreadIds.has(notificationThreadId)
+      ? subagentCardId(notificationThreadId)
+      : undefined;
     const events = mapCodexEvent(notif, live.threadId ?? "");
     for (const ev of events) {
       // The counts arrive on their own notification just before the turn ends,
       // so `done` is where they become visible to a consumer.
-      if (ev.type === "done" && live.lastUsage) ev.usage = live.lastUsage;
-      live.channel.push(ev);
+      if (ev.type === "done" && live.lastUsage) {
+        ev.usage = live.lastUsage;
+        this.recordTurnUsage(live, live.lastUsage);
+      }
+      const nested = parentToolUseId ? { ...ev, parentToolUseId } as ChatEvent : ev;
+      live.channel.push(nested);
       // Accumulate tool calls into the turn so getMessages (live) keeps them.
-      if (ev.type === "tool_use" || ev.type === "tool_result") live.currentEvents.push(ev);
+      if (nested.type === "tool_use" || nested.type === "tool_result") live.currentEvents.push(nested);
+      if (nested.type === "tool_use" && nested.tool === "Agent" && typeof nested.toolUseId === "string"
+          && nested.toolUseId.startsWith("subagent-")) {
+        live.subagentThreadIds.add(nested.toolUseId.slice("subagent-".length));
+      }
     }
     if (notif.method === "turn/completed") {
       if (live.currentAssistant || live.currentEvents.length) {
@@ -533,6 +880,32 @@ export class CodexAppServerProvider implements AIProvider {
         // Keep the live transcript consistent so getMessages (live reload) also shows it.
         live.transcript.push({ id: `codex-compact-${live.threadId}`, role: "assistant", content, timestamp: new Date().toISOString() });
       }
+    }
+  }
+
+  /** Persist Codex's per-turn token and prompt-cache split for the debug panel. */
+  private recordTurnUsage(live: LiveSession, usage: import("../../shared/turn-usage.ts").TurnUsage): void {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) ?? undefined : undefined;
+    const account = accountId ? getCodexAccount(accountId) : null;
+    try {
+      insertTurnUsage({
+        sessionId: live.threadId ?? "",
+        model: usage.model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        contextWindow: usage.contextWindow,
+        costUsd: usage.costUsd,
+        // A cache miss alone does not prove a process restart: a first turn and
+        // an evicted prompt cache look the same on the wire. Keep this false
+        // until the provider has an explicit lifecycle reason to record.
+        coldStart: false,
+        ...(accountId ? { accountId } : {}),
+        ...(account?.label ? { accountLabel: account.label } : {}),
+      });
+    } catch (err) {
+      console.warn(`[usage] failed to persist codex usage: ${(err as Error).message}`);
     }
   }
 
@@ -807,7 +1180,12 @@ export class CodexAppServerProvider implements AIProvider {
 
     // Managed accounts are assigned on first send; don't show an unrelated
     // ambient login while that assignment is pending or the binding is missing.
-    if (accountId || listCodexAccounts().length > 0) return {};
+    //
+    // Disabled ones do not count towards "managed accounts exist": with every one switched
+    // off the selector returns null and chats really do run on the ambient ~/.codex login,
+    // so that is the login whose usage belongs here.
+    const selectable = listCodexAccounts().filter((a) => a.status !== "disabled");
+    if (accountId || selectable.length > 0) return {};
     return getOrFetchUsage(this.id, AMBIENT_ACCOUNT_KEY);
   }
 }

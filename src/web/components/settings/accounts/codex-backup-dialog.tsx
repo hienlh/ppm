@@ -10,7 +10,7 @@
  */
 
 import { useRef } from "react";
-import { Download, Loader2, Lock, Upload } from "lucide-react";
+import { Download, Loader2, Lock, Upload } from "@/lib/icons";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";

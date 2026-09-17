@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Cloud, Share2, Loader2, Copy, Check, X, LogOut, Link, Unlink, ExternalLink } from "lucide-react";
+import { Cloud, Share2, Loader2, Copy, Check, X, LogOut, Link, Unlink, ExternalLink } from "@/lib/icons";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "@/lib/api-client";
 import { copyToClipboard } from "@/lib/clipboard";

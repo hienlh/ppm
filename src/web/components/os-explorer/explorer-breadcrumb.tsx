@@ -6,7 +6,7 @@
  * one overflow menu, so the bar never pushes the toolbar controls out of a narrow window.
  */
 
-import { ChevronRight, MoreHorizontal } from "lucide-react";
+import { ChevronRight, MoreHorizontal } from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";

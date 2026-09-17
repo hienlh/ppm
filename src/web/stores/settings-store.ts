@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
+import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
+import {
+  clampCustomFps, clampCustomQualityPercent,
+} from "../../shared/remote-desktop-custom-quality";
+import {
+  clampCustomScale, parseViewStyle, type ViewStyle,
+} from "@/components/remote-desktop/remote-desktop-view-style";
 
 export type GitStatusViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
@@ -34,6 +41,15 @@ interface SettingsState {
   /** GitLens-style annotation after the cursor's line in the code editor. */
   inlineBlame: boolean;
   wordWrap: boolean;
+  /** Word wrap on a phone-sized viewport. Device-local — see `persistDevicePref`. */
+  mobileWordWrap: boolean;
+  /**
+   * Run a language server for the open file. Off until asked, and device-local:
+   * one `typescript-language-server` was 854 MB resident, which is a reasonable
+   * thing to spend on a desktop and never a reasonable thing for a phone to
+   * turn on because a desktop did.
+   */
+  lspEnabled: boolean;
   tabWrap: boolean;
   editorTabStyle: EditorTabStyle;
   sidebarActiveTab: SidebarActiveTab;
@@ -52,9 +68,60 @@ interface SettingsState {
   /** Hold a screen wake lock while any chat turn is running, so a propped-up tablet does not
    *  dim mid-answer. Defaults on; see `hooks/use-wake-lock.ts`. */
   keepScreenAwake: boolean;
+  /**
+   * Image quality rung to ask for on connect — RustDesk's three, or `"custom"`.
+   *
+   * It is a *ceiling*, not a pin: the session always adapts beneath it, so there is no `auto`
+   * arm to choose (`video_qos.rs`: "user set image quality => update to the maximum ratio").
+   *
+   * Device-local, for the same reason as `lspEnabled`: it answers "what can this link afford",
+   * and a desktop on a LAN must not choose "Good image quality" for a phone on mobile data.
+   * What comes back out of localStorage is untrusted the same way a rung off the wire is,
+   * hence `parseQualityChoice` below rather than a cast.
+   */
+  remoteDesktopQuality: QualityChoice;
+  /**
+   * How the remote screen is fitted into the viewer — RustDesk's three `ViewStyle`s.
+   *
+   * Device-local like the rung above, and for the same reason: `original` on a 3440×1440 host
+   * is a scrollable 1:1 view on a desktop and an unusable pinhole on a phone, so a choice made
+   * on one screen must not follow the user to the other.
+   */
+  remoteDesktopViewStyle: ViewStyle;
+  /** Zoom factor for `remoteDesktopViewStyle === "custom"` (RustDesk's 5%–1000%). */
+  remoteDesktopCustomScale: number;
+  /** Bitrate percentage for `remoteDesktopQuality === "custom"`. Not the ratio: 50 means
+   *  ratio 1.0 — see `remote-desktop-custom-quality.ts`. */
+  remoteDesktopCustomQualityPercent: number;
+  /** Frame rate for the custom rung (RustDesk's 5–120). */
+  remoteDesktopCustomFps: number;
+  /** RustDesk's "More" checkbox: raises the bitrate ceiling from 100% to 2000%. */
+  remoteDesktopCustomQualityMore: boolean;
+  /** Draw the host pointer into the captured frames. The grabber takes this at startup, so
+   *  changing it respawns ffmpeg (~400ms of held picture) — see `restartCapture`. */
+  remoteDesktopShowCursor: boolean;
+  /** Two-way clipboard sync. Off means Ctrl+V is forwarded to the host as a plain keystroke,
+   *  so the host pastes its *own* clipboard and nothing crosses the connection. */
+  remoteDesktopClipboardSync: boolean;
+  /**
+   * H.264 encoder to ask the host for, or null to take the host's own first choice.
+   *
+   * Device-local like the rest, which is also why the *server* re-checks it: this pref follows
+   * the browser, not the host, so the same phone reaching a second machine arrives asking for
+   * the first machine's GPU encoder.
+   */
+  remoteDesktopCodec: string | null;
   deviceName: string | null;
   version: string | null;
   tunnelActive: boolean;
+  setRemoteDesktopQuality: (choice: QualityChoice) => void;
+  setRemoteDesktopViewStyle: (style: ViewStyle) => void;
+  setRemoteDesktopCustomScale: (scale: number) => void;
+  setRemoteDesktopCustomQuality: (percent: number, fps: number) => void;
+  setRemoteDesktopCustomQualityMore: (more: boolean) => void;
+  setRemoteDesktopShowCursor: (show: boolean) => void;
+  setRemoteDesktopClipboardSync: (enabled: boolean) => void;
+  setRemoteDesktopCodec: (encoder: string | null) => void;
   setThemeStyle: (style: PpmThemeStyle) => void;
   setThemeMode: (mode: PpmThemeMode) => void;
   setCustomTheme: (id: string) => void;
@@ -70,6 +137,8 @@ interface SettingsState {
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleInlineBlame: () => void;
   toggleWordWrap: () => void;
+  toggleMobileWordWrap: () => void;
+  setLspEnabled: (enabled: boolean) => void;
   toggleTabWrap: () => void;
   setEditorTabStyle: (style: EditorTabStyle) => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
@@ -96,6 +165,8 @@ interface PersistedSettings {
   gitStatusViewMode?: GitStatusViewMode;
   inlineBlame?: boolean;
   wordWrap?: boolean;
+  mobileWordWrap?: boolean;
+  lspEnabled?: boolean;
   tabWrap?: boolean;
   editorTabStyle?: EditorTabStyle;
   sidebarActiveTab?: SidebarActiveTab;
@@ -107,6 +178,15 @@ interface PersistedSettings {
   remoteDesktopStatsVisible?: boolean;
   remoteDesktopWarningDismissed?: boolean;
   keepScreenAwake?: boolean;
+  remoteDesktopQuality?: QualityChoice;
+  remoteDesktopViewStyle?: ViewStyle;
+  remoteDesktopCustomScale?: number;
+  remoteDesktopCustomQualityPercent?: number;
+  remoteDesktopCustomFps?: number;
+  remoteDesktopCustomQualityMore?: boolean;
+  remoteDesktopShowCursor?: boolean;
+  remoteDesktopClipboardSync?: boolean;
+  remoteDesktopCodec?: string | null;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -215,6 +295,20 @@ function persistUiPref(update: Partial<PersistedSettings>) {
 }
 
 /**
+ * Persist a pref to this device only.
+ *
+ * The server round-trip above exists so prefs survive an origin change, but it
+ * also means the last device to write wins everywhere. That is wrong for the
+ * prefs that answer "what can this screen afford": a desktop turning the
+ * language server on must not start one for the phone, and unwrapping lines on
+ * a 27-inch monitor must not unwrap them on a 6-inch one. Those stay local, and
+ * `applyServerUiPrefs` deliberately does not read them back.
+ */
+function persistDevicePref(update: Partial<PersistedSettings>) {
+  persistSettings(update);
+}
+
+/**
  * Push the current theme selection to the dedicated server endpoint.
  * Errors are swallowed, so callers may ignore the promise; awaiting it only
  * matters when a following request must observe the write (see
@@ -283,6 +377,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   inlineBlame: _initial.inlineBlame ?? false,
   wordWrap: _initial.wordWrap ?? false,
+  remoteDesktopQuality: parseQualityChoice(_initial.remoteDesktopQuality),
+  remoteDesktopViewStyle: parseViewStyle(_initial.remoteDesktopViewStyle),
+  remoteDesktopCustomScale: clampCustomScale(_initial.remoteDesktopCustomScale),
+  // `More` is read first: it decides the ceiling the percentage is clamped to, so clamping in
+  // the other order would silently cut a stored 500% back to 100% on every reload.
+  remoteDesktopCustomQualityMore: _initial.remoteDesktopCustomQualityMore ?? false,
+  remoteDesktopCustomQualityPercent: clampCustomQualityPercent(
+    _initial.remoteDesktopCustomQualityPercent, _initial.remoteDesktopCustomQualityMore ?? false,
+  ),
+  remoteDesktopCustomFps: clampCustomFps(_initial.remoteDesktopCustomFps),
+  remoteDesktopShowCursor: _initial.remoteDesktopShowCursor ?? true,
+  remoteDesktopClipboardSync: _initial.remoteDesktopClipboardSync ?? true,
+  remoteDesktopCodec: typeof _initial.remoteDesktopCodec === "string" ? _initial.remoteDesktopCodec : null,
+  mobileWordWrap: _initial.mobileWordWrap ?? true,
+  lspEnabled: _initial.lspEnabled ?? false,
   tabWrap: _initial.tabWrap ?? false,
   editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "history",
@@ -405,6 +514,65 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().wordWrap;
     persistUiPref({ wordWrap: next });
     set({ wordWrap: next });
+  },
+
+  toggleMobileWordWrap: () => {
+    const next = !get().mobileWordWrap;
+    persistDevicePref({ mobileWordWrap: next });
+    set({ mobileWordWrap: next });
+  },
+
+  setLspEnabled: (enabled) => {
+    persistDevicePref({ lspEnabled: enabled });
+    set({ lspEnabled: enabled });
+  },
+
+  setRemoteDesktopQuality: (choice) => {
+    persistDevicePref({ remoteDesktopQuality: choice });
+    set({ remoteDesktopQuality: choice });
+  },
+
+  setRemoteDesktopViewStyle: (style) => {
+    persistDevicePref({ remoteDesktopViewStyle: style });
+    set({ remoteDesktopViewStyle: style });
+  },
+
+  setRemoteDesktopCustomScale: (scale) => {
+    const next = clampCustomScale(scale);
+    persistDevicePref({ remoteDesktopCustomScale: next });
+    set({ remoteDesktopCustomScale: next });
+  },
+
+  setRemoteDesktopCustomQuality: (percent, fps) => {
+    const next = {
+      remoteDesktopCustomQualityPercent: clampCustomQualityPercent(percent, get().remoteDesktopCustomQualityMore),
+      remoteDesktopCustomFps: clampCustomFps(fps),
+    };
+    persistDevicePref(next);
+    set(next);
+  },
+
+  setRemoteDesktopCustomQualityMore: (more) => {
+    // Turning it off has to re-clamp: a 500% left over from when it was on is out of range.
+    const percent = clampCustomQualityPercent(get().remoteDesktopCustomQualityPercent, more);
+    const next = { remoteDesktopCustomQualityMore: more, remoteDesktopCustomQualityPercent: percent };
+    persistDevicePref(next);
+    set(next);
+  },
+
+  setRemoteDesktopShowCursor: (show) => {
+    persistDevicePref({ remoteDesktopShowCursor: show });
+    set({ remoteDesktopShowCursor: show });
+  },
+
+  setRemoteDesktopClipboardSync: (enabled) => {
+    persistDevicePref({ remoteDesktopClipboardSync: enabled });
+    set({ remoteDesktopClipboardSync: enabled });
+  },
+
+  setRemoteDesktopCodec: (encoder) => {
+    persistDevicePref({ remoteDesktopCodec: encoder });
+    set({ remoteDesktopCodec: encoder });
   },
 
   toggleTabWrap: () => {

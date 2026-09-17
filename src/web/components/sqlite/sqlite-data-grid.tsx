@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
-import { ChevronLeft, ChevronRight, Loader2, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Trash2 } from "@/lib/icons";
 import type { ColumnInfo } from "./use-sqlite";
 
 interface Props {

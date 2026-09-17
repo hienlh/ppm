@@ -14,8 +14,9 @@
  * is built, and the error says so.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Minus, Plus, Trash2 } from "lucide-react";
+import { Check, Loader2, Minus, Plus, Trash2 } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import { basename, cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
@@ -106,6 +107,7 @@ function HunkStageBody({
   onApplied: () => void;
   isMobile: boolean;
 }) {
+  const { gitUrl } = useGitRepo(projectName);
   const { filePath, scope } = target;
   const [data, setData] = useState<FileHunks | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,7 +122,7 @@ function HunkStageBody({
     setError(null);
     api
       .get<FileHunks>(
-        `${projectUrl(projectName)}/git/hunks?path=${encodeURIComponent(filePath)}&scope=${scope}`,
+        gitUrl(`/hunks?path=${encodeURIComponent(filePath)}&scope=${scope}`),
       )
       .then((result) => {
         if (cancelled) return;
@@ -163,7 +165,7 @@ function HunkStageBody({
     setApplying(true);
     setError(null);
     try {
-      await api.post(`${projectUrl(projectName)}/git/${action}-hunks`, {
+      await api.post(gitUrl(`/${action}-hunks`), {
         path: filePath,
         hunks: request,
       });

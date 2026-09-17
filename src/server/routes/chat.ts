@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
+import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { draftService } from "../../services/draft.service.ts";
@@ -13,11 +14,14 @@ import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-d
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
+import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
+import { listCodexAccounts } from "../../services/codex-account.service.ts";
+import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
@@ -25,6 +29,7 @@ import {
   search as chatSearchQuery,
   startBackfill as chatSearchStartBackfill,
   getIndexStatus as chatSearchGetIndexStatus,
+  getKnownSessionCount as chatSearchKnownCount,
 } from "../../services/chat-search.service.ts";
 import type { ChatSearchResult, ChatSearchResponse } from "../../types/chat.ts";
 import { ok, err } from "../../types/api.ts";
@@ -247,15 +252,24 @@ chatRoutes.get("/search", async (c) => {
     const rawQuery = c.req.query("q")?.trim() || "";
     const limit = Math.min(parseInt(c.req.query("limit") ?? "30", 10) || 30, 100);
 
+    // An empty query has nothing to match, so it must not pay to enumerate: a
+    // dir-scoped `listSessions` pages the SDK until exhausted, and all this
+    // answer carries is the indexing chip's two numbers, which the index knows
+    // by itself.
+    if (!rawQuery) {
+      const indexing = { total: chatSearchKnownCount(projectPath), ...chatSearchGetIndexStatus(projectPath) };
+      return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
+    }
+
     // Enumerate sessions once (also drives title matches + metadata for content hits).
     const sessions = await chatService.listSessions(undefined, projectPath);
-    const total = sessions.length;
-    const indexing = { total, ...chatSearchGetIndexStatus(projectPath) };
+    const indexing = { total: sessions.length, ...chatSearchGetIndexStatus(projectPath) };
 
-    if (!rawQuery) return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
-
-    // Lazy self-refresh; UI shows an indexing indicator while this runs.
-    chatSearchStartBackfill(projectPath);
+    // Lazy self-refresh; UI shows an indexing indicator while this runs. The
+    // sessions are handed over rather than enumerated again: a dir-scoped list
+    // with no limit pages the SDK until exhausted, and this route was paying
+    // for that twice on every search.
+    chatSearchStartBackfill(projectPath, sessions);
 
     const pinnedIds = getPinnedSessionIds();
     const tagMap = getSessionTags(sessions.map((s) => s.id));
@@ -361,13 +375,19 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string }>();
     const session = await chatService.createSession(body.providerId, {
       projectName,
       projectPath,
       title: body.title,
     });
     if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
+    // The tab claimed an account when it opened and showed its name; honour that here so
+    // the first message runs on the account the user was actually looking at. Advisory,
+    // never authoritative: bindPickedAccount re-checks the id against the server's own
+    // pool and simply declines an id it does not recognise, because this arrives from a
+    // client and selecting a token by client-supplied id is not something to allow.
+    if (body.accountId) bindPickedAccount(session.id, session.providerId, body.accountId);
     // Auto-assign default tag if project has one
     const defaultTagId = getProjectDefaultTagId(projectPath);
     if (defaultTagId) setSessionTag(session.id, defaultTagId, projectPath);
@@ -462,8 +482,11 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const projectPath = c.get("projectPath");
     // Persist to PPM DB (authoritative source for user-set titles)
     setSessionTitle(id, title);
-    // Also persist to SDK so Claude Code CLI sees the custom title
-    await sdkRenameSession(id, title, { dir: projectPath });
+    // Codex owns its rollout title and has no Claude SDK session to rename.
+    // PPM's title table is the authoritative title for both providers.
+    if (getSessionProvider(id) !== "codex") {
+      await sdkRenameSession(id, title, { dir: projectPath });
+    }
     // Also update in-memory session
     const session = chatService.getSession(id);
     if (session) session.title = title;
@@ -471,6 +494,44 @@ chatRoutes.patch("/sessions/:id", async (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
+});
+
+/**
+ * PUT /chat/sessions/:id/account — move a live session onto an account the user picked.
+ *
+ * Unlike the same choice made at session creation, this one answers: the user is looking at
+ * a panel and pressed something, so a silently ignored pick would read as a broken button.
+ *
+ * Worth knowing before calling: the prompt cache is scoped per account, so moving a session
+ * mid-conversation re-sends its whole transcript as a cache write rather than a read. On a
+ * long session that is a real cost, not a formality.
+ */
+chatRoutes.put("/sessions/:id/account", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json<{ accountId?: string }>().catch(() => ({} as { accountId?: string }));
+  if (!body.accountId) return c.json(err("accountId is required"), 400);
+  const providerId = getSessionProvider(sessionId) ?? "claude";
+  if (!bindPickedAccount(sessionId, providerId, body.accountId)) {
+    return c.json(err(bindRefusalReason(providerId, body.accountId)), 400);
+  }
+  // Codex binds an account by spawning its app-server with that account's CODEX_HOME, so a
+  // subprocess already running keeps serving the old account however the binding reads — the
+  // switch appeared to do nothing until something else happened to kill it. Dropping it while
+  // idle makes the next message respawn on the account the user just picked. Claude needs
+  // none of this: it reads the binding per turn, and there is nothing stale to clear.
+  if (providerId === "codex") {
+    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
+    // Never mid-turn. The answer being streamed would be lost, and the switch takes effect
+    // on the next message either way — which is exactly what the picker promises.
+    if (!listRunningSessions().some((s) => s.sessionId === sessionId)) {
+      dropIdleSubprocess(
+        sessionId,
+        "account_switch",
+        "Subprocess released: the session was moved to another Codex account",
+      );
+    }
+  }
+  return c.json(ok({ accountId: body.accountId }));
 });
 
 /** PUT /chat/sessions/:id/pin — pin a session */
@@ -718,9 +779,22 @@ chatRoutes.get("/sessions/:id/logs", (c) => {
  */
 function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlDir: string; projectPath: string; exists: boolean } {
   const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const providerId = getSessionProvider(sessionId);
+  const storedProjectPath = getSessionProjectPath(sessionId) ?? "";
+  if (providerId === "codex") {
+    const dirs = [
+      ...listCodexAccounts().map((account) => join(account.home, "sessions")),
+      ...(homedir ? [resolve(homedir, ".codex", "sessions")] : []),
+    ];
+    for (const dir of dirs) {
+      const found = findRolloutByThreadId(dir, sessionId, storedProjectPath || undefined);
+      if (found) return { jsonlPath: found, jsonlDir: dir, projectPath: storedProjectPath, exists: true };
+    }
+    return { jsonlPath: "", jsonlDir: "", projectPath: storedProjectPath, exists: false };
+  }
   const provider = providerRegistry.get("claude") as any;
   const projectPath = provider?.activeSessions?.get(sessionId)?.projectPath
-    ?? getSessionProjectPath(sessionId)
+    ?? storedProjectPath
     ?? "";
   const projectsRoot = homedir ? resolve(homedir, ".claude", "projects") : "";
   // SDK encodes cwd by replacing path separators + drive colon with "-".
@@ -745,24 +819,25 @@ function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlD
 }
 
 /** GET /chat/sessions/:id/debug — session debug info (IDs, JSONL path) */
-chatRoutes.get("/sessions/:id/debug", (c) => {
+chatRoutes.get("/sessions/:id/debug", async (c) => {
   const sessionId = c.req.param("id");
   const { jsonlPath, jsonlDir, projectPath, exists } = resolveSessionJsonlPath(sessionId);
   // Transcript weight: file size + record count (1 JSONL line = 1 event record).
   // Line count skipped above 64MB so the debug button stays snappy on huge files.
+  //
+  // `countLines` rather than `readFileSync(path, "utf8")` plus a `charCodeAt`
+  // walk. Not for speed — both are 53 ms on a 35 MB transcript — but because
+  // the old one held the loop for every one of those milliseconds, and this one
+  // hands it back nine times. The yields inside it are explicit `setTimeout`s
+  // and have to be: awaiting the stream alone resolves as microtasks and blocks
+  // just as hard. See `file-lines.ts`.
   let jsonlSizeBytes: number | null = null;
   let jsonlLines: number | null = null;
   if (exists && jsonlPath) {
     try {
       const st = statSync(jsonlPath);
       jsonlSizeBytes = st.size;
-      if (st.size <= 64 * 1024 * 1024) {
-        const text = readFileSync(jsonlPath, "utf8");
-        let n = 0;
-        for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-        if (text.length > 0 && text.charCodeAt(text.length - 1) !== 10) n++;
-        jsonlLines = n;
-      }
+      if (st.size <= 64 * 1024 * 1024) jsonlLines = await countLines(jsonlPath);
     } catch { /* stat/read failure — omit weight fields */ }
   }
   // PPM session ID == SDK session ID (canonical — see claude-agent-sdk.ts:728).
@@ -770,6 +845,7 @@ chatRoutes.get("/sessions/:id/debug", (c) => {
   return c.json(ok({
     ppmSessionId: sessionId,
     sdkSessionId: sessionId,
+    providerId: getSessionProvider(sessionId) ?? "claude",
     sessionId,
     jsonlPath: exists ? jsonlPath : null,
     jsonlDir,
@@ -865,7 +941,7 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     const mode: StripMode = (body as { mode?: unknown }).mode === "all" ? "all" : "oversized";
     const includeAttachments = (body as { includeAttachments?: unknown }).includeAttachments === true;
 
-    const { listRunningSessions, dropSubprocessForTranscriptRewrite } = await import("../ws/chat.ts");
+    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
     if (listRunningSessions().some((s) => s.sessionId === sessionId)) {
       return c.json(err("Session is running — wait for the turn to finish"), 409);
     }
@@ -878,7 +954,11 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     // re-sends the oversized attachment from memory and fails exactly as before, which is the
     // failure this endpoint exists to clear. Drop it so the turn is rebuilt from the file we
     // are about to rewrite.
-    dropSubprocessForTranscriptRewrite(sessionId);
+    dropIdleSubprocess(
+      sessionId,
+      "transcript_rewritten",
+      "Subprocess released: the transcript was rewritten, so the next turn is rebuilt from disk",
+    );
 
     const result = await stripTranscriptImagesFile(found.path, mode, { includeAttachments });
     return c.json(ok({
@@ -922,11 +1002,13 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     // Codex rollouts live under ~/.codex/sessions (different format + jail than Claude JSONL).
     const { isCodexRolloutPath, getCodexPreCompactMessages } = await import("../../providers/codex-app-server/codex-history.ts");
     if (isCodexRolloutPath(jsonlPath)) {
-      const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"));
+      const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"), beforeUuid);
       return c.json(ok(messages));
     }
     const validated = validateJsonlPath(jsonlPath);
-    const messages = await parseJsonlTranscript(validated, beforeUuid);
+    // One compaction segment per request: the client walks further back by
+    // expanding the summary that arrives at the head of each one.
+    const messages = await parseJsonlTranscript(validated, beforeUuid, { oneSegment: true });
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

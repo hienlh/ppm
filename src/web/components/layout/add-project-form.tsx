@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2, FolderOpen } from "lucide-react";
+import { Loader2, FolderOpen } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { api } from "@/lib/api-client";
