@@ -226,12 +226,16 @@ export function AccountCard({
             </Tooltip>
           )}
           {!isExpired && onToggle && (
+            // The track is 36x20, under the 44px minimum, and padding a wrapper around it
+            // changes nothing — only the button itself takes the tap. The pseudo-element is
+            // the target: 44px tall, and 40px wide rather than 44 because the extra would
+            // reach past the 2px gap into the delete button beside it.
             <Switch
               checked={status !== "disabled"}
               onCheckedChange={() => onToggle(entry.accountId, status)}
               disabled={toggling || status === "cooldown"}
               aria-label={status === "disabled" ? "Enable account" : "Disable account"}
-              className="cursor-pointer"
+              className="cursor-pointer relative before:absolute before:content-[''] before:-inset-y-3 before:-inset-x-0.5"
             />
           )}
           {onDelete && (
