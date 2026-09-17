@@ -825,6 +825,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
               onToggle={setLspEnabled}
               status={lsp.status}
               diagnostics={lsp.diagnostics}
+              onInstall={lsp.install}
             />
           )}
           <EditorLanguagePicker value={effectiveLanguage} onChange={handleLanguageChange} />

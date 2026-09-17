@@ -267,6 +267,10 @@ app.route("/api/upgrade", upgradeRoutes);
 import { cloudRoutes } from "./routes/cloud.ts";
 app.route("/api/cloud", cloudRoutes);
 
+// Language servers, machine-wide (the Settings pane). The per-project half is project-scoped.
+import { lspGlobalRoutes } from "./routes/lsp.ts";
+app.route("/api/lsp", lspGlobalRoutes);
+
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);
 
