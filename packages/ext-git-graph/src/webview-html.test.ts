@@ -177,7 +177,12 @@ describe("webview-html: the injected script", () => {
   it("offsets the graph overlay by the branch column's width", () => {
     // The SVG is one absolutely-positioned overlay: if its left edge does not
     // track the column in front of it, every node is drawn off its row's dot.
-    expect(getWebviewHtml()).toContain("left: calc(var(--refs-col-w, 170px) + 8px)");
+    // The 6px is the row's own padding, which is where the graph cell starts;
+    // the 2px the drawing sits in from there is on the SVG inside the clip box,
+    // because a box offset by both ends 2px past the column it clips to.
+    const html = getWebviewHtml();
+    expect(html).toContain("left: calc(var(--refs-col-w, 170px) + 6px)");
+    expect(html).toMatch(/#graph-svg-container \{[^}]*left: 2px/);
   });
 });
 
@@ -545,5 +550,133 @@ describe("getWebviewHtml commit details", () => {
     expect(css).toMatch(/\.file-item \.file-dir \{[^}]*flex: 1/);
     const actions = css.slice(css.indexOf(".file-actions {"));
     expect(actions.slice(0, actions.indexOf("}"))).not.toContain("margin-left: auto");
+  });
+});
+
+describe("webview-html: a panel narrower than the table", () => {
+  const html = getWebviewHtml();
+
+  it("caps the graph column instead of letting it take the row", () => {
+    // The column used to be set to whatever the lanes needed. The message is
+    // the only column that can shrink, so from about twenty parallel branches
+    // on it was the message that paid for the graph — all of it, down to zero.
+    expect(html).not.toContain("setProperty('--graph-col-w', gw + 'px')");
+    expect(html).toContain("function graphColCap()");
+    expect(html).toContain("area.clientWidth - fixed - rowPadding - MESSAGE_MIN_W");
+    expect(html).toContain("Math.min(want || GRAPH_MIN_W, cap)");
+  });
+
+  it("measures what the columns take rather than listing them", () => {
+    // Hiding a column has to give its pixels to the graph. A table of constants
+    // here would need editing every time a column is added or hidden, and the
+    // way that shows is a cap that is quietly too small.
+    expect(html).toContain(".col-refs, .col-changes, .col-author, .col-date, .col-hash')");
+    expect(html).toContain("fixed += cell.offsetWidth");
+  });
+
+  it("recomputes the cap when the panel changes size", () => {
+    // Nothing re-renders the graph when a window is dragged, so without this
+    // the cap stays at whatever the width was when the commits last arrived.
+    expect(html).toContain("new ResizeObserver(() => applyGraphColWidth())");
+  });
+
+  it("clips the overlay to the column it belongs to", () => {
+    // The overlay is positioned and the rows are not, so it paints above them:
+    // capping the column without clipping only replaces a missing message with
+    // one that has branch lines drawn through it.
+    expect(html).toMatch(/#graph-clip \{[^}]*width: var\(--graph-col-w/);
+    expect(html).toMatch(/#graph-clip \{[^}]*overflow: hidden/);
+    expect(html).toContain('<div id="graph-clip"><div id="graph-svg-container"></div></div>');
+  });
+
+  it("puts the graph's scrollbar in the header, not on the graph", () => {
+    // The overlay is as tall as the whole history, so a scrollbar along its
+    // bottom edge would sit thousands of pixels below the viewport.
+    const header = html.slice(html.indexOf('id="graph-header"'), html.indexOf('id="commit-list-wrapper"'));
+    expect(header).toContain('id="graph-hscroll"');
+    expect(html).toContain("transform: translateX(calc(-1 * var(--graph-pan-x, 0px)))");
+  });
+
+  it("agrees between the message column's floor and the cap that respects it", () => {
+    // Two numbers for one thing: a CSS floor wider than the JS cap allows for
+    // is a row that overflows its own box instead of one that fits.
+    const cssFloor = html.match(/\.col-message \{[^}]*min-width: (\d+)px/);
+    const jsFloor = html.match(/const MESSAGE_MIN_W = (\d+);/);
+    expect(cssFloor?.[1]).toBeDefined();
+    expect(cssFloor?.[1]).toBe(jsFloor?.[1]);
+  });
+
+  it("drops the message's floor on a phone, where the row is the message", () => {
+    // A floor wider than the panel is what makes a row overflow its own box.
+    const phone = html.slice(html.indexOf("@media (max-width: 640px)"));
+    expect(phone.slice(0, phone.indexOf("\n}"))).toContain(".col-message { min-width: 0; }");
+  });
+
+  it("sheds the columns that carry least, in order, before anything is crushed", () => {
+    expect(html).toMatch(/@media \(max-width: 900px\) \{\s*\.col-date, \.col-hash \{ display: none; \}/);
+    expect(html).toMatch(/@media \(max-width: 760px\) \{\s*\.col-changes \{ display: none; \}/);
+  });
+
+  it("lets those tiers apply to a tablet too", () => {
+    // The coarse block used to hold the table open at 880px and scroll it
+    // sideways, which cancels every tier below that width.
+    const coarse = html.slice(html.indexOf("@media (pointer: coarse)"));
+    expect(coarse.slice(0, coarse.indexOf("\n}"))).not.toContain("min-width: 880px");
+    expect(html).not.toContain("#commit-list-wrapper { min-width: 880px; }");
+  });
+
+  it("declares the tiers after the coarse block and before the phone one", () => {
+    const coarse = html.indexOf("@media (pointer: coarse)");
+    const tier = html.indexOf("@media (max-width: 900px)");
+    const phone = html.indexOf("@media (max-width: 640px)");
+    expect(coarse).toBeLessThan(tier);
+    expect(tier).toBeLessThan(phone);
+  });
+});
+
+describe("webview-html: column visibility", () => {
+  const html = getWebviewHtml();
+  const columns = [
+    { key: "colRefs", cls: "cols-no-refs", col: "col-refs" },
+    { key: "colChanges", cls: "cols-no-changes", col: "col-changes" },
+    { key: "colAuthor", cls: "cols-no-author", col: "col-author" },
+    { key: "colDate", cls: "cols-no-date", col: "col-date" },
+    { key: "colHash", cls: "cols-no-hash", col: "col-hash" },
+  ];
+
+  it("offers every optional column in Settings, in the script, and in CSS", () => {
+    for (const c of columns) {
+      expect(html).toContain(`id="s-${c.key}"`);
+      expect(html).toContain(`{ key: '${c.key}', cls: '${c.cls}'`);
+      expect(html).toContain(`.${c.cls} .${c.col} { display: none; }`);
+    }
+  });
+
+  it("zeroes the refs variable when that column goes, not just the cell", () => {
+    // The variable is where the graph overlay starts, so hiding the cell alone
+    // would leave every node drawn 170px to the right of its row's dot.
+    expect(html).toContain(".cols-no-refs { --refs-col-w: 0px; }");
+  });
+
+  it("opens the same list from the header as from Settings", () => {
+    expect(html).toContain("header.addEventListener('contextmenu'");
+    expect(html).toContain("setupLongPress(header, (x, y) => showColumnMenu(x, y))");
+    expect(html).toContain("setColumnVisible(col.key, e.target.checked)");
+  });
+
+  it("marks what the panel's width has already taken away", () => {
+    // A tick that does nothing, with nothing to say why, is worse than an item
+    // that says it needs more room.
+    expect(html).toContain("columnBlockedByWidth");
+    expect(html).toContain("needs a wider panel");
+    expect(html).toContain("window.matchMedia('(max-width: 900px)').matches");
+    expect(html).toContain("window.matchMedia('(max-width: 760px)').matches");
+  });
+
+  it("hands the freed width to the graph", () => {
+    // No resize fires for a column that was hidden, so the cap would otherwise
+    // keep reserving room for a column that is no longer there.
+    const apply = html.slice(html.indexOf("function applyColumnVisibility()"));
+    expect(apply.slice(0, apply.indexOf("\n}"))).toContain("applyGraphColWidth()");
   });
 });

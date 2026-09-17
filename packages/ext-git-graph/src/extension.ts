@@ -31,6 +31,7 @@ const VALID_SETTING_KEYS = new Set<string>([
   "maxCommits", "showTags", "showStashes", "showRemoteBranches", "graphStyle",
   "firstParentOnly", "dateFormat", "commitOrdering", "issueLinkingRules", "prCreation",
   "autoFetchInterval",
+  "colRefs", "colChanges", "colAuthor", "colDate", "colHash",
 ]);
 
 async function saveSetting(context: ExtensionContext, key: string, value: unknown): Promise<GitGraphSettings> {
@@ -95,6 +96,11 @@ function openGitGraph(
     try {
       switch (msg.command) {
         case "ready":
+          // Before anything is drawn: the settings say which columns the table
+          // has, and until this arrived they were only fetched when the
+          // settings panel was opened — so a saved choice took effect on the
+          // second look at the panel rather than the first.
+          await panel.webview.postMessage({ command: "loadSettings", data: getSettings(context) });
           await handleRepoInfo(vscode, panel, pp);
           await handleRequestCommits(vscode, panel, pp, context);
           handleUncommittedStatus(vscode, panel, pp); // fire-and-forget

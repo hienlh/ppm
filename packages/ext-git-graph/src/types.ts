@@ -134,6 +134,20 @@ export interface GitGraphSettings {
   issueLinkingRules: IssueLinkingRule[];
   prCreation: PrCreationConfig | null;
   autoFetchInterval: number;
+  /*
+   * Which columns the commit table shows. Flat keys rather than one nested
+   * object, because the stored settings are merged over the defaults one level
+   * deep: a nested object saved by an older version would keep its own shape
+   * and any key added later would arrive undefined.
+   *
+   * A narrow panel drops columns of its own accord regardless of these — they
+   * say what to show when there is room for it.
+   */
+  colRefs: boolean;
+  colChanges: boolean;
+  colAuthor: boolean;
+  colDate: boolean;
+  colHash: boolean;
 }
 
 export const DEFAULT_SETTINGS: GitGraphSettings = {
@@ -148,6 +162,11 @@ export const DEFAULT_SETTINGS: GitGraphSettings = {
   issueLinkingRules: [{ pattern: "#(\\d+)", url: "" }],
   prCreation: null,
   autoFetchInterval: 0,
+  colRefs: true,
+  colChanges: true,
+  colAuthor: true,
+  colDate: true,
+  colHash: true,
 };
 
 // --- Extension → Webview messages ---

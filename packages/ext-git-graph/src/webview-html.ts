@@ -5,6 +5,19 @@
 import { AVATAR_JS, FONT_TOKENS } from "./webview-shell.ts";
 import { COMMIT_MESSAGE_JS } from "./commit-message-html.ts";
 
+/*
+ * The narrowest the message column may get, in px. The graph column is capped
+ * against this rather than the other way round: the message is what a list of
+ * commits is for, and it used to be the only column able to shrink at all — so
+ * in a repository with enough parallel branches the graph took the whole row
+ * and the messages were simply not there. Both the stylesheet and the script
+ * read it from here, because the script's cap and the CSS floor disagreeing is
+ * the same bug in a subtler form.
+ */
+const MESSAGE_MIN_W = 240;
+/** The narrowest the graph column may get, automatically or by dragging. */
+const GRAPH_MIN_W = 40;
+
 export function getWebviewHtml(): string {
   return `<!DOCTYPE html>
 <html>
@@ -86,7 +99,7 @@ ${getStyles()}
     <div id="graph-container">
       <div id="graph-header" class="commit-row header-row">
         <div class="col-refs">Branch / Tag</div>
-        <div class="col-graph">Graph<div class="graph-resize-handle" id="graph-resize-handle"></div></div>
+        <div class="col-graph">Graph<div class="graph-hscroll hidden" id="graph-hscroll"><div id="graph-hscroll-inner"></div></div><div class="graph-resize-handle" id="graph-resize-handle"></div></div>
         <div class="col-message">Message</div>
         <div class="col-changes">Changes</div>
         <div class="col-author">Author</div>
@@ -94,7 +107,7 @@ ${getStyles()}
         <div class="col-hash">Hash</div>
       </div>
       <div id="commit-list-wrapper">
-        <div id="graph-svg-container"></div>
+        <div id="graph-clip"><div id="graph-svg-container"></div></div>
         <div id="commit-list"></div>
       </div>
       <div id="loading" class="loading hidden">Loading...</div>
@@ -119,6 +132,15 @@ ${getStyles()}
           <div class="setting-row"><label>Date Format</label><select id="s-dateFormat"><option value="relative">Relative</option><option value="absolute">Absolute</option><option value="iso">ISO</option></select></div>
           <div class="setting-row"><label>Commit Ordering</label><select id="s-commitOrdering"><option value="topo">Topological</option><option value="date">Date</option><option value="author-date">Author Date</option></select></div>
           <div class="setting-row"><label>Auto Fetch Interval</label><select id="s-autoFetchInterval"><option value="0">Disabled</option><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option></select></div>
+        </details>
+        <details class="settings-section" open>
+          <summary>Columns</summary>
+          <p style="font-size:11px;color:var(--subtext);margin-bottom:6px">Right-click the table header for the same list. A narrow panel drops the last few of its own accord, whatever is ticked here.</p>
+          <div class="setting-row"><label>Branch / Tag</label><input type="checkbox" id="s-colRefs"></div>
+          <div class="setting-row"><label>Changes</label><input type="checkbox" id="s-colChanges"></div>
+          <div class="setting-row"><label>Author</label><input type="checkbox" id="s-colAuthor"></div>
+          <div class="setting-row"><label>Date</label><input type="checkbox" id="s-colDate"></div>
+          <div class="setting-row"><label>Hash</label><input type="checkbox" id="s-colHash"></div>
         </details>
         <details class="settings-section" open>
           <summary>User Details</summary>
@@ -352,7 +374,20 @@ button:active { background: var(--surface); }
 .col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; position: relative; }
 .graph-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; background: transparent; }
 .graph-resize-handle:hover, .graph-resize-handle.dragging { background: var(--blue); opacity: 0.5; }
-.col-message { flex: 1; min-width: 0; padding: 0 6px 0 12px; position: relative; display: flex; flex-direction: column; justify-content: center; align-self: stretch; overflow: hidden; }
+/* The graph's own horizontal scrollbar, in the sticky header. It cannot sit on
+   the graph itself: that is one overlay as tall as the whole history, so a
+   scrollbar along its bottom edge would be thousands of pixels below the
+   viewport. This strip scrolls nothing — its scrollLeft is read and applied to
+   the overlay as a translation. */
+.graph-hscroll { position: absolute; left: 0; right: 6px; bottom: 0; height: 7px; overflow-x: auto; overflow-y: hidden; }
+.graph-hscroll-inner { height: 1px; }
+.graph-hscroll::-webkit-scrollbar { height: 6px; }
+.graph-hscroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+.graph-hscroll::-webkit-scrollbar-thumb:hover { background: var(--subtext); }
+/* The message never shrinks past a readable measure. Every other column is
+   either fixed or hidden by the width tiers, so without a floor here this one
+   absorbs the whole shortfall and disappears. */
+.col-message { flex: 1; min-width: ${MESSAGE_MIN_W}px; padding: 0 6px 0 12px; position: relative; display: flex; flex-direction: column; justify-content: center; align-self: stretch; overflow: hidden; }
 /* The lane's colour, restated where the eye reads the message. The row centres
    its cells, so this one has to stretch or the tick has nothing to span. */
 .col-message::before { content: ''; position: absolute; left: 3px; top: 7px; bottom: 7px; width: 2px; border-radius: 1px; background: var(--lane, transparent); opacity: 0.65; }
@@ -389,6 +424,17 @@ button:active { background: var(--surface); }
 .col-date { width: 80px; min-width: 80px; color: var(--subtext); font-size: 11px; }
 .col-hash { width: 60px; min-width: 60px; font-family: var(--mono-font); font-size: 10px; color: var(--subtle); }
 
+/* Columns the reader turned off, from the header's context menu or from
+   Settings. Declared after :root so the refs variable — which is where the
+   graph overlay starts, not just how wide a cell is — loses to this one on
+   source order; the two have the same specificity. */
+.cols-no-refs { --refs-col-w: 0px; }
+.cols-no-refs .col-refs { display: none; }
+.cols-no-changes .col-changes { display: none; }
+.cols-no-author .col-author { display: none; }
+.cols-no-date .col-date { display: none; }
+.cols-no-hash .col-hash { display: none; }
+
 /* Ref badges — border + tinted bg + dark text */
 .ref-badge { display: inline-flex; align-items: center; gap: 3px; padding: 0px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; margin-right: 3px; vertical-align: middle; line-height: 16px; border: 1px solid; color: #1a1a1a; }
 .ref-head { border-color: var(--green); background: color-mix(in srgb, var(--green) 12%, transparent); }
@@ -401,9 +447,21 @@ button:active { background: var(--surface); }
   :root:not([data-ppm-theme="light"]) .ref-badge { color: #e4e4e7; }
 }
 
-/* SVG graph — single SVG overlay */
+/* SVG graph — single SVG overlay.
+   The clip box is what keeps the overlay inside its column: the SVG is drawn at
+   whatever width the lanes need, which in a repository with enough parallel
+   branches is wider than the panel. Unclipped it paints over the message,
+   changes and author columns — it is positioned and they are not, so it wins
+   the paint order — and capping the column without clipping only trades a
+   missing message for one with branch lines drawn through it. What the clip
+   hides is reached by panning: --graph-pan-x, driven by the header's strip. */
 #commit-list-wrapper { position: relative; }
-#graph-svg-container { position: absolute; top: 0; left: calc(var(--refs-col-w, 170px) + 8px); z-index: 1; pointer-events: none; }
+#graph-clip { position: absolute; top: 0; left: calc(var(--refs-col-w, 170px) + 6px); width: var(--graph-col-w, 120px); height: 100%; overflow: hidden; z-index: 1; pointer-events: none; }
+/* The clip box starts where the graph cell starts — 6px being the row's own
+   padding — and the drawing keeps the 2px it always had inside it. Written the
+   other way round, as one offset of 8px on the box, the box ends 2px past its
+   column and the first pixels of the message have a branch line through them. */
+#graph-svg-container { position: absolute; top: 0; left: 2px; transform: translateX(calc(-1 * var(--graph-pan-x, 0px))); }
 #graph-svg-container circle { pointer-events: auto; cursor: pointer; }
 #graph-svg-container .line { stroke-width: 2; fill: none; }
 /* The checked-out commit wears a thicker ring rather than a different shape,
@@ -559,6 +617,11 @@ button:active { background: var(--surface); }
 .ctx-item { padding: 6px 12px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 8px; }
 .ctx-item:hover { background: var(--surface-hover); }
 .ctx-item.destructive { color: var(--red); }
+/* A column of its own for the tick, so a list of toggles does not shift
+   sideways as they are ticked and unticked. */
+.ctx-tick { width: 12px; flex-shrink: 0; color: var(--blue); }
+.ctx-item.disabled { opacity: 0.5; cursor: default; }
+.ctx-item.disabled:hover { background: transparent; }
 .ctx-separator { border-top: 1px solid var(--border); margin: 4px 0; }
 
 /* Loading */
@@ -632,15 +695,32 @@ button:active { background: var(--surface); }
   #toolbar button { font-size: 10px; }
   .branch-trigger { font-size: 10px !important; padding: 2px 6px !important; }
   #graph-area { order: 1; }
+  /* A safety net, not the layout: the width tiers below are what make the row
+     fit. This only means that a row which still does not fit — every optional
+     column switched back on in a small panel — can be reached by scrolling
+     rather than clipped away. */
   #graph-container { overflow-x: auto; overflow-y: auto; }
   #find-bar { order: 0; }
   #status-bar { order: 9; }
-  /* Enough for every column including the branch one, so a tablet scrolls the
-     table sideways rather than crushing it. */
-  #commit-list-wrapper { min-width: 880px; }
-  #graph-header { min-width: 880px; }
+  /* A 6px scrollbar is a mouse's target. This is the only way to pan the graph
+     without a wheel, so it gets a thumb a finger can land on. */
+  .graph-hscroll { height: 14px; }
+  .graph-hscroll::-webkit-scrollbar { height: 12px; }
   .commit-row.header-row { min-height: 20px; }
   .detail-panel { order: 8; max-height: 35vh; }
+}
+/* Width tiers. Columns leave in order of how little they carry, so that the
+   graph and the message keep their room instead of the message paying for
+   everything. They apply to every pointer type: a tablet held in portrait is
+   as narrow as the window a mouse drags to half the screen, and one layout for
+   a width is one thing to reason about. The user's own column choices (the
+   header's context menu) decide what is shown when there IS room; these decide
+   what there is room for. */
+@media (max-width: 900px) {
+  .col-date, .col-hash { display: none; }
+}
+@media (max-width: 760px) {
+  .col-changes { display: none; }
 }
 /* Phone layout: the graph and the message, with author/date/hash under the
    subject. Six columns of fragments is not a list of commits, and 44px is the
@@ -648,10 +728,9 @@ button:active { background: var(--surface); }
    script uses this same 640px, because it decides where the ref badges go. */
 @media (max-width: 640px) {
   :root { --refs-col-w: 0px; }
-  /* The coarse-pointer rules above keep the whole table and scroll it
-     sideways, which is right for a tablet. A phone gets the stacked row
-     instead, so the minimum width that forces that scroll has to go. */
-  #commit-list-wrapper, #graph-header { min-width: 0; }
+  /* The floor the wide layout keeps for the message is the whole row here, and
+     a floor wider than the panel is what makes a row overflow its own box. */
+  .col-message { min-width: 0; }
   .commit-row { height: 44px; }
   .commit-row.header-row { height: 24px; }
   .col-refs, .col-changes, .col-author, .col-date, .col-hash { display: none; }
@@ -683,7 +762,19 @@ const DEFAULT_SETTINGS = {
   graphStyle: 'rounded', firstParentOnly: false, dateFormat: 'relative', commitOrdering: 'topo',
   issueLinkingRules: [{ pattern: '#(\\\\d+)', url: '' }], prCreation: null,
   autoFetchInterval: 0,
+  colRefs: true, colChanges: true, colAuthor: true, colDate: true, colHash: true,
 };
+
+/** Optional columns, in the order the header declares them. */
+const OPTIONAL_COLUMNS = [
+  { key: 'colRefs', cls: 'cols-no-refs', label: 'Branch / Tag' },
+  { key: 'colChanges', cls: 'cols-no-changes', label: 'Changes' },
+  { key: 'colAuthor', cls: 'cols-no-author', label: 'Author' },
+  { key: 'colDate', cls: 'cols-no-date', label: 'Date' },
+  { key: 'colHash', cls: 'cols-no-hash', label: 'Hash' },
+];
+const MESSAGE_MIN_W = ${MESSAGE_MIN_W};
+const GRAPH_MIN_W = ${GRAPH_MIN_W};
 
 const state = {
   repo: '',
@@ -705,7 +796,12 @@ const state = {
   searchIndex: -1,
   settings: { ...DEFAULT_SETTINGS },
   userDetails: { name: '', email: '' },
+  /** Dragged width of the graph column, or null while it sizes itself. */
   graphColWidth: null,
+  /** Width the lanes actually need — what the column is capped against. */
+  graphWidth: 0,
+  /** How far the graph is panned inside its column. */
+  graphPanX: 0,
   fileViewMode: 'list',
   worktrees: [],
   submodules: [],
@@ -1524,23 +1620,99 @@ document.getElementById('stash-save').addEventListener('click', () => {
     resizeHandle.classList.add('dragging');
     resizeHandle.setPointerCapture(e.pointerId);
   });
-  resizeHandle.addEventListener('pointermove', (e) => {
-    if (!resizing) return;
-    const newW = Math.max(40, Math.min(400, startW + e.clientX - startX));
-    document.documentElement.style.setProperty('--graph-col-w', newW + 'px');
-  });
+  // Both ends of the drag go through the same cap the automatic width uses: a
+  // hand-dragged column wider than the panel is the bug this whole path is
+  // about, and a ceiling of its own would also be a ceiling the automatic width
+  // could exceed and the drag could then never restore.
+  const dragTo = (e) => {
+    state.graphColWidth = Math.max(GRAPH_MIN_W, startW + e.clientX - startX);
+    applyGraphColWidth();
+  };
+  resizeHandle.addEventListener('pointermove', (e) => { if (resizing) dragTo(e); });
   resizeHandle.addEventListener('pointerup', (e) => {
     if (!resizing) return;
     resizing = false;
     resizeHandle.classList.remove('dragging');
-    const newW = Math.max(40, Math.min(400, startW + e.clientX - startX));
-    state.graphColWidth = newW;
-    document.documentElement.style.setProperty('--graph-col-w', newW + 'px');
+    dragTo(e);
   });
   resizeHandle.addEventListener('dblclick', () => {
     state.graphColWidth = null;
-    graphRender(-1);
+    applyGraphColWidth();
   });
+}
+
+// --- Panning the graph inside its column ---
+{
+  const strip = document.getElementById('graph-hscroll');
+  strip.addEventListener('scroll', () => {
+    if (Math.abs(strip.scrollLeft - state.graphPanX) <= 1) return;
+    state.graphPanX = strip.scrollLeft;
+    applyGraphPan();
+  });
+  // A trackpad's sideways gesture and shift+wheel, over the list itself. The
+  // overlay cannot take these: it is pointer-events: none so that a click lands
+  // on the row underneath it.
+  document.getElementById('graph-container').addEventListener('wheel', (e) => {
+    const dx = e.shiftKey ? e.deltaY : e.deltaX;
+    if (!dx || (!e.shiftKey && Math.abs(e.deltaX) <= Math.abs(e.deltaY))) return;
+    const before = state.graphPanX;
+    panGraphBy(dx);
+    if (state.graphPanX !== before) e.preventDefault();
+  }, { passive: false });
+  // The cap is a share of the panel's width, so it is only right until the
+  // panel changes size — and nothing re-renders the graph when a window is
+  // dragged or a sibling panel opens.
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => applyGraphColWidth()).observe(document.getElementById('graph-container'));
+  }
+}
+
+// --- Columns the reader chose to see ---
+function applyColumnVisibility() {
+  const root = document.documentElement;
+  OPTIONAL_COLUMNS.forEach((col) => {
+    root.classList.toggle(col.cls, state.settings[col.key] === false);
+  });
+  // Hiding a column hands its width to the graph, and no resize fires for it.
+  applyGraphColWidth();
+}
+
+/**
+ * Whether a column is hidden by the panel's width whatever the setting says.
+ * The menu marks those rather than hiding them, so that a tick doing nothing is
+ * never the only explanation on offer.
+ */
+function columnBlockedByWidth(key) {
+  if (typeof window.matchMedia !== 'function') return false;
+  if (key === 'colDate' || key === 'colHash') return window.matchMedia('(max-width: 900px)').matches;
+  if (key === 'colChanges') return window.matchMedia('(max-width: 760px)').matches;
+  return false;
+}
+
+function setColumnVisible(key, visible) {
+  state.settings[key] = visible;
+  vscode.postMessage({ command: 'updateSetting', key, value: visible });
+  applyColumnVisibility();
+  const box = document.getElementById('s-' + key);
+  if (box) box.checked = visible;
+}
+
+function showColumnMenu(x, y) {
+  renderContextMenu(x, y, OPTIONAL_COLUMNS.map((col) => ({
+    label: col.label + (columnBlockedByWidth(col.key) ? ' — needs a wider panel' : ''),
+    checked: state.settings[col.key] !== false,
+    disabled: columnBlockedByWidth(col.key),
+    action: () => setColumnVisible(col.key, state.settings[col.key] === false),
+  })));
+}
+
+{
+  const header = document.getElementById('graph-header');
+  header.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showColumnMenu(e.clientX, e.clientY);
+  });
+  setupLongPress(header, (x, y) => showColumnMenu(x, y));
 }
 
 // --- Graph rendering (faithful port of vscode-git-graph graph.ts) ---
@@ -1830,7 +2002,7 @@ function graphGetAvailableColour(startAt) {
 function graphRender(expandIdx) {
   const container = document.getElementById('graph-svg-container');
   container.innerHTML = '';
-  if (gVertices.length === 0) { if (state.graphColWidth === null) document.documentElement.style.setProperty('--graph-col-w', '40px'); return; }
+  if (gVertices.length === 0) { state.graphWidth = GRAPH_MIN_W; applyGraphColWidth(); return; }
 
   // Measure actual row height (may be fractional due to browser zoom)
   // and use it for SVG grid to prevent cumulative sub-pixel drift
@@ -1858,11 +2030,71 @@ function graphRender(expandIdx) {
   const w = 2 * cfg.grid.offsetX + Math.max(maxX - 1, 0) * cfg.grid.x;
   const h = gVertices.length * cfg.grid.y + cfg.grid.offsetY - cfg.grid.y / 2 + (expandIdx > -1 ? cfg.grid.expandY : 0);
 
-  const gw = Math.max(w, 40);
+  const gw = Math.max(w, GRAPH_MIN_W);
   svg.setAttribute('width', gw.toString());
   svg.setAttribute('height', h.toString());
   container.appendChild(svg);
-  if (state.graphColWidth === null) document.documentElement.style.setProperty('--graph-col-w', gw + 'px');
+  // The SVG is drawn at the width the lanes need; the column it shows through
+  // is a different number entirely, and the panel decides that one.
+  state.graphWidth = gw;
+  applyGraphColWidth();
+}
+
+/*
+ * The widest the graph column may be right now: whatever is left of the panel
+ * once the columns that cannot shrink have taken theirs and the message has its
+ * floor. Measured from the header rather than from a table of constants, so
+ * hiding a column — by the user's choice or by a width tier — gives its pixels
+ * to the graph without anything here having to know which columns exist.
+ */
+function graphColCap() {
+  const header = document.getElementById('graph-header');
+  const area = document.getElementById('graph-container');
+  if (!header || !area || !area.clientWidth) return MESSAGE_MIN_W;
+  let fixed = 0;
+  // offsetWidth is 0 for a hidden column, which is exactly the answer wanted.
+  header.querySelectorAll('.col-refs, .col-changes, .col-author, .col-date, .col-hash')
+    .forEach((cell) => { fixed += cell.offsetWidth; });
+  const rowPadding = 12;
+  return Math.max(GRAPH_MIN_W, area.clientWidth - fixed - rowPadding - MESSAGE_MIN_W);
+}
+
+/**
+ * Publish the graph column's width: the dragged one if there is one, else what
+ * the lanes need, both capped to what the panel can spare.
+ */
+function applyGraphColWidth() {
+  const cap = graphColCap();
+  const want = state.graphColWidth === null ? state.graphWidth : state.graphColWidth;
+  const width = Math.max(GRAPH_MIN_W, Math.min(want || GRAPH_MIN_W, cap));
+  document.documentElement.style.setProperty('--graph-col-w', width + 'px');
+  applyGraphPan();
+}
+
+/**
+ * Move the overlay inside its clip box, and keep the header's scroll strip
+ * saying the same thing. The strip scrolls nothing itself — it exists because
+ * a scrollbar on the overlay would sit below the last commit in the history.
+ */
+function applyGraphPan() {
+  const cell = document.querySelector('#graph-header .col-graph');
+  const shown = cell ? cell.offsetWidth : 0;
+  const max = Math.max(0, state.graphWidth - shown);
+  state.graphPanX = Math.min(Math.max(0, state.graphPanX), max);
+  document.documentElement.style.setProperty('--graph-pan-x', state.graphPanX + 'px');
+
+  const strip = document.getElementById('graph-hscroll');
+  const inner = document.getElementById('graph-hscroll-inner');
+  if (!strip || !inner) return;
+  inner.style.width = state.graphWidth + 'px';
+  strip.classList.toggle('hidden', max <= 0);
+  // Guarded, or writing scrollLeft here re-enters through the scroll handler.
+  if (Math.abs(strip.scrollLeft - state.graphPanX) > 1) strip.scrollLeft = state.graphPanX;
+}
+
+function panGraphBy(dx) {
+  state.graphPanX += dx;
+  applyGraphPan();
 }
 
 function graphVertexOver(e) {
@@ -3209,6 +3441,10 @@ function showDropActionMenu(x, y, ref, commit) {
 /**
  * Render a context menu from an item list. The older menu builders each inline
  * this same block; new menus go through here.
+ *
+ * An item may carry a checked flag, drawn as a tick in a column of its own so
+ * that a list of toggles does not jump sideways as they are turned on and off,
+ * and a disabled flag for one that is real but unavailable right now.
  */
 function renderContextMenu(x, y, items) {
   const menu = document.getElementById('context-menu');
@@ -3217,7 +3453,10 @@ function renderContextMenu(x, y, items) {
     if (item.separator) {
       html += '<div class="ctx-separator"></div>';
     } else {
-      html += '<div class="ctx-item' + (item.destructive ? ' destructive' : '') + '" data-idx="' + idx + '">' + escHtml(item.label) + '</div>';
+      const cls = 'ctx-item' + (item.destructive ? ' destructive' : '') + (item.disabled ? ' disabled' : '');
+      const tick = item.checked === undefined ? '' :
+        '<span class="ctx-tick">' + (item.checked ? '\\u2713' : '') + '</span>';
+      html += '<div class="' + cls + '" data-idx="' + idx + '">' + tick + escHtml(item.label) + '</div>';
     }
   });
   menu.innerHTML = html;
@@ -3226,7 +3465,7 @@ function renderContextMenu(x, y, items) {
   menu.classList.remove('hidden');
   menu.querySelectorAll('.ctx-item').forEach(el => {
     const item = items[parseInt(el.dataset.idx)];
-    if (item && item.action) el.addEventListener('click', () => { hideContextMenu(); item.action(); });
+    if (item && item.action && !item.disabled) el.addEventListener('click', () => { hideContextMenu(); item.action(); });
   });
   setTimeout(() => document.addEventListener('click', hideContextMenu, { once: true }), 0);
 }
@@ -3281,11 +3520,22 @@ function applySettingsToUI() {
   document.getElementById('s-dateFormat').value = s.dateFormat;
   document.getElementById('s-commitOrdering').value = s.commitOrdering;
   document.getElementById('s-autoFetchInterval').value = s.autoFetchInterval || 0;
+  OPTIONAL_COLUMNS.forEach((col) => {
+    document.getElementById('s-' + col.key).checked = s[col.key] !== false;
+  });
+  applyColumnVisibility();
   graphConfig.style = s.graphStyle;
   startAutoFetch(s.autoFetchInterval);
   renderIssueRules();
   applyPrSettingsToUI();
 }
+
+// The same five toggles as the header's context menu, through the same call.
+OPTIONAL_COLUMNS.forEach((col) => {
+  document.getElementById('s-' + col.key).addEventListener('change', (e) => {
+    setColumnVisible(col.key, e.target.checked);
+  });
+});
 
 // General setting change handlers
 ['showTags', 'showStashes', 'showRemoteBranches', 'firstParentOnly'].forEach(key => {
