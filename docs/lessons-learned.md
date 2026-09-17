@@ -4,6 +4,20 @@ Knowledge and gotchas discovered during PPM development.
 
 ---
 
+## A missing Codex rollout must not restart an existing conversation
+
+Each Codex account has its own history directory. Search all managed accounts,
+preferring the session's current account, and copy the located rollout into the
+serving account's directory before resuming. Only a session freshly created by
+PPM may start a new thread without a rollout. An existing thread with missing
+history must report an error, including during account rotation.
+
+Starting a replacement thread and recording `migrated_to` hides the original
+history behind the replacement while a tab can retain the original title.
+For affected historical data, verify both transcripts and the migration log,
+take a verified SQLite snapshot, then remove only the incorrect redirect.
+Keep both transcripts; verify the live messages API returns each independently.
+
 ## Chat usage must stay scoped to its provider and session
 
 Usage API responses are snapshots: replace them instead of merging into previous

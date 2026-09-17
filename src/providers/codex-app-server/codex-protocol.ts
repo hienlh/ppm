@@ -56,6 +56,10 @@ export interface TurnStartParams {
   approvalPolicy?: AskForApproval;
   sandboxPolicy?: unknown;
   model?: string;
+  /** Codex's per-turn reasoning depth (low through ultra, model dependent). */
+  effort?: string;
+  /** Controls whether Codex streams a safe reasoning summary to the client. */
+  summary?: "none" | "auto" | "concise" | "detailed";
 }
 
 // ── Decisions (approval responses) ──

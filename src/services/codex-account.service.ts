@@ -15,11 +15,16 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { configService } from "./config.service.ts";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getOrFetchUsage } from "./provider-usage/usage-registry.ts";
+import { isCodexAccountUsageLimited } from "./codex-account-cooldown.ts";
+import { dailyGuardMessage, dailyGuardState } from "../shared/codex-daily-guard.ts";
 import type { UsageInfo } from "../providers/provider.interface.ts";
 
 export type CodexStrategy = "round-robin" | "fill-first" | "lowest-usage";
 
 export type CodexAccountType = "apiKey" | "chatgpt";
+
+/** Two states only — nothing here parks an account in cooldown the way Claude's rotation does. */
+export type CodexAccountStatus = "active" | "disabled";
 
 export interface CodexAccount {
   id: string;
@@ -27,6 +32,8 @@ export interface CodexAccount {
   type: CodexAccountType;
   home: string;
   planType?: string | null;
+  status: CodexAccountStatus;
+  dailyGuardEnabled: boolean;
   addedAt: string;
 }
 
@@ -38,10 +45,23 @@ export type CodexCreds =
 interface Row {
   id: string; label: string | null; type: string; home: string;
   plan_type: string | null; creds_enc: string | null; added_at: string;
+  status?: string | null;
+  daily_guard_enabled?: number | null;
 }
 
 function rowToAccount(r: Row): CodexAccount {
-  return { id: r.id, label: r.label ?? r.id.slice(0, 8), type: r.type as CodexAccountType, home: r.home, planType: r.plan_type, addedAt: r.added_at };
+  return {
+    id: r.id,
+    label: r.label ?? r.id.slice(0, 8),
+    type: r.type as CodexAccountType,
+    home: r.home,
+    planType: r.plan_type,
+    // A row written before the column existed reads as null; treat that as enabled, which
+    // is what it effectively was.
+    status: r.status === "disabled" ? "disabled" : "active",
+  dailyGuardEnabled: r.daily_guard_enabled !== 0,
+    addedAt: r.added_at,
+  };
 }
 
 /** CODEX_HOME directory for an account id. */
@@ -71,7 +91,7 @@ export function getCodexAccountCreds(id: string): CodexCreds | null {
  * verified label/planType and the creds to persist (encrypted). Idempotent dir create.
  */
 export function createCodexAccount(input: {
-  label: string; type: CodexAccountType; planType?: string | null; creds?: CodexCreds; id?: string;
+  label: string; type: CodexAccountType; planType?: string | null; creds?: CodexCreds; id?: string; dailyGuardEnabled?: boolean;
 }): CodexAccount {
   const id = input.id ?? randomUUID();
   const home = codexAccountHome(id);
@@ -82,8 +102,8 @@ export function createCodexAccount(input: {
   const credsEnc = input.creds ? encrypt(JSON.stringify(input.creds)) : null;
   try {
     getDb().query(
-      "INSERT INTO codex_accounts (id, label, type, home, plan_type, creds_enc) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(id, input.label, input.type, home, input.planType ?? null, credsEnc);
+      "INSERT INTO codex_accounts (id, label, type, home, plan_type, creds_enc, daily_guard_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(id, input.label, input.type, home, input.planType ?? null, credsEnc, input.dailyGuardEnabled === false ? 0 : 1);
   } catch (e) {
     // Keep the invariant row⟺home: drop the dir if the row didn't land.
     try { rmSync(home, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -101,6 +121,33 @@ export function updateCodexAccountMeta(id: string, meta: { label?: string; planT
   vals.push(id);
   getDb().query(`UPDATE codex_accounts SET ${sets.join(", ")} WHERE id = ?`).run(...vals as any[]);
 }
+
+/**
+ * Switch an account on or off.
+ *
+ * Deliberately no token proof on the way in, unlike the Claude path: that check exists
+ * because an Anthropic OAuth account can hold a refresh token the server has to exercise
+ * before trusting. A Codex account is a CODEX_HOME directory the app-server authenticates
+ * against when it spawns, so there is nothing here to prove in advance — copying that check
+ * across would buy a slow button and no safety.
+ *
+ * Disabling never touches credentials. Off and removed are different things, and the account
+ * has to come back exactly as it was.
+ */
+export function setCodexAccountStatus(id: string, status: CodexAccountStatus): CodexAccount | null {
+  if (!getCodexAccount(id)) return null;
+  getDb().query("UPDATE codex_accounts SET status = ? WHERE id = ?").run(status, id);
+  return getCodexAccount(id);
+}
+
+/** Enable or disable the seven-day quota pacing guard for one account. */
+export function setCodexDailyGuard(id: string, enabled: boolean): CodexAccount | null {
+  if (!getCodexAccount(id)) return null;
+  getDb().query("UPDATE codex_accounts SET daily_guard_enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+  return getCodexAccount(id);
+}
+
+export class CodexDailyGuardError extends Error {}
 
 /** Remove the account row and its CODEX_HOME dir. */
 export function removeCodexAccount(id: string): void {
@@ -126,16 +173,82 @@ export function setCodexStrategy(strategy: CodexStrategy): void {
   configService.save();
 }
 
+/** Five-hour utilisation at or above which an account is skipped while others have room. */
+const FIVE_HOUR_SKIP_THRESHOLD = 0.95;
+
+/**
+ * The utilisation an account should be judged on, as a 0-1 fraction.
+ *
+ * Not every plan has a short window. A ChatGPT Business account reports a weekly quota and
+ * nothing else, so reading `fiveHour` alone finds nothing there and reports the account as
+ * unreadable — which sends it to the back of `lowest-usage` and exempts it from the cap
+ * skip, for an account whose usage is in fact perfectly well known. Falling through to the
+ * weekly figure judges it on the only limit it actually has.
+ *
+ * `Infinity` still means genuinely unreadable: a failed fetch de-prioritises the account
+ * rather than reading as a flattering 0%.
+ */
+export function codexUsageLevel(usage?: UsageInfo): number {
+  return usage?.fiveHour ?? usage?.sevenDay ?? Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Drop accounts with no five-hour room left, unless that would leave nothing.
+ *
+ * Soft on purpose, mirroring the Claude selector: a throttled turn beats no turn, so when
+ * every account is at its cap the caller still gets one back. `usageOf` is supplied by the
+ * caller rather than fetched here — usage lives behind an async provider layer, and pulling
+ * it inside a synchronous pick would put a network round-trip on every account selection.
+ * With no `usageOf` there is nothing to judge and every account stays a candidate.
+ */
+function withFiveHourRoom(
+  accts: CodexAccount[],
+  usageOf?: (id: string) => number,
+): CodexAccount[] {
+  if (!usageOf) return accts;
+  const room = accts.filter((a) => {
+    const util = usageOf(a.id);
+    return !Number.isFinite(util) ? true : util < FIVE_HOUR_SKIP_THRESHOLD;
+  });
+  return room.length > 0 ? room : accts;
+}
+
+/**
+ * Drop accounts Codex itself refused for an exhausted quota, unless that would leave nothing.
+ *
+ * Complements the five-hour skip rather than repeating it. That one reads a usage figure
+ * served from a two-minute cache, so an account that hit its cap moments ago still looks
+ * like it has room; this one reads the refusal Codex just gave us, which is current by
+ * definition. Soft for the same reason as the skip above: a park is a guess at when the
+ * quota returns, and handing back a parked account beats handing back nothing.
+ */
+function withQuotaLeft(accts: CodexAccount[]): CodexAccount[] {
+  const usable = accts.filter((a) => !isCodexAccountUsageLimited(a.id));
+  return usable.length > 0 ? usable : accts;
+}
+
 /**
  * Pick an account by strategy. `usageOf` (optional, from P4) enables lowest-usage;
  * without it lowest-usage falls back to round-robin.
+ *
+ * `usageOf` also drives the five-hour skip, so a caller that supplies it gets an account
+ * with room rather than merely the least-used one among several that are all capped.
  */
-export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: (id: string) => number }): CodexAccount | null {
-  const accts = listCodexAccounts();
-  if (accts.length === 0) return null;
-  if (accts.length === 1) return accts[0]!;
+export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: (id: string) => number; exclude?: string[] }): CodexAccount | null {
+  // Disabled is a hard exclusion with no fallback, unlike the five-hour skip below. Being
+  // capped means a slower turn; being switched off is the user saying don't use this, and
+  // handing it back anyway because nothing else was left would ignore them.
+  //
+  // `exclude` is hard for the same reason: its only caller is the rotation away from an
+  // account that just refused the turn, and falling back to it would rotate in a circle.
+  const excluded = new Set(opts?.exclude ?? []);
+  const all = listCodexAccounts().filter((a) => a.status !== "disabled" && !excluded.has(a.id));
+  if (all.length === 0) return null;
+  if (all.length === 1) return all[0]!;
   const strategy = opts?.strategy ?? getCodexStrategy();
   const usageOf = opts?.usageOf;
+  const accts = withFiveHourRoom(withQuotaLeft(all), usageOf);
+  if (accts.length === 1) return accts[0]!;
   if (strategy === "fill-first") return accts[0]!;
   if (strategy === "lowest-usage" && usageOf) {
     return accts.reduce((best, a) => (usageOf(a.id) < usageOf(best.id) ? a : best), accts[0]!);
@@ -160,7 +273,10 @@ export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: 
  * null rather than guessing at one.
  */
 export function peekCodexAccount(): CodexAccount | null {
-  const accts = listCodexAccounts();
+  // Status and the quota park are the two things this can filter on without going async, so
+  // it does both. Usage lives behind a fetch and stays out of reach here; the consuming pick
+  // endpoint reads it instead.
+  const accts = withQuotaLeft(listCodexAccounts().filter((a) => a.status !== "disabled"));
   if (accts.length === 0) return null;
   if (accts.length === 1) return accts[0]!;
   return getCodexStrategy() === "fill-first" ? accts[0]! : null;
@@ -171,14 +287,59 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   // Session-less callers (the model list) have nothing sticky to honour and fall
   // straight through to the configured strategy.
   const sticky = sessionId ? getSessionCodexAccount(sessionId) : null;
-  if (sticky) { const a = getCodexAccount(sticky); if (a) return a; }
-  if (getCodexStrategy() === "lowest-usage" && listCodexAccounts().length > 1) {
+  // A binding is held for the prompt cache, not honoured unconditionally: an account the
+  // user has switched off has to let go of the sessions sitting on it, or turning it off
+  // would do nothing for exactly the conversations already using it. An account parked for
+  // an exhausted quota lets go for a different reason — it would refuse the turn, and
+  // spending one to rediscover that is worse than starting on an account that can answer.
+  // Usage is only worth fetching when it can change the answer, and with at most one
+  // account able to serve it cannot. Parked accounts count as unable for the same reason
+  // they are skipped below, so a pool of two where one is out of quota resolves without a
+  // network read at all.
+  const usable = listCodexAccounts().filter((a) => a.status !== "disabled" && !isCodexAccountUsageLimited(a.id));
+  const guarded = usable.filter((a) => a.dailyGuardEnabled);
+  if (guarded.length > 0) {
     const usages = await getAllCodexUsages();
-    // A failed usage fetch (broken/expired account) yields {} → treat as +Infinity
-    // so lowest-usage de-prioritizes it instead of preferring it as "0% used".
-    return selectCodexAccount({ strategy: "lowest-usage", usageOf: (id) => usages[id]?.fiveHour ?? Number.POSITIVE_INFINITY });
+    const blocked = guarded.flatMap((a) => {
+      // Pacing is for plans that only expose the weekly bucket. A Plus account's separate
+      // five-hour window is already the useful short-term control and must not gain this row.
+      const usage = usages[a.id];
+      const state = usage?.session == null ? dailyGuardState(usage?.weekly) : null;
+      return state?.blocked ? [a.id] : [];
+    });
+    if (blocked.length > 0) {
+      const stickyAccount = sticky ? getCodexAccount(sticky) : null;
+      if (stickyAccount && !blocked.includes(stickyAccount.id)
+          && stickyAccount.status !== "disabled" && !isCodexAccountUsageLimited(stickyAccount.id)) return stickyAccount;
+      if (blocked.length === usable.length && sessionId) {
+        const account = getCodexAccount(blocked[0]!);
+        const usage = account ? usages[account.id] : undefined;
+        const state = usage?.session == null ? dailyGuardState(usage?.weekly) : null;
+        throw new CodexDailyGuardError(state ? dailyGuardMessage(state) : "Daily guard reached for every available Codex account.");
+      }
+      return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]), exclude: blocked });
+    }
+    if (sticky) {
+      const a = getCodexAccount(sticky);
+      if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
+    }
+    return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
   }
-  return selectCodexAccount();
+  if (sticky) {
+    const a = getCodexAccount(sticky);
+    if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
+  }
+  if (usable.length <= 1) return selectCodexAccount();
+  // Usage is read for every strategy, not just lowest-usage: it is also what lets the
+  // selector skip an account with no five-hour room left. Reading it only for lowest-usage
+  // left that skip inert under round-robin, which is the default — sessions kept landing on
+  // accounts that were already capped. The read is served from the shared usage cache, so
+  // this costs a lookup rather than a request per session start.
+  //
+  // A failed usage fetch (broken/expired account) yields {} → treat as +Infinity so
+  // lowest-usage de-prioritizes it instead of preferring it as "0% used".
+  const usages = await getAllCodexUsages();
+  return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
 }
 
 // ── Usage (per account) ──

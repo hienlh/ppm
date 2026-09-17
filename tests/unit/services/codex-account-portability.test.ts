@@ -13,7 +13,7 @@ describe("codex account export/import", () => {
   beforeEach(clearAll);
 
   it("round-trips an apiKey account (creds + auth.json) under a password", () => {
-    const acct = createCodexAccount({ label: "Key A", type: "apiKey", creds: { type: "apiKey", apiKey: "sk-secret" } });
+    const acct = createCodexAccount({ label: "Key A", type: "apiKey", dailyGuardEnabled: true, creds: { type: "apiKey", apiKey: "sk-secret" } });
     writeFileSync(join(acct.home, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-secret" }), { mode: 0o600 });
 
     const blob = exportCodexEncrypted("pw");
@@ -25,6 +25,7 @@ describe("codex account export/import", () => {
 
     const restored = getCodexAccount(acct.id);
     expect(restored?.label).toBe("Key A");
+    expect(restored?.dailyGuardEnabled).toBe(true);
     expect(getCodexAccountCreds(acct.id)).toEqual({ type: "apiKey", apiKey: "sk-secret" });
     const authPath = join(codexAccountHome(acct.id), "auth.json");
     expect(existsSync(authPath)).toBe(true);
