@@ -205,7 +205,9 @@ describe("bundledServerEntry", () => {
     const entry = bundledServerEntry(typescript);
 
     expect(entry).not.toBeNull();
-    expect(entry!.endsWith("/typescript-language-server/lib/cli.mjs")).toBe(true);
+    // Built with `sep`, like the `.bin` check below: the entry comes from `path.resolve`, so it
+    // is backslash-separated on Windows and a forward-slash literal never matches there.
+    expect(entry!.endsWith(`${sep}typescript-language-server${sep}lib${sep}cli.mjs`)).toBe(true);
     expect(Bun.file(entry!).size).toBeGreaterThan(0);
   });
 
