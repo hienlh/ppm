@@ -13,7 +13,7 @@
  */
 
 import { useState, type ReactNode } from "react";
-import { ExternalLink, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
+import { ExternalLink, Maximize2, Minimize2, RefreshCw, X } from "@/lib/icons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { openSettings } from "@/components/settings/open-settings";
 
