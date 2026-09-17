@@ -102,7 +102,7 @@ describe("codex default model migration", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)");
     db.query("INSERT INTO config (key, value) VALUES ('ai', 'not json')").run();
-    db.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION - 1}`);
+    db.exec(`PRAGMA user_version = ${VERSION_BEFORE_CODEX_MODEL_MIGRATION}`);
     expect(() => runMigrations(db)).not.toThrow();
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version)
       .toBe(CURRENT_SCHEMA_VERSION);

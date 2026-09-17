@@ -3,7 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getLastTurnCacheState } from "../../services/db.service.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
@@ -127,6 +127,12 @@ interface SessionEntry {
   lastTurnEndedAt?: number;
   /** Transcript replayed to the API on that turn — what re-caching it would cost again */
   lastTurnPrefixTokens?: number;
+  /** Context that turn actually held, measured per API call rather than summed */
+  lastTurnContextTokens?: number;
+  /** Cache window the API reported on that turn, outranking the credential-shaped guess */
+  lastTurnCacheTtlMs?: number;
+  /** A compaction the last turn ended on, which leaves the cached prefix inapplicable */
+  lastTurnCompactedAt?: number;
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
 }
@@ -225,7 +231,12 @@ function scheduleSubprocessRelease(sessionId: string): void {
   const note = "Subprocess released: its prompt cache has expired, so keeping it warm saves nothing";
   // The window is the provider's to state: an API-key install's cache dies at five minutes,
   // so holding the subprocess for an hour there guards nothing and costs ~350MB.
-  const ttlMs = provider.promptCacheTtlMs?.(sessionId);
+  // The API's own answer where the turn gave one, the provider's inference otherwise: an
+  // install wrongly read as API-key would drop a subprocess at minute five and pay to rebuild
+  // a prefix whose cache had fifty-five minutes left. Entry-only, with no DB lookup — a
+  // session with no turn in this process has no `lastTurnEndedAt` either, so the delay is 0
+  // regardless of the window.
+  const ttlMs = entry.lastTurnCacheTtlMs ?? provider.promptCacheTtlMs?.(sessionId);
   const delay = cacheReleaseDelayMs(entry.lastTurnEndedAt, Date.now(), ttlMs);
   if (delay === 0) {
     releaseSubprocess(sessionId, "cache_expired", note);
@@ -252,15 +263,37 @@ function scheduleSubprocessRelease(sessionId: string): void {
  */
 function promptCacheSnapshot(sessionId: string, entry: SessionEntry): PromptCacheState | null {
   const provider = providerRegistry.get(entry.providerId);
-  const ttlMs = provider?.promptCacheTtlMs?.(sessionId);
-  // A provider with no opinion has no Anthropic prompt cache to warn about.
-  if (ttlMs == null) return null;
+  const declaredTtlMs = provider?.promptCacheTtlMs?.(sessionId);
+  // A provider with no opinion has no Anthropic prompt cache to warn about. Asked before the
+  // measured window is consulted, because this gate is about whether there is a cache at all.
+  if (declaredTtlMs == null) return null;
+
+  // The entry is memory, and memory is the short-lived half of this. `CLEANUP_TIMEOUT_MS`
+  // drops it five minutes after the last tab leaves, and a restart drops it at once — both
+  // well inside the hour the cache it describes actually lives. So a session reopened later
+  // has to answer from `turn_usage`, which recorded the same three facts on every turn.
+  // Memory still wins when it has them: it is this process's own turn, with no clock
+  // conversion between here and SQLite's UTC text.
+  const persisted = entry.lastTurnEndedAt == null ? getLastTurnCacheState(sessionId) : null;
+  const lastTurnEndedAt = entry.lastTurnEndedAt ?? persisted?.endedAtMs;
+  const billedPrefixTokens = entry.lastTurnPrefixTokens ?? persisted?.prefixTokens;
+  const contextTokens = entry.lastTurnContextTokens ?? persisted?.contextTokens;
+  // `usage.cache_creation` beats the guess `promptCacheTtlMs` makes from the credential's
+  // shape, which is wrong for a proxy, a custom base_url, or a subscription past its limits.
+  const ttlMs = entry.lastTurnCacheTtlMs ?? persisted?.cacheTtlMs ?? declaredTtlMs;
+  // Memory first again, and here that matters in the other direction: a live entry that has
+  // re-cached since holds `undefined`, which must beat the stale compaction still on the
+  // row this session's last turn wrote.
+  const compactedAt = entry.lastTurnEndedAt != null ? entry.lastTurnCompactedAt : persisted?.compactedAt;
+
   return {
     ttlMs,
     // Sent even before a turn has completed: the window is the install's, and a tab that
     // stays connected all day needs it to arm the notice from its own turns.
-    ...(entry.lastTurnEndedAt != null && { lastTurnEndedAt: entry.lastTurnEndedAt }),
-    ...(entry.lastTurnPrefixTokens != null && { billedPrefixTokens: entry.lastTurnPrefixTokens }),
+    ...(lastTurnEndedAt != null && { lastTurnEndedAt }),
+    ...(billedPrefixTokens != null && { billedPrefixTokens }),
+    ...(contextTokens != null && { contextTokens }),
+    ...(compactedAt != null && { compactedAt }),
   };
 }
 
@@ -814,6 +847,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // or it fires while the cache it was protecting is still fresh.
         entry.lastTurnEndedAt = Date.now();
         if (ev.usage) entry.lastTurnPrefixTokens = prefixTokens(ev.usage);
+        if (ev.usage?.contextTokens != null) entry.lastTurnContextTokens = ev.usage.contextTokens;
+        if (ev.usage?.cacheTtlMs != null) entry.lastTurnCacheTtlMs = ev.usage.cacheTtlMs;
+        // Assigned rather than only-when-present: the provider clears this the moment an API
+        // call re-caches, and that clearing is the signal the cache is usable again. Skipping
+        // the undefined case would leave a session cold for the rest of its life.
+        if (ev.usage) entry.lastTurnCompactedAt = ev.usage.compactedAt;
         if (entry.clients.size === 0) scheduleSubprocessRelease(sessionId);
 
         // Fire-and-forget: fetch updated session title (DB title takes priority) + notification

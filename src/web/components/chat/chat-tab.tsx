@@ -920,6 +920,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             onEffortChange={setEffort}
             thinking={thinking}
             onThinkingChange={setThinking}
+            promptCache={promptCache}
           />
         )}
       </div>

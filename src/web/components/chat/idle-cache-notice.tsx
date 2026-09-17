@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import { Clock } from "@/lib/icons";
+import { useMinuteClock } from "@/hooks/use-minute-clock";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
-import { idleCacheNotice, formatIdleDuration } from "../../../shared/prompt-cache-idle";
+import { idleCacheNotice, formatIdleDuration, formatContextTokens } from "../../../shared/prompt-cache-idle";
 
 /**
  * How long the session has been idle, when that has stopped being free.
@@ -11,25 +11,23 @@ import { idleCacheNotice, formatIdleDuration } from "../../../shared/prompt-cach
  * what did. It disappears on its own the moment a turn starts, because by then the
  * decision it exists to inform has been made.
  *
- * Deliberately gives no token figure. Claude Code's own version of this notice names one,
- * but nothing the SDK reports at the end of a turn is the size of the live context —
- * `modelUsage` is a running session total, so quoting it printed "1.0M tokens" against a
- * window of the same size. The consequence is the actionable half anyway.
+ * Says one of two things. A compaction replaced the conversation, so the cache holds a prefix
+ * that will never be sent again — that is reported without a token figure, because the
+ * summary it produced has not been through an API call yet and nothing has measured it.
+ * Otherwise the cache simply lapsed, and the transcript still standing is what gets re-sent.
+ *
+ * Names a token figure only when one was measured. `modelUsage` cannot supply it — the SDK
+ * accumulates it across the session and across subagents, which is what once printed "1.0M
+ * tokens" against a window of the same size — so the number comes from the turn's last
+ * top-level assistant message instead (`TurnUsage.contextTokens`). Turns recorded before PPM
+ * measured that carry none, and the sentence has to stand without it.
  *
  * Owns its outer padding so that "no notice" costs no layout: the caller renders this
  * unconditionally, and a wrapper with padding around nothing is a gap above the composer
  * that appears for no reason.
  */
 export function IdleCacheNotice({ promptCache }: { promptCache: PromptCacheState | null }) {
-  // Re-read the clock rather than count: a phone that slept for six hours throttles or
-  // drops timers entirely, so an accumulated count would come back six hours short.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const notice = idleCacheNotice(promptCache, now);
+  const notice = idleCacheNotice(promptCache, useMinuteClock());
   if (!notice) return null;
 
   return (
@@ -41,11 +39,28 @@ export function IdleCacheNotice({ promptCache }: { promptCache: PromptCacheState
           to the available width — and wraps — on a phone. */}
       <div className="flex w-fit items-start gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-[11px] text-text-secondary">
         <Clock className="mt-px size-3.5 shrink-0 text-text-subtle" />
-        <span>
-          Idle <span className="tabular-nums">{formatIdleDuration(notice.idleMs)}</span>. The
-          prompt cache has likely expired, so your next message re-sends the whole transcript
-          at full price.
-        </span>
+        {notice.reason === "compacted" ? (
+          <span>
+            The conversation was compacted{" "}
+            <span className="tabular-nums">{formatIdleDuration(notice.idleMs)}</span> ago, so the
+            prompt cache no longer covers it and your next message will re-cache it.
+          </span>
+        ) : (
+          <span>
+            Idle <span className="tabular-nums">{formatIdleDuration(notice.idleMs)}</span>. The
+            prompt cache has likely expired, so your next message re-sends{" "}
+            {notice.contextTokens != null ? (
+              <>
+                about{" "}
+                <span className="tabular-nums">{formatContextTokens(notice.contextTokens)}</span>{" "}
+                tokens
+              </>
+            ) : (
+              "the whole transcript"
+            )}{" "}
+            at full price.
+          </span>
+        )}
       </div>
     </div>
   );
