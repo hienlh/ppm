@@ -14,9 +14,9 @@ import type { SettingsCategoryId } from "./settings-categories";
 const SECTIONS: Record<SettingsCategoryId, LazyExoticComponent<ComponentType>> = {
   general: lazy(() => import("./general-settings-section").then((m) => ({ default: m.GeneralSettingsSection }))),
   appearance: lazy(() => import("./appearance-settings-section").then((m) => ({ default: m.AppearanceSettingsSection }))),
+  "language-servers": lazy(() => import("./language-servers-section").then((m) => ({ default: m.LanguageServersSection }))),
   "ai-provider": lazy(() => import("./ai-settings-section").then((m) => ({ default: m.AISettingsSection }))),
   accounts: lazy(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
-  voice: lazy(() => import("./voice-settings-section").then((m) => ({ default: m.VoiceSettingsSection }))),
   ppmbot: lazy(() => import("./ppmbot-settings-section").then((m) => ({ default: m.PPMBotSettingsSection }))),
   notifications: lazy(() => import("./notifications-settings-section").then((m) => ({ default: m.NotificationsSettingsSection }))),
   jira: lazy(() => import("./jira-watcher-section").then((m) => ({ default: m.JiraWatcherSection }))),

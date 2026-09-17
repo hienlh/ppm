@@ -72,10 +72,14 @@ describe("what the editor and the setting gate on", () => {
   });
 
   it("gates the setting's switch the same way, so the two cannot disagree", () => {
-    // A switch disabled at 767px told a desktop user they were on a phone.
-    const settings = SRC("components/settings/appearance-settings-section.tsx");
+    // A switch disabled at 767px told a desktop user they were on a phone. The switch lives in
+    // the Language Servers pane now, beside the list it decides the fate of — a server
+    // installed while the feature is off does nothing.
+    const settings = SRC("components/settings/language-servers-section.tsx");
     expect(settings).toContain("disabled={isTouchOnly}");
     expect(settings).not.toContain("disabled={isMobile}");
+    // And it went with it: two switches for one pref would drift apart.
+    expect(SRC("components/settings/appearance-settings-section.tsx")).not.toContain("lspEnabled");
   });
 
   it("leaves word wrap on the viewport test, which is the right question for it", () => {

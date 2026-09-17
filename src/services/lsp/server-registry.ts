@@ -33,6 +33,14 @@ export interface LanguageServerDefinition {
   /** Shown verbatim when the command cannot be found. */
   installHint: string;
   /**
+   * How the Install button installs this server, when PPM can install it at all.
+   *
+   * Unset for a server that needs a system package manager — `clangd`, `lua-language-server`
+   * and `solargraph` mean pacman, apt, brew or a gem, i.e. a password and a choice PPM has no
+   * business making. Those keep a command to copy and no button.
+   */
+  install?: LanguageServerInstall;
+  /**
    * The npm package PPM depends on for this server, when it ships one.
    *
    * Only set where the package is in PPM's own `dependencies` — naming one that is not there
@@ -41,6 +49,25 @@ export interface LanguageServerDefinition {
   bundledPackage?: string;
   initializationOptions?: Record<string, unknown>;
 }
+
+/**
+ * What the Install button runs.
+ *
+ * `bun` and `go` both put the server inside PPM's own directory, so nothing the user installed
+ * is touched and `rm -rf` is the uninstall. `rustup` is the exception and has to be: a
+ * rust-analyzer belongs to a toolchain, and a private copy would be the wrong one as soon as a
+ * project pins a different toolchain.
+ *
+ * PPM never installs the *toolchain*. `go` and `rustup` are offered only where the host
+ * already has them — see `canInstall` in `lsp-install.ts`.
+ */
+export type LanguageServerInstall =
+  /** `bun add <packages>`; the first package provides `command`, the rest are what it needs. */
+  | { with: "bun"; packages: string[] }
+  /** `go install <module>` with `GOBIN` pointed at PPM's own bin directory. */
+  | { with: "go"; module: string }
+  /** `rustup component add <component>`, in whichever toolchain the project selects. */
+  | { with: "rustup"; component: string };
 
 /**
  * File extension to LSP language id.
@@ -110,6 +137,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     // start against it with "provides no tsserver" — which reads like a broken
     // install rather than the wrong major version.
     installHint: "bun add -g typescript-language-server typescript@5",
+    install: { with: "bun", packages: ["typescript-language-server", "typescript@5"] },
     // Shipped with PPM, so this one works on a fresh install with nothing else done. The
     // project's own copy still wins where there is one — a repository pinned to TypeScript 4
     // has to be analysed by its own server, not by whatever PPM happens to carry.
@@ -153,6 +181,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"],
     installHint: "bun add -g pyright",
+    install: { with: "bun", packages: ["pyright"] },
   },
   {
     id: "gopls",
@@ -162,6 +191,9 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: [],
     rootMarkers: ["go.work", "go.mod"],
     installHint: "go install golang.org/x/tools/gopls@latest",
+    // Built by the host's own Go, into PPM's directory: `GOBIN` is what decides where the
+    // binary lands, so `~/go/bin` is left exactly as the user arranged it. 10.6 s here.
+    install: { with: "go", module: "golang.org/x/tools/gopls@latest" },
   },
   {
     id: "rust-analyzer",
@@ -171,6 +203,11 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: [],
     rootMarkers: ["Cargo.toml"],
     installHint: "rustup component add rust-analyzer",
+    // The one server PPM does not keep in its own directory: rust-analyzer belongs to a
+    // *toolchain*, and a copy of its own would be the wrong one the moment a project pins a
+    // different one. `rustup which` is then both the lookup and the installed-check — it exits
+    // non-zero with "unknown binary" when the component is absent, in 3 ms.
+    install: { with: "rustup", component: "rust-analyzer" },
   },
   {
     id: "clangd",
@@ -189,6 +226,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: ["package.json"],
     installHint: "bun add -g vscode-langservers-extracted",
+    install: { with: "bun", packages: ["vscode-langservers-extracted"] },
   },
   {
     id: "html",
@@ -198,6 +236,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: ["package.json"],
     installHint: "bun add -g vscode-langservers-extracted",
+    install: { with: "bun", packages: ["vscode-langservers-extracted"] },
   },
   {
     id: "css",
@@ -207,6 +246,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: ["package.json"],
     installHint: "bun add -g vscode-langservers-extracted",
+    install: { with: "bun", packages: ["vscode-langservers-extracted"] },
   },
   {
     id: "yaml",
@@ -216,6 +256,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: [],
     installHint: "bun add -g yaml-language-server",
+    install: { with: "bun", packages: ["yaml-language-server"] },
   },
   {
     id: "bash",
@@ -225,6 +266,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["start"],
     rootMarkers: [],
     installHint: "bun add -g bash-language-server",
+    install: { with: "bun", packages: ["bash-language-server"] },
   },
   {
     id: "intelephense",
@@ -234,6 +276,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: ["composer.json"],
     installHint: "bun add -g intelephense",
+    install: { with: "bun", packages: ["intelephense"] },
   },
   {
     id: "solargraph",
@@ -261,6 +304,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: ["package.json"],
     installHint: "bun add -g @vue/language-server",
+    install: { with: "bun", packages: ["@vue/language-server"] },
   },
   {
     id: "svelte",
@@ -270,6 +314,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--stdio"],
     rootMarkers: ["package.json"],
     installHint: "bun add -g svelte-language-server",
+    install: { with: "bun", packages: ["svelte-language-server"] },
   },
 ];
 
@@ -280,6 +325,26 @@ export function serversForLanguage(languageId: string): LanguageServerDefinition
 
 export function serverById(id: string): LanguageServerDefinition | undefined {
   return LANGUAGE_SERVERS.find((s) => s.id === id);
+}
+
+/**
+ * The other servers that an uninstall of this one would also take away.
+ *
+ * One npm package can provide several servers — `vscode-langservers-extracted` is JSON, HTML
+ * and CSS at once — so `bun remove` of it removes all three whichever row the button was on.
+ * That is not a thing to discover afterwards, so the Settings pane names them before asking.
+ * Nothing shares a `go` module or a rustup component, so those answer with nothing.
+ */
+export function serversSharingInstall(definition: LanguageServerDefinition): LanguageServerDefinition[] {
+  const plan = definition.install;
+  if (plan?.with !== "bun") return [];
+  const pkg = packageName(plan.packages[0] ?? "");
+  return LANGUAGE_SERVERS.filter(
+    (s) =>
+      s.id !== definition.id &&
+      s.install?.with === "bun" &&
+      packageName(s.install.packages[0] ?? "") === pkg,
+  );
 }
 
 /**
@@ -386,16 +451,67 @@ export function bundledServerEntry(
 ): string | null {
   const pkg = definition.bundledPackage;
   if (!pkg) return null;
-  let manifestPath: string;
-  let manifest: { bin?: string | Record<string, string> };
   try {
-    manifestPath = resolve(`${pkg}/package.json`);
-    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as typeof manifest;
+    return binEntry(resolve(`${pkg}/package.json`), definition.command);
   } catch {
     return null;
   }
+}
+
+/**
+ * The entry script of an npm server the Install button put in PPM's own directory.
+ *
+ * Built as a path *under* `installDir` rather than resolved through `require`: Node resolution
+ * climbs out of the directory it starts in, so a stray `~/node_modules` would answer for a
+ * package PPM never installed — and whatever answers here is executed.
+ */
+export function installedServerEntry(definition: LanguageServerDefinition, installDir: string): string | null {
+  if (definition.install?.with !== "bun") return null;
+  const spec = definition.install.packages[0];
+  if (!spec) return null;
+  const pkgDir = path.join(installDir, "node_modules", ...packageName(spec).split("/"));
+  return binEntry(path.join(pkgDir, "package.json"), definition.command);
+}
+
+/**
+ * Where a compiled server the Install button built would be — PPM's own `bin` directory.
+ *
+ * That is `GOBIN` for the install, so the binary is PPM's to find and to delete, and the
+ * user's `~/go/bin` is left as they arranged it. A plain path: whether it exists is the
+ * caller's `exists()`, the same as for every other candidate.
+ */
+export function installedBinaryPath(
+  definition: LanguageServerDefinition,
+  installDir: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (definition.install?.with !== "go") return null;
+  return path.join(installDir, "bin", platform === "win32" ? `${definition.command}.exe` : definition.command);
+}
+
+/** `typescript@5` → `typescript`, keeping a scoped package's own leading `@`. */
+export function packageName(spec: string): string {
+  const at = spec.indexOf("@", 1);
+  return at === -1 ? spec : spec.slice(0, at);
+}
+
+/**
+ * `bin[command]` from a package manifest, as an absolute path.
+ *
+ * Both callers want the package's **entry script** and not npm's `.bin` shim: that shim starts
+ * `#!/usr/bin/env node`, and someone who installed PPM with bun may have no `node` on the
+ * machine at all — measured as exit **127** with `env: 'node': No such file or directory`,
+ * after the server had already been reported as installed. The manager runs the entry with bun.
+ */
+function binEntry(manifestPath: string, command: string): string | null {
+  let manifest: { bin?: string | Record<string, string> };
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as typeof manifest;
+  } catch {
+    return null; // not installed, or a manifest we cannot read
+  }
   // `bin` is either a bare string — the package's own name — or a map of command to path.
-  const relative = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[definition.command];
+  const relative = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[command];
   if (!relative) return null;
   return path.resolve(path.dirname(manifestPath), relative);
 }

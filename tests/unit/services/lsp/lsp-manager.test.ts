@@ -7,7 +7,7 @@
  * and fatal on a real machine.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { LspManager, isUnavailable, type LspHandle } from "../../../../src/services/lsp/lsp-manager.ts";
@@ -40,6 +40,23 @@ let manager: LspManager;
 function make(servers: LanguageServerDefinition[] = [FAKE], graceMs = 60_000, maxSessions = 6): LspManager {
   manager = new LspManager(servers, graceMs, maxSessions);
   return manager;
+}
+
+/**
+ * An install directory as `bun add` would leave it: one package, whose `bin` points at a
+ * server. The entry is the fixture, so the manager has something that really answers.
+ */
+function installDirWithFakeServer(): string {
+  const dir = mkdtempSync(join(tmpdir(), "ppm-lsp-installed-"));
+  extraProjects.push(dir);
+  const pkgDir = join(dir, "node_modules", "fake-lsp-package");
+  mkdirSync(pkgDir, { recursive: true });
+  writeFileSync(
+    join(pkgDir, "package.json"),
+    JSON.stringify({ name: "fake-lsp-package", bin: { "fake-installed-server": "server.ts" } }),
+  );
+  writeFileSync(join(pkgDir, "server.ts"), `import ${JSON.stringify(FIXTURE)};\n`);
+  return dir;
 }
 
 /** A second, third… project root, so one manager starts more than one server. */
@@ -139,6 +156,54 @@ describe("LspManager.acquire", () => {
 
     expect(isUnavailable(result) && result.reason).toBe("not-installed");
     expect(isUnavailable(result) && result.server?.installHint).toBe("bun add -g nothing");
+  });
+
+  it("says whether PPM could install the missing one, which is what the button hangs off", async () => {
+    // The registry's answer, not the editor's guess: a server that comes from a toolchain has
+    // only a command to copy, and offering a button that cannot work is worse than no button.
+    const fromToolchain = await make([MISSING]).acquire(project, "a.lua", "s1");
+    expect(isUnavailable(fromToolchain) && fromToolchain.server?.installable).toBe(false);
+
+    const fromNpm = await make([{ ...MISSING, install: { with: "bun", packages: ["nothing-at-all"] } }])
+      .acquire(project, "a.lua", "s2");
+    expect(isUnavailable(fromNpm) && fromNpm.server?.installable).toBe(true);
+  });
+
+  it("finds and starts a server the Install button put in PPM's own directory", async () => {
+    // Neither the project's `node_modules/.bin` nor PATH: `bun add` into PPM's own directory
+    // leaves a package with a `bin`, and the manager runs that entry with bun. This is the
+    // whole path the button depends on — the command below is on no PATH anywhere.
+    const installDir = installDirWithFakeServer();
+    const installed: LanguageServerDefinition = {
+      ...FAKE,
+      id: "installed",
+      command: "fake-installed-server",
+      args: [],
+      install: { with: "bun", packages: ["fake-lsp-package"] },
+    };
+    expect(Bun.which("fake-installed-server")).toBeNull();
+
+    manager = new LspManager([installed], 60_000, 6, () => installDir);
+    const result = await manager.acquire(project, "a.lua", "s1");
+
+    expect(isUnavailable(result)).toBe(false);
+    expect((result as LspHandle).session.state).toBe("ready");
+  });
+
+  it("asks rustup before PATH, because the proxy on PATH lies", () => {
+    // `~/.cargo/bin/rust-analyzer` is a rustup proxy that exists whether or not the component
+    // does — measured on this host, with the component absent, the symlink was right there. A
+    // PATH hit therefore reports an installed server that prints "unknown binary" and exits
+    // when spawned: a broken server instead of the missing one the Install button is for.
+    //
+    // Asserted against the source rather than by running it, because the fake binary would have
+    // to go on PATH and `Bun.which` cannot see one put there: it reads the PATH the *process*
+    // started with and never looks at `process.env.PATH` again (measured — adding a directory
+    // changes nothing, and so does emptying it). Only the explicit `{ PATH }` option is live.
+    const source = readFileSync(resolve(import.meta.dir, "../../../../src/services/lsp/lsp-manager.ts"), "utf8");
+    const body = source.slice(source.indexOf("private async resolveCommand"));
+
+    expect(body.indexOf("rustupServerPath")).toBeLessThan(body.indexOf("Bun.which"));
   });
 
   it("falls through a missing server to an installed one", async () => {

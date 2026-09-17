@@ -16,14 +16,20 @@
  */
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import { resolveBunPath } from "../autostart-generator.ts";
+import { canInstall, lspInstallDir, rustupServerPath } from "./lsp-install.ts";
 import { LspSession, type LspSessionState } from "./lsp-session.ts";
 import {
   LANGUAGE_SERVERS,
   ancestorDirs,
   bundledServerEntry,
   candidateCommandPaths,
+  installedBinaryPath,
+  installedServerEntry,
   lspLanguageForPath,
+  serversSharingInstall,
   type LanguageServerDefinition,
+  type LanguageServerInstall,
 } from "./server-registry.ts";
 
 /** How long a session with no subscribers is kept before being shut down. */
@@ -52,8 +58,32 @@ export type LspUnavailableReason = "no-language" | "not-installed" | "failed";
 export interface LspUnavailable {
   reason: LspUnavailableReason;
   /** The server that would have served it, when one is known. */
-  server?: { id: string; displayName: string; installHint: string };
+  server?: {
+    id: string;
+    displayName: string;
+    installHint: string;
+    installable: boolean;
+    /** What the button would use, so the editor can say what pressing it does. */
+    installWith?: "bun" | "go" | "rustup";
+  };
   message: string;
+}
+
+/**
+ * What the editor needs to name a missing server, and to decide whether to offer to install it.
+ *
+ * `installable` is the host's answer rather than the editor's guess, and it is not the registry's
+ * either: `go install` needs a Go on this machine and `rustup component add` needs a rustup, so
+ * the same server is installable on one host and a command to copy on the next.
+ */
+function serverSummary(definition: LanguageServerDefinition): NonNullable<LspUnavailable["server"]> {
+  return {
+    id: definition.id,
+    displayName: definition.displayName,
+    installHint: definition.installHint,
+    installable: canInstall(definition),
+    installWith: definition.install?.with,
+  };
 }
 
 export function isUnavailable(result: LspHandle | LspUnavailable): result is LspUnavailable {
@@ -67,6 +97,33 @@ interface Entry {
   /** Monotonic, so "least recently used" is exact rather than at the clock's resolution. */
   lastUsed: number;
 }
+
+/**
+ * The bun that runs a server's entry script.
+ *
+ * Not `process.execPath`: that is bun only while PPM runs from source. A compiled PPM is its
+ * own executable, so spawning it with a script path reaches PPM's *CLI* — the same trap that
+ * made a compiled PPM answer `<ppm> x @openai/codex app-server` with "unknown command". `null`
+ * on a host with no bun at all, where such a copy cannot be run and must not be called
+ * installed.
+ */
+function bunRuntime(): string | null {
+  try {
+    return resolveBunPath();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where a server was found, in the order `resolveCommand` looks.
+ *
+ * It exists for the Remove button: PPM may delete what PPM installed and nothing else.
+ * `project` is the repository's copy, `path` is one the user installed themselves, and
+ * `bundled` is PPM's own dependency — removing any of those would be PPM tidying up after
+ * someone else, and for `bundled` it would break the TypeScript server a fresh install has.
+ */
+export type ServerOrigin = "project" | "rustup" | "path" | "ppm" | "bundled";
 
 async function exists(candidate: string): Promise<boolean> {
   try {
@@ -93,6 +150,8 @@ export class LspManager {
     private readonly servers: LanguageServerDefinition[] = LANGUAGE_SERVERS,
     private readonly idleGraceMs: number = IDLE_GRACE_MS,
     private readonly maxSessions: number = MAX_SESSIONS,
+    /** Called rather than held, so `PPM_HOME` is read when a server is looked for, not at import. */
+    private readonly installDir: () => string = lspInstallDir,
   ) {}
 
   onNotification(listener: (key: string, method: string, params: unknown) => void): () => void {
@@ -122,8 +181,8 @@ export class LspManager {
 
     let lastMissing: LanguageServerDefinition | null = null;
     for (const definition of candidates) {
-      const command = await this.resolveCommand(definition, dirs);
-      if (!command) {
+      const resolved = await this.resolveCommand(definition, dirs);
+      if (!resolved) {
         lastMissing = definition;
         continue;
       }
@@ -131,7 +190,7 @@ export class LspManager {
       const key = `${definition.id} ${rootPath}`;
 
       try {
-        const session = await this.startOrReuse(key, definition, command, rootPath);
+        const session = await this.startOrReuse(key, definition, resolved.command, rootPath);
         // Subscribe *then* trim, so the session this call is about to hand out is never the
         // one the cap takes away.
         this.subscribe(key, subscriber);
@@ -140,7 +199,7 @@ export class LspManager {
       } catch (e) {
         return {
           reason: "failed",
-          server: { id: definition.id, displayName: definition.displayName, installHint: definition.installHint },
+          server: serverSummary(definition),
           message: e instanceof Error ? e.message : String(e),
         };
       }
@@ -149,7 +208,7 @@ export class LspManager {
     const missing = lastMissing ?? candidates[0]!;
     return {
       reason: "not-installed",
-      server: { id: missing.id, displayName: missing.displayName, installHint: missing.installHint },
+      server: serverSummary(missing),
       message: `${missing.displayName} is not installed.`,
     };
   }
@@ -256,25 +315,51 @@ export class LspManager {
    *
    * The project's own copy first, because a repository pinned to TypeScript 4 has to be
    * analysed by its own server — the same reason VS Code offers "Use Workspace Version".
-   * Then `PATH`, which is whatever the user deliberately installed. Then the copy PPM ships,
-   * which is the floor rather than a preference: it is how a fresh install has a working
-   * TypeScript server with nothing else done, and it must never win over either of the two
-   * choices someone actually made.
+   * Then rustup, which owns its answer completely (below). Then `PATH`, which is whatever the
+   * user deliberately installed. Then PPM's own directory: what the Install button put there,
+   * and then the copy PPM ships, which is the floor rather than a preference — it is how a
+   * fresh install has a working TypeScript server with nothing else done, and it must never win
+   * over either of the two choices someone actually made.
    */
-  private async resolveCommand(definition: LanguageServerDefinition, dirs: string[]): Promise<string[] | null> {
+  private async resolveCommand(
+    definition: LanguageServerDefinition,
+    dirs: string[],
+  ): Promise<{ command: string[]; origin: ServerOrigin } | null> {
     const candidates = candidateCommandPaths(definition.command, dirs);
     for (const candidate of candidates.slice(0, -1)) {
-      if (await exists(candidate)) return [candidate];
+      if (await exists(candidate)) return { command: [candidate], origin: "project" };
     }
+    // rust-analyzer is a toolchain component rather than a file PPM owns, so rustup is asked
+    // where it is — in the file's own directory, so a repository pinning a toolchain gets that
+    // toolchain's server. This has to come *before* PATH, because `~/.cargo/bin/rust-analyzer`
+    // is a rustup proxy that exists whether or not the component does: found on PATH it reports
+    // an installed server, and spawning it prints "unknown binary" and exits, which is a broken
+    // server rather than the missing one the Install button is offered for. Costs nothing for
+    // every other server — it answers null on sight of a definition that is not rustup's.
+    const fromRustup = await rustupServerPath(definition, dirs[0] ?? process.cwd());
+    if (fromRustup) return { command: [fromRustup], origin: "rustup" };
+
     // The last candidate is the bare command, which means PATH.
     const onPath = Bun.which(definition.command);
-    if (onPath) return [onPath];
+    if (onPath) return { command: [onPath], origin: "path" };
 
-    const bundled = bundledServerEntry(definition);
-    // Run by the runtime PPM is already using, not through npm's `.bin` shim: that shim is
+    // What the Install button built with the host's Go: a real binary in PPM's own directory,
+    // spawned as itself.
+    const binary = installedBinaryPath(definition, this.installDir());
+    if (binary && (await exists(binary))) return { command: [binary], origin: "ppm" };
+
+    // Both of PPM's npm copies are entry scripts rather than npm's `.bin` shims: that shim is
     // `#!/usr/bin/env node`, and someone who installed PPM with bun may have no node at all —
     // which fails as exit code 127 at spawn time, long after the server looked installed.
-    return bundled && (await exists(bundled)) ? [process.execPath, bundled] : null;
+    for (const [entry, origin] of [
+      [installedServerEntry(definition, this.installDir()), "ppm"],
+      [bundledServerEntry(definition), "bundled"],
+    ] as const) {
+      if (!entry || !(await exists(entry))) continue;
+      const runtime = bunRuntime();
+      return runtime ? { command: [runtime, entry], origin } : null;
+    }
+    return null;
   }
 
   /**
@@ -316,24 +401,70 @@ export class LspManager {
   }
 
   /**
-   * Which of the registered servers this project could actually use.
+   * Which of the registered servers could actually be used.
    *
-   * Answers the editor's "why is nothing happening" question directly, with the
-   * install command for anything missing.
+   * Answers the editor's "why is nothing happening" question directly, with the install
+   * command for anything missing. With no `projectPath` it answers for the *machine* — no
+   * project `node_modules/.bin` is consulted — which is what the Settings pane asks, since it
+   * is not open on any one project.
    */
-  async availability(projectPath: string): Promise<
-    Array<{ id: string; displayName: string; languages: string[]; installed: boolean; installHint: string }>
+  async availability(projectPath?: string): Promise<
+    Array<{
+      id: string;
+      displayName: string;
+      languages: string[];
+      installed: boolean;
+      installHint: string;
+      installable: boolean;
+      installWith?: LanguageServerInstall["with"];
+      origin?: ServerOrigin;
+      /** Whether PPM may remove it — that is, whether PPM is what put it there. */
+      removable: boolean;
+      /** Servers the same removal would also take, because one npm package provides several. */
+      alsoRemoves?: string[];
+    }>
   > {
-    const dirs = [projectPath];
+    const dirs = projectPath ? [projectPath] : [];
     return Promise.all(
-      this.servers.map(async (definition) => ({
-        id: definition.id,
-        displayName: definition.displayName,
-        languages: definition.languages,
-        installed: (await this.resolveCommand(definition, dirs)) !== null,
-        installHint: definition.installHint,
-      })),
+      this.servers.map(async (definition) => {
+        const resolved = await this.resolveCommand(definition, dirs);
+        const origin = resolved?.origin;
+        const removable = origin === "ppm" || origin === "rustup";
+        const shared = removable ? serversSharingInstall(definition).map((s) => s.displayName) : [];
+        return {
+          id: definition.id,
+          displayName: definition.displayName,
+          languages: definition.languages,
+          installed: resolved !== null,
+          installHint: definition.installHint,
+          installable: canInstall(definition),
+          installWith: definition.install?.with,
+          origin,
+          removable,
+          ...(shared.length > 0 ? { alsoRemoves: shared } : {}),
+        };
+      }),
     );
+  }
+
+  /**
+   * Stop this server's idle sessions, for an uninstall that is about to delete it.
+   *
+   * Only the ones nobody is holding. A session with a subscriber is an editor open on it, and
+   * taking that away answers every later request with "the language server is no longer
+   * running" until the tab is closed and reopened — the same reason `enforceSessionCap` leaves
+   * held sessions alone. One that keeps running is running on files it already opened, which
+   * is harmless everywhere except Windows, where it is also what refuses the unlink.
+   */
+  async stopIdle(serverId: string): Promise<void> {
+    const doomed = [...this.entries.entries()].filter(
+      ([, entry]) => entry.session.definition.id === serverId && entry.subscribers.size === 0,
+    );
+    for (const [key, entry] of doomed) {
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      this.entries.delete(key);
+    }
+    await Promise.all(doomed.map(([, entry]) => entry.session.dispose()));
   }
 
   /**

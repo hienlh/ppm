@@ -37,7 +37,7 @@ class FakeWs {
 
 mock.module("@/lib/ws-client", () => ({ WsClient: FakeWs }));
 
-const { LspConnection, acquireLspConnection, releaseLspConnection } =
+const { LspConnection, acquireLspConnection, releaseLspConnection, retryUnavailableLspDocuments } =
   await import("../../../src/web/lib/lsp/lsp-client.ts");
 
 /** A connection with one document the bridge has already reported ready. */
@@ -106,6 +106,65 @@ describe("LspConnection.request with a signal", () => {
 
     await expect(inflight).rejects.toThrow(/timed out/);
     expect(ws.ofType("cancel")).toHaveLength(1);
+  });
+});
+
+describe("asking again after an install", () => {
+  /** A connection with one document the bridge has reported as having no server. */
+  function missing(path = "src/a.ts") {
+    const connection = new LspConnection("demo");
+    const ws = FakeWs.last!;
+    connection.open(path, { getText: () => "x", getVersion: () => 1, clientUri: "inmemory://model/1" });
+    ws.deliver({
+      t: "unavailable",
+      path,
+      reason: "not-installed",
+      server: { id: "typescript", displayName: "TypeScript", installHint: "…", installable: true },
+      message: "TypeScript is not installed.",
+    });
+    return { connection, ws };
+  }
+
+  it("reopens the documents that had no server", () => {
+    // The file is already open. Closing and reopening the tab to pick up a server that has
+    // just appeared is the step the Install button exists to remove.
+    const { connection, ws } = missing();
+    expect(ws.ofType("open")).toHaveLength(1);
+
+    connection.retryUnavailable();
+
+    expect(ws.ofType("open")).toHaveLength(2);
+    expect(connection.statusOf("src/a.ts")).toEqual({ state: "opening" });
+  });
+
+  it("leaves a document that already has a server alone", () => {
+    // Reopening a ready document would take a working server away from a tab that is using it.
+    const { connection, ws } = connected();
+
+    connection.retryUnavailable();
+
+    expect(ws.ofType("open")).toHaveLength(1);
+    expect(connection.statusOf("src/a.ts")).toMatchObject({ state: "ready" });
+  });
+
+  it("asks on every project's connection, not just the one that was open", () => {
+    // One `bun add` serves every project at once, and the editors of the others are still
+    // mounted behind the tab pool — claiming a server is missing that is now installed.
+    const first = acquireLspConnection("one");
+    const firstWs = FakeWs.last!;
+    const second = acquireLspConnection("two");
+    const secondWs = FakeWs.last!;
+    for (const [connection, ws] of [[first, firstWs], [second, secondWs]] as const) {
+      connection.open("src/a.ts", { getText: () => "", getVersion: () => 1, clientUri: "inmemory://model/1" });
+      ws.deliver({ t: "unavailable", path: "src/a.ts", reason: "not-installed", server: null, message: "no" });
+    }
+
+    retryUnavailableLspDocuments();
+
+    expect(firstWs.ofType("open")).toHaveLength(2);
+    expect(secondWs.ofType("open")).toHaveLength(2);
+    releaseLspConnection("one");
+    releaseLspConnection("two");
   });
 });
 

@@ -1,14 +1,19 @@
-import { describe, it, expect } from "bun:test";
-import { readFileSync } from "node:fs";
-import { sep } from "node:path";
+import { describe, it, expect, afterEach } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, sep } from "node:path";
+import { tmpdir } from "node:os";
 import {
   LANGUAGE_SERVERS,
   ancestorDirs,
   bundledServerEntry,
   candidateCommandPaths,
+  installedBinaryPath,
+  installedServerEntry,
   lspLanguageForPath,
+  packageName,
   serverById,
   serversForLanguage,
+  serversSharingInstall,
 } from "../../../../src/services/lsp/server-registry.ts";
 
 describe("lspLanguageForPath", () => {
@@ -212,7 +217,7 @@ describe("bundledServerEntry", () => {
   it("answers with the package's entry, never npm's .bin shim", () => {
     // The shim is `#!/usr/bin/env node`, and someone who installed PPM with bun may have no
     // node at all — measured: spawning it with nothing named `node` on PATH exits 127, long
-    // after the server was reported as installed. The caller runs this with `process.execPath`.
+    // after the server was reported as installed. The caller runs this with bun.
     const entry = bundledServerEntry(typescript)!;
 
     expect(entry).not.toContain(`${sep}.bin${sep}`);
@@ -261,6 +266,145 @@ describe("bundledServerEntry", () => {
   });
 });
 
+describe("installedServerEntry", () => {
+  const typescript = serverById("typescript")!;
+
+  /** An install directory holding one package, as `bun add` would leave it. */
+  function installDirWith(pkg: string, bin: unknown): string {
+    const dir = mkdtempSync(join(tmpdir(), "ppm-lsp-install-"));
+    const pkgDir = join(dir, "node_modules", ...pkg.split("/"));
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: pkg, bin }));
+    installDirs.push(dir);
+    return dir;
+  }
+
+  const installDirs: string[] = [];
+  afterEach(() => {
+    for (const dir of installDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("finds the entry of what the Install button put in PPM's own directory", () => {
+    const dir = installDirWith("typescript-language-server", { "typescript-language-server": "lib/cli.mjs" });
+
+    expect(installedServerEntry(typescript, dir))
+      .toBe(join(dir, "node_modules", "typescript-language-server", "lib", "cli.mjs"));
+  });
+
+  it("stays inside that directory rather than climbing out of it", () => {
+    // Node resolution walks *up* from where it starts, so a stray `~/node_modules` beside the
+    // PPM directory would answer for a package PPM never installed — and whatever answers here
+    // is executed.
+    const dir = mkdtempSync(join(tmpdir(), "ppm-lsp-install-"));
+    installDirs.push(dir);
+    const outside = join(dir, "node_modules");
+    mkdirSync(join(dir, "inner"), { recursive: true });
+    mkdirSync(join(outside, "typescript-language-server"), { recursive: true });
+    writeFileSync(
+      join(outside, "typescript-language-server", "package.json"),
+      JSON.stringify({ name: "typescript-language-server", bin: { "typescript-language-server": "cli.mjs" } }),
+    );
+
+    expect(installedServerEntry(typescript, join(dir, "inner"))).toBeNull();
+  });
+
+  it("reads the scoped name whole", () => {
+    const vue = serverById("vue")!;
+    const dir = installDirWith("@vue/language-server", { "vue-language-server": "bin/vue-language-server.js" });
+
+    expect(installedServerEntry(vue, dir))
+      .toBe(join(dir, "node_modules", "@vue", "language-server", "bin", "vue-language-server.js"));
+  });
+
+  it("is null for a server PPM cannot install, and for one that is simply absent", () => {
+    const dir = installDirWith("typescript-language-server", { "typescript-language-server": "lib/cli.mjs" });
+
+    // gopls comes from a toolchain; nothing is ever installed for it, so nothing may be claimed.
+    expect(installedServerEntry(serverById("gopls")!, dir)).toBeNull();
+    expect(installedServerEntry(serverById("pyright")!, dir)).toBeNull();
+  });
+
+  it("is null when the package is there but provides no such command", () => {
+    // A package that dropped or renamed its binary. Guessing a path here is a spawn failure
+    // reported long after the server was called installed.
+    const dir = installDirWith("typescript-language-server", { "something-else": "lib/cli.mjs" });
+
+    expect(installedServerEntry(typescript, dir)).toBeNull();
+  });
+});
+
+describe("what the Install button will run", () => {
+  const installable = LANGUAGE_SERVERS.filter((s) => s.install);
+
+  it("offers every server PPM can install without a system package manager", () => {
+    expect(installable.map((s) => s.id).sort()).toEqual([
+      "bash", "css", "gopls", "html", "intelephense", "json",
+      "pyright", "rust-analyzer", "svelte", "typescript", "vue", "yaml",
+    ]);
+    // Left out on purpose: clangd, lua-language-server and solargraph mean pacman, apt, brew
+    // or a gem — a password, and a choice about the machine PPM has no business making.
+    for (const id of ["clangd", "solargraph", "lua"]) {
+      expect(serverById(id)!.install).toBeUndefined();
+    }
+  });
+
+  it("runs exactly what the hint tells the user to run", () => {
+    // The hint is what a user runs by hand; the plan is what the button runs. Two descriptions
+    // that can drift are two different installs, and only one of them is ever tested.
+    for (const server of installable) {
+      const plan = server.install!;
+      const expected =
+        plan.with === "bun" ? `bun add -g ${plan.packages.join(" ")}`
+        : plan.with === "go" ? `go install ${plan.module}`
+        : `rustup component add ${plan.component}`;
+      expect(server.installHint).toBe(expected);
+    }
+  });
+
+  it("names a package, a module or a component — never a flag or a path", () => {
+    // Every one of these is argv, so anything shaped like an option or a local path would be a
+    // different command than the one the table claims to describe.
+    for (const server of installable) {
+      const plan = server.install!;
+      const specs = plan.with === "bun" ? plan.packages : [plan.with === "go" ? plan.module : plan.component];
+      for (const spec of specs) {
+        expect(spec.startsWith("-")).toBe(false);
+        expect(spec).not.toContain(" ");
+        expect(spec).not.toContain("..");
+      }
+    }
+    // And the npm ones are package specs, since they are handed to `bun add`.
+    for (const server of installable.filter((s) => s.install!.with === "bun")) {
+      for (const spec of (server.install as { packages: string[] }).packages) {
+        expect(spec).toMatch(/^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(@[^@\s]+)?$/);
+      }
+    }
+  });
+
+  it("only looks in PPM's own bin directory for a server it builds there", () => {
+    // `GOBIN` puts it there, so this is where it is. The npm servers are packages rather than
+    // binaries, and nothing PPM builds for them lands in `bin`.
+    const gopls = serverById("gopls")!;
+    expect(installedBinaryPath(gopls, "/ppm", "linux")).toBe("/ppm/bin/gopls");
+    // Only the `.exe` is the platform's here — the separator is the *host's*, because the test
+    // runner joins paths with whatever it is running on, not with the platform being asked about.
+    expect(installedBinaryPath(gopls, "/ppm", "win32")).toBe(join("/ppm", "bin", "gopls.exe"));
+    expect(installedBinaryPath(serverById("typescript")!, "/ppm")).toBeNull();
+    // rust-analyzer belongs to a rustup toolchain; PPM keeps no copy to find.
+    expect(installedBinaryPath(serverById("rust-analyzer")!, "/ppm")).toBeNull();
+    expect(installedServerEntry(serverById("rust-analyzer")!, "/ppm")).toBeNull();
+  });
+});
+
+describe("packageName", () => {
+  it("drops the version and keeps the scope", () => {
+    expect(packageName("typescript@5")).toBe("typescript");
+    expect(packageName("typescript-language-server")).toBe("typescript-language-server");
+    expect(packageName("@vue/language-server")).toBe("@vue/language-server");
+    expect(packageName("@vue/language-server@3.3.11")).toBe("@vue/language-server");
+  });
+});
+
 describe("where the manager looks, in order", () => {
   /** Just `resolveCommand`, so a failure here prints a function and not the whole file. */
   function resolveCommandBody(): string {
@@ -269,17 +413,41 @@ describe("where the manager looks, in order", () => {
     return src.slice(start, src.indexOf("\n  }\n", start));
   }
 
-  it("puts the bundled copy last, behind the project's and PATH", () => {
-    // The floor, not a preference: a repository pinned to its own server, and a server the
-    // user deliberately installed, both have to win over whatever PPM happens to carry.
+  it("puts the bundled copy last, behind the project's, PATH and the installed one", () => {
+    // The floor, not a preference: a repository pinned to its own server, a server the user
+    // deliberately installed, and one the Install button fetched all have to win over whatever
+    // PPM happens to carry.
     const body = resolveCommandBody();
-    const order = ["candidateCommandPaths", "Bun.which", "bundledServerEntry"];
+    const order = ["candidateCommandPaths", "Bun.which", "installedServerEntry", "bundledServerEntry"];
 
     expect(order.map((name) => body.indexOf(name))).toEqual([...order.map((n) => body.indexOf(n))].sort((a, b) => a - b));
     for (const name of order) expect(body.indexOf(name)).toBeGreaterThan(-1);
   });
 
-  it("runs the bundled copy with PPM's own runtime", () => {
-    expect(resolveCommandBody()).toContain("[process.execPath, bundled]");
+  it("runs PPM's own copies with bun, never with the PPM executable", () => {
+    // `process.execPath` is bun only while PPM runs from source. A compiled PPM is its own
+    // executable, so `<ppm> <entry> --stdio` reaches PPM's CLI — which is how a compiled PPM
+    // once answered `<ppm> x @openai/codex app-server` with "unknown command". Asserted on the
+    // source because `bun test` always runs with an execPath that *is* bun, so no test run here
+    // can tell the two apart.
+    expect(resolveCommandBody()).toContain("bunRuntime()");
+    expect(resolveCommandBody()).not.toContain("process.execPath");
+  });
+});
+
+describe("serversSharingInstall", () => {
+  it("names the servers one npm package provides together", () => {
+    // `vscode-langservers-extracted` is JSON, HTML and CSS at once, so `bun remove` of it takes
+    // all three whichever row the Remove button was on. The pane says so before asking, which
+    // it can only do if this answers.
+    const shared = serversSharingInstall(serverById("json")!).map((s) => s.id).sort();
+
+    expect(shared).toEqual(["css", "html"]);
+  });
+
+  it("answers with nothing for a package, module or component that is its own", () => {
+    for (const id of ["typescript", "pyright", "gopls", "rust-analyzer", "clangd"]) {
+      expect(serversSharingInstall(serverById(id)!)).toEqual([]);
+    }
   });
 });

@@ -20,7 +20,7 @@ import {
   Keyboard,
   FolderSearch,
   DatabaseZap,
-  Mic,
+  Zap,
 } from "@/lib/icons";
 
 /**
@@ -32,9 +32,9 @@ import {
 export type SettingsCategoryId =
   | "general"
   | "appearance"
+  | "language-servers"
   | "ai-provider"
   | "accounts"
-  | "voice"
   | "ppmbot"
   | "notifications"
   | "jira"
@@ -46,9 +46,8 @@ export type SettingsCategoryId =
   | "query-audit";
 
 /**
- * `core` carries no heading: General and Appearance sit at the top of the rail as plain rows,
- * the way a desktop settings app opens on its most-used pane. A heading above a single row
- * would just repeat the row's own label.
+ * `core` carries no heading: its rows sit at the top of the rail as plain ones, the way a
+ * desktop settings app opens on its most-used pane. A heading over them would name the app.
  */
 export type SettingsGroupId = "core" | "ai" | "integrations" | "advanced";
 
@@ -77,10 +76,10 @@ export const SETTINGS_GROUPS: SettingsGroupDef[] = [
 export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "general", group: "core", label: "General", subtitle: "Device name, password, version", icon: Settings2 },
   { id: "appearance", group: "core", label: "Appearance", subtitle: "Theme, tabs, explorer skin", icon: Palette },
+  { id: "language-servers", group: "core", label: "Language Servers", subtitle: "Completions and go to definition, per language", icon: Zap },
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },
-  { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 
   { id: "ppmbot", group: "integrations", label: "PPMBot", subtitle: "Telegram AI bot", icon: BotMessageSquare },
   { id: "notifications", group: "integrations", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
