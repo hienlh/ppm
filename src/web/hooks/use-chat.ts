@@ -762,6 +762,15 @@ export function useChat(
             ...prev,
             lastTurnEndedAt: Date.now(),
             billedPrefixTokens: prefixTokens(doneUsage),
+            // Left at its previous value when this turn measured none, rather than cleared:
+            // a context does not shrink, so the older figure is still the better answer.
+            ...(doneUsage.contextTokens != null && { contextTokens: doneUsage.contextTokens }),
+            // Same reason: a turn that only read the cache reports no window, and the one
+            // already in hand is still the window this session's cache lives in.
+            ...(doneUsage.cacheTtlMs != null && { ttlMs: doneUsage.cacheTtlMs }),
+            // Unconditional, unlike the two above: `undefined` here is the turn reporting
+            // that it re-cached after a compaction, which has to clear the flag.
+            compactedAt: doneUsage.compactedAt,
           });
         }
         streamingContentRef.current = "";

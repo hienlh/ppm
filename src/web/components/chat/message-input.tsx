@@ -18,6 +18,8 @@ import type { SlashItem } from "./slash-command-picker";
 import { fetchSlashItems, clearSlashItemsCache } from "@/lib/slash-items-cache";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
+import { PromptCacheChip } from "./prompt-cache-chip";
+import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
 
 /**
  * Base64 payload for an image file, or undefined when it cannot be read.
@@ -124,6 +126,8 @@ interface MessageInputProps {
   thinking?: boolean;
   /** Thinking toggle handler */
   onThinkingChange?: (enabled: boolean) => void;
+  /** This session's prompt-cache clock, for the countdown chip */
+  promptCache?: PromptCacheState | null;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -158,6 +162,7 @@ export const MessageInput = memo(function MessageInput({
   onEffortChange,
   thinking,
   onThinkingChange,
+  promptCache,
 }: MessageInputProps) {
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
@@ -857,7 +862,7 @@ export const MessageInput = memo(function MessageInput({
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: mode chip + provider selector row */}
-        <div className="flex items-center gap-1 px-2 pt-2 md:hidden relative">
+        <div className="flex flex-wrap items-center gap-1 px-2 pt-2 md:hidden relative">
           <ModeChip
             mode={permissionMode ?? "bypassPermissions"}
             onClick={() => setModeSelectorOpen((v) => !v)}
@@ -889,6 +894,7 @@ export const MessageInput = memo(function MessageInput({
             />
           )}
           {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+          <PromptCacheChip promptCache={promptCache ?? null} />
         </div>
         {/* Mobile: single row — attach + textarea + mic + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
@@ -952,7 +958,7 @@ export const MessageInput = memo(function MessageInput({
         {/* Desktop: chips row (permission + model) then a single input row
             (paperclip | textarea | mic | send) — design PPMWorkspace composer. */}
         <div className="hidden md:block">
-          <div className="flex items-center gap-1.5 px-2.5 pt-2.5">
+          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5">
             {/* Mode indicator chip */}
             <div className="relative">
               <ModeChip
@@ -988,6 +994,7 @@ export const MessageInput = memo(function MessageInput({
               />
             )}
             {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+            <PromptCacheChip promptCache={promptCache ?? null} />
           </div>
           <div className="flex items-end gap-2 px-2.5 py-2">
             <button

@@ -3,6 +3,8 @@ import {
   assessTurnCost,
   buildTurnUsage,
   fmtTokens,
+  messageContextTokens,
+  messageCacheTtl,
   prefixCostMultiplier,
   prefixTokens,
   uncachedPrefixTokens,
@@ -141,5 +143,78 @@ describe("fmtTokens", () => {
     expect(fmtTokens(1_500)).toBe("1.5k");
     expect(fmtTokens(320_000)).toBe("320k");
     expect(fmtTokens(2_400_000)).toBe("2.4M");
+  });
+});
+
+describe("messageContextTokens", () => {
+  // The whole input side of one API call. Cached tokens occupy the context exactly like
+  // fresh ones — dropping them reports a warm turn as holding almost nothing.
+  test("sums every part of the input side", () => {
+    expect(messageContextTokens({
+      input_tokens: 4,
+      cache_read_input_tokens: 58_000,
+      cache_creation_input_tokens: 1_000,
+      output_tokens: 900,
+    })).toBe(59_004);
+  });
+
+  // The next call replays the transcript, not this call's answer — counting output here
+  // would inflate every turn by its own reply.
+  test("excludes output tokens", () => {
+    expect(messageContextTokens({ input_tokens: 100, output_tokens: 9_000 })).toBe(100);
+  });
+
+  // The cache pair is nullable on the wire; only `input_tokens` is always sent.
+  test("treats a null cache field as zero, not as unmeasurable", () => {
+    expect(messageContextTokens({
+      input_tokens: 100,
+      cache_read_input_tokens: null,
+      cache_creation_input_tokens: null,
+    })).toBe(100);
+  });
+
+  // A frame with no usage must not read as a zero-token context, which would display as
+  // "re-sends about 0 tokens" on a full session.
+  test("reports a missing usage as unmeasured rather than as zero", () => {
+    expect(messageContextTokens(undefined)).toBeUndefined();
+    expect(messageContextTokens(null)).toBeUndefined();
+    expect(messageContextTokens({})).toBeUndefined();
+    expect(messageContextTokens({ output_tokens: 10 })).toBeUndefined();
+    // An explicit zero on every field is the same non-answer, not a zero-token context.
+    expect(messageContextTokens({
+      input_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    })).toBeUndefined();
+  });
+
+  // The API does not promise `input_tokens` on every frame, and a cached prefix is a real
+  // context whether or not a fresh-input count came with it.
+  test("answers from the cache fields alone when input_tokens is absent", () => {
+    expect(messageContextTokens({ cache_read_input_tokens: 58_000 })).toBe(58_000);
+  });
+});
+
+describe("messageCacheTtl", () => {
+  // Measured on real transcripts: 3155 of 3172 assistant messages carry this, so the guess
+  // it replaces was being made in the presence of the answer.
+  test("reads the window the API actually wrote", () => {
+    expect(messageCacheTtl({ cache_creation: { ephemeral_1h_input_tokens: 77_200, ephemeral_5m_input_tokens: 0 } })).toBe("1h");
+    expect(messageCacheTtl({ cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 4_100 } })).toBe("5m");
+  });
+
+  // A prefix split across both windows still has an hour on the longer half, so reporting
+  // five minutes would expire a cache that is still standing.
+  test("reports the longer window when a turn wrote into both", () => {
+    expect(messageCacheTtl({ cache_creation: { ephemeral_1h_input_tokens: 10, ephemeral_5m_input_tokens: 99_999 } })).toBe("1h");
+  });
+
+  // Silence, not five minutes: a turn that only read the cache names no window, and
+  // defaulting to the short one there is exactly the bug this replaces.
+  test("says nothing rather than guessing when no window was written", () => {
+    expect(messageCacheTtl({ cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 } })).toBeUndefined();
+    expect(messageCacheTtl({ cache_read_input_tokens: 58_000 })).toBeUndefined();
+    expect(messageCacheTtl({ cache_creation: null })).toBeUndefined();
+    expect(messageCacheTtl(undefined)).toBeUndefined();
   });
 });

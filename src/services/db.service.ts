@@ -6,7 +6,7 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
-export const CURRENT_SCHEMA_VERSION = 47;
+export const CURRENT_SCHEMA_VERSION = 52;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1129,11 +1129,56 @@ export function runMigrations(database: Database): void {
     database.exec(`PRAGMA user_version = 48;`);
   }
 
+  // This checkout's prompt-cache work first shipped as migrations 46-48 on turn_usage, before
+  // main used those numbers for accounts (it is 50-52 below now). A database that ran the local
+  // ones sits past 45 without main's columns, so the version gates above skip them for good and
+  // 49 then updates a column that does not exist. Added by schema rather than by version here;
+  // on a database that followed main every statement is a no-op.
+  if (current >= 46 && current < 49) {
+    for (const col of [
+      "granted_at INTEGER",
+      "refresh_expires_at INTEGER",
+      "reauth_required INTEGER NOT NULL DEFAULT 0",
+      "last_refresh_attempt_at INTEGER",
+    ]) {
+      try { database.exec(`ALTER TABLE accounts ADD COLUMN ${col}`); } catch { /* exists */ }
+    }
+    try { database.exec(`ALTER TABLE codex_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`); } catch { /* exists */ }
+    try { database.exec(`ALTER TABLE codex_accounts ADD COLUMN daily_guard_enabled INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+  }
+
   if (current < 49) {
     // Daily guard was introduced as an opt-in during development. Ship it enabled so every
     // weekly-only account starts paced; Plus accounts simply do not surface or use it.
     database.exec(`UPDATE codex_accounts SET daily_guard_enabled = 1`);
     database.exec(`PRAGMA user_version = 49;`);
+  }
+
+  if (current < 50) {
+    // The idle-cache notice had to live entirely in server memory, because nothing on disk
+    // said when a session last cached or how much. `recorded_at` answers the first; this
+    // column answers the second with a figure the summed token columns cannot give —
+    // see `TurnUsage.contextTokens`. Null on every existing row: unmeasured, not zero.
+    try { database.exec("ALTER TABLE turn_usage ADD COLUMN context_tokens INTEGER"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 50;`);
+  }
+
+  if (current < 51) {
+    // The cache window was inferred from the credential's shape — an `sk-ant-oat` prefix
+    // meaning a subscription and therefore an hour. The API states it outright in
+    // `usage.cache_creation`, and that answer has to outlive the process the way the rest of
+    // the last turn's facts now do. Null on existing rows: unreported, so the guess stands.
+    try { database.exec("ALTER TABLE turn_usage ADD COLUMN cache_ttl_ms INTEGER"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 51;`);
+  }
+
+  if (current < 52) {
+    // A compaction makes the cached prefix inapplicable rather than stale, and the window in
+    // which that matters is between the compaction and the user's next message — a window a
+    // restart lands inside often enough to be worth surviving. Null on existing rows: no
+    // compaction is known, which is what every turn before this recorded anyway.
+    try { database.exec("ALTER TABLE turn_usage ADD COLUMN compacted_at INTEGER"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 52;`);
   }
 }
 
@@ -1652,6 +1697,9 @@ export interface TurnUsageRow {
   cold_reason: string | null;
   account_id: string | null;
   account_label: string | null;
+  context_tokens: number | null;
+  cache_ttl_ms: number | null;
+  compacted_at: number | null;
   recorded_at: string;
 }
 
@@ -1668,13 +1716,16 @@ export function insertTurnUsage(record: {
   coldReason?: string;
   accountId?: string;
   accountLabel?: string;
+  contextTokens?: number;
+  cacheTtlMs?: number;
+  compactedAt?: number;
 }): void {
   getDb().query(
     `INSERT INTO turn_usage
        (session_id, model, input_tokens, output_tokens, cache_read_tokens,
         cache_write_tokens, context_window, cost_usd, cold_start, cold_reason,
-        account_id, account_label)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        account_id, account_label, context_tokens, cache_ttl_ms, compacted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     record.sessionId, record.model ?? null,
     record.inputTokens, record.outputTokens,
@@ -1682,7 +1733,48 @@ export function insertTurnUsage(record: {
     record.contextWindow ?? null, record.costUsd ?? null,
     record.coldStart ? 1 : 0, record.coldReason ?? null,
     record.accountId ?? null, record.accountLabel ?? null,
+    record.contextTokens ?? null, record.cacheTtlMs ?? null, record.compactedAt ?? null,
   );
+}
+
+/**
+ * When this session last wrote its prompt cache, and what it would cost to write again.
+ *
+ * The idle notice used to be answerable only from the live `SessionEntry`, which is dropped
+ * five minutes after the last tab disconnects — while the cache it describes lives for an
+ * hour. So the notice appeared only for a session left connected and went silent for exactly
+ * the session reopened the next morning, which is the one it exists for. These three columns
+ * are already written on every turn; reading them back is the whole fix.
+ */
+export function getLastTurnCacheState(sessionId: string): {
+  endedAtMs: number;
+  prefixTokens: number;
+  contextTokens?: number;
+  cacheTtlMs?: number;
+  compactedAt?: number;
+} | null {
+  const row = getDb().query(
+    `SELECT input_tokens, cache_read_tokens, cache_write_tokens, context_tokens, cache_ttl_ms, compacted_at, recorded_at
+       FROM turn_usage WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+  ).get(sessionId) as Pick<
+    TurnUsageRow,
+    "input_tokens" | "cache_read_tokens" | "cache_write_tokens" | "context_tokens" | "cache_ttl_ms" | "compacted_at" | "recorded_at"
+  > | null;
+  if (!row?.recorded_at) return null;
+
+  // `datetime('now')` is UTC and writes no zone suffix, which `Date` then reads as LOCAL
+  // time — seven hours adrift in Asia/Saigon, enough to make the idle window come out
+  // negative and silence the notice on precisely the machines it was rebuilt for.
+  const endedAtMs = Date.parse(`${row.recorded_at.replace(" ", "T")}Z`);
+  if (!Number.isFinite(endedAtMs)) return null;
+
+  return {
+    endedAtMs,
+    prefixTokens: row.input_tokens + row.cache_read_tokens + row.cache_write_tokens,
+    ...(row.context_tokens != null && { contextTokens: row.context_tokens }),
+    ...(row.cache_ttl_ms != null && { cacheTtlMs: row.cache_ttl_ms }),
+    ...(row.compacted_at != null && { compactedAt: row.compacted_at }),
+  };
 }
 
 /** Most recent turns first — the debug dialog shows the tail of a session. */
