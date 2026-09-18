@@ -9,6 +9,7 @@ import type {
   SendMessageOpts,
   UsageInfo,
 } from "../provider.interface.ts";
+import { stderrReason, type ProviderProbeResult } from "../provider-probe.ts";
 import { configService } from "../../services/config.service.ts";
 import { withSharedContext } from "../../shared/provider-context.ts";
 import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles, insertTurnUsage } from "../../services/db.service.ts";
@@ -1057,20 +1058,51 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   // ── Capability probes ──
-  async isAvailable(): Promise<boolean> {
+  /**
+   * Whether `bun x @openai/codex` runs here, and when it does not, why.
+   *
+   * The reason is the point: a failure is rarely "codex is not installed" —
+   * bun fetches the package on demand — it is usually the manifest refresh
+   * failing on a host whose network is not up yet. `retryable` is what tells
+   * the registry to ask again instead of hiding the provider until the next
+   * restart; only a missing bun is hopeless, since nothing can run without it.
+   */
+  async probe(): Promise<ProviderProbeResult> {
+    let cmd: string[];
     try {
-      const proc = Bun.spawn(codexCommand("--version"), {
+      cmd = codexCommand("--version");
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message, retryable: false };
+    }
+    try {
+      const proc = Bun.spawn(cmd, {
         stdout: "pipe", stderr: "pipe",
       });
       // 30s: a cold `bun x` may download the package, and the probe runs during
       // heavy concurrent server startup where process spawn can be starved.
-      const timeout = setTimeout(() => { try { proc.kill(); } catch { /* ignore */ } }, 30_000);
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        try { proc.kill(); } catch { /* ignore */ }
+      }, 30_000);
       await proc.exited;
       clearTimeout(timeout);
-      return proc.exitCode === 0;
-    } catch {
-      return false;
+      if (proc.exitCode === 0) return { ok: true };
+      const stderr = timedOut ? "" : await new Response(proc.stderr).text();
+      return {
+        ok: false,
+        retryable: true,
+        reason: timedOut
+          ? "`bun x @openai/codex --version` timed out after 30s"
+          : redactTruncate(stderrReason(stderr), 200) || `\`bun x @openai/codex --version\` exited ${proc.exitCode}`,
+      };
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message, retryable: true };
     }
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return (await this.probe()).ok;
   }
 
   async listModels(): Promise<ModelOption[]> {
