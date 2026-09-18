@@ -20,7 +20,7 @@ import {
   readAndDeleteCmd, readStatus, updateStatus, writeStatus,
   STATUS_FILE, PID_FILE,
 } from "./supervisor-state.ts";
-import type { ResolvedTunnelConfig, TunnelMode } from "./named-tunnel/named-tunnel-config.ts";
+import { resolveTunnelConfig, type ResolvedTunnelConfig, type TunnelMode } from "./named-tunnel/named-tunnel-config.ts";
 import { readTunnelConfigFresh, chooseTunnelSpawn } from "./named-tunnel/named-tunnel-runtime.ts";
 import { waitForLogLine } from "./named-tunnel/named-tunnel-readiness.ts";
 import { nextNamedRetryDelayMs } from "./named-tunnel/named-tunnel-retry.ts";
@@ -2282,7 +2282,23 @@ export async function runSupervisor(opts: {
   // and the probe can never tell named from quick) until the next spawn.
   // It also carries the master switch, so it is read before the gate rather
   // than inside it.
-  namedTunnelMode = await readTunnelConfigFresh();
+  // This read must not be able to decide whether the edge below gets spawned.
+  // It already did once: a `systemctl restart` brought this process up while
+  // the outgoing one still held the database's write lock, the rejection ended
+  // startup right here, and PPM ran for eight minutes with nothing listening on
+  // its public port — the server child came back on the health check, which has
+  // no equivalent for an edge that was never started in the first place.
+  //
+  // The fallback is sharing OFF, not the resolver's default: an absent config
+  // row means "on" (it predates the master switch), so defaulting would publish
+  // a tunnel for someone who had switched sharing off and whose config merely
+  // could not be read.
+  try {
+    namedTunnelMode = await readTunnelConfigFresh();
+  } catch (e) {
+    log("ERROR", `Tunnel config unreadable — continuing with sharing off: ${e}`);
+    namedTunnelMode = resolveTunnelConfig({ enabled: false });
+  }
   tunnelSharingEnabled = opts.share && namedTunnelMode.enabled;
   if (opts.share && !tunnelSharingEnabled) {
     log("INFO", "Tunnel off (tunnel.enabled = false) — no cloudflared will be started");
