@@ -3,7 +3,8 @@ import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { useKeybindingsStore, parseCombo, eventMatchesCombo } from "@/stores/keybindings-store";
+import { useKeybindingsStore, parseCombo, eventMatchesCombo, matchesDockBacktick } from "@/stores/keybindings-store";
+import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { openSettings } from "@/components/settings/open-settings";
@@ -89,9 +90,10 @@ export function useGlobalKeybindings() {
         const { matchesEvent: m } = useKeybindingsStore.getState();
         // Mod+S — always prevent browser save dialog
         if (m(e, "save-prevent")) { e.preventDefault(); }
-        // toggle-dock (Mod+') fires even when the terminal textarea is focused (VSCode parity).
-        // It's a modifier combo, so it can't produce a plain quote in the shell.
-        if (m(e, "toggle-dock")) {
+        // toggle-dock (Mod+', and VS Code's Ctrl+` on desktop) fires even when the
+        // terminal textarea is focused (VSCode parity). Both are modifier combos, so
+        // neither can produce a plain quote or backtick in the shell.
+        if (m(e, "toggle-dock") || matchesDockBacktick(e, isMobileDevice())) {
           e.preventDefault();
           usePanelStore.getState().toggleDock();
         }
@@ -126,7 +128,7 @@ export function useGlobalKeybindings() {
       }
 
       // Toggle terminal dock
-      if (match(e, "toggle-dock")) {
+      if (match(e, "toggle-dock") || matchesDockBacktick(e, isMobileDevice())) {
         e.preventDefault();
         usePanelStore.getState().toggleDock();
         return;

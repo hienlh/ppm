@@ -18,6 +18,7 @@ import { Check, ChevronDown, ChevronRight } from "@/lib/icons";
 import { FileIcon } from "@/lib/file-icons";
 import { isReviewed, type ReviewState } from "@/lib/branch-review-state";
 import type { TreeNode } from "@/lib/git-file-tree";
+import { StartEllipsis } from "@/components/ui/start-ellipsis";
 import type { BranchDiffFile } from "../../../types/git";
 
 export const STATUS_COLORS: Record<BranchDiffFile["status"], string> = {
@@ -31,19 +32,6 @@ export const STATUS_COLORS: Record<BranchDiffFile["status"], string> = {
 
 /** Indent per nesting level, matching the Source Control tree. */
 export const TREE_INDENT = 14;
-
-/**
- * Ellipsize from the start, so the end of a path — the part that differs —
- * survives. Same trick as the Source Control panel: a right-to-left box cuts at
- * its left edge, and `<bdi>` keeps the name itself reading left to right.
- */
-export function StartEllipsis({ children }: { children: string }) {
-  return (
-    <span dir="rtl" className="truncate text-left min-w-0 flex-1">
-      <bdi>{children}</bdi>
-    </span>
-  );
-}
 
 export interface TreeRowProps {
   node: TreeNode;

@@ -15,16 +15,10 @@
  * whole panel: a picker tucked into a header is a picker nobody finds, and
  * until it is answered there is nothing else for the panel to show.
  */
-import { FolderGit2, GitBranch, ChevronsUpDown, RefreshCw } from "@/lib/icons";
+import { useMemo } from "react";
+import { FolderGit2, GitBranch, RefreshCw } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { SearchSelect } from "@/components/ui/search-select";
 import type { GitRepoCandidate } from "@/lib/git-repo-scope";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
 import { cn } from "@/lib/utils";
@@ -40,6 +34,13 @@ export function GitRepoBar({ repo, repos, onChoose }: GitRepoBarProps) {
   // a subfolder's history under the project's name, and that has to be visible.
   const single = repos.length < 2;
   const coarse = usePrefersCoarsePointer();
+  // Searchable, because a folder of checkouts is named the way this one is —
+  // `nxsys-backend-nx5833`, `…-nx5838`, `…-nx5838-ma` — and a plain menu of
+  // thirty of them is read top to bottom for the last few characters.
+  const items = useMemo(
+    () => repos.map((c) => ({ value: c.path, label: c.relative, title: c.path, icon: GitBranch })),
+    [repos],
+  );
   return (
     <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border shrink-0 text-xs text-text-secondary">
       <FolderGit2 className="size-3.5 shrink-0 text-text-subtle" />
@@ -48,37 +49,24 @@ export function GitRepoBar({ repo, repos, onChoose }: GitRepoBarProps) {
           {repo.relative}
         </span>
       ) : (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            {/* The only way back to the other repository, so it is a full
-                44px target wherever the pointer is coarse — gated on the
-                pointer rather than on a width, because a touch laptop is wide
-                and has no mouse. On a mouse it stays out of the way. */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn("min-w-0 gap-1 px-1.5 text-xs", coarse ? "h-11" : "h-8")}
-            >
-              <span className="truncate" title={repo.path}>{repo.relative}</span>
-              <ChevronsUpDown className="size-3 shrink-0 opacity-60" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-w-[min(20rem,90vw)]">
-            <DropdownMenuLabel className="text-xs">Repository</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {repos.map((candidate) => (
-              <DropdownMenuItem
-                key={candidate.path}
-                onClick={() => onChoose(candidate.path)}
-                className="gap-2"
-              >
-                <GitBranch className="size-3.5 shrink-0" />
-                <span className="truncate">{candidate.relative}</span>
-                {candidate.path === repo.path && <span className="ml-auto text-text-subtle">✓</span>}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <SearchSelect
+          value={repo.path}
+          items={items}
+          onChange={onChoose}
+          label="Repository"
+          searchPlaceholder="Search repositories"
+          emptyText="No matching repositories"
+          testId="git-repo-picker"
+          // Ghost, not a form field: this row says which repository, it does not
+          // ask. And it is the only way back to the other repository, so a full
+          // 44px target wherever the pointer is coarse — gated on the pointer
+          // rather than on a width, because a touch laptop is wide and has no
+          // mouse. Both heights are restated at `md:` to beat the field's own.
+          className={cn(
+            "border-transparent bg-transparent px-1.5 text-text-secondary hover:bg-accent",
+            coarse ? "h-11 md:h-11" : "h-8 md:h-8",
+          )}
+        />
       )}
     </div>
   );

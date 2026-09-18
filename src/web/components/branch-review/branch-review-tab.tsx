@@ -28,7 +28,9 @@ import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { GitRepoBar, GitRepoChoice, GitNoRepo } from "@/components/git/git-repo-picker";
 import { FileIcon } from "@/lib/file-icons";
 import { buildTree, compactTree } from "@/lib/git-file-tree";
-import { StartEllipsis, TreeRow } from "./branch-review-tree-row";
+import { TreeRow } from "./branch-review-tree-row";
+import { StartEllipsis } from "@/components/ui/start-ellipsis";
+import { BranchSelect } from "@/components/git/branch-select";
 import {
   Check, ChevronDown, ChevronRight, FileText, Loader2, RefreshCw, ListChecks, ArrowRight,
 } from "@/lib/icons";
@@ -246,30 +248,28 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
       )}
 
       {/*
-        Native selects rather than the shadcn one: a repository can have
-        hundreds of branches, and the OS picker is both scrollable and a far
-        better touch target than a rendered popover on a phone.
+        A searchable picker rather than a native `<select>`: the list is the
+        whole problem here — hundreds of branches, all sharing a prefix — and a
+        native picker cannot be filtered. See `branch-select.tsx`.
       */}
       <div className="flex items-center gap-2 px-2 py-1.5 border-b border-border shrink-0 flex-wrap">
-        <select
+        <BranchSelect
           value={base}
-          onChange={(e) => setBase(e.target.value)}
-          aria-label="Base branch"
-          data-testid="branch-review-base"
-          className="h-7 max-w-[38%] rounded-md border border-border bg-panel px-2 text-xs min-w-0"
-        >
-          {branches.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
-        </select>
+          branches={branches}
+          onChange={setBase}
+          label="Base branch"
+          testId="branch-review-base"
+          className="max-w-[38%]"
+        />
         <ArrowRight className="size-3.5 text-text-3 shrink-0" />
-        <select
+        <BranchSelect
           value={head}
-          onChange={(e) => setHead(e.target.value)}
-          aria-label="Branch to review"
-          data-testid="branch-review-head"
-          className="h-7 max-w-[38%] rounded-md border border-border bg-panel px-2 text-xs min-w-0"
-        >
-          {branches.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
-        </select>
+          branches={branches}
+          onChange={setHead}
+          label="Branch to review"
+          testId="branch-review-head"
+          className="max-w-[38%]"
+        />
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-text-2 tabular-nums" data-testid="branch-review-progress">

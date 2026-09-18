@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BranchSelect } from "@/components/git/branch-select";
 import type { GitBranch } from "../../../types/git";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +37,7 @@ export function CreateWorktreeDialog({
   const [branchMode, setBranchMode] = useState<BranchMode>("new");
   const [newBranch, setNewBranch] = useState("");
   const [existingBranch, setExistingBranch] = useState("");
-  const [branches, setBranches] = useState<string[]>([]);
+  const [branches, setBranches] = useState<GitBranch[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,10 +47,10 @@ export function CreateWorktreeDialog({
     api
       .get<GitBranch[]>(gitUrl("/branches"))
       .then((data) => {
-        const local = data.filter((b) => !b.remote).map((b) => b.name);
+        const local = data.filter((b) => !b.remote);
         setBranches(local);
         if (local.length > 0 && !existingBranch) {
-          setExistingBranch(local[0]!);
+          setExistingBranch((local.find((b) => b.current) ?? local[0]!).name);
         }
       })
       .catch(() => setBranches([]));
@@ -143,21 +144,21 @@ export function CreateWorktreeDialog({
             onChange={(e) => setNewBranch(e.target.value)}
             className="w-full"
           />
+        ) : branches.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No branches available</p>
         ) : (
-          <select
+          /* `modal`: this is inside a Radix dialog — see the prop's note. */
+          <BranchSelect
             value={existingBranch}
-            onChange={(e) => setExistingBranch(e.target.value)}
-            className="w-full h-9 px-3 rounded-md border border-input bg-transparent text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            {branches.length === 0 && (
-              <option value="">No branches available</option>
-            )}
-            {branches.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
+            branches={branches}
+            onChange={setExistingBranch}
+            label="Existing branch"
+            testId="worktree-branch"
+            // h-9 on both, so it lines up with the Input it replaces in this form
+            // rather than with the compact panel row the picker was written for.
+            className="h-9 w-full md:h-9"
+            modal
+          />
         )}
       </div>
     </div>

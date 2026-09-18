@@ -4,9 +4,11 @@ import { gitService } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
 import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
+import { assertRef } from "../../services/git-branch-diff/branch-diff-parse.ts";
 import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
 import { isInsideDir, realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
 import { ok, err } from "../../types/api.ts";
+import type { CheckoutMode } from "../../types/git.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -267,6 +269,22 @@ gitRoutes.get("/branches", async (c) => {
   }
 });
 
+/**
+ * GET /git/refs — every checkout target the branch picker offers.
+ *
+ * Separate from `/branches` rather than an enrichment of it: this answer costs
+ * one `for-each-ref` over *three* namespaces and carries a commit per row,
+ * where `/branches` is the cheap list the graph and the review pickers read on
+ * mount.
+ */
+gitRoutes.get("/refs", async (c) => {
+  try {
+    return c.json(ok(await gitService.refs(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /git/pr-url?branch= */
 gitRoutes.get("/pr-url", async (c) => {
   try {
@@ -495,20 +513,38 @@ gitRoutes.post("/branch/create", async (c) => {
     const projectPath = c.get("projectPath");
     const { name, from } = await c.req.json<{ name: string; from?: string }>();
     if (!name) return c.json(err("Missing: name"), 400);
-    await gitService.createBranch(projectPath, name, from);
+    // Both land as arguments of `git checkout -b`, so neither may open with a dash.
+    await gitService.createBranch(
+      projectPath,
+      assertRef(name, "name"),
+      from ? assertRef(from, "from") : undefined,
+    );
     return c.json(ok({ created: name }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
 });
 
-/** POST /git/checkout { ref } */
+/**
+ * POST /git/checkout { ref, mode? }
+ *
+ * `mode` is `checkout` (the default), `detach` or `track` — see
+ * `GitService.checkout`. It is validated rather than passed through because it
+ * decides which flag precedes the ref, and `assertRef` is what stops the ref
+ * itself from *being* a flag: an unchecked `-f` here is a forced checkout that
+ * discards the working tree.
+ */
+const CHECKOUT_MODES = new Set<CheckoutMode>(["checkout", "detach", "track"]);
+
 gitRoutes.post("/checkout", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const { ref } = await c.req.json<{ ref: string }>();
+    const { ref, mode } = await c.req.json<{ ref: string; mode?: CheckoutMode }>();
     if (!ref) return c.json(err("Missing: ref"), 400);
-    await gitService.checkout(projectPath, ref);
+    if (mode && !CHECKOUT_MODES.has(mode)) {
+      return c.json(err(`Unknown checkout mode: "${mode}"`), 400);
+    }
+    await gitService.checkout(projectPath, assertRef(ref, "ref"), mode);
     return c.json(ok({ checkedOut: ref }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

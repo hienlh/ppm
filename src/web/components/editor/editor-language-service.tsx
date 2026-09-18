@@ -23,6 +23,14 @@ import { useTabStore } from "@/stores/tab-store";
 export interface EditorLspState {
   status: LspDocumentStatus | null;
   diagnostics: LspDiagnostic[];
+  /**
+   * Install the server this file has none of.
+   *
+   * Handed up rather than called from the toolbar directly: the indicator lives on the
+   * editor's static path, and one runtime import of the LSP client there would merge this
+   * whole chunk back into the editor's — see `editor-lsp-lazy-boundary.test.ts`.
+   */
+  install?: (serverId: string) => Promise<void>;
 }
 
 const NO_LSP_STATE: EditorLspState = { status: null, diagnostics: [] };
@@ -39,7 +47,7 @@ interface EditorLanguageServiceProps {
 export function EditorLanguageService({
   editor, monaco, projectName, filePath, onState,
 }: EditorLanguageServiceProps) {
-  const { status, diagnostics } = useLsp({ editor, monaco, projectName, filePath, enabled: true });
+  const { status, diagnostics, install } = useLsp({ editor, monaco, projectName, filePath, enabled: true });
 
   // F12. Monaco's own binding would swap another file's model into this
   // editor, leaving the tab titled and dirty-tracked as the old file. Disposed
@@ -64,8 +72,8 @@ export function EditorLanguageService({
   onStateRef.current = onState;
 
   useEffect(() => {
-    onStateRef.current({ status, diagnostics });
-  }, [status, diagnostics]);
+    onStateRef.current({ status, diagnostics, install });
+  }, [status, diagnostics, install]);
 
   // The editor keeps drawing whatever it was last told, so a language service
   // that is going away has to retract its own status.
