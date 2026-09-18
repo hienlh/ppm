@@ -15,7 +15,7 @@ import {
 import { ok, err } from "../../types/api.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
-import { providerRegistry } from "../../providers/registry.ts";
+import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
 
 export const settingsRoutes = new Hono();
 
@@ -244,6 +244,24 @@ settingsRoutes.put("/ai", async (c) => {
     configService.save();
 
     return c.json(ok(stripSensitiveFields(updated)));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/**
+ * GET /settings/ai/providers/status — which CLI providers registered, and why one did not.
+ *
+ * Settings builds its provider tabs from config, which keeps a codex entry
+ * forever once it has been written — so the tab is there while chat offers no
+ * Codex at all. This is what lets that tab say which of the two it is.
+ */
+settingsRoutes.get("/ai/providers/status", (c) => c.json(ok(providerProbeStatuses())));
+
+/** POST /settings/ai/providers/:id/probe — probe now, ahead of the backoff */
+settingsRoutes.post("/ai/providers/:id/probe", async (c) => {
+  try {
+    return c.json(ok(await retryProviderProbe(c.req.param("id"))));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
