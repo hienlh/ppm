@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Trash2, Power, PowerOff, Puzzle, FolderSymlink, Loader2 } from "@/lib/icons";
+import { extensionIcon } from "@/lib/extension-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";
@@ -165,7 +166,13 @@ export function ExtensionManagerSection() {
                 className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
               >
                 <div className="size-8 rounded-md bg-background flex items-center justify-center shrink-0">
-                  <Puzzle className="size-4 text-muted-foreground" />
+                  {/* The manifest's own icon, the same one its panels' tabs get.
+                      A list of puzzle pieces distinguishes nothing, and the
+                      field has been on the API all along. */}
+                  {(() => {
+                    const Icon = extensionIcon(ext.icon) ?? Puzzle;
+                    return <Icon className="size-4 text-muted-foreground" />;
+                  })()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium truncate">{ext.displayName || ext.id}</p>

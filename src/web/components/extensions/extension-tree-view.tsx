@@ -1,6 +1,7 @@
 import { useCallback, useState, useRef, useMemo } from "react";
-import { ChevronRight, ChevronDown, RefreshCw, Pencil, Trash2, Plus, Search } from "@/lib/icons";
+import { ChevronRight, ChevronDown, RefreshCw } from "@/lib/icons";
 import { useExtensionStore, type TreeItemUI, type TreeItemAction } from "@/stores/extension-store";
+import { extensionIcon } from "@/lib/extension-icons";
 import { cn } from "@/lib/utils";
 
 interface ExtensionTreeViewProps {
@@ -21,14 +22,6 @@ function executeCommand(command: string, args?: unknown[]) {
     detail: { command, args },
   }));
 }
-
-const ACTION_ICONS: Record<string, React.ElementType> = {
-  refresh: RefreshCw,
-  edit: Pencil,
-  trash: Trash2,
-  plus: Plus,
-  search: Search,
-};
 
 /** Generic TreeView renderer for extension-contributed tree data */
 export function ExtensionTreeView({ viewId, className }: ExtensionTreeViewProps) {
@@ -75,7 +68,7 @@ export function ExtensionTreeView({ viewId, className }: ExtensionTreeViewProps)
         <div className="flex items-center gap-0.5">
           {viewMeta.headerActions.map((action) => {
             const iconName = action.icon ?? inferIcon(action.command);
-            const Icon = ACTION_ICONS[iconName] ?? RefreshCw;
+            const Icon = extensionIcon(iconName) ?? RefreshCw;
             return (
               <button
                 key={action.command}
@@ -213,7 +206,7 @@ function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; vi
 
 function ActionButton({ action }: { action: TreeItemAction }) {
   const [spinning, setSpinning] = useState(false);
-  const Icon = ACTION_ICONS[action.icon] ?? RefreshCw;
+  const Icon = extensionIcon(action.icon) ?? RefreshCw;
   const isTrash = action.icon === "trash";
 
   const handleClick = useCallback((e: React.MouseEvent) => {

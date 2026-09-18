@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **An extension's panels wear the icon its manifest declares.** Git Graph, Blame, File History, Compare, Interactive Rebase and Reflog were six tabs with the same puzzle piece on them, and the extension list in Settings drew one too — the names had been in the manifest all along, with nothing reading them. Three separate half-tables of icon names became one, so a name that works in the command palette now works on a tab and in a tree view as well.
+
 ### Changed
 - **The Git Graph is panned by dragging it, and has no scrollbar of its own.** The scrollbar sat in the 24px header row with its thumb across the word "Graph", and moving it under the header only traded that for a strip taking a row between the header and the first commit. Drag the graph sideways instead — the pointer says so, a finger still scrolls the list vertically, and a drag no longer opens the commit it ends on. A thin marker shows where in the lanes you are while something is moving them, and fades out after.
 

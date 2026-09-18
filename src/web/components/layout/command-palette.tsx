@@ -3,19 +3,15 @@ import {
   Terminal,
   MessageSquare,
   GitCommitHorizontal,
-  GitBranch,
   Puzzle,
   Settings,
   Database,
   Search,
-  FileCode,
   FilePlus,
   FolderOpen,
   Loader2,
   Globe,
   Mic,
-  RefreshCw,
-  Plus,
   Columns2,
   Cloud,
   AppWindow,
@@ -33,6 +29,7 @@ import { useIsTouchOnly } from "@/hooks/use-is-touch-only";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useExtensionStore } from "@/stores/extension-store";
+import { extensionIcon } from "@/lib/extension-icons";
 import { useCompareStore } from "@/stores/compare-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { api } from "@/lib/api-client";
@@ -60,19 +57,6 @@ interface CommandItem {
 }
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
-
-/** Map extension icon string names to lucide components */
-const EXT_ICON_MAP: Record<string, React.ElementType> = {
-  "git-branch": GitBranch,
-  "database": Database,
-  "refresh": RefreshCw,
-  "plus": Plus,
-  "terminal": Terminal,
-  "settings": Settings,
-  "search": Search,
-  "file-code": FileCode,
-  "globe": Globe,
-};
 
 /** Format a keybinding combo for display (e.g. "Mod+G" → "⌘G" on Mac, "Ctrl+G" on others) */
 function formatShortcut(combo: string): string {
@@ -296,7 +280,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         id: `ext:${cmd.command}`,
         label: cmd.title,
         hint: cmd.category,
-        icon: (cmd.icon && EXT_ICON_MAP[cmd.icon]) || Puzzle,
+        icon: extensionIcon(cmd.icon) ?? Puzzle,
         group: "action" as const,
         keywords: `extension ${cmd.command} ${cmd.category ?? ""}`,
         shortcut: shortcutCombo ? formatShortcut(shortcutCombo) : undefined,
