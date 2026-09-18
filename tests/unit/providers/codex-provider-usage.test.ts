@@ -34,9 +34,35 @@ describe("Codex provider usage account", () => {
       return {};
     }));
 
-    const usage = await new CodexAppServerProvider().getUsage("usage-bound");
+    const usage = await new CodexAppServerProvider().getUsage("usage-bound", account("Ignored preview").id);
     expect(start).toHaveBeenCalledWith({ cwd: process.cwd(), codexHome: bound.home });
     expect(usage).toMatchObject({ fiveHour: 0.17, activeAccountId: bound.id, activeAccountLabel: bound.label });
+  });
+
+  it("reads the claimed account's quota before the first chat message", async () => {
+    account("Another available account");
+    const picked = account("New tab's chosen account");
+    const start = spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation(() => {});
+    spies.push(start);
+    spies.push(spyOn(CodexJsonRpcClient.prototype, "notify").mockImplementation(() => {}));
+    spies.push(spyOn(CodexJsonRpcClient.prototype, "close").mockImplementation(() => {}));
+    spies.push(spyOn(CodexJsonRpcClient.prototype, "request").mockImplementation(async (method) => {
+      if (method === "account/rateLimits/read") {
+        return { rateLimits: { primary: { usedPercent: 0 }, secondary: { usedPercent: 57 }, planType: "plus" } };
+      }
+      return {};
+    }));
+    const usage = await new CodexAppServerProvider().getUsage(undefined, picked.id);
+    expect(start).toHaveBeenCalledWith({ cwd: process.cwd(), codexHome: picked.home });
+    expect(usage).toMatchObject({ fiveHour: 0, sevenDay: 0.57, activeAccountId: picked.id, activeAccountLabel: picked.label });
+  });
+
+  it("does not substitute another account when a new tab's claim was deleted", async () => {
+    account("Unrelated account");
+    const start = spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation(() => {});
+    spies.push(start);
+    expect(await new CodexAppServerProvider().getUsage(undefined, "deleted-preview")).toEqual({});
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("does not query an unrelated login before a managed session is bound", async () => {

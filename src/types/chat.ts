@@ -70,7 +70,7 @@ export interface AIProvider {
   /** Drop runtime skill discovery results after a user requests a refresh. */
   invalidateSkillsCache?(): void;
   /** Provider-specific usage/quota (rate limits). Used by GET /chat/usage. */
-  getUsage?(sessionId?: string): Promise<UsageInfo>;
+  getUsage?(sessionId?: string, pickedAccountId?: string): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
   /** Prompt-cache lifetime for this session, in ms — how long holding its subprocess pays. */

@@ -1147,12 +1147,14 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   /** Read the session's account without advancing the account-selection strategy. */
-  async getUsage(sessionId?: string): Promise<UsageInfo> {
+  async getUsage(sessionId?: string, pickedAccountId?: string): Promise<UsageInfo> {
     // Idempotent, and needed because a caller can reach the provider before the
     // server has started background polling — an unregistered source would make
     // the shared layer answer {} instead of reading codex.
     registerUsageSource(codexUsageSource);
-    const accountId = sessionId ? getSessionCodexAccount(sessionId) : null;
+    // An unopened chat has a claimed account but no session binding yet.
+    // Read that exact account without advancing the selection strategy.
+    const accountId = sessionId ? getSessionCodexAccount(sessionId) : pickedAccountId ?? null;
     const bound = accountId ? getCodexAccount(accountId) : null;
     if (bound) {
       // Through the shared layer, so this answers from the cache or the stored
@@ -1166,12 +1168,12 @@ export class CodexAppServerProvider implements AIProvider {
       };
     }
 
-    // Nothing bound yet — a session binds on its first send. Name the account
+    // No binding or explicit tab claim — a session binds on its first send. Name the account
     // that will serve it, but do NOT read its quota: that spawns an app-server
     // against a login which is not yet this session's, and which a round-robin
     // or lowest-usage pick may never hand it. So the toolbar can say WHO will
     // answer without PPM touching that account on a session's behalf before
-    // the session owns it. The numbers arrive with the first turn.
+    // the session owns it. Quota is read once a tab claims it or a session binds it.
     //
     // Skipped when the session names an account that no longer exists: naming
     // a different one there would be a lie about a binding that already failed.

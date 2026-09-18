@@ -135,7 +135,7 @@ chatRoutes.get("/usage", async (c) => {
         const { invalidateUsage } = await import("../../services/provider-usage/usage-registry.ts");
         invalidateUsage(providerId);
       }
-      try { return c.json(ok(await provider.getUsage(c.req.query("session")))); } catch { return c.json(ok({})); }
+      try { return c.json(ok(await provider.getUsage(c.req.query("session"), c.req.query("accountId")))); } catch { return c.json(ok({})); }
     }
     return c.json(ok({}));
   }

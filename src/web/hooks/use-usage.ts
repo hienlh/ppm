@@ -26,8 +26,9 @@ interface UseUsageReturn {
  * `sessionId` scopes the reported account to this session's binding. Without it the header
  * shows whichever account ran last across every open session, which is wrong for all but one.
  */
-export function useUsage(projectName: string, providerId = "claude", sessionId?: string): UseUsageReturn {
-  const scope = JSON.stringify([projectName, providerId, sessionId]);
+export function useUsage(projectName: string, providerId = "claude", sessionId?: string, pickedAccountId?: string): UseUsageReturn {
+  const previewAccountId = providerId === "codex" && !sessionId ? pickedAccountId : undefined;
+  const scope = JSON.stringify([projectName, providerId, sessionId, previewAccountId]);
   const [snapshot, setSnapshot] = useState<{ scope: string; usage: UsageInfo; fetchedAt: string | null } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -39,11 +40,12 @@ export function useUsage(projectName: string, providerId = "claude", sessionId?:
     setUsageLoading(true);
     const qs = forceRefresh ? "&refresh=1" : "";
     const sessionQs = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
+    const accountQs = previewAccountId ? `&accountId=${encodeURIComponent(previewAccountId)}` : "";
     // Via api.get, not raw fetch: the toolbar's loading state is gated on this
     // settling, and a raw fetch has no timeout to stop it stalling forever.
     return api
       .get<(UsageInfo & { lastFetchedAt?: string }) | null>(
-        `${projectUrl(projectName)}/chat/usage?providerId=${providerId}${sessionQs}${qs}`,
+        `${projectUrl(projectName)}/chat/usage?providerId=${providerId}${sessionQs}${accountQs}${qs}`,
       )
       .then((data) => {
         if (request !== requestRef.current) return;
@@ -55,7 +57,7 @@ export function useUsage(projectName: string, providerId = "claude", sessionId?:
       .finally(() => {
         if (request === requestRef.current) setUsageLoading(false);
       });
-  }, [projectName, providerId, sessionId, scope]);
+  }, [projectName, providerId, sessionId, previewAccountId, scope]);
 
   // Read cache on mount + auto-read every POLL_INTERVAL
   useEffect(() => {

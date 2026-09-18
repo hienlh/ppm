@@ -90,7 +90,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   // Usage runs independently — auto-refreshes on interval. Scoped to this session so the
   // account shown is the one bound to it, not whichever session ran most recently.
   const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, reloadUsage } =
-    useUsage(projectName, providerId, sessionId ?? undefined);
+    useUsage(projectName, providerId, sessionId ?? undefined,
+      metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined);
 
   // Draft auto-save/restore
   const { draft, draftLoading, saveDraft, clearDraft } = useDraft(projectName, sessionId);
