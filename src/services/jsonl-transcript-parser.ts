@@ -9,6 +9,8 @@ import { homedir } from "node:os";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { stripSharedContext } from "../shared/provider-context.ts";
+import { readLines } from "./read-lines.ts";
+import { readCompactions, applyCompactions } from "./compaction-savings.ts";
 
 /**
  * How large a transcript this module will look at, for the callers that go
@@ -307,48 +309,6 @@ export function validateJsonlPath(inputPath: string, maxBytes = MAX_FILE_SIZE): 
   return real;
 }
 
-/**
- * Yield a file's lines without holding the file in memory.
- *
- * `Bun.file().text()` plus `split("\n")` costs the whole transcript twice over —
- * 277MB resident for a 77MB file, which is what forced a cap low enough to
- * reject real sessions. Peak here is one chunk plus one line.
- */
-async function* readLines(filePath: string, fromByte = 0): AsyncGenerator<string> {
-  const decoder = new TextDecoder();
-  // Explicit reader rather than `for await` over the stream: the DOM lib's
-  // ReadableStream is not typed as async-iterable, and the `finally` is what
-  // releases it when a caller breaks early on `beforeUuid`.
-  // One byte *before* the offset, so the first line the split produces is
-  // always the tail of the record the offset fell inside — the empty string
-  // when it fell exactly on a newline. That makes the drop below unconditional
-  // instead of a boundary case, and a boundary case here silently costs a whole
-  // record rather than a fragment.
-  const file = fromByte > 0 ? Bun.file(filePath).slice(fromByte - 1) : Bun.file(filePath);
-  const reader = file.stream().getReader();
-  // A fragment is not always unparseable — the tail of one record is sometimes
-  // a complete smaller document — so it has to go by position rather than be
-  // left for `JSON.parse` to reject, or it enters as an invented message.
-  let dropPartial = fromByte > 0;
-  let buffered = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffered += decoder.decode(value, { stream: true });
-      const lines = buffered.split("\n");
-      buffered = lines.pop() ?? "";
-      for (const line of lines) {
-        if (dropPartial) { dropPartial = false; continue; }
-        yield line;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  buffered += decoder.decode();
-  if (buffered && !dropPartial) yield buffered;
-}
 
 /**
  * Read a JSONL transcript file, parse entries, apply merge/nest pipeline, return ChatMessage[].
@@ -417,6 +377,11 @@ export async function parseJsonlTranscript(
   // Lazy import: merger depends on this module (parseSessionMessage).
   const { mergeSubagentChildren } = await import("./subagent-transcript-merger.ts");
   mergeSubagentChildren(filePath.replace(/\.jsonl$/, ""), merged);
+
+  // An expanded segment opens with its own compact summary, so it needs the same
+  // divider the newest one gets — otherwise only the last compaction in a chat is
+  // labelled and the earlier ones read as ordinary messages.
+  applyCompactions(merged, await readCompactions(filePath).catch(() => new Map()));
 
   return merged.filter(
     (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),

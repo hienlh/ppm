@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
 import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "@/lib/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
+import { useWhisperVoiceInput } from "@/hooks/use-whisper-voice-input";
+import { useSettingsStore } from "@/stores/settings-store";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { downscaleImage } from "@/lib/image-resize";
 import { INLINE_IMAGE_LIMITS } from "@/lib/image-resize-limits";
@@ -18,6 +20,8 @@ import type { SlashItem } from "./slash-command-picker";
 import { fetchSlashItems, clearSlashItemsCache } from "@/lib/slash-items-cache";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
+import { PromptCacheChip } from "./prompt-cache-chip";
+import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
 
 /**
  * Base64 payload for an image file, or undefined when it cannot be read.
@@ -124,6 +128,8 @@ interface MessageInputProps {
   thinking?: boolean;
   /** Thinking toggle handler */
   onThinkingChange?: (enabled: boolean) => void;
+  /** This session's prompt-cache clock, for the countdown chip */
+  promptCache?: PromptCacheState | null;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -158,6 +164,7 @@ export const MessageInput = memo(function MessageInput({
   onEffortChange,
   thinking,
   onThinkingChange,
+  promptCache,
 }: MessageInputProps) {
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
@@ -233,8 +240,16 @@ export const MessageInput = memo(function MessageInput({
     [getUserHistory, writeTextareas, getVisibleTextarea],
   );
 
-  // Voice input (Web Speech API)
-  const voice = useVoiceInput();
+  // Voice input. Two engines behind the same button: the browser's own
+  // recogniser (text appears as you speak, but Chrome/Edge/Safari only) and
+  // Whisper running on the PPM host (any browser, answers once at the end).
+  // Settings picks, per device; an engine the device cannot do falls back.
+  const voiceEngine = useSettingsStore((s) => s.voiceEngine);
+  const browserVoice = useVoiceInput();
+  const whisperVoice = useWhisperVoiceInput();
+  const useWhisper = voiceEngine === "whisper" && whisperVoice.supported;
+  const voice = useWhisper ? whisperVoice : browserVoice;
+  const isTranscribing = useWhisper && whisperVoice.isTranscribing;
   // Store pre-voice text so voice appends to existing input
   const preVoiceTextRef = useRef("");
   const voiceResultCb = useCallback((text: string) => {
@@ -253,13 +268,20 @@ export const MessageInput = memo(function MessageInput({
     }
   }, [writeTextareas, getVisibleTextarea]);
   const handleVoiceToggle = useCallback(() => {
+    // The shortcut reaches this while Whisper is still working on the last
+    // recording, where the button is already disabled.
+    if (isTranscribing) return;
     if (voice.isListening) {
       voice.stop();
     } else {
       preVoiceTextRef.current = valueRef.current.trim();
       voice.start(voiceResultCb);
     }
-  }, [voice.isListening, voice.start, voice.stop, voiceResultCb]);
+  }, [voice.isListening, voice.start, voice.stop, voiceResultCb, isTranscribing]);
+
+  const micLabel = isTranscribing
+    ? "Transcribing"
+    : voice.isListening ? "Stop voice input" : "Start voice input";
 
   // Listen for global keyboard shortcut (Cmd+Shift+V) to toggle voice.
   // Guarded so that only the focused panel's chat reacts — every chat tab stays
@@ -619,7 +641,13 @@ export const MessageInput = memo(function MessageInput({
     slashPickerOpenRef.current = false;
     onFileStateChange?.(false, "");
     filePickerOpenRef.current = false;
-    if (voice.isListening) voice.stop();
+    // Sending closes the mic. Whisper's recording is dropped rather than
+    // transcribed: its text would arrive seconds later, into the box the
+    // message just left.
+    if (voice.isListening) {
+      if (useWhisper) whisperVoice.cancel();
+      else voice.stop();
+    }
     onSend(content, readyAttachments, isStreaming ? priority : undefined);
     writeTextareas("");
     // Revoke preview URLs
@@ -635,7 +663,8 @@ export const MessageInput = memo(function MessageInput({
       if (textareaRef.current) textareaRef.current.style.height = "auto";
       if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
     }
-  }, [attachments, agentTag, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas]);
+  }, [attachments, agentTag, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas,
+      voice.isListening, voice.stop, whisperVoice.cancel, useWhisper]);
 
   const handleSend = useCallback(() => {
     if (disabled) return;
@@ -857,7 +886,7 @@ export const MessageInput = memo(function MessageInput({
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: mode chip + provider selector row */}
-        <div className="flex items-center gap-1 px-2 pt-2 md:hidden relative">
+        <div className="flex flex-wrap items-center gap-1 px-2 pt-2 md:hidden relative">
           <ModeChip
             mode={permissionMode ?? "bypassPermissions"}
             onClick={() => setModeSelectorOpen((v) => !v)}
@@ -889,6 +918,7 @@ export const MessageInput = memo(function MessageInput({
             />
           )}
           {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+          <PromptCacheChip promptCache={promptCache ?? null} />
         </div>
         {/* Mobile: single row — attach + textarea + mic + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
@@ -918,15 +948,17 @@ export const MessageInput = memo(function MessageInput({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
-              disabled={disabled}
+              disabled={disabled || isTranscribing}
               className={`flex items-center justify-center size-8 shrink-0 rounded-[10px] transition-colors disabled:opacity-50 ${
                 voice.isListening
                   ? "bg-error text-white animate-pulse"
                   : "text-text-3 hover:text-text-primary"
               }`}
-              aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
+              aria-label={micLabel}
             >
-              {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              {isTranscribing
+                ? <Loader2 className="size-4 animate-spin" />
+                : voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
             </button>
           )}
           {showCancel ? (
@@ -952,7 +984,7 @@ export const MessageInput = memo(function MessageInput({
         {/* Desktop: chips row (permission + model) then a single input row
             (paperclip | textarea | mic | send) — design PPMWorkspace composer. */}
         <div className="hidden md:block">
-          <div className="flex items-center gap-1.5 px-2.5 pt-2.5">
+          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5">
             {/* Mode indicator chip */}
             <div className="relative">
               <ModeChip
@@ -988,6 +1020,7 @@ export const MessageInput = memo(function MessageInput({
               />
             )}
             {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+            <PromptCacheChip promptCache={promptCache ?? null} />
           </div>
           <div className="flex items-end gap-2 px-2.5 py-2">
             <button
@@ -1016,15 +1049,17 @@ export const MessageInput = memo(function MessageInput({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
-                disabled={disabled}
+                disabled={disabled || isTranscribing}
                 className={`flex items-center justify-center size-[34px] shrink-0 rounded-[10px] transition-colors disabled:opacity-50 ${
                   voice.isListening
                     ? "bg-error text-white animate-pulse"
                     : "text-text-3 hover:text-text-primary hover:bg-surface-elevated"
                 }`}
-                aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
+                aria-label={micLabel}
               >
-                {voice.isListening ? <MicOff className="size-[17px]" /> : <Mic className="size-[17px]" />}
+                {isTranscribing
+                  ? <Loader2 className="size-[17px] animate-spin" />
+                  : voice.isListening ? <MicOff className="size-[17px]" /> : <Mic className="size-[17px]" />}
               </button>
             )}
             {showCancel ? (

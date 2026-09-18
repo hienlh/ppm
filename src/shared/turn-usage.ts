@@ -46,6 +46,36 @@ export interface TurnUsage {
    */
   accountId?: string;
   accountLabel?: string;
+  /**
+   * Live context held at the end of the turn — what the next message actually replays.
+   *
+   * Not derivable from anything else on this type. Every other field here is summed out of
+   * the result's `modelUsage`, which the SDK accumulates across a streaming session and
+   * across subagents: one measured session reported 55.9M prefix tokens against a 200k
+   * window, and per-turn deltas fare no better (one turn's delta was 4.2M — twenty-one
+   * windows — because twenty subagents each replayed their own prefix into the same sum).
+   *
+   * This comes instead from the `usage` on the turn's last top-level assistant message,
+   * which is one API call's own input side and so is a real context size. Absent when no
+   * such message carried usage; never substitute a summed figure for it.
+   */
+  contextTokens?: number;
+  /**
+   * Cache window the API reported for this turn, when it reported one.
+   *
+   * Outranks the provider's credential-shaped guess wherever both exist — see
+   * `messageCacheTtl`. Absent on a turn that only read the cache, and on every turn recorded
+   * before PPM read this field.
+   */
+  cacheTtlMs?: number;
+  /**
+   * When a compaction invalidated this session's cache, if one did and nothing re-cached after.
+   *
+   * Not a timestamp of "the last compaction" — the provider clears it on the next API call,
+   * so an auto-compact mid-turn never reaches here. What survives is a compaction the turn
+   * ended on, which is the case where the user's next message pays to rebuild the prefix.
+   */
+  compactedAt?: number;
 }
 
 /** Total prefix replayed to the API this turn, cached or not. */
@@ -66,7 +96,7 @@ export function uncachedPrefixTokens(u: TurnUsage): number {
  */
 export function buildTurnUsage(
   modelUsage: Record<string, ModelUsageLike> | undefined,
-  opts: { coldReason?: string; accountId?: string; accountLabel?: string } = {},
+  opts: { coldReason?: string; accountId?: string; accountLabel?: string; contextTokens?: number; cacheTtlMs?: number; compactedAt?: number } = {},
 ): TurnUsage | undefined {
   if (!modelUsage) return undefined;
   const entries = Object.entries(modelUsage);
@@ -113,7 +143,61 @@ export function buildTurnUsage(
     ...(opts.coldReason && { coldReason: opts.coldReason }),
     ...(opts.accountId && { accountId: opts.accountId }),
     ...(opts.accountLabel && { accountLabel: opts.accountLabel }),
+    ...(opts.contextTokens != null && { contextTokens: opts.contextTokens }),
+    ...(opts.cacheTtlMs != null && { cacheTtlMs: opts.cacheTtlMs }),
+    ...(opts.compactedAt != null && { compactedAt: opts.compactedAt }),
   };
+}
+
+/**
+ * Context size carried by one assistant message's `usage`, or undefined if it carried none.
+ *
+ * The input side of a single API call: what the model was actually given, whether it arrived
+ * fresh or out of the cache. Output tokens are excluded — they are not in the context the
+ * *next* call replays until they have been written back as a message, and counting them here
+ * would inflate every turn by its own answer.
+ */
+export function messageContextTokens(usage: unknown): number | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const u = usage as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const total = num(u.input_tokens) + num(u.cache_read_input_tokens) + num(u.cache_creation_input_tokens);
+  // Zero is not a context, it is a frame that carried no input side — a usage object with
+  // only output tokens, say. Returning it would render as "re-sends about 0 tokens" on a
+  // full session. Matches Claude Code's own reader, which likewise sums all three fields
+  // without requiring any one of them and rejects a zero total.
+  return total > 0 ? total : undefined;
+}
+
+/** Which prompt-cache window the API wrote this turn's prefix into. */
+export type PromptCacheTtl = "1h" | "5m";
+
+/**
+ * The cache lifetime the API itself reports, or undefined when it reported none.
+ *
+ * PPM otherwise *infers* this from the credential — an `sk-ant-oat` token means a
+ * subscription and therefore an hour, anything else five minutes — which is a guess about
+ * billing made from the shape of a string. It is wrong for a proxy, for a custom `base_url`,
+ * and for a subscription past its usage limits, and being wrong is not cosmetic: the
+ * countdown and the idle banner both measure against this, so a session whose cache really
+ * lives an hour is declared cold at minute five.
+ *
+ * `usage.cache_creation` answers it outright. Mirrors Claude Code's own reader, including
+ * the order: a prefix written into both windows is reported as the longer one, because that
+ * is the one still standing. Returns the discriminant rather than milliseconds so this stays
+ * free of the server's constants — `shared/` is imported by the browser bundle.
+ */
+export function messageCacheTtl(usage: unknown): PromptCacheTtl | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const cc = (usage as { cache_creation?: unknown }).cache_creation;
+  if (!cc || typeof cc !== "object") return undefined;
+  const c = cc as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  if (num(c.ephemeral_1h_input_tokens) > 0) return "1h";
+  if (num(c.ephemeral_5m_input_tokens) > 0) return "5m";
+  // A turn that only *read* the cache writes nothing, so it names no window. That is silence,
+  // not five minutes: answering the short one here would expire a warm hour-long cache.
+  return undefined;
 }
 
 /**

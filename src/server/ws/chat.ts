@@ -3,7 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getLastTurnCacheState } from "../../services/db.service.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
@@ -15,7 +15,8 @@ import { resolveSessionDir } from "../../services/subagent-transcript-merger.ts"
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
-import { formatTurnUsageLog } from "../../shared/turn-usage.ts";
+import { formatTurnUsageLog, prefixTokens } from "../../shared/turn-usage.ts";
+import type { PromptCacheState } from "../../shared/prompt-cache-idle.ts";
 import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 
@@ -124,6 +125,14 @@ interface SessionEntry {
   idleSince?: number;
   /** When the last turn completed — the moment this session's prompt cache was last written */
   lastTurnEndedAt?: number;
+  /** Transcript replayed to the API on that turn — what re-caching it would cost again */
+  lastTurnPrefixTokens?: number;
+  /** Context that turn actually held, measured per API call rather than summed */
+  lastTurnContextTokens?: number;
+  /** Cache window the API reported on that turn, outranking the credential-shaped guess */
+  lastTurnCacheTtlMs?: number;
+  /** A compaction the last turn ended on, which leaves the cached prefix inapplicable */
+  lastTurnCompactedAt?: number;
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
 }
@@ -222,7 +231,12 @@ function scheduleSubprocessRelease(sessionId: string): void {
   const note = "Subprocess released: its prompt cache has expired, so keeping it warm saves nothing";
   // The window is the provider's to state: an API-key install's cache dies at five minutes,
   // so holding the subprocess for an hour there guards nothing and costs ~350MB.
-  const ttlMs = provider.promptCacheTtlMs?.(sessionId);
+  // The API's own answer where the turn gave one, the provider's inference otherwise: an
+  // install wrongly read as API-key would drop a subprocess at minute five and pay to rebuild
+  // a prefix whose cache had fifty-five minutes left. Entry-only, with no DB lookup — a
+  // session with no turn in this process has no `lastTurnEndedAt` either, so the delay is 0
+  // regardless of the window.
+  const ttlMs = entry.lastTurnCacheTtlMs ?? provider.promptCacheTtlMs?.(sessionId);
   const delay = cacheReleaseDelayMs(entry.lastTurnEndedAt, Date.now(), ttlMs);
   if (delay === 0) {
     releaseSubprocess(sessionId, "cache_expired", note);
@@ -233,6 +247,54 @@ function scheduleSubprocessRelease(sessionId: string): void {
     if (e) e.cacheReleaseTimer = undefined;
     releaseSubprocess(sessionId, "cache_expired", note);
   }, delay);
+}
+
+/**
+ * What a reconnecting client needs to say whether this session's prompt cache is still warm.
+ *
+ * The three facts are only known here: when the cache was last written, how long this
+ * install's caches live, and how much transcript would have to be re-sent. The browser has
+ * none of them after a reload — `ChatMessage.usage` is attached from the live `done` event
+ * and is not in the transcript — so a tab reopened the next morning would otherwise have no
+ * way to warn that the first message of the day is the expensive one.
+ *
+ * Null until a turn has both completed and reported its usage: with nothing cached there is
+ * nothing to lose, and a size PPM cannot measure must not be guessed at.
+ */
+function promptCacheSnapshot(sessionId: string, entry: SessionEntry): PromptCacheState | null {
+  const provider = providerRegistry.get(entry.providerId);
+  const declaredTtlMs = provider?.promptCacheTtlMs?.(sessionId);
+  // A provider with no opinion has no Anthropic prompt cache to warn about. Asked before the
+  // measured window is consulted, because this gate is about whether there is a cache at all.
+  if (declaredTtlMs == null) return null;
+
+  // The entry is memory, and memory is the short-lived half of this. `CLEANUP_TIMEOUT_MS`
+  // drops it five minutes after the last tab leaves, and a restart drops it at once — both
+  // well inside the hour the cache it describes actually lives. So a session reopened later
+  // has to answer from `turn_usage`, which recorded the same three facts on every turn.
+  // Memory still wins when it has them: it is this process's own turn, with no clock
+  // conversion between here and SQLite's UTC text.
+  const persisted = entry.lastTurnEndedAt == null ? getLastTurnCacheState(sessionId) : null;
+  const lastTurnEndedAt = entry.lastTurnEndedAt ?? persisted?.endedAtMs;
+  const billedPrefixTokens = entry.lastTurnPrefixTokens ?? persisted?.prefixTokens;
+  const contextTokens = entry.lastTurnContextTokens ?? persisted?.contextTokens;
+  // `usage.cache_creation` beats the guess `promptCacheTtlMs` makes from the credential's
+  // shape, which is wrong for a proxy, a custom base_url, or a subscription past its limits.
+  const ttlMs = entry.lastTurnCacheTtlMs ?? persisted?.cacheTtlMs ?? declaredTtlMs;
+  // Memory first again, and here that matters in the other direction: a live entry that has
+  // re-cached since holds `undefined`, which must beat the stale compaction still on the
+  // row this session's last turn wrote.
+  const compactedAt = entry.lastTurnEndedAt != null ? entry.lastTurnCompactedAt : persisted?.compactedAt;
+
+  return {
+    ttlMs,
+    // Sent even before a turn has completed: the window is the install's, and a tab that
+    // stays connected all day needs it to arm the notice from its own turns.
+    ...(lastTurnEndedAt != null && { lastTurnEndedAt }),
+    ...(billedPrefixTokens != null && { billedPrefixTokens }),
+    ...(contextTokens != null && { contextTokens }),
+    ...(compactedAt != null && { compactedAt }),
+  };
 }
 
 /** Push the current background-shell registry snapshot to a session's clients. */
@@ -784,6 +846,13 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // release pending from the disconnect was timed against the previous turn — re-time it
         // or it fires while the cache it was protecting is still fresh.
         entry.lastTurnEndedAt = Date.now();
+        if (ev.usage) entry.lastTurnPrefixTokens = prefixTokens(ev.usage);
+        if (ev.usage?.contextTokens != null) entry.lastTurnContextTokens = ev.usage.contextTokens;
+        if (ev.usage?.cacheTtlMs != null) entry.lastTurnCacheTtlMs = ev.usage.cacheTtlMs;
+        // Assigned rather than only-when-present: the provider clears this the moment an API
+        // call re-caches, and that clearing is the signal the cache is usable again. Skipping
+        // the undefined case would leave a session cold for the rest of its life.
+        if (ev.usage) entry.lastTurnCompactedAt = ev.usage.compactedAt;
         if (entry.clients.size === 0) scheduleSubprocessRelease(sessionId);
 
         // Fire-and-forget: fetch updated session title (DB title takes priority) + notification
@@ -992,6 +1061,7 @@ export const chatWebSocket = {
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
+        promptCache: promptCacheSnapshot(sessionId, existing),
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -1124,6 +1194,7 @@ export const chatWebSocket = {
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
+        promptCache: promptCacheSnapshot(sessionId, entry),
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);

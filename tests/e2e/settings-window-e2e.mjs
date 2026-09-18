@@ -663,7 +663,7 @@ async function main() {
 
   step("4. Chat usage chip (desktop)");
   // Also read-only. It opens a chat tab to reach the chip and closes it again in teardown.
-  await scenario("chat: the usage panel shows usage and NO account management", async () => {
+  await scenario("chat: the usage panel carries the account switch and nothing more", async () => {
     // A fresh tab, never a reused one: `openTab` puts it in the focused panel and activates
     // it, whereas an existing chat tab can sit in a panel that is not currently showing —
     // its chip is then in the DOM but display:none, which says nothing about the chip.
@@ -721,19 +721,29 @@ async function main() {
     await clickVisible(cdp, visibleOne('button[title="Usage limits"]'), "usage chip");
     await waitFor(cdp, `Boolean(${visibleOne('button[title="Add, remove or rotate accounts"]')})`, "usage panel");
 
-    // The point of the split: management must not exist here any more, or the two copies can
-    // drift again. Scoped to the panel, since the Settings window may also be open.
-    const stray = await cdp.evaluate(`(() => {
+    // Where the split falls. Parking an account is a reaction to the numbers on this panel,
+    // so the switch lives here as well as in Settings — off the same `patchAccount`, not a
+    // second implementation. Adding, removing, exporting and importing are not reactions to
+    // usage and must not come back, or the two copies can drift again. Scoped to the panel,
+    // since the Settings window may also be open.
+    const panelControls = await cdp.evaluate(`(() => {
       const link = ${visibleOne('button[title="Add, remove or rotate accounts"]')};
       const panel = link?.closest('div.relative');
-      if (!panel) return "no panel";
+      if (!panel) return { stray: "no panel" };
       const labels = ["Add", "Export", "Import", "Add account"];
-      const found = [...panel.querySelectorAll('button')]
-        .map((b) => b.textContent?.trim())
-        .filter((t) => labels.includes(t));
-      return found.length ? found.join(", ") : "";
+      return {
+        stray: [...panel.querySelectorAll('button')]
+          .map((b) => b.textContent?.trim())
+          .filter((t) => labels.includes(t))
+          .join(", "),
+        switches: panel.querySelectorAll('[data-testid="account-card"] button[role="switch"]').length,
+      };
     })()`);
-    if (stray) throw new Error(`the chat usage panel still offers account management: ${stray}`);
+    if (panelControls.stray) {
+      throw new Error(`the chat usage panel still offers account management: ${panelControls.stray}`);
+    }
+    // Presence only — this harness never flips it, because these are the host's real accounts.
+    if (!panelControls.switches) throw new Error("the chat usage panel has no account switch");
   });
   await cdp.screenshot(join(SHOTS, "settings-07-chat-usage-panel.png"));
 

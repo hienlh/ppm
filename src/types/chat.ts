@@ -221,4 +221,31 @@ export interface ChatMessage {
   sdkUuid?: string;
   /** Token split for the turn that produced this message; drives the cost warning. */
   usage?: import("../shared/turn-usage").TurnUsage;
+  /**
+   * Set only on the compact-summary message that opens a post-compaction segment,
+   * so the divider above it can say what the compaction cost and saved.
+   */
+  compaction?: CompactionInfo;
+}
+
+/**
+ * What one compaction did, read back from the `compact_boundary` record Claude Code
+ * writes into the transcript.
+ *
+ * Taken from the file rather than from the live `compact_boundary` event because the
+ * figure has to survive a reload: the turn that compacts ends by refetching history,
+ * so a notice that existed only in WebSocket state would vanish seconds after it
+ * appeared. The event carries the same numbers and is deliberately not plumbed.
+ */
+export interface CompactionInfo {
+  /** `auto` when the context window forced it, `manual` when the user ran /compact. */
+  trigger: "manual" | "auto";
+  /** Transcript size going in. */
+  preTokens: number;
+  /** Size of the summary that replaced it. */
+  postTokens: number;
+  /** `preTokens - postTokens` — this compaction alone, not the session's running total. */
+  savedTokens: number;
+  /** How long the compaction took, when the record says. */
+  durationMs?: number;
 }

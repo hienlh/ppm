@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { resolveBunPath } from "../../services/autostart-generator.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./codex-protocol.ts";
 
@@ -38,6 +39,19 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
   return out;
 }
 
+/**
+ * The argv that runs the scoped `@openai/codex` package through bun's resolver.
+ *
+ * Not `process.execPath`: that is bun only when PPM runs from source. A compiled PPM is
+ * its own executable, so `<ppm> x @openai/codex app-server` reached PPM's CLI, which
+ * rejects `x` — every spawn ended as "codex subprocess exited". The availability probe
+ * hid it, because `<ppm> x @openai/codex --version` is answered by PPM's own `--version`
+ * with exit 0, so the provider registered as installed on exactly those hosts.
+ */
+export function codexCommand(...args: string[]): string[] {
+  return [resolveBunPath(), "x", "@openai/codex", ...args];
+}
+
 function validId(id: unknown): id is number | string {
   return typeof id === "number" || typeof id === "string";
 }
@@ -62,7 +76,8 @@ export class CodexJsonRpcClient {
   start(opts?: { cwd?: string; codexHome?: string }): void {
     const env = buildSpawnEnv();
     if (opts?.codexHome) env.CODEX_HOME = opts.codexHome;
-    this.proc = spawn(process.execPath, ["x", "@openai/codex", "app-server"], {
+    const [cmd, ...args] = codexCommand("app-server");
+    this.proc = spawn(cmd!, args, {
       cwd: opts?.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env,

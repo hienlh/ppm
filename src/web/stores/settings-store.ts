@@ -15,6 +15,8 @@ export type EditorTabStyle = "default" | "boxed" | "pill";
 export type DockPosition = "left" | "bottom" | "right";
 /** OS Explorer window chrome — "auto" follows the host `platform` (Linux → macOS look). */
 export type ExplorerSkinPref = "auto" | "windows" | "macos";
+/** Speech-to-text for the chat box: the browser's own recogniser, or Whisper on the PPM host. */
+export type VoiceEngine = "browser" | "whisper";
 /** Settings is deliberately absent: it opens as its own floating window (or a tab on mobile),
  *  never as a sidebar panel. See `settings/use-open-settings.ts`. */
 export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | `ext:${string}`;
@@ -50,6 +52,13 @@ interface SettingsState {
    * turn on because a desktop did.
    */
   lspEnabled: boolean;
+  /**
+   * Which engine the chat mic uses. Device-local for the same reason as
+   * `lspEnabled`: it answers "what can this browser do" — Firefox and Brave
+   * have no Web Speech API at all — and a phone must not be switched to the
+   * browser engine because a desktop Chrome preferred it.
+   */
+  voiceEngine: VoiceEngine;
   tabWrap: boolean;
   editorTabStyle: EditorTabStyle;
   sidebarActiveTab: SidebarActiveTab;
@@ -139,6 +148,7 @@ interface SettingsState {
   toggleWordWrap: () => void;
   toggleMobileWordWrap: () => void;
   setLspEnabled: (enabled: boolean) => void;
+  setVoiceEngine: (engine: VoiceEngine) => void;
   toggleTabWrap: () => void;
   setEditorTabStyle: (style: EditorTabStyle) => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
@@ -167,6 +177,7 @@ interface PersistedSettings {
   wordWrap?: boolean;
   mobileWordWrap?: boolean;
   lspEnabled?: boolean;
+  voiceEngine?: VoiceEngine;
   tabWrap?: boolean;
   editorTabStyle?: EditorTabStyle;
   sidebarActiveTab?: SidebarActiveTab;
@@ -392,6 +403,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   remoteDesktopCodec: typeof _initial.remoteDesktopCodec === "string" ? _initial.remoteDesktopCodec : null,
   mobileWordWrap: _initial.mobileWordWrap ?? true,
   lspEnabled: _initial.lspEnabled ?? false,
+  voiceEngine: _initial.voiceEngine === "whisper" ? "whisper" : "browser",
   tabWrap: _initial.tabWrap ?? false,
   editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "history",
@@ -525,6 +537,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setLspEnabled: (enabled) => {
     persistDevicePref({ lspEnabled: enabled });
     set({ lspEnabled: enabled });
+  },
+
+  setVoiceEngine: (engine) => {
+    persistDevicePref({ voiceEngine: engine });
+    set({ voiceEngine: engine });
   },
 
   setRemoteDesktopQuality: (choice) => {

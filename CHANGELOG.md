@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex disappeared from chat after a restart, and nothing on screen said why.** The provider is registered once, at startup, behind a probe that runs `bun x @openai/codex --version` — and bun re-fetches the npm manifest whenever its cached copy has gone stale, so a server restarting during a network blip probes a perfectly good install and is told `error: ConnectionRefused downloading package manifest @openai/codex`. Measured, that probe fails in **0ms**; the provider is then skipped for the whole life of the process, which on a machine running PPM as a service means until somebody thinks to restart it. There was nothing to notice it by, either: the composer hides its provider chip while only one provider is registered, so Codex did not render greyed out, it simply was not there — one line in the log was the entire record, while Settings went on showing a Codex tab, because a provider keeps its config entry once it has ever been configured. Registration is now retried on its own — 30s, 1m, 2m, 5m, then every 15 minutes, stopping the moment it succeeds and never armed at all for the one failure retrying cannot fix, a host with no bun. Verified against a real server pointed at an unreachable registry: probe 1 failed at 03:04:20, probe 2 registered at 03:04:50, no restart. Settings → AI now carries the reason on the provider's own tab with the time of the next automatic check and a **Check again** button, so the answer to "why is Codex not in the picker" is on the page rather than in `~/.ppm/ppm.log`.
+
 ## [0.22.0] - 2026-09-18
 
 ### Added

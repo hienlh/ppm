@@ -24,12 +24,13 @@ import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.servi
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionProjectPath, setSessionMetadata, getSessionTitle, setSessionTitle, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
 import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from "../services/subprocess-retention.ts";
-import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
+import { buildTurnUsage, formatTurnUsageLog, messageContextTokens, messageCacheTtl } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
+import { readCompactions, applyCompactions } from "../services/compaction-savings.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
 import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
@@ -980,6 +981,31 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultContextWindowPct: number | undefined;
     let resultCostUsd: number | undefined;
     let lastAssistantUuid: string | undefined;
+    /**
+     * Context held by the turn's most recent top-level API call.
+     *
+     * Subagent frames are excluded by `parent_tool_use_id`: an agent runs its own
+     * conversation against its own prefix, so folding its usage in here would report a
+     * context this session does not have. Last rather than first, because a turn that ran
+     * tools grew between its calls and the next message replays the grown transcript.
+     */
+    let lastContextTokens: number | undefined;
+    /**
+     * Cache window the API reported, rather than the one `promptCacheTtlMs` infers from the
+     * credential. Sticky across turns for the same reason as `lastContextTokens`: a turn that
+     * only reads the cache names no window, and that is silence rather than a change.
+     */
+    let lastCacheTtlMs: number | undefined;
+    /**
+     * When this session was compacted, while that still invalidates the cache.
+     *
+     * Set at the boundary and cleared by the next top-level API call, which caches the new
+     * prefix — so an auto-compact mid-turn clears itself before the turn even ends, and only
+     * a compaction nothing followed (an explicit `/compact`) survives to be reported. That
+     * is Claude Code's own rule: it drops the flag on the first message to arrive after the
+     * boundary.
+     */
+    let compactedAt: number | undefined;
     let yieldedDone = false;
     /**
      * Only the first turn of this query resumes onto a fresh subprocess and replays the
@@ -1350,6 +1376,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (subtype === "compact_boundary") {
             const meta = (msg as any).compact_metadata;
             console.log(`[sdk] session=${sessionId} COMPACT_BOUNDARY trigger=${meta?.trigger} pre_tokens=${meta?.pre_tokens}`);
+            compactedAt = Date.now();
             yield { type: "system" as const, subtype: "compact_done" } as ChatEvent;
             continue;
           }
@@ -1511,6 +1538,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         if (msg.type === "assistant") {
           // Track assistant UUID from top-level messages (not subagent children)
           if (!parentId && (msg as any).uuid) lastAssistantUuid = (msg as any).uuid;
+          // The one place a real context size passes through. With partial messages on, a
+          // single API call emits several assistant frames carrying the same input side, so
+          // overwriting is correct — it is the *call* being measured, not the frame.
+          if (!parentId) {
+            const usage = (msg as any).message?.usage;
+            const ctx = messageContextTokens(usage);
+            if (ctx != null) lastContextTokens = ctx;
+            const ttl = messageCacheTtl(usage);
+            if (ttl) lastCacheTtlMs = ttl === "1h" ? SUBSCRIPTION_PROMPT_CACHE_TTL_MS : API_KEY_PROMPT_CACHE_TTL_MS;
+            // This call ran against the post-compaction prefix and cached it, so the
+            // boundary no longer says anything about the cache. Gated on `ctx` rather than
+            // on the message alone: a frame carrying no input side cached nothing.
+            if (ctx != null) compactedAt = undefined;
+          }
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
           let assistantError = (msg as any).error as string | undefined;
           // Human-readable reset time + parsed timestamp for a hard usage/session limit
@@ -1984,6 +2025,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               accountId: account.id,
               accountLabel: account.label ?? account.email ?? undefined,
             }),
+            ...(lastContextTokens != null && { contextTokens: lastContextTokens }),
+            ...(lastCacheTtlMs != null && { cacheTtlMs: lastCacheTtlMs }),
+            ...(compactedAt != null && { compactedAt }),
           });
           coldReasonForNextResult = undefined;
           if (turnUsage) {
@@ -2002,6 +2046,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 coldReason: turnUsage.coldReason,
                 accountId: turnUsage.accountId,
                 accountLabel: turnUsage.accountLabel,
+                contextTokens: turnUsage.contextTokens,
+                cacheTtlMs: turnUsage.cacheTtlMs,
+                compactedAt: turnUsage.compactedAt,
               });
             } catch (err) {
               // Accounting must never break a turn that already succeeded.
@@ -2032,6 +2079,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           resultCostUsd = undefined;
           lastAssistantUuid = undefined;
           sdkEventCount = 0;
+          // `lastContextTokens` deliberately survives the reset: a context does not shrink
+          // between turns of one subprocess, so the last measurement stays true until a new
+          // call replaces it. Clearing it would report "cannot measure" for a turn that
+          // errored before its first assistant message, losing a figure that is still valid.
           // Reset auth retry budget on successful turn — each new turn gets a fresh
           // budget so OAuth tokens rotated mid-conversation can still trigger refresh
           if (!subtype || subtype === "success") authRetryCount = 0;
@@ -2202,6 +2253,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // instead of inline sidechain lines — merge them back as card children.
       const sessionDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
       if (sessionDir) mergeSubagentChildren(sessionDir, merged);
+
+      // The SDK walk stops at the `compact_boundary` record and never yields it, so what
+      // each compaction cost has to come from the file the walk read.
+      if (sessionDir) {
+        applyCompactions(merged, await readCompactions(`${sessionDir}.jsonl`).catch(() => new Map()));
+      }
 
       // A backgrounded Agent's tool result is only a launch ack; its real outcome arrives
       // later as a <task-notification>. Stamp that onto the tool_use so the card can tell
