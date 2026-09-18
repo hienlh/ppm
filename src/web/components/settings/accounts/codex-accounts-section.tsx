@@ -138,18 +138,18 @@ export function CodexAccountsSection() {
                                 </button>
                               </TooltipTrigger>
                               <TooltipContent side="top" className="max-w-64 text-xs leading-relaxed">
-                                Keeps a weekly-only Codex account on pace to last until its reset. Each day adds one seventh of the weekly quota. When usage reaches that day's cap, PPM pauses new turns until the next day. Turn it off any time to use the remaining quota freely.
+                                Spreads the weekly quota across five weekdays, adding 20% per weekday. Weekend slots keep the previous cap; unused allowance carries forward. Daily slots start at the reset time and use UTC weekdays. Turn it off any time to use the remaining quota freely.
                               </TooltipContent>
                             </Tooltip>
                           </div>
                           <p className={`text-[10px] tabular-nums ${a.dailyGuardEnabled && guard.blocked ? "text-error" : "text-text-subtle"}`}>
                             {a.dailyGuardEnabled && guard.blocked
                               ? `${Math.round(guard.used * 100)}% used / ${Math.round(guard.cap * 100)}% daily cap. New turns paused.`
-                              : `Day ${guard.day}/7, ${Math.round(guard.cap * 100)}% daily cap`}
+                              : `Weekday ${guard.day}/5, ${Math.round(guard.cap * 100)}% daily cap`}
                           </p>
                         </div>
-                        <span className="hidden" title={`Day ${guard.day}/7: hold weekly usage at or below ${Math.round(guard.cap * 100)}% to last until reset.`}>
-                          Daily guard {a.dailyGuardEnabled ? `· Day ${guard.day}/7 cap ${Math.round(guard.cap * 100)}%` : ""}
+                        <span className="hidden" title={`Weekday ${guard.day}/5: hold weekly usage at or below ${Math.round(guard.cap * 100)}% to last until reset.`}>
+                          Daily guard {a.dailyGuardEnabled ? `· Weekday ${guard.day}/5 cap ${Math.round(guard.cap * 100)}%` : ""}
                         </span>
                         <Switch
                           checked={!!a.dailyGuardEnabled}

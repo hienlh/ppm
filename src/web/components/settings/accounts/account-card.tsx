@@ -278,14 +278,14 @@ export function AccountCard({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-64 text-xs leading-relaxed">
-                  Keeps a weekly-only Codex account on pace to last until its reset. Each day adds one seventh of the weekly quota. When usage reaches that day's cap, PPM pauses new turns until the next day.
+                  Spreads the weekly quota across five weekdays, adding 20% per weekday. Weekend slots keep the previous cap; unused allowance carries forward. Daily slots start at the reset time and use UTC weekdays.
                 </TooltipContent>
               </Tooltip>
             </div>
             <p className={`text-[10px] tabular-nums ${dailyGuard.enabled && dailyGuard.state.blocked ? "text-error" : "text-text-subtle"}`}>
               {dailyGuard.enabled && dailyGuard.state.blocked
                 ? `${Math.round(dailyGuard.state.used * 100)}% used / ${Math.round(dailyGuard.state.cap * 100)}% daily cap. New turns paused.`
-                : `Day ${dailyGuard.state.day}/7, ${Math.round(dailyGuard.state.cap * 100)}% daily cap`}
+                : `Weekday ${dailyGuard.state.day}/5, ${Math.round(dailyGuard.state.cap * 100)}% daily cap`}
             </p>
           </div>
           {onDailyGuardToggle && (

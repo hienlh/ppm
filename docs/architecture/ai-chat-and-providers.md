@@ -2,6 +2,15 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Codex daily guard for weekly-only accounts
+
+Daily guard spreads a seven-day quota window across five weekdays: each weekday
+unlocks another 20% of the weekly quota. Unused allowance carries forward.
+Saturday/Sunday slots keep the previous cap; a window starting on a weekend
+opens its first allowance on Monday. Slots are 24 hours from the weekly reset
+time and use UTC weekdays, consistently in the server and browser. This does not
+change Codex's reset schedule. Users can disable the guard per account.
+
 ## Codex context settings
 
 **AI Settings → Codex** exposes **Context window (tokens)** and **Auto-compact
