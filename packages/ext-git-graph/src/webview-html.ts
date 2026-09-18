@@ -99,7 +99,7 @@ ${getStyles()}
     <div id="graph-container">
       <div id="graph-header" class="commit-row header-row">
         <div class="col-refs">Branch / Tag</div>
-        <div class="col-graph">Graph<div class="graph-hscroll hidden" id="graph-hscroll"><div id="graph-hscroll-inner"></div></div><div class="graph-resize-handle" id="graph-resize-handle"></div></div>
+        <div class="col-graph">Graph<div class="graph-resize-handle" id="graph-resize-handle"></div></div>
         <div class="col-message">Message</div>
         <div class="col-changes">Changes</div>
         <div class="col-author">Author</div>
@@ -112,6 +112,7 @@ ${getStyles()}
       </div>
       <div id="loading" class="loading hidden">Loading...</div>
     </div>
+      <div id="graph-pan-bar" class="hidden" aria-hidden="true"><div id="graph-pan-thumb"></div></div>
       <div id="scroll-markers" aria-hidden="true"></div>
     </div>
     <div id="detail-panel" class="detail-panel hidden"></div>
@@ -374,16 +375,24 @@ button:active { background: var(--surface); }
 .col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; position: relative; }
 .graph-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; background: transparent; }
 .graph-resize-handle:hover, .graph-resize-handle.dragging { background: var(--blue); opacity: 0.5; }
-/* The graph's own horizontal scrollbar, in the sticky header. It cannot sit on
-   the graph itself: that is one overlay as tall as the whole history, so a
-   scrollbar along its bottom edge would be thousands of pixels below the
-   viewport. This strip scrolls nothing — its scrollLeft is read and applied to
-   the overlay as a translation. */
-.graph-hscroll { position: absolute; left: 0; right: 6px; bottom: 0; height: 7px; overflow-x: auto; overflow-y: hidden; }
-.graph-hscroll-inner { height: 1px; }
-.graph-hscroll::-webkit-scrollbar { height: 6px; }
-.graph-hscroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
-.graph-hscroll::-webkit-scrollbar-thumb:hover { background: var(--subtext); }
+/* Panning the graph is a drag on the graph itself, so there is no scrollbar in
+   the table taking a row of its own — a real one cannot go on the overlay,
+   which is as tall as the whole history, and in a 24px header row the thumb
+   lands across the word "Graph". What is left is a hint: where in the lanes the
+   column currently is, shown while a drag or a wheel is moving it and faded out
+   after. It is positioned over the graph area rather than inside the scroller,
+   so it neither scrolls away nor displaces a row. */
+/* A row's graph cell is an empty spacer, and the row centres its cells — so
+   without this it is 0px tall and the pointer that looks like it is on the
+   graph is really on the row behind it, which is what decides whether a drag
+   pans or selects a commit. Not the header's cell: that one has a label in it,
+   and stretching it takes the label off the line the other headings sit on. */
+.commit-row:not(.header-row) .col-graph { align-self: stretch; touch-action: pan-y; }
+:root.graph-can-pan .commit-row:not(.header-row) .col-graph { cursor: grab; }
+:root.graph-panning .commit-row:not(.header-row) .col-graph { cursor: grabbing; }
+#graph-pan-bar { position: absolute; z-index: 4; bottom: 6px; left: calc(var(--refs-col-w, 170px) + 6px); width: var(--graph-col-w, 120px); height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 10%, transparent); opacity: 0; transition: opacity 0.4s ease; pointer-events: none; }
+#graph-pan-bar.visible { opacity: 1; transition-duration: 0.1s; }
+#graph-pan-thumb { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: var(--subtext); }
 /* The message never shrinks past a readable measure. Every other column is
    either fixed or hidden by the width tiers, so without a floor here this one
    absorbs the whole shortfall and disappears. */
@@ -454,7 +463,7 @@ button:active { background: var(--surface); }
    changes and author columns — it is positioned and they are not, so it wins
    the paint order — and capping the column without clipping only trades a
    missing message for one with branch lines drawn through it. What the clip
-   hides is reached by panning: --graph-pan-x, driven by the header's strip. */
+   hides is reached by panning: --graph-pan-x, driven by a drag on the graph. */
 #commit-list-wrapper { position: relative; }
 #graph-clip { position: absolute; top: 0; left: calc(var(--refs-col-w, 170px) + 6px); width: var(--graph-col-w, 120px); height: 100%; overflow: hidden; z-index: 1; pointer-events: none; }
 /* The clip box starts where the graph cell starts — 6px being the row's own
@@ -702,10 +711,6 @@ button:active { background: var(--surface); }
   #graph-container { overflow-x: auto; overflow-y: auto; }
   #find-bar { order: 0; }
   #status-bar { order: 9; }
-  /* A 6px scrollbar is a mouse's target. This is the only way to pan the graph
-     without a wheel, so it gets a thumb a finger can land on. */
-  .graph-hscroll { height: 14px; }
-  .graph-hscroll::-webkit-scrollbar { height: 12px; }
   .commit-row.header-row { min-height: 20px; }
   .detail-panel { order: 8; max-height: 35vh; }
 }
@@ -1643,12 +1648,56 @@ document.getElementById('stash-save').addEventListener('click', () => {
 
 // --- Panning the graph inside its column ---
 {
-  const strip = document.getElementById('graph-hscroll');
-  strip.addEventListener('scroll', () => {
-    if (Math.abs(strip.scrollLeft - state.graphPanX) <= 1) return;
-    state.graphPanX = strip.scrollLeft;
+  const list = document.getElementById('commit-list');
+  let tracking = false, panned = false, startX = 0, startY = 0, startPan = 0, pointerId = null;
+
+  list.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !e.target.closest || !e.target.closest('.col-graph')) return;
+    if (graphPanMax() <= 0) return;
+    tracking = true;
+    panned = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    startPan = state.graphPanX;
+    pointerId = e.pointerId;
+  });
+
+  list.addEventListener('pointermove', (e) => {
+    if (!tracking) return;
+    const dx = e.clientX - startX;
+    if (!panned) {
+      // Sideways and past the slop before this is a pan: anything else is the
+      // press that selects a commit, or the finger that scrolls the list —
+      // .col-graph is touch-action: pan-y so the browser keeps that one.
+      if (Math.abs(dx) < 4 || Math.abs(dx) <= Math.abs(e.clientY - startY)) return;
+      panned = true;
+      list.setPointerCapture(pointerId);
+      document.documentElement.classList.add('graph-panning');
+      showPanHint(true);
+    }
+    state.graphPanX = startPan - dx;
     applyGraphPan();
   });
+
+  const endPan = () => {
+    if (!tracking) return;
+    tracking = false;
+    if (!panned) return;
+    try { list.releasePointerCapture(pointerId); } catch (err) { /* already released */ }
+    document.documentElement.classList.remove('graph-panning');
+    showPanHint(false);
+  };
+  list.addEventListener('pointerup', endPan);
+  list.addEventListener('pointercancel', endPan);
+  // A drag is not a click. Captured on the way down, because the row's own
+  // handler would otherwise open the commit the pan happened to end on.
+  list.addEventListener('click', (e) => {
+    if (!panned) return;
+    panned = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
   // A trackpad's sideways gesture and shift+wheel, over the list itself. The
   // overlay cannot take these: it is pointer-events: none so that a click lands
   // on the row underneath it.
@@ -2071,30 +2120,49 @@ function applyGraphColWidth() {
   applyGraphPan();
 }
 
+/** How far the graph can be moved: what is drawn, less what the column shows. */
+function graphPanMax() {
+  const cell = document.querySelector('#graph-header .col-graph');
+  return Math.max(0, state.graphWidth - (cell ? cell.offsetWidth : 0));
+}
+
 /**
- * Move the overlay inside its clip box, and keep the header's scroll strip
- * saying the same thing. The strip scrolls nothing itself — it exists because
- * a scrollbar on the overlay would sit below the last commit in the history.
+ * Move the overlay inside its clip box, and put the hint where the column now
+ * is. The hint is not a scrollbar: it takes no room in the table and is only
+ * legible while something is moving the graph.
  */
 function applyGraphPan() {
   const cell = document.querySelector('#graph-header .col-graph');
   const shown = cell ? cell.offsetWidth : 0;
-  const max = Math.max(0, state.graphWidth - shown);
+  const max = graphPanMax();
   state.graphPanX = Math.min(Math.max(0, state.graphPanX), max);
   document.documentElement.style.setProperty('--graph-pan-x', state.graphPanX + 'px');
+  document.documentElement.classList.toggle('graph-can-pan', max > 0);
 
-  const strip = document.getElementById('graph-hscroll');
-  const inner = document.getElementById('graph-hscroll-inner');
-  if (!strip || !inner) return;
-  inner.style.width = state.graphWidth + 'px';
-  strip.classList.toggle('hidden', max <= 0);
-  // Guarded, or writing scrollLeft here re-enters through the scroll handler.
-  if (Math.abs(strip.scrollLeft - state.graphPanX) > 1) strip.scrollLeft = state.graphPanX;
+  const bar = document.getElementById('graph-pan-bar');
+  const thumb = document.getElementById('graph-pan-thumb');
+  if (!bar || !thumb) return;
+  bar.classList.toggle('hidden', max <= 0 || !state.graphWidth);
+  if (max <= 0 || !state.graphWidth) return;
+  const ratio = shown / state.graphWidth;
+  thumb.style.width = (ratio * 100) + '%';
+  thumb.style.left = ((state.graphPanX / state.graphWidth) * 100) + '%';
+}
+
+/** Show the hint while something is moving the graph, then let it fade. */
+let panHintTimer = null;
+function showPanHint(sticky) {
+  const bar = document.getElementById('graph-pan-bar');
+  if (!bar || bar.classList.contains('hidden')) return;
+  bar.classList.add('visible');
+  if (panHintTimer) clearTimeout(panHintTimer);
+  panHintTimer = sticky ? null : setTimeout(() => bar.classList.remove('visible'), 700);
 }
 
 function panGraphBy(dx) {
   state.graphPanX += dx;
   applyGraphPan();
+  showPanHint(false);
 }
 
 function graphVertexOver(e) {

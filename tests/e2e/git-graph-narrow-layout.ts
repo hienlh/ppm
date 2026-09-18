@@ -164,7 +164,6 @@ const MEASURE = `(() => {
   const cell = (c) => { const el = row.querySelector('.' + c); return el ? el.getBoundingClientRect() : null; };
   const clip = document.getElementById('graph-clip').getBoundingClientRect();
   const svg = document.querySelector('#graph-svg-container svg');
-  const strip = document.getElementById('graph-hscroll');
   const msg = cell('col-message');
   return {
     panel: document.documentElement.clientWidth,
@@ -177,7 +176,11 @@ const MEASURE = `(() => {
     messageLeft: msg ? Math.round(msg.left) : 0,
     shown: ['col-refs','col-changes','col-author','col-date','col-hash']
       .filter((c) => { const el = row.querySelector('.' + c); return el && el.offsetParent !== null; }),
-    stripHidden: strip.classList.contains('hidden'),
+    canPan: document.documentElement.classList.contains('graph-can-pan'),
+    // Nothing may take a row between the header and the first commit: a
+    // scrollbar of its own there is what this layout deliberately does without.
+    headerBottom: Math.round(document.getElementById('graph-header').getBoundingClientRect().bottom),
+    firstRowTop: Math.round(row.getBoundingClientRect().top),
     // The table's own overflow, not the document's: the settings panel is
     // parked off the right edge by a transform and sits in scrollWidth for the
     // whole life of the panel, so the document number answers a different
@@ -232,21 +235,59 @@ async function main(): Promise<void> {
   check(m.message >= 240, "the message column keeps its floor", `${m.message}px`);
   check(m.messageText.length > 0 && m.messageVisible, "the subject is on screen", JSON.stringify(m.messageText.slice(0, 40)));
   check(m.clipRight <= m.messageLeft, "the overlay is clipped before the message starts", `${m.clipRight} <= ${m.messageLeft}`);
-  check(!m.stripHidden, "the header offers a scrollbar for the rest of the graph");
+  check(m.canPan, "the graph reports that it can be panned");
   check(m.overflow <= 0, "nothing is clipped off the right edge", `overflow ${m.overflow}px`);
 
-  // --- Panning the graph ---
-  const pan = await cdp.evaluate<any>(`(() => {
-    const strip = document.getElementById('graph-hscroll');
-    const before = document.querySelector('#graph-svg-container').getBoundingClientRect().left;
-    strip.scrollLeft = 150;
-    return new Promise((r) => setTimeout(() => r({
-      before: Math.round(before),
-      after: Math.round(document.querySelector('#graph-svg-container').getBoundingClientRect().left),
-      pan: getComputedStyle(document.documentElement).getPropertyValue('--graph-pan-x').trim(),
-    }), 120));
+  check(
+    m.firstRowTop === m.headerBottom,
+    "nothing takes a row between the header and the first commit",
+    `header ends ${m.headerBottom}, first row ${m.firstRowTop}`,
+  );
+
+  // --- Panning by dragging the graph itself ---
+  const at = await cdp.evaluate<any>(`(() => {
+    const cell = document.querySelectorAll('#commit-list .commit-row')[4].querySelector('.col-graph');
+    const r = cell.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   })()`);
-  check(pan.after < pan.before, "the strip pans the graph", `${pan.before} -> ${pan.after} (${pan.pan})`);
+  const hit = await cdp.evaluate<string>(`(() => {
+    const el = document.elementFromPoint(${at.x}, ${at.y});
+    if (!el) return 'none';
+    const parent = el.parentElement;
+    return el.tagName + '[' + (el.getAttribute('class') || '') + '] in ' + (parent ? parent.id || parent.className : '?');
+  })()`);
+  console.log(`  (drag starts on ${hit})`);
+  const overlayLeft = () =>
+    cdp.evaluate<number>("Math.round(document.querySelector('#graph-svg-container').getBoundingClientRect().left)");
+  const beforeDrag = await overlayLeft();
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", buttons: 1, clickCount: 1 });
+  for (const step of [30, 70, 110, 150]) {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x - step, y: at.y, button: "left", buttons: 1 });
+  }
+  const midDrag = await cdp.evaluate<any>(`({
+    hint: document.getElementById('graph-pan-bar').classList.contains('visible'),
+    thumb: document.getElementById('graph-pan-thumb').style.width,
+    grabbing: document.documentElement.classList.contains('graph-panning'),
+  })`);
+  await cdp.shot("git-graph-panning.png");
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x - 150, y: at.y, button: "left", buttons: 0, clickCount: 1 });
+  await Bun.sleep(150);
+  const afterDrag = await overlayLeft();
+  const selected = await cdp.evaluate<number>("document.querySelectorAll('.commit-row.selected').length");
+  check(afterDrag < beforeDrag, "dragging the graph pans it", `${beforeDrag} -> ${afterDrag}`);
+  check(midDrag.hint && midDrag.grabbing, "a hint shows while the drag is happening", `thumb ${midDrag.thumb}`);
+  check(selected === 0, "the drag did not select the commit it ended on", `${selected} selected`);
+
+  // A press that does not move is still the click that opens a commit.
+  await cdp.evaluate("closeDetailPanel()");
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", buttons: 1, clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "left", buttons: 0, clickCount: 1 });
+  await Bun.sleep(200);
+  check(
+    (await cdp.evaluate<number>("document.querySelectorAll('.commit-row.selected').length")) === 1,
+    "a press without a drag still opens the commit",
+  );
+  await cdp.evaluate("closeDetailPanel()");
 
   // --- A split pane, and a tablet in portrait ---
   for (const width of [900, 760, 700]) {

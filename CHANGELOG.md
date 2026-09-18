@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **The Git Graph is panned by dragging it, and has no scrollbar of its own.** The scrollbar sat in the 24px header row with its thumb across the word "Graph", and moving it under the header only traded that for a strip taking a row between the header and the first commit. Drag the graph sideways instead — the pointer says so, a finger still scrolls the list vertically, and a drag no longer opens the commit it ends on. A thin marker shows where in the lanes you are while something is moving them, and fades out after.
+
 ## [0.22.0] - 2026-09-18
 
 ### Added

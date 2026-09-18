@@ -589,12 +589,37 @@ describe("webview-html: a panel narrower than the table", () => {
     expect(html).toContain('<div id="graph-clip"><div id="graph-svg-container"></div></div>');
   });
 
-  it("puts the graph's scrollbar in the header, not on the graph", () => {
-    // The overlay is as tall as the whole history, so a scrollbar along its
-    // bottom edge would sit thousands of pixels below the viewport.
-    const header = html.slice(html.indexOf('id="graph-header"'), html.indexOf('id="commit-list-wrapper"'));
-    expect(header).toContain('id="graph-hscroll"');
+  it("pans the graph by dragging it, with no scrollbar taking a row", () => {
+    // A real scrollbar has nowhere to go: not on the overlay, which is as tall
+    // as the whole history, and not in the 24px header row, where the thumb
+    // comes down across the word "Graph". So the graph is dragged directly, and
+    // the only furniture is a hint that takes no space in the table.
+    expect(html).not.toContain("graph-hscroll");
+    expect(html).toMatch(/#graph-pan-bar \{[^}]*position: absolute/);
+    expect(html).toMatch(/#graph-pan-bar \{[^}]*pointer-events: none/);
     expect(html).toContain("transform: translateX(calc(-1 * var(--graph-pan-x, 0px)))");
+  });
+
+  it("leaves the vertical scroll to the browser and the sideways drag to itself", () => {
+    // Without pan-y the finger that scrolls the list would be taken for a pan
+    // attempt on every row whose graph cell it happened to land on.
+    expect(html).toContain(".commit-row:not(.header-row) .col-graph { align-self: stretch; touch-action: pan-y; }");
+    expect(html).toContain("Math.abs(dx) <= Math.abs(e.clientY - startY)");
+  });
+
+  it("gives a row's graph cell a height to be dragged by, and spares the header's", () => {
+    // The cell is an empty spacer in a row that centres its cells, so it is 0px
+    // tall and every pointer lands on the row behind it. The header's cell has
+    // a label, and stretching that one lifts it off the other headings' line.
+    expect(html).toMatch(/\.commit-row:not\(\.header-row\) \.col-graph \{[^}]*align-self: stretch/);
+    expect(html).not.toMatch(/^\.commit-row \.col-graph \{/m);
+  });
+
+  it("does not select the commit a drag happened to end on", () => {
+    // The row's own click handler opens a commit, and a pan ends over a row.
+    const click = html.slice(html.indexOf("list.addEventListener('click'"));
+    expect(click.slice(0, 200)).toContain("e.stopPropagation()");
+    expect(click.slice(0, 200)).toContain("}, true)");
   });
 
   it("agrees between the message column's floor and the cap that respects it", () => {
