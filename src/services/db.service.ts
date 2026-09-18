@@ -34,8 +34,7 @@ export function getDb(): Database {
   const ppmDir = getPpmDir();
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
   db = new Database(getDbPath());
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
+  applyDbPragmas(db);
   backupBeforeMigrations(db);
   runMigrations(db);
   return db;
@@ -66,6 +65,26 @@ function backupBeforeMigrations(database: Database): void {
   }
 }
 
+/**
+ * The pragmas every PPM connection to this database needs.
+ *
+ * `busy_timeout` is the one with a story. SQLite's default is to fail a
+ * contended lock INSTANTLY — measured, 0ms to `SQLiteError: database is
+ * locked` — and PPM routinely has two processes on this file for a moment: a
+ * `systemctl restart` starts the new supervisor while the outgoing server is
+ * still committing and checkpointing, which for a 300MB database is over a
+ * second. That single throw arrived as an unhandled rejection inside
+ * supervisor startup, which then stopped before spawning the edge forwarder —
+ * so PPM ran with nothing listening on its public port. 5s rather than the
+ * query audit's 2s: one snapshot of this database measures ~1.2s, so the wait
+ * has to cover a checkpoint plus whatever writes queued behind it.
+ */
+export function applyDbPragmas(database: Database): void {
+  database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA busy_timeout = 5000");
+  database.exec("PRAGMA foreign_keys = ON");
+}
+
 /** Close the DB (for graceful shutdown or tests) */
 export function closeDb(): void {
   if (db) { db.close(); db = null; }
@@ -74,8 +93,7 @@ export function closeDb(): void {
 /** For tests: open an isolated in-memory DB with schema applied */
 export function openTestDb(): Database {
   const testDb = new Database(":memory:");
-  testDb.exec("PRAGMA journal_mode = WAL");
-  testDb.exec("PRAGMA foreign_keys = ON");
+  applyDbPragmas(testDb);
   runMigrations(testDb);
   return testDb;
 }

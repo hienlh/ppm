@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A restart could leave PPM running with nothing listening on its port.** `systemctl restart` brings the new supervisor up while the outgoing one is still committing and checkpointing, and SQLite's default is to fail a contended lock **instantly** — measured, 0ms to `SQLiteError: database is locked`, against 1.5s-and-a-row for a connection that asks for a `busy_timeout`. Nothing in PPM asked for one; only the query audit's own database did, at 2s. The throw landed on the tunnel-config read in supervisor startup, arrived as an unhandled rejection, and ended startup at that line — **before** the edge forwarder, the process that owns the public port, was ever spawned. The server child came back 90 seconds later on its health check; the edge has no equivalent, because the probe that would respawn it is armed just after the spawn that never happened. So PPM sat there healthy on its loopback port and dark on 3210 for eight minutes, and the only way back was another restart. Two changes. Every connection PPM opens now sets `busy_timeout = 5000` — 5s rather than the audit's 2s, because one snapshot of a 300MB database measures ~1.2s and the wait has to cover a checkpoint plus whatever writes queued behind it. And that config read can no longer decide whether the edge is spawned: it falls back to **sharing off**, deliberately not to the resolver's own default, since an absent config row means "on" and a row that merely could not be read must never publish a tunnel for someone who had sharing switched off.
+
 ## [0.22.0] - 2026-09-18
 
 ### Added

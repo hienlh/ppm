@@ -393,7 +393,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     _projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
   ): Record<string, string | undefined> {
-    const base: Record<string, string | undefined> = { ...process.env };
+    // Terminal `/resume` and the IDE session pickers list with includeProgrammatic: false,
+    // which drops every transcript whose entrypoint is sdk-cli/sdk-ts/sdk-py — and sdk-ts is
+    // what the SDK stamps when the environment names no entrypoint. That is why sessions
+    // started here were invisible to the CLI and the VS Code extension even in the same
+    // project. The value reaches the transcript verbatim; telemetry maps unknown ones to
+    // "other", so naming ourselves beats borrowing another client's label.
+    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm" };
 
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();
