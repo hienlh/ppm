@@ -1,8 +1,9 @@
 import type { ChatMessage, ChatEvent, SessionInfo } from "../provider.interface.ts";
 import { stripSharedContext } from "../../shared/provider-context.ts";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { getPpmDir } from "../../services/ppm-dir.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseApplyPatch, changeToToolUse } from "./codex-patch.ts";
 import { mapRolloutItem } from "./codex-rollout-items.ts";
@@ -449,14 +450,27 @@ export function getRolloutMessages(sessionsDir: string, threadId: string, reques
 
 /** True when a path points at a codex rollout in the ambient or a PPM account home. */
 export function isCodexRolloutPath(p: string): boolean {
-  const n = normPath(p);
-  const ambient = normPath(join(homedir(), ".codex", "sessions"));
-  const managed = normPath(join(homedir(), ".ppm", "codex-accounts"));
-  return n.endsWith(".jsonl") && (n.includes(ambient) || (n.includes(managed) && n.includes("/sessions/")));
+  return withinCodexSessions(p, false);
+}
+
+function withinCodexSessions(p: string, canonical: boolean): boolean {
+  const normalize = (value: string) => process.platform === "win32" ? normPath(value).replace(/\\/g, "/") : normPath(value);
+  const n = normalize(p);
+  if (!n.endsWith(".jsonl")) return false;
+  const rootPath = (value: string) => {
+    if (canonical) { try { return normalize(realpathSync(value)); } catch { return null; } }
+    return normalize(value);
+  };
+  const ambientRoots = [join(homedir(), ".codex", "sessions")];
+  if (process.env.CODEX_HOME) ambientRoots.push(join(process.env.CODEX_HOME, "sessions"));
+  if (ambientRoots.some((value) => { const root = rootPath(value); return root && n.startsWith(root + "/"); })) return true;
+  const managed = rootPath(join(getPpmDir(), "codex-accounts"));
+  return !!managed && n.startsWith(managed + "/") && /^[^/]+\/sessions\/.+/.test(n.slice(managed.length + 1));
 }
 
 /**
- * One pre-compact segment for the "load more" feature. Jails to ~/.codex/sessions,
+ * One pre-compact segment for the "load more" feature. Jails to ambient,
+ * CODEX_HOME, or PPM managed-account session directories via real paths;
  * fail-closed on cwd.
  *
  * One segment per request rather than everything before the first boundary, which is
@@ -468,7 +482,12 @@ export function isCodexRolloutPath(p: string): boolean {
  */
 export function getCodexPreCompactMessages(file: string, requestedCwd?: string, beforeId?: string): ChatMessage[] {
   if (!isCodexRolloutPath(file)) throw new Error("Access denied: not a codex rollout");
-  const resolved = resolve(file);
+  let resolved: string;
+  try { resolved = realpathSync(resolve(file)); } catch { throw new Error("File not found"); }
+  if (!withinCodexSessions(resolved, true)) throw new Error("Access denied: transcript outside Codex sessions");
+  const info = statSync(resolved);
+  if (!info.isFile()) throw new Error("Not a regular file");
+  if (info.size > 256 * 1024 * 1024) throw new Error("Transcript too large");
   let text: string;
   try { text = readFileSync(resolved, "utf-8"); } catch { throw new Error("File not found"); }
   // Read once and reused below. `readSessionMeta` opens and reads the whole rollout again, and
