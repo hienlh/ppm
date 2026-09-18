@@ -21,6 +21,8 @@ function harness(opts: { collectDelayMs?: number; intervalMs?: number } = {}) {
     },
     diskNet: async () => { counters.diskNet++; return { disk: null, net: null, warnings: [] }; },
     gpus: { collect: async () => { counters.gpu++; return []; }, isDisabled: () => false },
+    devices: null,
+    apps: null,
   };
   const service = new SystemMetricsService({
     collectors,

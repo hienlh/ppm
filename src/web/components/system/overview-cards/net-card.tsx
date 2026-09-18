@@ -1,5 +1,6 @@
 import { formatBps } from "@/lib/format-bytes";
 import { MetricChartCanvas } from "../metric-chart-canvas";
+import { CardShell } from "./card-shell";
 
 export interface NetCardProps {
   available: boolean;
@@ -10,14 +11,17 @@ export interface NetCardProps {
   /** True while the stream has not yet delivered a second tick — a rate needs two
    *  samples, so `available:false` here is expected, not a missing collector. */
   measuring?: boolean;
+  /** Opens the Performance page on the busiest device of this kind. */
+  onOpen?: () => void;
 }
 
-export function NetCard({ available, inBps, outBps, downSeries, upSeries, measuring }: NetCardProps) {
+export function NetCard({ available, inBps, outBps, downSeries, upSeries, measuring, onOpen }: NetCardProps) {
   return (
-    <div
-      className="rounded-lg border border-border p-4 space-y-2"
-      data-testid="sysmon-card-net"
-      data-available={available}
+    <CardShell
+      testId="sysmon-card-net"
+      data={{ "data-available": available }}
+      onOpen={onOpen}
+      openLabel="Network details"
     >
       <h3 className="text-sm font-medium">Network</h3>
       {available ? (
@@ -28,6 +32,7 @@ export function NetCard({ available, inBps, outBps, downSeries, upSeries, measur
               { data: upSeries, color: "var(--color-warning)" },
             ]}
             height={56}
+            grid
           />
           <p className="text-[11px] text-text-subtle">
             Down {formatBps(inBps)} · Up {formatBps(outBps)}
@@ -36,6 +41,6 @@ export function NetCard({ available, inBps, outBps, downSeries, upSeries, measur
       ) : (
         <p className="text-[11px] text-text-subtle">{measuring ? "measuring…" : "n/a"}</p>
       )}
-    </div>
+    </CardShell>
   );
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Search } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRam } from "@/lib/format-bytes";
-import { cpuColor, formatDiskCell, formatGpuCell, formatNetCell } from "./process-row-format";
+import { cpuColor, formatDiskCell, formatGpuCell, formatNetCell, formatSwapCell } from "./process-row-format";
 import { optionalCellClassName, PROCESS_ROW_GRID_CLASS, type ProcessGridResult } from "./process-columns-grid";
 import type { Totals } from "./process-table-totals";
 import { SortableHeader, type ColumnResizeHandlers } from "./sortable-header";
@@ -86,7 +86,7 @@ export interface ProcessTableHeaderProps {
   resize: ColumnResizeHandlers;
 }
 
-/** Sticky column header row, grid-aligned with the rows below it. Disk/GPU/Net
+/** Sticky column header row, grid-aligned with the rows below it. Swap/Disk/GPU/Net
  *  headers only render when the host reported that column as measurable
  *  (`grid.columns.<x>`); below `@lg` only the one currently sorted survives. Every
  *  fixed-width column carries a drag handle on its right edge. */
@@ -103,6 +103,9 @@ export function ProcessTableHeader({ sortKey, sortDir, grid, onSort, resize }: P
       <SortableHeader label="Process" field="name" {...common} resize={undefined} align="left" testId="sysmon-sort-name" />
       <SortableHeader label="CPU" field="cpu" {...common} resizeKey="cpu" testId="sysmon-sort-cpu" />
       <SortableHeader label="RAM" field="ram" {...common} resizeKey="ram" testId="sysmon-sort-ram" />
+      {grid.columns.swap && (
+        <SortableHeader label="Swap" field="swap" {...common} resizeKey="swap" testId="sysmon-col-swap" className={optionalCellClassName(grid, "swap")} />
+      )}
       {grid.columns.disk && (
         <SortableHeader label="Disk" field="disk" {...common} resizeKey="disk" testId="sysmon-col-disk" className={optionalCellClassName(grid, "disk")} />
       )}
@@ -138,6 +141,11 @@ export function ProcessTableFooter({ totals, grid, gpuUtilPercent }: ProcessTabl
       <span className="truncate">Total ({totals.count} processes)</span>
       <span className={cn("text-right", cpuColor(totals.cpu))}>{totals.cpu.toFixed(1)}%</span>
       <span className="text-right text-text-secondary">{formatRam(totals.ramMB)}</span>
+      {grid.columns.swap && (
+        <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "swap"))}>
+          {formatSwapCell(totals.swapMB)}
+        </span>
+      )}
       {grid.columns.disk && (
         <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "disk"))}>
           {formatDiskCell(totals.diskReadBps, totals.diskWriteBps)}

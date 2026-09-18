@@ -7,6 +7,7 @@ export interface Totals {
   count: number;
   /** Sums over rows with a defined value; `undefined` when NO visible row measured
    *  that metric — mirrors the "undefined = host can't measure" rule on ProcessInfo. */
+  swapMB?: number;
   diskReadBps?: number;
   diskWriteBps?: number;
   gpuMemMB?: number;
@@ -28,6 +29,7 @@ export function accumulateTotals(
   item: {
     cpu: number;
     ramMB: number;
+    swapMB?: number;
     diskReadBps?: number;
     diskWriteBps?: number;
     gpuMemMB?: number;
@@ -40,6 +42,7 @@ export function accumulateTotals(
     cpu: acc.cpu + item.cpu,
     ramMB: acc.ramMB + item.ramMB,
     count: acc.count + countDelta,
+    swapMB: addOptional(acc.swapMB, item.swapMB),
     diskReadBps: addOptional(acc.diskReadBps, item.diskReadBps),
     diskWriteBps: addOptional(acc.diskWriteBps, item.diskWriteBps),
     gpuMemMB: addOptional(acc.gpuMemMB, item.gpuMemMB),

@@ -1,7 +1,7 @@
 import { X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRam } from "@/lib/format-bytes";
-import { cpuColor, formatAge, formatDiskCell, formatGpuCell, formatNetCell, sumOptionalBps } from "./process-row-format";
+import { cpuColor, formatAge, formatDiskCell, formatGpuCell, formatNetCell, formatSwapCell, sumOptionalBps } from "./process-row-format";
 import { optionalCellClassName, type ProcessGridResult } from "./process-columns-grid";
 import type { ProcessInfo } from "../../../types/system-metrics";
 
@@ -22,6 +22,7 @@ export function ProcessRow({ proc, indent, grid, onKillClick }: ProcessRowProps)
       data-pid={proc.pid}
       data-ppm={proc.ppm}
       data-protected={proc.protected}
+      data-swap-mb={proc.swapMB}
       data-disk-bps={sumOptionalBps(proc.diskReadBps, proc.diskWriteBps)}
       data-gpu-pct={proc.gpuPct}
       data-net-bps={sumOptionalBps(proc.netInBps, proc.netOutBps)}
@@ -39,6 +40,11 @@ export function ProcessRow({ proc, indent, grid, onKillClick }: ProcessRowProps)
       </div>
       <span className={cn("text-right", cpuColor(proc.cpu))}>{proc.cpu.toFixed(1)}%</span>
       <span className="text-right text-text-secondary">{formatRam(proc.ramMB)}</span>
+      {grid.columns.swap && (
+        <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "swap"))}>
+          {formatSwapCell(proc.swapMB)}
+        </span>
+      )}
       {grid.columns.disk && (
         <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "disk"))}>
           {formatDiskCell(proc.diskReadBps, proc.diskWriteBps)}

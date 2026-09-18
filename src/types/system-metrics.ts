@@ -14,6 +14,24 @@ export interface CpuMetrics {
   /** Index matches `os.cpus()` order. Core count is `cores.length`. */
   cores: number[];
   model: string;
+  /** Everything below is Mission Center's CPU page and is absent where this host
+   *  cannot measure it — the UI hides the row rather than showing a 0.
+   *
+   *  Kernel-mode share, drawn as a second line under the total. */
+  kernelPercent?: number;
+  coreKernel?: number[];
+  /** Mean current clock across the online cores, MHz. */
+  currentMHz?: number;
+  /** Package sensor, °C. */
+  tempC?: number;
+  /** Package draw over the tick, watts (RAPL energy delta / elapsed). */
+  powerW?: number;
+  /** Kernel-wide totals for the page's rows. Handles is open file descriptors,
+   *  which is the closest Linux analogue of the Windows figure. */
+  threadCount?: number;
+  handleCount?: number;
+  /** Seconds since boot. */
+  uptimeSec?: number;
 }
 
 export interface MemoryMetrics {
@@ -22,6 +40,41 @@ export interface MemoryMetrics {
   availableMB: number;
   /** usedMB / totalMB × 100. */
   percent: number;
+  /** Mission Center's composition bar, in BYTES. The four add up to the total, so
+   *  the bar needs no normalisation. Absent on a host with no /proc/meminfo. */
+  inUseBytes?: number;
+  /** Written-to pages not yet on disk (Dirty + Writeback). */
+  modifiedBytes?: number;
+  /** Reclaimable: page cache, buffers and reclaimable slab. */
+  standbyBytes?: number;
+  freeBytes?: number;
+  cachedMB?: number;
+  /** Address space promised to processes, and the kernel's ceiling for it. */
+  committedMB?: number;
+  commitLimitMB?: number;
+  swapTotalMB?: number;
+  swapUsedMB?: number;
+  /** zram, summed across every device. `compressedMB` is what the compressed
+   *  pages occupy; `savingsMB` is what they would have occupied uncompressed
+   *  minus that, i.e. the RAM the compression bought back. Both absent on a host
+   *  with no zram — which is not the same as a host whose zram is empty. */
+  zramCompressedMB?: number;
+  zramSavingsMB?: number;
+}
+
+/** One fan, plus the temperature its chip reports beside it — Mission Center's
+ *  Fan page. Small and few, so the labels ride the tick rather than the inventory. */
+export interface FanMetrics {
+  /** Stable across ticks: "<hwmon name>/fan<N>", e.g. "it8689/fan1". */
+  id: string;
+  /** The chip's own label when it has one, else "Fan N". */
+  label: string;
+  rpm: number;
+  /** Duty cycle, 0-100, from the matching `pwmN` (raw 0-255). */
+  pwmPercent?: number;
+  /** The chip's temperature sensor with the same index, °C. */
+  tempC?: number;
+  tempName?: string;
 }
 
 /** Whole-machine throughput, bytes/second over the last tick. */
@@ -39,8 +92,52 @@ export interface GpuMetrics {
   name: string;
   /** 0-100. */
   utilPercent: number;
+  /** Dedicated memory. `vramTotalMB` 0 = the device has none to report (an
+   *  integrated GPU), so the UI shows no memory figure rather than "0 B / 0 B". */
   vramUsedMB: number;
   vramTotalMB: number;
+  /** Everything below is Mission Center's GPU page. Each field is absent when this
+   *  driver/host cannot measure it, and the UI hides that row or graph mode.
+   *
+   *  Stable device id matching `GpuInfo.id`: the PCI address ("0000:00:02.0"), or
+   *  "<driver>-<n>" for a GPU with none. */
+  id?: string;
+  /** GTT / shared system memory (amdgpu), MB. */
+  sharedUsedMB?: number;
+  sharedTotalMB?: number;
+  /** Video engines, 0-100. When `GpuInfo.encodeDecodeShared`, the one combined
+   *  counter is reported as `encodePercent` and `decodePercent` is absent. */
+  encodePercent?: number;
+  decodePercent?: number;
+  clockMHz?: number;
+  clockMaxMHz?: number;
+  memClockMHz?: number;
+  memClockMaxMHz?: number;
+  powerW?: number;
+  powerMaxW?: number;
+  tempC?: number;
+}
+
+/** Static facts about one GPU — served by the hardware inventory, never per tick. */
+export interface GpuInfo {
+  /** Same id as `GpuMetrics.id`. */
+  id: string;
+  name: string;
+  vendor?: string;
+  /** Kernel driver: "i915", "xe", "amdgpu", "nvidia". */
+  driver?: string;
+  driverVersion?: string;
+  /** Highest context the driver offers: "4.6", or "ES 3.2". Absent = unknown. */
+  openglVersion?: string;
+  /** Vulkan API version, "1.4.354". Absent = unsupported or unknown. */
+  vulkanVersion?: string;
+  pcieGen?: number;
+  pcieLanes?: number;
+  /** Only when different from the current link (Mission Center hides an equal one). */
+  pcieMaxGen?: number;
+  pcieMaxLanes?: number;
+  /** One combined video engine (Intel VCS): the UI shows "Video encode/decode". */
+  encodeDecodeShared?: boolean;
 }
 
 export interface SystemMetrics {
@@ -50,10 +147,63 @@ export interface SystemMetrics {
   disk: RateMetrics;
   /** light tier: available:false. */
   net: RateMetrics;
-  /** light tier: []. Empty also when no NVIDIA GPU — the UI hides the card. */
+  /** light tier: []. Empty also when no GPU is readable — the UI hides the card. */
   gpus: GpuMetrics[];
   /** light tier: 0. Processes the collector could see this tick. */
   processCount: number;
+  /** Per-device figures for the Performance page's drive and network entries (full
+   *  tier). Absent = not collected on this host; static facts about each device are
+   *  in the hardware inventory (`src/types/system-hardware.ts`), keyed by `id`. */
+  disks?: DiskMetrics[];
+  nics?: NicMetrics[];
+  /** Absent where the host exposes no fan tachometer (most laptops, every VM). */
+  fans?: FanMetrics[];
+}
+
+/** One whole disk (a /sys/block entry), for Mission Center's per-drive page. */
+export interface DiskMetrics {
+  /** Kernel name, the key into the inventory: "nvme0n1", "sda". */
+  id: string;
+  /** False on this device's first sample: the rates below need two of them, so the
+   *  UI says "measuring…" rather than a confident 0. The two totals are absolutes
+   *  and are always real. */
+  available: boolean;
+  /** "Active time": share of the tick with I/O in flight (iostat %util), 0-100. */
+  busyPercent: number;
+  /** "Avg. response time": ms per completed request (read + write + discard +
+   *  flush) over the tick; 0 when none completed. */
+  responseMs: number;
+  readBps: number;
+  writeBps: number;
+  /** Bytes since boot ("Total Read" / "Total Written"). */
+  readTotal: number;
+  writeTotal: number;
+  /** Drive sensor, °C (NVMe composite, SATA via drivetemp); absent when none. */
+  tempC?: number;
+}
+
+export type NicState = "connected" | "connecting" | "disconnected" | "unavailable" | "unknown";
+
+/** One network interface, for Mission Center's per-interface page. */
+export interface NicMetrics {
+  /** Interface name, the key into the inventory: "enp3s0". */
+  id: string;
+  /** False on this interface's first sample (the rates need two). The totals are
+   *  absolutes and are always real. */
+  available: boolean;
+  rxBps: number;
+  txBps: number;
+  /** Bytes since the interface came up ("Total Received" / "Total Sent"). */
+  rxTotal: number;
+  txTotal: number;
+  state: NicState;
+  /** Negotiated link speed, Mbit/s — Mission Center's "Maximum Bitrate", and the
+   *  throughput axis ceiling when dynamic scaling is off. Absent when unknown. */
+  linkMbps?: number;
+  /** Wireless only. */
+  ssid?: string;
+  signalPercent?: number;
+  frequencyMHz?: number;
 }
 
 export interface ProcessInfo {
@@ -70,6 +220,16 @@ export interface ProcessInfo {
    *  Always 0 on a process's first observed tick. */
   cpu: number;
   ramMB: number;
+  /** Anonymous memory the kernel has pushed out to swap, MB — Mission Center's
+   *  Swap column. `undefined` = this OS does not report it per process; a kernel
+   *  thread, which has no address space at all, reports 0. */
+  swapMB?: number;
+  /** `"<scope>:<unit>"` — the Services row this pid belongs to, read from its
+   *  cgroup ("system:sshd.service"). The scope is part of the key because
+   *  `dbus-broker.service` exists in BOTH on an ordinary desktop. Absent on a
+   *  host with no systemd, for a pid in no unit, and for another user's units.
+   *  The Services page's live figures are summed over it. */
+  unitKey?: string;
   /** Epoch ms UTC; 0 when unknown. Identity guard for CPU deltas, grouping and kill. */
   startedAt: number;
   /** PPM server, supervisor, edge forwarder, their descendants, PPM-managed
@@ -114,6 +274,7 @@ export interface ProcessGroup {
   /** Roll-ups of the optional per-process columns, with the same optionality:
    *  the sum over the members that HAVE a value, and `undefined` when no member
    *  has one — so "nothing measurable" never renders as a hard 0. */
+  swapMB?: number;
   diskReadBps?: number;
   diskWriteBps?: number;
   /** Summed engine busy across members, clamped 0-100. */
@@ -129,6 +290,8 @@ export interface ProcessColumnAvailability {
   disk: boolean;
   gpu: boolean;
   net: boolean;
+  /** Linux only so far: `VmSwap` in `/proc/<pid>/status`. */
+  swap: boolean;
 }
 
 /** CLIENT-SIDE history element: aggregates only. There is no server ring. */
@@ -160,6 +323,10 @@ export interface MetricsSnapshot {
   total: { cpu: number; ramMB: number; processCount: number };
   /** Non-fatal collector failures, human readable. Rendered in the UI. */
   warnings: string[];
+  /** Linux desktop apps (full tier). Absent on other hosts and from older servers. */
+  apps?: AppInfo[];
+  /** Signals this host can deliver. Absent = an older server (kill route only). */
+  signals?: ProcessSignal[];
 }
 
 export interface KillProcessRequest {
@@ -182,9 +349,71 @@ export interface KillProcessResult {
   killed: number[];
 }
 
+/** Mission Center's process menu: "Stop" is TERM, "Force Stop" is KILL, and the
+ *  "Send Signal" submenu offers all eight. Names without the `SIG` prefix. */
+export type ProcessSignal = "TERM" | "KILL" | "STOP" | "CONT" | "HUP" | "INT" | "USR1" | "USR2";
+
+export const PROCESS_SIGNALS: readonly ProcessSignal[] = ["TERM", "KILL", "STOP", "CONT", "HUP", "INT", "USR1", "USR2"];
+
+export interface SignalProcessRequest {
+  pid: number;
+  /** Identity guard, exactly as for a kill: 409 when the live process started at
+   *  another time, so a recycled pid is never signalled against a stale name. */
+  startedAt: number;
+  signal: ProcessSignal;
+  /** Deliver to the whole collected tree as well. Suspending an app means
+   *  suspending its helpers, which signalling the root alone does not do. */
+  tree?: boolean;
+}
+
+export interface SignalProcessResult {
+  pid: number;
+  signal: ProcessSignal;
+  tree: boolean;
+  method: "taskkill" | "signal";
+  /** Pids actually signalled (win32 + tree: `[pid]`, as for a kill). */
+  signalled: number[];
+}
+
+/** On-demand facts for the Details dialog — fetched when it opens, never per tick.
+ *  Live figures (CPU, memory, …) come from the snapshot row, not from here. Every
+ *  field is null when this OS or this pid's permissions do not expose it. */
+export interface ProcessDetails {
+  pid: number;
+  ppid: number;
+  name: string;
+  startedAt: number;
+  /** Full command line, secrets redacted but NOT truncated to the row's 160 chars. */
+  command: string | null;
+  exe: string | null;
+  cwd: string | null;
+  user: string | null;
+  /** Kernel state, e.g. "S (sleeping)", "T (stopped)". */
+  state: string | null;
+  threads: number | null;
+  nice: number | null;
+  /** Linux cgroup path — which systemd unit or app scope the process runs in. */
+  cgroup: string | null;
+}
+
+/** A running desktop application — Mission Center's "Apps" section. Linux only:
+ *  identified from the user's app cgroups and `.desktop` Exec matching. */
+export interface AppInfo {
+  /** Desktop file id without `.desktop`: "org.kde.konsole". Stable across ticks. */
+  id: string;
+  /** The entry's unlocalised `Name=`. */
+  name: string;
+  /** The entry's `Icon=`: a theme icon name or an absolute path; resolved to an
+   *  image by `/api/system/app-icon`. Null when the entry has none. */
+  icon: string | null;
+  /** Primary pids: app pids whose parent is not also one of this app's pids. Each
+   *  stands for its whole subtree, which is what an app row's figures sum over. */
+  pids: number[];
+}
+
 /** Sort columns offered by the process table. `disk` sorts by read + write,
  *  `net` by in + out; rows without a value sort last. */
-export type SortKey = "cpu" | "ram" | "disk" | "gpu" | "gpuMem" | "net" | "name" | null;
+export type SortKey = "cpu" | "ram" | "swap" | "disk" | "gpu" | "gpuMem" | "net" | "name" | null;
 export type SortDir = "asc" | "desc";
 
 /** Full-tier poll cadence. A Windows tick (one CIM round trip) costs ~175-200 ms,
