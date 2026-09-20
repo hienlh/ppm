@@ -86,11 +86,32 @@ export function useDraft(projectName: string, sessionId: string | null) {
     [projectName],
   );
 
-  // Clear draft (on send)
-  const clear = useCallback(() => {
+  /**
+   * Drop a save that is still waiting on the debounce, without touching the server.
+   *
+   * Called at Enter. The save runs against whatever session the tab is on when the
+   * timer fires — and the first send of a new tab swaps the tab onto its new session
+   * within that second, so a save left armed would write the message just sent as the
+   * new session's draft, to reappear in the composer on the next mount as if unsent.
+   */
+  const cancelPendingSave = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = undefined;
+  }, []);
+
+  /**
+   * Clear the draft once its message has actually been handed to the socket.
+   *
+   * `draftId` names the draft the message was composed under. The first send of a
+   * new tab creates the session and only then sends, so by the time the send
+   * happens `sessionRef` already points at the new session while the draft still
+   * lives under `__new__` — deleting by the current session id would leave it
+   * behind and restore it into the next new tab.
+   */
+  const clear = useCallback((draftId?: string) => {
     if (!projectName) return;
     if (timerRef.current) clearTimeout(timerRef.current);
-    const id = sessionRef.current ?? "__new__";
+    const id = draftId ?? sessionRef.current ?? "__new__";
     api
       .del(`${projectUrl(projectName)}/chat/drafts/${encodeURIComponent(id)}`)
       .catch(() => {});
@@ -104,5 +125,5 @@ export function useDraft(projectName: string, sessionId: string | null) {
     };
   }, []);
 
-  return { draft, draftLoading: loading, saveDraft: save, clearDraft: clear };
+  return { draft, draftLoading: loading, saveDraft: save, clearDraft: clear, cancelPendingSave };
 }

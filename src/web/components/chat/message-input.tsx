@@ -95,6 +95,13 @@ interface MessageInputProps {
   initialValue?: string;
   /** Bumping this counter clears the textarea (e.g. parent cancels an edit). */
   clearSignal?: number;
+  /**
+   * A message that could not be sent, handed back. A fresh `nonce` applies it even
+   * when `text` equals the last one — `initialValue` cannot do this, because it only
+   * reacts to a *changed* value, and the text of a failed send is often exactly the
+   * draft the composer was already prefilled with.
+   */
+  restore?: { text: string; nonce: number } | null;
   /** Called on content change for draft auto-save */
   onContentChange?: (content: string, attachments?: Array<{ name: string; path: string }>) => void;
   /** Returns this session's user messages, oldest first — powers ArrowUp/Down recall */
@@ -144,6 +151,7 @@ export const MessageInput = memo(function MessageInput({
   onExternalPathsConsumed,
   initialValue,
   clearSignal,
+  restore,
   onContentChange,
   getUserHistory,
   autoFocus,
@@ -316,6 +324,22 @@ export const MessageInput = memo(function MessageInput({
   useEffect(() => {
     if (clearSignal) writeTextareas("");
   }, [clearSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // An unsent message coming back. The send can fail up to ~45 s after Enter, by which
+  // time the user may be typing something new — so the text goes AFTER what is there
+  // rather than over it. Reported as a content change so it is saved as the draft
+  // again; `writeTextareas` alone tells nobody.
+  useEffect(() => {
+    if (!restore?.nonce || !restore.text) return;
+    const current = valueRef.current;
+    const next = current.trim() ? `${current}\n\n${restore.text}` : restore.text;
+    writeTextareas(next);
+    onContentChange?.(next, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+    setTimeout(() => {
+      const ta = getVisibleTextarea();
+      if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+    }, 50);
+  }, [restore?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-focus on mount when requested
   useEffect(() => {

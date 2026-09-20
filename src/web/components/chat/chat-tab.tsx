@@ -31,6 +31,15 @@ interface ChatTabProps {
   tabId?: string;
 }
 
+/**
+ * How long a first message may wait for its session to be created, and then for the
+ * new socket to report connected, before it is handed back to the user. Generous
+ * because a codex app-server cold start alone takes ~30 s; the point is only that
+ * "forever, silently" is not an option.
+ */
+const SESSION_CREATE_TIMEOUT_MS = 30_000;
+const PENDING_SEND_TIMEOUT_MS = 45_000;
+
 export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [sessionId, setSessionId] = useState<string | null>(
     (metadata?.sessionId as string) ?? null,
@@ -72,8 +81,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     (metadata?.permissionMode as string) ?? undefined,
   );
 
-  // Pending message to send after WS connects (replaces unreliable setTimeout)
-  const pendingSendRef = useRef<{ content: string; permissionMode?: string; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] } | null>(null);
+  // Pending message to send after WS connects (replaces unreliable setTimeout).
+  // `draftId` is the draft it was composed under, deleted only once the message has
+  // really been handed to the socket; until then that row is the only other copy.
+  const pendingSendRef = useRef<{
+    content: string;
+    draftId: string;
+    permissionMode?: string;
+    images?: Array<{ data: string; mediaType: string }>;
+    imagePaths?: string[];
+  } | null>(null);
+  const pendingSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
@@ -94,7 +112,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined);
 
   // Draft auto-save/restore
-  const { draft, draftLoading, saveDraft, clearDraft } = useDraft(projectName, sessionId);
+  const { draft, draftLoading, saveDraft, clearDraft, cancelPendingSave } = useDraft(projectName, sessionId);
 
   // Load global default permission mode on mount (if no per-session override)
   useEffect(() => {
@@ -292,15 +310,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const primaryTeam = teamActivity?.teamNames?.[0] ?? "";
   const { members: teamMembers } = useTeamActivityFeed(primaryTeam, !!primaryTeam);
 
-  // Flush pending message once WS connects (replaces unreliable setTimeout)
-  useEffect(() => {
-    if (isConnected && pendingSendRef.current) {
-      const { content, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths } = pendingSendRef.current;
-      pendingSendRef.current = null;
-      sendMessage(content, { permissionMode: pm, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
-    }
-  }, [isConnected, sendMessage]);
-
   // Auto-clear notification badge when this tab is active and document is visible.
   // Checks ALL panels (not just focused) so split-panel scenarios also clear.
   useEffect(() => {
@@ -336,20 +345,92 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   // Pending fork message — show in input for user to edit, not auto-send
   const [forkDraft, setForkDraft] = useState<string | undefined>(metadata?.pendingMessage as string | undefined);
-  // Pending edit: when set, the next send forks at `anchorMsgId` and continues
-  // in THIS tab (swap sessionId) instead of opening a new tab.
-  // anchorMsgId = fork anchor (prev message); ownMsgId = the edited message itself (for highlight).
-  const [editFork, setEditFork] = useState<{ anchorMsgId?: string; ownMsgId?: string } | null>(null);
-  // Local echo of a just-sent edited message. The forked session's WS connect can
-  // be slow (codex app-server cold start ~30s), and the real optimistic message is
-  // only added after `isConnected`. Show this immediately so the edit doesn't
-  // vanish while the new session spins up; cleared once the real message arrives.
   // True from the moment an edit is submitted until the forked session starts
   // responding. Drives a "working" indicator so the ~10s fork + codex connect
   // doesn't leave the user staring at a frozen screen. (No optimistic message
   // echo — appending it to the still-visible source transcript would render the
   // edit in the wrong place; the real message appears once the fork loads.)
   const [editForking, setEditForking] = useState(false);
+
+  /**
+   * A message that could not be sent, on its way back into the composer. A nonce
+   * rather than the bare string: the text is often identical to the draft the
+   * composer was prefilled with, and a value that does not change applies nothing.
+   */
+  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
+
+  /**
+   * Give an unsent message back to the user.
+   *
+   * The composer empties itself the moment Enter is pressed, and the first send of a
+   * new tab still has a session to create and a socket to open before anything leaves
+   * the browser. Whichever of those fails, the text goes back into the input — the
+   * composer re-saves it as the draft so a reload keeps it — and the failure is said
+   * out loud: a cleared input over an unchanged transcript reads as nothing having
+   * happened at all.
+   *
+   * What comes back is the full message as it would have been sent, attachment
+   * markers included. The files themselves are already uploaded and the markers name
+   * them, so re-sending still hands the model every file; the composer has no way to
+   * re-attach them as chips, and a picture-only message would otherwise come back as
+   * nothing at all.
+   */
+  const restoreUnsentMessage = useCallback((content: string, reason: string) => {
+    setRestore({ text: content, nonce: Date.now() });
+    toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
+  }, []);
+
+  /**
+   * Drop a pending send that never got its socket; hand the text back.
+   *
+   * The draft it was composed under is cleared first: the composer re-saves the
+   * restored text under the session the tab is on now, and leaving the old row
+   * behind would prefill the next new tab with this message as well.
+   */
+  const abandonPendingSend = useCallback((reason: string) => {
+    if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
+    setEditForking(false);
+    const pending = pendingSendRef.current;
+    if (!pending) return;
+    pendingSendRef.current = null;
+    clearDraft(pending.draftId);
+    restoreUnsentMessage(pending.content, reason);
+  }, [restoreUnsentMessage, clearDraft]);
+
+  /**
+   * Queue a message for the moment the (new) session's socket reports connected.
+   * Bounded: a socket that never says hello would otherwise keep the text in a ref
+   * with nothing on screen, for as long as the tab lives.
+   */
+  const queuePendingSend = useCallback((pending: NonNullable<typeof pendingSendRef.current>) => {
+    pendingSendRef.current = pending;
+    if (pendingSendTimerRef.current) clearTimeout(pendingSendTimerRef.current);
+    pendingSendTimerRef.current = setTimeout(
+      () => abandonPendingSend("The chat did not connect in time."),
+      PENDING_SEND_TIMEOUT_MS,
+    );
+  }, [abandonPendingSend]);
+
+  // Flush pending message once WS connects (replaces unreliable setTimeout)
+  useEffect(() => {
+    if (isConnected && pendingSendRef.current) {
+      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths } = pendingSendRef.current;
+      pendingSendRef.current = null;
+      if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
+      sendMessage(content, { permissionMode: pm, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
+      clearDraft(draftId);
+    }
+  }, [isConnected, sendMessage, clearDraft]);
+
+  // A closed tab takes its pending message with it; the timer must not fire into an
+  // unmounted component.
+  useEffect(() => () => {
+    if (pendingSendTimerRef.current) clearTimeout(pendingSendTimerRef.current);
+  }, []);
+  // Pending edit: when set, the next send forks at `anchorMsgId` and continues
+  // in THIS tab (swap sessionId) instead of opening a new tab.
+  // anchorMsgId = fork anchor (prev message); ownMsgId = the edited message itself (for highlight).
+  const [editFork, setEditFork] = useState<{ anchorMsgId?: string; ownMsgId?: string } | null>(null);
   // Bumped to tell MessageInput to clear its textarea when an edit is cancelled.
   const [clearInputSignal, setClearInputSignal] = useState(0);
   // True while a same-tree version swap loads: versions share an identical prefix,
@@ -400,13 +481,16 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   }, [projectName, providerId]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
-    setEditForking(false);
+    // A message still waiting for its own session's socket must not ride the
+    // connect of the one picked here: `isConnected` is session-scoped, so the flush
+    // would fire on the selected conversation and post it there.
+    abandonPendingSend("You switched to another chat before it connected.");
     setSessionId(session.id);
     setProviderId(session.providerId);
     if (tabId) updateTab(tabId, { title: session.title || "Chat" });
     // Immediately clear notification for the selected session
     useNotificationStore.getState().clearForSession(session.id);
-  }, [tabId, updateTab]);
+  }, [tabId, updateTab, abandonPendingSend]);
 
   /** Fork current session and open new tab with the forked session, resending userMessage */
   const handleFork = useCallback(async (userMessage: string, messageId?: string) => {
@@ -462,43 +546,52 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       // session's codex connect can take ~10s; don't await in silence.
       setEditForking(true);
       try {
+        // Bounded like session creation below, and with the same accepted cost: a
+        // fork the server finished after the abort is a stray sibling in the tree.
         const forked = await api.post<{ id: string }>(
           `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}&mode=edit`,
           { messageId: anchorMsgId },
+          { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) },
         );
         // The tree gained a sibling. Swapping sessionId below refetches
         // /messages, which carries a fresh versionMap, so the switcher's n/m
         // counts update without any cache to invalidate.
         // Queue the edited message — flushed by the connect effect once the WS
-        // reconnects to the forked session.
-        pendingSendRef.current = { content: fullContent, permissionMode };
+        // reconnects to the forked session. The draft was composed under the
+        // source session, so that is the one to clear when it goes.
+        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode });
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
         if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: forked.id } });
         setSessionId(forked.id);
       } catch (e) {
         setEditForking(false);
-        const msg = (e as Error)?.message || "Unknown error";
+        const msg = (e as Error)?.name === "TimeoutError"
+          ? "The server did not answer in time."
+          : (e as Error)?.message || "Unknown error";
         toast.error("Cannot edit from this message", {
           description: msg.includes("not found") || msg.includes("Invalid upToMessageId")
             ? "The original message is no longer available in the session transcript."
             : msg,
         });
+        // The edited text was cleared from the composer on Enter — put it back.
+        setRestore({ text: fullContent, nonce: Date.now() });
       }
     },
-    [sessionId, projectName, providerId, permissionMode, tabId, updateTab, metadata],
+    [sessionId, projectName, providerId, permissionMode, tabId, updateTab, metadata, queuePendingSend],
   );
 
   /** Swap THIS tab to another version's session (version switcher prev/next) */
   const handleSwitchVersion = useCallback(
     (targetSessionId: string) => {
       if (!targetSessionId || targetSessionId === sessionId) return;
-      setEditForking(false);
+      // Same as handleSelectSession: a queued edit must not land in the version switched to.
+      abandonPendingSend("You switched to another version before it connected.");
       setStaleSwap(true);
       if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: targetSessionId } });
       setSessionId(targetSessionId);
     },
-    [sessionId, tabId, updateTab, metadata],
+    [sessionId, tabId, updateTab, metadata, abandonPendingSend],
   );
 
   /** Build message content with file references and inline text snippets prepended */
@@ -560,6 +653,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       if (!sessionId) {
         try {
           const pName = projectName;
+          // Bounded: the composer is already empty by now, and a create call that hangs
+          // (a stale tunnel connection after a long idle is the usual way) would otherwise
+          // leave it empty over an unchanged transcript for as long as the tab lives.
+          // Accepted cost: a create the server completed after the abort leaves one empty
+          // session behind, which the retry does not reuse.
           const session = await api.post<Session>(`${projectUrl(pName)}/chat/sessions`, {
             providerId,
             title: content.slice(0, 50),
@@ -568,20 +666,27 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             // The account this tab claimed on open and has been displaying since. Redeeming
             // it here is what makes that display true rather than a guess.
             accountId: pickedAccountId,
-          });
+          }, { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) });
           setSessionId(session.id);
           setProviderId(session.providerId);
-          // Queue message — will be sent by effect when WS reports isConnected
-          pendingSendRef.current = { content: fullContent, permissionMode, images, imagePaths };
+          // Queue message — will be sent by effect when WS reports isConnected. It was
+          // composed under the new-tab draft, which is what to clear once it goes.
+          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode, images, imagePaths });
           return;
         } catch (e) {
           console.error("Failed to create session:", e);
+          const msg = (e as Error)?.name === "TimeoutError"
+            ? "The server did not answer in time."
+            : `Could not start the chat: ${(e as Error)?.message || "unknown error"}.`;
+          restoreUnsentMessage(fullContent, msg);
           return;
         }
       }
       sendMessage(fullContent, { permissionMode, priority, ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
+      // Only now: the message is on (or queued for) a live session's socket.
+      clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, pickedAccountId, queuePendingSend, restoreUnsentMessage, clearDraft],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -589,7 +694,15 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const slashItemsRef = useRef(slashItems);
   slashItemsRef.current = slashItems;
 
-  /** Stable wrapper for MessageInput onSend — clears forkDraft + draft and delegates to handleSend */
+  /**
+   * Stable wrapper for MessageInput onSend — drops the prefill and delegates.
+   *
+   * The draft is NOT deleted here. The composer has already emptied itself, so the
+   * saved draft is the only other copy of the text until the send actually happens;
+   * each send path deletes it at the moment the message reaches a socket, and puts
+   * the text back when it cannot. Only the save still waiting on its debounce is
+   * dropped, or it would land under whichever session the tab is on a second later.
+   */
   const handleInputSend = useCallback(
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
       // Client-handled built-ins act on the UI, so they must not reach the SDK.
@@ -606,16 +719,16 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       }
 
       setForkDraft(undefined);
-      clearDraft();
+      cancelPendingSave();
       if (editFork && sessionId && projectName) {
         const anchor = editFork.anchorMsgId;
         setEditFork(null);
         void handleEditSend(buildMessageWithAttachments(content, attachments), anchor);
         return;
       }
-      handleSend(content, attachments, priority);
+      void handleSend(content, attachments, priority);
     },
-    [handleSend, clearDraft, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
+    [handleSend, clearDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -895,6 +1008,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             autoFocus={!(metadata?.sessionId) || !!forkDraft}
             initialValue={forkDraft ?? draft?.content}
             clearSignal={clearInputSignal}
+            restore={restore}
             projectName={projectName}
             onSlashStateChange={handleSlashStateChange}
             onSlashItemsLoaded={handleSlashItemsLoaded}
