@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-09-22
+
+### Added
+- New chats can follow the last focused chat's provider across panels or always use the configured default.
+
+### Fixed
+- Show the selected Codex account's usage before sending the first message.
+- Restore unsent first messages and drafts when session creation or connection fails.
+- Fix loading Codex history before compaction on Windows and validate transcript paths.
+- Clear stale model options when switching chat providers.
+
 ## [0.22.1] - 2026-09-18
 
 ### Fixed
