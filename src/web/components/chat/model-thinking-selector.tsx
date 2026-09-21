@@ -46,17 +46,36 @@ export function ModelThinkingSelector({
   providerId,
   disabled,
 }: ModelThinkingSelectorProps) {
-  const [models, setModels] = useState<ModelOption[]>([]);
+  const [modelResult, setModelResult] = useState<{
+    projectName: string;
+    providerId: string;
+    models: ModelOption[];
+    error?: boolean;
+  } | null>(null);
+  // Never render another provider/project's options, even before effects run.
+  const result = modelResult?.projectName === projectName && modelResult.providerId === providerId
+    ? modelResult : null;
+  const models = result?.models ?? [];
+  const loading = Boolean(projectName && providerId && !result);
+  const modelStatus = loading ? "Loading models..." : result?.error
+    ? "Unable to load models" : models.length === 0 ? "No models available" : null;
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
+    let active = true;
+    setModelResult(null);
     if (!projectName || !providerId) return;
     api
       .get<ModelOption[]>(`${projectUrl(projectName)}/chat/providers/${providerId}/models`)
-      .then(setModels)
-      .catch(() => {});
+      .then((models) => {
+        if (active) setModelResult({ projectName, providerId, models });
+      })
+      .catch(() => {
+        if (active) setModelResult({ projectName, providerId, models: [], error: true });
+      });
+    return () => { active = false; };
   }, [projectName, providerId]);
 
   useEffect(() => {
@@ -77,9 +96,9 @@ export function ModelThinkingSelector({
   }, [open, isMobile]);
 
   const current = models.find((m) => m.value === model);
-  const modelDisplay = current ? shortLabel(current.label) : model ? shortLabel(model) : "Model";
+  const modelDisplay = loading ? "Loading models..." : current ? shortLabel(current.label) : "Model";
   const effortValue = effort ?? DEFAULT_EFFORT;
-  const showModelList = models.length > 1;
+  const showModelList = models.length > 0 || Boolean(modelStatus);
   const chipText = chipLabel(modelDisplay, effortValue);
 
   const pick = (fn: () => void) => {
@@ -93,6 +112,7 @@ export function ModelThinkingSelector({
       {showModelList && (
         <div className="flex-1 min-w-0 py-1">
           <SectionLabel>Model</SectionLabel>
+          {modelStatus && <div role="status" className="px-3 py-2 text-xs text-text-secondary">{modelStatus}</div>}
           {models.map((m) => (
             <OptionRow key={m.value} active={m.value === model} onClick={() => pick(() => onModelChange(m.value))}>
               <span className="flex-1 truncate">{shortLabel(m.label)}</span>
