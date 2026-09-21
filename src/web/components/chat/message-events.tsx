@@ -153,7 +153,7 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
     <>
       {groups.map((group, i) => {
         if (group.kind === "thinking") {
-          return <ThinkingBlock key={`think-${i}`} content={group.content} isStreaming={isStreaming && i === groups.length - 1} />;
+          return <ThinkingBlock key={`think-${i}`} content={group.content} projectName={projectName} isStreaming={isStreaming && i === groups.length - 1} />;
         }
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
@@ -169,8 +169,8 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
   );
 }
 
-/** Collapsible thinking block — shows Claude's reasoning, collapsed by default when done */
-function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+/** Collapsible thinking block — shows the provider's safe reasoning summary, collapsed by default when done */
+function ThinkingBlock({ content, projectName, isStreaming }: { content: string; projectName?: string; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(isStreaming);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -198,8 +198,8 @@ function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming:
       </button>
       {expanded && (
         <div ref={scrollRef} className="max-h-60 overflow-y-auto">
-          <div className="px-2 pb-2 text-text-subtle/80 whitespace-pre-wrap text-[11px] leading-relaxed">
-            {content}
+          <div className="px-2 pb-2 text-text-subtle/80 text-[11px] leading-relaxed">
+            <MarkdownContent content={content} projectName={projectName} isStreaming={isStreaming} />
           </div>
         </div>
       )}
