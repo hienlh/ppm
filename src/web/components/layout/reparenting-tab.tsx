@@ -65,9 +65,11 @@ export function ReparentingTab({
       if (pid === DOCK_PANEL_ID || isWindowPanelId(pid)) return;
       usePanelStore.getState().setFocusedPanel(pid);
     };
-    wrapper.addEventListener("mousedown", onMouseDown, true);
+    wrapper.addEventListener("pointerdown", onMouseDown, true);
+    wrapper.addEventListener("focusin", onMouseDown, true);
     return () => {
-      wrapper.removeEventListener("mousedown", onMouseDown, true);
+      wrapper.removeEventListener("pointerdown", onMouseDown, true);
+      wrapper.removeEventListener("focusin", onMouseDown, true);
       wrapper.remove();
     };
   }, [wrapper, hiddenContainer]);

@@ -20,6 +20,7 @@ import { MessageInput, type ChatAttachment, type MessagePriority } from "./messa
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
+import { NewChatProviderGate } from "./new-chat-provider-gate";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
 
 import type { DragEvent } from "react";
@@ -41,6 +42,14 @@ const SESSION_CREATE_TIMEOUT_MS = 30_000;
 const PENDING_SEND_TIMEOUT_MS = 45_000;
 
 export function ChatTab({ metadata, tabId }: ChatTabProps) {
+  return tabId && metadata ? (
+    <NewChatProviderGate tabId={tabId} metadata={metadata}>
+      <ChatTabContent metadata={metadata} tabId={tabId} />
+    </NewChatProviderGate>
+  ) : <ChatTabContent metadata={metadata} tabId={tabId} />;
+}
+
+function ChatTabContent({ metadata, tabId }: ChatTabProps) {
   const [sessionId, setSessionId] = useState<string | null>(
     (metadata?.sessionId as string) ?? null,
   );
@@ -118,7 +127,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   useEffect(() => {
     if (permissionMode) return;
     getAISettings().then((s) => {
-      const provider = s.providers[s.default_provider ?? "claude"];
+      const provider = s.providers[providerId];
       setPermissionMode(provider?.permission_mode ?? "bypassPermissions");
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

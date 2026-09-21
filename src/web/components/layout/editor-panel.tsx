@@ -54,7 +54,7 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
         panelCount > 1 && "border border-transparent",
         panelCount > 1 && isFocused && "border-primary/30",
       )}
-      onMouseDown={() => { if (usePanelStore.getState().focusedPanelId !== panelId) usePanelStore.getState().setFocusedPanel(panelId); }}
+      onMouseDown={() => { if (usePanelStore.getState().focusedPanelId !== panelId) usePanelStore.getState().setFocusedPanel(panelId, false); }}
     >
       <TabBar panelId={panelId} />
 

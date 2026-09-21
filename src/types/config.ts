@@ -74,8 +74,12 @@ export interface ProjectConfig {
   image?: string;
 }
 
+export type NewChatProviderMode = "default" | "follow-focus";
+
 export interface AIConfig {
   default_provider: string;
+  /** Missing in legacy settings: use the configured default provider. */
+  new_chat_provider_mode?: NewChatProviderMode;
   /** Share project rules and memory between providers. Unset defaults to true. */
   share_provider_context?: boolean;
   providers: Record<string, AIProviderConfig>;
@@ -140,6 +144,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   projects: [],
   ai: {
     default_provider: "claude",
+    new_chat_provider_mode: "follow-focus",
     share_provider_context: true,
     providers: {
       claude: {
@@ -280,7 +285,7 @@ export function validateCodexContextConfig(config: Partial<AIProviderConfig>): s
 
 /** Validate default_provider references an existing provider key */
 export function validateDefaultProvider(defaultProvider: string, providers: Record<string, unknown>): string | null {
-  if (!providers[defaultProvider]) {
+  if (!Object.hasOwn(providers, defaultProvider)) {
     return `default_provider "${defaultProvider}" not found in providers`;
   }
   return null;
@@ -292,6 +297,12 @@ export function validateDefaultProvider(defaultProvider: string, providers: Reco
  */
 export function sanitizeConfig(config: PpmConfig): boolean {
   let dirty = false;
+
+  // Preserve legacy behavior on upgrade; only fresh configs opt into following focus.
+  if (config.ai.new_chat_provider_mode !== "default" && config.ai.new_chat_provider_mode !== "follow-focus") {
+    config.ai.new_chat_provider_mode = "default";
+    dirty = true;
+  }
 
   if (typeof config.ai.share_provider_context !== "boolean") {
     config.ai.share_provider_context = true;

@@ -25,6 +25,7 @@ describe("GET /settings/ai", () => {
     const json = await res.json();
     expect(json.ok).toBe(true);
     expect(json.data.default_provider).toBe("claude");
+    expect(json.data.new_chat_provider_mode).toBe("follow-focus");
     expect(json.data.share_provider_context).toBe(true);
     expect(json.data.providers.claude.type).toBe("agent-sdk");
     expect(json.data.providers.claude.model).toBe("claude-opus-5");
@@ -37,6 +38,57 @@ describe("GET /settings/ai", () => {
 
 describe("PUT /settings/ai", () => {
   beforeEach(resetConfig);
+
+  it("persists each new-chat mode and preserves it on unrelated updates", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const providers = structuredClone(configService.get("ai").providers);
+    for (const mode of ["default", "follow-focus"]) {
+      const res = await put({ new_chat_provider_mode: mode });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.new_chat_provider_mode).toBe(mode);
+      expect(configService.load().ai.new_chat_provider_mode).toBe(mode);
+      expect((await put({ share_provider_context: false })).status).toBe(200);
+      expect(configService.load().ai.new_chat_provider_mode).toBe(mode);
+      expect(configService.get("ai").providers).toEqual(providers);
+    }
+  });
+
+  it("rejects invalid modes atomically", async () => {
+    const app = createApp();
+    const before = getConfigValue("ai");
+    for (const value of [null, "recent", "", 0, true, {}]) {
+      const res = await app.request("/settings/ai", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_chat_provider_mode: value, share_provider_context: false }),
+      });
+      expect(res.status).toBe(400);
+      expect(getConfigValue("ai")).toBe(before);
+    }
+  });
+
+  it("accepts configured Codex as the default provider", async () => {
+    const app = createApp();
+    const res = await app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ default_provider: "codex", providers: { codex: { type: "cli", cli_command: "codex" } } }),
+    });
+    expect(res.status).toBe(200);
+    expect(configService.load().ai.default_provider).toBe("codex");
+  });
+
+  it("rejects malformed or inherited default provider keys", async () => {
+    const app = createApp();
+    for (const value of [null, "", 123, {}, "toString", "__proto__"]) {
+      const res = await app.request("/settings/ai", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ default_provider: value }),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
 
   it("persists Codex token limits and resets overrides with null", async () => {
     const app = createApp();
@@ -163,7 +215,7 @@ describe("PUT /settings/ai", () => {
     expect(json.data.default_provider).toBe("claude");
   });
 
-  it("rejects default_provider not in VALID_PROVIDERS", async () => {
+  it("rejects default_provider that is not configured", async () => {
     const app = createApp();
     const res = await app.request("/settings/ai", {
       method: "PUT",

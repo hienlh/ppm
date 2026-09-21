@@ -448,6 +448,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
                   metadata: project ? { projectName: project.name } : undefined,
                 });
               } else {
+                usePanelStore.getState().setFocusedPanel(effectivePanelId, false);
                 openCommandPalette();
               }
             }}
@@ -503,4 +504,3 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
     </>
   );
 });
-

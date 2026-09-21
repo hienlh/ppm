@@ -120,6 +120,42 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
     <div className={gapSize}>
       <h3 className={`${headingSize} font-medium text-text-secondary`}>AI Settings</h3>
 
+      <div className={fieldGap}>
+        <Label htmlFor="ai-new-chat-provider" className={compact ? labelSize : undefined}>New chat provider</Label>
+        <Select
+          value={settings.new_chat_provider_mode ?? "default"}
+          disabled={saving}
+          onValueChange={(value) => handleSettingsSave({ new_chat_provider_mode: value as "default" | "follow-focus" })}
+        >
+          <SelectTrigger id="ai-new-chat-provider" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="follow-focus">Follow last focused chat</SelectItem>
+            <SelectItem value="default">Always use default provider</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+          {settings.new_chat_provider_mode === "follow-focus"
+            ? "New tabs follow the last chat you focused in this project, across panels. Existing tabs keep their provider."
+            : "New tabs always use the default provider. Existing tabs keep their provider."}
+        </p>
+      </div>
+
+      <div className={fieldGap}>
+        <Label htmlFor="ai-default-provider" className={compact ? labelSize : undefined}>Default provider</Label>
+        <Select value={settings.default_provider} disabled={saving}
+          onValueChange={(default_provider) => handleSettingsSave({ default_provider })}>
+          <SelectTrigger id="ai-default-provider" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {providerTabs.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {settings.new_chat_provider_mode === "follow-focus" && (
+          <p className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+            Used when no chat has been focused in this project yet.
+          </p>
+        )}
+      </div>
+
       <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
         <div className={fieldGap}>
           <Label htmlFor="ai-share-provider-context" className={compact ? labelSize : undefined}>

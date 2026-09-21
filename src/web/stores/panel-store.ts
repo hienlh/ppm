@@ -89,6 +89,8 @@ export interface PanelStore {
   grid: string[][];
   focusedPanelId: string;
   currentProject: string | null;
+  /** Session-local focus memory, isolated by project; non-chat tabs do not clear it. */
+  lastFocusedChatProviders: Record<string, string>;
 
   /** Keep-alive: per-project grid snapshots (for hidden workspaces) */
   projectGrids: Record<string, string[][]>;
@@ -106,7 +108,7 @@ export interface PanelStore {
   reloadProject: (projectName: string) => void;
 
   // Panel focus
-  setFocusedPanel: (panelId: string) => void;
+  setFocusedPanel: (panelId: string, rememberChat?: boolean) => void;
 
   // Tab operations (operate on focused panel by default)
   openTab: (tab: Omit<Tab, "id">, panelId?: string) => string;
@@ -210,6 +212,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
   return {
     ...defaultLayout(),
     currentProject: null,
+    lastFocusedChatProviders: {},
     projectGrids: {},
     projectFocused: {},
     dock: { visible: false, height: 30 },
@@ -459,10 +462,13 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       get().switchProject(projectName);
     },
 
-    setFocusedPanel: (panelId) => {
+    setFocusedPanel: (panelId, rememberChat = true) => {
       // Focus drives where the next tab opens, so it must stay on a real, on-grid panel.
       if (isWindowPanelId(panelId)) return;
-      if (get().panels[panelId]) set({ focusedPanelId: panelId });
+      const panel = get().panels[panelId];
+      if (!panel) return;
+      set({ focusedPanelId: panelId });
+      if (rememberChat) rememberChatProvider(panel.tabs.find((t) => t.id === panel.activeTabId));
     },
 
     openTab: (tabDef, panelId?) => {
@@ -473,6 +479,15 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         : resolvePanel(panelId);
       const panel = get().panels[pid];
       if (!panel) return "";
+
+      if (tabDef.type === "chat" && !tabDef.metadata?.sessionId && !tabDef.metadata?.providerId) {
+        const project = tabDef.projectId ?? (tabDef.metadata?.projectName as string | undefined) ?? get().currentProject;
+        tabDef = { ...tabDef, metadata: {
+          ...tabDef.metadata,
+          providerPending: true,
+          focusedProviderOnOpen: project ? get().lastFocusedChatProviders[project] : undefined,
+        } };
+      }
 
       // Terminal: compute next available index if not provided
       if (tabDef.type === "terminal" && !tabDef.metadata?.terminalIndex) {
@@ -499,6 +514,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         for (const p of Object.values(get().panels)) {
           const existing = p.tabs.find((t) => t.type === "chat" && t.metadata?.sessionId === sid);
           if (existing) {
+            rememberChatProvider(existing);
             set((s) => ({
               focusedPanelId: focusAfterActivate(p.id),
               panels: {
@@ -664,6 +680,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     setActiveTab: (tabId, panelId?) => {
       const panel = panelId ? get().panels[panelId] : findPanel(tabId);
       if (!panel) return;
+      rememberChatProvider(panel.tabs.find((t) => t.id === tabId));
       const pid = panel.id;
       set((s) => {
         const p = s.panels[pid]!;
@@ -861,4 +878,30 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
 
     isMobile: () => typeof window !== "undefined" && window.innerWidth < 768,
   };
+});
+
+// Observe activation as well as a provider change in the focused composer. Updates
+// from background chats must never replace the user's most recent focus choice.
+function rememberChatProvider(tab: Tab | undefined) {
+  const state = usePanelStore.getState();
+  if (tab?.type !== "chat" || tab.metadata?.providerPending) return;
+  const project = tab.projectId ?? (tab.metadata?.projectName as string | undefined) ?? state.currentProject;
+  const provider = (tab.metadata?.providerId as string | undefined) ?? "claude";
+  if (!project || state.lastFocusedChatProviders[project] === provider) return;
+  usePanelStore.setState({ lastFocusedChatProviders: {
+    ...state.lastFocusedChatProviders, [project]: provider,
+  } });
+}
+
+usePanelStore.subscribe((state, previous) => {
+  const panel = state.panels[state.focusedPanelId];
+  const tab = panel?.tabs.find((t) => t.id === panel.activeTabId);
+  // A panel's chrome can change the destination for new tabs without focusing
+  // its chat. Actual body/tab focus is recorded explicitly by the actions above.
+  const oldPanel = previous.panels[state.focusedPanelId];
+  const oldTab = oldPanel?.tabs.find((t) => t.id === oldPanel.activeTabId);
+  if (tab?.id === oldTab?.id
+    && tab?.metadata?.providerId === oldTab?.metadata?.providerId
+    && state.currentProject === previous.currentProject) return;
+  rememberChatProvider(tab);
 });

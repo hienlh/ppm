@@ -5,9 +5,9 @@ import {
   validateAIProviderConfig,
   validateCodexContextConfig,
   validateDefaultProvider,
-  VALID_PROVIDERS,
   DEFAULT_CONFIG,
   type AIProviderConfig,
+  type NewChatProviderMode,
   type TelegramConfig,
   type PPMBotConfig,
   type ThemeConfig,
@@ -184,11 +184,19 @@ settingsRoutes.put("/ai", async (c) => {
   try {
     const body = await c.req.json<{
       default_provider?: string;
+      new_chat_provider_mode?: NewChatProviderMode;
       share_provider_context?: boolean;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
     const currentAi = configService.get("ai");
+
+    if ("new_chat_provider_mode" in body && body.new_chat_provider_mode !== "default" && body.new_chat_provider_mode !== "follow-focus") {
+      return c.json(err("new_chat_provider_mode must be one of: default, follow-focus"), 400);
+    }
+    if ("default_provider" in body && (typeof body.default_provider !== "string" || !body.default_provider)) {
+      return c.json(err("default_provider must be a non-empty string"), 400);
+    }
 
     if ("share_provider_context" in body && typeof body.share_provider_context !== "boolean") {
       return c.json(err("share_provider_context must be a boolean"), 400);
@@ -207,6 +215,7 @@ settingsRoutes.put("/ai", async (c) => {
     // Merge: body overrides current values (shallow merge per provider)
     const updated = {
       ...currentAi,
+      new_chat_provider_mode: body.new_chat_provider_mode ?? currentAi.new_chat_provider_mode ?? "default",
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
@@ -231,11 +240,8 @@ settingsRoutes.put("/ai", async (c) => {
       }
     }
 
-    // Validate default_provider is in allowed list and references existing provider
+    // Configured providers include runtime integrations such as Codex.
     if (body.default_provider) {
-      if (!VALID_PROVIDERS.includes(body.default_provider as any)) {
-        return c.json(err(`default_provider must be one of: ${VALID_PROVIDERS.join(", ")}`), 400);
-      }
       const dpErr = validateDefaultProvider(updated.default_provider, updated.providers);
       if (dpErr) return c.json(err(dpErr), 400);
     }

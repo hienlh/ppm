@@ -155,6 +155,7 @@ export async function initProject(options: InitOptions = {}) {
   configService.set("auth", { enabled: authEnabled, token: authToken });
   configService.set("ai", {
     default_provider: "claude",
+    new_chat_provider_mode: configService.get("ai").new_chat_provider_mode,
     providers: {
       claude: {
         type: "agent-sdk",

@@ -2,6 +2,19 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## New Chat Provider
+
+Settings → AI offers `Always use default provider` and `Follow last focused chat`.
+`ai.default_provider` is the fixed choice or the fallback when the current project has
+no focused chat. Fresh installations use follow-focus; existing configurations without
+`ai.new_chat_provider_mode` retain default mode.
+
+Focus memory is per project and browser session, across panels. Editors, terminals and
+panel chrome do not replace it. New tabs snapshot the source at creation and resolve
+settings before mounting chat or claiming an account. An unavailable provider prompts
+for an available choice. Existing tabs, resumed sessions and explicit fork/clear
+providers are preserved; changing the setting only affects new tabs.
+
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
 **Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints
