@@ -205,7 +205,14 @@ settingsRoutes.put("/ai", async (c) => {
     // Validate each provider config
     if (body.providers) {
       for (const [name, providerConfig] of Object.entries(body.providers)) {
-        const errors = validateAIProviderConfig(providerConfig);
+        // Field-only updates still need the saved provider kind and CLI command.
+        // Validate submitted values without revalidating unrelated legacy settings.
+        const existing = currentAi.providers[name];
+        const errors = validateAIProviderConfig({
+          type: existing?.type,
+          cli_command: existing?.cli_command,
+          ...providerConfig,
+        });
         if (errors.length > 0) {
           return c.json(err(`Provider "${name}": ${errors.join(", ")}`), 400);
         }

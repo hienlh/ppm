@@ -90,6 +90,38 @@ describe("PUT /settings/ai", () => {
     }
   });
 
+  it("persists model-only updates and Auto for configured CLI providers", async () => {
+    const app = createApp();
+    for (const [name, command] of [["codex", "codex"], ["cursor", "cursor-agent"]]) {
+      const put = (patch: Record<string, unknown>) => app.request("/settings/ai", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providers: { [name!]: patch } }),
+      });
+      expect((await put({ type: "cli", cli_command: command })).status).toBe(200);
+      for (const model of ["gpt-5.6-terra", ""]) {
+        const res = await put({ model });
+        expect(res.status).toBe(200);
+        expect((await res.json()).data.providers[name!].model).toBe(model);
+        expect(configService.load().ai.providers[name!]).toMatchObject({
+          type: "cli", cli_command: command, model,
+        });
+      }
+      const before = getConfigValue("ai");
+      expect((await put({ cli_command: "invalid-command" })).status).toBe(400);
+      expect(getConfigValue("ai")).toBe(before);
+    }
+  });
+
+  it("rejects non-Claude models in model-only SDK updates without saving", async () => {
+    const before = getConfigValue("ai");
+    const res = await createApp().request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providers: { claude: { model: "gpt-5.6-terra" } } }),
+    });
+    expect(res.status).toBe(400);
+    expect(getConfigValue("ai")).toBe(before);
+  });
+
   it("persists Codex token limits and resets overrides with null", async () => {
     const app = createApp();
     const put = (codex: Record<string, unknown>) => app.request("/settings/ai", {
