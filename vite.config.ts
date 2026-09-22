@@ -86,7 +86,11 @@ export default defineConfig({
     port: 5173,
     allowedHosts: true,
     proxy: {
-      "/api": process.env.PPM_DEV_API ?? "http://localhost:8081",
+      "/api": {
+        target: process.env.PPM_DEV_API ?? "http://localhost:8081",
+        // HTML preview CSP must refer to the browser-facing authority.
+        changeOrigin: false,
+      },
       "/ws": {
         target: process.env.PPM_DEV_API ?? "http://localhost:8081",
         ws: true,

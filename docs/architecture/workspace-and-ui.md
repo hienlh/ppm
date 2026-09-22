@@ -157,6 +157,12 @@ When switching projects, workspaces are preserved instead of destroyed:
 
 ---
 
+### HTML file preview
+
+Saved `.html` and `.htm` files open with a single toolbar row: breadcrumb, Refresh preview, Code / Preview and an overflow menu. The single refresh button reloads the entry document, also restoring it after following an image or link inside the sandbox. Download, wrap, blame, language and language-server settings live in the menu; Code mode also offers Reload code from disk (disabled while unsaved). Controls support desktop, mobile and external files from OS Explorer. Preview renders the saved file; refreshing it does not replace the editor buffer. Once opened, the code editor stays mounted across mode changes to retain undo and cursor state. Existing tab pop-out/redock also hosts the preview.
+
+`POST /api/html-preview` requires normal API authentication and returns a one-hour capability URL under `/api/html-preview/content/:token/`. The capability serves static assets from the HTML file's directory and descendants with byte-range support for video. Realpath containment, filesystem credential guards, hidden asset restrictions and a static extension allowlist apply to each request. No PPM login token is embedded in the document. Both the iframe and response CSP sandbox scripts without same-origin privileges; resource/fetch access is limited to that preview directory. External CDNs, parent-directory assets, forms, nested frames and browser storage are intentionally unsupported. Refresh renews an expired capability; at most 128 capabilities are retained per server.
+
 ## Terminal Flow
 
 ```

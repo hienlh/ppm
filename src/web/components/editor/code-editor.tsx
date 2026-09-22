@@ -18,6 +18,8 @@ import { LspStatus } from "./lsp-status";
 import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal, ShieldCheck, ShieldOff } from "@/lib/icons";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
+import { HtmlPreview } from "./html-preview";
+import { HtmlPreviewToolbar } from "./html-preview-toolbar";
 import { EditorLanguagePicker } from "./editor-language-picker";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
@@ -136,6 +138,11 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const isAudio = AUDIO_EXTS.has(ext);
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
+  const isHtml = (ext === "html" || ext === "htm") && !isUntitled && inlineContent == null;
+  const [htmlMode, setHtmlMode] = useState<"edit" | "preview">("preview");
+  const [htmlRevision, setHtmlRevision] = useState(0);
+  const [htmlCodeOpened, setHtmlCodeOpened] = useState(false);
+  const htmlPreviewVisible = isHtml && htmlMode === "preview";
   const isCsv = ext === "csv";
   // Explicit language override (from language picker / New DB Query); falls back to file extension.
   const langOverride = metadata?.language as string | undefined;
@@ -448,7 +455,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // buffer no server can serve must not switch the built-in worker back on underneath the
   // project file in the next tab.
   const lspWanted = lspEnabled && !isTouchOnly;
-  const lspOn = lspWanted && lspServable;
+  const lspOn = lspWanted && lspServable && !htmlPreviewVisible;
   const [lsp, setLsp] = useState<EditorLspState>({ status: null, diagnostics: [] });
   const handleLspState = useCallback((next: EditorLspState) => setLsp(next), []);
 
@@ -807,7 +814,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         </div>
       )}
       {/* Breadcrumb + Toolbar bar — desktop only */}
-      {filePath && projectName && tabId && (
+      {!isHtml && filePath && projectName && tabId && (
         <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0">
           <EditorBreadcrumb
             filePath={filePath}
@@ -850,7 +857,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       )}
 
       {/* Language + SQL toolbar for untitled / external files (no project breadcrumb) */}
-      {inlineContent == null && tabId && (isUntitled || (filePath && !projectName)) && (
+      {!isHtml && inlineContent == null && tabId && (isUntitled || (filePath && !projectName)) && (
         <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0 px-2">
           <span className="text-xs text-muted-foreground truncate flex-1">
             {isUntitled ? `Untitled-${metadata?.untitledNumber ?? 1}` : (filePath ? basename(filePath) : "Untitled")}
@@ -860,15 +867,32 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         </div>
       )}
 
+      {isHtml && filePath && (
+        <HtmlPreviewToolbar mode={htmlMode} onModeChange={(mode) => {
+          if (mode === "edit") setHtmlCodeOpened(true);
+          setHtmlMode(mode);
+        }}
+          onRefresh={() => { setHtmlMode("preview"); setHtmlRevision((value) => value + 1); }} unsaved={unsaved}
+          onReloadCode={reloadFile} refreshing={refreshing}
+          breadcrumb={projectName && tabId ? <EditorBreadcrumb filePath={filePath} projectName={projectName} tabId={tabId} className="flex items-center min-w-0 overflow-x-auto scrollbar-none gap-0.5" /> : <span className="truncate text-xs text-muted-foreground">{basename(filePath)}</span>}
+          filePath={filePath} projectName={projectName} wordWrap={wrapOn} onToggleWordWrap={toggleWrap}
+          inlineBlame={inlineBlame} onToggleInlineBlame={canBlame ? toggleInlineBlame : undefined}
+          language={effectiveLanguage} onLanguageChange={handleLanguageChange}
+          lspEnabled={lspWanted} onToggleLsp={lspServable && !isTouchOnly ? setLspEnabled : undefined} />
+      )}
+
       {/* Content area */}
-      {isCsv && csvMode === "table" ? (
+      {htmlPreviewVisible && filePath && (
+        <HtmlPreview filePath={filePath} projectName={projectName} revision={htmlRevision} />
+      )}
+      {htmlPreviewVisible && !htmlCodeOpened ? null : isCsv && csvMode === "table" ? (
         <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>}>
           <CsvPreview content={content ?? ""} onContentChange={handleChange} wordWrap={wrapOn} />
         </Suspense>
       ) : isMarkdown && mdMode === "preview" ? (
         <MarkdownPreview content={content ?? ""} />
       ) : (
-        <div className="flex-1 overflow-hidden min-h-0">
+        <div className={htmlPreviewVisible ? "hidden" : "flex-1 overflow-hidden min-h-0"}>
           <Editor
             height="100%"
             key={effectiveLanguage}
@@ -930,7 +954,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       )}
 
       {/* Mobile toolbar — bottom, like terminal */}
-      {isMobile && (
+      {isMobile && !htmlPreviewVisible && (
         <EditorMobileToolbar
           editorRef={editorRef}
           readOnly={inlineContent != null}

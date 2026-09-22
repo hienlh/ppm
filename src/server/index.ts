@@ -20,6 +20,7 @@ import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { fsOpsRoutes } from "./routes/fs-ops.ts";
 import { fsUploadRoutes } from "./routes/fs-upload.ts";
 import { fsSqliteRoutes } from "./routes/fs-sqlite.ts";
+import { htmlPreviewRoutes } from "./routes/html-preview.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
@@ -176,10 +177,14 @@ if (process.env.NODE_ENV !== "production") {
 // Proxy routes — before auth middleware (uses own auth key)
 app.route("/proxy", proxyRoutes);
 
+// HTML assets authenticate with bounded preview capabilities, never the PPM session token.
+app.route("/api/html-preview/content", htmlPreviewRoutes.content);
+
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.use("/api/*", gzipJson);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
+app.route("/api/html-preview", htmlPreviewRoutes.api);
 
 // Port forwarding — starts per-port Cloudflare tunnels
 app.route("/api/preview", portForwardingRoutes);
