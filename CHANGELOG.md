@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.22.4] - 2026-09-22
+
+### Fixed
+- Recover chat streaming after tunnel WebSocket gaps instead of showing the response only when the turn ends.
+
 ## [0.22.3] - 2026-09-22
 
 ### Added
