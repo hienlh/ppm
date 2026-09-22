@@ -199,6 +199,12 @@ export function useChat(
   const turnFinalizedRef = useRef(false);
   const historyRequestRef = useRef<AbortController | null>(null);
   const queuedReplayMessagesRef = useRef<MessageEvent[]>([]);
+  /** Highest streamed event sequence received from the server for this session. */
+  const streamSeqRef = useRef(0);
+  /** A full replay is already on its way; do not flood snapshots for one gap. */
+  const resyncInFlightRef = useRef(false);
+  /** The bounded server replay omitted an old prefix; idle history reload repairs it. */
+  const replayTruncatedRef = useRef(false);
   const handleMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
   /** True while replaying turn_events — suppresses setPendingApproval */
   const isReplayingRef = useRef(false);
@@ -777,12 +783,39 @@ export function useChat(
       return;
     }
 
-    // Ignore keepalive pings
-    if ((data as any).type === "ping") return;
-
     if (isReplayingRef.current) {
       queuedReplayMessagesRef.current.push(event);
       return;
+    }
+
+    // A ping carries the latest stream sequence. If it is ahead of what the tab
+    // has seen, request the server's in-flight buffer immediately. This catches
+    // a tunnel that keeps heartbeats alive while dropping content frames.
+    if ((data as any).type === "ping") {
+      const serverSeq = (data as any).streamSeq;
+      if (typeof serverSeq === "number" && serverSeq > streamSeqRef.current
+        && !resyncInFlightRef.current && !replayTruncatedRef.current) {
+        resyncInFlightRef.current = true;
+        sendRef.current(JSON.stringify({ type: "resync" }));
+      }
+      return;
+    }
+
+    // Live stream frames must be contiguous. A higher number is evidence that
+    // a tunnel/proxy skipped a content frame; request one full snapshot and let
+    // the replay establish the authoritative cursor below.
+    const streamSeq = (data as any).streamSeq;
+    if (typeof streamSeq === "number") {
+      if (replayTruncatedRef.current) {
+        // The prefix is unavailable from the bounded buffer. Continue showing
+        // fresh frames and let the normal idle transcript reload fill the gap.
+        streamSeqRef.current = Math.max(streamSeqRef.current, streamSeq);
+      } else if (streamSeq === streamSeqRef.current + 1) {
+        streamSeqRef.current = streamSeq;
+      } else if (streamSeq > streamSeqRef.current && !resyncInFlightRef.current) {
+        resyncInFlightRef.current = true;
+        sendRef.current(JSON.stringify({ type: "resync" }));
+      }
     }
 
     // file:changed, session:unread_changed and jira:* are app-wide and now arrive
@@ -860,11 +893,14 @@ export function useChat(
       // Safety: idle phase means no turn running — ensure compact indicator does not linger.
       // BE should broadcast compact_status=done too, but this is a belt-and-braces clear.
       if (p === "idle") {
+        const replayWasTruncated = replayTruncatedRef.current;
+        resyncInFlightRef.current = false;
+        replayTruncatedRef.current = false;
         setCompactStatus(null);
         setStatusMessage(null);
         // Completion can arrive after lost content/done frames. Reconcile once
         // the turn is idle so the answer appears without a manual reload.
-        if (wasActive && !turnFinalizedRef.current) refetchRef.current?.();
+        if (replayWasTruncated || (wasActive && !turnFinalizedRef.current)) refetchRef.current?.();
       }
       return;
     }
@@ -921,8 +957,11 @@ export function useChat(
       // connects right after the mount fetch and this refetch would re-download
       // the entire history (and remount every transcript image) for no reason.
       if (p === "idle") {
+        const replayWasTruncated = replayTruncatedRef.current;
+        resyncInFlightRef.current = false;
+        replayTruncatedRef.current = false;
         const historyFresh = Date.now() - historyLoadedAtRef.current < 5000;
-        if (!(wasIdle && historyFresh)) refetchRef.current?.();
+        if (replayWasTruncated || !(wasIdle && historyFresh)) refetchRef.current?.();
         setIsReconnecting(false);
       }
       // If streaming, turn_events message will follow
@@ -997,6 +1036,13 @@ export function useChat(
         } else {
           replayRafRef.current = 0;
           isReplayingRef.current = false;
+          const snapshotSeq = (data as any).streamSeq;
+          const truncated = (data as any).truncated === true;
+          replayTruncatedRef.current = truncated;
+          if (!truncated && typeof snapshotSeq === "number") {
+            streamSeqRef.current = snapshotSeq;
+          }
+          resyncInFlightRef.current = false;
           setIsReconnecting(false);
           // Preserve websocket order: live text/done must follow the snapshot,
           // even when rebuilding a large snapshot takes several frames.
@@ -1021,7 +1067,7 @@ export function useChat(
     url: wsUrl,
     onMessage: handleMessage,
     autoConnect: !!sessionId && !!projectName,
-    idleTimeoutMs: 45_000, // Server sends a heartbeat every 15 seconds.
+    idleTimeoutMs: 45_000, // Server sends a heartbeat every 5 seconds.
     onConnectionChange: (connected) => {
       if (!connected) {
         attemptRef.current?.fail();
@@ -1042,6 +1088,9 @@ export function useChat(
     const historyReconciled = historyReconciledRef.current;
     turnFinalizedRef.current = false;
     historyActivityRef.current++;
+    streamSeqRef.current = 0;
+    resyncInFlightRef.current = false;
+    replayTruncatedRef.current = false;
 
     // Keep the user's unconfirmed model/thinking picks across the draft→real transition
     // (null → id), but drop them when switching between two existing sessions so one

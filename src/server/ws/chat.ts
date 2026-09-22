@@ -48,7 +48,7 @@ function resolveSessionThinkingEnabled(sessionId: string): boolean {
   );
 }
 
-const PING_INTERVAL_MS = 15_000; // 15s keepalive
+const PING_INTERVAL_MS = 5_000; // Detect an active stream gap promptly through a tunnel.
 /**
  * When an abandoned session's entry is dropped.
  *
@@ -120,6 +120,8 @@ interface SessionEntry {
   backgroundToolUseIds?: Set<string>;
   /** Nested-agent children buffered into turnEvents this turn (see MAX_NESTED_TURN_EVENTS) */
   nestedBuffered?: number;
+  /** Monotonic sequence for streamed events, used to detect a downstream content gap. */
+  streamSeq: number;
   /** When the last client left, for evicting the least recently used warm subprocess */
   idleSince?: number;
   /** When the last turn completed — the moment this session's prompt cache was last written */
@@ -320,9 +322,12 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   const evType = (event as any)?.type;
+  const streamed = evType && BUFFERABLE_TYPES.has(evType)
+    ? { ...(event as Record<string, unknown>), streamSeq: ++entry.streamSeq }
+    : event;
   if (evType && BUFFERABLE_TYPES.has(evType)) {
     if (entry.turnEvents.length < MAX_TURN_EVENTS) {
-      entry.turnEvents.push({ ...(event as Record<string, unknown>) });
+      entry.turnEvents.push(streamed);
     }
     // Enrich: embed tool_result onto matching tool_use for reconnect reliability.
     // Reconnecting clients may miss separate tool_result events — this ensures
@@ -340,7 +345,7 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
       }
     }
   }
-  broadcast(sessionId, event);
+  broadcast(sessionId, streamed);
 }
 
 /**
@@ -453,11 +458,18 @@ function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): voi
 function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
   const entry = activeSessions.get(sessionId);
   if (!entry || entry.turnEvents.length === 0) return;
+  const lastBufferedSeq = (entry.turnEvents[entry.turnEvents.length - 1] as { streamSeq?: number } | undefined)?.streamSeq ?? 0;
+  const truncated = lastBufferedSeq < entry.streamSeq;
   try {
     ws.send(JSON.stringify({
       type: "turn_events",
       events: entry.turnEvents,
       userMessage: entry.currentUserMessage ?? null,
+      // This is an authoritative full snapshot, not a delta. `truncated` tells
+      // the client it must wait for the normal idle history reload to recover
+      // frames beyond the bounded replay buffer.
+      streamSeq: entry.streamSeq,
+      ...(truncated ? { truncated: true } : {}),
     }));
   } catch (e) {
     console.warn(`[chat] session=${sessionId} sendTurnEvents failed: ${(e as Error).message}`);
@@ -467,7 +479,7 @@ function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
 /** Set up per-client application-level ping */
 function setupClientPing(entry: SessionEntry, ws: ChatWsSocket): void {
   const interval = setInterval(() => {
-    try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* ws may be closed */ }
+    try { ws.send(JSON.stringify({ type: "ping", streamSeq: entry.streamSeq })); } catch { /* ws may be closed */ }
   }, PING_INTERVAL_MS);
   entry.pingIntervals.set(ws, interval);
 }
@@ -1033,6 +1045,7 @@ export const chatWebSocket = {
       phase: "idle",
       turnEvents: [],
       isStreamingActive: false,
+      streamSeq: 0,
       teamWatchers: new Map(),
       teamNames: new Set(),
       compactStatus: null,
@@ -1093,7 +1106,7 @@ export const chatWebSocket = {
       if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
       const newEntry: SessionEntry = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
-        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false,
+        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false, streamSeq: 0,
         teamWatchers: new Map(), teamNames: new Set(), compactStatus: null,
         model: getSessionModel(sessionId) ?? undefined,
       };
@@ -1113,7 +1126,7 @@ export const chatWebSocket = {
     // Client-initiated handshake — FE sends "ready" after onopen.
     // Re-send status so tunnel connections (Cloudflare) that missed the
     // open-handler message still get connected/status confirmation.
-    if (parsed.type === "ready") {
+    if (parsed.type === "ready" || parsed.type === "resync") {
       ws.send(JSON.stringify({
         type: "session_state",
         sessionId,

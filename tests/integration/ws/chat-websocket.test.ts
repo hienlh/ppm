@@ -511,6 +511,27 @@ describe("Chat WebSocket — New Protocol", () => {
     c2.close();
   });
 
+  it("replays an in-progress turn when a client requests stream resync", async () => {
+    const session = await chatService.createSession("mock", {});
+    const c1 = await connectWs(session.id);
+    await c1.waitForType("session_state");
+    c1.ws.send(JSON.stringify({ type: "message", content: "hello stream resync" }));
+
+    const text = await c1.waitForType("text");
+    expect(text.streamSeq).toBeGreaterThan(0);
+    c1.ws.send(JSON.stringify({ type: "resync" }));
+
+    const replay = await c1.waitForType("turn_events");
+    expect(replay.events.some((event: any) => event.streamSeq === text.streamSeq)).toBe(true);
+
+    await c1.waitForType("done");
+    const stateCount = c1.messages.filter((message) => message.type === "session_state").length;
+    c1.ws.send(JSON.stringify({ type: "resync" }));
+    const idle = await c1.waitForNthType("session_state", stateCount + 1);
+    expect(idle.phase).toBe("idle");
+    c1.close();
+  });
+
   // ─── idle reconnect (no turn_events) ───
 
   it("reconnecting to idle session does NOT send turn_events", async () => {
