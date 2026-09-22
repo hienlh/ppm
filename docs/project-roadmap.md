@@ -14,7 +14,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
-### Implemented locally — pending release
+### Adaptive onboarding (0.22.3)
 
 - Adaptive onboarding: choose experience and goal, follow contextual guidance, pause/resume,
   skip or replay. Includes mobile project-content search. Verified in an isolated sandbox;

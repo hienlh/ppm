@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-09-22
+
+### Added
+- Adaptive guided tours with experience levels, task choices, saved progress and mobile support.
+- Quick orientation for Command Palette and navigation, with reduced-motion-aware step transitions.
+- Project-content search in the mobile navigation drawer.
+- Sandboxed HTML preview with compact controls and local static assets.
+
+### Fixed
+- Find run instructions opens README or package.json; file guidance supports arbitrary text, Markdown previews and empty projects.
+- Content search finds Git for Windows grep without PATH changes and reports failures separately from empty results.
+- Sort chat history by latest activity and cache model lists, including shared Codex discovery requests.
+- Render thinking as Markdown and preserve Codex summary sections.
+- Validate model updates using the saved provider type.
+- Include Monaco assets in published packages so the editor finishes loading.
+
 ## [0.22.2] - 2026-09-22
 
 ### Added
