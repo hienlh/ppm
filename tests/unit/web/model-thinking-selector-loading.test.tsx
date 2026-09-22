@@ -18,8 +18,10 @@ function deferred() {
 }
 const claudeModels = [{ value: "opus", label: "Claude Opus" }, { value: "sonnet", label: "Claude Sonnet" }];
 const codexModels = [{ value: "gpt", label: "GPT Codex" }, { value: "mini", label: "GPT Mini" }];
+let projectSequence = 0;
 
 async function setup() {
+  const projectName = `demo-${++projectSequence}`;
   const claude = deferred();
   const codex = deferred();
   const spy = spyOn(api, "get").mockImplementation(((url: string) => url.includes("/claude/") ? claude.promise : codex.promise) as typeof api.get);
@@ -30,11 +32,11 @@ async function setup() {
     change = setProvider;
     return <ModelThinkingSelector model={null} effort={null} thinking={false}
       onModelChange={() => {}} onEffortChange={() => {}} onThinkingChange={() => {}}
-      projectName="demo" providerId={provider} />;
+      projectName={projectName} providerId={provider} />;
   }
   view = await mount(<Harness />);
   await click(view.container.querySelector("button"));
-  return { claude, codex, container: view.container, switchProvider: () => act(async () => { change("codex"); }) };
+  return { claude, codex, spy, Harness, container: view.container, switchProvider: (provider = "codex") => act(async () => { change(provider); }) };
 }
 
 it("removes Claude options while Codex models load, then shows Codex", async () => {
@@ -47,6 +49,39 @@ it("removes Claude options while Codex models load, then shows Codex", async () 
   await act(async () => { t.codex.resolve(codexModels); });
   expect(t.container.textContent).toContain("GPT Codex");
   expect(t.container.textContent).not.toContain("Loading models");
+});
+
+it("reuses loaded models when switching back and mounting another chat tab", async () => {
+  const t = await setup();
+  await act(async () => { t.claude.resolve(claudeModels); });
+  await t.switchProvider();
+  await act(async () => { t.codex.resolve(codexModels); });
+  await t.switchProvider("claude");
+  await t.switchProvider();
+  expect(t.container.textContent).toContain("GPT Codex");
+  expect(t.container.textContent).not.toContain("Loading models");
+  expect(t.spy).toHaveBeenCalledTimes(2);
+  await view!.unmount();
+  view = await mount(<t.Harness />);
+  await click(view.container.querySelector("button"));
+  await t.switchProvider();
+  expect(view.container.textContent).toContain("GPT Codex");
+  expect(t.spy).toHaveBeenCalledTimes(2);
+});
+
+it("keeps cached models visible when an expired list refresh fails", async () => {
+  const t = await setup();
+  await act(async () => { t.claude.resolve(claudeModels); });
+  await t.switchProvider();
+  await act(async () => { t.codex.resolve(codexModels); });
+  const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 6 * 60 * 1000);
+  try {
+    t.spy.mockImplementation(() => Promise.reject(new Error("offline")));
+    await t.switchProvider("claude");
+    await t.switchProvider();
+    expect(t.container.textContent).toContain("GPT Codex");
+    expect(t.container.textContent).not.toContain("Loading models");
+  } finally { clock.mockRestore(); }
 });
 
 it("ignores an old provider response arriving after the current response", async () => {

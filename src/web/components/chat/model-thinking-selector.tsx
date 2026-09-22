@@ -10,6 +10,10 @@ interface ModelOption {
   label: string;
 }
 
+// Shared by chat tabs; keep successful lists visible while refreshing an old entry.
+const modelCache = new Map<string, { models: ModelOption[]; expiry: number }>();
+const MODEL_CACHE_TTL = 5 * 60 * 1000;
+
 interface ModelThinkingSelectorProps {
   model: string | null;
   effort: string | null;
@@ -46,6 +50,8 @@ export function ModelThinkingSelector({
   providerId,
   disabled,
 }: ModelThinkingSelectorProps) {
+  const cacheKey = JSON.stringify([projectName, providerId]);
+  const cached = modelCache.get(cacheKey);
   const [modelResult, setModelResult] = useState<{
     projectName: string;
     providerId: string;
@@ -54,7 +60,7 @@ export function ModelThinkingSelector({
   } | null>(null);
   // Never render another provider/project's options, even before effects run.
   const result = modelResult?.projectName === projectName && modelResult.providerId === providerId
-    ? modelResult : null;
+    ? modelResult : cached ? { ...cached, error: false } : null;
   const models = result?.models ?? [];
   const loading = Boolean(projectName && providerId && !result);
   const modelStatus = loading ? "Loading models..." : result?.error
@@ -67,16 +73,21 @@ export function ModelThinkingSelector({
     let active = true;
     setModelResult(null);
     if (!projectName || !providerId) return;
+    const entry = modelCache.get(cacheKey);
+    if (entry && Date.now() < entry.expiry) return;
     api
       .get<ModelOption[]>(`${projectUrl(projectName)}/chat/providers/${providerId}/models`)
       .then((models) => {
-        if (active) setModelResult({ projectName, providerId, models });
+        // The backend also returns [] on discovery failure. Don't replace a usable list.
+        const usable = models.length > 0 ? models : entry?.models ?? models;
+        if (active && models.length > 0) modelCache.set(cacheKey, { models, expiry: Date.now() + MODEL_CACHE_TTL });
+        if (active) setModelResult({ projectName, providerId, models: usable });
       })
       .catch(() => {
-        if (active) setModelResult({ projectName, providerId, models: [], error: true });
+        if (active) setModelResult({ projectName, providerId, models: entry?.models ?? [], error: !entry });
       });
     return () => { active = false; };
-  }, [projectName, providerId]);
+  }, [projectName, providerId, cacheKey]);
 
   useEffect(() => {
     if (disabled) setOpen(false);

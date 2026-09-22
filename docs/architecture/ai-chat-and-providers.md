@@ -11,6 +11,16 @@ opens its first allowance on Monday. Slots are 24 hours from the weekly reset
 time and use UTC weekdays, consistently in the server and browser. This does not
 change Codex's reset schedule. Users can disable the guard per account.
 
+## Model discovery cache
+
+The chat model picker shares successful model lists across chat tabs, keyed by
+project and provider, in browser memory for five minutes. Expired lists remain
+visible while a refresh runs; failed or empty refreshes retain the last usable
+list. Reloading the page clears this browser cache. Codex discovery also keeps
+a five-minute server memory cache, shares concurrent discovery requests, and
+serves its previous list while refreshing. The first uncached request still
+waits for Codex app-server initialization and model discovery.
+
 ## Codex context settings
 
 **AI Settings → Codex** exposes **Context window (tokens)** and **Auto-compact

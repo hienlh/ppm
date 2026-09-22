@@ -305,6 +305,7 @@ export class CodexAppServerProvider implements AIProvider {
   private unstartedSessions = new Set<string>();
   private live = new Map<string, LiveSession>();
   private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
+  private modelsPending: Promise<ModelOption[]> | null = null;
   /** Keyed by `cwd\0codexHome` — skills differ per workspace AND per account. */
   private skillsCache = new Map<string, { skills: CodexSkill[]; expiry: number }>();
 
@@ -1075,6 +1076,15 @@ export class CodexAppServerProvider implements AIProvider {
 
   async listModels(): Promise<ModelOption[]> {
     if (this.modelsCache && Date.now() < this.modelsCache.expiry) return this.modelsCache.models;
+    if (!this.modelsPending) {
+      this.modelsPending = this.loadModels().finally(() => { this.modelsPending = null; });
+    }
+    // A refresh must not block the picker once a successful list is available.
+    if (this.modelsCache) return this.modelsCache.models;
+    return this.modelsPending;
+  }
+
+  private async loadModels(): Promise<ModelOption[]> {
     const client = new CodexJsonRpcClient();
     try {
       // Without a CODEX_HOME the app-server falls back to the machine's own
