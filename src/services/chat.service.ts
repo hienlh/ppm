@@ -11,6 +11,7 @@ import type {
   ChatMessage,
   SendMessageOpts,
 } from "../providers/provider.interface.ts";
+import { compareSessionsByActivity } from "../types/chat.ts";
 
 class ChatService {
   // Delivery hints only: a restart/eviction safely sends a fresh snapshot.
@@ -75,10 +76,7 @@ class ChatService {
         }
       }
     }
-    return all.sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+    return all.sort(compareSessionsByActivity);
   }
 
   async deleteSession(

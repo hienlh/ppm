@@ -8,7 +8,7 @@ import { SessionContextMenu } from "./session-context-menu";
 import { ProviderBadge } from "./provider-selector";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
-import type { SessionInfo, ProjectTag } from "../../../types/chat";
+import { compareSessionsByActivity, type SessionInfo, type ProjectTag } from "../../../types/chat";
 
 const MAX_RECENT_SESSIONS = 5;
 const FETCH_SESSIONS_LIMIT = 20;
@@ -62,11 +62,7 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
       }
       setSessions((prev) => {
         const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
-        return updated.sort((a, b) => {
-          if (a.pinned && !b.pinned) return -1;
-          if (!a.pinned && b.pinned) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        });
+        return updated.sort(compareSessionsByActivity);
       });
     } catch {
       // silently ignore

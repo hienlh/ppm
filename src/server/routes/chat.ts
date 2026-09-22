@@ -31,7 +31,7 @@ import {
   getIndexStatus as chatSearchGetIndexStatus,
   getKnownSessionCount as chatSearchKnownCount,
 } from "../../services/chat-search.service.ts";
-import type { ChatSearchResult, ChatSearchResponse } from "../../types/chat.ts";
+import { compareSessionsByActivity, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -227,12 +227,8 @@ chatRoutes.get("/sessions", async (c) => {
     // most recently active node). Pinned sessions are never collapsed.
     const collapsed = collapseTreesToHeads(enriched);
 
-    // Sort: pinned first, then by createdAt desc
-    collapsed.sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+    // Pinned first, then most recently active (not merely most recently created).
+    collapsed.sort(compareSessionsByActivity);
 
     // Server-side search + tag filter
     let filtered = collapsed;

@@ -119,6 +119,24 @@ export interface SessionInfo {
   tag?: { id: number; name: string; color: string } | null;
 }
 
+/**
+ * Keeps every history surface in the same order: pinned conversations first,
+ * then the conversation most recently written to. Older providers may not
+ * expose an update timestamp, so their creation time remains the fallback.
+ */
+export function compareSessionsByActivity(a: SessionInfo, b: SessionInfo): number {
+  if (a.pinned && !b.pinned) return -1;
+  if (!a.pinned && b.pinned) return 1;
+  return sessionActivityTime(b) - sessionActivityTime(a);
+}
+
+function sessionActivityTime(session: SessionInfo): number {
+  const updated = session.updatedAt ? Date.parse(session.updatedAt) : NaN;
+  if (Number.isFinite(updated)) return updated;
+  const created = Date.parse(session.createdAt);
+  return Number.isFinite(created) ? created : 0;
+}
+
 export interface SessionListResponse {
   sessions: SessionInfo[];
   hasMore: boolean;

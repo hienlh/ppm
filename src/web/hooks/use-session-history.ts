@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import type { SessionInfo, SessionListResponse, ProjectTag } from "../../types/chat";
+import { compareSessionsByActivity, type SessionInfo, type SessionListResponse, type ProjectTag } from "../../types/chat";
 
 const PAGE_SIZE = 50;
 
@@ -145,11 +145,7 @@ export function useSessionHistory({
       }
       setSessions((prev) => {
         const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
-        return updated.sort((a, b) => {
-          if (a.pinned && !b.pinned) return -1;
-          if (!a.pinned && b.pinned) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        });
+        return updated.sort(compareSessionsByActivity);
       });
     } catch { /* silent */ }
   }, [projectName]);
