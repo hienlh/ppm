@@ -5,6 +5,8 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
+import { OnboardingRunDocumentPreview } from "@/components/onboarding/onboarding-run-document-preview";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
@@ -89,6 +91,14 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const [encoding, setEncoding] = useState<string>("utf-8");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadedFile, setLoadedFile] = useState<string | null>(null);
+  const activeTabId = useTabStore((s) => s.activeTabId);
+  const [onboardingRefresh, setOnboardingRefresh] = useState(0);
+  useEffect(() => {
+    const refresh = () => setOnboardingRefresh((n) => n + 1);
+    window.addEventListener("ppm:onboarding-refresh", refresh);
+    return () => window.removeEventListener("ppm:onboarding-refresh", refresh);
+  }, []);
   const [unsaved, setUnsaved] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestContentRef = useRef<string>("");
@@ -329,6 +339,17 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // Detect external (absolute) file path — not relative to project
   const isExternalFile = filePath ? /^(\/|[A-Za-z]:[/\\])/.test(filePath) : false;
 
+  useEffect(() => {
+    if (!projectName || !filePath || !tabId || activeTabId !== tabId || loading || error || !mounted ||
+      loadedFile !== `${projectName}:${filePath}` || inlineContent != null || isUntitled || isSqlite || encoding === "base64" ||
+      htmlPreviewVisible || isImage || isPdf || isDocx || isVideo || isAudio || (isMarkdown && mdMode === "preview") || (isCsv && csvMode === "table")) return;
+    const node = mounted.editor.getDomNode();
+    const visible = !!node?.isConnected && !!node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    if (visible) emitOnboardingEvidence({ type: "file-ready", projectName, tabId, visible,
+      isRunDocument: /^(readme(?:\..*)?|package\.json)$/i.test(basename(filePath)) });
+  }, [onboardingRefresh, projectName, filePath, tabId, activeTabId, loading, error, mounted, loadedFile, inlineContent, isUntitled,
+    isSqlite, encoding, isImage, isPdf, isDocx, isVideo, isAudio, isMarkdown, mdMode, isCsv, csvMode, htmlPreviewVisible]);
+
   // Load file content
   useEffect(() => {
     if (inlineContent != null) { setLoading(false); return; }
@@ -345,6 +366,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
 
     setLoading(true);
     setError(null);
+    setLoadedFile(null);
+    let cancelled = false;
 
     const readUrl = isExternalFile
       ? `/api/fs/read?path=${encodeURIComponent(filePath)}`
@@ -353,17 +376,20 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     api
       .get<{ content: string; encoding?: string }>(readUrl)
       .then((data) => {
+        if (cancelled) return;
         setContent(data.content);
-        if (data.encoding) setEncoding(data.encoding);
+        setEncoding(data.encoding ?? "utf-8");
+        setLoadedFile(`${projectName}:${filePath}`);
         latestContentRef.current = data.content;
         setLoading(false);
       })
       .catch((err) => {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load file");
         setLoading(false);
       });
 
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+    return () => { cancelled = true; if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [filePath, projectName, isImage, isPdf, isDocx, isExternalFile, isUntitled]);
 
   // Manual reload: re-fetch content from disk (fallback when fs watch misses a change)
@@ -789,6 +815,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   return (
     <div
       ref={containerRef}
+      data-onboarding="file"
       className="flex flex-col h-full w-full overflow-hidden"
       style={mobileHeight ? { height: `${mobileHeight}px`, maxHeight: `${mobileHeight}px` } : undefined}
     >
@@ -890,7 +917,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
           <CsvPreview content={content ?? ""} onContentChange={handleChange} wordWrap={wrapOn} />
         </Suspense>
       ) : isMarkdown && mdMode === "preview" ? (
-        <MarkdownPreview content={content ?? ""} />
+        <MarkdownPreview content={content ?? ""} projectName={projectName} filePath={filePath} tabId={tabId}
+          ready={!loading && !error && loadedFile === `${projectName}:${filePath}` && inlineContent == null && !isUntitled} />
       ) : (
         <div className={htmlPreviewVisible ? "hidden" : "flex-1 overflow-hidden min-h-0"}>
           <Editor
@@ -1071,11 +1099,12 @@ function LoadingSpinner() {
   return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
 }
 
-function MarkdownPreview({ content }: { content: string }) {
+function MarkdownPreview({ content, ...context }: { content: string; projectName?: string; filePath?: string; tabId?: string; ready: boolean }) {
   return (
     <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded m-4" />}>
-      <MarkdownRenderer content={content} className="flex-1 overflow-auto p-4" />
+      <OnboardingRunDocumentPreview {...context}>
+        <MarkdownRenderer content={content} className="flex-1 overflow-auto p-4" />
+      </OnboardingRunDocumentPreview>
     </Suspense>
   );
 }
-

@@ -5,6 +5,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { FileTree } from "@/components/explorer/file-tree";
+import { SearchPanel } from "@/components/explorer/search-panel";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
@@ -29,10 +30,10 @@ import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { cn } from "@/lib/utils";
 
-// Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
+// Tab ids the mobile drawer can render content for;
 // ext views are supported via the `ext:` prefix.
 const MOBILE_SUPPORTED = new Set<string>([
-  "history", "teams", "explorer", "git", "database", "tunnels", "ai-resources", "jira",
+  "history", "teams", "explorer", "search", "git", "database", "tunnels", "ai-resources", "jira",
 ]);
 const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
 
@@ -137,13 +138,14 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
         </div>
 
         {/* Tab content — scrollable */}
-        <div className="flex-1 overflow-y-auto min-h-0">
+        <div data-onboarding={isOpen ? activeTab : undefined} className="flex-1 overflow-y-auto min-h-0">
           {activeTab === "history" && (activeProject
             ? <SessionHistoryList variant="sidebar" projectName={activeProject.name} onNavigate={onClose} />
             : noProject)}
           {activeTab === "teams" && (activeProject ? <GroupList /> : noProject)}
           {activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
-          {activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}
+          {isOpen && activeTab === "search" && <SearchPanel onNavigate={onClose} />}
+          {isOpen && activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}
           {activeTab === "database" && <DatabaseSidebar />}
           {activeTab === "tunnels" && <TunnelManagerTab />}
           {activeTab === "jira" && <JiraPanel />}

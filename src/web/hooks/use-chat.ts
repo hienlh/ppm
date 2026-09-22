@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo, startTransition } from "react";
+import { ChatAttemptLifecycle, type ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useWebSocket } from "./use-websocket";
 import { api, projectUrl } from "@/lib/api-client";
 import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expansions";
@@ -130,7 +131,12 @@ export function useChat(
    * empty even though the conversation is on disk under the new id.
    */
   onSessionMigrated?: (newSessionId: string) => void,
+  onAttempt?: (event: ChatAttemptEvent) => void,
 ): UseChatReturn {
+  const attemptObserverRef = useRef(onAttempt);
+  attemptObserverRef.current = onAttempt;
+  const attemptRef = useRef<ChatAttemptLifecycle | null>(null);
+  if (!attemptRef.current) attemptRef.current = new ChatAttemptLifecycle((event) => attemptObserverRef.current?.(event));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   /** Map of compactMessageId → pre-compact messages (already ID-prefixed). Ephemeral. */
   const [expansions, setExpansions] = useState<Map<string, ChatMessage[]>>(new Map());
@@ -609,6 +615,7 @@ export function useChat(
       }
 
       case "error": {
+        if (!isReplayingRef.current) attemptRef.current?.fail();
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -703,6 +710,7 @@ export function useChat(
       }
 
       case "done": {
+        if (!isReplayingRef.current) attemptRef.current?.finish(!!streamingContentRef.current.trim());
         // Idempotent: may receive duplicate done (provider + stream loop finally)
         if (phaseRef.current === "idle") break;
         if (ev.contextWindowPct != null) {
@@ -815,6 +823,7 @@ export function useChat(
     if ((data as any).type === "session_migrated") {
       const migratedTo = (data as any).newSessionId as string | undefined;
       if (migratedTo && migratedTo !== sessionIdRef.current) {
+        attemptRef.current?.migrate(migratedTo);
         onSessionMigratedRef.current?.(migratedTo);
       }
       return;
@@ -1015,6 +1024,7 @@ export function useChat(
     idleTimeoutMs: 45_000, // Server sends a heartbeat every 15 seconds.
     onConnectionChange: (connected) => {
       if (!connected) {
+        attemptRef.current?.fail();
         setIsConnected(false);
         setIsReconnecting(true);
       }
@@ -1028,6 +1038,7 @@ export function useChat(
   // Load history and reset state when session changes
   useEffect(() => {
     let cancelled = false;
+    attemptRef.current?.select(sessionId);
     const historyReconciled = historyReconciledRef.current;
     turnFinalizedRef.current = false;
     historyActivityRef.current++;
@@ -1170,6 +1181,7 @@ export function useChat(
       historyActivityRef.current++;
 
       const isFollowUp = phaseRef.current !== "idle";
+      if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
       turnFinalizedRef.current = false;
 
       if (isFollowUp) {
@@ -1227,7 +1239,7 @@ export function useChat(
         ...(thinkingRef.current !== null && { thinking: thinkingRef.current }),
       }));
     },
-    [send],
+    [send, isConnected, connectedSessionId],
   );
 
   const setModel = useCallback(
@@ -1294,6 +1306,7 @@ export function useChat(
   );
 
   const cancelStreaming = useCallback(() => {
+    attemptRef.current?.fail();
     if (phaseRef.current === "idle") return;
     send(JSON.stringify({ type: "cancel" }));
     const finalContent = streamingContentRef.current;

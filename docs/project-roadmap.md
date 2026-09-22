@@ -14,6 +14,12 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
+### Implemented locally — pending release
+
+- Adaptive onboarding: choose experience and goal, follow contextual guidance, pause/resume,
+  skip or replay. Includes mobile project-content search. Verified in an isolated sandbox;
+  AI recordings use a deterministic test provider, not live accounts.
+
 ### v0.18 — Windows, floating windows, whole-machine tooling (Released)
 - **Tab pop-out → floating window → Document Picture-in-Picture** — any desktop tab detaches into an
   in-app floating window and from there into an always-on-top browser PiP window; both directions

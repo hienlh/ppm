@@ -41,6 +41,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { UploadProgressPanel } from "@/components/os-explorer/upload/upload-progress-panel";
 import { cn } from "@/lib/utils";
 import { isRecoveryReloadPending } from "@/lib/chunk-recovery";
+import { OnboardingRoot } from "@/components/onboarding/onboarding-root";
 
 // Lazy: the explorer feature (views, actions, skins, icon map) is the same heavy bundle the
 // desktop floating window already keeps out of the initial chunk (see `WINDOW_CONTENT`) —
@@ -61,7 +62,7 @@ export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const isMobileViewport = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | undefined>();
+  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "search" | "history" | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
 
   const [mountedProjects, setMountedProjects] = useState<Set<string>>(
@@ -350,6 +351,13 @@ export function App() {
         <ProjectBottomSheet
           isOpen={projectSheetOpen}
           onClose={() => setProjectSheetOpen(false)}
+        />
+        <OnboardingRoot
+          paletteOpen={paletteOpen}
+          navigationOpen={drawerOpen || projectSheetOpen}
+          openProjects={() => setProjectSheetOpen(true)}
+          openNavigation={(tab) => { setDrawerTab(tab as "explorer" | "git" | "search" | "history"); setDrawerOpen(true); }}
+          closeNavigation={() => { setDrawerOpen(false); setProjectSheetOpen(false); }}
         />
 
         {/* Command palette (Shift+Shift) */}

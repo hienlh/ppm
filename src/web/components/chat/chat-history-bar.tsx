@@ -1,3 +1,4 @@
+import { usePanelStore } from "@/stores/panel-store";
 import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react";
 import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "@/lib/icons";
 import { Activity } from "@/lib/icons";
@@ -30,6 +31,7 @@ interface TeamActivityState {
 }
 
 interface ChatHistoryBarProps {
+  tabId?: string;
   projectName: string;
   usageInfo: UsageInfo;
   usageLoading?: boolean;
@@ -72,6 +74,7 @@ function pctColor(pct: number): string {
 }
 
 export function ChatHistoryBar({
+  tabId,
   projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
   onSelectSession, onBugReport, isConnected, onReload,
@@ -168,6 +171,10 @@ export function ChatHistoryBar({
   }, [activePanel, projectName, loadTags]);
 
   function openSession(session: SessionInfo) {
+    if (tabId) window.dispatchEvent(new CustomEvent("ppm:onboarding-evidence", {
+      detail: { type: "history-opened", projectName, tabId, sessionId: session.id,
+        visible: !document.hidden && Object.values(usePanelStore.getState().panels).some((panel) => panel.activeTabId === tabId) },
+    }));
     if (onSelectSession) {
       onSelectSession(session);
       setActivePanel(null);
@@ -297,6 +304,7 @@ export function ChatHistoryBar({
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
           {/* History */}
           <button
+            data-onboarding="chat-history"
             onClick={() => togglePanel("history")}
             className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
               activePanel === "history" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
@@ -522,6 +530,7 @@ export function ChatHistoryBar({
                     onTagChanged={handleTagChanged}
                   >
                   <div
+                    data-onboarding="chat-history-session"
                     className={cn(
                       "flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group",
                       isUnread && "font-medium text-foreground",

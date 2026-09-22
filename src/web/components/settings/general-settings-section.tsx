@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { useSettingsStore } from "@/stores/settings-store";
 import { wakeLockSupport } from "@/hooks/use-wake-lock";
 import { ChangePasswordSection } from "./change-password-section";
+import { OnboardingEntry } from "@/components/onboarding/onboarding-entry";
 
 export function GeneralSettingsSection() {
   const { deviceName, setDeviceName, version, keepScreenAwake, setKeepScreenAwake } = useSettingsStore(
@@ -51,6 +52,12 @@ export function GeneralSettingsSection() {
 
   return (
     <div className="space-y-6">
+      <section className="space-y-2">
+        <h3 className="text-sm font-medium">Learn PPM</h3>
+        <p className="text-sm text-muted-foreground">Choose your experience and a task. Guidance is saved in this browser.</p>
+        <OnboardingEntry compact />
+      </section>
+      <Separator />
       <section className="space-y-2">
         <Label htmlFor="device-name">Device Name</Label>
         <div className="flex gap-2">

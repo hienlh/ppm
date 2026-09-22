@@ -108,7 +108,7 @@ export const Sidebar = memo(function Sidebar() {
 
         <div className="flex-1 min-w-0 flex flex-col">
           {/* Panel content */}
-          <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="flex-1 overflow-y-auto min-h-0" data-onboarding={sidebarActiveTab === "explorer" ? "explorer" : undefined}>
             {sidebarActiveTab === "explorer" && (
               activeProject ? (
                 <FileTree />

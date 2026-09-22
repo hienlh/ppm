@@ -1,3 +1,4 @@
+import { usePanelStore } from "@/stores/panel-store";
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
 import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "@/lib/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
@@ -68,6 +69,7 @@ export interface ChatAttachment {
 export type MessagePriority = 'now' | 'next' | 'later';
 
 interface MessageInputProps {
+  draftReady?: boolean;
   /** Tab id of the owning chat tab — addresses "Send to Chat" at this tab only. */
   tabId?: string;
   onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => void;
@@ -135,6 +137,7 @@ interface MessageInputProps {
 
 export const MessageInput = memo(function MessageInput({
   tabId,
+  draftReady = true,
   onSend,
   isStreaming,
   onCancel,
@@ -319,6 +322,25 @@ export const MessageInput = memo(function MessageInput({
       }, 50);
     }
   }, [initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A tour suggestion is an explicit user action. Hydrated or typed drafts always win.
+  useEffect(() => {
+    const suggest = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!draftReady || disabled || isStreaming || valueRef.current || attachments.length || agentTag || !tabId) return;
+      if (detail?.projectName !== projectName || (detail.tabId && detail.tabId !== tabId) || typeof detail.text !== "string") return;
+      const panels = usePanelStore.getState();
+      const active = detail.tabId
+        ? Object.values(panels.panels).some((panel) => panel.activeTabId === tabId)
+        : panels.panels[panels.focusedPanelId]?.activeTabId === tabId;
+      if (!active || document.hidden) return;
+      writeTextareas(detail.text);
+      onContentChange?.(detail.text);
+      getVisibleTextarea()?.focus();
+    };
+    window.addEventListener("ppm:onboarding-prompt", suggest);
+    return () => window.removeEventListener("ppm:onboarding-prompt", suggest);
+  }, [draftReady, disabled, isStreaming, attachments.length, agentTag, tabId, projectName, onContentChange, writeTextareas, getVisibleTextarea]);
 
   // Parent-driven clear (e.g. cancelling an edit) — skip initial mount (0).
   useEffect(() => {
@@ -850,7 +872,7 @@ export const MessageInput = memo(function MessageInput({
   const showCancel = isStreaming && !hasContent;
 
   return (
-    <div className="p-2 md:p-3">
+    <div data-onboarding="chat-input" className="p-2 md:p-3">
       {/* Rounded input container */}
       <div
         className="border border-border rounded-[var(--rad)] bg-panel shadow-[var(--shadow-float)] cursor-text"

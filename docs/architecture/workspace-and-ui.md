@@ -2,6 +2,63 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Adaptive guided tour
+
+The optional welcome card and Settings → General → Learn PPM open a two-screen chooser:
+experience (beginner/familiar/advanced), then goal (AI/explore/developer). Shared step IDs
+and level-specific copy live in `src/web/lib/onboarding/`; `onboarding-store.ts` owns
+versioned browser-local progress. Active guidance restores paused after reload. This is
+per browser/origin, not an account profile; changing devices or tunnel origins does not
+sync progress. Denied or corrupt storage falls back safely.
+
+Quick orientation is available from the welcome/resume card, active guide, chat welcome
+and General settings. Its optional Command Palette and navigation reference uses the
+canonical sidebar icon/label registry, explains desktop/mobile entry points and utility
+buttons, and opens the real palette on request. It never changes tour progress. While
+the reference or palette is open, Escape closes that surface without pausing the tour;
+the tour card is hidden behind the palette so it cannot cover its controls.
+
+Step changes use the shared `OnboardingStepTransition`: a 200ms fade and 12px horizontal
+slide, reversed for Back. It animates the existing DOM node without delaying state or
+duplicating controls. Rapid navigation cancels the previous animation; reduced-motion
+preferences skip animation and cancel any running transition when changed live.
+
+`OnboardingRoot` mounts only inside the authenticated app. Nonmodal hints preserve real
+workspace interactions; mobile navigation reuses the project sheet and drawer, including
+the shared SearchPanel. Collapsed guidance moves above content controls to keep Send reachable.
+Typed `ppm:onboarding-evidence` events report actual text-editor, search, terminal and Git
+readiness. Chat uses an optional transport lifecycle observer and a client-local attempt ID;
+partial output after cancellation/error/disconnection never counts as success. Canonical
+session migration preserves identity. `ppm:onboarding-refresh` requests existing readiness
+only, never replays a user send or search. History uses the chat toolbar's menu.
+
+The tour never sends prompts, executes terminal commands, edits files or changes provider
+permissions automatically. Suggestions fill only an empty hydrated focused composer after
+a user click. Completed and skipped steps remain separate. The run-instructions step is
+orientation, not proof that a program ran. Images and preview-only files offer a text-file
+alternative or skip. Settings and chat welcome can resume a paused/dismissed tour.
+
+The file-reading step accepts any successfully loaded text/source file and Markdown
+Preview, regardless of filename. Empty visible project roots offer an explicit skip;
+the tour never creates sample files. Root-list errors do not masquerade as emptiness,
+and stale requests cannot replace the current guidance. On mobile, collapsed guidance
+hides while the navigation drawer/project picker is open so the first file remains tappable.
+
+Project content search resolves grep from PATH or Git for Windows without changing the
+server environment. It runs asynchronously with timeout/output bounds, uses project-relative
+NUL-delimited filenames, and distinguishes errors from successful zero-result searches.
+The frontend surfaces the actual retryable error. The sandbox no longer injects grep into PATH.
+
+The run-instructions action opens a readable root README directly, falling back to
+package.json. A loaded visible README Markdown preview qualifies for this orientation
+step without switching to Edit, and Markdown previews also qualify for general file reading.
+Missing documents and list failures show a retry/browse/skip explanation. Only the
+user's explicit acknowledgment completes the run-instructions step.
+
+Verification uses `tests/e2e/onboarding-tour.mjs` and its isolated fixtures: fresh database,
+scratch project, local ports, allowlisted test provider and real HTTP/WebSocket routes.
+Playwright captures desktop/mobile screenshots and videos without live AI credentials.
+
 ## New Chat Provider
 
 Settings → AI offers `Always use default provider` and `Follow last focused chat`.

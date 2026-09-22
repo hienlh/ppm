@@ -8,6 +8,8 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { RotateCcw, MessageSquare } from "@/lib/icons";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
+import { useTabStore } from "@/stores/tab-store";
+import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
 
 import { TerminalMobileToolbar } from "./terminal-mobile-toolbar";
 import { TerminalLinksSheet } from "./terminal-links-sheet";
@@ -27,6 +29,18 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const [ctrlMode, setCtrlMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
+  const activeTabId = useTabStore((s) => s.activeTabId);
+  const [onboardingRefresh, setOnboardingRefresh] = useState(0);
+  useEffect(() => {
+    const refresh = () => setOnboardingRefresh((n) => n + 1);
+    window.addEventListener("ppm:onboarding-refresh", refresh);
+    return () => window.removeEventListener("ppm:onboarding-refresh", refresh);
+  }, []);
+  useEffect(() => {
+    if (!projectName || !tabId || activeTabId !== tabId || !connected || !shellReady || reconnecting || exited) return;
+    const visible = !!containerRef.current?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    if (visible) emitOnboardingEvidence({ type: "terminal-ready", projectName, tabId, visible });
+  }, [onboardingRefresh, projectName, tabId, activeTabId, connected, shellReady, reconnecting, exited]);
 
   useTerminalTouchSelection(containerRef, selectMode);
 
@@ -125,7 +139,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const isMobile = typeof window !== "undefined" && "ontouchstart" in window;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div data-onboarding="terminal" className="flex flex-col h-full min-h-0">
       {/* Status bar */}
       <div className="flex items-center gap-2 px-3 py-1 bg-surface border-b border-border text-xs">
         <span

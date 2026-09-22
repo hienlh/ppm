@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
 import { selectInlineImages } from "@/lib/image-resize-limits";
 import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
+import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
 import { useTabStore } from "@/stores/tab-store";
@@ -256,6 +257,16 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
    */
   const [servingAccount, setServingAccount] = useState<{ id: string; label: string | null } | null>(null);
 
+  const tourTabActive = usePanelStore((state) => Object.values(state.panels).some((panel) => panel.activeTabId === tabId));
+  const observeAttempt = useCallback((event: ChatAttemptEvent) => {
+    if (!tabId) return;
+    const visible = !document.hidden && Object.values(usePanelStore.getState().panels).some((panel) => panel.activeTabId === tabId);
+    const types = { started: "chat-started", succeeded: "chat-succeeded", failed: "chat-failed", session: "chat-session" } as const;
+    window.dispatchEvent(new CustomEvent("ppm:onboarding-evidence", {
+      detail: { ...event, type: types[event.type], projectName, tabId, visible },
+    }));
+  }, [projectName, tabId]);
+
   const {
     messages,
     renderedMessages,
@@ -293,7 +304,17 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
     bashPartialOutput,
     backgroundShells,
     killBackgroundShell,
-  } = useChat(sessionId, providerId, projectName, handleSessionMigrated);
+  } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt);
+
+  useEffect(() => {
+    if (!tabId || !tourTabActive || draftLoading || isStreaming) return;
+    const announce = () => window.dispatchEvent(new CustomEvent("ppm:onboarding-evidence", {
+      detail: { type: "chat-opened", projectName, tabId, sessionId, visible: !document.hidden },
+    }));
+    announce();
+    window.addEventListener("ppm:onboarding-refresh", announce);
+    return () => window.removeEventListener("ppm:onboarding-refresh", announce);
+  }, [tabId, projectName, sessionId, tourTabActive, draftLoading, isStreaming]);
 
   // The stream's report is the second writer. A turn that ran — or was forced onto another
   // account mid-flight — is ground truth, and it arrives after whatever the picker last said.
@@ -868,6 +889,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
 
   return (
     <div
+      data-onboarding="chat"
       className="flex flex-col h-full relative"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -942,6 +964,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
       <div className="border-t border-border bg-panel shrink-0">
         {/* Unified toolbar: History, Config, Usage, Bug report, Connection */}
         <ChatHistoryBar
+          tabId={tabId}
           projectName={projectName}
           usageInfo={usageInfo}
           usageLoading={usageLoading}
@@ -1010,6 +1033,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
         {/* Input — gate on first draft load to avoid empty→filled flash, then keep mounted */}
         {(inputReady || !draftLoading) && (
           <MessageInput
+            draftReady={!draftLoading}
             tabId={tabId}
             onSend={handleInputSend}
             isStreaming={isStreaming}

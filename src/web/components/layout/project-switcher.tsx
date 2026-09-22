@@ -206,6 +206,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFilePicked} />
       <button
         ref={btnRef}
+        data-onboarding="project"
         onClick={toggleFlyout}
         title="Switch project"
         className={cn(
