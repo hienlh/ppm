@@ -105,6 +105,10 @@ try {
       await action(page, "Open Git changes");
       await waitStep(page, "Find how to run the project");
       await action(page, "Find run instructions");
+      // Opening the document is asynchronous and collapses guidance when it
+      // finishes. Wait for that transition before reopening the card.
+      await page.getByRole("heading", { name: "Tour playground", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Expand guide", exact: true }).waitFor();
       await expand(page);
       await page.getByRole("button", { name: "I know where to run commands", exact: true }).click();
     }
