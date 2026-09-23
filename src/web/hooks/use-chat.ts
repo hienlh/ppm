@@ -65,6 +65,8 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   compactStatus: "compacting" | null;
+  /** MCP servers this session's subprocess reported as needing a sign-in. */
+  mcpNeedsAuth: string[];
   statusMessage: string | null;
   sessionTitle: string | null;
   /**
@@ -150,6 +152,8 @@ export function useChat(
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [compactStatus, setCompactStatus] = useState<"compacting" | null>(null);
+  /** MCP servers this session's subprocess reported as needing a sign-in. */
+  const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -862,6 +866,12 @@ export function useChat(
       return;
     }
 
+    if ((data as any).type === "mcp_status") {
+      const list = (data as any).needsAuth;
+      setMcpNeedsAuth(Array.isArray(list) ? list : []);
+      return;
+    }
+
     // Handle compact status events
     if ((data as any).type === "compact_status") {
       const status = (data as any).status;
@@ -951,6 +961,7 @@ export function useChat(
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
+      setMcpNeedsAuth(Array.isArray(state.mcpNeedsAuth) ? state.mcpNeedsAuth : []);
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
       // and the full transcript finished loading moments ago — on boot the WS
@@ -1109,6 +1120,8 @@ export function useChat(
     setPendingApproval(null);
     if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     setCompactStatus(null);
+    // Another session's subprocess saw another MCP state; its session_state brings its own.
+    setMcpNeedsAuth([]);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
     // Drop the previous session's version groups. Keeping them would let the
@@ -1516,6 +1529,7 @@ export function useChat(
     pendingApproval,
     contextWindowPct,
     compactStatus,
+    mcpNeedsAuth,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

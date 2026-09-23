@@ -16,6 +16,7 @@ import { getAISettings, pickAccountForTab } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { TeamWorkingBar } from "./team-working-bar";
+import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
@@ -283,6 +284,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
     pendingApproval,
     contextWindowPct,
     compactStatus,
+    mcpNeedsAuth,
     statusMessage,
     sessionTitle,
     liveAccount,
@@ -959,6 +961,9 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
 
       {/* Teammates still working — pinned here so it is the last thing under the conversation */}
       <TeamWorkingBar teamName={primaryTeam} members={teamMembers} projectName={projectName} />
+
+      {/* MCP servers this session cannot use until someone signs in */}
+      <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-panel shrink-0">

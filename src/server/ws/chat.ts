@@ -18,6 +18,8 @@ import { configService } from "../../services/config.service.ts";
 import { formatTurnUsageLog } from "../../shared/turn-usage.ts";
 import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
+import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
+import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -116,6 +118,8 @@ interface SessionEntry {
   lastImplicitTeamProbe?: number;
   /** Compact indicator state — sticky until turn ends or boundary received, synced on reconnect */
   compactStatus?: "compacting" | null;
+  /** MCP servers the subprocess reported as `needs-auth` at init — drives the chat's sign-in bar */
+  mcpNeedsAuth?: string[];
   /** toolUseIds of Bash/Agent calls launched with run_in_background — their spy outlives the tool_result */
   backgroundToolUseIds?: Set<string>;
   /** Nested-agent children buffered into turnEvents this turn (see MAX_NESTED_TURN_EVENTS) */
@@ -248,6 +252,28 @@ function broadcastBackgroundRegistry(sessionId: string): void {
 
 /** Tracks active sessions — persists even when FE disconnects */
 const activeSessions = new Map<string, SessionEntry>();
+
+registerMcpSignInSync({
+  sessions: () => activeSessions.entries(),
+  broadcast: (sessionId, event) => broadcast(sessionId, event),
+  reconnect: async (providerId, sessionId, serverName) => {
+    const provider = providerRegistry.get(providerId) as { reconnectMcpServer?: (s: string, n: string) => Promise<string | null> } | undefined;
+    return provider?.reconnectMcpServer?.(sessionId, serverName) ?? null;
+  },
+  // Background agents and shells outlive the turn inside the subprocess; a sign-in elsewhere
+  // must never be what kills them.
+  canDrop: (sessionId) => {
+    const entry = activeSessions.get(sessionId);
+    if (!entry || entry.isStreamingActive) return false;
+    if ((entry.backgroundToolUseIds?.size ?? 0) > 0) return false;
+    return !backgroundShellRegistry.list(sessionId).some((sh) => sh.status !== "stopped");
+  },
+  dropIdle: (sessionId, serverName) => dropIdleSubprocess(
+    sessionId,
+    "mcp_sign_in",
+    `Subprocess released: it could not see the new ${serverName} sign-in, the next turn starts a fresh one`,
+  ),
+});
 
 /** Check if any frontend client is currently connected via WebSocket */
 export function hasActiveClient(): boolean {
@@ -609,7 +635,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
         const sub = (ev as any).subtype;
-        if (sub === "compacting") {
+        if (sub === "init" && Array.isArray(ev.mcpServers)) {
+          entry.mcpNeedsAuth = needsAuthServerNames(ev.mcpServers);
+          broadcast(sessionId, mcpStatusEvent(entry.mcpNeedsAuth));
+        } else if (sub === "compacting") {
           entry.compactStatus = "compacting";
           console.log(`[chat] session=${sessionId} compact_status=compacting (persisted on entry)`);
           broadcast(sessionId, { type: "compact_status", status: "compacting" });
@@ -1001,6 +1030,7 @@ export const chatWebSocket = {
         pendingApproval: existing.pendingApprovalEvent ?? null,
         sessionTitle: session?.title || null,
         compactStatus: existing.compactStatus ?? null,
+        mcpNeedsAuth: existing.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1134,6 +1164,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1342,6 +1373,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1368,6 +1400,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1388,6 +1421,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),

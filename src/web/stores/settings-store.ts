@@ -65,6 +65,10 @@ interface SettingsState {
   /** User ticked "don't show again" on the remote-desktop warning that precedes every open
    *  (`remote-desktop-warning-gate.tsx`); once true the viewer connects straight away. */
   remoteDesktopWarningDismissed: boolean;
+  /** MCP servers hidden from the chat's sign-in bar. The bar comes back only for a server
+   *  outside this list; a successful sign-in takes the server off it, so a later expiry
+   *  is announced again. Synced like other UI prefs. */
+  mcpSignInDismissed: string[];
   /** Hold a screen wake lock while any chat turn is running, so a propped-up tablet does not
    *  dim mid-answer. Defaults on; see `hooks/use-wake-lock.ts`. */
   keepScreenAwake: boolean;
@@ -148,6 +152,8 @@ interface SettingsState {
   setExplorerSkin: (pref: ExplorerSkinPref) => void;
   toggleRemoteDesktopStatsVisible: () => void;
   setRemoteDesktopWarningDismissed: (dismissed: boolean) => void;
+  dismissMcpSignIn: (serverNames: string[]) => void;
+  undismissMcpSignIn: (serverName: string) => void;
   setKeepScreenAwake: (enabled: boolean) => void;
   fetchServerInfo: () => Promise<void>;
   /** Re-push the in-memory theme selection to the server (see the action for why). */
@@ -177,6 +183,7 @@ interface PersistedSettings {
   explorerSkin?: ExplorerSkinPref;
   remoteDesktopStatsVisible?: boolean;
   remoteDesktopWarningDismissed?: boolean;
+  mcpSignInDismissed?: string[];
   keepScreenAwake?: boolean;
   remoteDesktopQuality?: QualityChoice;
   remoteDesktopViewStyle?: ViewStyle;
@@ -242,6 +249,15 @@ const DEFAULT_DB_EXPANDED: DbSidebarExpanded = { conns: [], groups: ["__ungroupe
 const DB_EXPANDED_CAPS = { conns: 200, groups: 200, tables: 500 } as const;
 
 /** Coerce stored/server data into a valid expansion set; null when unusable. */
+/** Same bound as the server's validator for the pref. */
+const MAX_NAME_LIST = 200;
+
+/** A list of names read back from storage or the server, or null when it is not one. */
+function sanitizeNameList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((s): s is string => typeof s === "string" && s.length > 0 && s.length <= 200).slice(-MAX_NAME_LIST);
+}
+
 function sanitizeDbExpanded(value: unknown): DbSidebarExpanded | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
@@ -356,6 +372,8 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   }
   if (typeof data.remoteDesktopStatsVisible === "boolean") patch.remoteDesktopStatsVisible = data.remoteDesktopStatsVisible;
   if (typeof data.remoteDesktopWarningDismissed === "boolean") patch.remoteDesktopWarningDismissed = data.remoteDesktopWarningDismissed;
+  const mcpDismissed = sanitizeNameList(data.mcpSignInDismissed);
+  if (mcpDismissed) patch.mcpSignInDismissed = mcpDismissed;
   if (typeof data.keepScreenAwake === "boolean") patch.keepScreenAwake = data.keepScreenAwake;
   const dbExpanded = sanitizeDbExpanded(data.dbSidebarExpanded);
   if (dbExpanded) patch.dbSidebarExpanded = dbExpanded;
@@ -402,6 +420,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   explorerSkin: (_initial.explorerSkin === "windows" || _initial.explorerSkin === "macos") ? _initial.explorerSkin : "auto",
   remoteDesktopStatsVisible: _initial.remoteDesktopStatsVisible ?? false,
   remoteDesktopWarningDismissed: _initial.remoteDesktopWarningDismissed ?? false,
+  mcpSignInDismissed: sanitizeNameList(_initial.mcpSignInDismissed) ?? [],
   keepScreenAwake: _initial.keepScreenAwake ?? true,
   deviceName: null,
   version: null,
@@ -590,6 +609,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setRemoteDesktopWarningDismissed: (dismissed) => {
     persistUiPref({ remoteDesktopWarningDismissed: dismissed });
     set({ remoteDesktopWarningDismissed: dismissed });
+  },
+
+  dismissMcpSignIn: (serverNames) => {
+    const current = get().mcpSignInDismissed;
+    const next = [...current, ...serverNames.filter((n) => !current.includes(n))].slice(-MAX_NAME_LIST);
+    persistUiPref({ mcpSignInDismissed: next });
+    set({ mcpSignInDismissed: next });
+  },
+
+  undismissMcpSignIn: (serverName) => {
+    const current = get().mcpSignInDismissed;
+    if (!current.includes(serverName)) return;
+    const next = current.filter((n) => n !== serverName);
+    persistUiPref({ mcpSignInDismissed: next });
+    set({ mcpSignInDismissed: next });
   },
 
   setKeepScreenAwake: (enabled) => {

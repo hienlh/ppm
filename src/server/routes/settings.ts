@@ -118,6 +118,8 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   sidebarCollapsed: (v) => typeof v === "boolean",
   remoteDesktopStatsVisible: (v) => typeof v === "boolean",
   remoteDesktopWarningDismissed: (v) => typeof v === "boolean",
+  // MCP servers the user hid from the chat's sign-in bar (by name)
+  mcpSignInDismissed: (v) => Array.isArray(v) && v.length <= 200 && v.every((s) => typeof s === "string" && s.length <= 200),
   keepScreenAwake: (v) => typeof v === "boolean",
   sidebarWidth: (v) => typeof v === "number" && v >= 200 && v <= 600,
   gitStatusViewMode: (v) => v === "flat" || v === "tree",

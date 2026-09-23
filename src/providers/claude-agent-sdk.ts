@@ -1072,14 +1072,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
-      // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats),
-      // merged with servers inherited from Claude Code's ~/.claude.json for this project.
-      // PPM DB entries override inherited ones on name conflict.
-      const ownServers = mcpConfigService.list();
-      const inheritedServers = providerConfig.inherit_claude_mcp !== false
-        ? listInheritedClaudeMcpServers(effectiveCwd)
-        : {};
-      const mcpServers = { ...inheritedServers, ...ownServers };
+      const mcpServers = this.resolveMcpServers(effectiveCwd);
       const hasMcp = Object.keys(mcpServers).length > 0;
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
@@ -1334,6 +1327,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             } else {
               console.log(`[sdk] session=${sessionId} init: sdk_session_id=${sdkSid}`);
             }
+            // Carry each MCP server's connection state so the host can offer a sign-in
+            // for the ones reporting `needs-auth`.
+            const initServers = (msg as any).mcp_servers;
+            yield {
+              type: "system" as any,
+              subtype,
+              ...(Array.isArray(initServers) && { mcpServers: initServers }),
+            } as any;
+            continue;
           }
 
           // Detect compacting status
@@ -2108,6 +2110,83 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     }
   }
 
+
+  /**
+   * MCP servers for a query in `cwd`: PPM's own (read fresh — the user may add or remove
+   * one between chats) over those inherited from Claude Code's ~/.claude.json for this
+   * project. PPM entries win on a name conflict.
+   */
+  private resolveMcpServers(cwd: string): Record<string, unknown> {
+    const inherited = this.getProviderConfig().inherit_claude_mcp !== false
+      ? listInheritedClaudeMcpServers(cwd)
+      : {};
+    return { ...inherited, ...mcpConfigService.list() };
+  }
+
+  /**
+   * A subprocess that never receives a prompt, for control requests only — MCP status
+   * and MCP sign-in. It is configured like a chat query in `cwd` (same CLI, settings
+   * sources and MCP servers), so it sees exactly the servers a chat there would, and it
+   * never calls the model. The caller owns it and must `close()` it: an OAuth flow's
+   * localhost callback listener lives inside this process.
+   */
+  openMcpControlQuery(cwd: string): { query: any; close: () => void } {
+    const providerConfig = this.getProviderConfig();
+    const cliExecutablePath = resolveCliExecutablePath(
+      (providerConfig as { cli_command?: string }).cli_command,
+    );
+    const mcpServers = this.resolveMcpServers(cwd);
+    const { generator, controller } = createMessageChannel();
+    const q = query({
+      prompt: generator,
+      options: {
+        ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),
+        ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
+        cwd,
+        settingSources: ["user", "project"],
+        // No account: MCP OAuth tokens belong to the CLI's own credential store, the same
+        // one an interactive `claude` writes, and no model call is ever made here.
+        env: this.buildQueryEnv(cwd, null),
+        settings: { permissions: { allow: [], deny: [] } },
+        ...(Object.keys(mcpServers).length > 0 && { mcpServers }),
+        stderr: (chunk: string) => {
+          const line = chunk.trim();
+          if (line) console.log(`[mcp-control] stderr: ${line.slice(0, 300)}`);
+        },
+      } as any,
+    });
+    let closed = false;
+    return {
+      query: q,
+      close: () => {
+        if (closed) return;
+        closed = true;
+        controller.done();
+        q.close();
+      },
+    };
+  }
+
+  /**
+   * Reconnect one MCP server inside a live chat subprocess, so a sign-in finished
+   * elsewhere shows up without restarting the conversation. Returns the server's status
+   * afterwards, or null when the session has no live subprocess.
+   */
+  async reconnectMcpServer(sessionId: string, serverName: string): Promise<string | null> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return null;
+    try {
+      await ss.query.reconnectMcpServer(serverName);
+    } catch (e) {
+      console.warn(`[sdk] session=${sessionId} reconnectMcpServer(${serverName}) failed: ${(e as Error).message}`);
+    }
+    try {
+      const statuses: Array<{ name: string; status: string }> = await ss.query.mcpServerStatus();
+      return statuses.find((s) => s.name === serverName)?.status ?? null;
+    } catch {
+      return null;
+    }
+  }
 
   /** Abort and fully teardown the streaming session — user must resume to continue */
   abortQuery(sessionId: string, source = "unknown"): void {

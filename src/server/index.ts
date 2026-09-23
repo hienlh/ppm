@@ -180,6 +180,12 @@ app.route("/proxy", proxyRoutes);
 // HTML assets authenticate with bounded preview capabilities, never the PPM session token.
 app.route("/api/html-preview/content", htmlPreviewRoutes.content);
 
+// MCP sign-in redirect: reached by a browser navigation from the authorization server,
+// which carries no PPM token. It only completes a flow an authenticated user started.
+import { mcpAuthRoutes, mcpAuthCallbackHandler } from "./routes/mcp-auth.ts";
+import { mcpOAuthFlows } from "../services/mcp-oauth/mcp-oauth-flows.ts";
+app.get("/api/mcp-auth/callback", mcpAuthCallbackHandler);
+
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.use("/api/*", gzipJson);
@@ -227,6 +233,7 @@ app.route("/api/loopback", loopbackRoutes);
 // API routes
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
+app.route("/api/mcp-auth", mcpAuthRoutes);
 app.route("/api/settings/themes", settingsThemesRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
@@ -1054,6 +1061,8 @@ if (process.argv.includes("__serve__")) {
     // resident rust-analyzer holding a crate graph is too expensive to leave
     // to chance. Synchronous because process.exit follows immediately.
     try { lspManager.killAllSync(); } catch {}
+    // An MCP sign-in holds a Claude subprocess until it settles.
+    try { mcpOAuthFlows.disposeAll(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

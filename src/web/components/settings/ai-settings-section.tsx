@@ -15,6 +15,7 @@ import { api } from "@/lib/api-client";
 import { ProviderBadge } from "@/components/chat/provider-selector";
 import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
+import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
 import type { ModelOption } from "../../../types/chat";
 
 const EFFORT_OPTIONS = [
@@ -393,6 +394,16 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                 checked={config?.inherit_claude_mcp ?? true}
                 onCheckedChange={(v) => handleSave("inherit_claude_mcp", v)}
               />
+            </div>
+
+            <div className={fieldGap}>
+              <Label className={compact ? labelSize : undefined}>MCP sign-in</Label>
+              <p className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+                Servers that use OAuth stay unavailable to Claude until someone signs in. Project-scoped servers are listed in the project's AI Resources panel.
+              </p>
+              <div className="-mx-2">
+                <McpSignInList showWhenEmpty />
+              </div>
             </div>
           </>
         )}
