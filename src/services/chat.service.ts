@@ -14,6 +14,19 @@ import type {
 import { compareSessionsByActivity } from "../types/chat.ts";
 import { buildDesignInstructions } from "./design/design-instructions.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
+import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
+import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
+
+/**
+ * Events after which a design session's files may have settled: the end of a turn, and a
+ * background task (which can keep writing after the turn's `done`) reaching a final state.
+ */
+function endsDesignWork(event: ChatEvent): boolean {
+  if (event.type === "done") return true;
+  if (event.type !== "system" || event.subtype !== "task_notification") return false;
+  const status = (event as { taskStatus?: string }).taskStatus;
+  return isTerminalAgentStatus(status) || status === "killed";
+}
 
 /** Project-scoped file edits auto-approved, shell and everything else asks. */
 export const DESIGN_DEFAULT_PERMISSION_MODE = "acceptEdits";
@@ -135,6 +148,10 @@ class ChatService {
             this.invalidateSharedContext(providerId, activeSessionId);
           }
           activeSessionId = migratedId;
+        }
+        if (endsDesignWork(event)) {
+          // Not awaited: the snapshot is debounced and must never hold up or fail the turn.
+          scheduleTurnSnapshot(activeSessionId, this.getSession(activeSessionId)?.projectPath);
         }
         yield event;
       }

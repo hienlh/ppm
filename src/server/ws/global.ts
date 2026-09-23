@@ -10,7 +10,7 @@
  *     file watching at all — silently breaking editor live-reload, docx/pdf
  *     preview reload, and file-tree invalidation.
  *  2. **Cross-cutting broadcasts** (`file:changed`, `session:unread_changed`,
- *     `session:phase_changed`, `jira:*`). These are app-wide, not session-scoped,
+ *     `session:phase_changed`, `jira:*`, `design:*`). These are app-wide, not session-scoped,
  *     so they belong on an app-wide channel.
  *
  * Events go to global clients only — never also to chat clients — so a client
@@ -19,6 +19,8 @@
  */
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
 import { configService } from "../../services/config.service.ts";
+import { onDesignEvent } from "../../services/design/design-events.ts";
+import { resolve } from "node:path";
 
 type GlobalWsSocket = {
   data: { type: string };
@@ -65,6 +67,21 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
 // File changes are app-wide: relay them to every global client.
 onFileChange((projectName, path) => {
   broadcastGlobalEvent({ type: "file:changed", projectName, path });
+});
+
+/** Registered project whose folder is `projectPath`, or null. Case-folded on Windows. */
+function projectNameForPath(projectPath: string): string | null {
+  const fold = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+  const target = fold(projectPath);
+  return configService.get("projects").find((p) => fold(p.path) === target)?.name ?? null;
+}
+
+// Design history/comment changes: `.design/` is not watched, so these are the only signal.
+// Services know the project path; browsers address projects by name, and a path no
+// registered project owns is dropped rather than broadcast.
+onDesignEvent((type, { projectPath, slug }) => {
+  const projectName = projectNameForPath(projectPath);
+  if (projectName) broadcastGlobalEvent({ type: `design:${type}`, projectName, slug });
 });
 
 export const globalWebSocket = {

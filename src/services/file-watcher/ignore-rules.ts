@@ -8,8 +8,16 @@
  * `fs.inotify.max_user_watches` for the whole machine.
  */
 
-/** Dependency trees, build output and tool caches — high directory count, no value to the UI. */
+/**
+ * Dependency trees, build output and tool caches — high directory count, no value to the UI.
+ *
+ * `.design` is a design's snapshot history and comments (`designs/<slug>/.design/`): one
+ * design with a hundred snapshots of a nested asset tree could spend thousands of the
+ * per-project watch budget and fan out a `file:changed` per copied file. Its changes are
+ * announced as `design:*` events instead.
+ */
 export const IGNORED_DIRS = new Set([
+  ".design",
   ".git",
   ".gradle",
   ".idea",
