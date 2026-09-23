@@ -199,7 +199,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 | Dependency | Version | Risk | Notes |
 |-----------|---------|------|-------|
 | Bun | 1.3.6+ | Medium | Check security advisories weekly |
-| Claude Agent SDK | 0.3.251 | Medium | Pinned exactly — follow for API changes, new features |
+| Claude Agent SDK | 0.3.280 | Medium | Pinned exactly — follow for API changes, new features |
 | React | 19.2.4 | Low | Monitor breaking changes |
 | Hono | 4.12.8 | Low | Server + WS |
 | Vite | 8.0 | Low | Build + PWA plugin |

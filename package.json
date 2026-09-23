@@ -54,7 +54,7 @@
     "workbox-strategies": "^7.4.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.251",
+    "@anthropic-ai/claude-agent-sdk": "0.3.280",
     "@codemirror/lang-sql": "^6.10.0",
     "@glideapps/glide-data-grid": "^6.0.3",
     "@inquirer/prompts": "^8.3.0",
