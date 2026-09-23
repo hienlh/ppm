@@ -37,20 +37,29 @@ const MOBILE_SUPPORTED = new Set<string>([
 ]);
 const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
 
-/** One utility tile in the drawer footer grid — icon over a short single-line label, with an
- *  optional corner feature badge. Uniform size so the grid wraps cleanly as tiles are added,
- *  instead of a single cramped row where long labels ("Cloud & Share") wrapped and overflowed. */
-function FooterTile({ icon: Icon, label, badge, onClick }: {
-  icon: React.ElementType; label: string; badge?: FeatureBadgeId; onClick: () => void;
-}) {
+interface FooterTileDef {
+  icon: React.ElementType;
+  label: string;
+  badge?: FeatureBadgeId;
+  onClick: () => void;
+}
+
+/** One utility tile in the drawer footer row — icon over a short single-line label, with an
+ *  optional feature badge. Uniform size, and short labels ("Cloud", not "Cloud & Share") so
+ *  every tile stays on one line at the narrowest phone width. */
+function FooterTile({ icon: Icon, label, badge, onClick }: FooterTileDef) {
   return (
     <button
       onClick={onClick}
-      className="group relative flex flex-col items-center justify-center gap-1 rounded-lg py-2.5 text-text-subtle hover:bg-surface-elevated hover:text-text-secondary transition-colors"
+      className="group flex flex-col items-center justify-center gap-1 rounded-lg py-2.5 text-text-subtle hover:bg-surface-elevated hover:text-text-secondary transition-colors"
     >
-      <Icon className="size-4" />
+      {/* The badge hangs off the icon, not the tile: a tile is a whole column wide, so a
+          tile-corner badge floats away from the thing it is labelling. */}
+      <span className="relative flex items-center justify-center">
+        <Icon className="size-4" />
+        <FeatureBadge id={badge} variant="corner" className="-top-2 -right-3" />
+      </span>
       <span className="text-[10px] leading-none">{label}</span>
-      <FeatureBadge id={badge} variant="corner" />
     </button>
   );
 }
@@ -99,6 +108,21 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   }, []);
 
   const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
+
+  // Built as a list so the row's column count can follow the tile count. With a fixed column
+  // count an optional tile (Remote, only on a capable host) pushes the last tile onto a second
+  // line by itself — one lonely icon under four, which is what a "grid" costs here.
+  const footerTiles: FooterTileDef[] = [
+    // Not a sidebar tab — the explorer opens as its own full-screen sheet.
+    { icon: FolderTree, label: "Files", badge: "os-explorer", onClick: () => { onClose(); void openExplorer(); } },
+    ...(remoteDesktopAvailable
+      ? [{ icon: MonitorSmartphone, label: "Remote", badge: "remote-desktop", onClick: () => { onClose(); openRemoteDesktop(); } } satisfies FooterTileDef]
+      : []),
+    { icon: Cloud, label: "Cloud", onClick: () => setCloudOpen(true) },
+    // Also not a sidebar tab — settings open as their own tab here, window on desktop.
+    { icon: Settings, label: "Settings", onClick: () => { onClose(); openSettings(); } },
+    { icon: BugIcon, label: "Bug", onClick: handleReportBug },
+  ];
 
   const noProject = (
     <p className="px-4 py-6 text-xs text-text-secondary text-center">
@@ -162,19 +186,16 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
             onReorder={setSidebarTabOrder}
           />
 
-          {/* Footer: version/upgrade on its own line, then a uniform wrapping grid of utility
-              tiles (opens explorer/remote/cloud, report bug) — scales cleanly as tiles are added. */}
+          {/* Footer: one row of utility tiles (opens explorer/remote/cloud/settings, report bug),
+              then version/upgrade on its own line under a divider. */}
           <div className="border-t border-border px-3 py-2">
-            <div className="grid grid-cols-4 gap-1">
-              {/* Not a sidebar tab — the explorer opens as its own full-screen sheet. */}
-              <FooterTile icon={FolderTree} label="Files" badge="os-explorer" onClick={() => { onClose(); void openExplorer(); }} />
-              {remoteDesktopAvailable && (
-                <FooterTile icon={MonitorSmartphone} label="Remote" badge="remote-desktop" onClick={() => { onClose(); openRemoteDesktop(); }} />
-              )}
-              <FooterTile icon={Cloud} label="Cloud" onClick={() => setCloudOpen(true)} />
-              {/* Also not a sidebar tab — settings open as their own tab here, window on desktop. */}
-              <FooterTile icon={Settings} label="Settings" onClick={() => { onClose(); openSettings(); }} />
-              <FooterTile icon={BugIcon} label="Bug" onClick={handleReportBug} />
+            <div
+              className="grid gap-1"
+              style={{ gridTemplateColumns: `repeat(${footerTiles.length}, minmax(0, 1fr))` }}
+            >
+              {footerTiles.map((tile) => (
+                <FooterTile key={tile.label} {...tile} />
+              ))}
             </div>
             {/* Version / upgrade pinned at the very bottom, under a divider. */}
             <div className="mt-2 pt-2 border-t border-border px-1 text-[11px]">
