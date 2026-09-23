@@ -3,7 +3,8 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getSessionDesignSlug, setSessionPermissionMode } from "../../services/db.service.ts";
+import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
@@ -1210,6 +1211,12 @@ export const chatWebSocket = {
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
+        // A design session keeps its mode for callers that pass none (CLI, scheduler), so
+        // the one the user picked here is written back rather than living in this socket.
+        if (VALID_PERMISSION_MODES.includes(parsed.permissionMode as typeof VALID_PERMISSION_MODES[number])
+          && getSessionDesignSlug(sessionId)) {
+          setSessionPermissionMode(sessionId, parsed.permissionMode);
+        }
       }
       // Store model override — sticky for this session
       if (parsed.model) {

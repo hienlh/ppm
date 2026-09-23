@@ -12,6 +12,11 @@ import type {
   SendMessageOpts,
 } from "../providers/provider.interface.ts";
 import { compareSessionsByActivity } from "../types/chat.ts";
+import { buildDesignInstructions } from "./design/design-instructions.ts";
+import { isValidDesignSlug } from "./design/design-slug.ts";
+
+/** Project-scoped file edits auto-approved, shell and everything else asks. */
+export const DESIGN_DEFAULT_PERMISSION_MODE = "acceptEdits";
 
 class ChatService {
   // Delivery hints only: a restart/eviction safely sends a fresh snapshot.
@@ -111,6 +116,17 @@ class ChatService {
         if (event.type === "error" || (event.type === "done" && event.resultSubtype?.startsWith("error")) || (event.type === "system" && event.subtype === "compact_done")) {
           this.invalidateSharedContext(providerId, activeSessionId);
         }
+        if (event.type === "session_migrated" && event.newSessionId !== event.oldSessionId) {
+          // Carries the design slug and stored mode (with model/effort) to the provider's
+          // real id for callers that are not the WebSocket, which records this itself —
+          // the copy keeps whatever the destination already has, so doing both is safe.
+          try {
+            const { setSessionMigratedTo } = await import("./db.service.ts");
+            setSessionMigratedTo(event.oldSessionId, event.newSessionId);
+          } catch (e) {
+            console.warn(`[chat] could not record session migration: ${(e as Error).message}`);
+          }
+        }
         const migratedId = event.type === "session_migrated" ? event.newSessionId : event.type === "done" ? event.sessionId : undefined;
         if (migratedId && migratedId !== activeSessionId) {
           const snapshot = this.sharedSnapshots.get(`${providerId}:${activeSessionId}`);
@@ -136,6 +152,7 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
+    const design = await this.resolveDesignOptions(sessionId, opts);
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -155,7 +172,30 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...opts, sharedContext };
+    return { ...design, sharedContext };
+  }
+
+  /**
+   * Design identity for this turn, resolved here because every caller — the WebSocket, the
+   * CLI, the scheduler, group chat, the bots — sends through this service, and a design
+   * session reached by any of them must get its instructions and its permission default.
+   *
+   * Instruction text is only ever built from the stored slug: anything a caller put in
+   * `designInstructions`/`designSession` is discarded, so no client text reaches the
+   * system prompt. An explicit caller mode wins (the user picked it), then the mode stored
+   * for the session, then the design default.
+   */
+  private async resolveDesignOptions(sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
+    const { designInstructions: _instructions, designSession: _flag, ...rest } = opts ?? {};
+    const { getSessionDesignSlug, getSessionPermissionMode } = await import("./db.service.ts");
+    const slug = getSessionDesignSlug(sessionId);
+    if (!slug || !isValidDesignSlug(slug)) return rest;
+    return {
+      ...rest,
+      designInstructions: buildDesignInstructions(slug),
+      designSession: true,
+      permissionMode: opts?.permissionMode ?? getSessionPermissionMode(sessionId) ?? DESIGN_DEFAULT_PERMISSION_MODE,
+    };
   }
 
   /** Push a live follow-up through the same context policy as sendMessage. */

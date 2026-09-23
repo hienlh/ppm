@@ -22,6 +22,15 @@ export interface SendMessageOpts {
   effort?: string;
   /** Per-session thinking tri-state (see THINKING_ADAPTIVE); falls back to provider config */
   thinkingBudget?: number;
+  /**
+   * Design session instruction block. Resolved by `chatService.prepareSendOptions` from the
+   * session's stored design slug and stripped from whatever the caller passed, so it is
+   * always server-built. Claude appends it to the system prompt, Codex sends it as
+   * `developerInstructions`.
+   */
+  designInstructions?: string;
+  /** Set alongside `designInstructions`; selects the design permission policy. */
+  designSession?: boolean;
 }
 
 export interface AIProvider {
@@ -29,6 +38,9 @@ export interface AIProvider {
   name: string;
   /** Handles opts.sharedContext without using it as the user's saved message/title. */
   supportsSharedContext?: boolean;
+  /** Delivers opts.designInstructions to the model on every turn. Only such providers may
+   *  host a design session; anywhere else the instructions would be silently dropped. */
+  supportsDesignInstructions?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
   getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
 
@@ -117,6 +129,8 @@ export interface SessionInfo {
   updatedAt?: string;
   pinned?: boolean;
   tag?: { id: number; name: string; color: string } | null;
+  /** Design this session belongs to; null/absent for an ordinary chat. */
+  designSlug?: string | null;
 }
 
 /**

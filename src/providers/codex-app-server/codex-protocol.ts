@@ -27,6 +27,9 @@ export interface ThreadStartParams {
   sandbox?: SandboxMode;
   approvalPolicy?: AskForApproval;
   model?: string;
+  /** Supplements (never replaces) codex's base instructions. Not persisted by the thread:
+   *  it is a per-request override, so every thread/start and thread/resume must carry it. */
+  developerInstructions?: string;
 }
 
 export interface ThreadResumeParams {
@@ -35,6 +38,8 @@ export interface ThreadResumeParams {
   sandbox?: SandboxMode;
   approvalPolicy?: AskForApproval;
   model?: string;
+  /** See ThreadStartParams.developerInstructions. */
+  developerInstructions?: string;
 }
 
 /** thread/started notification + thread/start response both carry a Thread. */

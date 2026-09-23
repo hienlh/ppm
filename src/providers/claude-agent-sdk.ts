@@ -5,7 +5,8 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { buildModelQueryOptions } from "./claude-agent-sdk-query-options.ts";
+import { buildModelQueryOptions, buildSystemPromptOption, preToolUseDecision } from "./claude-agent-sdk-query-options.ts";
+import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
@@ -215,6 +216,7 @@ interface PendingApproval {
  */
 export class ClaudeAgentSdkProvider implements AIProvider {
   readonly supportsSharedContext = true;
+  readonly supportsDesignInstructions = true;
   id = "claude";
   name = "Claude";
 
@@ -881,23 +883,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const providerConfig = this.getProviderConfig();
     const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
-    const systemPromptOpt = providerConfig.system_prompt
-      ? { type: "custom" as const, value: providerConfig.system_prompt }
-      : { type: "preset" as const, preset: "claude_code" as const };
+    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
+    // A design session in acceptEdits auto-approves file tools only while they target the
+    // project, and asks for everything else. Any other mode the user picks for a design
+    // session behaves exactly as that mode does in an ordinary chat.
+    const designPolicy = !!opts?.designSession && permissionMode === "acceptEdits";
+    // No project root means nothing can be proven inside it, so every file tool asks.
+    const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
 
     // Build allowedTools based on permission mode.
     // SDK auto-approves everything in allowedTools (skips canUseTool callback).
     // In non-bypass modes, only pre-approve read-only tools so write/execute tools
     // go through the permission evaluation chain → canUseTool callback.
+    // The design policy pre-approves nothing: the read-only list would let Read and Grep
+    // reach any path on disk and every MCP tool run unasked, which is exactly what a
+    // design session's agent (fed page content it did not write) must not do.
     const readOnlyTools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
     const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
     const teamTools = providerConfig.agent_teams
       ? ["TeamCreate", "TeamDelete", "SendMessage", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
       : [];
     const mcpTools = ["mcp__*"];
-    const allowedTools = isBypass
-      ? [...readOnlyTools, ...writeTools, ...teamTools, ...mcpTools]
-      : [...readOnlyTools, ...mcpTools];
+    const allowedTools = designPolicy
+      ? []
+      : isBypass
+        ? [...readOnlyTools, ...writeTools, ...teamTools, ...mcpTools]
+        : [...readOnlyTools, ...mcpTools];
 
     /**
      * Approval events to yield from the generator.
@@ -936,6 +947,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         }
         return { behavior: "deny" as const, message: "User skipped the question" };
       }
+      // The PreToolUse hook normally settles design-policy tools before this runs; this is
+      // the fail-closed backstop for any path that reaches the callback without it.
+      if (designPolicy && designToolDecision(toolName, input, designRoot) !== "allow") {
+        const result = await waitForApproval(toolName, input);
+        if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
+      }
       return { behavior: "allow" as const, updatedInput: input };
     };
 
@@ -952,18 +969,25 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Bypass mode: allow everything
       if (isBypass) return {};
 
-      // Read-only tools: always allow
-      if (readOnlyTools.includes(toolName)) return {};
-
       // AskUserQuestion: handled by canUseTool callback
       if (toolName === "AskUserQuestion") return {};
 
+      // Design policy: project-scoped file tools pass, everything else falls through to
+      // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
+      // auto-approvals (which include some shell commands) never get a say.
+      if (designPolicy) {
+        if (designToolDecision(toolName, hookInput?.tool_input, designRoot) === "allow") {
+          return preToolUseDecision("allow");
+        }
+      } else if (readOnlyTools.includes(toolName)) {
+        // Read-only tools: always allow
+        return {};
+      }
+
       // Non-bypass mode: ask FE for approval on write/execute tools
       const result = await waitForApproval(toolName, hookInput?.tool_input);
-      if (result.approved) {
-        return { hookSpecificOutput: { permissionDecision: "allow" } };
-      }
-      return { hookSpecificOutput: { permissionDecision: "deny", message: "User denied tool execution" } };
+      if (result.approved) return preToolUseDecision("allow");
+      return preToolUseDecision("deny", "User denied tool execution");
     };
 
     // Hooks config: add our permission hook for non-bypass modes

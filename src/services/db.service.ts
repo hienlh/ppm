@@ -6,7 +6,9 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
-export const CURRENT_SCHEMA_VERSION = 47;
+// Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
+// any database already at this version, so a stale value silently drops that backup.
+export const CURRENT_SCHEMA_VERSION = 50;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1135,6 +1137,16 @@ export function runMigrations(database: Database): void {
     database.exec(`UPDATE codex_accounts SET daily_guard_enabled = 1`);
     database.exec(`PRAGMA user_version = 49;`);
   }
+
+  if (current < 50) {
+    // A design session is an ordinary session carrying the slug of the design it works on,
+    // plus the permission mode it runs under. The mode is stored per session because
+    // callers without a UI (CLI, scheduler, bots) pass none, and a design session must not
+    // fall back to the provider-wide default (usually bypass). NULL = an ordinary session.
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN design_slug TEXT"); } catch { /* exists */ }
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN permission_mode TEXT"); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 50;`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1321,12 +1333,14 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget)
-      SELECT ?, model, effort, thinking_budget FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode)
+      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
-        thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget)
+        thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
+        design_slug = COALESCE(session_metadata.design_slug, excluded.design_slug),
+        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode)
     `).run(newSessionId, oldSessionId);
     database.query(
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
@@ -1432,6 +1446,61 @@ export function setSessionThinking(sessionId: string, budget: number | null): vo
   getDb().query(
     "INSERT INTO session_metadata (session_id, thinking_budget) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET thinking_budget = excluded.thinking_budget",
   ).run(sessionId, budget);
+}
+
+/** Design this session works on (`designs/<slug>/`); null for an ordinary chat. */
+export function getSessionDesignSlug(sessionId: string): string | null {
+  const row = getDb().query("SELECT design_slug FROM session_metadata WHERE session_id = ?").get(sessionId) as { design_slug: string | null } | null;
+  return row?.design_slug ?? null;
+}
+
+export function setSessionDesignSlug(sessionId: string, slug: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, design_slug) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET design_slug = excluded.design_slug",
+  ).run(sessionId, slug);
+}
+
+/** Design slugs for many sessions at once (history lists); sessions without one are absent. */
+export function getSessionDesignSlugs(sessionIds: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  // Chunked well under SQLite's bound-parameter limit, which a long history page can reach.
+  for (let i = 0; i < sessionIds.length; i += 500) {
+    const chunk = sessionIds.slice(i, i + 500);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = getDb().query(
+      `SELECT session_id, design_slug FROM session_metadata WHERE design_slug IS NOT NULL AND session_id IN (${placeholders})`,
+    ).all(...chunk) as { session_id: string; design_slug: string }[];
+    for (const r of rows) result[r.session_id] = r.design_slug;
+  }
+  return result;
+}
+
+/** Permission mode stored for this session; null = the caller's or provider's default applies. */
+export function getSessionPermissionMode(sessionId: string): string | null {
+  const row = getDb().query("SELECT permission_mode FROM session_metadata WHERE session_id = ?").get(sessionId) as { permission_mode: string | null } | null;
+  return row?.permission_mode ?? null;
+}
+
+export function setSessionPermissionMode(sessionId: string, mode: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, permission_mode) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET permission_mode = excluded.permission_mode",
+  ).run(sessionId, mode);
+}
+
+/**
+ * Give a fork the design identity of its source, so forking a design chat yields another
+ * design chat rather than an ordinary one that has quietly lost its instructions and its
+ * safer permission default. A no-op for a source that is not a design session.
+ */
+export function copySessionDesignSettings(sourceSessionId: string, targetSessionId: string): void {
+  if (sourceSessionId === targetSessionId) return;
+  const slug = getSessionDesignSlug(sourceSessionId);
+  if (!slug) return;
+  getDb().transaction(() => {
+    setSessionDesignSlug(targetSessionId, slug);
+    const mode = getSessionPermissionMode(sourceSessionId);
+    if (mode) setSessionPermissionMode(targetSessionId, mode);
+  })();
 }
 
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
+import { buildThreadParams, requestWithInstructionsFallback, type CodexThreadParams } from "./codex-thread-params.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
@@ -139,6 +140,9 @@ interface LiveSession {
   channel: EventChannel;
   permission: CodexPermission;
   model?: string;
+  /** Design instructions, resent on every thread/start and thread/resume — codex does not
+   *  persist them, and the account-switch respawn has no send options to read them from. */
+  developerInstructions?: string;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -297,6 +301,7 @@ function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestU
  */
 export class CodexAppServerProvider implements AIProvider {
   readonly supportsSharedContext = true;
+  readonly supportsDesignInstructions = true;
   readonly id = "codex";
   readonly name = "Codex";
 
@@ -686,14 +691,15 @@ export class CodexAppServerProvider implements AIProvider {
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
 
-    const resumeBase = {
-      ...this.contextConfigOverrides(),
+    const resumeBase = buildThreadParams({
       cwd: live.cwd,
-      sandbox: live.permission.sandbox,
-      approvalPolicy: live.permission.approvalPolicy,
-      ...(live.model ? { model: live.model } : {}),
-    };
-    await this.resumeThread(client, threadId, found, account.home, resumeBase);
+      permission: live.permission,
+      model: live.model,
+      configOverrides: this.contextConfigOverrides(),
+      developerInstructions: live.developerInstructions,
+    });
+    await requestWithInstructionsFallback(resumeBase,
+      (params) => this.resumeThread(client, threadId, found, account.home, params));
   }
 
   /**
@@ -714,7 +720,7 @@ export class CodexAppServerProvider implements AIProvider {
     threadId: string,
     found: { path: string; sessionsDir: string },
     codexHome: string | undefined,
-    resumeBase: Record<string, unknown>,
+    resumeBase: CodexThreadParams,
   ): Promise<unknown> {
     const target = sessionsDirForHome(codexHome);
     const path = localizeRollout(found.path, found.sessionsDir, target);
@@ -738,7 +744,7 @@ export class CodexAppServerProvider implements AIProvider {
   private async connect(sessionId: string, opts?: SendMessageOpts): Promise<LiveSession> {
     const meta = this.sessions.get(sessionId);
     const cwd = meta?.projectPath || getSessionProjectPath(sessionId) || process.cwd();
-    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode);
+    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode, { designSession: opts?.designSession });
     const model = codexModel(opts?.model ?? this.config?.model);
 
     // Only resume a rollout attributable to this project. An unknown/resumed ID
@@ -750,6 +756,7 @@ export class CodexAppServerProvider implements AIProvider {
     const channel = createEventChannel();
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
+      developerInstructions: opts?.designInstructions,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -768,12 +775,16 @@ export class CodexAppServerProvider implements AIProvider {
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
 
-    const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}), ...this.contextConfigOverrides() };
+    const resumeBase = buildThreadParams({
+      cwd, permission, model,
+      configOverrides: this.contextConfigOverrides(),
+      developerInstructions: live.developerInstructions,
+    });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
-    const result = found
-      ? await this.resumeThread(client, sessionId, found, account?.home, resumeBase)
-      : await client.request("thread/start", resumeBase);
+    const result = await requestWithInstructionsFallback(resumeBase, (params) => found
+      ? this.resumeThread(client, sessionId, found, account?.home, params)
+      : client.request("thread/start", params));
 
     const threadId = extractThreadId(result) ?? (found ? sessionId : null);
     if (!threadId) throw new Error("codex thread/start returned no thread id");

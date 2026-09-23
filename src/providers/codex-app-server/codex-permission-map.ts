@@ -22,7 +22,17 @@ const MAP: Record<string, CodexPermission> = {
   plan: { sandbox: "read-only", approvalPolicy: "never" },
 };
 
+/**
+ * A design session's acceptEdits: file edits stay inside the workspace, and any command
+ * outside codex's trusted read-only set asks first. `on-request` would let the model run
+ * arbitrary commands in the sandbox unasked, which is the opposite of the design default
+ * ("edits yes, shell asks"). Residual, and accepted: codex still auto-runs its trusted
+ * read-only commands (`cat`, `ls`, …) and its sandbox can read outside the workspace.
+ */
+const DESIGN_ACCEPT_EDITS: CodexPermission = { sandbox: "workspace-write", approvalPolicy: "untrusted" };
+
 /** Pure map from PPM permissionMode → codex {sandbox, approvalPolicy}. Unknown → bypass. */
-export function permissionModeToCodex(mode?: string): CodexPermission {
+export function permissionModeToCodex(mode?: string, opts?: { designSession?: boolean }): CodexPermission {
+  if (opts?.designSession && mode === "acceptEdits") return DESIGN_ACCEPT_EDITS;
   return (mode && MAP[mode]) || MAP.bypassPermissions!;
 }

@@ -74,6 +74,53 @@ export function isThinkingEnabled(
   return effective == null ? true : effective !== 0;
 }
 
+/** The only system-prompt shape PPM sends: Claude Code's own prompt, optionally extended. */
+export interface PresetSystemPromptOption {
+  type: "preset";
+  preset: "claude_code";
+  append?: string;
+}
+
+/**
+ * Compose the SDK `systemPrompt` option from the provider's "Additional Instructions"
+ * (`system_prompt`) and a design session's instruction block.
+ *
+ * Both are appended to the preset, never used as a replacing `custom` prompt: the setting
+ * is labelled as *additional* instructions, and replacing Claude Code's prompt would drop
+ * its tool-use guidance. Computed on every turn, so nothing depends on the SDK recording
+ * the prompt on the session's first request.
+ */
+export function buildSystemPromptOption(
+  additional?: string,
+  design?: string,
+): PresetSystemPromptOption {
+  const parts = [additional, design]
+    .map((part) => part?.trim())
+    .filter((part): part is string => !!part);
+  return parts.length
+    ? { type: "preset", preset: "claude_code", append: parts.join("\n\n") }
+    : { type: "preset", preset: "claude_code" };
+}
+
+/**
+ * A PreToolUse hook's permission verdict in the shape the CLI actually honours.
+ *
+ * `hookEventName` is not decoration: the bundled CLI reads `permissionDecision` only when
+ * `hookSpecificOutput.hookEventName === "PreToolUse"`, and it rejects a callback hook whose
+ * output names no (or another) event with "Hook returned incorrect event name". Without
+ * it, a "deny" the user clicked is not a deny. The reason travels as
+ * `permissionDecisionReason`, the field the CLI reports back to the model.
+ */
+export function preToolUseDecision(decision: "allow" | "deny", reason?: string) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse" as const,
+      permissionDecision: decision,
+      ...(reason ? { permissionDecisionReason: reason } : {}),
+    },
+  };
+}
+
 /** Resolve per-call overrides against provider config. Per-call wins, else config, else omit. */
 export function buildModelQueryOptions(
   opts: ModelQueryOverrides,

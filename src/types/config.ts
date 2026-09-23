@@ -85,7 +85,7 @@ export interface AIConfig {
   providers: Record<string, AIProviderConfig>;
 }
 
-const VALID_PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
+export const VALID_PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
 export type PermissionMode = typeof VALID_PERMISSION_MODES[number];
 
 export interface AIProviderConfig {

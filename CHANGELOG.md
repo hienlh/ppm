@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- Claude's "Additional Instructions" setting now actually reaches the model; it applies to new sessions and is added to Claude Code's own prompt rather than replacing it.
+- Allow/deny answers in a Claude chat's tool approval prompt are sent in the form the Claude CLI accepts, so a denied tool is reliably blocked.
+- The automatic database snapshot before a schema upgrade is taken again; it had been skipped since schema version 47.
+
 ## [0.22.10] - 2026-09-24
 
 ### Added
