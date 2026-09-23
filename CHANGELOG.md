@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.22.6] - 2026-09-23
+
+### Changed
+- Make chat welcome tour actions compact and consistent, while preserving touch targets and keyboard focus.
+
 ## [0.22.5] - 2026-09-23
 
 ### Fixed
