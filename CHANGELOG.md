@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.22.10] - 2026-09-24
+
 ### Added
 - Sign in to MCP servers that need OAuth (Vanta, plugin connectors) from the chat's new sign-in bar, Settings → AI Provider, or the AI Resources panel; hiding the bar is remembered per server.
 
