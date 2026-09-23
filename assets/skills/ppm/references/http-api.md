@@ -161,6 +161,16 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 - `POST   /api/loopback/callback`
 
+## /api/mcp-auth
+
+- `GET    /api/mcp-auth/status`
+- `POST   /api/mcp-auth/start`
+- `GET    /api/mcp-auth/flows/:id`
+- `POST   /api/mcp-auth/flows/:id/callback`
+- `POST   /api/mcp-auth/flows/:id/confirm`
+- `DELETE /api/mcp-auth/flows/:id`
+- `GET    /api/mcp-auth/state`
+
 ## /api/postgres
 
 - `POST   /api/postgres/test`
@@ -349,4 +359,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.22.9 -->
+<!-- Generated from src/server/routes/ for PPM v0.22.10 -->
