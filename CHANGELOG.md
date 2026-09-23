@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.22.5] - 2026-09-23
+
+### Fixed
+- Chat file links carrying a line number (`app.ts:160`) open the file and jump to that line instead of doing nothing.
+- The Command Palette understands the same `:line` suffix, so the search fallback still lands on the right line.
+- Maths written with `\[ … \]` or `\( … \)` renders instead of showing a stray bracket and raw LaTeX.
+
 ## [0.22.4] - 2026-09-22
 
 ### Fixed
