@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.22.8] - 2026-09-23
+
+### Fixed
+- The mobile drawer's utility tiles (Files, Remote, Cloud, Settings, Bug) stay on one row instead of dropping the last one onto a line of its own, and each NEW/BETA badge sits on its icon.
+
 ## [0.22.7] - 2026-09-23
 
 ### Added
