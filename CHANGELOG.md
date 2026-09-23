@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.22.7] - 2026-09-23
+
+### Added
+- Claude Opus 5.5 (`claude-opus-5-5`) in the model list.
+
+### Changed
+- New installs default to Claude Opus 5.5 and Codex GPT-6 Sol, the current balanced coding models; existing configs are untouched.
+
 ## [0.22.6] - 2026-09-23
 
 ### Changed
