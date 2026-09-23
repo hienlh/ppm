@@ -35,6 +35,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
+import { splitSourceLocation, type SourceLine } from "@/lib/source-location";
 import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
 import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
 import { fileIconElement } from "@/lib/file-icons";
@@ -122,6 +123,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const listRef = useRef<HTMLDivElement>(null);
 
   const openTab = useTabStore((s) => s.openTab);
+  const updateTab = useTabStore((s) => s.updateTab);
   const activeProject = useProjectStore((s) => s.activeProject);
   const fileIndex = useFileStore((s) => s.fileIndex);
   const indexStatus = useFileStore((s) => s.indexStatus);
@@ -135,6 +137,38 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const isMobile = useIsMobile();
   const isTouchOnly = useIsTouchOnly();
   const lspEnabled = useSettingsStore((s) => s.lspEnabled);
+
+  /**
+   * A query may name one place in a file — `app.ts:120`, `app.ts:120-140`, `app.ts#L120` —
+   * which is what a Markdown file link falls back to when its path resolves to nothing.
+   * The suffix has to come off before searching, or it is matched against filenames that
+   * never contain it and the query finds nothing at all.
+   */
+  const typed = useMemo(() => splitSourceLocation(query) ?? { path: query }, [query]);
+  const searchPath = useMemo(
+    () => splitSourceLocation(deferredQuery)?.path ?? deferredQuery,
+    [deferredQuery],
+  );
+
+  /**
+   * Read when an item is actually picked, rather than closed over per command: the file
+   * commands are built from the entire project index, and rebuilding thousands of them on
+   * each keystroke of `:120` costs far more than carrying the line this way.
+   */
+  const lineTargetRef = useRef<SourceLine | undefined>(undefined);
+  useEffect(() => { lineTargetRef.current = typed.line; }, [typed.line]);
+
+  /** Open a file as an editor tab, jumping to the line the query named. */
+  const openFileTab = useCallback((path: string, title: string, projectId: string | null, meta?: { projectName: string }) => {
+    const line = lineTargetRef.current;
+    const metadata: Record<string, unknown> = { ...meta, filePath: path };
+    if (line) Object.assign(metadata, { lineNumber: line.start, endLine: line.end, revealAt: Date.now() });
+    const id = openTab({ type: "editor", title, projectId, metadata, closable: true });
+    // A tab already open on this file is deduped by filePath and keeps the metadata it was
+    // opened with, so the new line has to be pushed onto it for the reveal effect to fire.
+    if (line && id) updateTab(id, { metadata });
+    onClose();
+  }, [openTab, updateTab, onClose]);
 
   // Fetch filesystem files when path query changes directory
   const fetchFsFiles = useCallback(async (dir: string) => {
@@ -156,13 +190,13 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
   // When query changes and looks like a path, fetch files
   useEffect(() => {
-    if (!isPathQuery(query)) {
+    if (!isPathQuery(typed.path)) {
       setFsFiles([]);
       return;
     }
-    const dir = extractDir(query);
+    const dir = extractDir(typed.path);
     fetchFsFiles(dir);
-  }, [query, fetchFsFiles]);
+  }, [typed.path, fetchFsFiles]);
 
   // Debounced DB table search
   useEffect(() => {
@@ -310,18 +344,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       keywords: f.path,
       // Propagate gitignore flag for muted rendering (only present on /files/index entries)
       isIgnored: ("isIgnored" in f ? f.isIgnored : undefined) as boolean | undefined,
-      action: () => {
-        openTab({
-          type: "editor",
-          title: f.name,
-          projectId,
-          metadata: { ...meta, filePath: f.path },
-          closable: true,
-        });
-        onClose();
-      },
+      action: () => openFileTab(f.path, f.name, projectId, meta),
     }));
-  }, [indexStatus, fileIndex, fileTree, activeProject, openTab, onClose]);
+  }, [indexStatus, fileIndex, fileTree, activeProject, openFileTab]);
 
   // Filesystem commands — from cached API results
   const fsCommands = useMemo<CommandItem[]>(() => {
@@ -337,19 +362,10 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         icon: FolderOpen,
         group: "fs" as const,
         keywords: fp,
-        action: () => {
-          openTab({
-            type: "editor",
-            title: name,
-            projectId,
-            metadata: { ...meta, filePath: fp },
-            closable: true,
-          });
-          onClose();
-        },
+        action: () => openFileTab(fp, name, projectId, meta),
       };
     });
-  }, [fsFiles, activeProject, openTab, onClose]);
+  }, [fsFiles, activeProject, openFileTab]);
 
   const dbCommands = useMemo<CommandItem[]>(() => dbResults.map((r) => ({
     id: `db:${r.connectionId}:${r.schemaName}.${r.tableName}`,
@@ -395,9 +411,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
   const filtered = useMemo(() => {
     // Path mode — search filesystem results using filename portion only
-    if (isPathQuery(deferredQuery)) {
-      const lastSlash = deferredQuery.lastIndexOf("/");
-      const fileFilter = lastSlash >= 0 ? deferredQuery.slice(lastSlash + 1).toLowerCase() : "";
+    if (isPathQuery(searchPath)) {
+      const lastSlash = searchPath.lastIndexOf("/");
+      const fileFilter = lastSlash >= 0 ? searchPath.slice(lastSlash + 1).toLowerCase() : "";
       if (!fileFilter) return fsCommands.slice(0, 50);
       return fsCommands.filter((c) => {
         const name = c.label.toLowerCase();
@@ -407,9 +423,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     }
 
     // Normal mode
-    if (!deferredQuery.trim()) return actionCommands;
+    if (!searchPath.trim()) return actionCommands;
     // Strip leading ./ or ../ — index paths are relative without dot prefix
-    const qLower = deferredQuery.toLowerCase().replace(/^\.\.?\//, "");
+    const qLower = searchPath.toLowerCase().replace(/^\.\.?\//, "");
     const scored: Array<{ cmd: CommandItem; score: FileSearchScore }> = [];
     for (const entry of searchIndex) {
       const s = scoreFileSearchFast(qLower, entry.filenameLower, entry.pathLower, entry.labelLen, entry.depth);
@@ -419,7 +435,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     const matched = scored.slice(0, MAX_RESULTS).map((s) => s.cmd);
     // Prepend DB results (already filtered server-side) when query is 2+ chars
     return deferredQuery.trim().length >= 2 ? [...dbCommands, ...matched] : matched;
-  }, [searchIndex, actionCommands, fsCommands, dbCommands, deferredQuery]);
+  }, [searchIndex, actionCommands, fsCommands, dbCommands, deferredQuery, searchPath]);
 
   // Stable set of groups that have data (pre-query) — prevents chip flashing
   const availableGroups = useMemo(() => {
@@ -527,7 +543,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
   if (!open) return null;
 
-  const pathMode = isPathQuery(query);
+  const pathMode = isPathQuery(typed.path);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-start justify-center md:pt-[20vh]" onClick={onClose}>

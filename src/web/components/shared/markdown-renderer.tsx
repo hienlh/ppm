@@ -1,20 +1,17 @@
-import { useMemo, useCallback, useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
-import { useTabStore } from "@/stores/tab-store";
-import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useImageOverlay } from "@/stores/image-overlay-store";
 import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
 import { useDiagramOverlay } from "@/stores/diagram-overlay-store";
-import { openCommandPalette } from "@/hooks/use-global-keybindings";
-import { useBackgroundOutputStore } from "@/stores/background-output-store";
-import { api, projectUrl, getAuthToken } from "@/lib/api-client";
+import { getAuthToken } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
-import { MdContext, useMdContext, FILE_EXT_RE, GLOB_CHARS_RE, LOCAL_PATH_RE, markdownUrlTransform } from "./markdown-context";
+import { MdContext, useMdContext, LOCAL_PATH_RE, markdownUrlTransform, parseMarkdownFileTarget } from "./markdown-context";
+import { useMarkdownFileNavigation } from "./use-markdown-file-navigation";
 import { MdPre, MdCode } from "./markdown-code-block";
 
 interface MarkdownRendererProps {
@@ -31,74 +28,10 @@ const rehypePlugins = [rehypeRaw, rehypeKatex] as any;
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
-function findInTree(nodes: FileNode[], name: string): string[] {
-  const results: string[] = [];
-  for (const n of nodes) {
-    if (n.type === "file" && n.name === name) results.push(n.path);
-    if (n.children) results.push(...findInTree(n.children, name));
-  }
-  return results;
-}
-
 export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false }: MarkdownRendererProps) {
-  const openTab = useTabStore((s) => s.openTab);
-  const updateTab = useTabStore((s) => s.updateTab);
-  const fileTree = useFileStore((s) => s.tree);
   const openImageOverlayFn = useImageOverlay((s) => s.open);
   const openDiagramOverlayFn = useDiagramOverlay((s) => s.open);
-
-  const openFileOrSearch = useCallback((filePath: string, line?: { start: number; end?: number }) => {
-    if (!filePath) return;
-
-    // Background command .output reference → open the live output panel (resolves the
-    // bare basename to the tracked shell's absolute outputPath; opened via /api/fs/read).
-    if (/\.output$/.test(filePath)) {
-      const store = useBackgroundOutputStore.getState();
-      const shell = store.findByOutput(filePath);
-      if (shell) { store.openPanel(shell.shellId); return; }
-    }
-
-    const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
-    const isRelative = /^(\.\/|\.\.\/)/.test(filePath);
-    const fileName = basename(filePath);
-
-    // Open editor tab; when a line target is given, also updateTab so an already-open
-    // tab (deduped by filePath) jumps to the new line. revealAt forces the editor's
-    // reveal effect to fire even when the same line is clicked again.
-    const openAt = (meta: Record<string, unknown>, title: string, projectId: string | null) => {
-      const full = { ...meta };
-      if (line) { full.lineNumber = line.start; full.endLine = line.end; full.revealAt = Date.now(); }
-      const id = openTab({ type: "editor", title, metadata: full, projectId, closable: true });
-      if (line && id) updateTab(id, { metadata: full });
-    };
-
-    const searchAndOpen = (fp: string) => {
-      const matches = findInTree(fileTree, basename(fp));
-      if (matches.length === 1) {
-        openAt({ filePath: matches[0], projectName }, basename(fp), projectName ?? null);
-      } else {
-        openCommandPalette(fp);
-      }
-    };
-
-    if (isAbsolute) {
-      const meta: Record<string, unknown> = { filePath };
-      if (projectName) meta.projectName = projectName;
-      api.get(`/api/fs/read?path=${encodeURIComponent(filePath)}`).then(() => {
-        openAt(meta, fileName, null);
-      }).catch(() => openCommandPalette(filePath));
-      return;
-    }
-
-    if (isRelative && projectName) {
-      api.get(`${projectUrl(projectName)}/files/read?path=${encodeURIComponent(filePath)}`)
-        .then(() => openAt({ filePath, projectName }, fileName, projectName))
-        .catch(() => searchAndOpen(filePath));
-      return;
-    }
-
-    searchAndOpen(filePath);
-  }, [openTab, updateTab, fileTree, projectName]);
+  const openFileOrSearch = useMarkdownFileNavigation(projectName);
 
   const ctx = useMemo(() => ({
     projectName, codeActions, isStreaming, openFileOrSearch,
@@ -125,11 +58,12 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 /** Link — external links open in new tab; file paths open in editor */
 function MdLink({ href, children, node, ...props }: any) {
   const { openFileOrSearch } = useMdContext();
-  if (href?.match(/^https?:\/\//)) {
+  if (href?.match(/^(https?:)?\/\//i)) {
     return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
   }
-  if (href && !GLOB_CHARS_RE.test(href) && FILE_EXT_RE.test(href)) {
-    return <a href={href} onClick={(e: React.MouseEvent) => { e.preventDefault(); openFileOrSearch(href); }} {...props}>{children}</a>;
+  const target = href ? parseMarkdownFileTarget(href) : null;
+  if (target) {
+    return <a href={href} onClick={(e: React.MouseEvent) => { e.preventDefault(); openFileOrSearch(target.path, target.line); }} {...props}>{children}</a>;
   }
   return <a href={href} {...props}>{children}</a>;
 }

@@ -220,6 +220,12 @@ Saved `.html` and `.htm` files open with a single toolbar row: breadcrumb, Refre
 
 `POST /api/html-preview` requires normal API authentication and returns a one-hour capability URL under `/api/html-preview/content/:token/`. The capability serves static assets from the HTML file's directory and descendants with byte-range support for video. Realpath containment, filesystem credential guards, hidden asset restrictions and a static extension allowlist apply to each request. No PPM login token is embedded in the document. Both the iframe and response CSP sandbox scripts without same-origin privileges; resource/fetch access is limited to that preview directory. External CDNs, parent-directory assets, forms, nested frames and browser storage are intentionally unsupported. Refresh renews an expired capability; at most 128 capabilities are retained per server.
 
+### Markdown file and folder links
+
+Markdown local links are parsed independently of extensions, then resolved by `use-markdown-file-navigation` through the guarded host `/api/fs/stat` API: files open editor/viewer tabs; directories open desktop/mobile Explorer. Supports Windows/Unix paths, project-relative paths, `~/`, local `file://` URLs, percent-encoded names and line references. Relative links resolve against the message's project root. Missing or ambiguous targets open search; explicit paths never fall back to a different same-named file. Remote file authorities/UNC remain unsupported by the host filesystem policy.
+
+A link may name one place in the file — `app.ts:120`, `app.ts:120-140`, `app.ts#L120` — which `src/web/lib/source-location.ts` splits off the path for both readers of it. The editor reveals that line (selecting the range when one is given) and a tab already open on the file is updated rather than left where it was. A suffix naming an impossible line rejects the link instead of quietly opening line 1. The same suffix travels into the command palette on the search fallback, so it strips it before matching filenames and still jumps once a candidate is picked — including in filesystem (`/`, `~/`, `C:\`) mode, where the directory is listed without it.
+
 ## Terminal Flow
 
 ```
