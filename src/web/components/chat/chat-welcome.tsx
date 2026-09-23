@@ -11,7 +11,7 @@ interface ChatWelcomeProps {
 export function ChatWelcome({ projectName, onSelectSession }: ChatWelcomeProps) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-6 text-text-secondary overflow-y-auto">
-      <div className="flex flex-col items-center gap-3">
+      <div className="flex flex-col items-center gap-3 px-4 w-full">
         <Bot className="size-10 text-text-subtle" />
         <p className="text-sm">Send a message to start a new conversation</p>
         <OnboardingEntry compact />
