@@ -28,6 +28,7 @@ import {
 } from "./window-panel-actions";
 import { saveWindowPanels } from "./window-panel-persistence";
 import { useWindowStore } from "@/components/floating-window/window-store";
+import { tabSessionId } from "@/lib/tab-session-id";
 import {
   makeToggleDock,
   makeSetDockVisible,
@@ -509,12 +510,39 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       // (chat-tab only rewrites metadata, not the tab id), so deriveTabId's
       // chat:{provider}/{sessionId} never matches the live tab. Match on the real
       // sessionId instead so re-opening from history focuses the tab, not a dupe.
+      //
+      // A design tab hosts a chat session too, and it is the session's real home: opening a
+      // design session from history or a notification must focus its design tab, never
+      // start a plain chat that has left design mode.
       if (tabDef.type === "chat" && tabDef.metadata?.sessionId) {
         const sid = tabDef.metadata.sessionId;
         for (const p of Object.values(get().panels)) {
-          const existing = p.tabs.find((t) => t.type === "chat" && t.metadata?.sessionId === sid);
+          const existing = p.tabs.find((t) => tabSessionId(t) === sid);
           if (existing) {
             rememberChatProvider(existing);
+            set((s) => ({
+              focusedPanelId: focusAfterActivate(p.id),
+              panels: {
+                ...s.panels,
+                [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
+              },
+            }));
+            persist();
+            return existing.id;
+          }
+        }
+      }
+
+      // One tab per design, across ALL panels. Matched by slug *and* project, because the
+      // panels map also holds the keep-alive layouts of other projects, whose designs can
+      // share a slug with this one.
+      if (tabDef.type === "design") {
+        const slug = tabDef.metadata?.designSlug;
+        const project = tabDef.projectId ?? tabDef.metadata?.projectName;
+        for (const p of Object.values(get().panels)) {
+          const existing = p.tabs.find((t) => t.type === "design" && t.metadata?.designSlug === slug
+            && (t.projectId ?? t.metadata?.projectName) === project);
+          if (existing) {
             set((s) => ({
               focusedPanelId: focusAfterActivate(p.id),
               panels: {

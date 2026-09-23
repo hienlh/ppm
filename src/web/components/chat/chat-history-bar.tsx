@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react
 import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "@/lib/icons";
 import { Activity } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
-import { useTabStore } from "@/stores/tab-store";
+import { openSessionInItsTab } from "@/lib/design/open-design-tab";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
@@ -50,6 +50,12 @@ interface ChatHistoryBarProps {
   /** Route this chat onto another account. */
   onSelectAccount?: (accountId: string, label: string | null) => Promise<string | null>;
   onSelectSession?: (session: SessionInfo) => void;
+  /**
+   * Set inside a design tab: only that design's sessions are listed, and picking one swaps
+   * it into the tab. Without it, a design session is opened in its own design tab rather
+   * than switched into this chat, where it would have left design mode.
+   */
+  historyFilter?: string;
   onBugReport?: () => void;
   isConnected?: boolean;
   onReload?: () => void;
@@ -77,7 +83,7 @@ export function ChatHistoryBar({
   tabId,
   projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
-  onSelectSession, onBugReport, isConnected, onReload,
+  onSelectSession, historyFilter, onBugReport, isConnected, onReload,
   teamActivity, teamMessages, onTeamOpen,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
@@ -99,7 +105,6 @@ export function ChatHistoryBar({
   const [showTagSettings, setShowTagSettings] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
-  const openTab = useTabStore((s) => s.openTab);
   const PAGE_SIZE = 50;
 
   const togglePanel = (panel: PanelType) => {
@@ -175,17 +180,13 @@ export function ChatHistoryBar({
       detail: { type: "history-opened", projectName, tabId, sessionId: session.id,
         visible: !document.hidden && Object.values(usePanelStore.getState().panels).some((panel) => panel.activeTabId === tabId) },
     }));
-    if (onSelectSession) {
+    const staysHere = historyFilter ? session.designSlug === historyFilter : !session.designSlug;
+    if (onSelectSession && staysHere) {
       onSelectSession(session);
       setActivePanel(null);
     } else {
-      openTab({
-        type: "chat",
-        title: session.title || "Chat",
-        projectId: projectName ?? null,
-        metadata: { projectName, sessionId: session.id, providerId: session.providerId },
-        closable: true,
-      });
+      openSessionInItsTab(session, projectName);
+      setActivePanel(null);
     }
   }
 
@@ -275,9 +276,11 @@ export function ChatHistoryBar({
   }, [activePanel, projectTags, sessionId, projectName, handleTagChanged]);
 
   // Filter by tag client-side (search is now server-side via ?q=)
+  // Inside a design tab the picker is that design's history, nothing else.
+  const scopedSessions = historyFilter ? sessions.filter((s) => s.designSlug === historyFilter) : sessions;
   const filteredSessions = selectedTagId !== null
-    ? sessions.filter((s) => s.tag?.id === selectedTagId)
-    : sessions;
+    ? scopedSessions.filter((s) => s.tag?.id === selectedTagId)
+    : scopedSessions;
 
   // Usage badge display — Claude (SDK) and Codex both expose usage limits
   const isClaudeProvider = !providerId || providerId === "claude";
@@ -473,7 +476,7 @@ export function ChatHistoryBar({
                 className={`shrink-0 rounded-md border px-2 py-1 text-[10px] transition-colors ${
                   selectedTagId === null ? "bg-primary/20 border-primary text-primary" : "border-border bg-surface text-text-secondary"
                 }`}
-              >All ({sessions.length})</button>
+              >All ({scopedSessions.length})</button>
               {projectTags.map((tag) => (
                 <button
                   key={tag.id}
@@ -505,7 +508,7 @@ export function ChatHistoryBar({
           )}
 
           <div className="max-h-[200px] overflow-y-auto">
-            {loading && sessions.length === 0 ? (
+            {loading && scopedSessions.length === 0 ? (
               <div className="flex items-center justify-center py-3">
                 <Loader2 className="size-3.5 animate-spin text-text-subtle" />
               </div>

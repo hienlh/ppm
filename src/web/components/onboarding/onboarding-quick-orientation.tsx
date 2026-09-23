@@ -14,6 +14,7 @@ export function openQuickOrientation(): void {
 const descriptions: Record<string, string> = {
   history: "Return to earlier AI conversations and continue where you left off.",
   teams: "Find group conversations with multiple AI agents.",
+  designs: "Design pages and slide decks with AI beside a live preview.",
   explorer: "Browse files and folders in the selected project.",
   search: "Find words across your project's files.",
   git: "Review changed files and diffs before committing your work.",

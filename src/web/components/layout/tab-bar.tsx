@@ -48,6 +48,7 @@ import { downloadFile } from "@/lib/file-download";
 import { copyToClipboard } from "@/lib/clipboard";
 import { FileActions } from "@/components/explorer/file-actions";
 import { getTabIcon } from "@/lib/tab-type-icons";
+import { tabSessionId } from "@/lib/tab-session-id";
 import {
   ContextMenu as BarContextMenu,
   ContextMenuContent as BarContextMenuContent,
@@ -83,7 +84,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
 
   // Fetch session tags for open chat tabs
-  const chatSessionIds = tabs.filter((t) => t.type === "chat" && t.metadata?.sessionId).map((t) => t.metadata!.sessionId as string);
+  const chatSessionIds = tabs.map(tabSessionId).filter((id): id is string => !!id);
   useEffect(() => {
     if (!activeProject?.name || chatSessionIds.length === 0) return;
     api.get<{ sessions: { id: string; tag?: { id: number; name: string; color: string } | null }[] }>(
@@ -344,7 +345,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
       >
         <div className={tabRowClass(editorTabStyle, tabWrap)}>
           {tabs.map((tab, i) => {
-            const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
+            const sessionId = tabSessionId(tab);
             const entry = sessionId ? notifications.get(sessionId) : undefined;
             const notiType = entry && entry.count > 0 ? entry.type : null;
             const notiManual = !!entry?.manual;

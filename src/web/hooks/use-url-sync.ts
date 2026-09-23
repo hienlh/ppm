@@ -3,6 +3,8 @@ import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { openSettings } from "@/components/settings/open-settings";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
+import { isValidDesignSlug } from "../../services/design/design-slug";
+import { DESIGN_PERMISSION_MODE } from "@/lib/design/design-tab-metadata";
 
 // ---------------------------------------------------------------------------
 // URL state types
@@ -18,7 +20,7 @@ export interface UrlState {
 const VALID_TAB_TYPES: TabType[] = [
   "terminal", "chat", "editor", "database", "sqlite",
   "postgres", "git-diff", "settings",
-  "extension", "group",
+  "extension", "group", "design",
 ];
 
 // ---------------------------------------------------------------------------
@@ -110,7 +112,7 @@ export function tabIdFromUrl(tabType: TabType, tabIdentifier: string | null): st
 // Auto-open tab from URL
 // ---------------------------------------------------------------------------
 
-function buildMetadataFromUrl(
+export function buildMetadataFromUrl(
   type: TabType, identifier: string | null, projectName: string,
 ): Record<string, unknown> | null {
   switch (type) {
@@ -139,6 +141,11 @@ function buildMetadataFromUrl(
     }
     case "extension": return identifier ? { viewType: identifier, projectName } : null;
     case "group": return identifier ? { groupId: identifier, projectName } : null;
+    // The URL names the design only. The provider is resolved by the design tab itself,
+    // among the providers that can carry design instructions, which is why it is pending.
+    case "design": return isValidDesignSlug(identifier)
+      ? { projectName, designSlug: identifier, providerPending: true, permissionMode: DESIGN_PERMISSION_MODE }
+      : null;
     default: return null;
   }
 }
@@ -159,6 +166,7 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
       return identifier.split("-").map(w => (w[0]?.toUpperCase() ?? "") + w.slice(1)).join(" ");
     }
     case "group": return "Group";
+    case "design": return "Design";
     default: return type;
   }
 }

@@ -227,6 +227,16 @@ const MAP: Record<string, string | null> = {
   MonitorX: "desktop-off",
   MonitorSmartphone: "phone-desktop",
   Smartphone: "phone",
+  Tablet: "tablet",
+  Printer: "print",
+
+  // --- Design mode: canvas frames, tools and exports
+  Presentation: "slide-text",
+  SlidersHorizontal: "options",
+  Move: "arrow-move",
+  MousePointerClick: "cursor-click",
+  MessageSquarePlus: "chat-add",
+  FileArchive: "folder-zip",
   HardDrive: "hard-drive",
   Cpu: "developer-board",
   Usb: "usb-stick",

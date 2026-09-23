@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
 import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone, Settings } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
@@ -30,10 +30,14 @@ import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { cn } from "@/lib/utils";
 
+// Lazy so the design UI stays out of the entry bundle until the section is opened.
+const DesignsSidebarPanel = lazy(() =>
+  import("@/components/design/designs-sidebar-panel").then((m) => ({ default: m.DesignsSidebarPanel })));
+
 // Tab ids the mobile drawer can render content for;
 // ext views are supported via the `ext:` prefix.
 const MOBILE_SUPPORTED = new Set<string>([
-  "history", "teams", "explorer", "search", "git", "database", "tunnels", "ai-resources", "jira",
+  "history", "teams", "designs", "explorer", "search", "git", "database", "tunnels", "ai-resources", "jira",
 ]);
 const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
 
@@ -167,6 +171,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
             ? <SessionHistoryList variant="sidebar" projectName={activeProject.name} onNavigate={onClose} />
             : noProject)}
           {activeTab === "teams" && (activeProject ? <GroupList /> : noProject)}
+          {activeTab === "designs" && (activeProject
+            ? <Suspense fallback={null}><DesignsSidebarPanel onNavigate={onClose} /></Suspense>
+            : noProject)}
           {activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
           {isOpen && activeTab === "search" && <SearchPanel onNavigate={onClose} />}
           {isOpen && activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}

@@ -25,6 +25,9 @@ import { syncRunningSessions } from "@/lib/sync-running-sessions";
  * - `jira:*` → re-dispatched as window events.
  * - `tunnel:*` → re-dispatched as window events (named-tunnel setup flow —
  *   login URL/state, setup progress/done/pending/error).
+ * - `design:*` → re-dispatched as window events (`design:history_changed`,
+ *   `design:comments_changed`). A design's `.design/` folder is not watched, so these
+ *   are the only signal that its snapshots or comments changed.
  *
  * Also tells the server which project to watch, so file watching follows the
  * active project instead of depending on a chat socket existing.
@@ -95,7 +98,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         return;
       }
 
-      if (type.startsWith("jira:") || type.startsWith("tunnel:")) {
+      if (type.startsWith("jira:") || type.startsWith("tunnel:") || type.startsWith("design:")) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));
       }
     });

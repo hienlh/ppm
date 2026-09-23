@@ -5,6 +5,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expansions";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { tabSessionId } from "@/lib/tab-session-id";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
@@ -114,7 +115,7 @@ function isSessionTabActive(sid: string): boolean {
   const { panels } = usePanelStore.getState();
   for (const panel of Object.values(panels)) {
     const activeTab = panel.tabs.find((t) => t.id === panel.activeTabId);
-    if (activeTab?.type === "chat" && activeTab.metadata?.sessionId === sid) return true;
+    if (tabSessionId(activeTab) === sid) return true;
   }
   return false;
 }

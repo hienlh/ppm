@@ -39,11 +39,12 @@ import { splitSourceLocation, type SourceLine } from "@/lib/source-location";
 import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
 import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
 import { fileIconElement } from "@/lib/file-icons";
+import { NewDesignDialogHost, useDesignCommands } from "./command-palette-design-commands";
 
 /** Max results to display — prevents rendering thousands of matches */
 const MAX_RESULTS = 100;
 
-interface CommandItem {
+export interface CommandItem {
   id: string;
   label: string;
   hint?: string;
@@ -210,6 +211,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     return () => clearTimeout(timer);
   }, [query]);
 
+  const designCommands = useDesignCommands(activeProject?.name ?? null, open, onClose);
+
   // Action commands
   const actionCommands = useMemo<CommandItem[]>(() => {
     const projectId = activeProject?.name ?? null;
@@ -325,8 +328,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       };
     });
 
-    return [...builtIn, ...extCmds];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled]);
+    return [...builtIn, ...designCommands, ...extCmds];
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled, designCommands]);
 
   // File commands — from index when ready, fallback to flattened tree
   const fileCommands = useMemo<CommandItem[]>(() => {
@@ -541,11 +544,15 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     }
   }
 
-  if (!open) return null;
+  // The dialog host stays mounted while the palette is closed: New Design opens after it
+  // closes. Both branches keep it as the fragment's first child so React keeps its state.
+  if (!open) return <><NewDesignDialogHost /></>;
 
   const pathMode = isPathQuery(typed.path);
 
   return (
+    <>
+    <NewDesignDialogHost />
     <div className="fixed inset-0 z-50 flex items-end md:items-start justify-center md:pt-[20vh]" onClick={onClose}>
       <div className="fixed inset-0 bg-black/50" />
       <div
@@ -675,5 +682,6 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         </div>
       </div>
     </div>
+    </>
   );
 }

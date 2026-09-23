@@ -1,4 +1,4 @@
-import { useCallback, useRef, memo } from "react";
+import { useCallback, useRef, memo, lazy, Suspense } from "react";
 import { PanelLeftOpen } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
@@ -16,6 +16,10 @@ import { GroupList } from "@/components/group-chat/group-list";
 import { useGitChangesPoller } from "@/stores/git-status-store";
 import { ProjectSwitcher } from "./project-switcher";
 import { NavSectionRail } from "./nav-section-rail";
+
+// Lazy so the design UI stays out of the entry bundle until the section is opened.
+const DesignsSidebarPanel = lazy(() =>
+  import("@/components/design/designs-sidebar-panel").then((m) => ({ default: m.DesignsSidebarPanel })));
 
 function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   const dragging = useRef(false);
@@ -132,6 +136,9 @@ export const Sidebar = memo(function Sidebar() {
               )
             )}
             {sidebarActiveTab === "teams" && <GroupList />}
+            {sidebarActiveTab === "designs" && (
+              <Suspense fallback={null}><DesignsSidebarPanel /></Suspense>
+            )}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
             {sidebarActiveTab === "tunnels" && <TunnelManagerTab />}
             {sidebarActiveTab === "jira" && <JiraPanel />}

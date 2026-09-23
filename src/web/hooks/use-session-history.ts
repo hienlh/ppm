@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api, projectUrl } from "@/lib/api-client";
-import { useTabStore } from "@/stores/tab-store";
+import { openSessionInItsTab } from "@/lib/design/open-design-tab";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { compareSessionsByActivity, type SessionInfo, type SessionListResponse, type ProjectTag } from "../../types/chat";
 
@@ -40,7 +40,6 @@ export function useSessionHistory({
   const [tagCounts, setTagCounts] = useState<Record<number, number>>({});
   const [showTagSettings, setShowTagSettings] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
-  const openTab = useTabStore((s) => s.openTab);
 
   const load = useCallback(async (query?: string) => {
     if (!projectName) return;
@@ -99,16 +98,11 @@ export function useSessionHistory({
   useEffect(() => { load(debouncedSearch || undefined); }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openSession(session: SessionInfo) {
-    if (onSelectSession) {
+    if (onSelectSession && !session.designSlug) {
       onSelectSession(session);
     } else {
-      openTab({
-        type: "chat",
-        title: session.title || "Chat",
-        projectId: projectName ?? null,
-        metadata: { projectName, sessionId: session.id, providerId: session.providerId },
-        closable: true,
-      });
+      // A design session opens in its design tab, where it stays in design mode.
+      openSessionInItsTab(session, projectName);
     }
   }
 

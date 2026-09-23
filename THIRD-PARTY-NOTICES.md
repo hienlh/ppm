@@ -17,7 +17,7 @@ bun scripts/gen-nerd-font.ts
 
 ## Product icons
 
-`src/web/lib/icons.generated.tsx` holds the path data for 175 glyphs, emitted by
+`src/web/lib/icons.generated.tsx` holds the path data for 183 glyphs, emitted by
 `scripts/gen-product-icons.ts` at 20px Regular. The outlines are reproduced unchanged;
 only the surrounding component is PPM's. The 15 names Fluent has no glyph for stay on
 `lucide-react`, which is a dependency rather than something vendored here.

@@ -9,6 +9,7 @@ import { TabBar } from "./tab-bar";
 import { SplitDropOverlay } from "./split-drop-overlay";
 import { registerPanelSlot } from "./tab-pool";
 import { visibleTabs } from "@/stores/panel-utils";
+import { openSessionInItsTab } from "@/lib/design/open-design-tab";
 import { cn } from "@/lib/utils";
 
 const QUICK_OPEN_TABS: { type: TabType; label: string; icon: React.ElementType }[] = [
@@ -95,16 +96,9 @@ function EmptyPanel({ panelId, canClose }: { panelId: string; canClose: boolean 
   }
 
   const openSession = useCallback((session: SessionInfo) => {
-    usePanelStore.getState().openTab(
-      {
-        type: "chat",
-        title: session.title || "Chat",
-        projectId: activeProject?.name ?? null,
-        metadata: { projectName: activeProject?.name, sessionId: session.id, providerId: session.providerId },
-        closable: true,
-      },
-      panelId,
-    );
+    if (!activeProject?.name) return;
+    // A design session opens in its design tab, where it stays in design mode.
+    openSessionInItsTab(session, activeProject.name, panelId);
   }, [activeProject?.name, panelId]);
 
   return (

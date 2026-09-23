@@ -24,14 +24,31 @@ import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
 import { NewChatProviderGate } from "./new-chat-provider-gate";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
+import { patchTabMetadata } from "@/lib/patch-tab-metadata";
 
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
 
+/** A fork a host has taken over: the forked session, and the message to resend in it. */
+export interface ChatForkRequest {
+  sessionId: string;
+  providerId: string;
+  pendingMessage: string;
+}
+
 interface ChatTabProps {
   metadata?: Record<string, unknown>;
   tabId?: string;
+  /**
+   * Replaces "open a new chat tab" (`/clear`) for a host that keeps its conversation in
+   * place — a design tab starts the next session inside itself, where it stays in design mode.
+   */
+  onNewSession?: (clearedFrom?: string) => void;
+  /** Replaces "open the fork in a new tab"; the host swaps the fork into itself. */
+  onFork?: (fork: ChatForkRequest) => void;
+  /** Lists only this design's sessions in the history picker. */
+  historyFilter?: string;
 }
 
 /**
@@ -43,15 +60,18 @@ interface ChatTabProps {
 const SESSION_CREATE_TIMEOUT_MS = 30_000;
 const PENDING_SEND_TIMEOUT_MS = 45_000;
 
-export function ChatTab({ metadata, tabId }: ChatTabProps) {
+export function ChatTab(props: ChatTabProps) {
+  const { metadata, tabId } = props;
   return tabId && metadata ? (
     <NewChatProviderGate tabId={tabId} metadata={metadata}>
-      <ChatTabContent metadata={metadata} tabId={tabId} />
+      <ChatTabContent {...props} />
     </NewChatProviderGate>
-  ) : <ChatTabContent metadata={metadata} tabId={tabId} />;
+  ) : <ChatTabContent {...props} />;
 }
 
-function ChatTabContent({ metadata, tabId }: ChatTabProps) {
+function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }: ChatTabProps) {
+  // A design chat is created with its slug and keeps the design's name as its tab title.
+  const designSlug = typeof metadata?.designSlug === "string" && metadata.designSlug ? metadata.designSlug : undefined;
   const [sessionId, setSessionId] = useState<string | null>(
     (metadata?.sessionId as string) ?? null,
   );
@@ -140,18 +160,19 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
   // is the only account that matters, and it is the one the server re-routes when an
   // account goes bad. Keeping the tab's copy alongside it would give the chip a second,
   // staler answer to the same question.
+  //
+  // Merged into the metadata the store holds now, never the `metadata` prop: the prop is
+  // whatever this component last rendered with, and spreading it back would revert keys a
+  // host (a design tab) or the panel store wrote in the meantime.
   useEffect(() => {
     if (!tabId || !sessionId) return;
-    updateTab(tabId, {
-      metadata: {
-        ...metadata,
-        sessionId,
-        providerId,
-        permissionMode,
-        pickedAccountId: undefined,
-        pickedAccountLabel: undefined,
-        pickedAccountProvider: undefined,
-      },
+    patchTabMetadata(tabId, {
+      sessionId,
+      providerId,
+      permissionMode,
+      pickedAccountId: undefined,
+      pickedAccountLabel: undefined,
+      pickedAccountProvider: undefined,
     });
   }, [sessionId, providerId, permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -163,8 +184,8 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
    */
   const handleProviderChange = useCallback((id: string) => {
     setProviderId(id);
-    if (tabId) updateTab(tabId, { metadata: { ...metadata, providerId: id } });
-  }, [tabId, metadata, updateTab]);
+    if (tabId) patchTabMetadata(tabId, { providerId: id });
+  }, [tabId]);
 
   /** The account this tab claimed while it had no session yet, and who it was claimed from. */
   const pickedAccountId = metadata?.pickedAccountId as string | undefined;
@@ -194,13 +215,10 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
     pickAccountForTab(providerId)
       .then((picked) => {
         if (cancelled || !picked) return;
-        updateTab(tabId, {
-          metadata: {
-            ...metadata,
-            pickedAccountId: picked.id,
-            pickedAccountLabel: picked.label,
-            pickedAccountProvider: providerId,
-          },
+        patchTabMetadata(tabId, {
+          pickedAccountId: picked.id,
+          pickedAccountLabel: picked.label,
+          pickedAccountProvider: providerId,
         });
       })
       .catch(() => { /* leave the chip blank rather than naming an account we did not get */ });
@@ -241,9 +259,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
       return null;
     }
     if (!tabId) return null;
-    updateTab(tabId, {
-      metadata: { ...metadata, pickedAccountId: accountId, pickedAccountLabel: label, pickedAccountProvider: providerId },
-    });
+    patchTabMetadata(tabId, { pickedAccountId: accountId, pickedAccountLabel: label, pickedAccountProvider: providerId });
     return null;
   }, [sessionId, projectName, tabId, metadata, providerId, updateTab, reloadUsage]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -368,9 +384,10 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
     };
   }, [sessionId, tabId]);
 
-  // Update tab title when SDK summary arrives
+  // Update tab title when SDK summary arrives. A design tab is named after its design, not
+  // after whichever of its sessions happens to be open.
   useEffect(() => {
-    if (tabId && sessionTitle) {
+    if (tabId && sessionTitle && !designSlug) {
       updateTab(tabId, { title: sessionTitle });
     }
   }, [sessionTitle]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -486,7 +503,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
   useEffect(() => {
     if (forkDraft && isConnected && sessionId && tabId) {
       // Clear from tab metadata once consumed
-      updateTab(tabId, { metadata: { ...metadata, pendingMessage: undefined } });
+      patchTabMetadata(tabId, { pendingMessage: undefined });
     }
   }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -503,6 +520,10 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
   }, [editForking]);
 
   const handleNewSession = useCallback((title?: string, clearedFrom?: string) => {
+    if (onNewSession) {
+      onNewSession(clearedFrom);
+      return;
+    }
     useTabStore.getState().openTab({
       type: "chat",
       title: title || "AI Chat",
@@ -510,7 +531,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
       projectId: projectName || null,
       closable: true,
     });
-  }, [projectName, providerId]);
+  }, [projectName, providerId, onNewSession]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
     // A message still waiting for its own session's socket must not ride the
@@ -519,10 +540,10 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
     abandonPendingSend("You switched to another chat before it connected.");
     setSessionId(session.id);
     setProviderId(session.providerId);
-    if (tabId) updateTab(tabId, { title: session.title || "Chat" });
+    if (tabId && !designSlug) updateTab(tabId, { title: session.title || "Chat" });
     // Immediately clear notification for the selected session
     useNotificationStore.getState().clearForSession(session.id);
-  }, [tabId, updateTab, abandonPendingSend]);
+  }, [tabId, updateTab, abandonPendingSend, designSlug]);
 
   /** Fork current session and open new tab with the forked session, resending userMessage */
   const handleFork = useCallback(async (userMessage: string, messageId?: string) => {
@@ -533,7 +554,12 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
         `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
         { messageId },
       );
-      // Open new chat tab with forked session — it will send userMessage on connect
+      // A host that keeps the conversation in place takes the fork over; otherwise open a
+      // new chat tab with the forked session — it will send userMessage on connect.
+      if (onFork) {
+        onFork({ sessionId: forked.id, providerId, pendingMessage: userMessage });
+        return;
+      }
       useTabStore.getState().openTab({
         type: "chat",
         title: `Fork: ${userMessage.slice(0, 30)}`,
@@ -553,7 +579,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
           : msg,
       });
     }
-  }, [sessionId, projectName, providerId]);
+  }, [sessionId, projectName, providerId, onFork]);
 
   /** Edit a user message: prefill input + arm same-tab fork on next send */
   const handleEdit = useCallback((userMessage: string, messageId?: string, ownMsgId?: string) => {
@@ -594,7 +620,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
         queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode });
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
-        if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: forked.id } });
+        if (tabId) patchTabMetadata(tabId, { sessionId: forked.id });
         setSessionId(forked.id);
       } catch (e) {
         setEditForking(false);
@@ -610,7 +636,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
         setRestore({ text: fullContent, nonce: Date.now() });
       }
     },
-    [sessionId, projectName, providerId, permissionMode, tabId, updateTab, metadata, queuePendingSend],
+    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend],
   );
 
   /** Swap THIS tab to another version's session (version switcher prev/next) */
@@ -620,10 +646,10 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
       // Same as handleSelectSession: a queued edit must not land in the version switched to.
       abandonPendingSend("You switched to another version before it connected.");
       setStaleSwap(true);
-      if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: targetSessionId } });
+      if (tabId) patchTabMetadata(tabId, { sessionId: targetSessionId });
       setSessionId(targetSessionId);
     },
-    [sessionId, tabId, updateTab, metadata, abandonPendingSend],
+    [sessionId, tabId, abandonPendingSend],
   );
 
   /** Build message content with file references and inline text snippets prepended */
@@ -698,6 +724,9 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
             // The account this tab claimed on open and has been displaying since. Redeeming
             // it here is what makes that display true rather than a guess.
             accountId: pickedAccountId,
+            // Fixed at creation: the server gives every turn of this session the design's
+            // instructions and the design permission default.
+            ...(designSlug && { designSlug }),
           }, { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) });
           setSessionId(session.id);
           setProviderId(session.providerId);
@@ -718,7 +747,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, pickedAccountId, queuePendingSend, restoreUnsentMessage, clearDraft],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, pickedAccountId, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -981,6 +1010,7 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
           pickedAccountId={servingAccount?.id ?? (claimMatchesProvider ? pickedAccountId ?? null : null)}
           onSelectAccount={handleSelectAccount}
           onSelectSession={handleSelectSession}
+          historyFilter={historyFilter}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}
           isConnected={isConnected}
           onReload={() => {
@@ -1064,7 +1094,9 @@ function ChatTabContent({ metadata, tabId }: ChatTabProps) {
             onModeChange={setPermissionMode}
             providerId={providerId}
             sessionId={sessionId ?? undefined}
-            onProviderChange={!sessionId ? handleProviderChange : undefined}
+            // A design chat's provider was chosen among those that carry design instructions;
+            // the composer's picker offers every provider, so it is not offered here.
+            onProviderChange={!sessionId && !designSlug ? handleProviderChange : undefined}
             model={model}
             onModelChange={setModel}
             effort={effort}

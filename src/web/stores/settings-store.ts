@@ -17,7 +17,7 @@ export type DockPosition = "left" | "bottom" | "right";
 export type ExplorerSkinPref = "auto" | "windows" | "macos";
 /** Settings is deliberately absent: it opens as its own floating window (or a tab on mobile),
  *  never as a sidebar panel. See `settings/use-open-settings.ts`. */
-export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | `ext:${string}`;
+export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | "designs" | `ext:${string}`;
 
 /** Expanded nodes of the Database sidebar tree. Table keys are `${connId}:${schema}.${table}`. */
 export interface DbSidebarExpanded {
@@ -224,7 +224,7 @@ function initialTheme(p: PersistedSettings): { style: PpmThemeStyle; mode: PpmTh
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
   if (typeof tab !== "string") return false;
-  return ["explorer", "git", "database", "search", "jira", "ai-resources", "history", "tunnels", "teams"].includes(tab) || tab.startsWith("ext:");
+  return ["explorer", "git", "database", "search", "jira", "ai-resources", "history", "tunnels", "teams", "designs"].includes(tab) || tab.startsWith("ext:");
 }
 
 /** Keep only valid, de-duplicated tab ids — guards against garbage in persisted/server data. */
