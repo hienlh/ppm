@@ -1,8 +1,8 @@
-import { Hono, type Context } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
-import { mapFsError } from "../../services/fs-path-guard.service.ts";
 import { isSnapshotId } from "../../shared/design-types.ts";
+import { designFail as fail, designJsonBody as jsonBody, type DesignRouteEnv } from "./design-route-helpers.ts";
+import { designCommentRoutes } from "./design-comments.ts";
 import {
   createDesign, deleteDesign, designSystemStatus, getDesign, listDesigns, renameDesign,
 } from "../../services/design/design-store.service.ts";
@@ -17,24 +17,7 @@ import { restoreSnapshot } from "../../services/design/design-restore.service.ts
  * router (comments, tweaks, write-backs, exports) by appending below.
  */
 
-type Env = { Variables: { projectPath: string; projectName: string } };
-
-export const designRoutes = new Hono<Env>();
-
-function fail(c: Context<Env>, e: unknown): Response {
-  const info = mapFsError(e);
-  if (info.status >= 500) console.error(`[design] ${c.req.method} ${c.req.path}: ${info.message}`);
-  return c.json(err(info.message), info.status as ContentfulStatusCode);
-}
-
-async function jsonBody(c: Context<Env>): Promise<Record<string, unknown> | null> {
-  try {
-    const body: unknown = await c.req.json();
-    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
+export const designRoutes = new Hono<DesignRouteEnv>();
 
 designRoutes.get("/", async (c) => {
   try {
@@ -104,3 +87,5 @@ designRoutes.post("/:slug/history/:id/restore", async (c) => {
     return fail(c, e);
   }
 });
+
+designRoutes.route("/:slug/comments", designCommentRoutes);

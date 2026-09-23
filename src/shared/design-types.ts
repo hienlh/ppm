@@ -58,3 +58,6 @@ export const SNAPSHOT_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
 export function isSnapshotId(value: unknown): value is string {
   return typeof value === "string" && SNAPSHOT_ID_RE.test(value);
 }
+
+/** A design file's `gen`: 16 hex chars of the SHA-256 of its BOM-less text. */
+export const DESIGN_GEN_RE = /^[0-9a-f]{16}$/;

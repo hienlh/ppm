@@ -14,14 +14,17 @@
  * registries below and must never let a child message cause a write on its own.
  */
 
+import { DESIGN_GEN_RE } from "./design-types";
+import { PICKER_CHILD_VALIDATORS, PICKER_PARENT_VALIDATORS } from "./design-bridge-messages-picker";
+
+export { DESIGN_GEN_RE };
+
 export const BRIDGE_CHANNEL = "design-bridge";
 export const BRIDGE_VERSION = 1;
 /** Shape of the per-load nonce. Anything else is dropped by the server and the parent. */
 export const BRIDGE_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 /** Most `issue` messages one document load may post. */
 export const MAX_BRIDGE_ISSUES = 20;
-/** A design file's `gen`: 16 hex chars of the SHA-256 of its BOM-less text. */
-export const DESIGN_GEN_RE = /^[0-9a-f]{16}$/;
 
 export interface BridgeEnvelope {
   ppm: typeof BRIDGE_CHANNEL;
@@ -92,9 +95,11 @@ export const CORE_PARENT_VALIDATORS = {
 // Later features spread their validators into these two objects.
 export const CHILD_VALIDATORS = {
   ...CORE_CHILD_VALIDATORS,
+  ...PICKER_CHILD_VALIDATORS,
 };
 export const PARENT_VALIDATORS = {
   ...CORE_PARENT_VALIDATORS,
+  ...PICKER_PARENT_VALIDATORS,
 };
 
 type Validated<R> = { [K in keyof R]: R[K] extends Validator<infer T> ? T : never }[keyof R];

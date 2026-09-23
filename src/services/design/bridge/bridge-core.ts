@@ -13,6 +13,10 @@
  * `scroll` as the page scrolls, and applies `restore-scroll`.
  */
 
+import type { anchorOf, cssPathOf, describeElement, domTreeAccess, elementQuote } from "./bridge-element-info.ts";
+import type { diceSimilarity, resolveAnchor } from "./bridge-anchor-resolve.ts";
+import type { createPickerOverlay } from "./bridge-picker-overlay.ts";
+
 export interface BridgeBoot {
   nonce: string | null;
   gen: string;
@@ -23,10 +27,27 @@ export interface BridgeBoot {
 
 export type BridgeHandler = (message: Record<string, unknown>) => void;
 
+/**
+ * Helpers several features share, installed by the assembly as `ppm.lib` from their own
+ * source. Keyed by string names the assembly writes, so a bundler renaming the functions
+ * cannot break a feature that calls one.
+ */
+export interface BridgeLib {
+  elementQuote: typeof elementQuote;
+  domTreeAccess: typeof domTreeAccess;
+  cssPathOf: typeof cssPathOf;
+  anchorOf: typeof anchorOf;
+  describeElement: typeof describeElement;
+  diceSimilarity: typeof diceSimilarity;
+  resolveAnchor: typeof resolveAnchor;
+  createPickerOverlay: typeof createPickerOverlay;
+}
+
 export interface BridgeApi {
   win: Window;
   doc: Document;
   boot: BridgeBoot;
+  lib: BridgeLib;
   post(type: string, payload?: Record<string, unknown>): void;
   on(type: string, handler: BridgeHandler): void;
   byId(ppmId: unknown): Element | null;
@@ -120,6 +141,8 @@ export function installBridgeCore(win: Window): BridgeApi {
     win,
     doc,
     boot,
+    // Filled in by the assembly before any feature runs.
+    lib: {} as BridgeLib,
     post,
     issue,
     on(type: string, handler: BridgeHandler): void {

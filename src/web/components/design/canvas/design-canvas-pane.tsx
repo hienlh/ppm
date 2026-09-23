@@ -12,6 +12,8 @@ import { useDesignCanvas } from "./use-design-canvas";
 import { defaultFrameFor, framePreset, type DeviceFrameId } from "./device-frame-presets";
 import { fitFrame, type Size } from "./canvas-geometry";
 import { DesignIssuesBadge } from "./design-issues-badge";
+import { useDesignCommentsFeature } from "../comments/use-design-comments-feature";
+import { DesignCommentsOverlay, DesignCommentsSidePanel } from "../comments/design-comments-layer";
 
 /**
  * The live canvas: the design's entry page in a sandboxed iframe, sized to the chosen
@@ -48,9 +50,17 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   const fit = fitFrame(framePreset(frame).size, stage);
   const framed = frame !== "desktop";
 
+  // The comments list and the history share the side column, so opening one closes the other.
+  const comments = useDesignCommentsFeature(tab, canvas.bridge, { onPanelOpen: () => setHistoryOpen(false) });
+  const { closePanel: closeComments } = comments;
+  const toggleHistory = useCallback(() => {
+    if (!historyOpen) closeComments();
+    setHistoryOpen(!historyOpen);
+  }, [historyOpen, closeComments]);
+
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
-    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory: () => setHistoryOpen((v) => !v),
-  }), [tab, canvas, frame, setFrame, historyOpen]);
+    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments,
+  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments]);
 
   const history = historyOpen && (
     <DesignHistoryPanel onClose={() => setHistoryOpen(false)} onRestored={canvas.reload} />
@@ -97,8 +107,12 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
             </div>
           )}
           <DesignIssuesBadge issues={canvas.issues} className="absolute right-2 top-2" />
+          {canvas.src && <DesignCommentsOverlay feature={comments} fit={fit} stage={stage} isMobile={tab.isMobile} />}
         </div>
         {!tab.isMobile && history && <div className="w-72 shrink-0 border-l border-border">{history}</div>}
+        {!tab.isMobile && comments.panelOpen && (
+          <div className="w-72 shrink-0 border-l border-border"><DesignCommentsSidePanel feature={comments} /></div>
+        )}
       </div>
       {tab.isMobile && (
         <>
@@ -107,6 +121,9 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
           </BottomSheet>
           <BottomSheet open={historyOpen} onClose={() => setHistoryOpen(false)} className="flex h-[70vh] flex-col">
             <div className="min-h-0 flex-1">{history}</div>
+          </BottomSheet>
+          <BottomSheet open={comments.panelOpen} onClose={closeComments} className="flex h-[70vh] flex-col">
+            <div className="min-h-0 flex-1"><DesignCommentsSidePanel feature={comments} /></div>
           </BottomSheet>
         </>
       )}

@@ -1,5 +1,10 @@
-import { installBridgeCore, type BridgeApi } from "./bridge-core.ts";
+import { installBridgeCore, type BridgeApi, type BridgeLib } from "./bridge-core.ts";
 import { installNavGuard } from "./bridge-nav-guard.ts";
+import { installPicker } from "./bridge-picker.ts";
+import { installPins } from "./bridge-pins.ts";
+import { anchorOf, cssPathOf, describeElement, domTreeAccess, elementQuote } from "./bridge-element-info.ts";
+import { diceSimilarity, resolveAnchor } from "./bridge-anchor-resolve.ts";
+import { createPickerOverlay } from "./bridge-picker-overlay.ts";
 
 /**
  * The bridge script injected as the first child of a design document's `<head>`.
@@ -9,19 +14,35 @@ import { installNavGuard } from "./bridge-nav-guard.ts";
  * kept inside a template literal. Features are called through an array, never by name, so
  * a bundler renaming a function cannot break the assembly; each one receives everything
  * it needs in `ppm`. Later features append themselves to {@link BRIDGE_FEATURES}.
+ *
+ * Shared helpers travel the same way as {@link BRIDGE_LIB}, installed as `ppm.lib` under
+ * the string keys written here, before any feature runs.
  */
 
 export type BridgeFeature = (ppm: BridgeApi) => void;
 
+export const BRIDGE_LIB: BridgeLib = {
+  elementQuote, domTreeAccess, cssPathOf, anchorOf, describeElement, diceSimilarity, resolveAnchor, createPickerOverlay,
+};
+
 export const BRIDGE_FEATURES: readonly BridgeFeature[] = [
+  // Ahead of the nav guard: while picking, a click on a link selects it and must not also
+  // be reported as a blocked navigation.
+  installPicker,
+  installPins,
   installNavGuard,
 ];
 
-export function assembleBridge(features: readonly BridgeFeature[]): string {
+export function assembleBridge(features: readonly BridgeFeature[], lib: Partial<BridgeLib> = BRIDGE_LIB): string {
   const list = features.map((feature) => `(${feature.toString()})`).join(",\n");
+  const helpers = Object.entries(lib)
+    .map(([name, fn]) => `${JSON.stringify(name)}: (${(fn as () => void).toString()})`)
+    .join(",\n");
   return `(function (window) {
 "use strict";
 var ppm = (${installBridgeCore.toString()})(window);
+var lib = {${helpers}};
+for (var name in lib) ppm.lib[name] = lib[name];
 var features = [${list}];
 for (var i = 0; i < features.length; i++) {
   try { features[i](ppm); } catch (e) { ppm.issue("error", "bridge feature failed: " + (e && e.message)); }

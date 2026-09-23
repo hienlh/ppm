@@ -1,5 +1,7 @@
 import type { ElementType } from "react";
-import { History, Monitor, MoreHorizontal, Presentation, RefreshCw, Smartphone, Sparkles, Tablet } from "@/lib/icons";
+import {
+  History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Presentation, RefreshCw, Smartphone, Sparkles, Tablet,
+} from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -9,6 +11,7 @@ import { buildDesignSystemInitPrompt } from "../../../shared/design-system-init-
 import { DEVICE_FRAMES, type DeviceFrameId } from "./canvas/device-frame-presets";
 import type { DesignTabContextValue } from "./design-tab-context";
 import type { DesignCanvasState } from "./canvas/use-design-canvas";
+import type { DesignCommentsFeature } from "./comments/use-design-comments-feature";
 
 /**
  * The canvas toolbar and its registry.
@@ -25,6 +28,7 @@ export interface DesignToolbarContext extends DesignTabContextValue {
   setFrame: (frame: DeviceFrameId) => void;
   historyOpen: boolean;
   toggleHistory: () => void;
+  comments: DesignCommentsFeature;
 }
 
 export interface DesignToolbarItem {
@@ -34,6 +38,8 @@ export interface DesignToolbarItem {
   placement: "bar" | "more";
   isActive?: (ctx: DesignToolbarContext) => boolean;
   isDisabled?: (ctx: DesignToolbarContext) => boolean;
+  /** A count shown on the button, e.g. open comments; nothing when 0 or null. */
+  badge?: (ctx: DesignToolbarContext) => number | null;
   run: (ctx: DesignToolbarContext) => void;
 }
 
@@ -48,7 +54,29 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     id: "design-system", label: "Set up design system", icon: Sparkles, placement: "more",
     run: (ctx) => deliverToDesignChat(ctx.tabId, buildDesignSystemInitPrompt(), "Set up design system"),
   },
+  {
+    // Picking needs element ids, which a file served without instrumentation does not have.
+    id: "select", label: "Select element", icon: MousePointerClick, placement: "bar",
+    isActive: (ctx) => ctx.comments.picker.on,
+    isDisabled: (ctx) => ctx.canvas.bridge.ready?.instrumented === false,
+    run: (ctx) => ctx.comments.picker.setOn(!ctx.comments.picker.on),
+  },
+  {
+    id: "comments", label: "Comments", icon: MessageSquarePlus, placement: "bar",
+    isActive: (ctx) => ctx.comments.panelOpen,
+    badge: (ctx) => ctx.comments.openCount || null,
+    run: (ctx) => ctx.comments.togglePanel(),
+  },
 ];
+
+function Badge({ count, className }: { count: number | null | undefined; className?: string }) {
+  if (!count) return null;
+  return (
+    <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground", className)}>
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
 
 export const FRAME_ICONS: Record<DeviceFrameId, ElementType> = {
   desktop: Monitor, tablet: Tablet, phone: Smartphone, slide: Presentation,
@@ -80,8 +108,9 @@ export function DesignToolbar({ ctx }: { ctx: DesignToolbarContext }) {
         <button key={item.id} type="button" title={item.label} aria-label={item.label}
           aria-pressed={item.isActive ? item.isActive(ctx) : undefined}
           disabled={item.isDisabled?.(ctx)} onClick={() => item.run(ctx)}
-          className={cn(iconBtn, item.isActive?.(ctx) && "bg-surface-elevated text-foreground")}>
+          className={cn(iconBtn, "relative", item.isActive?.(ctx) && "bg-surface-elevated text-foreground")}>
           <item.icon className="size-4" />
+          <Badge count={item.badge?.(ctx)} className="absolute -right-1 -top-1" />
         </button>
       ))}
       {more.length > 0 && (
@@ -129,7 +158,8 @@ export function DesignToolbarList({ ctx, onDone }: { ctx: DesignToolbarContext; 
         <button key={item.id} type="button" className={row} disabled={item.isDisabled?.(ctx)}
           aria-pressed={item.isActive ? item.isActive(ctx) : undefined}
           onClick={() => { onDone(); item.run(ctx); }}>
-          <item.icon className="size-5 text-text-subtle" /> {item.label}
+          <item.icon className="size-5 text-text-subtle" /> <span className="flex-1">{item.label}</span>
+          <Badge count={item.badge?.(ctx)} />
         </button>
       ))}
     </div>
