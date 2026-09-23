@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.22.9] - 2026-09-23
+
+### Fixed
+- Chats on Claude Opus 5.5 no longer fail with "Claude Code 2.1.251 does not support this model"; the bundled Claude Agent SDK is now 0.3.280.
+
 ## [0.22.8] - 2026-09-23
 
 ### Fixed
