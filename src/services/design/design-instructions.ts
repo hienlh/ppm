@@ -1,5 +1,9 @@
 import { DESIGN_CDN_HOSTS } from "../../shared/design-cdn-hosts.ts";
+import { TWEAK_SCHEMA_EXAMPLE } from "../../shared/design-tweaks.ts";
 import { isValidDesignSlug } from "./design-slug.ts";
+
+/** Pasted verbatim into the prompt; a test parses it, so the schema and the prompt cannot drift. */
+const TWEAK_EXAMPLE_JSON = JSON.stringify(TWEAK_SCHEMA_EXAMPLE, null, 2);
 
 /**
  * The instruction block a design session carries on every turn (Claude `append`, Codex
@@ -37,13 +41,18 @@ application's source code.
 ## The manifest: \`${dir}design.json\`
 - It is a JSON object. Keep the fields it already has. \`kind\` was set when the design was
   created: \`"slides"\` means a slide deck, anything else a single page. Do not change it.
-- \`tweaks\` is an array of controls the user can adjust live. Each entry maps one CSS custom
-  property (\`var\`, e.g. \`--accent\`) to a control:
-  - \`{"id", "label", "type": "range", "var", "min", "max", "step", "unit", "default"}\`
-  - \`{"id", "label", "type": "color", "var", "default": "#rrggbb"}\`
-  - \`{"id", "label", "type": "select", "var", "options": [{"label", "value"}], "default"}\`
-- Declare every tweakable value once in the design's own \`:root { ... }\` block and use it
-  through \`var(--name)\`. Never put tweak variables in \`../tokens.css\`.
+- \`tweaks\` is an array of at most 24 controls the user can adjust live. Each entry maps one
+  CSS custom property (\`var\`, like \`--accent\`) to a control of type \`range\` (\`min\`, \`max\`,
+  \`step\`, \`unit\` one of px, rem, em, %, deg or empty, numeric \`default\`), \`color\` (\`default\`
+  a hex colour) or \`select\` (at most 12 \`options\`, each value plain CSS using letters, digits,
+  spaces and \`# . , % ( ) -\` only; \`default\` is one of the values). Ids and vars are unique. For example:
+\`\`\`json
+${TWEAK_EXAMPLE_JSON}
+\`\`\`
+- The values live in the design's own \`:root { ... }\` block, declared once, unconditionally
+  (not inside \`@media\`) and without \`!important\`; use them through \`var(--name)\`. Never put
+  tweak variables in \`../tokens.css\`: the user's adjustments are written back into the
+  design's own \`:root\`, and a variable set in the shared file cannot be written.
 - Offer a handful of meaningful tweaks (accent colour, radius, spacing scale, font size),
   not one per property.
 

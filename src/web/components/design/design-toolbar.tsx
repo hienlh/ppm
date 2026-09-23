@@ -1,6 +1,7 @@
 import type { ElementType } from "react";
 import {
-  History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Presentation, RefreshCw, Smartphone, Sparkles, Tablet,
+  History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Presentation, RefreshCw, SlidersHorizontal, Smartphone,
+  Sparkles, Tablet,
 } from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -12,6 +13,7 @@ import { DEVICE_FRAMES, type DeviceFrameId } from "./canvas/device-frame-presets
 import type { DesignTabContextValue } from "./design-tab-context";
 import type { DesignCanvasState } from "./canvas/use-design-canvas";
 import type { DesignCommentsFeature } from "./comments/use-design-comments-feature";
+import type { DesignTweaksFeature } from "./tweaks/use-design-tweaks";
 
 /**
  * The canvas toolbar and its registry.
@@ -29,6 +31,7 @@ export interface DesignToolbarContext extends DesignTabContextValue {
   historyOpen: boolean;
   toggleHistory: () => void;
   comments: DesignCommentsFeature;
+  tweaks: DesignTweaksFeature;
 }
 
 export interface DesignToolbarItem {
@@ -38,6 +41,8 @@ export interface DesignToolbarItem {
   placement: "bar" | "more";
   isActive?: (ctx: DesignToolbarContext) => boolean;
   isDisabled?: (ctx: DesignToolbarContext) => boolean;
+  /** Left out of the bar, the menu and the phone sheet while true. */
+  isHidden?: (ctx: DesignToolbarContext) => boolean;
   /** A count shown on the button, e.g. open comments; nothing when 0 or null. */
   badge?: (ctx: DesignToolbarContext) => number | null;
   run: (ctx: DesignToolbarContext) => void;
@@ -67,7 +72,17 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     badge: (ctx) => ctx.comments.openCount || null,
     run: (ctx) => ctx.comments.togglePanel(),
   },
+  {
+    // Offered whenever design.json parses; with no tweaks declared the panel asks the AI for some.
+    id: "tweaks", label: "Tweaks", icon: SlidersHorizontal, placement: "bar",
+    isHidden: (ctx) => !ctx.tweaks.available,
+    isActive: (ctx) => ctx.tweaks.panelOpen,
+    badge: (ctx) => ctx.tweaks.dirtyCount || null,
+    run: (ctx) => ctx.tweaks.togglePanel(),
+  },
 ];
+
+const visibleItems = (ctx: DesignToolbarContext) => DESIGN_TOOLBAR_ITEMS.filter((i) => !i.isHidden?.(ctx));
 
 function Badge({ count, className }: { count: number | null | undefined; className?: string }) {
   if (!count) return null;
@@ -86,8 +101,9 @@ const iconBtn = "flex size-8 items-center justify-center rounded-md text-text-su
 
 /** Desktop toolbar: frame picker on the left, registry items on the right. */
 export function DesignToolbar({ ctx }: { ctx: DesignToolbarContext }) {
-  const bar = DESIGN_TOOLBAR_ITEMS.filter((i) => i.placement === "bar");
-  const more = DESIGN_TOOLBAR_ITEMS.filter((i) => i.placement === "more");
+  const items = visibleItems(ctx);
+  const bar = items.filter((i) => i.placement === "bar");
+  const more = items.filter((i) => i.placement === "more");
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2">
       <div role="radiogroup" aria-label="Device frame" className="flex items-center gap-0.5">
@@ -154,7 +170,7 @@ export function DesignToolbarList({ ctx, onDone }: { ctx: DesignToolbarContext; 
         })}
       </div>
       <div className="my-1 h-px bg-border" />
-      {DESIGN_TOOLBAR_ITEMS.map((item) => (
+      {visibleItems(ctx).map((item) => (
         <button key={item.id} type="button" className={row} disabled={item.isDisabled?.(ctx)}
           aria-pressed={item.isActive ? item.isActive(ctx) : undefined}
           onClick={() => { onDone(); item.run(ctx); }}>

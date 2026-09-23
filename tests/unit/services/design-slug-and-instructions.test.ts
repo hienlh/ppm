@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { DESIGN_SLUG_RE, isValidDesignSlug, slugFromTitle } from "../../../src/services/design/design-slug.ts";
 import { buildDesignInstructions } from "../../../src/services/design/design-instructions.ts";
 import { DESIGN_CDN_HOSTS } from "../../../src/shared/design-cdn-hosts.ts";
+import { parseTweaks } from "../../../src/shared/design-tweaks.ts";
 
 describe("isValidDesignSlug", () => {
   it("accepts a single lowercase path segment", () => {
@@ -67,6 +68,16 @@ describe("buildDesignInstructions", () => {
     expect(text).toContain("1280x720");
     expect(text).toContain(":root");
     expect(text).toContain("tweaks");
+  });
+
+  it("embeds a tweaks example the schema parser accepts with zero errors", () => {
+    const fenced = /```json\n([\s\S]*?)\n```/.exec(text);
+    expect(fenced).not.toBeNull();
+    const example = JSON.parse(fenced![1]!);
+    const { tweaks, errors } = parseTweaks(example.tweaks);
+    expect(errors).toEqual([]);
+    expect(tweaks.map((t) => t.type).sort()).toEqual(["color", "range", "select"]);
+    expect(text).toMatch(/Never put\s+tweak variables in `\.\.\/tokens\.css`/);
   });
 
   it("refuses to build from an invalid slug rather than escaping it", () => {

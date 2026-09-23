@@ -2,6 +2,7 @@ import { installBridgeCore, type BridgeApi, type BridgeLib } from "./bridge-core
 import { installNavGuard } from "./bridge-nav-guard.ts";
 import { installPicker } from "./bridge-picker.ts";
 import { installPins } from "./bridge-pins.ts";
+import { installTweaks } from "./bridge-tweaks.ts";
 import { anchorOf, cssPathOf, describeElement, domTreeAccess, elementQuote } from "./bridge-element-info.ts";
 import { diceSimilarity, resolveAnchor } from "./bridge-anchor-resolve.ts";
 import { createPickerOverlay } from "./bridge-picker-overlay.ts";
@@ -31,6 +32,7 @@ export const BRIDGE_FEATURES: readonly BridgeFeature[] = [
   installPicker,
   installPins,
   installNavGuard,
+  installTweaks,
 ];
 
 export function assembleBridge(features: readonly BridgeFeature[], lib: Partial<BridgeLib> = BRIDGE_LIB): string {

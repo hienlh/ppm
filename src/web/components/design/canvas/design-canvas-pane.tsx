@@ -14,6 +14,8 @@ import { fitFrame, type Size } from "./canvas-geometry";
 import { DesignIssuesBadge } from "./design-issues-badge";
 import { useDesignCommentsFeature } from "../comments/use-design-comments-feature";
 import { DesignCommentsOverlay, DesignCommentsSidePanel } from "../comments/design-comments-layer";
+import { useDesignTweaks } from "../tweaks/use-design-tweaks";
+import { TweaksPanel } from "../tweaks/tweaks-panel";
 
 /**
  * The live canvas: the design's entry page in a sandboxed iframe, sized to the chosen
@@ -50,17 +52,26 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   const fit = fitFrame(framePreset(frame).size, stage);
   const framed = frame !== "desktop";
 
-  // The comments list and the history share the side column, so opening one closes the other.
-  const comments = useDesignCommentsFeature(tab, canvas.bridge, { onPanelOpen: () => setHistoryOpen(false) });
+  // Comments, tweaks and the history share the side column, so opening one closes the others.
+  const closeTweaksRef = useRef<() => void>(() => {});
+  const comments = useDesignCommentsFeature(tab, canvas.bridge, {
+    onPanelOpen: () => { setHistoryOpen(false); closeTweaksRef.current(); },
+  });
   const { closePanel: closeComments } = comments;
+  const tweaks = useDesignTweaks(tab, canvas.bridge, canvas.reload, {
+    onPanelOpen: () => { setHistoryOpen(false); closeComments(); },
+  });
+  const { closePanel: closeTweaks } = tweaks;
+  closeTweaksRef.current = closeTweaks;
   const toggleHistory = useCallback(() => {
-    if (!historyOpen) closeComments();
+    if (!historyOpen) { closeComments(); closeTweaks(); }
     setHistoryOpen(!historyOpen);
-  }, [historyOpen, closeComments]);
+  }, [historyOpen, closeComments, closeTweaks]);
 
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
-    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments,
-  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments]);
+    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks,
+  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks]);
+  const tweaksPanel = tweaks.panelOpen && <TweaksPanel feature={tweaks} tabId={tab.tabId} slug={tab.slug} />;
 
   const history = historyOpen && (
     <DesignHistoryPanel onClose={() => setHistoryOpen(false)} onRestored={canvas.reload} />
@@ -113,7 +124,11 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
         {!tab.isMobile && comments.panelOpen && (
           <div className="w-72 shrink-0 border-l border-border"><DesignCommentsSidePanel feature={comments} /></div>
         )}
+        {!tab.isMobile && tweaksPanel && <div className="w-72 shrink-0 border-l border-border">{tweaksPanel}</div>}
       </div>
+      {/* Docked under the canvas rather than in a sheet: a sheet's backdrop would dim the very
+          colours being tweaked, and the canvas has to stay in view while a slider moves. */}
+      {tab.isMobile && tweaksPanel && <div className="h-[45%] shrink-0 border-t border-border">{tweaksPanel}</div>}
       {tab.isMobile && (
         <>
           <BottomSheet open={moreOpen} onClose={() => onMoreClose?.()}>

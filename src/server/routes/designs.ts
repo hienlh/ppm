@@ -3,6 +3,7 @@ import { ok, err } from "../../types/api.ts";
 import { isSnapshotId } from "../../shared/design-types.ts";
 import { designFail as fail, designJsonBody as jsonBody, type DesignRouteEnv } from "./design-route-helpers.ts";
 import { designCommentRoutes } from "./design-comments.ts";
+import { designTweakRoutes } from "./design-tweaks.ts";
 import {
   createDesign, deleteDesign, designSystemStatus, getDesign, listDesigns, renameDesign,
 } from "../../services/design/design-store.service.ts";
@@ -89,3 +90,4 @@ designRoutes.post("/:slug/history/:id/restore", async (c) => {
 });
 
 designRoutes.route("/:slug/comments", designCommentRoutes);
+designRoutes.route("/:slug/tweaks", designTweakRoutes);
