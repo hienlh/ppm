@@ -28,7 +28,7 @@ describe("GET /settings/ai", () => {
     expect(json.data.new_chat_provider_mode).toBe("follow-focus");
     expect(json.data.share_provider_context).toBe(true);
     expect(json.data.providers.claude.type).toBe("agent-sdk");
-    expect(json.data.providers.claude.model).toBe("claude-opus-5");
+    expect(json.data.providers.claude.model).toBe("claude-opus-5-5");
     expect(json.data.providers.claude.effort).toBe("high");
     expect(json.data.providers.claude.max_turns).toBe(1000);
     // api_key_env should be stripped from GET response

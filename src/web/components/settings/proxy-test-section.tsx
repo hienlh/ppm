@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 
 const DEFAULT_MESSAGE = "Hello! Reply briefly.";
-const DEFAULT_MODEL = "claude-opus-5";
+const DEFAULT_MODEL = "claude-opus-5-5";
 
 type EndpointFormat = "anthropic" | "openai";
 

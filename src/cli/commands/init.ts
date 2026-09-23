@@ -105,7 +105,7 @@ export async function initProject(options: InitOptions = {}) {
         }));
 
   // 6. Advanced settings
-  let aiModel = "claude-opus-5";
+  let aiModel = "claude-opus-5-5";
   let aiEffort: "low" | "medium" | "high" | "xhigh" | "max" = "high";
   let aiMaxTurns = 100;
   let aiApiKeyEnv = "ANTHROPIC_API_KEY";
@@ -120,7 +120,7 @@ export async function initProject(options: InitOptions = {}) {
       aiModel = await select({
         message: "AI model:",
         choices: CLAUDE_MODELS.map((m) => ({ value: m.value, name: claudeModelInitName(m) })),
-        default: "claude-opus-5",
+        default: "claude-opus-5-5",
       });
 
       aiEffort = await select({
