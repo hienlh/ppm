@@ -10,6 +10,7 @@ import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
 import { useDiagramOverlay } from "@/stores/diagram-overlay-store";
 import { getAuthToken } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
+import { normalizeMathDelimiters } from "@/lib/markdown-math-delimiters";
 import { MdContext, useMdContext, LOCAL_PATH_RE, markdownUrlTransform, parseMarkdownFileTarget } from "./markdown-context";
 import { useMarkdownFileNavigation } from "./use-markdown-file-navigation";
 import { MdPre, MdCode } from "./markdown-code-block";
@@ -32,6 +33,9 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
   const openImageOverlayFn = useImageOverlay((s) => s.open);
   const openDiagramOverlayFn = useDiagramOverlay((s) => s.open);
   const openFileOrSearch = useMarkdownFileNavigation(projectName);
+  // Before parsing, because Markdown reads `\[` as an escaped bracket and the backslash is
+  // gone by the time there is a tree to walk.
+  const source = useMemo(() => normalizeMathDelimiters(content), [content]);
 
   const ctx = useMemo(() => ({
     projectName, codeActions, isStreaming, openFileOrSearch,
@@ -48,7 +52,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
           urlTransform={markdownUrlTransform}
           components={mdComponents}
         >
-          {content}
+          {source}
         </ReactMarkdown>
       </div>
     </MdContext.Provider>
