@@ -1,9 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { DESIGN_SLUG_RE, isValidDesignSlug, slugFromTitle } from "../../../src/services/design/design-slug.ts";
-import {
-  buildDesignInstructions,
-  DESIGN_INSTRUCTION_CDN_HOSTS,
-} from "../../../src/services/design/design-instructions.ts";
+import { buildDesignInstructions } from "../../../src/services/design/design-instructions.ts";
+import { DESIGN_CDN_HOSTS } from "../../../src/shared/design-cdn-hosts.ts";
 
 describe("isValidDesignSlug", () => {
   it("accepts a single lowercase path segment", () => {
@@ -56,8 +54,8 @@ describe("buildDesignInstructions", () => {
   });
 
   it("lists every allowed CDN host", () => {
-    expect(DESIGN_INSTRUCTION_CDN_HOSTS).toHaveLength(5);
-    for (const host of DESIGN_INSTRUCTION_CDN_HOSTS) expect(text).toContain(`https://${host}`);
+    expect(DESIGN_CDN_HOSTS).toHaveLength(5);
+    for (const host of DESIGN_CDN_HOSTS) expect(text).toContain(`https://${host}`);
   });
 
   it("covers the design system, the canvas's own data and the slide format", () => {

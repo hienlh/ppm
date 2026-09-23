@@ -1,32 +1,16 @@
 import { Hono } from "hono";
 import { realpath, stat } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
-import { assertAllowed, assertNotPpmDir, resolvePath } from "../../services/fs-path-guard.service.ts";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { resolvePath } from "../../services/fs-path-guard.service.ts";
 import { ok, err } from "../../types/api.ts";
+import { browserFacingHost, guardPreviewAsset as guardAsset, isInsideRoot as inside, previewDenied as denied } from "../helpers/preview-asset-guard.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 
 const PREFIX = "/api/html-preview/content";
 const TTL = 60 * 60 * 1000;
 const MAX_SESSIONS = 128;
-const ASSETS = new Set([".html", ".htm", ".css", ".js", ".mjs", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg", ".m4a", ".woff", ".woff2", ".ttf", ".otf", ".vtt"]);
 interface PreviewSession { root: string; expires: number }
-
-function denied(): never {
-  throw Object.assign(new Error("Preview path is not allowed"), { status: 403 });
-}
-
-function inside(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-
-function guardAsset(path: string, root = dirname(path)): void {
-  assertAllowed(path);
-  assertNotPpmDir(path);
-  // Only web assets, never hidden directories, dotenv, database or key files.
-  if (relative(root, path).split(/[\\/]/).some((part) => part.startsWith(".")) || !ASSETS.has(extname(path).toLowerCase())) denied();
-}
 
 /** Independent capability store per router pair; no session credentials enter iframe URLs. */
 export function createHtmlPreviewRoutes(now = Date.now) {
@@ -86,11 +70,7 @@ export function createHtmlPreviewRoutes(now = Date.now) {
       if (!inside(session.root, path)) denied();
       guardAsset(path, session.root);
       if (!(await stat(path)).isFile()) return c.json(err("File not found"), 404);
-      // Bun reconstructs req.url with its listening port. Preserve the browser's
-      // Host through Vite/tunnels; validate before inserting into a CSP directive.
-      const requestHost = c.req.header("host") ?? "";
-      const host = /^(?:[a-z0-9.-]+|\[[a-f0-9:]+\])(?::\d{1,5})?$/i.test(requestHost)
-        ? requestHost : new URL(c.req.url).host;
+      const host = browserFacingHost(c.req.header("host"), c.req.url);
       // A scheme-less host source follows the document's actual scheme through tunnels.
       const source = `${host}${PREFIX}/${token}/`;
       const policy = ["sandbox allow-scripts", "default-src 'none'", `script-src 'unsafe-inline' ${source}`,

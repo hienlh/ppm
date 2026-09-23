@@ -180,6 +180,10 @@ app.route("/proxy", proxyRoutes);
 // HTML assets authenticate with bounded preview capabilities, never the PPM session token.
 app.route("/api/html-preview/content", htmlPreviewRoutes.content);
 
+// Design canvas files: the same bounded-capability model, one design per token.
+import { designPreviewRoutes } from "./routes/design-preview.ts";
+app.route("/api/design-preview/content", designPreviewRoutes.content);
+
 // MCP sign-in redirect: reached by a browser navigation from the authorization server,
 // which carries no PPM token. It only completes a flow an authenticated user started.
 import { mcpAuthRoutes, mcpAuthCallbackHandler } from "./routes/mcp-auth.ts";
@@ -191,6 +195,7 @@ app.use("/api/*", authMiddleware);
 app.use("/api/*", gzipJson);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
 app.route("/api/html-preview", htmlPreviewRoutes.api);
+app.route("/api/design-preview", designPreviewRoutes.api);
 
 // Port forwarding — starts per-port Cloudflare tunnels
 app.route("/api/preview", portForwardingRoutes);

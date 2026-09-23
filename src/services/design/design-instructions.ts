@@ -1,17 +1,5 @@
+import { DESIGN_CDN_HOSTS } from "../../shared/design-cdn-hosts.ts";
 import { isValidDesignSlug } from "./design-slug.ts";
-
-/**
- * Hosts the design canvas lets a page load scripts, styles, fonts and images from.
- * Anything else is blocked by the canvas CSP, so the agent is told up front instead of
- * discovering it as a blank preview.
- */
-export const DESIGN_INSTRUCTION_CDN_HOSTS = [
-  "cdn.tailwindcss.com",
-  "cdn.jsdelivr.net",
-  "unpkg.com",
-  "fonts.googleapis.com",
-  "fonts.gstatic.com",
-] as const;
 
 /**
  * The instruction block a design session carries on every turn (Claude `append`, Codex
@@ -22,7 +10,7 @@ export const DESIGN_INSTRUCTION_CDN_HOSTS = [
 export function buildDesignInstructions(slug: string): string {
   if (!isValidDesignSlug(slug)) throw new Error(`invalid design slug "${slug}"`);
   const dir = `designs/${slug}/`;
-  const cdnList = DESIGN_INSTRUCTION_CDN_HOSTS.map((host) => `  - https://${host}`).join("\n");
+  const cdnList = DESIGN_CDN_HOSTS.map((host) => `  - https://${host}`).join("\n");
 
   return `# Design mode
 
