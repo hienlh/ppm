@@ -18,6 +18,16 @@ export interface SendToChatDetail {
   projectName?: string | null;
   /** Only the chat tab with this id may consume the event. */
   targetTabId?: string;
+  /**
+   * Send the text as a message right away when the addressed composer is idle and empty;
+   * otherwise it becomes a chip as usual. Only honoured together with `targetTabId`.
+   */
+  autoSend?: boolean;
+}
+
+/** Detail of the ack a composer answers with; `sent` says the text went out as a message. */
+export interface SendToChatAck {
+  sent?: boolean;
 }
 
 /** Wall-clock activation stamp written by the panel store on every tab activation. */

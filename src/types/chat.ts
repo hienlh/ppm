@@ -31,6 +31,12 @@ export interface SendMessageOpts {
   designInstructions?: string;
   /** Set alongside `designInstructions`; selects the design permission policy. */
   designSession?: boolean;
+  /**
+   * The design MCP endpoint (`design_check`) for this session: a URL on the port this server
+   * actually listens on and the session's capability token. Server-built like
+   * `designInstructions`; absent when the process serves no HTTP (the CLI).
+   */
+  designMcp?: { url: string; token: string };
 }
 
 export interface AIProvider {

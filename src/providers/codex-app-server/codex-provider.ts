@@ -31,7 +31,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, requestWithInstructionsFallback, type CodexThreadParams } from "./codex-thread-params.ts";
+import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, type CodexThreadParams } from "./codex-thread-params.ts";
+import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
@@ -143,6 +144,8 @@ interface LiveSession {
   /** Design instructions, resent on every thread/start and thread/resume — codex does not
    *  persist them, and the account-switch respawn has no send options to read them from. */
   developerInstructions?: string;
+  /** A design session's `design_check` endpoint, kept for the same reason. */
+  designMcp?: DesignMcpAccess;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -685,7 +688,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd: live.cwd, codexHome: account.home });
+    client.start({ cwd: live.cwd, codexHome: account.home, env: designMcpEnv(live.designMcp) });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
@@ -697,6 +700,7 @@ export class CodexAppServerProvider implements AIProvider {
       model: live.model,
       configOverrides: this.contextConfigOverrides(),
       developerInstructions: live.developerInstructions,
+      designMcp: live.designMcp,
     });
     await requestWithInstructionsFallback(resumeBase,
       (params) => this.resumeThread(client, threadId, found, account.home, params));
@@ -757,6 +761,7 @@ export class CodexAppServerProvider implements AIProvider {
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
       developerInstructions: opts?.designInstructions,
+      designMcp: opts?.designSession ? opts.designMcp : undefined,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -770,7 +775,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd, codexHome: account?.home });
+    client.start({ cwd, codexHome: account?.home, env: designMcpEnv(live.designMcp) });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
@@ -779,6 +784,7 @@ export class CodexAppServerProvider implements AIProvider {
       cwd, permission, model,
       configOverrides: this.contextConfigOverrides(),
       developerInstructions: live.developerInstructions,
+      designMcp: live.designMcp,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.

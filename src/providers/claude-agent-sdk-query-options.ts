@@ -5,7 +5,10 @@
 // outside this set and crashes the subprocess (notably "extra" — the app UI
 // label "Extra" must map to "xhigh" before reaching this layer).
 
-import type { ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { McpHttpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import {
+  CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
+} from "../services/design/mcp/design-mcp-tool.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -117,6 +120,23 @@ export function preToolUseDecision(decision: "allow" | "deny", reason?: string) 
       hookEventName: "PreToolUse" as const,
       permissionDecision: decision,
       ...(reason ? { permissionDecisionReason: reason } : {}),
+    },
+  };
+}
+
+/**
+ * The design MCP server (`design_check`) as the SDK's `http` server config, for a design
+ * session only; `{}` otherwise, so an ordinary chat's server list is exactly what it was.
+ * The bearer token is the session's capability and travels in the header, never the URL.
+ */
+export function designMcpServers(access: DesignMcpAccess | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_DESIGN_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: DESIGN_CHECK_TOOL_TIMEOUT_MS,
     },
   };
 }

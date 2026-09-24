@@ -79,9 +79,13 @@ function projectNameForPath(projectPath: string): string | null {
 // Design history/comment changes: `.design/` is not watched, so these are the only signal.
 // Services know the project path; browsers address projects by name, and a path no
 // registered project owns is dropped rather than broadcast.
-onDesignEvent((type, { projectPath, slug }) => {
+onDesignEvent((type, { projectPath, slug, requestId, screenshot }) => {
   const projectName = projectNameForPath(projectPath);
-  if (projectName) broadcastGlobalEvent({ type: `design:${type}`, projectName, slug });
+  if (!projectName) return;
+  broadcastGlobalEvent({
+    type: `design:${type}`, projectName, slug,
+    ...(requestId ? { requestId, screenshot: screenshot === true } : {}),
+  });
 });
 
 export const globalWebSocket = {

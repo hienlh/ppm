@@ -146,6 +146,23 @@ export function itemToToolUse(item: Item): ChatEvent {
 }
 
 /** Build the tool_result from a completed ThreadItem. */
+/**
+ * An MCP result's content blocks as readable text, with any image reduced to a label. A
+ * block's base64 payload (a `design_check` screenshot is up to half a megabyte) would
+ * otherwise be the visible result, and ride through the turn buffer and the JSONL with it.
+ */
+export function mcpResultText(result: unknown): string | undefined {
+  if (result == null) return undefined;
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return typeof result === "string" ? result : JSON.stringify(result);
+  return content.map((block) => {
+    const b = (block ?? {}) as { type?: unknown; text?: unknown; mimeType?: unknown };
+    if (b.type === "text" && typeof b.text === "string") return b.text;
+    if (b.type === "image") return `[image ${typeof b.mimeType === "string" ? b.mimeType : ""}]`.replace(" ]", "]");
+    return JSON.stringify(block);
+  }).join("\n");
+}
+
 export function itemToToolResult(item: Item): ChatEvent {
   const type = item.type;
   let output = "";
@@ -158,7 +175,7 @@ export function itemToToolResult(item: Item): ChatEvent {
     exitCode = typeof exit === "number" ? exit : undefined;
     isError = exitCode != null && exitCode !== 0;
   } else if (type === "mcpToolCall") {
-    output = redactTruncate(item.result ?? item.error ?? "");
+    output = redactTruncate(mcpResultText(item.result) ?? item.error ?? "");
     isError = item.error != null;
   } else if (type === "fileChange") {
     const changes = Array.isArray(item.changes) ? item.changes : [];

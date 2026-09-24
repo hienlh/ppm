@@ -3,9 +3,11 @@ import "../../test-setup.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
 import {
-  getDb, getSessionDesignSlug, getSessionPermissionMode, setSessionDesignSlug, setSessionPermissionMode,
+  getDb, getSessionDesignSlug, getSessionPermissionMode, setSessionDesignSlug, setSessionMetadata, setSessionPermissionMode,
 } from "../../../src/services/db.service.ts";
 import type { AIProvider, ChatEvent, SendMessageOpts } from "../../../src/types/chat.ts";
+import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
+import { designMcpTokens } from "../../../src/services/design/mcp/design-mcp-tokens.ts";
 
 /** Records what reaches the provider, which is what every caller's turn actually carries. */
 function stubProvider(id: string, events: ChatEvent[] = []): AIProvider & { seen: SendMessageOpts[] } {
@@ -83,5 +85,33 @@ describe("chatService design resolution", () => {
     expect(getSessionDesignSlug("thread")).toBe("smoke");
     expect(getSessionPermissionMode("thread")).toBeNull();
     expect((await chatService.prepareSendOptions("stub-migrate", "thread", "again")).designSession).toBe(true);
+  });
+
+  it("gives a design session the design_check endpoint on the port the server listens on", async () => {
+    providerRegistry.register(stubProvider("stub-design"));
+    setSessionDesignSlug("d5", "smoke");
+    setSessionMetadata("d5", "demo", "/proj/demo");
+    setServerListenAddress(8123, "0.0.0.0");
+    try {
+      const opts = await chatService.prepareSendOptions("stub-design", "d5", "hi");
+      expect(opts.designMcp?.url).toBe("http://127.0.0.1:8123/api/design-mcp");
+      expect(designMcpTokens.resolve(opts.designMcp!.token)).toEqual({ sessionId: "d5", projectPath: "/proj/demo", slug: "smoke" });
+      expect(opts.designInstructions).toContain("call the `design_check` tool");
+      // The next turn keeps the same token: a running Claude query holds its MCP config.
+      expect((await chatService.prepareSendOptions("stub-design", "d5", "again")).designMcp?.token).toBe(opts.designMcp!.token);
+    } finally {
+      setServerListenAddress(0, "");
+    }
+  });
+
+  it("offers no tool when nothing listens, and never passes a caller's endpoint through", async () => {
+    providerRegistry.register(stubProvider("stub-design"));
+    setSessionDesignSlug("d6", "smoke");
+    setSessionMetadata("d6", "demo", "/proj/demo");
+    const design = await chatService.prepareSendOptions("stub-design", "d6", "hi", { designMcp: { url: "http://evil", token: "x" } });
+    expect(design).not.toHaveProperty("designMcp");
+    expect(design.designInstructions).not.toContain("design_check` tool");
+    const plain = await chatService.prepareSendOptions("stub-design", "plain2", "hi", { designMcp: { url: "http://evil", token: "x" } });
+    expect(plain).not.toHaveProperty("designMcp");
   });
 });

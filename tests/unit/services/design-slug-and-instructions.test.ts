@@ -84,4 +84,12 @@ describe("buildDesignInstructions", () => {
     expect(() => buildDesignInstructions("../x")).toThrow();
     expect(() => buildDesignInstructions("")).toThrow();
   });
+
+  it("asks for design_check only when the session has the tool, and always explains the automatic check", () => {
+    const withTool = buildDesignInstructions("smoke", { checkTool: true });
+    expect(withTool).toContain("call the `design_check` tool");
+    expect(withTool).toContain("[Canvas check]");
+    expect(text).not.toContain("`design_check` tool");
+    expect(text).toContain("[Canvas check]");
+  });
 });

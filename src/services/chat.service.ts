@@ -15,6 +15,8 @@ import { compareSessionsByActivity } from "../types/chat.ts";
 import { buildDesignInstructions } from "./design/design-instructions.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
 import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
+import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
+import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 
 /**
@@ -101,6 +103,7 @@ class ChatService {
     const provider = providerRegistry.get(providerId);
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
     this.invalidateSharedContext(providerId, sessionId);
+    designMcpTokens.revoke(sessionId);
     return provider.deleteSession(sessionId);
   }
 
@@ -202,15 +205,18 @@ class ChatService {
    * then the provider's configured default, exactly as for any other chat.
    */
   private async resolveDesignOptions(sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
-    const { designInstructions: _instructions, designSession: _flag, ...rest } = opts ?? {};
-    const { getSessionDesignSlug, getSessionPermissionMode } = await import("./db.service.ts");
+    const { designInstructions: _instructions, designSession: _flag, designMcp: _mcp, ...rest } = opts ?? {};
+    const { getSessionDesignSlug, getSessionPermissionMode, getSessionProjectPath } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);
     if (!slug || !isValidDesignSlug(slug)) return rest;
     const permissionMode = opts?.permissionMode ?? getSessionPermissionMode(sessionId) ?? undefined;
+    const projectPath = this.getSession(sessionId)?.projectPath ?? getSessionProjectPath(sessionId);
+    const designMcp = designMcpAccessFor(sessionId, projectPath, slug);
     return {
       ...rest,
-      designInstructions: buildDesignInstructions(slug),
+      designInstructions: buildDesignInstructions(slug, { checkTool: !!designMcp }),
       designSession: true,
+      ...(designMcp ? { designMcp } : {}),
       ...(permissionMode ? { permissionMode } : {}),
     };
   }

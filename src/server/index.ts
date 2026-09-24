@@ -190,6 +190,12 @@ import { mcpAuthRoutes, mcpAuthCallbackHandler } from "./routes/mcp-auth.ts";
 import { mcpOAuthFlows } from "../services/mcp-oauth/mcp-oauth-flows.ts";
 app.get("/api/mcp-auth/callback", mcpAuthCallbackHandler);
 
+// Design MCP endpoint: called by a design session's own Claude/Codex subprocess, which has
+// no PPM token. A per-session capability token in `Authorization` is its only credential.
+import { designMcpHandler } from "../services/design/mcp/design-mcp-endpoint.ts";
+import { setServerListenAddress } from "../services/server-listen-address.ts";
+app.all("/api/design-mcp", designMcpHandler);
+
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.use("/api/*", gzipJson);
@@ -1088,6 +1094,10 @@ if (process.argv.includes("__serve__")) {
       }
     }, 200);
   }
+
+  // Child processes calling back into this server (the design MCP endpoint) need the
+  // port actually bound, which is not the configured one under the supervisor (port 0).
+  setServerListenAddress(Number(server.port), host);
 
   // Publish the port we actually bound so the edge forwarder knows where to
   // send traffic. Only meaningful when the supervisor spawned us with port 0

@@ -9,11 +9,17 @@
  * Services only know the project *path*; the relay maps it to a project name.
  */
 
-export type DesignEventType = "history_changed" | "comments_changed";
+/**
+ * `check_request` asks the browsers showing this design to measure its canvas and POST the
+ * report back (see `check/design-canvas-check-broker.ts`); it carries the request's id.
+ */
+export type DesignEventType = "history_changed" | "comments_changed" | "check_request";
 
 export interface DesignEventPayload {
   projectPath: string;
   slug: string;
+  requestId?: string;
+  screenshot?: boolean;
 }
 
 type DesignEventCallback = (type: DesignEventType, payload: DesignEventPayload) => void;

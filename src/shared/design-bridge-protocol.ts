@@ -22,6 +22,7 @@ import { PICKER_CHILD_VALIDATORS, PICKER_PARENT_VALIDATORS } from "./design-brid
 import { TWEAK_CHILD_VALIDATORS, TWEAK_PARENT_VALIDATORS } from "./design-bridge-messages-tweaks";
 import { TRANSFORM_CHILD_VALIDATORS, TRANSFORM_PARENT_VALIDATORS } from "./design-bridge-messages-transform";
 import { SLIDES_CHILD_VALIDATORS, SLIDES_PARENT_VALIDATORS } from "./design-bridge-messages-slides";
+import { CHECK_CHILD_VALIDATORS, CHECK_PARENT_VALIDATORS } from "./design-bridge-messages-check";
 
 export { DESIGN_GEN_RE };
 
@@ -105,6 +106,7 @@ export const CHILD_VALIDATORS = {
   ...TWEAK_CHILD_VALIDATORS,
   ...TRANSFORM_CHILD_VALIDATORS,
   ...SLIDES_CHILD_VALIDATORS,
+  ...CHECK_CHILD_VALIDATORS,
 };
 export const PARENT_VALIDATORS = {
   ...CORE_PARENT_VALIDATORS,
@@ -112,6 +114,7 @@ export const PARENT_VALIDATORS = {
   ...TWEAK_PARENT_VALIDATORS,
   ...TRANSFORM_PARENT_VALIDATORS,
   ...SLIDES_PARENT_VALIDATORS,
+  ...CHECK_PARENT_VALIDATORS,
 };
 
 type Validated<R> = { [K in keyof R]: R[K] extends Validator<infer T> ? T : never }[keyof R];

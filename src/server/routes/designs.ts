@@ -7,6 +7,7 @@ import { designTweakRoutes } from "./design-tweaks.ts";
 import { designStyleRoutes } from "./design-style.ts";
 import { designUndoRoutes } from "./design-undo.ts";
 import { designExportRoutes } from "./design-export.ts";
+import { designCheckRoutes } from "./design-check.ts";
 import {
   createDesign, deleteDesign, designSystemStatus, getDesign, listDesigns, renameDesign,
 } from "../../services/design/design-store.service.ts";
@@ -97,3 +98,4 @@ designRoutes.route("/:slug/tweaks", designTweakRoutes);
 designRoutes.route("/:slug/style", designStyleRoutes);
 designRoutes.route("/:slug/undo", designUndoRoutes);
 designRoutes.route("/:slug/export", designExportRoutes);
+designRoutes.route("/:slug/check", designCheckRoutes);

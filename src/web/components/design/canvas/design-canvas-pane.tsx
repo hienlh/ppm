@@ -23,6 +23,8 @@ import { TransformReadout } from "../transform/transform-readout";
 import { useDesignExport } from "../export/use-design-export";
 import { ExportSheet } from "../export/export-menu";
 import { ExportWarningsSheet } from "../export/export-warnings-sheet";
+import { useDesignCanvasCheckResponder } from "./use-design-canvas-check";
+import { useDesignAutoCheck } from "../use-design-auto-check";
 
 /**
  * The live canvas: the design's entry page in a sandboxed iframe, sized to the chosen
@@ -83,6 +85,11 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   }, [closeComments, closeTweaks]);
   const undo = useDesignUndo(tab, { openHistory });
   const exports = useDesignExport(tab, canvas.bridge);
+  // The self-check: on demand for the agent's design_check tool, and by itself after a turn.
+  const checkContext = () => ({ issues: canvas.issues, frame: framePreset(frame).label });
+  useDesignCanvasCheckResponder({ projectName: tab.projectName, slug: tab.slug, bridge: canvas.bridge, context: checkContext });
+  const layoutIssues = useDesignAutoCheck({ tab, bridge: canvas.bridge, context: checkContext });
+  const allIssues = useMemo(() => [...canvas.issues, ...layoutIssues], [canvas.issues, layoutIssues]);
 
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
     ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports,
@@ -136,7 +143,7 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
               </div>
             </div>
           )}
-          <DesignIssuesBadge issues={canvas.issues} className="absolute right-2 top-2" />
+          <DesignIssuesBadge issues={allIssues} className="absolute right-2 top-2" />
           {canvas.src && (
             <DesignCommentsOverlay feature={comments} fit={fit} stage={stage} isMobile={tab.isMobile} selectionHint={transform.hint} />
           )}

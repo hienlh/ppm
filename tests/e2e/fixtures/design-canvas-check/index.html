@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PPM Workspace</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="workspace">
+
+    <!-- ACTIVITY BAR (left icon rail) -->
+    <aside class="activity-bar">
+      <div class="activity-top">
+        <button class="activity-btn active" title="Explorer" data-panel="explorer">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button class="activity-btn" title="Search" data-panel="search">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        </button>
+        <button class="activity-btn" title="Source Control" data-panel="git">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+        </button>
+        <button class="activity-btn" title="Extensions" data-panel="ext">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </button>
+      </div>
+      <div class="activity-bottom">
+        <button class="activity-btn" title="Settings">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">EXPLORER</span>
+      </div>
+
+      <!-- Project tree -->
+      <div class="sidebar-section">
+        <div class="section-head">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="section-label">PPM</span>
+        </div>
+        <div class="file-tree">
+          <div class="tree-item folder open">
+            <svg class="tree-icon chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+            <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span>src</span>
+          </div>
+          <div class="tree-children">
+            <div class="tree-item folder open">
+              <svg class="tree-icon chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+              <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span>web</span>
+            </div>
+            <div class="tree-children">
+              <div class="tree-item file">
+                <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-info)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span>app.tsx</span>
+              </div>
+              <div class="tree-item file active">
+                <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-info)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span>main.tsx</span>
+              </div>
+              <div class="tree-item file">
+                <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-info)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span>index.html</span>
+              </div>
+            </div>
+            <div class="tree-item folder">
+              <svg class="tree-icon chevron collapsed" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+              <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span>server</span>
+            </div>
+            <div class="tree-item folder">
+              <svg class="tree-icon chevron collapsed" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+              <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span>services</span>
+            </div>
+          </div>
+          <div class="tree-item file">
+            <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>package.json</span>
+          </div>
+          <div class="tree-item file">
+            <svg class="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-3)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>tsconfig.json</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN AREA -->
+    <div class="main-area">
+
+      <!-- TAB BAR -->
+      <div class="tab-bar">
+        <div class="tab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-info)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>app.tsx</span>
+          <button class="tab-close">&times;</button>
+        </div>
+        <div class="tab active">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-info)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>main.tsx</span>
+          <button class="tab-close">&times;</button>
+        </div>
+        <div class="tab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>package.json</span>
+          <button class="tab-close">&times;</button>
+        </div>
+      </div>
+
+      <!-- EDITOR + CHAT SPLIT -->
+      <div class="content-split">
+
+        <!-- EDITOR -->
+        <div class="editor-pane">
+          <div class="editor-content">
+            <div class="line-numbers">
+              <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+              <span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
+              <span>11</span><span>12</span><span>13</span><span>14</span><span>15</span>
+              <span>16</span><span>17</span><span>18</span><span>19</span><span>20</span>
+              <span>21</span><span>22</span><span>23</span><span>24</span>
+            </div>
+            <pre class="code"><span class="kw">import</span> { StrictMode } <span class="kw">from</span> <span class="str">"react"</span>
+<span class="kw">import</span> { createRoot } <span class="kw">from</span> <span class="str">"react-dom/client"</span>
+<span class="kw">import</span> { App } <span class="kw">from</span> <span class="str">"./app"</span>
+<span class="kw">import</span> <span class="str">"./styles/globals.css"</span>
+
+<span class="kw">import</span> <span class="str">"@fontsource-variable/geist"</span>
+<span class="kw">import</span> <span class="str">"@fontsource/monaspace-argon/400.css"</span>
+<span class="kw">import</span> <span class="str">"@fontsource/monaspace-argon/700.css"</span>
+
+<span class="comment">// mark that the entry ran (FOUC guard)</span>
+<span class="decl">window</span>.<span class="prop">__ppmEntryRan</span> = <span class="bool">true</span>
+
+<span class="kw">const</span> <span class="decl">root</span> = <span class="fn">createRoot</span>(
+  <span class="decl">document</span>.<span class="fn">getElementById</span>(<span class="str">"root"</span>)!
+)
+
+<span class="decl">root</span>.<span class="fn">render</span>(
+  &lt;<span class="comp">StrictMode</span>&gt;
+    &lt;<span class="comp">App</span> /&gt;
+  &lt;/<span class="comp">StrictMode</span>&gt;
+)
+
+<span class="comment">// register service worker</span>
+<span class="kw">import</span> <span class="str">"./register-sw"</span></pre>
+          </div>
+        </div>
+
+        <!-- CHAT PANEL -->
+        <div class="chat-pane">
+          <div class="chat-header">
+            <div class="chat-header-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="chat-title">AI Chat</span>
+            </div>
+            <div class="chat-model-badge">claude-opus-5</div>
+          </div>
+          <div class="chat-messages">
+            <div class="message assistant">
+              <div class="message-avatar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--color-accent)"><circle cx="12" cy="12" r="10"/></svg>
+              </div>
+              <div class="message-body">
+                <div class="message-text">I've analyzed the project structure. PPM is a web-based IDE with Hono backend and React frontend. What would you like to work on?</div>
+              </div>
+            </div>
+            <div class="message user">
+              <div class="message-body">
+                <div class="message-text">Help me add a new feature to the editor — inline git blame annotations, similar to GitLens.</div>
+              </div>
+            </div>
+            <div class="message assistant">
+              <div class="message-avatar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--color-accent)"><circle cx="12" cy="12" r="10"/></svg>
+              </div>
+              <div class="message-body">
+                <div class="message-text">I'll implement inline git blame. Here's the plan:</div>
+                <div class="tool-card">
+                  <div class="tool-header">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    <span class="tool-name">Read</span>
+                    <span class="tool-path">src/web/hooks/use-inline-blame.ts</span>
+                  </div>
+                </div>
+                <div class="tool-card">
+                  <div class="tool-header">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-2)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    <span class="tool-name">Edit</span>
+                    <span class="tool-path">src/services/git-blame/blame-service.ts</span>
+                  </div>
+                </div>
+                <div class="message-text" style="margin-top:8px">I've set up the blame hook. The annotation appears as a faded inline decoration after the last character of each line, showing the author and relative date.</div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-area">
+            <div class="chat-input-box">
+              <textarea class="chat-input" placeholder="Ask anything..." rows="1"></textarea>
+              <button class="chat-send-btn" title="Send">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BOTTOM PANEL (Terminal) -->
+      <div class="bottom-panel">
+        <div class="bottom-tabs">
+          <button class="bottom-tab active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            Terminal
+          </button>
+          <button class="bottom-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Problems <span class="problems-count">2</span>
+          </button>
+          <button class="bottom-tab">Output</button>
+        </div>
+        <div class="terminal-content">
+          <div class="term-line"><span class="term-prompt">~/ppm $</span> bun dev:server</div>
+          <div class="term-line"><span class="term-info">[server]</span> Listening on http://localhost:8081</div>
+          <div class="term-line"><span class="term-info">[server]</span> Database: ~/.ppm/ppm.dev.db</div>
+          <div class="term-line"><span class="term-success">[ready]</span> Development server started in 142ms</div>
+          <div class="term-line"><span class="term-prompt">~/ppm $</span> <span class="term-cursor"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATUS BAR -->
+    <footer class="status-bar">
+      <div class="status-left">
+        <span class="status-item status-branch">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+          feat/design-mode
+        </span>
+        <span class="status-item">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          0
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          2
+        </span>
+      </div>
+      <div class="status-right">
+        <span class="status-item">TypeScript</span>
+        <span class="status-item">UTF-8</span>
+        <span class="status-item">Ln 11, Col 32</span>
+        <span class="status-item status-ai">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--color-accent)"><circle cx="12" cy="12" r="10"/></svg>
+          Claude Opus 5
+        </span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

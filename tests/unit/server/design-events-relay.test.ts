@@ -40,4 +40,11 @@ describe("design event relay on /ws/global", () => {
     emitDesignEvent("history_changed", { projectPath: join(project, "elsewhere"), slug: "home" });
     expect(sent).toEqual([]);
   });
+
+  it("carries a canvas check request's id and screenshot flag", () => {
+    emitDesignEvent("check_request", { projectPath: project, slug: "home", requestId: "abcdefgh12345678", screenshot: true });
+    expect(sent).toEqual([
+      { type: "design:check_request", projectName: "demo", slug: "home", requestId: "abcdefgh12345678", screenshot: true },
+    ]);
+  });
 });

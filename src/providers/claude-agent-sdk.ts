@@ -5,7 +5,8 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { buildModelQueryOptions, buildSystemPromptOption, preToolUseDecision } from "./claude-agent-sdk-query-options.ts";
+import { buildModelQueryOptions, buildSystemPromptOption, designMcpServers, preToolUseDecision } from "./claude-agent-sdk-query-options.ts";
+import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
@@ -904,8 +905,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ? ["TeamCreate", "TeamDelete", "SendMessage", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
       : [];
     const mcpTools = ["mcp__*"];
+    // `design_check` only reads the canvas, so a design session never asks before it runs.
+    const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
     const allowedTools = designPolicy
-      ? []
+      ? (designCheckTool ? [designCheckTool] : [])
       : isBypass
         ? [...readOnlyTools, ...writeTools, ...teamTools, ...mcpTools]
         : [...readOnlyTools, ...mcpTools];
@@ -949,7 +952,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       // The PreToolUse hook normally settles design-policy tools before this runs; this is
       // the fail-closed backstop for any path that reaches the callback without it.
-      if (designPolicy && designToolDecision(toolName, input, designRoot) !== "allow") {
+      if (designPolicy && toolName !== designCheckTool && designToolDecision(toolName, input, designRoot) !== "allow") {
         const result = await waitForApproval(toolName, input);
         if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
       }
@@ -971,6 +974,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // AskUserQuestion: handled by canUseTool callback
       if (toolName === "AskUserQuestion") return {};
+
+      if (designCheckTool && toolName === designCheckTool) return preToolUseDecision("allow");
 
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
@@ -1096,7 +1101,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
-      const mcpServers = this.resolveMcpServers(effectiveCwd);
+      const mcpServers = { ...this.resolveMcpServers(effectiveCwd), ...designMcpServers(opts?.designSession ? opts.designMcp : undefined) };
       const hasMcp = Object.keys(mcpServers).length > 0;
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time

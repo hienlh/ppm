@@ -7,7 +7,7 @@ import { downscaleImage } from "@/lib/image-resize";
 import { INLINE_IMAGE_LIMITS } from "@/lib/image-resize-limits";
 import { randomId } from "@/lib/utils";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
-import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatDetail } from "@/lib/send-to-chat";
+import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatAck, type SendToChatDetail } from "@/lib/send-to-chat";
 import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { stepHistory } from "./message-history-recall";
@@ -290,10 +290,17 @@ export const MessageInput = memo(function MessageInput({
   // may consume it, or the same output lands in every open chat at once.
   useEffect(() => {
     const handler = (e: Event) => {
-      const { text, label, targetTabId } = ((e as CustomEvent).detail ?? {}) as SendToChatDetail;
+      const { text, label, targetTabId, autoSend } = ((e as CustomEvent).detail ?? {}) as SendToChatDetail;
       if (!text) return;
       if (targetTabId ? targetTabId !== tabId : !ownsGlobalShortcut(getVisibleTextarea())) return;
-      window.dispatchEvent(new Event(SEND_TO_CHAT_ACK_EVENT));
+      // Sent as-is only into an idle, empty composer: anything the user has typed or
+      // attached is theirs, and the text joins it as a chip for them to send instead.
+      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !valueRef.current.trim() && attachments.length === 0;
+      window.dispatchEvent(new CustomEvent<SendToChatAck>(SEND_TO_CHAT_ACK_EVENT, { detail: { sent: send } }));
+      if (send) {
+        onSend(text, []);
+        return;
+      }
       const att: ChatAttachment = {
         id: randomId(),
         name: label ?? "Terminal output",
@@ -307,7 +314,7 @@ export const MessageInput = memo(function MessageInput({
     };
     window.addEventListener(SEND_TO_CHAT_EVENT, handler);
     return () => window.removeEventListener(SEND_TO_CHAT_EVENT, handler);
-  }, [getVisibleTextarea, tabId]);
+  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend]);
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
   // A restored draft can land after the input is already on screen, so never

@@ -10,6 +10,7 @@
 - Tweak sliders, colours and choices the AI declares, previewed live and applied into the design's CSS.
 - Drag and resize elements on the canvas, saved into the design, with an undo that keeps later AI changes.
 - Export a design as ZIP, a single HTML file, PDF or PowerPoint with editable text, or hand it off to a new chat that builds it in the project's code.
+- The design AI checks the rendered canvas: a `design_check` tool (layout problems, errors, screenshot) for Claude and Codex, plus an automatic check after each turn that reports problems back.
 
 ### Fixed
 - Claude's "Additional Instructions" setting now actually reaches the model; it applies to new sessions and is added to Claude Code's own prompt rather than replacing it.

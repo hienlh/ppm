@@ -22,6 +22,9 @@ import type { createTransformStyle } from "./bridge-transform-style.ts";
 import type { extractTextRuns, mergeTextRuns, parseCssColor } from "./bridge-extract-text.ts";
 import type { blockItems, cssRotation } from "./bridge-extract-blocks.ts";
 import type { imageDataUrl } from "./bridge-extract-images.ts";
+import type { checkLabel, gridImplicitFindings } from "./bridge-layout-grid.ts";
+import type { boxFindings } from "./bridge-layout-boxes.ts";
+import type { captureScreenshot } from "./bridge-layout-screenshot.ts";
 
 export interface BridgeBoot {
   nonce: string | null;
@@ -59,6 +62,10 @@ export interface BridgeLib {
   cssRotation: typeof cssRotation;
   blockItems: typeof blockItems;
   imageDataUrl: typeof imageDataUrl;
+  checkLabel: typeof checkLabel;
+  gridImplicitFindings: typeof gridImplicitFindings;
+  boxFindings: typeof boxFindings;
+  captureScreenshot: typeof captureScreenshot;
 }
 
 export interface BridgeApi {
