@@ -174,6 +174,8 @@ export interface ChatSearchResult {
   ts: string;
   pinned?: boolean;
   tag?: { id: number; name: string; color: string } | null;
+  /** Set for a design session, so a result opens in its design tab rather than as a chat. */
+  designSlug?: string | null;
 }
 
 export interface ChatSearchResponse {

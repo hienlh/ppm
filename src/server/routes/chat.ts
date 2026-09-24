@@ -323,6 +323,9 @@ chatRoutes.get("/search", async (c) => {
       });
     }
 
+    const designSlugs = getSessionDesignSlugs(results.map((r) => r.sessionId));
+    for (const r of results) r.designSlug = designSlugs[r.sessionId] ?? null;
+
     // Pinned first, then title matches above content, then most-recent within group.
     results.sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
@@ -337,6 +340,16 @@ chatRoutes.get("/search", async (c) => {
 });
 
 /** GET /chat/sessions/:id/messages — get message history */
+/**
+ * The design a session belongs to, if any. A chat tab asks on open: every surface that opens
+ * sessions as plain chats (a notification, a search hit, a link) would otherwise take a design
+ * session out of design mode, and this lets the tab hand itself over to the design tab.
+ */
+chatRoutes.get("/sessions/:id/design", (c) => {
+  const id = c.req.param("id");
+  return c.json(ok({ designSlug: getSessionDesignSlugs([id])[id] ?? null }));
+});
+
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
     const requestedId = c.req.param("id");

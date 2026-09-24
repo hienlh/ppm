@@ -7,6 +7,7 @@ import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
 import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
+import { useDesignSessionRedirect } from "@/hooks/use-design-session-redirect";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -133,6 +134,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Use tab's own project, not global activeProject (keep-alive: hidden tabs must not react to switches)
   const projectName = (metadata?.projectName as string) ?? "";
+  useDesignSessionRedirect({ tabId, sessionId, designSlug, projectName, providerId });
   const updateTab = useTabStore((s) => s.updateTab);
   const version = useSettingsStore((s) => s.version);
 
