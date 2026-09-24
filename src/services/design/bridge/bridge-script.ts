@@ -10,6 +10,10 @@ import { createPickerOverlay } from "./bridge-picker-overlay.ts";
 import { applyDrag, formatPx, parseTranslate, zoneAt } from "./bridge-transform-math.ts";
 import { createTransformOverlay } from "./bridge-transform-overlay.ts";
 import { createTransformStyle } from "./bridge-transform-style.ts";
+import { installSlidesExtract } from "./bridge-extract-slides.ts";
+import { extractTextRuns, mergeTextRuns, parseCssColor } from "./bridge-extract-text.ts";
+import { blockItems, cssRotation } from "./bridge-extract-blocks.ts";
+import { imageDataUrl } from "./bridge-extract-images.ts";
 
 /**
  * The bridge script injected as the first child of a design document's `<head>`.
@@ -29,6 +33,7 @@ export type BridgeFeature = (ppm: BridgeApi) => void;
 export const BRIDGE_LIB: BridgeLib = {
   elementQuote, domTreeAccess, cssPathOf, anchorOf, describeElement, diceSimilarity, resolveAnchor, createPickerOverlay,
   parseTranslate, formatPx, applyDrag, zoneAt, createTransformOverlay, createTransformStyle,
+  parseCssColor, mergeTextRuns, extractTextRuns, cssRotation, blockItems, imageDataUrl,
 };
 
 export const BRIDGE_FEATURES: readonly BridgeFeature[] = [
@@ -41,6 +46,7 @@ export const BRIDGE_FEATURES: readonly BridgeFeature[] = [
   installPins,
   installNavGuard,
   installTweaks,
+  installSlidesExtract,
 ];
 
 export function assembleBridge(features: readonly BridgeFeature[], lib: Partial<BridgeLib> = BRIDGE_LIB): string {

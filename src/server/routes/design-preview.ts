@@ -14,6 +14,7 @@ import { decodeDesignText, MAX_DESIGN_SOURCE_BYTES } from "../../services/design
 import { buildDesignCsp } from "../../services/design/preview/design-csp.ts";
 import { resolveScopedAsset } from "../../services/design/preview/design-preview-scope.ts";
 import { renderDesignHtml } from "../../services/design/preview/design-preview-html.ts";
+import { printInjection } from "../../services/design/preview/print-view.ts";
 import { EXPIRED_PAGE_CSP, expiredPageHtml } from "../../services/design/preview/expired-page.ts";
 import {
   createDesignPreviewTokenStore, isDesignPreviewPurpose, type DesignPreviewCapability,
@@ -126,7 +127,10 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
       };
       const head = c.req.method === "HEAD";
       if (/\.html?$/i.test(asset.abs)) {
-        const page = await renderDesignHtml(cap, asset, { nonce, withBridge: cap.purpose === "canvas" });
+        // The token's purpose alone decides what the page gets: the bridge for the canvas, the
+        // print style and script for print, nothing for standalone. No query flag changes it.
+        const inject = cap.purpose === "print" ? printInjection((await getDesign(cap.projectPath, cap.slug)).kind) : undefined;
+        const page = await renderDesignHtml(cap, asset, { nonce, withBridge: cap.purpose === "canvas", inject });
         return new Response(head ? null : page.body, {
           headers: {
             ...headers, "Content-Type": "text/html; charset=utf-8",

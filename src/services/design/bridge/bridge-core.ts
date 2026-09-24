@@ -19,6 +19,9 @@ import type { createPickerOverlay } from "./bridge-picker-overlay.ts";
 import type { applyDrag, formatPx, parseTranslate, zoneAt } from "./bridge-transform-math.ts";
 import type { createTransformOverlay } from "./bridge-transform-overlay.ts";
 import type { createTransformStyle } from "./bridge-transform-style.ts";
+import type { extractTextRuns, mergeTextRuns, parseCssColor } from "./bridge-extract-text.ts";
+import type { blockItems, cssRotation } from "./bridge-extract-blocks.ts";
+import type { imageDataUrl } from "./bridge-extract-images.ts";
 
 export interface BridgeBoot {
   nonce: string | null;
@@ -50,6 +53,12 @@ export interface BridgeLib {
   zoneAt: typeof zoneAt;
   createTransformOverlay: typeof createTransformOverlay;
   createTransformStyle: typeof createTransformStyle;
+  parseCssColor: typeof parseCssColor;
+  mergeTextRuns: typeof mergeTextRuns;
+  extractTextRuns: typeof extractTextRuns;
+  cssRotation: typeof cssRotation;
+  blockItems: typeof blockItems;
+  imageDataUrl: typeof imageDataUrl;
 }
 
 export interface BridgeApi {

@@ -12,7 +12,8 @@ import type { DesignRef } from "./design-preview-tokens.ts";
  * A canvas load gets element ids and the bridge. A file over {@link INSTRUMENT_MAX_BYTES},
  * or one that is not valid UTF-8 (whose offsets could never be written back safely), gets
  * the bridge alone and reports `instrumented: false`, so the canvas still hears `ready` and
- * only the features that need ids switch off. Print and standalone loads get the file as is.
+ * only the features that need ids switch off. Print and standalone loads get no bridge and
+ * no ids; `inject` (the print view's style and script) goes where the bridge would.
  */
 
 export const INSTRUMENT_MAX_BYTES = 5 * 1024 * 1024;
@@ -52,10 +53,23 @@ export async function linkedStylesheetGens(design: DesignRef, htmlRel: string, h
   return gens;
 }
 
+/** `snippet` at the head insertion point, or after the doctype when the file is too big to parse. */
+function injectPlain(text: string, snippet: string): string {
+  if (text.length <= INSTRUMENT_MAX_BYTES) {
+    try {
+      const at = analyzeHtml(text).headOffset;
+      return text.slice(0, at) + snippet + text.slice(at);
+    } catch {
+      // Unparseable: fall through to the position that needs no parse.
+    }
+  }
+  return injectWithoutParsing(text, snippet);
+}
+
 export async function renderDesignHtml(
   design: DesignRef,
   asset: ScopedAsset,
-  opts: { nonce: string | null; withBridge: boolean },
+  opts: { nonce: string | null; withBridge: boolean; inject?: string },
 ): Promise<RenderedDesignHtml> {
   const bytes = await readDesignFileSafe(asset.abs, MAX_DESIGN_SOURCE_BYTES);
   let source: DesignSource;
@@ -67,7 +81,7 @@ export async function renderDesignHtml(
     utf8 = false;
   }
   const { text, gen } = source;
-  if (!opts.withBridge) return { body: text, gen, instrumented: false };
+  if (!opts.withBridge) return { body: opts.inject ? injectPlain(text, opts.inject) : text, gen, instrumented: false };
 
   const tag = (instrumented: boolean, cssGens: Record<string, string>): string =>
     bridgeTag({ nonce: opts.nonce, gen, cssGens, file: asset.rel, instrumented });

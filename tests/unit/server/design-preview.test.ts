@@ -183,7 +183,11 @@ describe("design preview route", () => {
     const response = await request(url);
     expect(response.headers.get("content-security-policy")).toContain("sandbox allow-scripts allow-modals");
     const html = await response.text();
-    expect(html).toBe(INDEX);
+    // The page itself, plus only the print view's style and script (design-preview-modes.test.ts).
+    const at = INDEX.indexOf("<head>") + "<head>".length;
+    expect(html.startsWith(INDEX.slice(0, at) + "<style data-ppm-print")).toBe(true);
+    expect(html.endsWith(INDEX.slice(at))).toBe(true);
+    expect(html).not.toContain("data-ppm-bridge");
   });
 
   it("serves an oversized page uninstrumented but still with the bridge", async () => {

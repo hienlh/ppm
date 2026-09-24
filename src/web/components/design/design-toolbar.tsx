@@ -1,7 +1,7 @@
-import type { ElementType } from "react";
+import type { ElementType, ReactNode } from "react";
 import {
-  History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move, Presentation, RefreshCw, SlidersHorizontal, Smartphone,
-  Sparkles, Tablet, Undo2,
+  Code, Download, History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move, Presentation, RefreshCw,
+  SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -16,14 +16,17 @@ import type { DesignCommentsFeature } from "./comments/use-design-comments-featu
 import type { DesignTweaksFeature } from "./tweaks/use-design-tweaks";
 import type { CanvasTransformFeature } from "./transform/use-canvas-transform";
 import type { DesignUndoFeature } from "./transform/design-undo-stack";
+import type { DesignExportFeature } from "./export/use-design-export";
+import { ExportMenuButton } from "./export/export-menu";
 
 /**
  * The canvas toolbar and its registry.
  *
  * Features add a button by appending to {@link DESIGN_TOOLBAR_ITEMS}; nothing else in this
  * file needs to change. `bar` items get a button on desktop, `more` items live in the
- * overflow menu. On a phone every item is in the More sheet (the thumb-zone bar only holds
- * Canvas / Chat / More), which renders the same list through {@link DesignToolbarList}.
+ * overflow menu, and a `bar` item with `renderBar` draws its own control (a dropdown). On a
+ * phone every item is in the More sheet (the thumb-zone bar only holds Canvas / Chat / More),
+ * which renders the same list through `DesignToolbarList` and calls `run`.
  */
 
 export interface DesignToolbarContext extends DesignTabContextValue {
@@ -36,6 +39,7 @@ export interface DesignToolbarContext extends DesignTabContextValue {
   tweaks: DesignTweaksFeature;
   transform: CanvasTransformFeature;
   undo: DesignUndoFeature;
+  exports: DesignExportFeature;
 }
 
 export interface DesignToolbarItem {
@@ -49,6 +53,8 @@ export interface DesignToolbarItem {
   isHidden?: (ctx: DesignToolbarContext) => boolean;
   /** A count shown on the button, e.g. open comments; nothing when 0 or null. */
   badge?: (ctx: DesignToolbarContext) => number | null;
+  /** Desktop bar only: a control of its own in place of the plain button. */
+  renderBar?: (ctx: DesignToolbarContext, className: string) => ReactNode;
   run: (ctx: DesignToolbarContext) => void;
 }
 
@@ -97,11 +103,22 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     isDisabled: (ctx) => !ctx.undo.canUndo,
     run: (ctx) => ctx.undo.undo(),
   },
+  {
+    // Desktop: a dropdown of its own. Phone: the More sheet's row opens the export sheet.
+    id: "export", label: "Export", icon: Download, placement: "bar",
+    renderBar: (ctx, className) => <ExportMenuButton key="export" feature={ctx.exports} className={className} />,
+    run: (ctx) => ctx.exports.setSheetOpen(true),
+  },
+  {
+    // Starts a new, ordinary chat with the brief as a draft; never the design chat.
+    id: "handoff", label: "Hand off to code", icon: Code, placement: "more",
+    run: (ctx) => ctx.exports.handOff(),
+  },
 ];
 
-const visibleItems = (ctx: DesignToolbarContext) => DESIGN_TOOLBAR_ITEMS.filter((i) => !i.isHidden?.(ctx));
+export const visibleItems = (ctx: DesignToolbarContext) => DESIGN_TOOLBAR_ITEMS.filter((i) => !i.isHidden?.(ctx));
 
-function Badge({ count, className }: { count: number | null | undefined; className?: string }) {
+export function ToolbarBadge({ count, className }: { count: number | null | undefined; className?: string }) {
   if (!count) return null;
   return (
     <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground", className)}>
@@ -137,13 +154,13 @@ export function DesignToolbar({ ctx }: { ctx: DesignToolbarContext }) {
         })}
       </div>
       <span className="mx-2 min-w-0 flex-1 truncate text-xs text-text-subtle" title={ctx.design.title}>{ctx.design.title}</span>
-      {bar.map((item) => (
+      {bar.map((item) => item.renderBar ? item.renderBar(ctx, iconBtn) : (
         <button key={item.id} type="button" title={item.label} aria-label={item.label}
           aria-pressed={item.isActive ? item.isActive(ctx) : undefined}
           disabled={item.isDisabled?.(ctx)} onClick={() => item.run(ctx)}
           className={cn(iconBtn, "relative", item.isActive?.(ctx) && "bg-surface-elevated text-foreground")}>
           <item.icon className="size-4" />
-          <Badge count={item.badge?.(ctx)} className="absolute -right-1 -top-1" />
+          <ToolbarBadge count={item.badge?.(ctx)} className="absolute -right-1 -top-1" />
         </button>
       ))}
       {more.length > 0 && (
@@ -162,39 +179,6 @@ export function DesignToolbar({ ctx }: { ctx: DesignToolbarContext }) {
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-    </div>
-  );
-}
-
-/** The same frames and items as full-width rows, for the phone's More sheet. */
-export function DesignToolbarList({ ctx, onDone }: { ctx: DesignToolbarContext; onDone: () => void }) {
-  const row = "flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm hover:bg-surface-elevated disabled:opacity-40";
-  return (
-    <div className="flex flex-col gap-1 px-2 pb-2">
-      <p className="px-3 pt-1 text-xs font-semibold uppercase tracking-wide text-text-subtle">Device frame</p>
-      <div role="radiogroup" aria-label="Device frame" className="grid grid-cols-4 gap-2 px-1">
-        {DEVICE_FRAMES.map((f) => {
-          const Icon = FRAME_ICONS[f.id];
-          const on = ctx.frame === f.id;
-          return (
-            <button key={f.id} type="button" role="radio" aria-checked={on}
-              onClick={() => { ctx.setFrame(f.id); onDone(); }}
-              className={cn("flex min-h-14 flex-col items-center justify-center gap-1 rounded-md border text-xs",
-                on ? "border-primary text-foreground" : "border-border text-text-subtle")}>
-              <Icon className="size-5" /> {f.label}
-            </button>
-          );
-        })}
-      </div>
-      <div className="my-1 h-px bg-border" />
-      {visibleItems(ctx).map((item) => (
-        <button key={item.id} type="button" className={row} disabled={item.isDisabled?.(ctx)}
-          aria-pressed={item.isActive ? item.isActive(ctx) : undefined}
-          onClick={() => { onDone(); item.run(ctx); }}>
-          <item.icon className="size-5 text-text-subtle" /> <span className="flex-1">{item.label}</span>
-          <Badge count={item.badge?.(ctx)} />
-        </button>
-      ))}
     </div>
   );
 }

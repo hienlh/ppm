@@ -81,12 +81,16 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
  *
  * Falls back through: live tab answers the event → tab exists but is not mounted
  * yet, so hand the text over as `pendingMessage` → no chat open at all, open one.
+ *
+ * `newTab` skips the first two: the text always starts a fresh, plain chat as an editable
+ * draft. For a brief that must not land in whatever conversation (or design session) the
+ * user happened to select last.
  */
-export function sendToChat(opts: { text: string; label?: string; projectName?: string | null }): void {
+export function sendToChat(opts: { text: string; label?: string; projectName?: string | null; newTab?: boolean }): void {
   const { text, label, projectName } = opts;
   if (!text.trim()) return;
 
-  const targetTabId = resolveSelectedChatTabId(projectName);
+  const targetTabId = opts.newTab ? null : resolveSelectedChatTabId(projectName);
   const store = usePanelStore.getState();
 
   if (targetTabId) {

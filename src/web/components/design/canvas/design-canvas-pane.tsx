@@ -6,7 +6,8 @@ import {
   designFrameKey, loadDesignViewPrefs, saveDesignViewPrefs, withFrame,
 } from "@/lib/design/design-view-prefs";
 import { useDesignTab } from "../design-tab-context";
-import { DesignToolbar, DesignToolbarList, type DesignToolbarContext } from "../design-toolbar";
+import { DesignToolbar, type DesignToolbarContext } from "../design-toolbar";
+import { DesignToolbarList } from "../design-toolbar-list";
 import { DesignHistoryPanel } from "../history/design-history-panel";
 import { useDesignCanvas } from "./use-design-canvas";
 import { defaultFrameFor, framePreset, type DeviceFrameId } from "./device-frame-presets";
@@ -19,6 +20,9 @@ import { TweaksPanel } from "../tweaks/tweaks-panel";
 import { useCanvasTransform } from "../transform/use-canvas-transform";
 import { useDesignUndo } from "../transform/design-undo-stack";
 import { TransformReadout } from "../transform/transform-readout";
+import { useDesignExport } from "../export/use-design-export";
+import { ExportSheet } from "../export/export-menu";
+import { ExportWarningsSheet } from "../export/export-warnings-sheet";
 
 /**
  * The live canvas: the design's entry page in a sandboxed iframe, sized to the chosen
@@ -78,10 +82,11 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
     setHistoryOpen(true);
   }, [closeComments, closeTweaks]);
   const undo = useDesignUndo(tab, { openHistory });
+  const exports = useDesignExport(tab, canvas.bridge);
 
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
-    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo,
-  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo]);
+    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports,
+  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports]);
   const tweaksPanel = tweaks.panelOpen && <TweaksPanel feature={tweaks} tabId={tab.tabId} slug={tab.slug} />;
 
   const history = historyOpen && (
@@ -146,8 +151,10 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
       {/* Docked under the canvas rather than in a sheet: a sheet's backdrop would dim the very
           colours being tweaked, and the canvas has to stay in view while a slider moves. */}
       {tab.isMobile && tweaksPanel && <div className="h-[45%] shrink-0 border-t border-border">{tweaksPanel}</div>}
+      <ExportWarningsSheet feature={exports} />
       {tab.isMobile && (
         <>
+          <ExportSheet feature={exports} />
           <BottomSheet open={moreOpen} onClose={() => onMoreClose?.()}>
             <DesignToolbarList ctx={toolbarCtx} onDone={() => onMoreClose?.()} />
           </BottomSheet>
