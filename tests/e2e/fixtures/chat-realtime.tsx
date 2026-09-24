@@ -79,6 +79,26 @@ async function verify() {
   state.emit({ type: "phase_changed", phase: "idle" });
   await wait();
   assert(state.chat.messages.at(-1)?.content === "x".repeat(150) + "y", "Live events overtook replay");
+
+  // A rate limit or token refresh mid-turn resumes the same turn on another account.
+  // What streamed before the retry is already in the transcript and must stay on screen.
+  state.chat.sendMessage("retry mid-turn");
+  await wait();
+  state.emit({ type: "phase_changed", phase: "streaming" });
+  state.emit({ type: "text", content: "before " });
+  state.emit({ type: "tool_use", tool: "Bash", input: { command: "true" }, toolUseId: "tu-before" });
+  state.emit({ type: "tool_result", output: "", toolUseId: "tu-before" });
+  state.emit({ type: "account_retry", reason: "Rate limited — switching account", accountId: "b", accountLabel: "B" });
+  state.emit({ type: "text", content: "after" });
+  await wait();
+  const retried = state.chat.messages.at(-1);
+  const kinds = (retried?.events ?? []).map((e: any) => e.type);
+  assert(JSON.stringify(kinds) === JSON.stringify(["text", "tool_use", "tool_result", "account_retry", "text"]),
+    `Retry dropped the events streamed before it: ${JSON.stringify(kinds)}`);
+  state.emit({ type: "done" });
+  state.emit({ type: "phase_changed", phase: "idle" });
+  await wait();
+
   state.held = false;
   state.serverPhase = "streaming";
   state.emit({ type: "session_migrated", newSessionId: "provider-real-id" });
@@ -90,7 +110,7 @@ async function verify() {
   state.chat.reconnect();
   await wait();
   assert(!state.chat.isReconnecting, "Active session without replay left reconnect overlay stuck");
-  state.result = "PASS: missing completion, healthy metadata, late history, ordered replay, migration and active reconnect";
+  state.result = "PASS: missing completion, healthy metadata, late history, ordered replay, mid-turn account retry, migration and active reconnect";
   document.title = state.result;
 }
 verify().catch(error => { state.result = `FAIL: ${error.message}`; document.title = state.result; console.error(error); });

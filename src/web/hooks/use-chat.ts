@@ -467,9 +467,12 @@ export function useChat(
           // rate limit, usage cap or auth. Say so now rather than at the next usage poll.
           setLiveAccount({ id: ev.accountId, label: ev.accountLabel });
         }
-        // Clear previous streaming events (error text from failed attempt)
-        // and start fresh with only the retry notification
-        streamingEventsRef.current = [ev as ChatEvent];
+        // Append, never reset. A retry can land mid-turn — after tool calls and text that
+        // are already in the transcript — and the provider resumes that same turn, so
+        // clearing here hid everything before the retry until `done` reloaded history.
+        // The failed attempt itself adds nothing to clear: the provider swallows the
+        // error message instead of streaming it as text.
+        streamingEventsRef.current.push(ev as ChatEvent);
         syncMessages();
         break;
       }
