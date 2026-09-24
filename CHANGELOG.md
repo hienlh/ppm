@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- Design mode: a Design tab with the design chat beside a live preview of what the AI builds, as a page or a slide deck, at desktop, tablet, phone or slide size; a Canvas/Chat bar on phones.
+- Design chats on Claude and Codex follow the project's design system (`designs/DESIGN.md`, `designs/tokens.css`) and ask before running anything except file edits.
+- Design version history: a snapshot after every AI turn that changes the design, and restore.
+- Comments pinned to elements of a design, which stay on their element through edits and go to the AI in one message.
+- Tweak sliders, colours and choices the AI declares, previewed live and applied into the design's CSS.
+- Drag and resize elements on the canvas, saved into the design, with an undo that keeps later AI changes.
+- Export a design as ZIP, a single HTML file, PDF or PowerPoint with editable text, or hand it off to a new chat that builds it in the project's code.
+
 ### Fixed
 - Claude's "Additional Instructions" setting now actually reaches the model; it applies to new sessions and is added to Claude Code's own prompt rather than replacing it.
 - Allow/deny answers in a Claude chat's tool approval prompt are sent in the form the Claude CLI accepts, so a denied tool is reliably blocked.

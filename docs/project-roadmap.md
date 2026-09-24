@@ -14,6 +14,21 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
+### Design mode (Claude Design port) (next release)
+
+- A Design tab per design: the design chat beside a live, sandboxed canvas that reloads as the
+  agent writes, at desktop, tablet, phone and slide frames. Desktop split, phone Canvas/Chat bar.
+- Design sessions (Claude and Codex) get design instructions on every turn and default to
+  `acceptEdits`; a project design system (`designs/DESIGN.md`, `designs/tokens.css`) is shared.
+- Version history with a snapshot after every changing turn and crash-safe restore.
+- Pinned element comments that follow their element through edits, sent to the AI as
+  server-built, fenced snippets; tweak sliders bound to CSS variables; drag and resize written
+  back into the element's `style` with an exact undo.
+- Exports: ZIP, standalone HTML, PDF via a print view, and PPTX with editable text; "Hand off to
+  code" starts an ordinary chat with a build brief.
+- See `docs/architecture/workspace-and-ui.md` → "Design mode". Verified by
+  `tests/e2e/design-mode-e2e.mjs` at 1366 px and 390 px.
+
 ### Adaptive onboarding (0.22.3)
 
 - Adaptive onboarding: choose experience and goal, follow contextual guidance, pause/resume,

@@ -8,7 +8,7 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 | [AI Chat & Providers](architecture/ai-chat-and-providers.md) | Provider adapters, AI configuration, the persistent chat streaming session |
 | [Extension System](architecture/extensions.md) | Manifest, lifecycle, RPC, worker isolation, contribution registry, dev workflow |
 | [Data & Storage](architecture/data-and-storage.md) | SQLite schema and access, database viewer, MCP server management, group-chat model |
-| [Workspace & UI](architecture/workspace-and-ui.md) | Workspace switching, editor, terminal, git, file service, OS File Explorer, tab-host windows and Document PiP |
+| [Workspace & UI](architecture/workspace-and-ui.md) | Workspace switching, editor, terminal, git, file service, Design mode, OS File Explorer, tab-host windows and Document PiP |
 | [Integrations](architecture/integrations.md) | PPMBot Telegram coordinator, Jira watcher auto-debug |
 | [Plugins & Tracing](architecture/plugins-and-tracing.md) | *Design, not built.* The append-only session-event log (including browser errors) and the seam inventory behind "Everything is a Plugin. Every run is traceable." |
 
@@ -616,6 +616,16 @@ PPM is single-machine by design; multi-machine would require:
 | **CLI** | Config file permissions | 0600 (user read/write only) |
 | **API** | No sensitive data in logs | Token masked in debug output |
 | **CORS** | Same-origin only | WS on same host as HTTP API |
+
+**Design mode** runs AI-written HTML and scripts beside the app, with write-back to the files they
+came from, so the canvas is fenced in on both sides. The page loads from a per-design capability URL
+(`/api/design-preview/content/<token>/…`, minted and refreshed only through the authenticated API)
+into a `sandbox="allow-scripts"` iframe with an opaque origin, under a CSP whose `connect-src` is the
+design's own files. The frame talks to the app only through nonce-checked `postMessage`, and it
+can only *propose* writes: the parent requires a real user gesture and the server re-checks the
+file's gen and rate-limits. A design session is an ordinary chat session carrying a design slug,
+which gives every turn the design instructions and an `acceptEdits` default. Details:
+[Workspace & UI → Design mode](architecture/workspace-and-ui.md#design-mode).
 
 ---
 
