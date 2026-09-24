@@ -54,14 +54,16 @@ export async function stepChatToCanvas(ctx) {
   ctx.record("chat writes files and the canvas shows them", { shownAfterMs: shownAfter });
 
   assert.equal(call.step, "build");
-  assert.equal(call.permissionMode, "acceptEdits");
+  // A design chat starts in the provider's configured default like any new chat (the
+  // fixture leaves it unset, so bypassPermissions), and the session remembers that mode.
+  assert.equal(call.permissionMode, "bypassPermissions");
   assert.equal(call.designSession, true);
   assert.equal(call.designSlug, ctx.slug);
   ctx.sessionId = call.sessionId;
   const stored = (await apiJson(ctx, `/__design-test/session/${call.sessionId}`)).body;
-  assert.deepEqual(stored, { designSlug: ctx.slug, permissionMode: "acceptEdits" });
+  assert.deepEqual(stored, { designSlug: ctx.slug, permissionMode: "bypassPermissions" });
   assert.equal((await tabMetadata(ctx)).sessionId, call.sessionId);
-  ctx.record("design turn runs with acceptEdits and the design flag", stored);
+  ctx.record("design turn runs in the default permission mode with the design flag", stored);
 
   assert.ok(existsSync(designFile(ctx, ".design/.gitignore")), ".design/.gitignore exists");
   const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: ctx.harness.project, encoding: "utf8" });

@@ -14,7 +14,7 @@ const { deriveTabId, NON_POPPABLE_TAB_TYPES } = await import("../../../src/web/s
 const { isPoppableTabType } = await import("../../../src/web/stores/window-panel-persistence");
 const { TAB_TYPE_ICONS } = await import("../../../src/web/lib/tab-type-icons");
 const { buildUrl, parseUrlState, tabIdFromUrl, buildMetadataFromUrl } = await import("../../../src/web/hooks/use-url-sync");
-const { designTabMetadata, DESIGN_PERMISSION_MODE } = await import("../../../src/web/lib/design/design-tab-metadata");
+const { designTabMetadata } = await import("../../../src/web/lib/design/design-tab-metadata");
 
 const SRC = resolve(import.meta.dir, "../../../src");
 
@@ -43,7 +43,7 @@ describe("design tab registration", () => {
     expect(parsed.tabType).toBe("design");
     expect(tabIdFromUrl(parsed.tabType!, parsed.tabIdentifier)).toBe("design:landing");
     expect(buildMetadataFromUrl("design", parsed.tabIdentifier, "my project")).toEqual({
-      projectName: "my project", designSlug: "landing", providerPending: true, permissionMode: "acceptEdits",
+      projectName: "my project", designSlug: "landing", providerPending: true,
     });
   });
 
@@ -55,13 +55,11 @@ describe("design tab registration", () => {
 });
 
 describe("design tab metadata", () => {
-  it("always starts the chat in the design permission mode, matching the server default", () => {
+  it("writes no permission mode, so the chat loads the provider's configured default", () => {
     expect(designTabMetadata({ projectName: "p", designSlug: "d" })).toEqual({
-      projectName: "p", designSlug: "d", permissionMode: "acceptEdits", providerPending: true,
+      projectName: "p", designSlug: "d", providerPending: true,
     });
     expect(designTabMetadata({ projectName: "p", designSlug: "d", providerId: "codex", sessionId: "s", fresh: true }))
-      .toEqual({ projectName: "p", designSlug: "d", permissionMode: "acceptEdits", providerId: "codex", sessionId: "s", designSessionChecked: true });
-    const server = readFileSync(resolve(SRC, "services/chat.service.ts"), "utf8");
-    expect(server).toContain(`DESIGN_DEFAULT_PERMISSION_MODE = "${DESIGN_PERMISSION_MODE}"`);
+      .toEqual({ projectName: "p", designSlug: "d", providerId: "codex", sessionId: "s", designSessionChecked: true });
   });
 });

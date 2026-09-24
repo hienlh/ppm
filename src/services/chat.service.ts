@@ -28,9 +28,6 @@ function endsDesignWork(event: ChatEvent): boolean {
   return isTerminalAgentStatus(status) || status === "killed";
 }
 
-/** Project-scoped file edits auto-approved, shell and everything else asks. */
-export const DESIGN_DEFAULT_PERMISSION_MODE = "acceptEdits";
-
 class ChatService {
   // Delivery hints only: a restart/eviction safely sends a fresh snapshot.
   private sharedSnapshots = new Map<string, string>();
@@ -195,23 +192,26 @@ class ChatService {
   /**
    * Design identity for this turn, resolved here because every caller — the WebSocket, the
    * CLI, the scheduler, group chat, the bots — sends through this service, and a design
-   * session reached by any of them must get its instructions and its permission default.
+   * session reached by any of them must get its instructions.
    *
    * Instruction text is only ever built from the stored slug: anything a caller put in
    * `designInstructions`/`designSession` is discarded, so no client text reaches the
-   * system prompt. An explicit caller mode wins (the user picked it), then the mode stored
-   * for the session, then the design default.
+   * system prompt. A design session has no permission default of its own — an agent that
+   * has to read and search the project to design for it would otherwise ask on every file.
+   * An explicit caller mode wins (the user picked it), then the mode stored for the session,
+   * then the provider's configured default, exactly as for any other chat.
    */
   private async resolveDesignOptions(sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
     const { designInstructions: _instructions, designSession: _flag, ...rest } = opts ?? {};
     const { getSessionDesignSlug, getSessionPermissionMode } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);
     if (!slug || !isValidDesignSlug(slug)) return rest;
+    const permissionMode = opts?.permissionMode ?? getSessionPermissionMode(sessionId) ?? undefined;
     return {
       ...rest,
       designInstructions: buildDesignInstructions(slug),
       designSession: true,
-      permissionMode: opts?.permissionMode ?? getSessionPermissionMode(sessionId) ?? DESIGN_DEFAULT_PERMISSION_MODE,
+      ...(permissionMode ? { permissionMode } : {}),
     };
   }
 

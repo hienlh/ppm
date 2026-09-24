@@ -4,7 +4,7 @@ import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
-import { chatService, DESIGN_DEFAULT_PERMISSION_MODE } from "../../services/chat.service.ts";
+import { chatService } from "../../services/chat.service.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
@@ -12,7 +12,7 @@ import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sd
 import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
 import type { SlashItem } from "../../services/slash-discovery/types.ts";
 import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, setSessionPermissionMode, copySessionDesignSettings } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
@@ -398,10 +398,7 @@ chatRoutes.post("/sessions", async (c) => {
       title: body.title,
     });
     if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
-    if (isValidDesignSlug(designSlug)) {
-      setSessionDesignSlug(session.id, designSlug);
-      setSessionPermissionMode(session.id, DESIGN_DEFAULT_PERMISSION_MODE);
-    }
+    if (isValidDesignSlug(designSlug)) setSessionDesignSlug(session.id, designSlug);
     // The tab claimed an account when it opened and showed its name; honour that here so
     // the first message runs on the account the user was actually looking at. Advisory,
     // never authoritative: bindPickedAccount re-checks the id against the server's own

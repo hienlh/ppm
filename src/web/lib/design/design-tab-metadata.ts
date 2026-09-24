@@ -4,18 +4,12 @@
  * A design tab hosts an ordinary chat session plus the design's canvas, so its metadata is
  * a chat tab's (`sessionId`, `providerId`, `permissionMode`, ...) plus `designSlug`. Every
  * opener — the sidebar, the palette, the New Design dialog, a deep link — goes through
- * {@link designTabMetadata}, so none of them can forget the permission default or the
- * pending-provider flag.
+ * {@link designTabMetadata}, so none of them can forget the pending-provider flag.
+ *
+ * No `permissionMode` is written: the embedded chat then loads the provider's configured
+ * default exactly as a new chat tab does, because a design agent reads and searches the
+ * project constantly and a stricter mode would ask on every file.
  */
-
-/**
- * The permission mode a design chat starts in: file edits inside the project are approved,
- * everything else asks. Mirrors the server's own default for design sessions; it is written
- * into the tab because the composer sends its mode explicitly, and an explicit mode wins over
- * the session's stored one — without it the composer would load the global default (usually
- * `bypassPermissions`) and silently run the design chat in bypass.
- */
-export const DESIGN_PERMISSION_MODE = "acceptEdits";
 
 export interface DesignTabMetadataInput {
   projectName: string;
@@ -33,7 +27,6 @@ export function designTabMetadata(input: DesignTabMetadataInput): Record<string,
   return {
     projectName,
     designSlug,
-    permissionMode: DESIGN_PERMISSION_MODE,
     ...(sessionId ? { sessionId } : {}),
     ...(providerId ? { providerId } : { providerPending: true }),
     ...(fresh ? { designSessionChecked: true } : {}),

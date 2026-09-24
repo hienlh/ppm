@@ -624,7 +624,7 @@ into a `sandbox="allow-scripts"` iframe with an opaque origin, under a CSP whose
 design's own files. The frame talks to the app only through nonce-checked `postMessage`, and it
 can only *propose* writes: the parent requires a real user gesture and the server re-checks the
 file's gen and rate-limits. A design session is an ordinary chat session carrying a design slug,
-which gives every turn the design instructions and an `acceptEdits` default. Details:
+which gives every turn the design instructions; its permission mode defaults like any other chat. Details:
 [Workspace & UI → Design mode](architecture/workspace-and-ui.md#design-mode).
 
 ---

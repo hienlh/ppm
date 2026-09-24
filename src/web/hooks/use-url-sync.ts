@@ -4,7 +4,7 @@ import { useWindowStore } from "@/components/floating-window/window-store";
 import { openSettings } from "@/components/settings/open-settings";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
-import { DESIGN_PERMISSION_MODE } from "@/lib/design/design-tab-metadata";
+import { designTabMetadata } from "@/lib/design/design-tab-metadata";
 
 // ---------------------------------------------------------------------------
 // URL state types
@@ -144,7 +144,7 @@ export function buildMetadataFromUrl(
     // The URL names the design only. The provider is resolved by the design tab itself,
     // among the providers that can carry design instructions, which is why it is pending.
     case "design": return isValidDesignSlug(identifier)
-      ? { projectName, designSlug: identifier, providerPending: true, permissionMode: DESIGN_PERMISSION_MODE }
+      ? designTabMetadata({ projectName, designSlug: identifier })
       : null;
     default: return null;
   }

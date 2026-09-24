@@ -26,16 +26,16 @@ function stubProvider(id: string, events: ChatEvent[] = []): AIProvider & { seen
 describe("chatService design resolution", () => {
   beforeEach(() => getDb().run("DELETE FROM session_metadata"));
 
-  it("gives a design session its instructions and the design default mode", async () => {
+  it("gives a design session its instructions and leaves the mode to the provider default", async () => {
     providerRegistry.register(stubProvider("stub-design"));
     setSessionDesignSlug("d1", "smoke");
     const opts = await chatService.prepareSendOptions("stub-design", "d1", "hello");
     expect(opts.designSession).toBe(true);
     expect(opts.designInstructions).toContain("designs/smoke/");
-    expect(opts.permissionMode).toBe("acceptEdits");
+    expect(opts).not.toHaveProperty("permissionMode");
   });
 
-  it("prefers the mode stored for the session over the design default", async () => {
+  it("uses the mode stored for the session when the caller sends none", async () => {
     providerRegistry.register(stubProvider("stub-design"));
     setSessionDesignSlug("d2", "smoke");
     setSessionPermissionMode("d2", "default");
@@ -69,7 +69,7 @@ describe("chatService design resolution", () => {
     for await (const _ of chatService.sendMessage("stub-direct", "d4", "make it blue")) { /* consume */ }
     expect(provider.seen).toHaveLength(1);
     expect(provider.seen[0]!.designInstructions).toContain("designs/landing/");
-    expect(provider.seen[0]!.permissionMode).toBe("acceptEdits");
+    expect(provider.seen[0]!.permissionMode).toBeUndefined();
   });
 
   it("records a provider id migration so the design follows the new id", async () => {

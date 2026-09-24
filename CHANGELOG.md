@@ -4,7 +4,7 @@
 
 ### Added
 - Design mode: a Design tab with the design chat beside a live preview of what the AI builds, as a page or a slide deck, at desktop, tablet, phone or slide size; a Canvas/Chat bar on phones.
-- Design chats on Claude and Codex follow the project's design system (`designs/DESIGN.md`, `designs/tokens.css`) and ask before running anything except file edits.
+- Design chats on Claude and Codex follow the project's design system (`designs/DESIGN.md`, `designs/tokens.css`) and start in the same permission mode as any new chat.
 - Design version history: a snapshot after every AI turn that changes the design, and restore.
 - Comments pinned to elements of a design, which stay on their element through edits and go to the AI in one message.
 - Tweak sliders, colours and choices the AI declares, previewed live and applied into the design's CSS.

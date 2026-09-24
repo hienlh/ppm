@@ -5,7 +5,6 @@ import { resolveNewChatProvider } from "@/lib/new-chat-provider";
 import { listDesignProviders } from "@/lib/design/api-designs";
 import { patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { nextChatEpoch } from "@/lib/design/open-design-tab";
-import { DESIGN_PERMISSION_MODE } from "@/lib/design/design-tab-metadata";
 import type { ChatForkRequest } from "@/components/chat/chat-tab";
 import type { SessionListResponse } from "../../types/chat";
 
@@ -60,11 +59,7 @@ export function useDesignSessionState(tabId: string, metadata: Record<string, un
         const preferred = resolveNewChatProvider(settings);
         const pick = providers.find((p) => p.id === preferred) ?? providers[0];
         if (!pick) { setStatus("no-provider"); return; }
-        patchTabMetadata(tabId, {
-          providerId: pick.id,
-          providerPending: undefined,
-          permissionMode: typeof metadata.permissionMode === "string" ? metadata.permissionMode : DESIGN_PERMISSION_MODE,
-        });
+        patchTabMetadata(tabId, { providerId: pick.id, providerPending: undefined });
         return;
       }
       setStatus("ready");

@@ -18,8 +18,9 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 - A Design tab per design: the design chat beside a live, sandboxed canvas that reloads as the
   agent writes, at desktop, tablet, phone and slide frames. Desktop split, phone Canvas/Chat bar.
-- Design sessions (Claude and Codex) get design instructions on every turn and default to
-  `acceptEdits`; a project design system (`designs/DESIGN.md`, `designs/tokens.css`) is shared.
+- Design sessions (Claude and Codex) get design instructions on every turn and start in the
+  same permission mode as any new chat; a project design system (`designs/DESIGN.md`,
+  `designs/tokens.css`) is shared.
 - Version history with a snapshot after every changing turn and crash-safe restore.
 - Pinned element comments that follow their element through edits, sent to the AI as
   server-built, fenced snippets; tweak sliders bound to CSS variables; drag and resize written
