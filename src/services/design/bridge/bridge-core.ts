@@ -114,10 +114,12 @@ export function installBridgeCore(win: Window): BridgeApi {
   }
 
   win.addEventListener("message", (event: MessageEvent) => {
+    // `event.source` is set by the browser to the sender's own window, which nothing but
+    // `window.parent` itself can ever equal — so this alone authenticates the message as
+    // parent-originated, and the nonce (which the parent no longer sends anyway) adds nothing.
     if (parent === win || event.source !== parent) return;
     const m = event.data;
     if (!m || typeof m !== "object" || m.ppm !== "design-bridge" || m.v !== 1 || typeof m.type !== "string") return;
-    if (m.nonce !== nonce) return;
     const list = handlers.get(m.type);
     if (!list) return;
     for (let i = 0; i < list.length; i++) {

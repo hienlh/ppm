@@ -13,7 +13,19 @@ import type { DesignTabContextValue } from "../design-tab-context";
  * frame is recovered at most once per healthy document: an `expired` message or a load that
  * never says `ready` re-mints the token and reloads; if that fails too the canvas says so
  * instead of reloading forever.
+ *
+ * `expired` is only trusted before this load's `ready` arrives: the real expired stand-in
+ * (`expired-page.ts`) never sends one, but the actual design document could — its own script
+ * can read `?n=` off its URL — so a document that already proved itself must not be able to
+ * keep claiming its token died and loop the canvas through remints, each of which evicts
+ * another open canvas's token from the shared store.
  */
+
+/** Whether an `expired` message for the current load should trigger a remint-and-reload. */
+export function acceptsExpired(readyForCurrentLoad: boolean): boolean {
+  return !readyForCurrentLoad;
+}
+
 export function useDesignCanvas(ctx: DesignTabContextValue) {
   const { projectName, slug, design, isActive, refreshDesign } = ctx;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -38,6 +50,11 @@ export function useDesignCanvas(ctx: DesignTabContextValue) {
   }, [reload]);
 
   const bridge = useDesignBridge(iframeRef, load?.nonce ?? null, recover);
+  // Read inside the "expired" handler below instead of `bridge.ready` directly: that handler
+  // is registered in an effect that does not re-run on every render, so it would otherwise
+  // see whichever load was current the last time the effect ran.
+  const readyForLoad = useRef(false);
+  readyForLoad.current = bridge.ready !== null;
 
   // First URL: load it.
   useEffect(() => {
@@ -55,7 +72,7 @@ export function useDesignCanvas(ctx: DesignTabContextValue) {
   useEffect(() => {
     const offs = [
       bridge.on("ready", () => { recovering.current = false; setDead(false); }),
-      bridge.on("expired", recover),
+      bridge.on("expired", () => { if (acceptsExpired(readyForLoad.current)) recover(); }),
       bridge.on("scroll", (m) => { lastScroll.current = { x: m.x, y: m.y }; }),
       bridge.on("issue", (m) => setIssues((list) => list.length >= MAX_CANVAS_ISSUES ? list
         : [...list, { kind: m.kind, message: m.message, source: m.source, line: m.line }])),

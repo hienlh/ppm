@@ -3,11 +3,14 @@
  * script injected into the sandboxed design document (child, an opaque origin).
  *
  * Every message is an envelope `{ppm: BRIDGE_CHANNEL, v: BRIDGE_VERSION, nonce, type, ...}`.
- * The nonce is minted fresh by the parent for every iframe load (`?n=` on the URL) and echoed
- * by the bridge. The parent accepts a child message only when its source is the iframe's
- * `contentWindow` *and* its nonce is the current one: if the frame navigates itself to a
- * foreign page, that page is the new `contentWindow` and passes the source check, but it does
- * not have the nonce.
+ * The nonce is minted fresh by the parent for every iframe load (`?n=` on the URL) and baked
+ * into the document server-side; the bridge echoes its own copy on every message it posts.
+ * The parent accepts a child message only when its source is the iframe's `contentWindow`
+ * *and* its nonce is the current one: if the frame navigates itself to a foreign page, that
+ * page is the new `contentWindow` and passes the source check, but it never saw the nonce —
+ * unless the parent had told it, which is why parent → frame envelopes never carry one. The
+ * frame authenticates a parent message purely by `event.source`, which only `window.parent`
+ * itself can satisfy; no page running inside the frame can forge that.
  *
  * Everything the child sends is untrusted — the page's own scripts can post the same shapes.
  * The validators cap every field; later features append their own validators to the two
@@ -140,7 +143,13 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
   return parsed ? (parsed.body as ParentMessage) : null;
 }
 
-/** The envelope for a parent → frame message; envelope fields win over the payload's. */
-export function parentEnvelope(nonce: string, message: ParentMessage): BridgeEnvelope & ParentMessage {
-  return { ...message, ppm: BRIDGE_CHANNEL, v: BRIDGE_VERSION, nonce };
+/**
+ * The envelope for a parent → frame message; envelope fields win over the payload's.
+ *
+ * No nonce: the frame never needs one to trust its parent (see the module docstring), and
+ * sending one would hand it to any page the frame navigated itself to, for that page to echo
+ * straight back and forge a `ready`.
+ */
+export function parentEnvelope(message: ParentMessage): BridgeEnvelope & ParentMessage {
+  return { ...message, ppm: BRIDGE_CHANNEL, v: BRIDGE_VERSION, nonce: null };
 }

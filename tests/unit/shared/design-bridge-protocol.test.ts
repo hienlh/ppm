@@ -50,9 +50,9 @@ describe("design bridge protocol", () => {
     expect(title && title.type === "ready" && title.title.length).toBe(200);
   });
 
-  it("builds parent messages whose envelope cannot be overridden, and parses them back", () => {
-    const message = parentEnvelope(NONCE, { type: "restore-scroll", x: 1, y: 2 });
-    expect(message).toEqual({ ppm: BRIDGE_CHANNEL, v: BRIDGE_VERSION, nonce: NONCE, type: "restore-scroll", x: 1, y: 2 });
+  it("builds parent messages with no nonce, so a navigated-away frame has nothing to echo back", () => {
+    const message = parentEnvelope({ type: "restore-scroll", x: 1, y: 2 });
+    expect(message).toEqual({ ppm: BRIDGE_CHANNEL, v: BRIDGE_VERSION, nonce: null, type: "restore-scroll", x: 1, y: 2 });
     expect(parseParentMessage(message)).toEqual({ type: "restore-scroll", x: 1, y: 2 });
     expect(parseParentMessage(env("ready", ready))).toBeNull();
   });

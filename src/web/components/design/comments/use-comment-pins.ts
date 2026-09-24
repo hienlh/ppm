@@ -12,10 +12,14 @@ import type { CommentPatch } from "@/lib/design/api-design-comments";
  * back `reanchored` with the element's current id, which is only a *proposal*: it is sent
  * to the server, which re-checks it against the source. Refused (409) means the pin is
  * shown as detached for this document instead of on an element the server does not
- * recognise. Each proposal is made once per load, so a refusal cannot loop.
+ * recognise. Each proposal is made once per comment per load — keyed on the comment id
+ * alone, not on what the frame claims to have found — so a page varying its answers cannot
+ * turn one comment into an unbounded stream of PATCHes, each of which takes the design lock
+ * and re-parses the source file.
  *
  * Only comments on the page the frame is showing are sent: a multi-page design's other
- * pages would otherwise be matched by text against this one.
+ * pages would otherwise be matched by text against this one. The same list is what a
+ * proposal is checked against, so an id the frame invents outright is dropped too.
  */
 
 /** `elsewhere`: the comment is on another page of the design than the one on screen. */
@@ -24,6 +28,30 @@ export type PinStatus = "pinned" | "moved" | "detached" | "pending" | "elsewhere
 export interface CommentPins {
   rects: ReadonlyMap<string, PinRect>;
   statusOf: (id: string) => PinStatus;
+}
+
+interface ReanchoredPin { id: string; ppmId: number | null; gen: string | null; reanchored?: boolean }
+export interface ReanchorProposal { id: string; ppmId: number; gen: string }
+
+/**
+ * The re-anchor proposals worth acting on from one `pins-rects` reply: at most one per
+ * comment id, and only for ids this load actually asked the frame to pin. `proposed` is the
+ * caller's per-load dedupe set, mutated in place so a later call for the same load sees what
+ * an earlier one already accepted.
+ */
+export function pickReanchorProposals(
+  pins: readonly ReanchoredPin[],
+  validIds: ReadonlySet<string>,
+  proposed: Set<string>,
+): ReanchorProposal[] {
+  const out: ReanchorProposal[] = [];
+  for (const p of pins) {
+    if (!p.reanchored || p.ppmId === null || !p.gen) continue;
+    if (!validIds.has(p.id) || proposed.has(p.id)) continue;
+    proposed.add(p.id);
+    out.push({ id: p.id, ppmId: p.ppmId, gen: p.gen });
+  }
+  return out;
 }
 
 export function useCommentPins(
@@ -46,6 +74,11 @@ export function useCommentPins(
   );
   const openRef = useRef(open);
   openRef.current = open;
+  // Read inside the "pins-rects" handler below instead of `pins` directly: that handler is
+  // registered in an effect that does not re-run on every render, so closing over `pins`
+  // there would see whichever page was current the last time the effect ran.
+  const pinsRef = useRef(pins);
+  pinsRef.current = pins;
 
   useEffect(() => { send({ type: "pins-set", pins }); }, [send, pins]);
 
@@ -60,14 +93,11 @@ export function useCommentPins(
       }),
       bridge.on("pins-rects", (m) => {
         setRects(new Map(m.pins.map((p) => [p.id, p])));
-        for (const p of m.pins) {
-          if (!p.reanchored || p.ppmId === null || !p.gen) continue;
-          const key = `${p.id}:${p.ppmId}:${p.gen}`;
-          if (proposed.current.has(key)) continue;
-          proposed.current.add(key);
-          updateRef.current(p.id, { anchor: { ppmId: p.ppmId, gen: p.gen } })
-            .then(() => setMoved((s) => new Set(s).add(p.id)))
-            .catch(() => setRefused((s) => new Set(s).add(p.id)));
+        const validIds = new Set(pinsRef.current.map((p) => p.id));
+        for (const proposal of pickReanchorProposals(m.pins, validIds, proposed.current)) {
+          updateRef.current(proposal.id, { anchor: { ppmId: proposal.ppmId, gen: proposal.gen } })
+            .then(() => setMoved((s) => new Set(s).add(proposal.id)))
+            .catch(() => setRefused((s) => new Set(s).add(proposal.id)));
         }
       }),
     ];

@@ -94,15 +94,17 @@ describe("bridge core", () => {
     expect(ofType(h, "ready")[0]!.nonce).toBeNull();
   });
 
-  it("applies restore-scroll from the parent and ignores it from anyone else", () => {
+  it("applies restore-scroll from the parent regardless of nonce, and ignores it from anyone else", () => {
     const h = boot("<div style=\"height:5000px\"></div>");
     const msg = { ppm: "design-bridge", v: 1, nonce: NONCE, type: "restore-scroll", x: 0, y: 300 };
-    h.send(msg, h.win);
-    h.send(msg, { postMessage() {} });
-    h.send({ ...msg, nonce: "zzzzzzzzzzzzzzzz" });
-    h.send({ ...msg, ppm: "other" });
+    h.send(msg, h.win); // wrong source: the document itself is not its own parent
+    h.send(msg, { postMessage() {} }); // wrong source: an unrelated window
+    h.send({ ...msg, ppm: "other" }); // wrong channel
     expect(h.win.scrollY).toBe(0);
-    h.send(msg);
+    // The parent never sends a nonce (see parentEnvelope), so the frame no longer checks one
+    // inbound: only `event.source === parent` authenticates a parent message, which nothing
+    // running inside the frame — including a page it navigated itself to — can forge.
+    h.send({ ...msg, nonce: "zzzzzzzzzzzzzzzz" });
     expect(h.win.scrollY).toBe(300);
   });
 

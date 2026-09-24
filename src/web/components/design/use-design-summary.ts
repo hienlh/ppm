@@ -8,6 +8,26 @@ export type DesignSummaryState =
   | { status: "missing" }
   | { status: "error"; message: string };
 
+export type DesignFetchResult =
+  | { ok: true; design: DesignSummary }
+  | { ok: false; notFound: true }
+  | { ok: false; notFound: false; message: string };
+
+/**
+ * The state after one fetch, given what was on screen before it.
+ *
+ * A design already showing (`ready`) stays on screen through a transient refresh failure —
+ * a network blip, a server restart mid-request — instead of the tab replacing the chat and
+ * canvas with an empty state and losing whatever the user was doing. Only a 404, or a failure
+ * before anything ever loaded, counts as truly missing or erroring.
+ */
+export function nextSummaryState(previous: DesignSummaryState, result: DesignFetchResult): DesignSummaryState {
+  if (result.ok) return { status: "ready", design: result.design };
+  if (result.notFound) return { status: "missing" };
+  if (previous.status === "ready") return previous;
+  return { status: "error", message: result.message };
+}
+
 /**
  * The design's manifest, refetched on demand (a `design.json` change, a rename).
  *
@@ -24,11 +44,17 @@ export function useDesignSummary(projectName: string, slug: string) {
     if (!projectName || !slug) { setState({ status: "missing" }); return; }
     const request = ++latest.current;
     getDesign(projectName, slug)
-      .then((design) => { if (request === latest.current) setState({ status: "ready", design }); })
+      .then((design) => { if (request === latest.current) setState((prev) => nextSummaryState(prev, { ok: true, design })); })
       .catch((e: Error & { status?: number }) => {
         if (request !== latest.current) return;
         const notFound = e.status === 404 || /not found/i.test(e.message ?? "");
-        setState(notFound ? { status: "missing" } : { status: "error", message: e.message || "Could not load the design" });
+        setState((prev) => {
+          const next = nextSummaryState(prev, notFound
+            ? { ok: false, notFound: true }
+            : { ok: false, notFound: false, message: e.message || "Could not load the design" });
+          if (next === prev) console.warn(`[design] summary refresh for ${slug} failed, keeping the loaded design: ${e.message}`);
+          return next;
+        });
       });
   }, [projectName, slug, version]);
 

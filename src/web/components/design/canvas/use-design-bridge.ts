@@ -8,11 +8,14 @@ import {
  * The parent side of the design bridge: which frame messages are believed, how to talk
  * back, and what to redo every time the frame starts over.
  *
- * A message is accepted only when it comes from the iframe's current `contentWindow` AND
- * carries the nonce minted for the current load. The source check alone is not enough: a
- * frame that navigated itself to a foreign page is still the same `contentWindow`, but that
- * page never saw the nonce. A stale nonce (a message from the document before a reload) is
- * dropped the same way.
+ * A message from the frame is accepted only when it comes from the iframe's current
+ * `contentWindow` AND carries the nonce minted for the current load. The source check alone
+ * is not enough: a frame that navigated itself to a foreign page is still the same
+ * `contentWindow`, but that page never saw the nonce — parent → frame messages never carry
+ * one (see `design-bridge-protocol.ts`), and none goes out at all while the frame looks dead
+ * (loaded but not yet proven itself with `ready`), which is the only window such a page could
+ * otherwise use to snoop one off the wire and echo it back to forge its own `ready`. A stale
+ * nonce (a message from the document before a reload) is dropped the same way.
  *
  * Every `ready` is a brand-new document — a live reload, a token rotation, or the tab pool
  * moving the tab to another panel (which reloads any iframe it reparents). Features register
@@ -102,9 +105,12 @@ export function useDesignBridge(
 
   const send = useCallback<BridgeSend>((message) => {
     const win = iframeRef.current?.contentWindow;
-    const current = nonceRef.current;
-    if (!win || !current) return false;
-    const envelope = parentEnvelope(current, message);
+    if (!win || !nonceRef.current) return false;
+    // A load that fired `load` without a `ready` yet might already be showing a page the
+    // frame navigated itself to. Nothing goes out until the real document proves itself, or
+    // there would be a window where a parent message reaches that foreign page instead.
+    if (frameLooksDead(counts.current.loads, counts.current.readies)) return false;
+    const envelope = parentEnvelope(message);
     // Validated before it leaves, so a feature cannot post a shape the bridge would reject.
     if (!parseParentMessage(envelope)) return false;
     // "*": the frame's origin is opaque, and nothing sensitive ever goes this way.
