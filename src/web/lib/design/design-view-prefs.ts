@@ -1,8 +1,9 @@
 import { isDeviceFrameId, type DeviceFrameId } from "@/components/design/canvas/device-frame-presets";
+import { isDesignLayoutOverride, type DesignLayoutOverride } from "./design-layout-mode";
 
 /**
- * How this device likes its design tabs laid out: the chat pane's share of the split and
- * the device frame last chosen per design.
+ * How this device likes its design tabs laid out: the layout picked from the toolbar's
+ * menu, the chat pane's share of the split and the device frame last chosen per design.
  *
  * Device-local on purpose (plain localStorage, never the server prefs): a desktop that
  * likes a wide chat and a Tablet frame says nothing about what a phone should show.
@@ -18,13 +19,14 @@ export const MAX_CHAT_PERCENT = 70;
 export const MAX_REMEMBERED_FRAMES = 50;
 
 export interface DesignViewPrefs {
+  layout: DesignLayoutOverride;
   chatPercent: number;
   /** `<project>/<slug>` → frame, oldest first. */
   frames: Record<string, DeviceFrameId>;
 }
 
 export function defaultDesignViewPrefs(): DesignViewPrefs {
-  return { chatPercent: DEFAULT_CHAT_PERCENT, frames: {} };
+  return { layout: "auto", chatPercent: DEFAULT_CHAT_PERCENT, frames: {} };
 }
 
 export function clampChatPercent(value: unknown): number {
@@ -48,7 +50,8 @@ export function parseDesignViewPrefs(raw: string | null): DesignViewPrefs {
       .filter((e): e is [string, DeviceFrameId] => e[0].length <= 300 && isDeviceFrameId(e[1]));
     for (const [key, frame] of entries.slice(-MAX_REMEMBERED_FRAMES)) frames[key] = frame;
   }
-  return { chatPercent: clampChatPercent(obj.chatPercent), frames };
+  const layout = isDesignLayoutOverride(obj.layout) ? obj.layout : "auto";
+  return { layout, chatPercent: clampChatPercent(obj.chatPercent), frames };
 }
 
 export function designFrameKey(projectName: string, slug: string): string {
@@ -64,6 +67,10 @@ export function withFrame(prefs: DesignViewPrefs, key: string, frame: DeviceFram
 
 export function withChatPercent(prefs: DesignViewPrefs, percent: number): DesignViewPrefs {
   return { ...prefs, chatPercent: clampChatPercent(percent) };
+}
+
+export function withLayout(prefs: DesignViewPrefs, layout: DesignLayoutOverride): DesignViewPrefs {
+  return { ...prefs, layout };
 }
 
 export function loadDesignViewPrefs(): DesignViewPrefs {

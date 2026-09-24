@@ -1,7 +1,7 @@
 import type { ElementType, ReactNode } from "react";
 import {
-  Code, Download, History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move, Presentation, RefreshCw,
-  SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
+  Code, Columns2, Download, History, Maximize2, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
+  Presentation, RefreshCw, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -18,6 +18,7 @@ import type { CanvasTransformFeature } from "./transform/use-canvas-transform";
 import type { DesignUndoFeature } from "./transform/design-undo-stack";
 import type { DesignExportFeature } from "./export/use-design-export";
 import { ExportMenuButton } from "./export/export-menu";
+import { DesignLayoutMenu, DesignPaneSwitch } from "./design-layout-controls";
 
 /**
  * The canvas toolbar and its registry.
@@ -114,6 +115,20 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     id: "handoff", label: "Hand off to code", icon: Code, placement: "more",
     run: (ctx) => ctx.exports.handOff(),
   },
+  {
+    // The canvas over the whole window; the chat keeps running underneath.
+    id: "expand", label: "Expand canvas", icon: Maximize2, placement: "bar",
+    isActive: (ctx) => ctx.layout.expanded,
+    run: (ctx) => ctx.layout.setExpanded(!ctx.layout.expanded),
+  },
+  {
+    // Desktop only, as a menu of its own: a phone always shows one pane. Hidden while the
+    // canvas is expanded, where hiding the canvas pane would take the expanded view with it.
+    id: "layout", label: "Layout", icon: Columns2, placement: "bar",
+    isHidden: (ctx) => ctx.isMobile || ctx.layout.expanded,
+    renderBar: (ctx, className) => <DesignLayoutMenu key="layout" layout={ctx.layout} className={className} />,
+    run: (ctx) => ctx.layout.setOverride("auto"),
+  },
 ];
 
 export const visibleItems = (ctx: DesignToolbarContext) => DESIGN_TOOLBAR_ITEMS.filter((i) => !i.isHidden?.(ctx));
@@ -139,7 +154,8 @@ export function DesignToolbar({ ctx }: { ctx: DesignToolbarContext }) {
   const bar = items.filter((i) => i.placement === "bar");
   const more = items.filter((i) => i.placement === "more");
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2">
+    <div className="flex min-h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2">
+      {ctx.layout.switcher === "toolbar" && <DesignPaneSwitch layout={ctx.layout} />}
       <div role="radiogroup" aria-label="Device frame" className="flex items-center gap-0.5">
         {DEVICE_FRAMES.map((f) => {
           const Icon = FRAME_ICONS[f.id];

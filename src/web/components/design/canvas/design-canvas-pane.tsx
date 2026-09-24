@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw } from "@/lib/icons";
+import { Loader2, Minimize2, RefreshCw } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { cn } from "@/lib/utils";
 import {
@@ -25,6 +25,7 @@ import { ExportSheet } from "../export/export-menu";
 import { ExportWarningsSheet } from "../export/export-warnings-sheet";
 import { useDesignCanvasCheckResponder } from "./use-design-canvas-check";
 import { useDesignAutoCheck } from "../use-design-auto-check";
+import { useExpandedCanvasEscape } from "./use-expanded-canvas-escape";
 
 /**
  * The live canvas: the design's entry page in a sandboxed iframe, sized to the chosen
@@ -91,6 +92,9 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   const layoutIssues = useDesignAutoCheck({ tab, bridge: canvas.bridge, context: checkContext });
   const allIssues = useMemo(() => [...canvas.issues, ...layoutIssues], [canvas.issues, layoutIssues]);
 
+  const { expanded, setExpanded } = tab.layout;
+  useExpandedCanvasEscape(expanded, () => setExpanded(false), () => comments.picker.on);
+
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
     ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports,
   }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports]);
@@ -101,7 +105,11 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    // Expanding only restyles this element: `fixed` lifts it over the whole window from where
+    // it stands, where moving it to a portal would reload the iframe. Above the mobile nav
+    // (z-40), below dialogs, sheets and toasts (z-50 and up).
+    <div className={cn("flex h-full min-h-0 flex-col bg-background",
+      expanded && "fixed inset-0 z-[45] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]")}>
       {!tab.isMobile && <DesignToolbar ctx={toolbarCtx} />}
       <div className="flex min-h-0 flex-1">
         {/* Focusable in Move mode, so arrow keys pressed here nudge the selected element. */}
@@ -144,6 +152,12 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
             </div>
           )}
           <DesignIssuesBadge issues={allIssues} className="absolute right-2 top-2" />
+          {expanded && (
+            <button type="button" onClick={() => setExpanded(false)}
+              className="absolute left-2 top-2 z-30 flex min-h-8 items-center gap-1.5 rounded-md border border-border bg-popover px-2.5 text-xs font-medium shadow-md hover:bg-surface-elevated pointer-coarse:min-h-11 pointer-coarse:px-3">
+              <Minimize2 className="size-3.5" /> Exit full view
+            </button>
+          )}
           {canvas.src && (
             <DesignCommentsOverlay feature={comments} fit={fit} stage={stage} isMobile={tab.isMobile} selectionHint={transform.hint} />
           )}

@@ -1,5 +1,15 @@
 import { createContext, useContext } from "react";
 import type { DesignSummary } from "../../../shared/design-types";
+import type { DesignLayout, DesignLayoutOverride, DesignPane } from "@/lib/design/design-layout-mode";
+
+/** The tab's layout as resolved for its width, and the ways to change it. */
+export interface DesignLayoutControls extends DesignLayout {
+  /** Picks a layout from the menu and remembers it on this device. */
+  setOverride: (layout: DesignLayoutOverride) => void;
+  /** Which pane a single-pane layout shows; not remembered. */
+  setPane: (pane: DesignPane) => void;
+  setExpanded: (expanded: boolean) => void;
+}
 
 /**
  * What every part of a design tab shares: which design, which tab, which session, and the
@@ -17,7 +27,10 @@ export interface DesignTabContextValue {
   isStreaming: boolean;
   /** True while this tab is the visible tab of its panel. */
   isActive: boolean;
+  /** Phone viewport; a narrow tab on a desktop is not one (see `layout`). */
   isMobile: boolean;
+  layout: DesignLayoutControls;
+  /** Brings the chat into view: leaves the expanded canvas and, in one pane, switches to it. */
   showChat: () => void;
   refreshDesign: () => void;
 }

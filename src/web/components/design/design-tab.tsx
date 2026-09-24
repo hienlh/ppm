@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { Loader2, Palette } from "@/lib/icons";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { usePanelStore } from "@/stores/panel-store";
@@ -10,8 +10,8 @@ import { DESIGNS_CHANGED_EVENT } from "@/lib/design/design-ui-events";
 import { DesignTabContext, type DesignTabContextValue } from "./design-tab-context";
 import { DesignChatPane } from "./design-chat-pane";
 import { DesignCanvasPane } from "./canvas/design-canvas-pane";
-import { DesignSplitLayout } from "./design-split-layout";
-import { DesignMobileLayout, type DesignMobilePane } from "./design-mobile-layout";
+import { DesignTabLayout } from "./design-split-layout";
+import { useDesignLayout } from "./use-design-layout";
 import { useDesignSummary } from "./use-design-summary";
 
 /**
@@ -47,8 +47,8 @@ function DesignTabBody({ tabId, metadata, design, refreshDesign }: {
 }) {
   const isMobile = useIsMobile();
   const session = useDesignSessionState(tabId, metadata);
-  const [pane, setPane] = useState<DesignMobilePane>("canvas");
   const isActive = usePanelStore((s) => Object.values(s.panels).some((p) => p.activeTabId === tabId));
+  const { rootRef, layout, showChat } = useDesignLayout({ isPhone: isMobile, isActive });
   const isStreaming = useStreamingStore((s) => (session.sessionId ? s.sessions.has(session.sessionId) : false));
   const projectName = String(metadata.projectName);
 
@@ -58,10 +58,9 @@ function DesignTabBody({ tabId, metadata, design, refreshDesign }: {
     if (tab && tab.title !== design.title) usePanelStore.getState().updateTab(tabId, { title: design.title });
   }, [tabId, design.title]);
 
-  const showChat = useCallback(() => setPane("chat"), []);
   useEffect(() => {
     const onShow = (e: Event) => {
-      if ((e as CustomEvent<DesignShowChatDetail>).detail?.tabId === tabId) setPane("chat");
+      if ((e as CustomEvent<DesignShowChatDetail>).detail?.tabId === tabId) showChat();
     };
     // A rename from the sidebar changes the manifest; the watcher only reports it while this
     // project is the active one, so the announcement is the reliable signal.
@@ -74,26 +73,23 @@ function DesignTabBody({ tabId, metadata, design, refreshDesign }: {
       window.removeEventListener(DESIGN_SHOW_CHAT_EVENT, onShow);
       window.removeEventListener(DESIGNS_CHANGED_EVENT, onDesignsChanged);
     };
-  }, [tabId, projectName, refreshDesign]);
+  }, [tabId, projectName, refreshDesign, showChat]);
 
   const ctx = useMemo<DesignTabContextValue>(() => ({
     projectName, slug: design.slug, tabId, design, sessionId: session.sessionId,
-    isStreaming, isActive, isMobile, showChat, refreshDesign,
-  }), [projectName, design, tabId, session.sessionId, isStreaming, isActive, isMobile, showChat, refreshDesign]);
+    isStreaming, isActive, isMobile, layout, showChat, refreshDesign,
+  }), [projectName, design, tabId, session.sessionId, isStreaming, isActive, isMobile, layout, showChat, refreshDesign]);
 
-  const chat = <DesignChatPane tabId={tabId} metadata={metadata} session={session} />;
+  // One layout for every width and device: swapping layout components would remount (and
+  // so reload) the canvas and drop the chat's socket.
   return (
     <DesignTabContext.Provider value={ctx}>
-      {isMobile ? (
-        <DesignMobileLayout
-          pane={pane}
-          onPaneChange={setPane}
-          chat={chat}
-          canvas={(more) => <DesignCanvasPane moreOpen={more.open} onMoreClose={more.onClose} />}
-        />
-      ) : (
-        <DesignSplitLayout chat={chat} canvas={<DesignCanvasPane />} />
-      )}
+      <DesignTabLayout
+        rootRef={rootRef}
+        layout={layout}
+        chat={<DesignChatPane tabId={tabId} metadata={metadata} session={session} />}
+        canvas={(more) => <DesignCanvasPane moreOpen={more.open} onMoreClose={more.onClose} />}
+      />
     </DesignTabContext.Provider>
   );
 }
