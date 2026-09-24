@@ -1,7 +1,7 @@
 import type { ElementType } from "react";
 import {
-  History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Presentation, RefreshCw, SlidersHorizontal, Smartphone,
-  Sparkles, Tablet,
+  History, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move, Presentation, RefreshCw, SlidersHorizontal, Smartphone,
+  Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -14,6 +14,8 @@ import type { DesignTabContextValue } from "./design-tab-context";
 import type { DesignCanvasState } from "./canvas/use-design-canvas";
 import type { DesignCommentsFeature } from "./comments/use-design-comments-feature";
 import type { DesignTweaksFeature } from "./tweaks/use-design-tweaks";
+import type { CanvasTransformFeature } from "./transform/use-canvas-transform";
+import type { DesignUndoFeature } from "./transform/design-undo-stack";
 
 /**
  * The canvas toolbar and its registry.
@@ -32,6 +34,8 @@ export interface DesignToolbarContext extends DesignTabContextValue {
   toggleHistory: () => void;
   comments: DesignCommentsFeature;
   tweaks: DesignTweaksFeature;
+  transform: CanvasTransformFeature;
+  undo: DesignUndoFeature;
 }
 
 export interface DesignToolbarItem {
@@ -79,6 +83,19 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     isActive: (ctx) => ctx.tweaks.panelOpen,
     badge: (ctx) => ctx.tweaks.dirtyCount || null,
     run: (ctx) => ctx.tweaks.togglePanel(),
+  },
+  {
+    // Writes need element ids and a quiet chat: an agent editing the same file would race it.
+    id: "move", label: "Move and resize", icon: Move, placement: "bar",
+    isActive: (ctx) => ctx.transform.moveOn,
+    isDisabled: (ctx) => !ctx.transform.moveOn && ctx.transform.disabled,
+    run: (ctx) => ctx.transform.toggle(),
+  },
+  {
+    // Reverts the newest canvas write only, exactly; AI turns since then stay.
+    id: "undo", label: "Undo canvas edit", icon: Undo2, placement: "bar",
+    isDisabled: (ctx) => !ctx.undo.canUndo,
+    run: (ctx) => ctx.undo.undo(),
   },
 ];
 

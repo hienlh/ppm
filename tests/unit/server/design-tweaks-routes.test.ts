@@ -65,7 +65,7 @@ describe("design tweak routes", () => {
     expect(res.status).toBe(200);
     const { data } = await res.json();
     expect(html()).toBe(PAGE.replace("#111111", "#6366f1"));
-    expect(data).toEqual({ gens: { "index.html": computeGen(html()) } });
+    expect(data).toEqual({ gens: { "index.html": computeGen(html()) }, undoId: expect.stringMatching(/^[0-9a-f]{16}$/) });
   });
 
   it("answers a stale gen with 409 naming the file and its current gen", async () => {

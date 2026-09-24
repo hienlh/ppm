@@ -18,9 +18,11 @@ import { barPosition } from "./comment-overlay-geometry";
 interface Actions {
   onComment: () => void;
   onSend: () => void;
+  /** Shown with the selected element, e.g. "Created by a script, so it cannot be moved". */
+  hint?: string | null;
 }
 
-export function ElementActionBar({ picker, isMobile, fit, stage, onComment, onSend }: Actions & {
+export function ElementActionBar({ picker, isMobile, fit, stage, onComment, onSend, hint }: Actions & {
   picker: ElementPicker;
   isMobile: boolean;
   fit: FrameFit;
@@ -50,6 +52,7 @@ export function ElementActionBar({ picker, isMobile, fit, stage, onComment, onSe
         {selected ? (
           <>
             <p className="truncate px-1 pb-1 text-xs text-text-subtle">&lt;{selected.tag}&gt; {selected.text}</p>
+            {hint && <p className="px-1 pb-1 text-xs text-warning">{hint}</p>}
             <div className="grid grid-cols-4 gap-2">
               {buttons.map((b) => (
                 <button key={b.label} type="button" onClick={b.run}
@@ -88,6 +91,7 @@ export function ElementActionBar({ picker, isMobile, fit, stage, onComment, onSe
       className="absolute z-20 flex items-center gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-lg"
       style={{ left: at.left, top: at.top }}>
       <span className="max-w-32 truncate px-2 font-mono text-xs text-text-subtle">&lt;{selected.tag}&gt;</span>
+      {hint && <span className="max-w-64 truncate px-1 text-xs text-warning" title={hint}>{hint}</span>}
       {buttons.map((b) => (
         <button key={b.label} type="button" onClick={b.run} title={b.label}
           className={cn("flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-text-2 hover:bg-surface-elevated hover:text-foreground",

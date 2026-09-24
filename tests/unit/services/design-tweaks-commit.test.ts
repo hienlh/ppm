@@ -8,6 +8,8 @@ import { commitTweaks, readDesignTweaks, StaleTweakGenError } from "../../../src
 import { listSnapshots } from "../../../src/services/design/design-snapshots.service.ts";
 import { computeGen } from "../../../src/services/design/source/design-source-file.ts";
 import { TWEAK_INJECTIONS } from "../../fixtures/design-tweak-injections.ts";
+import { undoEdit } from "../../../src/services/design/design-edit-undo-journal.ts";
+import { designWriteClock, resetDesignWriteLimits } from "../../../src/services/design/design-write-rate-limit.ts";
 
 const PAGE = '<!doctype html><html><head><style>:root { --accent: #111111; }</style><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="../tokens.css"></head><body><h1>Hi</h1></body></html>';
 const THEME = ":root {\n  --radius: 4px;\n}\n.card { border-radius: var(--radius); }\n";
@@ -27,7 +29,12 @@ describe("commitTweaks", () => {
   const commit = (values: Record<string, string>, over: Record<string, unknown> = {}) =>
     commitTweaks(project, "home", { entry: "index.html", gens: gens(), values, ...over });
 
+  const realNow = designWriteClock.now;
   beforeEach(async () => {
+    resetDesignWriteLimits();
+    let now = 1_000_000;
+    // Writes a second apart: the canvas write limit is covered by its own tests.
+    designWriteClock.now = () => (now += 1000);
     project = realpathSync(mkdtempSync(join(tmpdir(), "ppm-design-tweaks-")));
     await createDesign(project, { title: "Home", kind: "page" });
     dir = join(project, "designs", "home");
@@ -37,7 +44,10 @@ describe("commitTweaks", () => {
     const manifest = JSON.parse(read("design.json"));
     writeFileSync(join(dir, "design.json"), JSON.stringify({ ...manifest, tweaks: [...TWEAKS, { id: "bad" }] }));
   });
-  afterEach(() => rmSync(project, { recursive: true, force: true }));
+  afterEach(() => {
+    designWriteClock.now = realNow;
+    rmSync(project, { recursive: true, force: true });
+  });
 
   it("reads the declared tweaks and the reasons for skipped ones", async () => {
     const info = await readDesignTweaks(project, "home");
@@ -52,6 +62,7 @@ describe("commitTweaks", () => {
     expect(read("index.html")).toBe(before.html.replace("#111111", "#6366f1"));
     expect(read("theme.css")).toBe(`${THEME.replace("4px", "12px")}\n:root {\n  --gap: 16px;\n}\n`);
     expect(out.gens).toEqual(gens());
+    expect(out.undoId).toMatch(/^[0-9a-f]{16}$/);
     expect(read("../tokens.css")).toBe(":root { --shared: #999999; }\n");
     const history = await listSnapshots(project, "home");
     expect(history.map((s) => s.reason)).toEqual(["before-edit"]);
@@ -90,6 +101,24 @@ describe("commitTweaks", () => {
   it("refuses a variable that the shared tokens.css sets last", async () => {
     await expect(commit({ "--shared": "#6366f1" })).rejects.toMatchObject({ status: 422 });
     expect(read("../tokens.css")).toBe(":root { --shared: #999999; }\n");
+  });
+
+  it("undoes an Apply exactly: the :root value comes back and a later edit elsewhere stays", async () => {
+    const out = await commit({ "--radius": "12px" });
+    const later = `${read("theme.css")}.later { color: teal; }\n`;
+    writeFileSync(join(dir, "theme.css"), later);
+    await undoEdit(project, "home", out.undoId);
+    expect(read("theme.css")).toBe(`${THEME}.later { color: teal; }\n`);
+    expect(read("index.html")).toBe(PAGE);
+  });
+
+  it("counts a commit that writes against the canvas write limit, and one that writes nothing not at all", async () => {
+    const t = 5_000_000;
+    designWriteClock.now = () => t;
+    await commit({ "--accent": "#6366f1" });
+    await expect(commit({ "--radius": "20px" })).rejects.toMatchObject({ status: 429 });
+    // Already in place: nothing is written, so nothing is counted or refused.
+    await expect(commit({ "--accent": "#6366f1" })).resolves.toMatchObject({ undoId: null });
   });
 
   it("serialises concurrent commits under the design lock", async () => {

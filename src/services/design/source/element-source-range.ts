@@ -35,7 +35,7 @@ const PARSE5_ACCESS: TreeAccess<Node> = {
   tag: (n) => (isElement(n) ? n.tagName.toLowerCase() : null),
 };
 
-function findByStartOffset(root: Node, offset: number): Element | null {
+export function findByStartOffset(root: Node, offset: number): Element | null {
   // Iterative, so a pathologically deep document cannot overflow the stack.
   const stack: Node[] = [root];
   while (stack.length) {

@@ -16,6 +16,9 @@ import { useDesignCommentsFeature } from "../comments/use-design-comments-featur
 import { DesignCommentsOverlay, DesignCommentsSidePanel } from "../comments/design-comments-layer";
 import { useDesignTweaks } from "../tweaks/use-design-tweaks";
 import { TweaksPanel } from "../tweaks/tweaks-panel";
+import { useCanvasTransform } from "../transform/use-canvas-transform";
+import { useDesignUndo } from "../transform/design-undo-stack";
+import { TransformReadout } from "../transform/transform-readout";
 
 /**
  * The live canvas: the design's entry page in a sandboxed iframe, sized to the chosen
@@ -68,9 +71,17 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
     setHistoryOpen(!historyOpen);
   }, [historyOpen, closeComments, closeTweaks]);
 
+  const transform = useCanvasTransform(tab, canvas.bridge, comments.picker, fit.scale, canvas.reload);
+  const openHistory = useCallback(() => {
+    closeComments();
+    closeTweaks();
+    setHistoryOpen(true);
+  }, [closeComments, closeTweaks]);
+  const undo = useDesignUndo(tab, { openHistory });
+
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
-    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks,
-  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks]);
+    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo,
+  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo]);
   const tweaksPanel = tweaks.panelOpen && <TweaksPanel feature={tweaks} tabId={tab.tabId} slug={tab.slug} />;
 
   const history = historyOpen && (
@@ -81,7 +92,10 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
     <div className="flex h-full min-h-0 flex-col bg-background">
       {!tab.isMobile && <DesignToolbar ctx={toolbarCtx} />}
       <div className="flex min-h-0 flex-1">
-        <div ref={stageRef} className={cn("relative min-w-0 flex-1 overflow-hidden", framed && "bg-surface-elevated/40")}>
+        {/* Focusable in Move mode, so arrow keys pressed here nudge the selected element. */}
+        <div ref={stageRef} className={cn("relative min-w-0 flex-1 overflow-hidden outline-none", framed && "bg-surface-elevated/40")}
+          tabIndex={transform.moveOn ? 0 : undefined} onKeyDown={transform.onPaneKeyDown}
+          aria-label={transform.moveOn ? "Canvas: arrow keys move the selected element" : undefined}>
           {canvas.src && (
             <div
               className={cn("absolute left-1/2 top-1/2 origin-center", framed && "rounded-md shadow-lg ring-1 ring-border")}
@@ -118,7 +132,10 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
             </div>
           )}
           <DesignIssuesBadge issues={canvas.issues} className="absolute right-2 top-2" />
-          {canvas.src && <DesignCommentsOverlay feature={comments} fit={fit} stage={stage} isMobile={tab.isMobile} />}
+          {canvas.src && (
+            <DesignCommentsOverlay feature={comments} fit={fit} stage={stage} isMobile={tab.isMobile} selectionHint={transform.hint} />
+          )}
+          {canvas.src && <TransformReadout feature={transform} isMobile={tab.isMobile} />}
         </div>
         {!tab.isMobile && history && <div className="w-72 shrink-0 border-l border-border">{history}</div>}
         {!tab.isMobile && comments.panelOpen && (

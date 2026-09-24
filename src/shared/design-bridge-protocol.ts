@@ -17,6 +17,7 @@
 import { DESIGN_GEN_RE } from "./design-types";
 import { PICKER_CHILD_VALIDATORS, PICKER_PARENT_VALIDATORS } from "./design-bridge-messages-picker";
 import { TWEAK_CHILD_VALIDATORS, TWEAK_PARENT_VALIDATORS } from "./design-bridge-messages-tweaks";
+import { TRANSFORM_CHILD_VALIDATORS, TRANSFORM_PARENT_VALIDATORS } from "./design-bridge-messages-transform";
 
 export { DESIGN_GEN_RE };
 
@@ -98,11 +99,13 @@ export const CHILD_VALIDATORS = {
   ...CORE_CHILD_VALIDATORS,
   ...PICKER_CHILD_VALIDATORS,
   ...TWEAK_CHILD_VALIDATORS,
+  ...TRANSFORM_CHILD_VALIDATORS,
 };
 export const PARENT_VALIDATORS = {
   ...CORE_PARENT_VALIDATORS,
   ...PICKER_PARENT_VALIDATORS,
   ...TWEAK_PARENT_VALIDATORS,
+  ...TRANSFORM_PARENT_VALIDATORS,
 };
 
 type Validated<R> = { [K in keyof R]: R[K] extends Validator<infer T> ? T : never }[keyof R];

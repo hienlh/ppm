@@ -3,9 +3,13 @@ import { installNavGuard } from "./bridge-nav-guard.ts";
 import { installPicker } from "./bridge-picker.ts";
 import { installPins } from "./bridge-pins.ts";
 import { installTweaks } from "./bridge-tweaks.ts";
+import { installTransform } from "./bridge-transform.ts";
 import { anchorOf, cssPathOf, describeElement, domTreeAccess, elementQuote } from "./bridge-element-info.ts";
 import { diceSimilarity, resolveAnchor } from "./bridge-anchor-resolve.ts";
 import { createPickerOverlay } from "./bridge-picker-overlay.ts";
+import { applyDrag, formatPx, parseTranslate, zoneAt } from "./bridge-transform-math.ts";
+import { createTransformOverlay } from "./bridge-transform-overlay.ts";
+import { createTransformStyle } from "./bridge-transform-style.ts";
 
 /**
  * The bridge script injected as the first child of a design document's `<head>`.
@@ -24,9 +28,13 @@ export type BridgeFeature = (ppm: BridgeApi) => void;
 
 export const BRIDGE_LIB: BridgeLib = {
   elementQuote, domTreeAccess, cssPathOf, anchorOf, describeElement, diceSimilarity, resolveAnchor, createPickerOverlay,
+  parseTranslate, formatPx, applyDrag, zoneAt, createTransformOverlay, createTransformStyle,
 };
 
 export const BRIDGE_FEATURES: readonly BridgeFeature[] = [
+  // First of all: every event on the move/resize handles is consumed here, before the picker
+  // would select the handles themselves and before the page sees a click.
+  installTransform,
   // Ahead of the nav guard: while picking, a click on a link selects it and must not also
   // be reported as a blocked navigation.
   installPicker,

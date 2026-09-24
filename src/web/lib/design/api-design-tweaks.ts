@@ -17,7 +17,7 @@ export interface DesignTweaksInfo {
 }
 
 export type TweakCommitOutcome =
-  | { status: "applied"; gens: Record<string, string> }
+  | { status: "applied"; gens: Record<string, string>; undoId: string | null }
   | { status: "stale"; file: string; currentGen: string };
 
 const base = (projectName: string, slug: string) =>
@@ -55,5 +55,10 @@ export async function commitDesignTweaks(
   }
   if (!res.ok || json.ok === false) throw new Error(json.error || `HTTP ${res.status}`);
   const gens = json.data?.gens;
-  return { status: "applied", gens: gens && typeof gens === "object" ? (gens as Record<string, string>) : {} };
+  const undoId = json.data?.undoId;
+  return {
+    status: "applied",
+    gens: gens && typeof gens === "object" ? (gens as Record<string, string>) : {},
+    undoId: typeof undoId === "string" ? undoId : null,
+  };
 }

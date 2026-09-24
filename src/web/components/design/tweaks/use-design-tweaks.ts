@@ -6,6 +6,7 @@ import { isSafeTweakValueShape } from "../../../../shared/design-tweaks";
 import type { TweakWinner } from "../../../../shared/design-bridge-messages-tweaks";
 import type { DesignTabContextValue } from "../design-tab-context";
 import type { DesignBridge } from "../canvas/use-design-bridge";
+import { pushDesignUndo } from "../transform/design-undo-stack";
 
 /**
  * Tweak controls for one design tab: the definitions from `design.json`, what the page
@@ -22,7 +23,7 @@ import type { DesignBridge } from "../canvas/use-design-bridge";
  */
 
 export function useDesignTweaks(tab: DesignTabContextValue, bridge: DesignBridge, reloadCanvas: () => void, opts: { onPanelOpen: () => void }) {
-  const { projectName, slug, design, isStreaming } = tab;
+  const { projectName, slug, tabId, design, isStreaming } = tab;
   const [info, setInfo] = useState<DesignTweaksInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rendered, setRendered] = useState<Record<string, string>>({});
@@ -119,6 +120,7 @@ export function useDesignTweaks(tab: DesignTabContextValue, bridge: DesignBridge
         return;
       }
       gensAfterApply.current = { ...gensAfterApply.current, ...out.gens };
+      if (out.undoId) pushDesignUndo(tabId, out.undoId);
       verify.current = values;
       setRendered((r) => ({ ...r, ...values }));
       setEdits((e) => Object.fromEntries(Object.entries(e).filter(([name]) => !(name in values))));
@@ -128,7 +130,7 @@ export function useDesignTweaks(tab: DesignTabContextValue, bridge: DesignBridge
     } finally {
       setApplying(false);
     }
-  }, [pending, isStreaming, projectName, slug, reloadCanvas]);
+  }, [pending, isStreaming, projectName, slug, tabId, reloadCanvas]);
 
   const togglePanel = useCallback(() => {
     if (!panelOpen) onPanelOpen.current();

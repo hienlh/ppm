@@ -11,6 +11,8 @@ import { DesignError } from "./design-error.ts";
 import { readDesignSource, writeDesignSource } from "./source/design-source-file.ts";
 import { styleSources } from "./source/design-style-sources.ts";
 import { planTweakPatches, type PlannedTweak } from "./source/tweak-patch-plan.ts";
+import { takeDesignWrite } from "./design-write-rate-limit.ts";
+import { changedSpan, recordEdit, type EditSpan } from "./design-edit-undo-journal.ts";
 
 /**
  * "Apply" in the Tweaks panel: write the chosen values into the design's stylesheets.
@@ -21,7 +23,9 @@ import { planTweakPatches, type PlannedTweak } from "./source/tweak-patch-plan.t
  * that. Every design file it reads must still have the gen the canvas reported for it —
  * the entry HTML and each linked stylesheet — or the whole commit is a 409 naming the file,
  * so a canvas that is behind an agent's edit can never have its view written back over it.
- * The `before-edit` snapshot is taken only once the commit is known to go through.
+ * The `before-edit` snapshot is taken only once the commit is known to go through, and a
+ * commit that writes counts against the design's canvas write limit. Every file it changes
+ * is journaled as one undo entry, so Undo reverts this Apply and nothing an AI turn did since.
  */
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
@@ -35,6 +39,8 @@ export interface TweakCommitInput {
 export interface TweakCommitResult {
   /** Current gen of every design file the commit read, rewritten ones included. */
   gens: Record<string, string>;
+  /** Undoes this commit's writes; null when nothing was written or it was too large to journal. */
+  undoId: string | null;
 }
 
 export interface DesignTweaksInfo extends ParsedTweaks {
@@ -116,12 +122,17 @@ export async function commitTweaks(projectPath: string, slug: string, raw: unkno
 
     const gens: Record<string, string> = {};
     for (const [file, { source, outside }] of loaded.files) if (!outside) gens[file] = source.gen;
-    if (patches.size === 0) return { gens };
+    if (patches.size === 0) return { gens, undoId: null };
+    takeDesignWrite(projectPath, slug);
     await snapshotDesign(projectPath, slug, "before-edit");
+    const spans: EditSpan[] = [];
+    const written: Record<string, string> = {};
     for (const [file, text] of patches) {
       const f = loaded.files.get(file)!;
-      gens[file] = await writeDesignSource(f.abs, text, { bom: f.source.bom });
+      gens[file] = written[file] = await writeDesignSource(f.abs, text, { bom: f.source.bom });
+      const span = changedSpan(file, f.source.text, text);
+      if (span) spans.push(span);
     }
-    return { gens };
+    return { gens, undoId: recordEdit(projectPath, slug, spans, written) };
   });
 }

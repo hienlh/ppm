@@ -16,6 +16,9 @@
 import type { anchorOf, cssPathOf, describeElement, domTreeAccess, elementQuote } from "./bridge-element-info.ts";
 import type { diceSimilarity, resolveAnchor } from "./bridge-anchor-resolve.ts";
 import type { createPickerOverlay } from "./bridge-picker-overlay.ts";
+import type { applyDrag, formatPx, parseTranslate, zoneAt } from "./bridge-transform-math.ts";
+import type { createTransformOverlay } from "./bridge-transform-overlay.ts";
+import type { createTransformStyle } from "./bridge-transform-style.ts";
 
 export interface BridgeBoot {
   nonce: string | null;
@@ -41,6 +44,12 @@ export interface BridgeLib {
   diceSimilarity: typeof diceSimilarity;
   resolveAnchor: typeof resolveAnchor;
   createPickerOverlay: typeof createPickerOverlay;
+  parseTranslate: typeof parseTranslate;
+  formatPx: typeof formatPx;
+  applyDrag: typeof applyDrag;
+  zoneAt: typeof zoneAt;
+  createTransformOverlay: typeof createTransformOverlay;
+  createTransformStyle: typeof createTransformStyle;
 }
 
 export interface BridgeApi {

@@ -13,11 +13,13 @@ import { CommentsPanel } from "./comments-panel";
  * beside the stage on desktop and in a bottom sheet on a phone.
  */
 
-export function DesignCommentsOverlay({ feature, fit, stage, isMobile }: {
+export function DesignCommentsOverlay({ feature, fit, stage, isMobile, selectionHint }: {
   feature: DesignCommentsFeature;
   fit: FrameFit;
   stage: Size;
   isMobile: boolean;
+  /** A note about the selected element from another canvas mode (e.g. why it cannot be moved). */
+  selectionHint?: string | null;
 }) {
   return (
     <>
@@ -40,6 +42,7 @@ export function DesignCommentsOverlay({ feature, fit, stage, isMobile }: {
         stage={stage}
         onComment={feature.commentOnSelected}
         onSend={feature.sendSelected}
+        hint={selectionHint}
       />
       <CommentComposer
         target={feature.composerTarget}
