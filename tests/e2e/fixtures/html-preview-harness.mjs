@@ -22,8 +22,12 @@ async function ready(url, child) {
   throw new Error(`HTML preview fixture did not become ready: ${url}`);
 }
 
-/** Starts disposable real API/Vite instances; never connects to the user's running PPM. */
-export async function createHtmlPreviewHarness() {
+/**
+ * Starts disposable real API/Vite instances; never connects to the user's running PPM.
+ * `serverScript` swaps in another fixture server that keeps the same isolation guards and
+ * answers `POST /__html-test/shutdown`.
+ */
+export async function createHtmlPreviewHarness({ serverScript = "tests/e2e/fixtures/html-preview-server.ts" } = {}) {
   const artifacts = process.env.PPM_HTML_PREVIEW_ARTIFACTS
     ? resolve(process.env.PPM_HTML_PREVIEW_ARTIFACTS) : await mkdtemp(join(tmpdir(), "ppm-html-preview-results-"));
   await mkdir(artifacts, { recursive: true });
@@ -40,7 +44,7 @@ export async function createHtmlPreviewHarness() {
   const env = { ...process.env, PPM_HOME: ppm, HOME: home, USERPROFILE: home,
     PPM_HTML_TEST_REAL_HOME: homedir(), PPM_HTML_TEST_PORT: String(apiPort), PPM_DEV_API: api };
   delete env.PPM_ALLOW_PROD_DB;
-  const backend = spawn(process.env.PPM_BUN || "bun", ["tests/e2e/fixtures/html-preview-server.ts"], { cwd: process.cwd(), env, windowsHide: true });
+  const backend = spawn(process.env.PPM_BUN || "bun", [serverScript], { cwd: process.cwd(), env, windowsHide: true });
   const frontend = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--config", "vite.config.ts", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], { cwd: process.cwd(), env, windowsHide: true });
   const logs = { api: "", web: "" };
   for (const [name, child] of [["api", backend], ["web", frontend]]) {
@@ -59,7 +63,9 @@ export async function createHtmlPreviewHarness() {
     await Promise.all([ready(`${api}/api/health`, backend), ready(web, frontend)]);
     const modulePath = process.env.PPM_PLAYWRIGHT_MODULE;
     const pw = modulePath ? await import(pathToFileURL(modulePath).href) : await import("playwright");
-    const browser = await pw.chromium.launch({ headless: true });
+    // PPM_PLAYWRIGHT_CHANNEL=chrome drives the installed Chrome when Playwright's own build is missing.
+    const channel = process.env.PPM_PLAYWRIGHT_CHANNEL;
+    const browser = await pw.chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
     return { browser, sandbox, project, api, web, artifacts, cleanup };
   } catch (error) { await cleanup(); throw error; }
 }
