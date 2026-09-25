@@ -84,7 +84,14 @@ interface FileStore {
    */
   inflight: Map<string, InflightLoad>;
   indexStatus: "idle" | "loading" | "ready" | "error";
-  indexProjectName: string | null;
+  /**
+   * Files changed since the index held was fetched, so it may be missing some. It stays on
+   * screen and is refetched by `ensureIndex` when something is about to read it — refetching on
+   * every change was a 22 MB download per change on a large project.
+   */
+  indexStale: boolean;
+  /** The project `fileIndex` belongs to (or is being loaded for); null when none is. */
+  indexProject: string | null;
   selectedFiles: string[];
   inlineAction: InlineAction | null;
   clipboard: ClipboardState | null;
@@ -99,6 +106,10 @@ interface FileStore {
   /** Load many folders in one request (expanded-state restore, deep expand) */
   loadPathsBatch(projectName: string, paths: string[]): Promise<void>;
   loadIndex(projectName: string): Promise<void>;
+  /** Fetch the index if it is missing, failed or stale — for UI about to show it. */
+  ensureIndex(projectName: string): void;
+  /** A file in `projectName` changed: keep the index, but refetch it before it is next read. */
+  markIndexStale(projectName: string): void;
   invalidateIndex(): void;
   invalidateFolder(projectName: string, folderPath: string): Promise<void>;
   toggleExpand(projectName: string, path: string): void;
@@ -143,7 +154,20 @@ interface InflightLoad {
   prefetch: boolean;
 }
 
-let indexRequest = 0;
+/*
+ * Index bookkeeping that nothing renders. `indexEpoch` moves whenever the index is dropped or
+ * replaced, so an answer still on its way cannot refill it; `indexChanges` counts
+ * `markIndexStale` calls, so an answer can tell whether a change arrived while it was fetched.
+ */
+let indexEpoch = 0;
+let indexChanges = 0;
+let indexLoad: Promise<void> | null = null;
+
+function abandonIndexLoad(): void {
+  indexEpoch++;
+  indexLoad = null;
+}
+
 export const useFileStore = create<FileStore>((set, get) => ({
   tree: [],
   fileIndex: [],
@@ -153,7 +177,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
   loadedPaths: new Set<string>(),
   inflight: new Map<string, InflightLoad>(),
   indexStatus: "idle",
-  indexProjectName: null,
+  indexStale: false,
+  indexProject: null,
   selectedFiles: [],
   inlineAction: null,
   clipboard: null,
@@ -294,22 +319,50 @@ export const useFileStore = create<FileStore>((set, get) => ({
     }
   },
 
-  loadIndex: async (projectName: string) => {
-    const request = ++indexRequest;
-    set({ indexStatus: "loading", indexProjectName: projectName, fileIndex: [] });
-    try {
-      const data = await api.get<FileEntry[]>(
-        `${projectUrl(projectName)}/files/index`,
-      );
-      if (request === indexRequest) set({ fileIndex: data, indexStatus: "ready" });
-    } catch {
-      if (request === indexRequest) set({ indexStatus: "error" });
+  loadIndex: (projectName: string) => {
+    if (indexLoad && get().indexProject === projectName) return indexLoad;
+    const epoch = ++indexEpoch;
+    const changesSeen = indexChanges;
+    if (get().indexProject !== projectName) {
+      set({ indexProject: projectName, fileIndex: [], indexStatus: "loading", indexStale: false });
+    } else if (get().indexStatus !== "ready") {
+      // A list already on screen stays there while its replacement loads.
+      set({ indexStatus: "loading" });
     }
+    const load = (async () => {
+      try {
+        const data = await api.get<FileEntry[]>(
+          `${projectUrl(projectName)}/files/index`,
+        );
+        if (epoch !== indexEpoch) return;
+        set({ fileIndex: data, indexStatus: "ready", indexStale: indexChanges !== changesSeen });
+      } catch {
+        if (epoch !== indexEpoch) return;
+        // A failed refresh keeps the list it was replacing; only a first load reports it.
+        if (get().indexStatus !== "ready") set({ indexStatus: "error" });
+      }
+    })().finally(() => {
+      if (indexLoad === load) indexLoad = null;
+    });
+    indexLoad = load;
+    return load;
+  },
+
+  ensureIndex: (projectName: string) => {
+    const { indexProject, indexStatus, indexStale } = get();
+    if (indexProject === projectName && indexStatus === "ready" && !indexStale) return;
+    void get().loadIndex(projectName);
+  },
+
+  markIndexStale: (projectName: string) => {
+    if (projectName !== get().indexProject) return;
+    indexChanges++;
+    if (!get().indexStale) set({ indexStale: true });
   },
 
   invalidateIndex: () => {
-    ++indexRequest;
-    set({ indexStatus: "idle", fileIndex: [], indexProjectName: null });
+    abandonIndexLoad();
+    set({ indexProject: null, indexStatus: "idle", fileIndex: [], indexStale: false });
   },
 
   invalidateFolder: async (projectName: string, folderPath: string) => {
@@ -375,10 +428,10 @@ export const useFileStore = create<FileStore>((set, get) => ({
   clearSelection: () => set({ selectedFiles: [] }),
 
   reset: () => {
-    ++indexRequest;
     cancelPrefetch();
     // Abort all in-flight requests
     for (const load of get().inflight.values()) load.controller.abort();
+    abandonIndexLoad();
     set({
       tree: [],
       fileIndex: [],
@@ -388,7 +441,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
       loadedPaths: new Set(),
       inflight: new Map(),
       indexStatus: "idle",
-      indexProjectName: null,
+      indexStale: false,
+      indexProject: null,
       selectedFiles: [],
       inlineAction: null,
       clipboard: null,

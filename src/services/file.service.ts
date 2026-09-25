@@ -19,6 +19,7 @@ import {
   listDirBatch as listDirBatchImpl,
   buildIndex as buildIndexImpl,
   invalidateIndexCache,
+  markIndexStale,
   clearIndexCache,
 } from "./file-list-index.service.ts";
 
@@ -281,9 +282,9 @@ class FileService {
 
   /**
    * Build flat file index for palette/search (delegates to file-list-index.service).
-   * Cached per project; invalidated on file change via invalidateIndexCache().
+   * Cached per project; a file change marks it stale via markIndexStale().
    */
-  buildIndex(projectPath: string): FileEntry[] {
+  buildIndex(projectPath: string): Promise<FileEntry[]> {
     return buildIndexImpl(projectPath);
   }
 
@@ -323,7 +324,8 @@ export class ValidationError extends Error {
 
 export const fileService = new FileService();
 
-// Wire file watcher → index cache invalidation
+// Wire file watcher → index staleness. Stale, not dropped: dropping made the next request walk
+// the whole project while it waited (see IndexEntry in file-list-index.service).
 // Dynamic import avoids circular dependency (file-watcher → chat.ts → file.service)
 import("./file-watcher.service.ts").then(({ onFileChange }) => {
   onFileChange((projectName) => {
@@ -332,7 +334,7 @@ import("./file-watcher.service.ts").then(({ onFileChange }) => {
       const { configService } = require("./config.service.ts");
       const projects = configService.get("projects") as Array<{ name: string; path: string }>;
       const project = projects.find((p: { name: string }) => p.name === projectName);
-      if (project) invalidateIndexCache(project.path);
+      if (project) markIndexStale(project.path);
     } catch {
       // Config not yet loaded or project not found — skip invalidation
     }

@@ -9,7 +9,7 @@
  *     so a workspace whose visible tabs are an editor and a terminal would get no
  *     file watching at all — silently breaking editor live-reload, docx/pdf
  *     preview reload, and file-tree invalidation.
- *  2. **Cross-cutting broadcasts** (`file:changed`, `session:unread_changed`,
+ *  2. **Cross-cutting broadcasts** (`file:changed`, `files:index-changed`, `session:unread_changed`,
  *     `session:phase_changed`, `jira:*`, `design:*`). These are app-wide, not session-scoped,
  *     so they belong on an app-wide channel.
  *
@@ -18,6 +18,7 @@
  * example, make an editor re-fetch its file twice per change).
  */
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
+import { onIndexRebuilt } from "../../services/file-list-index.service.ts";
 import { configService } from "../../services/config.service.ts";
 import { onDesignEvent } from "../../services/design/design-events.ts";
 import { resolve } from "node:path";
@@ -75,6 +76,15 @@ function projectNameForPath(projectPath: string): string | null {
   const target = fold(projectPath);
   return configService.get("projects").find((p) => fold(p.path) === target)?.name ?? null;
 }
+
+// A project's file index was rebuilt behind a stale one and now lists other paths. Clients do
+// not refetch the index on every `file:changed` (on a large project that is a 22 MB download
+// per change); this is what tells them the list they hold is out of date.
+onIndexRebuilt((projectPath, changed) => {
+  if (!changed) return;
+  const projectName = projectNameForPath(projectPath);
+  if (projectName) broadcastGlobalEvent({ type: "files:index-changed", projectName });
+});
 
 // Design history/comment changes: `.design/` is not watched, so these are the only signal.
 // Services know the project path; browsers address projects by name, and a path no

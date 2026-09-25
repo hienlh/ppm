@@ -3,6 +3,7 @@ import { WsClient } from "@/lib/ws-client";
 import { getAuthToken } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
+import { useFileStore } from "@/stores/file-store";
 import { syncRunningSessions } from "@/lib/sync-running-sessions";
 
 /**
@@ -14,7 +15,10 @@ import { syncRunningSessions } from "@/lib/sync-running-sessions";
  *
  * Handles:
  * - `file:changed` → re-dispatched as a window event for the editor, previews and
- *   file tree to consume.
+ *   file tree to consume, and marks the file index stale.
+ * - `files:index-changed` → marks the file index stale: the server rebuilt it behind the list
+ *   it had been serving, and the paths differ. Neither event fetches the index — on a large
+ *   project that is a 22 MB download — so it is refreshed only when something opens to read it.
  * - `session:unread_changed` → cross-device unread sync.
  * - `session:phase_changed` → keeps the tab-strip spinner and title indicator
  *   correct for sessions whose tab is not mounted, and — critically — clears them
@@ -67,7 +71,13 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
       }
 
       if (type === "file:changed") {
+        if (typeof data.projectName === "string") useFileStore.getState().markIndexStale(data.projectName);
         window.dispatchEvent(new CustomEvent("file:changed", { detail: data }));
+        return;
+      }
+
+      if (type === "files:index-changed") {
+        if (typeof data.projectName === "string") useFileStore.getState().markIndexStale(data.projectName);
         return;
       }
 

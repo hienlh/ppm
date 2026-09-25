@@ -67,7 +67,7 @@ async function openPicker() {
 }
 
 it("does not expose project A's cached files to a composer for B", async () => {
-  useFileStore.setState({ indexProjectName: projectA.name, indexStatus: "ready", fileIndex: [fileA] });
+  useFileStore.setState({ indexProject: projectA.name, indexStatus: "ready", fileIndex: [fileA] });
   useProjectStore.setState({ activeProject: projectB });
   const response = deferred<FileNode[]>();
   const get = spyOn(api, "get").mockImplementation(() => response.promise);
@@ -91,7 +91,7 @@ it("clears an old project on switch and ignores its late index response after B 
   view = await mount(<Invalidation />);
   const loadingA = useFileStore.getState().loadIndex(projectA.name);
   useProjectStore.setState({ activeProject: projectB });
-  expect(useFileStore.getState().indexProjectName).toBeNull();
+  expect(useFileStore.getState().indexProject).toBeNull();
   expect(useFileStore.getState().indexStatus).toBe("idle");
   expect(get).toHaveBeenCalledTimes(1); // Switching never eagerly loads B.
   const loadingB = useFileStore.getState().loadIndex(projectB.name);
@@ -99,14 +99,14 @@ it("clears an old project on switch and ignores its late index response after B 
   await loadingB;
   responseA.resolve([fileA]);
   await loadingA;
-  expect(useFileStore.getState().indexProjectName).toBe(projectB.name);
+  expect(useFileStore.getState().indexProject).toBe(projectB.name);
   expect(useFileStore.getState().fileIndex).toEqual([fileB]);
   expect(useFileStore.getState().indexStatus).toBe("ready");
 });
 
 for (const event of ["file:changed", "fsChanged"] as const) {
-  it(`invalidates ${event} with the drawer closed, then refreshes on @ and while its picker stays open`, async () => {
-    useFileStore.setState({ indexProjectName: projectA.name, indexStatus: "ready", fileIndex: [fileA] });
+  it(`marks the index stale on ${event} with the drawer closed, then refreshes it on @`, async () => {
+    useFileStore.setState({ indexProject: projectA.name, indexStatus: "ready", fileIndex: [fileA] });
     const response = deferred<FileNode[]>();
     const get = spyOn(api, "get").mockImplementation(() => response.promise);
     spies.push(get);
@@ -120,17 +120,22 @@ for (const event of ["file:changed", "fsChanged"] as const) {
     await change(projectB);
     expect(useFileStore.getState().indexStatus).toBe("ready");
     await change();
+    // Stale, not dropped: the list stays until something opens to read it (see `indexStale`).
     expect(get).not.toHaveBeenCalled();
-    expect(useFileStore.getState().indexStatus).toBe("idle");
-    expect(useFileStore.getState().fileIndex).toEqual([]);
-    expect(view.container.querySelector("output")!.textContent).toBe("");
+    expect(useFileStore.getState().indexStatus).toBe("ready");
+    expect(useFileStore.getState().indexStale).toBe(true);
+    expect(useFileStore.getState().fileIndex).toEqual([fileA]);
     await openPicker();
     expect(get).toHaveBeenCalledTimes(1);
     expect(get.mock.calls[0]![0]).toBe("/api/project/index-a/files/index");
     await act(async () => response.resolve([fileA, newFile]));
     expect(view.container.textContent).toContain(newFile.name);
+    expect(useFileStore.getState().indexStale).toBe(false);
+    // A change while the picker is open still downloads nothing: on a large project every
+    // refetch is the whole list, and a session writing files would make that back to back.
     await change();
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(useFileStore.getState().indexStale).toBe(true);
     expect(useFileStore.getState().indexStatus).toBe("ready");
   });
 }

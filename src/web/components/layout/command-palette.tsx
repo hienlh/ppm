@@ -128,8 +128,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const activeProject = useProjectStore((s) => s.activeProject);
   const fileIndex = useFileStore((s) => s.fileIndex);
   const indexStatus = useFileStore((s) => s.indexStatus);
-  const indexProjectName = useFileStore((s) => s.indexProjectName);
+  const indexProject = useFileStore((s) => s.indexProject);
   const loadIndex = useFileStore((s) => s.loadIndex);
+  const ensureIndex = useFileStore((s) => s.ensureIndex);
   const fileTree = useFileStore((s) => s.tree);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
@@ -337,7 +338,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     const projectId = activeProject?.name ?? null;
     const meta = activeProject ? { projectName: activeProject.name } : undefined;
     // Filter index to files only — directories are in the index for palette "open folder" affordances but not for file-open commands
-    const files = indexStatus === "ready" && indexProjectName === activeProject?.name ? fileIndex.filter((e) => e.type === "file") : flattenFiles(fileTree);
+    const files = indexStatus === "ready" && indexProject === activeProject?.name ? fileIndex.filter((e) => e.type === "file") : flattenFiles(fileTree);
 
     return files.map((f) => ({
       id: `file:${f.path}`,
@@ -350,7 +351,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       isIgnored: ("isIgnored" in f ? f.isIgnored : undefined) as boolean | undefined,
       action: () => openFileTab(f.path, f.name, projectId, meta),
     }));
-  }, [indexStatus, indexProjectName, fileIndex, fileTree, activeProject, openFileTab]);
+  }, [indexStatus, indexProject, fileIndex, fileTree, activeProject, openFileTab]);
 
   // Filesystem commands — from cached API results
   const fsCommands = useMemo<CommandItem[]>(() => {
@@ -473,12 +474,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     setSelectedIdx(0);
   }, []);
 
-  // Auto-load file index when palette opens and index isn't ready
+  // Load the file index as the palette opens, or refresh it if files changed since. Not on
+  // `indexStatus`: a failed load would retry itself in a loop — the hint below has a retry.
   useEffect(() => {
-    if (open && activeProject && (indexStatus === "idle" || indexProjectName !== activeProject.name)) {
-      loadIndex(activeProject.name);
-    }
-  }, [open, indexStatus, indexProjectName, activeProject, loadIndex]);
+    if (open && activeProject) ensureIndex(activeProject.name);
+  }, [open, activeProject, ensureIndex]);
 
   // Reset state when opening
   useEffect(() => {
