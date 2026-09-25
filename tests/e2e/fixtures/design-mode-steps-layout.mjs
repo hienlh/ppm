@@ -12,7 +12,9 @@ import { canvasLoad, canvasSelector, providerCalls, until } from "./design-mode-
  * nonce (or a new nonce).
  */
 
-const ROOT = "[data-design-view]";
+// The visible one: a context that shares a server with an earlier run gets that run's design
+// tab restored too, kept alive but hidden, and it comes first in the DOM.
+const ROOT = "[data-design-view]:visible";
 const CHAT_ROOT = "[data-design-chat-slot] > *";
 
 async function tagPanes(ctx) {
