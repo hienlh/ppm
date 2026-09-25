@@ -120,6 +120,18 @@ describe("GET /files/index", () => {
     expect(paths).toContain("secret.env");
   });
 
+  it("lets a first walk outlast Bun's 10 s idle timeout", async () => {
+    // nxsys-workspace's first walk took 14 s on a busy scratch server, and Bun cut the request
+    // off at 10 s with the list nearly built. `app.fetch(req, server)` hands routes the server.
+    const timeouts: { request: Request; seconds: number }[] = [];
+    const server = { timeout: (request: Request, seconds: number) => { timeouts.push({ request, seconds }); } };
+    const res = await app.request(`/api/project/${projectName}/files/index`, undefined, server);
+
+    expect(res.status).toBe(200);
+    expect(timeouts.map((t) => t.seconds)).toEqual([30]);
+    expect(new URL(timeouts[0]!.request.url).pathname).toBe(`/api/project/${projectName}/files/index`);
+  });
+
   it("returns cached result on second call (faster)", async () => {
     const start1 = Date.now();
     const res1 = await req(`/api/project/${projectName}/files/index`);
@@ -148,7 +160,8 @@ describe("GET /files/index", () => {
     // Add a new file
     writeFileSync(resolve(projectPath, "new-file.ts"), "export const y = 2");
 
-    // Invalidate cache directly (simulate file watcher)
+    // Hard invalidation (a filter change). The watcher only marks the index stale — see
+    // tests/unit/services/file-list-index-background.test.ts.
     invalidateIndexCache(projectPath);
 
     // Second call should see the new file

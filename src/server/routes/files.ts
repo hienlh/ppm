@@ -65,12 +65,17 @@ fileRoutes.post("/list-batch", async (c) => {
 /**
  * GET /files/index
  * Returns flat array of all project files {path, name} for palette/search.
- * Result is cached; cache is invalidated on file change events.
+ * Result is cached; a file change marks it stale, and the stale list is served while it rebuilds.
  */
-fileRoutes.get("/index", (c) => {
+fileRoutes.get("/index", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const entries = fileService.buildIndex(projectPath);
+    // A project's first walk can outlast Bun's 10 s idle timeout — nxsys-workspace took 7.6 s on
+    // an idle server and more on a busy one — and Bun then cuts the request off with the walk
+    // nearly done. The walk no longer stops the server, so waiting is safe; 30 s is as long as
+    // the browser waits for headers. `c.env` is the Bun server that `app.fetch(req, server)` passed.
+    (c.env as { timeout?: (request: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, 30);
+    const entries = await fileService.buildIndex(projectPath);
     return c.json(ok(entries));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));

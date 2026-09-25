@@ -197,7 +197,7 @@ describe("PATCH /api/settings/files", () => {
     writeFileSync(resolve(projectPath, "skip.log"), "");
 
     // Prime the index cache — should include both files
-    const initialIndex = buildIndex(projectPath);
+    const initialIndex = await buildIndex(projectPath);
     const initialFiles = initialIndex.filter((e) => e.type === "file").map((e) => e.path);
     expect(initialFiles).toContain("keep.ts");
     expect(initialFiles).toContain("skip.log");
@@ -212,7 +212,7 @@ describe("PATCH /api/settings/files", () => {
     // After PATCH, the cache should be cleared — next buildIndex rebuilds with new filters
     // We can't use the route here (route uses per-project path), so we verify the cache
     // was cleared by checking buildIndex() rebuilds (not returning stale cached result)
-    const postPatchIndex = buildIndex(projectPath);
+    const postPatchIndex = await buildIndex(projectPath);
     const postPatchFiles = postPatchIndex.filter((e) => e.type === "file").map((e) => e.path);
     expect(postPatchFiles).toContain("keep.ts");
     expect(postPatchFiles).not.toContain("skip.log");

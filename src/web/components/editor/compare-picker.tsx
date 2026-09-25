@@ -65,6 +65,11 @@ export function ComparePicker({ open: openProp, onOpenChange, initialA }: Compar
   const fileIndex = useFileStore((s) => s.fileIndex);
   const activeProject = useProjectStore((s) => s.activeProject);
 
+  // The index is refreshed only when something opens to read it — see `indexStale`.
+  useEffect(() => {
+    if (open && activeProject) useFileStore.getState().ensureIndex(activeProject.name);
+  }, [open, activeProject]);
+
   useEffect(() => {
     if (!open) return;
     // In controlled mode, sync A from prop. In singleton mode, event handler
