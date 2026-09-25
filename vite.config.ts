@@ -85,6 +85,12 @@ export default defineConfig({
     host: true,
     port: 5173,
     allowedHosts: true,
+    // Vite turns this on by itself when it sees an AI agent in the environment (CLAUDECODE,
+    // AI_AGENT, ...), which is how PPM's dev server is usually started. Its client then
+    // forwards unhandled rejections over the HMR socket without catching the send, so once
+    // a tunnel drops that socket each failed send is itself an unhandled rejection: a tab
+    // was measured spinning at ~87k rejections/s and 150% CPU until reloaded.
+    forwardConsole: false,
     proxy: {
       "/api": {
         target: process.env.PPM_DEV_API ?? "http://localhost:8081",
