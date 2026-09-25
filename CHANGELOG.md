@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.0] - 2026-09-25
 
 ### Added
 - Design mode: a Design tab with the design chat beside a live preview of what the AI builds, as a page or a slide deck, at desktop, tablet, phone or slide size; a Canvas/Chat bar on phones.
@@ -11,8 +11,11 @@
 - Drag and resize elements on the canvas, saved into the design, with an undo that keeps later AI changes.
 - Export a design as ZIP, a single HTML file, PDF or PowerPoint with editable text, or hand it off to a new chat that builds it in the project's code.
 - The design AI checks the rendered canvas: a `design_check` tool (layout problems, errors, screenshot) for Claude and Codex, plus an automatic check after each turn that reports problems back.
+- The Design tab splits chat and preview or shows one of them based on its own width, with a Layout menu (Auto / Split / Canvas only / Chat only) and a full-window preview.
+- A design chat opened from chat history, search or a notification opens in its Design tab.
 
 ### Fixed
+- Text and tool calls already streamed no longer disappear from a chat when a turn switches account midway (rate limit or token refresh).
 - Claude's "Additional Instructions" setting now actually reaches the model; it applies to new sessions and is added to Claude Code's own prompt rather than replacing it.
 - Allow/deny answers in a Claude chat's tool approval prompt are sent in the form the Claude CLI accepts, so a denied tool is reliably blocked.
 - The automatic database snapshot before a schema upgrade is taken again; it had been skipped since schema version 47.
