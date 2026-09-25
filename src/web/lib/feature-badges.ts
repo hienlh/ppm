@@ -14,6 +14,8 @@ export const FEATURE_BADGES = {
   "os-explorer": "new",
   /** Remote Desktop — stream + control the host desktop in a floating window. */
   "remote-desktop": "beta",
+  /** Design mode (Designs sidebar tab): design chat beside a live canvas, shipped in 0.23.0. */
+  designs: "new",
 } as const satisfies Record<string, FeatureBadgeKind>;
 
 export type FeatureBadgeId = keyof typeof FEATURE_BADGES;
