@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.22.11] - 2026-09-25
+
+### Fixed
+- Open chat tabs no longer each keep their own full copy of the project's file list for the `@` picker; they share one. A browser with ten chat tabs on a 42k-file project was holding ten copies.
+- A PPM dev server started from an AI agent session no longer lets a browser tab spin at 150% CPU after a tunnel drops Vite's HMR socket. Vite enables console forwarding by itself in that case, and it retried every failed send forever; it is now turned off.
+
 ## [0.22.10] - 2026-09-24
 
 ### Added
