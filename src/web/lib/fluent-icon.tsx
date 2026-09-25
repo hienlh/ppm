@@ -28,12 +28,46 @@ export interface ProductIconProps extends Omit<SVGProps<SVGSVGElement>, "ref"> {
 
 export type ProductIcon = ReturnType<typeof fluentIcon>;
 
+/**
+ * Utilities that describe the box an icon occupies rather than the glyph drawn in
+ * it: where it sits, its margins, how it behaves as a flex item — and the spin.
+ */
+const BOX_UTILITY =
+  /^(?:animate-spin$|-?m[trblxyse]?-|absolute$|relative$|fixed$|sticky$|-?inset-|-?top-|-?right-|-?bottom-|-?left-|-?translate-|z-|shrink|grow|self-|order-|pointer-events-)/;
+
+/**
+ * A spinning icon's classes, split between a wrapping span and the svg — or null
+ * when the icon does not spin.
+ *
+ * Chrome never hands an animation on an SVG element to the compositor, not even
+ * on an outer `<svg>`, so `animate-spin` on one recalculates style and repaints on
+ * the main thread every frame. Measured on a live tab, one spinner cost ~22% of a
+ * core; the same glyph inside a spinning span cost nothing measurable. A running
+ * tool card shows one for as long as the tool runs, which is most of a chat turn.
+ *
+ * The rotation moves to the span along with whatever positions the box, so a
+ * margin sits outside the rotating box instead of pulling its centre off the
+ * glyph, and an `absolute` spinner keeps its place. Size and colour stay on the
+ * svg, which is what lets a parent's `[&_svg:not([class*='size-'])]` rule keep
+ * sizing an icon that carries no size class of its own.
+ */
+export function splitSpinClasses(className: string): { box: string; glyph: string | undefined } | null {
+  const tokens = className.split(/\s+/).filter(Boolean);
+  const base = (t: string) => t.slice(t.lastIndexOf(":") + 1);
+  if (!tokens.some((t) => base(t) === "animate-spin")) return null;
+  const box = ["inline-flex"];
+  const glyph: string[] = [];
+  for (const t of tokens) (BOX_UTILITY.test(base(t)) ? box : glyph).push(t);
+  return { box: box.join(" "), glyph: glyph.length ? glyph.join(" ") : undefined };
+}
+
 export function fluentIcon(name: string, paths: readonly string[]) {
   const Icon = forwardRef<SVGSVGElement, ProductIconProps>(function Icon(
-    { size = 24, strokeWidth: _sw, absoluteStrokeWidth: _asw, ...rest },
+    { size = 24, strokeWidth: _sw, absoluteStrokeWidth: _asw, className, ...rest },
     ref,
   ) {
-    return (
+    const spin = typeof className === "string" ? splitSpinClasses(className) : null;
+    const svg = (
       <svg
         ref={ref}
         xmlns="http://www.w3.org/2000/svg"
@@ -50,12 +84,14 @@ export function fluentIcon(name: string, paths: readonly string[]) {
         // offering a class name for stylesheets to start depending on.
         data-icon={name}
         {...rest}
+        className={spin ? spin.glyph : className}
       >
         {paths.map((d) => (
           <path key={d} d={d} />
         ))}
       </svg>
     );
+    return spin ? <span className={spin.box}>{svg}</span> : svg;
   });
   Icon.displayName = name;
   return Icon;

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.23.1] - 2026-09-25
+
+### Fixed
+- Spinning icons no longer keep a browser core busy: a tool card's spinner cost about a fifth of a CPU core for as long as the tool ran, because the browser redraws an animated SVG on the main thread. The spin now runs on a wrapper the browser can animate on its own.
+
 ## [0.23.0] - 2026-09-25
 
 ### Added
