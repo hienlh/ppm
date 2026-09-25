@@ -409,8 +409,10 @@ export const MessageInput = memo(function MessageInput({
         onFileItemsLoaded?.([]);
         return;
       }
-      const { fileIndex } = useFileStore.getState();
-      const nodes: FileNode[] = fileIndex.map((e) => ({ name: e.name, path: e.path, type: e.type }));
+      // Share the store's array rather than mapping it: every mounted chat tab runs this,
+      // and a project index can hold tens of thousands of entries, so a per-tab copy
+      // kept one full duplicate alive for each open chat. Consumers only read it.
+      const nodes: FileNode[] = useFileStore.getState().fileIndex;
       fileItemsRef.current = nodes;
       onFileItemsLoaded?.(nodes);
     };
