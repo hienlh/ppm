@@ -6,7 +6,15 @@ import type { LimitBucket } from "../../../../types/chat";
 import type { CodexStrategy } from "./codex-rotation-dialog";
 
 export type Strategy = CodexStrategy;
-export interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled"; dailyGuardEnabled?: boolean }
+export interface CodexAccount {
+  id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled"; dailyGuardEnabled?: boolean;
+  /** The server saw this account's login refused (revoked or expired). Live, not stored. */
+  signedOut?: boolean;
+}
+
+/** Why a signed-out Codex card is dimmed, and what the chip does when pressed. */
+export const CODEX_SIGNED_OUT_HINT =
+  "Codex rejected this account's login (revoked or expired), so no turn can run on it and it is skipped. The usage shown is the last reading. Click to sign in again — the account keeps its settings and chats.";
 /**
  * One account's quota. The two percentages are what the bars read; the buckets carry the
  * reset clock the server already sends, so the Codex card can show "resets in" the way the
@@ -123,13 +131,17 @@ export function useCodexAccounts(onDone: () => void) {
 
   useEffect(() => releaseLogin, [releaseLogin]);
 
-  const startLogin = async (method: LoginMethod) => {
+  /** `reloginAccountId` signs that existing account in again rather than adding a new one. */
+  const startLogin = async (method: LoginMethod, reloginAccountId?: string) => {
     if (startingRef.current || pendingLoginRef.current || addingRef.current) return;
     startingRef.current = true;
     const generation = ++loginGenerationRef.current;
     setLoginStarting(true); setErr(null);
     try {
-      const result = await api.post<DevicePending | BrowserPending>(`/api/codex-accounts/${method}-login`, { label: label.trim() || undefined });
+      const result = await api.post<DevicePending | BrowserPending>(`/api/codex-accounts/${method}-login`, {
+        label: label.trim() || undefined,
+        ...(reloginAccountId ? { accountId: reloginAccountId } : {}),
+      });
       // Closing the dialog while startup is in flight still owes the server a cancel.
       if (generation !== loginGenerationRef.current) {
         void api.del(`/api/codex-accounts/${method}-login/${result.id}`).catch(() => {});
@@ -236,7 +248,9 @@ export function useCodexAccounts(onDone: () => void) {
     err, setErr, device, deviceWaiting, backupPassword, setBackupPassword,
     exporting, importing, msg, setMsg,
     toggling,
-    load, addApiKey, startDevice: () => startLogin("device"), startBrowser: () => startLogin("browser"),
+    load, addApiKey,
+    startDevice: (reloginAccountId?: string) => startLogin("device", reloginAccountId),
+    startBrowser: (reloginAccountId?: string) => startLogin("browser", reloginAccountId),
     browser, loginStarting, callbackUrl, setCallbackUrl, submittingCallback, submitCallback, cancelLogin, remove, toggle, toggleDailyGuard, changeStrategy, doExport, doImport,
   };
 }

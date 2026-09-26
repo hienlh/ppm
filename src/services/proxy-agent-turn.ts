@@ -34,6 +34,54 @@ const PROXY_PERMISSION_MODE = "plan";
 const FIRST_EVENT_TIMEOUT_MS = 90_000;
 const IDLE_TIMEOUT_MS = 300_000;
 
+/**
+ * How many proxy turns may run at once, across every provider and dialect.
+ *
+ * Every turn is its own agent subprocess (codex: `bun x @openai/codex app-server`), and a
+ * client that retries on failure multiplies them: a batch script at concurrency 4 against
+ * a signed-out account kept a dozen app-servers starting and failing at once, and the
+ * server stopped answering its own health check until the supervisor killed it, over and
+ * over. Past this many, a request is refused at once with 429 + Retry-After — which every
+ * OpenAI/Anthropic SDK already backs off on — instead of queueing more subprocesses.
+ */
+export const MAX_CONCURRENT_PROXY_TURNS = 4;
+const BUSY_RETRY_AFTER_S = 5;
+let activeProxyTurns = 0;
+
+/** Refused because {@link MAX_CONCURRENT_PROXY_TURNS} turns are already running. */
+export class ProxyBusyError extends Error {}
+
+/** Current number of running proxy turns (for tests and diagnostics). */
+export function activeProxyTurnCount(): number {
+  return activeProxyTurns;
+}
+
+/** Take a turn slot, or throw {@link ProxyBusyError}. The returned release is idempotent. */
+function acquireTurnSlot(): () => void {
+  if (activeProxyTurns >= MAX_CONCURRENT_PROXY_TURNS) {
+    throw new ProxyBusyError(`Proxy busy: ${MAX_CONCURRENT_PROXY_TURNS} requests are already running. Retry in ${BUSY_RETRY_AFTER_S}s.`);
+  }
+  activeProxyTurns++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeProxyTurns--;
+  };
+}
+
+/**
+ * The error response for a turn that could not run, in the caller's dialect.
+ * A busy refusal is a 429 with Retry-After so SDKs back off; anything else is a 502.
+ */
+export function turnFailureResponse(e: unknown, render: (status: number, message: string) => Response): Response {
+  const message = (e as Error)?.message ?? String(e);
+  if (!(e instanceof ProxyBusyError)) return render(502, message);
+  const res = render(429, message);
+  res.headers.set("Retry-After", String(BUSY_RETRY_AFTER_S));
+  return res;
+}
+
 /** Providers that exist in the registry but must never be exposed over HTTP. */
 const NOT_PROXYABLE = new Set(["mock"]);
 
@@ -133,26 +181,38 @@ export async function startAgentTurn(providerId: string, req: TurnRequest): Prom
   // instructions lead the turn instead.
   const message = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
 
-  const session = await provider.createSession({
-    projectPath: proxyWorkspace(),
-    title: `[API] ${providerId}`,
-  });
+  // Held until cleanup, which every caller runs on every path — including a streaming
+  // response whose body outlives this function.
+  const release = acquireTurnSlot();
+  try {
+    const session = await provider.createSession({
+      projectPath: proxyWorkspace(),
+      title: `[API] ${providerId}`,
+    });
 
-  const events = provider.sendMessage(session.id, message, {
-    permissionMode: PROXY_PERMISSION_MODE,
-    ...(req.model ? { model: req.model } : {}),
-    ...(req.imagePaths?.length ? { imagePaths: req.imagePaths } : {}),
-  });
+    const events = provider.sendMessage(session.id, message, {
+      permissionMode: PROXY_PERMISSION_MODE,
+      ...(req.model ? { model: req.model } : {}),
+      ...(req.imagePaths?.length ? { imagePaths: req.imagePaths } : {}),
+    });
 
-  return {
-    events: withTimeout(events),
-    cleanup: async () => {
-      // abortQuery is what kills the runtime; deleteSession alone may only drop
-      // the record, depending on the provider.
-      try { provider.abortQuery?.(session.id, "proxy"); } catch { /* best effort */ }
-      try { await provider.deleteSession(session.id); } catch { /* best effort */ }
-    },
-  };
+    return {
+      events: withTimeout(events),
+      cleanup: async () => {
+        try {
+          // abortQuery is what kills the runtime; deleteSession alone may only drop
+          // the record, depending on the provider.
+          try { provider.abortQuery?.(session.id, "proxy"); } catch { /* best effort */ }
+          try { await provider.deleteSession(session.id); } catch { /* best effort */ }
+        } finally {
+          release();
+        }
+      },
+    };
+  } catch (e) {
+    release();
+    throw e;
+  }
 }
 
 /** `<provider>/v1/models` in OpenAI's list shape, so clients can discover models. */

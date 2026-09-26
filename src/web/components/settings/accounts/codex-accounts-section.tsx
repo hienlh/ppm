@@ -25,7 +25,9 @@ import { CodexAddAccountDialog } from "./codex-add-account-dialog";
 import { CodexBackupDialog } from "./codex-backup-dialog";
 import { CodexRotationDialog } from "./codex-rotation-dialog";
 import { CodexUsageRows } from "./codex-usage-rows";
-import { useCodexAccounts } from "./use-codex-accounts";
+import { CODEX_SIGNED_OUT_HINT, useCodexAccounts, type CodexAccount } from "./use-codex-accounts";
+import { CodexSignInAgainDialog } from "./codex-sign-in-again-dialog";
+import { AccountHint } from "./account-hint";
 import { codexPlanLabel } from "../../../../shared/codex-plan-label.ts";
 import { dailyGuardState } from "../../../../shared/codex-daily-guard.ts";
 
@@ -34,6 +36,8 @@ import { dailyGuardState } from "../../../../shared/codex-daily-guard.ts";
 export function CodexAccountsSection() {
   const [dialog, setDialog] = useState<"add" | "export" | "import" | "rotation" | null>(null);
   const c = useCodexAccounts(() => setDialog(null));
+  /** The signed-out account whose "Sign in again" chip was pressed. */
+  const [signInAgain, setSignInAgain] = useState<CodexAccount | null>(null);
 
   return (
     <div className="space-y-4">
@@ -88,12 +92,21 @@ export function CodexAccountsSection() {
                   key={a.id}
                   dense
                   // Matches the Claude card that also carries a control beside the name.
-                  className="min-w-[300px] shrink-0 snap-start"
+                  className={`min-w-[300px] shrink-0 snap-start${a.signedOut ? " opacity-60" : ""}`}
                   data-testid="account-card"
                   data-account-id={a.id}
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium truncate flex-1 min-w-0">{a.label}</span>
+                    {a.signedOut && (
+                      <AccountHint
+                        className="text-[10px] text-error shrink-0 font-medium"
+                        hint={CODEX_SIGNED_OUT_HINT}
+                        onClick={a.type === "chatgpt" ? () => setSignInAgain(a) : undefined}
+                      >
+                        Sign in again
+                      </AccountHint>
+                    )}
                     <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1 shrink-0">
                       {a.type}
                     </span>
@@ -199,6 +212,9 @@ export function CodexAccountsSection() {
         onImport={(f) => void c.doImport(f)}
         error={c.err}
       />
+      {signInAgain && (
+        <CodexSignInAgainDialog account={signInAgain} onClose={() => setSignInAgain(null)} onDone={() => void c.load()} />
+      )}
       <CodexRotationDialog
         open={dialog === "rotation"}
         onOpenChange={(v) => setDialog(v ? "rotation" : null)}

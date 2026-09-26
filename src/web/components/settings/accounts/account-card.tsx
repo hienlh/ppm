@@ -60,6 +60,15 @@ export interface AccountCardProps {
   dailyGuard?: { enabled: boolean; state: DailyGuardState };
   onDailyGuardToggle?: () => void;
   dailyGuardToggling?: boolean;
+  /**
+   * The server has seen this account refused for a revoked or expired login, explained in
+   * the provider's own terms. For accounts with no `accountInfo` to carry `reauthRequired`
+   * (Codex): its usage bars still show the last reading, so without this the card looked
+   * healthy while every turn on it failed.
+   */
+  reauthHint?: string;
+  /** Start signing this account in again. Makes the "Sign in again"/"Expired" chip a button. */
+  onReauth?: (id: string) => void;
 }
 
 // Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
@@ -70,7 +79,7 @@ const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } 
 export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
   onSelect, unselectableReason, selecting, planLabel, dailyGuard, onDailyGuardToggle, dailyGuardToggling,
-  layout = "list",
+  reauthHint, onReauth, layout = "list",
 }: AccountCardProps) {
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
@@ -83,7 +92,7 @@ export function AccountCard({
   // Distinct from isExpired: this account still holds a refresh token, it is just one the
   // server will not honour. Dim it like an expired card, but keep every control — signing
   // in again goes through the same add flow, and delete has to stay reachable.
-  const needsReauth = !!accountInfo?.reauthRequired;
+  const needsReauth = !!accountInfo?.reauthRequired || !!reauthHint;
   // A sign-in dies on a fixed schedule regardless of use, so the warning has to lead the
   // last stretch of it rather than appear once it is already too late.
   const grantExpiresAtMs = accountInfo?.grantExpiresAt ? accountInfo.grantExpiresAt * 1000 : null;
@@ -166,7 +175,8 @@ export function AccountCard({
         {isExpired && (
           <AccountHint
             className="text-[10px] text-error shrink-0 font-medium"
-            hint="This token has expired and carries no refresh token, so nothing can renew it. Add the account again."
+            hint="This token has expired and carries no refresh token, so nothing can renew it. Sign in again to replace it."
+            onClick={onReauth ? () => onReauth(entry.accountId) : undefined}
           >
             Expired
           </AccountHint>
@@ -174,7 +184,8 @@ export function AccountCard({
         {needsReauth && !isExpired && (
           <AccountHint
             className="text-[10px] text-error shrink-0 font-medium"
-            hint="Anthropic rejected this account's refresh token, so no turn can run on it. Signing in again is the only thing that restores it."
+            hint={reauthHint ?? "Anthropic rejected this account's refresh token, so no turn can run on it. Signing in again is the only thing that restores it."}
+            onClick={onReauth ? () => onReauth(entry.accountId) : undefined}
           >
             Sign in again
           </AccountHint>

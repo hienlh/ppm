@@ -92,6 +92,19 @@ describe("mapCodexEvent", () => {
     expect(out).toEqual([{ type: "error", message: "bad" }]);
   });
 
+  it("error with willRetry → retrying status, not an error", () => {
+    const out = mapCodexEvent({
+      method: "error",
+      params: { error: { message: "Reconnecting... 2/5", additionalDetails: "unauthorized (401)" }, willRetry: true },
+    }, SID);
+    expect(out).toEqual([{ type: "status_update", phase: "retrying", message: "Reconnecting... 2/5" }]);
+  });
+
+  it("error with willRetry false stays an error", () => {
+    const out = mapCodexEvent({ method: "error", params: { error: { message: "gave up" }, willRetry: false } }, SID);
+    expect(out).toEqual([{ type: "error", message: "gave up" }]);
+  });
+
   it("tokenUsage/rateLimits → [] (usage cut)", () => {
     expect(mapCodexEvent({ method: "thread/tokenUsage/updated", params: {} }, SID)).toEqual([]);
     expect(mapCodexEvent({ method: "account/rateLimits/updated", params: {} }, SID)).toEqual([]);

@@ -270,6 +270,14 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
       const message = typeof err.message === "string" ? err.message
         : typeof p.message === "string" ? p.message
         : "codex error";
+      // `willRetry: true` is codex narrating its own retry loop ("Reconnecting...
+      // 2/5"), not a failure: the turn is still running and ends with either an
+      // answer or a final `willRetry: false` error. Reporting each one as an error
+      // put a card per attempt in the chat and made the proxy give up on a turn
+      // at the first reconnect.
+      if (p.willRetry === true) {
+        return [{ type: "status_update", phase: "retrying", message: redactTruncate(message, 256) }];
+      }
       return [{ type: "error", message: redactTruncate(message, 1024) }];
     }
 

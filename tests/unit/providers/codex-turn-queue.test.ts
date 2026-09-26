@@ -29,7 +29,7 @@ function makeLive(provider: any, sessionId: string, turnId = "turn-1") {
     pendingApprovals: new Map(),
     answeredCodexIds: new Set(),
     history: [], transcript: [], currentAssistant: "", currentEvents: [],
-    pendingTurns: [],
+    pendingTurns: [], subagentThreadIds: new Set(),
   };
   provider.live.set(sessionId, live);
   return { live, sent, pushed };

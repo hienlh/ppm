@@ -3,11 +3,20 @@ import { ok, err } from "../../types/api.ts";
 import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, setCodexDailyGuard, codexUsageLevel, type CodexStrategy } from "../../services/codex-account.service.ts";
 import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin, startBrowserLogin, submitBrowserCallback, getBrowserLoginStatus, cancelBrowserLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
+import { isCodexAccountAuthFailed } from "../../services/codex-account-auth-state.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
 export const codexAccountsRoutes = new Hono();
 
-codexAccountsRoutes.get("/", (c) => c.json(ok({ accounts: listCodexAccounts(), strategy: getCodexStrategy() })));
+/**
+ * `signedOut` is the server's live observation (a revoked/expired login seen on a turn or a
+ * quota read), not a stored field. The usage endpoint keeps serving the last good reading
+ * for such an account, so without it the card looked healthy while every turn failed.
+ */
+codexAccountsRoutes.get("/", (c) => c.json(ok({
+  accounts: listCodexAccounts().map((a) => ({ ...a, signedOut: isCodexAccountAuthFailed(a.id) })),
+  strategy: getCodexStrategy(),
+})));
 
 /** Per-account quota map { [accountId]: UsageInfo }. */
 codexAccountsRoutes.get("/usage", async (c) => c.json(ok(await getAllCodexUsages())));
@@ -73,10 +82,12 @@ codexAccountsRoutes.post("/api-key", async (c) => {
   catch (e) { return c.json(err((e as Error).message), 400); }
 });
 
-/** Begin ChatGPT device-code login → returns { id, userCode, verificationUrl }. */
+/** Begin ChatGPT device-code login → returns { id, userCode, verificationUrl }.
+ *  With `accountId`, signs that existing account in again instead of adding one. */
 codexAccountsRoutes.post("/device-login", async (c) => {
-  const body = await c.req.json<{ label?: string }>().catch(() => ({} as { label?: string }));
-  try { return c.json(ok(await startDeviceLogin(body.label))); }
+  const body = await c.req.json<{ label?: string; accountId?: unknown }>().catch(() => ({} as { label?: string; accountId?: unknown }));
+  if (body.accountId !== undefined && typeof body.accountId !== "string") return c.json(err("accountId must be a string"), 400);
+  try { return c.json(ok(await startDeviceLogin(body.label, undefined, body.accountId))); }
   catch (e) { return c.json(err((e as Error).message), 400); }
 });
 
@@ -92,10 +103,11 @@ codexAccountsRoutes.delete("/device-login/:id", (c) => {
 
 /** Browser OAuth uses the same durable polling as device-code login. */
 codexAccountsRoutes.post("/browser-login", async (c) => {
-  const body = await c.req.json<{ label?: string }>().catch(() => ({} as { label?: string }));
+  const body = await c.req.json<{ label?: string; accountId?: unknown }>().catch(() => ({} as { label?: string; accountId?: unknown }));
   if (body.label !== undefined && typeof body.label !== "string") return c.json(err("label must be a string"), 400);
+  if (body.accountId !== undefined && typeof body.accountId !== "string") return c.json(err("accountId must be a string"), 400);
   c.header("Cache-Control", "no-store");
-  try { return c.json(ok(await startBrowserLogin(body.label))); }
+  try { return c.json(ok(await startBrowserLogin(body.label, undefined, body.accountId))); }
   catch (e) { return c.json(err((e as Error).message), 400); }
 });
 

@@ -7,7 +7,7 @@
  * setting that base to `…/proxy/<provider>`.
  */
 import {
-  startAgentTurn, usageOf, resolveProvider, proxyableProviderIds,
+  startAgentTurn, usageOf, resolveProvider, proxyableProviderIds, turnFailureResponse,
 } from "./proxy-agent-turn.ts";
 import {
   buildPromptFromAnthropicMessages, hasUnsupportedAnthropicBlocks, messageResponse, anthropicError,
@@ -99,6 +99,6 @@ export async function forwardAgentMessages(
       ? await runStreaming(providerId, body)
       : await runNonStreaming(providerId, body);
   } catch (e) {
-    return anthropicError(502, (e as Error).message);
+    return turnFailureResponse(e, anthropicError);
   }
 }

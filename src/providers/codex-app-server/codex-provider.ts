@@ -26,6 +26,10 @@ import {
 import { dailyGuardMessage, dailyGuardState } from "../../shared/codex-daily-guard.ts";
 import { isCodexAccountUsageLimited, markCodexAccountUsageLimited } from "../../services/codex-account-cooldown.ts";
 import { isCodexUsageLimit, codexErrorMessage, parseCodexUsageLimitReset } from "./codex-usage-limit.ts";
+import { isCodexAuthFailure, codexErrorText, codexSignedOutMessage } from "./codex-auth-failure.ts";
+import {
+  isCodexAccountAuthFailed, markCodexAccountAuthFailed, clearCodexAccountAuthFailure,
+} from "../../services/codex-account-auth-state.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -181,7 +185,15 @@ interface LiveSession {
   /** The turn currently in flight, kept so a rotation can send it again on the new
    *  account. Cleared when the turn ends — there is then nothing to replay. */
   lastTurnInput?: { message: string; opts?: SendMessageOpts };
+  /** The running turn has already been reported as failed (its account is signed out) and
+   *  interrupted. Codex keeps narrating it — more retry notices, a final error, then
+   *  `turn/completed` — none of which may reach the caller a second time. Cleared by that
+   *  `turn/completed`, which is also when the queue may move on. */
+  discardingTurn?: boolean;
 }
+
+/** Why a turn is being moved to another account. */
+type RotationKind = "usage" | "auth";
 
 /** A follow-up held back because a turn was already running. */
 interface QueuedTurn {
@@ -516,7 +528,15 @@ export class CodexAppServerProvider implements AIProvider {
       // A quota refusal can come back as the rejection of the request itself rather than
       // as an `error` notification, and it is the same situation either way — move the
       // turn to an account that still has room instead of showing the refusal.
-      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason)) return;
+      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason, "usage")) return;
+      if (isCodexAuthFailure(reason)) {
+        this.markSessionAccountSignedOut(live, reason);
+        if (this.beginRotation(live, reason, "auth")) return;
+        live.channel.push({ type: "error", message: codexSignedOutMessage(this.sessionAccountLabel(live)) });
+        live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
+        this.endTurn(live);
+        return;
+      }
       if (!live.client.isClosed) live.channel.push({ type: "error", message: redactTruncate(reason, 256) });
       // No turn is running, so nothing will report `turn/completed` — release the
       // queue here or every later follow-up waits on a turn that never existed.
@@ -556,6 +576,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.turnInFlight = false;
     live.activeTurnId = null;
     live.interruptRequested = false;
+    live.discardingTurn = false;
     live.lastTurnInput = undefined;
     const next = live.pendingTurns.shift();
     if (next) void this.startTurn(live, next.message, next.opts);
@@ -575,29 +596,64 @@ export class CodexAppServerProvider implements AIProvider {
    * user untouched. That is the honest outcome: an error saying the quota is spent is worth
    * more than a silent retry on the account that just said so.
    */
-  private beginRotation(live: LiveSession, reason: string): boolean {
+  private beginRotation(live: LiveSession, reason: string, kind: RotationKind): boolean {
     const threadId = live.threadId;
     if (!threadId || live.rotating) return false;
     const currentId = getSessionCodexAccount(threadId);
     const candidates = listCodexAccounts().filter(
-      (a) => a.status !== "disabled" && a.id !== currentId && !isCodexAccountUsageLimited(a.id),
+      (a) => a.status !== "disabled" && a.id !== currentId
+        && !isCodexAccountUsageLimited(a.id) && !isCodexAccountAuthFailed(a.id),
     );
     if (candidates.length === 0) return false;
     live.rotating = true;
-    void this.rotateAccount(live, threadId, currentId, reason);
+    void this.rotateAccount(live, threadId, currentId, reason, kind);
     return true;
   }
 
-  /** Park the spent account, move the session onto a fresh one, and send the turn again. */
+  /** Mark the account serving this session as signed out, if it is a managed one. */
+  private markSessionAccountSignedOut(live: LiveSession, reason: string): void {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) : null;
+    if (accountId) markCodexAccountAuthFailed(accountId, redactTruncate(reason, 256));
+  }
+
+  private sessionAccountLabel(live: LiveSession): string | null {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) : null;
+    return accountId ? getCodexAccount(accountId)?.label ?? null : null;
+  }
+
+  /**
+   * The running turn's account turned out to be signed out.
+   *
+   * Recognised on codex's FIRST retry notice rather than its final error: the notice already
+   * names the 401, and waiting out the rest of the loop is ~24s of a subprocess and a request
+   * held open for an answer that cannot come. Moves the turn to another account when one can
+   * take it; otherwise reports it and interrupts the turn, discarding what codex still says
+   * about it.
+   */
+  private handleAuthFailure(live: LiveSession, reason: string): void {
+    this.markSessionAccountSignedOut(live, reason);
+    if (this.beginRotation(live, reason, "auth")) return;
+    live.discardingTurn = true;
+    this.interruptActiveTurn(live);
+    live.channel.push({ type: "error", message: codexSignedOutMessage(this.sessionAccountLabel(live)) });
+    live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
+  }
+
+  /** Bench the refused account, move the session onto a fresh one, and send the turn again. */
   private async rotateAccount(
     live: LiveSession,
     threadId: string,
     currentId: string | null,
     reason: string,
+    kind: RotationKind,
   ): Promise<void> {
     const pending = live.lastTurnInput;
-    const reset = parseCodexUsageLimitReset(reason);
-    if (currentId) markCodexAccountUsageLimited(currentId, reset?.atMs);
+    const reset = kind === "usage" ? parseCodexUsageLimitReset(reason) : null;
+    // A signed-out account was already marked by the caller; only a quota refusal parks here.
+    if (currentId && kind === "usage") markCodexAccountUsageLimited(currentId, reset?.atMs);
+    const giveUp = (): void => this.abandonRotation(live, kind === "auth"
+      ? codexSignedOutMessage(currentId ? getCodexAccount(currentId)?.label : null)
+      : this.usageLimitMessage(reason, reset?.text));
 
     let next: CodexAccount | null = null;
     try {
@@ -612,12 +668,12 @@ export class CodexAppServerProvider implements AIProvider {
       next = selectCodexAccount(currentId ? { exclude: [currentId] } : undefined);
     }
 
-    if (!next) { this.abandonRotation(live, reason, reset?.text); return; }
+    if (!next) { giveUp(); return; }
 
-    console.warn(`[codex] session=${threadId} usage limit — switching to ${next.id} (${next.label})`);
+    console.warn(`[codex] session=${threadId} ${kind === "auth" ? "account signed out" : "usage limit"} — switching to ${next.id} (${next.label})`);
     live.channel.push({
       type: "account_retry",
-      reason: "Usage limit reached — switching account",
+      reason: kind === "auth" ? "Account signed out — switching account" : "Usage limit reached — switching account",
       accountId: next.id,
       accountLabel: next.label,
     });
@@ -626,7 +682,7 @@ export class CodexAppServerProvider implements AIProvider {
       await this.respawnOn(live, threadId, next);
     } catch (e) {
       console.error(`[codex] session=${threadId} rotation to ${next.id} failed: ${redactTruncate((e as Error)?.message, 200)}`);
-      this.abandonRotation(live, reason, reset?.text);
+      giveUp();
       return;
     }
 
@@ -639,14 +695,15 @@ export class CodexAppServerProvider implements AIProvider {
     else this.endTurn(live);
   }
 
-  /** No account could take the turn — report the refusal and close the turn out. */
-  private abandonRotation(live: LiveSession, reason: string, resetText?: string): void {
-    live.rotating = false;
+  private usageLimitMessage(reason: string, resetText?: string): string {
     const suffix = resetText ? ` Try again ${resetText}.` : "";
-    live.channel.push({
-      type: "error",
-      message: `${redactTruncate(reason, 512)}${suffix} Add another account in Settings → Accounts, or wait for the reset.`,
-    });
+    return `${redactTruncate(reason, 512)}${suffix} Add another account in Settings → Accounts, or wait for the reset.`;
+  }
+
+  /** No account could take the turn — report the refusal and close the turn out. */
+  private abandonRotation(live: LiveSession, message: string): void {
+    live.rotating = false;
+    live.channel.push({ type: "error", message });
     live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
     this.endTurn(live);
   }
@@ -825,14 +882,35 @@ export class CodexAppServerProvider implements AIProvider {
   private handleNotification(live: LiveSession, notif: JsonRpcNotification): void {
     // A quota refusal is an ordinary `error` notification, so it has to be recognised
     // before the mapper turns it into a plain error card in front of the user.
-    if (notif.method === "error" && !live.rotating) {
+    if (notif.method === "error" && !live.rotating && !live.discardingTurn) {
+      // Retry notices count too: the headline says only "Reconnecting... N/5", but their
+      // details name the 401, and waiting for the final error costs the whole retry loop.
+      const authText = codexErrorText(notif.params);
+      if (isCodexAuthFailure(authText)) { this.handleAuthFailure(live, authText); return; }
       const reason = codexErrorMessage(notif.params);
-      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason)) return;
+      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason, "usage")) return;
     }
     // Mid-rotation the subprocess behind this session is being replaced. Anything it still
     // emits describes the turn that was refused — including its `turn/completed`, which
     // would close the turn the caller is about to be given a second time.
     if (live.rotating) return;
+    // A turn already reported as failed: swallow the rest of it, and let the queue move on
+    // only once codex confirms it is over.
+    if (live.discardingTurn) {
+      if (notif.method === "turn/completed") {
+        live.discardingTurn = false;
+        live.currentAssistant = "";
+        live.currentEvents = [];
+        this.endTurn(live);
+      }
+      return;
+    }
+    if (notif.method === "turn/completed"
+        && (notif.params as { turn?: { status?: string } })?.turn?.status === "completed" && live.threadId) {
+      // An answered turn is proof the login works, whatever was observed before.
+      const accountId = getSessionCodexAccount(live.threadId);
+      if (accountId) clearCodexAccountAuthFailure(accountId);
+    }
     if (notif.method === "item/agentMessage/delta") {
       const d = (notif.params as { delta?: string })?.delta;
       if (typeof d === "string") live.currentAssistant += d;
