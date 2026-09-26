@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.23.2] - 2026-09-26
+
+### Added
+- "Sign in again" and "Expired" on an account card are now buttons (Claude and Codex, in Settings and the chat usage panels); a Codex account signs in again in place and keeps its settings and chats.
+
+### Fixed
+- A Codex account whose login was revoked no longer takes PPM down: it is marked signed out and skipped, turns move to another account, and requests fail within milliseconds instead of hanging.
+- Codex's own "Reconnecting..." retries are no longer reported as errors, so a turn that recovers is not cut short.
+- The `/proxy/<provider>` endpoints run at most 4 requests at once and answer the rest with 429 + Retry-After instead of stalling the server.
+
 ## [0.23.1] - 2026-09-25
 
 ### Fixed
