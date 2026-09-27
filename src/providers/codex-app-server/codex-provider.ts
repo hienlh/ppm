@@ -167,9 +167,14 @@ interface LiveSession {
   /** A turn is running on the thread. Codex accepts exactly one at a time: a
    *  second `turn/start` resolves with the ALREADY-RUNNING turn (same id,
    *  status `inProgress`) and silently discards the new input — no error, so
-   *  nothing downstream can notice. Follow-ups therefore wait in `pendingTurns`
-   *  and are sent when the running turn reports `turn/completed`. */
+   *  nothing downstream can notice. A `next` follow-up is therefore handed to the
+   *  running turn with `turn/steer`; anything that cannot be steered waits in
+   *  `pendingTurns` and is sent when the running turn reports `turn/completed`. */
   turnInFlight?: boolean;
+  /** Follow-ups steered into the running turn. A rotation replays the turn on another
+   *  account from `lastTurnInput`, which knows nothing of these, so they are steered
+   *  into the replay again. Cleared when the turn ends. */
+  steeredInputs?: QueuedTurn[];
   /** A daily-guard usage read is in progress before the next turn starts. */
   checkingDailyGuard?: boolean;
   /** Id of the running turn — `turn/interrupt` needs it, `threadId` alone is rejected. */
@@ -201,12 +206,24 @@ interface QueuedTurn {
   opts?: SendMessageOpts;
   /** `later` sinks to the end of the queue; `now`/`next` go in front of it. */
   priority: "now" | "next" | "later";
+  /** Already in the transcript — being sent again on another account after a rotation. */
+  replay?: boolean;
 }
 
 interface EventChannel {
   push(ev: ChatEvent): void;
   done(): void;
   iterator: AsyncGenerator<ChatEvent, void, undefined>;
+}
+
+/** What a user message becomes on the wire, for `turn/start` and `turn/steer` alike.
+ *  Codex takes an image as a path, never as a payload, so the uploaded copy is what it
+ *  gets. Images lead: the text usually refers to them ("what is this?"). */
+function turnInput(message: string, opts?: SendMessageOpts): UserInput[] {
+  return [
+    ...(opts?.imagePaths ?? []).map((path) => ({ type: "localImage" as const, path })),
+    { type: "text" as const, text: withSharedContext(message, opts?.sharedContext), text_elements: [] },
+  ];
 }
 
 /** Next stable `rollout-N` id for a live message. Counts existing rollout-prefixed
@@ -461,11 +478,14 @@ export class CodexAppServerProvider implements AIProvider {
    */
   private async startTurn(live: LiveSession, message: string, opts?: SendMessageOpts, replay = false): Promise<void> {
     if (!live.threadId) return;
-    // One turn at a time — anything sent now would be dropped without a trace.
-    // `now` additionally cuts the running turn short so this one answers next.
+    // One turn at a time — a second `turn/start` would be dropped without a trace.
+    // `next` joins the running turn the way a Claude follow-up does; `now` cuts it
+    // short so this one answers next; `later` waits for it to finish.
     if (live.turnInFlight) {
       const priority = opts?.priority ?? "next";
-      this.enqueueTurn(live, { message, opts, priority });
+      const item: QueuedTurn = { message, opts, priority, ...(replay ? { replay } : {}) };
+      if (priority === "next" && this.canSteer(live)) { this.steerTurn(live, item); return; }
+      this.enqueueTurn(live, item);
       if (priority === "now") this.interruptActiveTurn(live);
       return;
     }
@@ -500,12 +520,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.currentAssistant = "";
     live.currentEvents = [];
     live.lastUsage = undefined;
-    // Codex takes an image as a path, never as a payload, so the uploaded copy is what it
-    // gets. Images lead: the text usually refers to them ("what is this?").
-    const input: UserInput[] = [
-      ...(opts?.imagePaths ?? []).map((path) => ({ type: "localImage" as const, path })),
-      { type: "text" as const, text: withSharedContext(message, opts?.sharedContext), text_elements: [] },
-    ];
+    const input = turnInput(message, opts);
     const turnModel = codexModel(opts?.model);
     const turnEffort = opts?.effort ?? this.config?.effort;
     const configuredThinking = this.config?.thinking_budget_tokens;
@@ -568,7 +583,64 @@ export class CodexAppServerProvider implements AIProvider {
     if (live.interruptRequested) {
       live.interruptRequested = false;
       this.interruptActiveTurn(live);
+      return;
     }
+    // Follow-ups that arrived before codex named the turn had nothing to steer into.
+    while (live.pendingTurns[0]?.priority === "next" && this.canSteer(live)) {
+      this.steerTurn(live, live.pendingTurns.shift()!);
+    }
+  }
+
+  /**
+   * Whether a follow-up may join the running turn. Not while the turn is unnamed
+   * (`turn/steer` requires its id), being interrupted for a `now` message (the input
+   * would land in a turn that is about to stop), being discarded or rotated away, or
+   * compacting — codex refuses to steer a compaction, and the refusal would only
+   * bounce the message back to the queue.
+   */
+  private canSteer(live: LiveSession): boolean {
+    return !!live.activeTurnId && !live.interruptRequested && !live.discardingTurn
+      && !live.rotating && !live.compactRequested
+      && !live.pendingTurns.some((q) => q.priority === "now");
+  }
+
+  /**
+   * Hand a follow-up to the running turn. `expectedTurnId` makes codex refuse it if that
+   * turn has already ended, so a refusal never loses the message: it is sent as a turn
+   * of its own instead, once whatever is running now finishes.
+   */
+  private steerTurn(live: LiveSession, item: QueuedTurn): void {
+    const turnId = live.activeTurnId!;
+    live.client.request("turn/steer", {
+      threadId: live.threadId,
+      expectedTurnId: turnId,
+      input: turnInput(item.message, item.opts),
+    }).then(() => {
+      live.steeredInputs = [...(live.steeredInputs ?? []), item];
+      if (item.replay) return;
+      // The answer so far belongs above the message, as it does in the rollout, which
+      // records the steered input as a user message between two agent messages.
+      if (live.currentAssistant || live.currentEvents.length) {
+        const events = live.currentEvents.length
+          ? [...live.currentEvents, ...(live.currentAssistant ? [{ type: "text", content: live.currentAssistant } as ChatEvent] : [])]
+          : undefined;
+        live.transcript.push({
+          id: nextRolloutId(live), role: "assistant", content: live.currentAssistant,
+          ...(events ? { events } : {}), timestamp: new Date().toISOString(),
+        });
+        live.currentAssistant = "";
+        live.currentEvents = [];
+      }
+      live.transcript.push({ id: nextRolloutId(live), role: "user", content: item.message, timestamp: new Date().toISOString() });
+    }).catch((err) => {
+      if (live.client.isClosed) return;
+      console.warn(`[codex] session=${live.threadId} steer refused, sending as its own turn: ${redactTruncate((err as Error)?.message ?? String(err), 200)}`);
+      const retry: QueuedTurn = { ...item, priority: "later" };
+      // `later` so it is not steered straight back into a turn that just refused it; the
+      // head of the queue because it was sent before anything waiting there.
+      if (live.turnInFlight) live.pendingTurns.unshift(retry);
+      else void this.startTurn(live, retry.message, retry.opts, retry.replay);
+    });
   }
 
   /** Running turn is over: send the next follow-up, if one is waiting. */
@@ -578,8 +650,9 @@ export class CodexAppServerProvider implements AIProvider {
     live.interruptRequested = false;
     live.discardingTurn = false;
     live.lastTurnInput = undefined;
+    live.steeredInputs = undefined;
     const next = live.pendingTurns.shift();
-    if (next) void this.startTurn(live, next.message, next.opts);
+    if (next) void this.startTurn(live, next.message, next.opts, next.replay);
   }
 
   // ── Usage-limit rotation ──
@@ -691,6 +764,10 @@ export class CodexAppServerProvider implements AIProvider {
     live.turnInFlight = false;
     live.activeTurnId = null;
     live.interruptRequested = false;
+    // What was steered into the refused turn is steered into its replay once that is named.
+    const steered = (live.steeredInputs ?? []).map((q) => ({ ...q, priority: "next" as const, replay: true }));
+    live.steeredInputs = undefined;
+    live.pendingTurns.unshift(...steered);
     if (pending) void this.startTurn(live, pending.message, pending.opts, true);
     else this.endTurn(live);
   }
