@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.4] - 2026-09-27
+
+### Improved
+- New chat tabs accept typing immediately, prepare provider settings in the background, and safely queue early sends.
+
+### Fixed
+- Codex reads mid-turn follow-up messages during the running task instead of waiting for the turn to finish.
+
 ## [0.23.3] - 2026-09-27
 
 ### Added
