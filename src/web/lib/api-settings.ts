@@ -121,6 +121,8 @@ export interface AccountUsageEntry {
     weekly?: import("../../types/chat").LimitBucket;
     weeklyOpus?: import("../../types/chat").LimitBucket;
     weeklySonnet?: import("../../types/chat").LimitBucket;
+    /** Per-model weekly limits ("Fable", …). */
+    weeklyScoped?: import("../../types/chat").ScopedLimitBucket[];
   };
 }
 

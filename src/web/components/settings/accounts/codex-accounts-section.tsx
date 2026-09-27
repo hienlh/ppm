@@ -27,6 +27,7 @@ import { CodexRotationDialog } from "./codex-rotation-dialog";
 import { CodexUsageRows } from "./codex-usage-rows";
 import { CODEX_SIGNED_OUT_HINT, useCodexAccounts, type CodexAccount } from "./use-codex-accounts";
 import { CodexSignInAgainDialog } from "./codex-sign-in-again-dialog";
+import { ResetCreditsChip } from "./account-usage-extras";
 import { AccountHint } from "./account-hint";
 import { codexPlanLabel } from "../../../../shared/codex-plan-label.ts";
 import { dailyGuardState } from "../../../../shared/codex-daily-guard.ts";
@@ -135,6 +136,11 @@ export function CodexAccountsSection() {
                     </Tooltip>
                   </div>
                   <CodexUsageRows usage={u} />
+                  {u.resetCredits && (
+                    <div className="text-[10px] text-text-subtle">
+                      <ResetCreditsChip credits={u.resetCredits} />
+                    </div>
+                  )}
                   {u.session == null && (() => {
                     const guard = dailyGuardState(u.weekly);
                     return guard ? (

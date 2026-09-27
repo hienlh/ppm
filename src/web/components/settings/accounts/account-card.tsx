@@ -27,6 +27,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AccountCardShell } from "./accounts-pane-header";
 import { formatExpiry, formatLastUpdated, tokenStatus } from "./account-usage-format";
 import type { DailyGuardState } from "../../../../shared/codex-daily-guard.ts";
+import type { ResetCredits } from "../../../../types/chat";
+import { ResetCreditsChip, ScopedBucketRows } from "./account-usage-extras";
 
 export interface AccountCardProps {
   entry: AccountUsageEntry;
@@ -69,6 +71,8 @@ export interface AccountCardProps {
   reauthHint?: string;
   /** Start signing this account in again. Makes the "Sign in again"/"Expired" chip a button. */
   onReauth?: (id: string) => void;
+  /** Codex's free rate-limit resets for this account, shown in the footer. */
+  resetCredits?: ResetCredits;
 }
 
 // Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
@@ -79,10 +83,10 @@ const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } 
 export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
   onSelect, unselectableReason, selecting, planLabel, dailyGuard, onDailyGuardToggle, dailyGuardToggling,
-  reauthHint, onReauth, layout = "list",
+  reauthHint, onReauth, resetCredits, layout = "list",
 }: AccountCardProps) {
   const { usage } = entry;
-  const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
+  const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet || usage.weeklyScoped?.length;
   const status = accountInfo?.status ?? entry.accountStatus;
   const isExpired = !!(
     accountInfo && !accountInfo.hasRefreshToken && accountInfo.expiresAt
@@ -268,6 +272,7 @@ export function AccountCard({
           <AccountBucketRow label="Weekly" bucket={usage.weekly} />
           <AccountBucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
           <AccountBucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
+          <ScopedBucketRows buckets={usage.weeklyScoped} />
         </div>
       ) : (
         <p className="text-xs text-text-subtle">
@@ -312,6 +317,7 @@ export function AccountCard({
       )}
 
       <div className="flex items-center gap-2 text-[10px] text-text-subtle flex-wrap">
+        <ResetCreditsChip credits={resetCredits} />
         {usage.lastFetchedAt && (
           <AccountHint
             className="inline-flex items-center gap-1"

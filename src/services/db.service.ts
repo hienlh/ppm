@@ -8,7 +8,7 @@ import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 50;
+export const CURRENT_SCHEMA_VERSION = 51;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1147,6 +1147,14 @@ export function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN permission_mode TEXT"); } catch { /* exists */ }
     database.exec(`PRAGMA user_version = 50;`);
   }
+
+  if (current < 51) {
+    // Usage details that have no fixed column: Claude's per-model weekly limits (Fable and
+    // whatever comes next arrive as `limits[]` entries, not as `seven_day_<model>` keys) and
+    // Codex's free rate-limit reset credits. JSON so a new model needs no migration of its own.
+    try { database.exec("ALTER TABLE claude_limit_snapshots ADD COLUMN extra_json TEXT"); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 51;`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1850,6 +1858,8 @@ export interface LimitSnapshotRow {
   weekly_opus_resets_at: string | null;
   weekly_sonnet_util: number | null;
   weekly_sonnet_resets_at: string | null;
+  /** JSON {@link import("../shared/usage-extra.ts").UsageExtra}: per-model weekly limits, reset credits. */
+  extra_json?: string | null;
   recorded_at: string;
 }
 
@@ -1859,8 +1869,8 @@ export function insertLimitSnapshot(
   getDb().query(
     `INSERT INTO claude_limit_snapshots
       (provider, account_id, five_hour_util, five_hour_resets_at, weekly_util, weekly_resets_at,
-       weekly_opus_util, weekly_opus_resets_at, weekly_sonnet_util, weekly_sonnet_resets_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       weekly_opus_util, weekly_opus_resets_at, weekly_sonnet_util, weekly_sonnet_resets_at, extra_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     data.provider ?? DEFAULT_USAGE_PROVIDER,
     data.account_id ?? null,
@@ -1868,6 +1878,7 @@ export function insertLimitSnapshot(
     data.weekly_util ?? null, data.weekly_resets_at ?? null,
     data.weekly_opus_util ?? null, data.weekly_opus_resets_at ?? null,
     data.weekly_sonnet_util ?? null, data.weekly_sonnet_resets_at ?? null,
+    data.extra_json ?? null,
   );
 }
 

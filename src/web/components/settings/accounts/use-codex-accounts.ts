@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getAuthToken } from "@/lib/api-client";
-import type { LimitBucket } from "../../../../types/chat";
+import type { LimitBucket, ResetCredits } from "../../../../types/chat";
 import type { CodexStrategy } from "./codex-rotation-dialog";
 
 export type Strategy = CodexStrategy;
@@ -25,6 +25,8 @@ export interface Usage {
   sevenDay?: number;
   session?: LimitBucket;
   weekly?: LimitBucket;
+  /** Free rate-limit resets Codex has granted the account. */
+  resetCredits?: ResetCredits;
 }
 interface DevicePending { id: string; userCode: string; verificationUrl: string }
 interface BrowserPending { id: string; authUrl: string }

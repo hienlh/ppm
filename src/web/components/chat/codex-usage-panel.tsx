@@ -27,7 +27,7 @@ import { UsagePanelShell } from "./usage-panel-shell";
 
 import { CODEX_SIGNED_OUT_HINT, type CodexAccount } from "@/components/settings/accounts/use-codex-accounts";
 import { CodexSignInAgainDialog } from "@/components/settings/accounts/codex-sign-in-again-dialog";
-type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly">;
+type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly" | "resetCredits">;
 
 /** Matches the whole-percent figure the bars show, so a refusal agrees with the card. */
 function atCap(util: number | null | undefined): boolean {
@@ -211,6 +211,7 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
             onDailyGuardToggle={guard ? () => void handleDailyGuardToggle(a.id, !!a.dailyGuardEnabled) : undefined}
             dailyGuardToggling={togglingId === a.id}
             reauthHint={a.signedOut ? CODEX_SIGNED_OUT_HINT : undefined}
+            resetCredits={u.resetCredits}
             // Only a ChatGPT sign-in can be renewed in place; a dead API key is replaced.
             onReauth={a.type === "chatgpt" ? () => setSignInAgain(a) : undefined}
           />

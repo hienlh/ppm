@@ -158,6 +158,7 @@ chatRoutes.get("/usage", async (c) => {
     weekly: usage.weekly,
     weeklyOpus: usage.weeklyOpus,
     weeklySonnet: usage.weeklySonnet,
+    weeklyScoped: usage.weeklyScoped,
     totalCostUsd: usage.totalCostUsd,
     activeAccountId: usage.activeAccountId,
     activeAccountLabel: usage.activeAccountLabel,

@@ -209,8 +209,27 @@ export interface UsageInfo {
   weekly?: LimitBucket;
   weeklyOpus?: LimitBucket;
   weeklySonnet?: LimitBucket;
+  /** Claude's per-model weekly limits ("Fable", …), labelled by model. */
+  weeklyScoped?: ScopedLimitBucket[];
+  /** Codex's free rate-limit resets still available to this account. */
+  resetCredits?: ResetCredits;
   activeAccountId?: string;
   activeAccountLabel?: string;
+}
+
+/** A weekly limit that applies to one model only, named as the provider names it. */
+export interface ScopedLimitBucket extends LimitBucket {
+  label: string;
+}
+
+/** Free "reset my rate limits" credits Codex grants an account. */
+export interface ResetCredits {
+  /** How many can still be used. */
+  available: number;
+  /** ISO time the soonest-expiring one lapses, if any is available. */
+  nextExpiresAt?: string;
+  /** What the soonest one resets, as Codex words it ("Full reset (Weekly + 5 hr)"). */
+  title?: string;
 }
 
 /** Result subtype from SDK ResultMessage */
