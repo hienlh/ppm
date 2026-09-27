@@ -131,6 +131,12 @@ interface SessionEntry {
   idleSince?: number;
   /** When the last turn completed — the moment this session's prompt cache was last written */
   lastTurnEndedAt?: number;
+  /**
+   * When the message that opened the current turn reached the server — what "time to first
+   * event" is measured from. The consumer loop outlives turns, so its own clock would count
+   * the idle gap before a follow-up as waiting on the provider.
+   */
+  turnRequestedAt?: { at: number; cold: boolean };
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
 }
@@ -716,9 +722,13 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
-        const waitMs = Date.now() - startTime;
-        console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType}`);
-        logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType})`);
+        const requested = entry.turnRequestedAt;
+        entry.turnRequestedAt = undefined;
+        // A turn nobody sent over this socket (scheduler, remote trigger) has no receipt time.
+        const waitMs = Date.now() - (requested?.at ?? startTime);
+        const path = requested ? (requested.cold ? "cold" : "warm") : "unsent";
+        console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType} path=${path}`);
+        logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType}, ${path})`);
         if (heartbeat) clearInterval(heartbeat);
         const newPhase = evType === "thinking" ? "thinking" : "streaming";
         setPhase(sessionId, newPhase);
@@ -1197,6 +1207,8 @@ export const chatWebSocket = {
     }
 
     if (parsed.type === "message") {
+      // Taken before any awaited work below (slash rewrites, resume), which is part of the wait.
+      const messageReceivedAt = Date.now();
       // Images count as content: a message may carry only a picture, with nothing typed.
       const hasInlineImages = Array.isArray((parsed as { images?: unknown }).images)
         && ((parsed as { images: unknown[] }).images.length > 0);
@@ -1320,6 +1332,10 @@ export const chatWebSocket = {
 
       // Store user message for reconnect replay (turn_events includes only assistant events)
       entry.currentUserMessage = parsed.content;
+      // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
+      if (!entry.isStreamingActive || entry.phase === "idle") {
+        entry.turnRequestedAt = { at: messageReceivedAt, cold: !entry.isStreamingActive };
+      }
 
       if (!entry.isStreamingActive) {
         // First message or post-crash recovery: start persistent consumer
@@ -1467,6 +1483,9 @@ export const chatWebSocket = {
       broadcastBackgroundRegistry(sessionId);
       const provider = providerRegistry.get(providerId);
       const instruction = `Call the KillShell tool with task_id "${shellId}" to stop that background command, then reply with just "Stopped.".`;
+      if (!entry.isStreamingActive || entry.phase === "idle") {
+        entry.turnRequestedAt = { at: Date.now(), cold: !entry.isStreamingActive };
+      }
       if (!entry.isStreamingActive) {
         if (provider && "resumeSession" in provider) await (provider as any).resumeSession(sessionId);
         if (entry.projectPath && provider && "ensureProjectPath" in provider) {

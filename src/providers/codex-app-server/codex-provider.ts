@@ -887,8 +887,12 @@ export class CodexAppServerProvider implements AIProvider {
 
     // Only resume a rollout attributable to this project. An unknown/resumed ID
     // without one must not silently become a fresh thread with a different identity.
-    const found = locateRollout(sessionId, cwd);
-    if (!found && !this.unstartedSessions.has(sessionId)) throw missingRolloutError(sessionId);
+    // A session created here and never started has no rollout: codex names the thread with an
+    // id of its own, so no file can match this one. Looking anyway reads the head of every
+    // rollout on disk, synchronously, before the first turn can start.
+    const unstarted = this.unstartedSessions.has(sessionId);
+    const found = unstarted ? null : locateRollout(sessionId, cwd);
+    if (!found && !unstarted) throw missingRolloutError(sessionId);
 
     const client = new CodexJsonRpcClient();
     const channel = createEventChannel();
@@ -948,11 +952,13 @@ export class CodexAppServerProvider implements AIProvider {
       if (account) setSessionCodexAccount(threadId, account.id);
     }
     // Snapshot persisted history so live message ids continue the rollout-N
-    // numbering (empty for a brand-new thread; full prior transcript on resume).
-    live.history = fromCodexSessionsDirs(threadId, (d) => {
+    // numbering (empty for a brand-new thread; full prior transcript on resume). A new thread
+    // has nothing to snapshot, and its rollout may not be on disk yet — searching for it would
+    // fall back to reading the head of every other rollout.
+    live.history = found ? fromCodexSessionsDirs(threadId, (d) => {
       const msgs = getRolloutMessages(d, threadId, cwd);
       return msgs.length > 0 ? msgs : null;
-    }) ?? [];
+    }) ?? [] : [];
     return live;
   }
 

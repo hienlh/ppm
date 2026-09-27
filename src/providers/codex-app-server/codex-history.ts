@@ -1,6 +1,6 @@
 import type { ChatMessage, ChatEvent, SessionInfo } from "../provider.interface.ts";
 import { stripSharedContext } from "../../shared/provider-context.ts";
-import { readdirSync, readFileSync, statSync, realpathSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { getPpmDir } from "../../services/ppm-dir.ts";
@@ -221,11 +221,46 @@ export function parseRolloutJsonl(
   return messages;
 }
 
-/** Read a rollout file's header (session_meta, plus its title when asked). */
-function readSessionMeta(file: string, opts?: { withTitle?: boolean }): RolloutHeader | null {
+/** First read of a rollout's head: `session_meta` carries the base instructions, measured at 22–27 KB. */
+const HEADER_FIRST_READ_BYTES = 32 * 1024;
+
+/**
+ * Read a rollout file's header (session_meta, plus its title when asked) from as little of
+ * the file as answers it.
+ *
+ * Reading whole files here is what froze the server: identifying one rollout among thousands
+ * read every transcript in full (1.8 GB, over a second of synchronous I/O) whenever no file
+ * name matched. The head is read in growing slices instead, and a slice's unterminated last
+ * line — possibly a split multi-byte character — is dropped by `completeLines`, so a partial
+ * read never parses a partial record.
+ */
+function readSessionMeta(
+  file: string,
+  opts?: { withTitle?: boolean; titleIf?: (header: RolloutHeader) => boolean },
+): RolloutHeader | null {
+  let fd: number | undefined;
   try {
-    return readRolloutHeader(readFileSync(file, "utf-8"), opts);
+    fd = openSync(file, "r");
+    const size = fstatSync(fd).size;
+    let buffer = Buffer.alloc(Math.min(size, HEADER_FIRST_READ_BYTES));
+    let filled = 0;
+    while (true) {
+      const read = readSync(fd, buffer, filled, buffer.length - filled, filled);
+      filled += read;
+      // A file that shrank under us reads short; stop rather than wait for bytes that are gone.
+      const eof = filled >= size || read === 0;
+      const header = readRolloutHeader(buffer.toString("utf-8", 0, filled), opts);
+      // A header the caller is about to discard needs no title: most rollouts in a shared
+      // tree belong to other projects, and a title can sit megabytes in, or nowhere at all.
+      const wanted = header && (!opts?.titleIf || opts.titleIf(header));
+      const complete = header && (!opts?.withTitle || !wanted || header.title || header.parentThreadId);
+      if (complete || eof) return header;
+      const grown = Buffer.alloc(Math.min(size, buffer.length * 4));
+      buffer.copy(grown, 0, 0, filled);
+      buffer = grown;
+    }
   } catch { /* unreadable file → excluded (fail-closed) */ }
+  finally { if (fd !== undefined) closeSync(fd); }
   return null;
 }
 
@@ -270,7 +305,10 @@ export function listCodexRollouts(
   const sessions: SessionInfo[] = [];
 
   for (const file of files) {
-    const meta = readSessionMeta(file, { withTitle: true });
+    const meta = readSessionMeta(file, {
+      withTitle: true,
+      titleIf: (h) => !!h.cwd && !h.parentThreadId && normPath(h.cwd) === target,
+    });
     if (!meta?.cwd) continue;            // fail-closed: no cwd → exclude
     if (normPath(meta.cwd) !== target) continue;
     if (meta.parentThreadId) continue;   // one step of another session, not a session

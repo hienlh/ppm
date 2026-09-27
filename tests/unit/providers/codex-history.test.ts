@@ -401,3 +401,49 @@ describe("subagent threads (spawned agents are steps, not sessions)", () => {
     expect(findRolloutByThreadId(FIXTURES, CHILD_ID, PPM_CWD)).not.toBeNull();
   });
 });
+
+describe("rollout headers are read from the head of the file, not the whole file", () => {
+  let dir: string;
+  const write = (name: string, records: unknown[], tail = "") => {
+    const day = join(dir, "2026", "09", "27");
+    mkdirSync(day, { recursive: true });
+    writeFileSync(join(day, name), records.map((r) => JSON.stringify(r)).join("\n") + "\n" + tail);
+  };
+  const meta = (id: string, extra: Record<string, unknown> = {}) =>
+    ({ type: "session_meta", payload: { id, cwd: PPM_CWD, timestamp: "2026-09-27T00:00:00Z", ...extra } });
+  const filler = (n: number) => Array.from({ length: n }, (_, i) =>
+    ({ type: "response_item", payload: { type: "message", role: "developer", content: `${"x".repeat(2000)}${i}` } }));
+
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "codex-head-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("identifies a thread whose session_meta alone is longer than the first slice", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    write("rollout-a.jsonl", [meta(id, { base_instructions: "i".repeat(300_000) })]);
+    expect(findRolloutByThreadId(dir, id, PPM_CWD)).toContain("rollout-a.jsonl");
+  });
+
+  it("finds a title that only appears megabytes into the transcript", () => {
+    const id = "22222222-2222-4333-8444-555555555555";
+    write(`rollout-b-${id}.jsonl`, [meta(id), ...filler(600),
+      { type: "event_msg", payload: { type: "user_message", message: "Late opening prompt" } }]);
+    expect(listCodexRollouts(dir, PPM_CWD, "codex")[0]?.title).toBe("Late opening prompt");
+  });
+
+  it("still ignores an unterminated last line", () => {
+    const id = "33333333-2222-4333-8444-555555555555";
+    write(`rollout-c-${id}.jsonl`, [meta(id)],
+      JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "half written" } }));
+    expect(listCodexRollouts(dir, PPM_CWD, "codex")[0]?.title).toBe("Codex session");
+  });
+
+  it("does not let a multi-byte character split across a slice corrupt the header", () => {
+    const id = "44444444-2222-4333-8444-555555555555";
+    // Pads session_meta so a 3-byte character straddles the first slice boundary.
+    write(`rollout-d-${id}.jsonl`, [meta(id, { base_instructions: "a".repeat(32_700) + "ệ".repeat(40) }),
+      { type: "event_msg", payload: { type: "user_message", message: "Sửa lỗi đăng nhập" } }]);
+    const [session] = listCodexRollouts(dir, PPM_CWD, "codex");
+    expect(session?.id).toBe(id);
+    expect(session?.title).toBe("Sửa lỗi đăng nhập");
+  });
+});
