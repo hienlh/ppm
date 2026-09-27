@@ -615,7 +615,13 @@ export async function startServer(options: {
       while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
 
       const bunExe = process.execPath.replace(/\\/g, "\\\\");
-      const logEscaped = logFile.replace(/\\/g, "\\\\");
+      // Never ppm.log itself: `-RedirectStandardOutput` opens its target with
+      // truncate, not append, so every `ppm start` wiped the whole log since the
+      // last rotation — and the handle it holds writes at its own offset, over
+      // lines the supervisor and server append. The supervisor's `log()` and the
+      // descriptor it hands the server already append everything to ppm.log;
+      // this file only catches the supervisor's raw console output.
+      const outLog = logFile.replace(/\.log$/, ".out.log").replace(/\\/g, "\\\\");
       const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
       const winArgs = isCompiledBin ? superviseArgs : ["run", supervisorScript, ...superviseArgs];
       const argStr = winArgs.map((a) => `'${a || "_"}'`).join(",");
@@ -623,7 +629,7 @@ export async function startServer(options: {
         `$p = Start-Process -PassThru -WindowStyle Hidden`,
         `-FilePath '${bunExe}'`,
         `-ArgumentList ${argStr}`,
-        `-RedirectStandardOutput '${logEscaped}'`,
+        `-RedirectStandardOutput '${outLog}'`,
         `-RedirectStandardError '${errLog}'`,
         `; Write-Output $p.Id`,
       ].join(" ");
