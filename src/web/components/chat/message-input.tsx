@@ -18,6 +18,7 @@ import { ProviderSelector } from "./provider-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { SlashItem } from "./slash-command-picker";
 import { fetchSlashItems, clearSlashItemsCache } from "@/lib/slash-items-cache";
+import { replaceSlashQuery, slashQueryBefore, stripSlashQuery } from "@/lib/slash-trigger";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
 
@@ -462,13 +463,11 @@ export const MessageInput = memo(function MessageInput({
     const cursorPos = el.selectionStart;
     const textBefore = text.slice(0, cursorPos);
     const textAfter = text.slice(cursorPos);
-    // Strip the /query trigger before the cursor, preserving leading whitespace.
-    const stripTrigger = (match: string) => (match.startsWith("/") ? "" : match[0]!);
 
     // Agents render as a removable chip (not inline text) so the composed
     // "Use the X agent to …" prompt is only assembled at send time.
     if (slashSelected.type === "agent") {
-      const stripped = textBefore.replace(/(?:^|\s)\/\S*$/, stripTrigger);
+      const stripped = stripSlashQuery(textBefore);
       setAgentTag(slashSelected.name);
       writeTextareas(stripped + textAfter);
       onSlashStateChange?.(false, "");
@@ -482,10 +481,7 @@ export const MessageInput = memo(function MessageInput({
     // The item's own sigil is used, not a hardcoded `/`: a codex skill is invoked
     // as `$imagegen`, so the composer must show the text that will actually be
     // sent rather than leaving the server to silently rewrite it.
-    const replaced = textBefore.replace(/(?:^|\s)\/\S*$/, (match) => {
-      const prefix = stripTrigger(match);
-      return `${prefix}${slashSelected.invokeSigil ?? "/"}${slashSelected.name} `;
-    });
+    const replaced = replaceSlashQuery(textBefore, `${slashSelected.invokeSigil ?? "/"}${slashSelected.name}`);
     writeTextareas(replaced + textAfter);
     onSlashStateChange?.(false, "");
     slashPickerOpenRef.current = false;
@@ -776,10 +772,9 @@ export const MessageInput = memo(function MessageInput({
 
       // Check for slash anywhere in text (after whitespace or at start)
       if (hasSlash) {
-        const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
-        if (slashMatch) {
+        const filter = slashQueryBefore(textBefore);
+        if (filter !== null) {
           if (!slashPickerOpenRef.current) loadSlashItems();
-          const filter = slashMatch[1] ?? "";
           onSlashStateChange?.(true, filter);
           slashPickerOpenRef.current = true;
           if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }

@@ -246,6 +246,8 @@ app.route("/api/settings", settingsRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
 app.route("/api/mcp-auth", mcpAuthRoutes);
 app.route("/api/settings/themes", settingsThemesRoutes);
+import { designSettingsRoutes } from "./routes/design-settings.ts";
+app.route("/api/settings/design", designSettingsRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
 app.route("/api/tunnel/named", namedTunnelRoutes);

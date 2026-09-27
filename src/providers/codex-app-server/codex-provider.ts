@@ -1315,12 +1315,15 @@ export class CodexAppServerProvider implements AIProvider {
     this.skillsCache.clear();
   }
 
-  async listSkills(sessionId?: string): Promise<CodexSkill[]> {
-    const cwd = (sessionId ? getSessionProjectPath(sessionId) : null) || process.cwd();
+  async listSkills(sessionId?: string, cwdHint?: string): Promise<CodexSkill[]> {
+    const cwd = (sessionId ? getSessionProjectPath(sessionId) : null) || cwdHint || process.cwd();
     // Reuse the account already bound to the session; resolving afresh here
-    // would advance a round-robin strategy for a mere UI listing.
+    // would advance a round-robin strategy for a mere UI listing. A session with
+    // no binding yet (its first turn is being prepared) lists with the account
+    // that will certainly serve it, when that is knowable without choosing one:
+    // the ambient home can hold a different set of skills.
     const accountId = sessionId ? getSessionCodexAccount(sessionId) : null;
-    const home = (accountId ? getCodexAccount(accountId)?.home : null) ?? undefined;
+    const home = (accountId ? getCodexAccount(accountId)?.home : peekCodexAccount()?.home) ?? undefined;
 
     const key = `${cwd}\0${home ?? ""}`;
     const hit = this.skillsCache.get(key);

@@ -83,8 +83,9 @@ export interface AIProvider {
    * Skills the provider's own runtime would resolve for this session, for
    * providers that own a skill system PPM cannot read off disk. Implemented by
    * codex; absent for Claude, whose skills come from the shared disk discovery.
+   * `cwd` stands in for a session's project when there is no session yet.
    */
-  listSkills?(sessionId?: string): Promise<import("../providers/codex-app-server/codex-protocol").CodexSkill[]>;
+  listSkills?(sessionId?: string, cwd?: string): Promise<import("../providers/codex-app-server/codex-protocol").CodexSkill[]>;
   /** Drop runtime skill discovery results after a user requests a refresh. */
   invalidateSkillsCache?(): void;
   /** Provider-specific usage/quota (rate limits). Used by GET /chat/usage. */

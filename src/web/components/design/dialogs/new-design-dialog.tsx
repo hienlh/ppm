@@ -7,8 +7,12 @@ import { resolveNewChatProvider } from "@/lib/new-chat-provider";
 import { createDesign, listDesignProviders, type DesignProvider } from "@/lib/design/api-designs";
 import { openDesignTab } from "@/lib/design/open-design-tab";
 import { announceDesignsChanged } from "@/lib/design/design-ui-events";
+import { getDesignSettings, readSkillLists } from "@/lib/design/api-design-settings";
+import { openSettings } from "@/components/settings/open-settings";
 import { DesignResponsiveDialog } from "./design-responsive-dialog";
+import { DesignSkillSuggestionHint } from "../design-skill-suggestion";
 import type { DesignKind } from "../../../../shared/design-types";
+import { needsDesignSkillSuggestion } from "../../../../shared/design-skill-suggestion";
 
 const MAX_TITLE_LENGTH = 120;
 
@@ -42,6 +46,19 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
         setProviderId((list.find((p) => p.id === preferred) ?? list[0])?.id ?? "");
       })
       .catch((e) => { if (!cancelled) { setProviders([]); setError((e as Error).message || "Could not load providers"); } });
+    return () => { cancelled = true; };
+  }, [projectName]);
+
+  // Only a hint: the dialog must work the same whether or not this ever answers.
+  const [suggestSkill, setSuggestSkill] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getDesignSettings(projectName)
+      .then((s) => {
+        const lists = readSkillLists(s);
+        if (!cancelled) setSuggestSkill(lists.length > 0 && needsDesignSkillSuggestion(s.instructions, lists));
+      })
+      .catch(() => { /* the hint is optional; Settings → Design shows the real error */ });
     return () => { cancelled = true; };
   }, [projectName]);
 
@@ -106,6 +123,7 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
             </select>
           )}
         </label>
+        {suggestSkill && <DesignSkillSuggestionHint onOpenSettings={() => { onClose(); openSettings("design"); }} />}
         {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
       </form>
     </DesignResponsiveDialog>

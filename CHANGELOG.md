@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Settings → Design: your own instructions for every design chat, with `/` to name installed skills (used by Claude and Codex) and an install suggestion when no design skill is present.
+
 ## [0.23.5] - 2026-09-27
 
 ### Improved

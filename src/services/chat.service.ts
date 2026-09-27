@@ -13,6 +13,7 @@ import type {
 } from "../providers/provider.interface.ts";
 import { compareSessionsByActivity } from "../types/chat.ts";
 import { buildDesignInstructions } from "./design/design-instructions.ts";
+import { userDesignSectionFor } from "./design/design-user-section.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
 import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
 import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
@@ -169,7 +170,7 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    const design = await this.resolveDesignOptions(sessionId, opts);
+    const design = await this.resolveDesignOptions(providerId, sessionId, opts);
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -197,14 +198,16 @@ class ChatService {
    * CLI, the scheduler, group chat, the bots — sends through this service, and a design
    * session reached by any of them must get its instructions.
    *
-   * Instruction text is only ever built from the stored slug: anything a caller put in
-   * `designInstructions`/`designSession` is discarded, so no client text reaches the
-   * system prompt. A design session has no permission default of its own — an agent that
+   * Instruction text is only ever built from the stored slug and the owner's saved design
+   * instructions: anything a caller put in `designInstructions`/`designSession` is
+   * discarded, so no per-message client text reaches the system prompt. The saved
+   * instructions' skill mentions are resolved against the skills this provider can load for
+   * this project. A design session has no permission default of its own — an agent that
    * has to read and search the project to design for it would otherwise ask on every file.
    * An explicit caller mode wins (the user picked it), then the mode stored for the session,
    * then the provider's configured default, exactly as for any other chat.
    */
-  private async resolveDesignOptions(sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
+  private async resolveDesignOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
     const { designInstructions: _instructions, designSession: _flag, designMcp: _mcp, ...rest } = opts ?? {};
     const { getSessionDesignSlug, getSessionPermissionMode, getSessionProjectPath } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);
@@ -212,9 +215,10 @@ class ChatService {
     const permissionMode = opts?.permissionMode ?? getSessionPermissionMode(sessionId) ?? undefined;
     const projectPath = this.getSession(sessionId)?.projectPath ?? getSessionProjectPath(sessionId);
     const designMcp = designMcpAccessFor(sessionId, projectPath, slug);
+    const userSection = await userDesignSectionFor({ providerId, sessionId, projectPath, slug });
     return {
       ...rest,
-      designInstructions: buildDesignInstructions(slug, { checkTool: !!designMcp }),
+      designInstructions: buildDesignInstructions(slug, { checkTool: !!designMcp, userSection }),
       designSession: true,
       ...(designMcp ? { designMcp } : {}),
       ...(permissionMode ? { permissionMode } : {}),

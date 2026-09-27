@@ -8,6 +8,10 @@ import {
 import type { AIProvider, ChatEvent, SendMessageOpts } from "../../../src/types/chat.ts";
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { designMcpTokens } from "../../../src/services/design/mcp/design-mcp-tokens.ts";
+import { setDesignInstructions } from "../../../src/services/design/design-settings.service.ts";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /** Records what reaches the provider, which is what every caller's turn actually carries. */
 function stubProvider(id: string, events: ChatEvent[] = []): AIProvider & { seen: SendMessageOpts[] } {
@@ -26,7 +30,10 @@ function stubProvider(id: string, events: ChatEvent[] = []): AIProvider & { seen
 }
 
 describe("chatService design resolution", () => {
-  beforeEach(() => getDb().run("DELETE FROM session_metadata"));
+  beforeEach(() => {
+    getDb().run("DELETE FROM session_metadata");
+    setDesignInstructions("");
+  });
 
   it("gives a design session its instructions and leaves the mode to the provider default", async () => {
     providerRegistry.register(stubProvider("stub-design"));
@@ -113,5 +120,96 @@ describe("chatService design resolution", () => {
     expect(design.designInstructions).not.toContain("design_check` tool");
     const plain = await chatService.prepareSendOptions("stub-design", "plain2", "hi", { designMcp: { url: "http://evil", token: "x" } });
     expect(plain).not.toHaveProperty("designMcp");
+  });
+});
+
+describe("chatService design resolution with the user's design instructions", () => {
+  beforeEach(() => {
+    getDb().run("DELETE FROM session_metadata");
+    setDesignInstructions("");
+  });
+
+  /** A project holding one skill under each of the given ecosystem folders. */
+  function projectWithSkills(skills: Record<string, ".claude" | ".codex">): string {
+    const root = mkdtempSync(join(tmpdir(), "ppm-design-skill-"));
+    mkdirSync(join(root, ".git"));
+    for (const [name, eco] of Object.entries(skills)) {
+      mkdirSync(join(root, eco, "skills", name), { recursive: true });
+      writeFileSync(join(root, eco, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: test skill\n---\nBody.\n`);
+    }
+    return root;
+  }
+
+  it("adds nothing when no instructions are saved", async () => {
+    providerRegistry.register(stubProvider("stub-design"));
+    setSessionDesignSlug("u0", "smoke");
+    expect((await chatService.prepareSendOptions("stub-design", "u0", "hi")).designInstructions)
+      .not.toContain("## The user's design instructions");
+  });
+
+  it("resolves a Claude session's mentions against the skills Claude itself loads", async () => {
+    providerRegistry.register(stubProvider("stub-design"));
+    // The composer also lists `.codex` skills, but the Skill tool cannot run one.
+    const project = projectWithSkills({ "brand-kit": ".claude", "codex-only": ".codex" });
+    setSessionDesignSlug("u1", "smoke");
+    setSessionMetadata("u1", "demo", project);
+    setDesignInstructions("Use /brand-kit for colours, /codex-only for icons. Skip /nothing-here.");
+    const text = (await chatService.prepareSendOptions("stub-design", "u1", "hi")).designInstructions!;
+    expect(text.indexOf("## The user's design instructions")).toBeGreaterThan(text.indexOf("## Checking your work"));
+    expect(text).toContain("invoke the `brand-kit` skill with the Skill tool");
+    expect(text).toContain("`/codex-only` does not name a skill installed");
+    expect(text).toContain("`/nothing-here` does not name a skill installed");
+    expect(text).toContain("ask the user in the chat before installing anything");
+  });
+
+  it("resolves a Codex session's mentions through its own skill list, skipping disabled skills", async () => {
+    const codex = {
+      ...stubProvider("stub-codex"),
+      async listSkills() { return [{ name: "ui-ux-pro-max" }, { name: "imagegen", enabled: false }]; },
+    };
+    providerRegistry.register(codex);
+    setSessionDesignSlug("u2", "smoke");
+    setDesignInstructions("Use /ak:ui-ux-pro-max and $imagegen.");
+    const text = (await chatService.prepareSendOptions("stub-codex", "u2", "hi")).designInstructions!;
+    expect(text).toContain("use the `$ui-ux-pro-max` skill");
+    expect(text).toContain("`/imagegen` does not name a skill installed");
+    expect(text).not.toContain("Skill tool");
+  });
+
+  it("still delivers the text, with the names unchecked, when the skill list cannot be read", async () => {
+    let calls = 0;
+    // What codex's listSkills really does when the app-server is down: answers an empty list.
+    const empty = { ...stubProvider("stub-empty"), async listSkills() { calls++; return []; } };
+    const broken = { ...stubProvider("stub-broken"), async listSkills(): Promise<never> { throw new Error("app-server down"); } };
+    providerRegistry.register(empty);
+    providerRegistry.register(broken);
+    setDesignInstructions("Use /ui-ux-pro-max.");
+    for (const [provider, session] of [["stub-empty", "u3"], ["stub-broken", "u4"]] as const) {
+      setSessionDesignSlug(session, "smoke");
+      const text = (await chatService.prepareSendOptions(provider, session, "hi")).designInstructions!;
+      expect(text).toContain("<user_design_instructions>\nUse /ui-ux-pro-max.\n</user_design_instructions>");
+      expect(text).toContain("the names above are unchecked");
+      expect(text).toContain("never install software on your own");
+      expect(text).not.toContain("does not name a skill installed");
+    }
+    // A failed listing is not retried on every turn: the next turn inside the back-off
+    // window answers without asking the runtime again.
+    await chatService.prepareSendOptions("stub-empty", "u3", "again");
+    expect(calls).toBe(1);
+  });
+
+  it("builds the section once per session and text, and again once the text changes", async () => {
+    let calls = 0;
+    const codex = { ...stubProvider("stub-counted"), async listSkills() { calls++; return [{ name: "brand-kit" }]; } };
+    providerRegistry.register(codex);
+    setSessionDesignSlug("u5", "smoke");
+    setDesignInstructions("Use /brand-kit.");
+    await chatService.prepareSendOptions("stub-counted", "u5", "one");
+    await chatService.prepareSendOptions("stub-counted", "u5", "two");
+    expect(calls).toBe(1);
+    setDesignInstructions("Use /brand-kit, and keep it calm.");
+    const text = (await chatService.prepareSendOptions("stub-counted", "u5", "three")).designInstructions!;
+    expect(calls).toBe(2);
+    expect(text).toContain("keep it calm");
   });
 });
