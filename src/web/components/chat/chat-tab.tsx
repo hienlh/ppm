@@ -145,7 +145,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined);
 
   // Draft auto-save/restore
-  const { draft, draftLoading, saveDraft, clearDraft, cancelPendingSave } = useDraft(projectName, sessionId);
+  const { draft, draftLoading, saveDraft, clearDraft, cancelPendingSave, moveDraft } = useDraft(projectName, sessionId, tabId);
 
   // Load global default permission mode on mount (if no per-session override)
   useEffect(() => {
@@ -402,6 +402,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // echo — appending it to the still-visible source transcript would render the
   // edit in the wrong place; the real message appears once the fork loads.)
   const [editForking, setEditForking] = useState(false);
+  // Covers session creation AND the wait for its socket greeting. Streaming
+  // starts only after the queued first message reaches that socket.
+  const [firstSendPending, setFirstSendPending] = useState(false);
 
   /**
    * A message that could not be sent, on its way back into the composer. A nonce
@@ -427,6 +430,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
    * nothing at all.
    */
   const restoreUnsentMessage = useCallback((content: string, reason: string) => {
+    setFirstSendPending(false);
     setRestore({ text: content, nonce: Date.now() });
     toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
   }, []);
@@ -469,6 +473,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       pendingSendRef.current = null;
       if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
       sendMessage(content, { permissionMode: pm, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
+      setFirstSendPending(false);
       clearDraft(draftId);
     }
   }, [isConnected, sendMessage, clearDraft]);
@@ -620,6 +625,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         // reconnects to the forked session. The draft was composed under the
         // source session, so that is the one to clear when it goes.
         queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode });
+        moveDraft(forked.id);
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
         if (tabId) patchTabMetadata(tabId, { sessionId: forked.id });
@@ -638,7 +644,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         setRestore({ text: fullContent, nonce: Date.now() });
       }
     },
-    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend],
+    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft],
   );
 
   /** Swap THIS tab to another version's session (version switcher prev/next) */
@@ -711,6 +717,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       if (!fullContent.trim() && images.length === 0) return;
 
       if (!sessionId) {
+        setFirstSendPending(true);
         try {
           const pName = projectName;
           // Bounded: the composer is already empty by now, and a create call that hangs
@@ -730,6 +737,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             // instructions and the design permission default.
             ...(designSlug && { designSlug }),
           }, { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) });
+          moveDraft(session.id);
           setSessionId(session.id);
           setProviderId(session.providerId);
           // Queue message — will be sent by effect when WS reports isConnected. It was
@@ -749,7 +757,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, pickedAccountId, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, pickedAccountId, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, moveDraft],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -782,6 +790,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       }
 
       setForkDraft(undefined);
+      // Save synchronously in this browser tab before the composer clears. A
+      // recovery reload can happen before either the POST or draft debounce ends.
+      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
       cancelPendingSave();
       if (editFork && sessionId && projectName) {
         const anchor = editFork.anchorMsgId;
@@ -791,7 +802,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       }
       void handleSend(content, attachments, priority);
     },
-    [handleSend, clearDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
+    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -963,7 +974,12 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       <BackgroundCommandBar shells={backgroundShells} onKill={killBackgroundShell} />
 
       {/* Messages */}
-      <MessageList
+      {firstSendPending ? (
+        <div role="status" className="flex flex-1 items-center justify-center gap-2 text-sm text-text-secondary">
+          <Loader2 className="size-4 animate-spin" />
+          <span>Starting conversation...</span>
+        </div>
+      ) : <MessageList
         messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
@@ -988,7 +1004,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
-      />
+      />}
 
       {/* Teammates still working — pinned here so it is the last thing under the conversation */}
       <TeamWorkingBar teamName={primaryTeam} members={teamMembers} projectName={projectName} />
@@ -1073,6 +1089,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             draftReady={!draftLoading}
             tabId={tabId}
             onSend={handleInputSend}
+            disabled={firstSendPending}
             isStreaming={isStreaming}
             onCancel={cancelStreaming}
             autoFocus={!(metadata?.sessionId) || !!forkDraft}
