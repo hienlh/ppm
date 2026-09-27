@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.23.3] - 2026-09-27
+
+### Added
+- Show per-model Claude weekly limits and available Codex rate-limit reset credits.
+
+### Improved
+- Load mobile chats faster by deferring editors, diagrams, file indexes and slash commands, and deduplicating history requests.
+
+### Fixed
+- Background agents no longer leave completed chats stuck processing or erase answers after reload.
+- Preserve unsent chat drafts across reloads and show progress while the first message connects.
+- Starting or restarting PPM on Windows no longer overwrites the server log.
+
 ## [0.23.2] - 2026-09-26
 
 ### Added
