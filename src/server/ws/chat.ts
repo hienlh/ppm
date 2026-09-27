@@ -376,7 +376,7 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
 }
 
 /**
- * Emit a nested-agent child read off disk. Buffered for reconnect replay only
+ * Emit a nested-agent child from the provider or disk. Buffered for reconnect replay only
  * while its turn is still in flight and under the nested budget; a background
  * agent that outlives the turn streams its children unbuffered, since the next
  * turn's replay is not the place for them and reload restores them from disk.
@@ -632,6 +632,20 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
+
+      // Child streams can outlive the root turn. Their content and terminal
+      // events belong to the Agent card, never to the root turn's lifecycle.
+      if (ev.parentToolUseId) {
+        emitNestedChild(sessionId, event);
+        continue;
+      }
+      // Codex's synthetic Agent card result has no parentToolUseId. A late
+      // completion still updates connected cards, but cannot start a root turn
+      // or create replay that would replace the completed assistant history.
+      if (evType === "tool_result" && ev.toolUseId?.startsWith("subagent-") && entry.phase === "idle") {
+        broadcast(sessionId, event);
+        continue;
+      }
 
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
@@ -929,6 +943,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // Consumer loop continues — query waits for next message in generator
       if (evType === "done") {
         entry.turnEvents = [];
+        entry.nestedBuffered = 0;
         entry.pendingApprovalEvent = undefined;
         // Clear stale compact status if turn ended without compact_boundary.
         // SDK may emit `status: compacting` without a matching boundary (deferred,

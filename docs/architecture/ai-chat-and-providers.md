@@ -2,6 +2,19 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Codex child stream lifecycle
+
+App-server notifications with an explicit non-root thread ID are nested agent
+events. They cannot end the root turn, change its active turn ID, rotate its
+account, overwrite root usage, or flush its transcript. Child content stays under
+its Agent card. The WebSocket consumer buffers nested content only while the
+root turn is active; late child results never revive an idle session or create a
+reconnect replay. The frontend updates finalized Agent cards in place for late
+results/errors and ignores nested `done` events.
+
+This prevents a completed answer from disappearing after reload when a
+background agent finishes after the root response.
+
 ## Codex daily guard for weekly-only accounts
 
 Daily guard spreads a seven-day quota window across five weekdays: each weekday

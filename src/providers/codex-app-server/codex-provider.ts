@@ -880,9 +880,16 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   private handleNotification(live: LiveSession, notif: JsonRpcNotification): void {
+    // One app-server also streams spawned threads. Resolve ownership before any
+    // turn/account state changes, even if the child's launch card has not arrived.
+    const notificationThreadId = threadIdFromNotification(notif.params);
+    const isChild = !!notificationThreadId && (live.threadId
+      ? notificationThreadId !== live.threadId
+      : live.subagentThreadIds.has(notificationThreadId));
+    const parentToolUseId = isChild ? subagentCardId(notificationThreadId!) : undefined;
     // A quota refusal is an ordinary `error` notification, so it has to be recognised
     // before the mapper turns it into a plain error card in front of the user.
-    if (notif.method === "error" && !live.rotating && !live.discardingTurn) {
+    if (!isChild && notif.method === "error" && !live.rotating && !live.discardingTurn) {
       // Retry notices count too: the headline says only "Reconnecting... N/5", but their
       // details name the 401, and waiting for the final error costs the whole retry loop.
       const authText = codexErrorText(notif.params);
@@ -897,7 +904,7 @@ export class CodexAppServerProvider implements AIProvider {
     // A turn already reported as failed: swallow the rest of it, and let the queue move on
     // only once codex confirms it is over.
     if (live.discardingTurn) {
-      if (notif.method === "turn/completed") {
+      if (!isChild && notif.method === "turn/completed") {
         live.discardingTurn = false;
         live.currentAssistant = "";
         live.currentEvents = [];
@@ -905,26 +912,26 @@ export class CodexAppServerProvider implements AIProvider {
       }
       return;
     }
-    if (notif.method === "turn/completed"
+    if (!isChild && notif.method === "turn/completed"
         && (notif.params as { turn?: { status?: string } })?.turn?.status === "completed" && live.threadId) {
       // An answered turn is proof the login works, whatever was observed before.
       const accountId = getSessionCodexAccount(live.threadId);
       if (accountId) clearCodexAccountAuthFailure(accountId);
     }
-    if (notif.method === "item/agentMessage/delta") {
+    if (!isChild && notif.method === "item/agentMessage/delta") {
       const d = (notif.params as { delta?: string })?.delta;
       if (typeof d === "string") live.currentAssistant += d;
     }
-    if (notif.method === "thread/tokenUsage/updated") {
+    if (!isChild && notif.method === "thread/tokenUsage/updated") {
       const usage = parseTokenUsage(notif.params, live.model);
       if (usage) live.lastUsage = usage;
     }
-    const notificationThreadId = threadIdFromNotification(notif.params);
-    const parentToolUseId = notificationThreadId && live.subagentThreadIds.has(notificationThreadId)
-      ? subagentCardId(notificationThreadId)
-      : undefined;
     const events = mapCodexEvent(notif, live.threadId ?? "");
     for (const ev of events) {
+      // Child lifecycle notifications must never terminate or change the phase
+      // of the root stream. Keep only content and diagnostics under its card.
+      if (isChild && ev.type !== "text" && ev.type !== "thinking"
+          && ev.type !== "tool_use" && ev.type !== "tool_result" && ev.type !== "error") continue;
       // The counts arrive on their own notification just before the turn ends,
       // so `done` is where they become visible to a consumer.
       if (ev.type === "done" && live.lastUsage) {
@@ -934,13 +941,13 @@ export class CodexAppServerProvider implements AIProvider {
       const nested = parentToolUseId ? { ...ev, parentToolUseId } as ChatEvent : ev;
       live.channel.push(nested);
       // Accumulate tool calls into the turn so getMessages (live) keeps them.
-      if (nested.type === "tool_use" || nested.type === "tool_result") live.currentEvents.push(nested);
+      if ((!isChild || live.turnInFlight) && (nested.type === "tool_use" || nested.type === "tool_result")) live.currentEvents.push(nested);
       if (nested.type === "tool_use" && nested.tool === "Agent" && typeof nested.toolUseId === "string"
           && nested.toolUseId.startsWith("subagent-")) {
         live.subagentThreadIds.add(nested.toolUseId.slice("subagent-".length));
       }
     }
-    if (notif.method === "turn/completed") {
+    if (!isChild && notif.method === "turn/completed") {
       if (live.currentAssistant || live.currentEvents.length) {
         const turnEvents = live.currentEvents.length
           ? [...live.currentEvents, ...(live.currentAssistant ? [{ type: "text", content: live.currentAssistant } as ChatEvent] : [])]
@@ -954,7 +961,7 @@ export class CodexAppServerProvider implements AIProvider {
       live.currentEvents = [];
       this.endTurn(live);
     }
-    if (notif.method === "turn/started") {
+    if (!isChild && notif.method === "turn/started") {
       // Codex is the authority on whether the thread is busy — take the flag from
       // it rather than only from what this side believes it started.
       live.turnInFlight = true;
@@ -965,7 +972,7 @@ export class CodexAppServerProvider implements AIProvider {
     // (the thread/compacted notification is deprecated). Surface the compact-summary
     // marker inline so the chat UI offers "load previous conversation". The turn's
     // own turn/completed provides the `done`.
-    if (notif.method === "item/completed" && live.compactRequested
+    if (!isChild && notif.method === "item/completed" && live.compactRequested
         && (notif.params as { item?: { type?: string } })?.item?.type === "contextCompaction") {
       live.compactRequested = false;
       const file = fromCodexSessionsDirs(live.threadId ?? undefined,

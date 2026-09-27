@@ -561,6 +561,18 @@ export function useChat(
           if (routeToFinalizedParent(ev as ChatEvent, pid)) { /* nested */ }
           break;
         }
+        // Background Codex agents can finish after the root answer. Update the
+        // finalized card without flushing empty streaming refs over history.
+        if (phaseRef.current === "idle" && trId?.startsWith("subagent-")) {
+          setMessages(prev => prev.map(message => {
+            if (!message.events?.some(e => e.type === "tool_use" && e.toolUseId === trId)) return message;
+            return { ...message, events: message.events.map(e =>
+              e.type === "tool_use" && e.toolUseId === trId
+                ? { ...e, result: { output: ev.output, isError: ev.isError, exitCode: ev.exitCode } }
+                : e) };
+          }));
+          break;
+        }
         upsertStreamingEvent((e) => !!trId && e.type === "tool_result" && (e as any).toolUseId === trId);
         syncMessages();
         break;
@@ -630,6 +642,11 @@ export function useChat(
       }
 
       case "error": {
+        if (ev.parentToolUseId) {
+          if (routeToParent(ev as ChatEvent, ev.parentToolUseId)) syncMessages();
+          else routeToFinalizedParent(ev as ChatEvent, ev.parentToolUseId);
+          break;
+        }
         if (!isReplayingRef.current) attemptRef.current?.fail();
         setMessages((prev) => {
           const last = prev[prev.length - 1];
@@ -725,6 +742,8 @@ export function useChat(
       }
 
       case "done": {
+        // A nested completion must never finalize or reset the root stream.
+        if (ev.parentToolUseId) break;
         if (!isReplayingRef.current) attemptRef.current?.finish(!!streamingContentRef.current.trim());
         // Idempotent: may receive duplicate done (provider + stream loop finally)
         if (phaseRef.current === "idle") break;
