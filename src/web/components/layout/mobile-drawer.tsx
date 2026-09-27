@@ -174,7 +174,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {activeTab === "designs" && (activeProject
             ? <Suspense fallback={null}><DesignsSidebarPanel onNavigate={onClose} /></Suspense>
             : noProject)}
-          {activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
+          {isOpen && activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
           {isOpen && activeTab === "search" && <SearchPanel onNavigate={onClose} />}
           {isOpen && activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}
           {activeTab === "database" && <DatabaseSidebar />}

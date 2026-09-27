@@ -11,6 +11,24 @@ opens its first allowance on Monday. Slots are 24 hours from the weekly reset
 time and use UTC weekdays, consistently in the server and browser. This does not
 change Codex's reset schedule. Users can disable the guard per account.
 
+## Chat startup
+
+The initial history request also covers an idle WebSocket greeting while it is
+pending; completed turns and truncated replays still trigger recovery reads.
+Slash commands load when the user opens the `/` picker. The `@` picker loads a
+file index on demand, scoped to its project; stale responses cannot overwrite
+the index for a different project.
+
+Monaco initializes when an editor mounts, Mermaid when a diagram renders, and
+Shiki when code highlighting is needed. Theme subscriptions remain active before
+those engines load. The production bundle leaves Mermaid's dynamic import out
+of manual vendor grouping so shared dependencies do not pull the engine into
+ordinary Markdown rendering.
+
+The mobile desktop sidebar is not mounted, and the closed mobile explorer does
+not mount its file tree. App-level file-index invalidation keeps cached paths
+fresh while the drawer is closed, without fetching an unused index.
+
 ## Model discovery cache
 
 The chat model picker shares successful model lists across chat tabs, keyed by

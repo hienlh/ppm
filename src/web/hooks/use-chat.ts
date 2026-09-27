@@ -226,6 +226,7 @@ export function useChat(
   const replayTurnUserMsgRef = useRef<string | null>(null);
   /** When the last full-transcript fetch completed — guards redundant idle refetches */
   const historyLoadedAtRef = useRef(0);
+  const initialHistoryPendingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   // Held in a ref so the socket handler always calls the latest callback without
@@ -976,7 +977,7 @@ export function useChat(
         resyncInFlightRef.current = false;
         replayTruncatedRef.current = false;
         const historyFresh = Date.now() - historyLoadedAtRef.current < 5000;
-        if (replayWasTruncated || !(wasIdle && historyFresh)) refetchRef.current?.();
+        if (replayWasTruncated || !(wasIdle && (historyFresh || initialHistoryPendingRef.current))) refetchRef.current?.();
         setIsReconnecting(false);
       }
       // If streaming, turn_events message will follow
@@ -1173,6 +1174,7 @@ export function useChat(
     const staleIds = new Set(messagesRef.current.map((m) => m.id));
 
     if (sessionId && projectName) {
+      initialHistoryPendingRef.current = true;
       setMessagesLoading(true);
       // Via api.get, not raw fetch: the loading screen is gated on this settling,
       // and a stalled request would otherwise hold the transcript hostage until
@@ -1220,7 +1222,10 @@ export function useChat(
           }
         })
         .finally(() => {
-          if (!cancelled) setMessagesLoading(false);
+          if (!cancelled) {
+            initialHistoryPendingRef.current = false;
+            setMessagesLoading(false);
+          }
         });
     } else {
       setMessages([]);
@@ -1228,6 +1233,7 @@ export function useChat(
 
     return () => {
       cancelled = true;
+      initialHistoryPendingRef.current = false;
       historyRequestRef.current?.abort();
       historyRequestRef.current = null;
       if (syncRafRef.current) clearTimeout(syncRafRef.current);

@@ -10,6 +10,7 @@ import { OnboardingRunDocumentPreview } from "@/components/onboarding/onboarding
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
 import { applyBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
 import { useIsMobile, isMobileDevice } from "@/hooks/use-is-mobile";
@@ -928,7 +929,10 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             // Before, not on, mount: the model is created with its language
             // id first, and a model created against an unregistered id is
             // plaintext for good.
-            beforeMount={registerDotenvLanguage}
+            beforeMount={(monaco) => {
+              prepareMonacoTheme(monaco);
+              registerDotenvLanguage(monaco);
+            }}
             value={content ?? ""}
             onChange={inlineContent != null ? undefined : handleChange}
             onMount={handleEditorMount}

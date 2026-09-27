@@ -1,4 +1,5 @@
 import { usePanelStore } from "@/stores/panel-store";
+import { useProjectStore } from "@/stores/project-store";
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
 import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "@/lib/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
@@ -394,8 +395,8 @@ export const MessageInput = memo(function MessageInput({
       });
   }, [projectName, providerId, sessionId, onSlashItemsLoaded]);
 
-  // Load when projectName changes (cache hit after the first tab in a project)
-  useEffect(() => { loadSlashItems(); }, [loadSlashItems]);
+  // Load on the first slash interaction below. Opening a transcript should
+  // not enumerate skills (or start a provider CLI) before the user needs them.
 
   // Refresh button invalidated the server cache — drop ours too, then refetch.
   useEffect(() => {
@@ -419,7 +420,12 @@ export const MessageInput = memo(function MessageInput({
       // Share the store's array rather than mapping it: every mounted chat tab runs this,
       // and a project index can hold tens of thousands of entries, so a per-tab copy
       // kept one full duplicate alive for each open chat. Consumers only read it.
-      const nodes: FileNode[] = useFileStore.getState().fileIndex;
+      const files = useFileStore.getState();
+      if (filePickerOpenRef.current && files.indexStatus === "idle" && useProjectStore.getState().activeProject?.name === projectName) {
+        void files.loadIndex(projectName);
+        return;
+      }
+      const nodes: FileNode[] = files.indexProjectName === projectName ? files.fileIndex : [];
       fileItemsRef.current = nodes;
       onFileItemsLoaded?.(nodes);
     };
@@ -760,7 +766,7 @@ export const MessageInput = memo(function MessageInput({
       // Check for slash anywhere in text (after whitespace or at start)
       if (hasSlash) {
         const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
-        if (slashMatch && slashItemsRef.current.length > 0) {
+        if (slashMatch) {
           if (!slashPickerOpenRef.current) loadSlashItems();
           const filter = slashMatch[1] ?? "";
           onSlashStateChange?.(true, filter);
@@ -773,7 +779,11 @@ export const MessageInput = memo(function MessageInput({
       // Check for @ anywhere in text (after whitespace or at start)
       if (hasAt) {
         const atMatch = textBefore.match(/@(\S*)$/);
-        if (atMatch && fileItemsRef.current.length > 0) {
+        if (atMatch) {
+          const files = useFileStore.getState();
+          if (projectName && (files.indexProjectName !== projectName || files.indexStatus === "idle" || files.indexStatus === "error")) {
+            void files.loadIndex(projectName);
+          }
           onFileStateChange?.(true, atMatch[1] ?? "");
           filePickerOpenRef.current = true;
           if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
@@ -785,7 +795,7 @@ export const MessageInput = memo(function MessageInput({
       if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
       if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
     },
-    [onSlashStateChange, onFileStateChange, loadSlashItems],
+    [onSlashStateChange, onFileStateChange, loadSlashItems, projectName],
   );
 
   /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */

@@ -37,6 +37,7 @@ it("opens an indexed project file at the line the query names", async () => {
   useFileStore.setState({
     fileIndex: [{ name: "app.ts", path: "src/app.ts", type: "file" }] as never,
     indexStatus: "ready",
+    indexProjectName: "demo",
   });
   const open = spyOn(useTabStore.getState(), "openTab").mockReturnValue("tab-1");
   const update = spyOn(useTabStore.getState(), "updateTab").mockImplementation(() => {});

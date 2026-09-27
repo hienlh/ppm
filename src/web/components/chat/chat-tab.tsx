@@ -782,7 +782,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         const item = slashItemsRef.current.find(
           (i) => i.handler === "client" && (i.name === slash[1] || i.aliases?.includes(slash[1]!)),
         );
-        if (item?.name === "clear") {
+        // This local action must also work before the lazily loaded picker
+        // catalog arrives (for example, paste /clear and immediately submit).
+        if (slash[1] === "clear" || item?.name === "clear") {
           clearDraft();
           handleNewSession(slash[2]?.trim(), sessionId ?? undefined);
           return;

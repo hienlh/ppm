@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import { Save, Undo2, Loader2, AlertTriangle, Lock } from "@/lib/icons";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 import { useAiResourcesStore } from "@/stores/ai-resources-store";
 import { readAiResource, writeAiResource, type AiResourceType, type AiResourceScope } from "@/lib/api-ai-resources";
 import { ScopeBadge, TYPE_ICON } from "./resource-visuals";
@@ -132,6 +133,7 @@ export function AiResourceEditor({ metadata }: AiResourceEditorProps) {
           <div className="p-6 text-center text-sm text-destructive">{error}</div>
         ) : (
           <Editor
+            beforeMount={prepareMonacoTheme}
             height="100%"
             language="markdown"
             theme={monacoTheme}

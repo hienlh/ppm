@@ -67,7 +67,9 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id: string) {
-          if (id.includes("node_modules/mermaid")) return "vendor-mermaid";
+          // Let the dynamic Mermaid import own its dependencies. A manual
+          // vendor group absorbs shared helpers and makes Markdown import the
+          // entire diagram engine even when the transcript contains no diagram.
           if (id.includes("node_modules/@xterm")) return "vendor-xterm";
           if (
             id.includes("node_modules/react-markdown") ||

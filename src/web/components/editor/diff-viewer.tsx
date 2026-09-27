@@ -4,6 +4,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 import { EDITOR_FONT_FAMILY, EDITOR_FONT_LIGATURES, EDITOR_FONT_SIZE } from "@/lib/editor-font";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
@@ -362,7 +363,10 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
           <DiffEditor
             height={containerHeight}
             language={language}
-            beforeMount={registerDotenvLanguage}
+            beforeMount={(monaco) => {
+              prepareMonacoTheme(monaco);
+              registerDotenvLanguage(monaco);
+            }}
             original={original}
             modified={modified}
             theme={monacoTheme}

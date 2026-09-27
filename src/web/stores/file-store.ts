@@ -84,6 +84,7 @@ interface FileStore {
    */
   inflight: Map<string, InflightLoad>;
   indexStatus: "idle" | "loading" | "ready" | "error";
+  indexProjectName: string | null;
   selectedFiles: string[];
   inlineAction: InlineAction | null;
   clipboard: ClipboardState | null;
@@ -142,6 +143,7 @@ interface InflightLoad {
   prefetch: boolean;
 }
 
+let indexRequest = 0;
 export const useFileStore = create<FileStore>((set, get) => ({
   tree: [],
   fileIndex: [],
@@ -151,6 +153,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   loadedPaths: new Set<string>(),
   inflight: new Map<string, InflightLoad>(),
   indexStatus: "idle",
+  indexProjectName: null,
   selectedFiles: [],
   inlineAction: null,
   clipboard: null,
@@ -292,19 +295,21 @@ export const useFileStore = create<FileStore>((set, get) => ({
   },
 
   loadIndex: async (projectName: string) => {
-    set({ indexStatus: "loading" });
+    const request = ++indexRequest;
+    set({ indexStatus: "loading", indexProjectName: projectName, fileIndex: [] });
     try {
       const data = await api.get<FileEntry[]>(
         `${projectUrl(projectName)}/files/index`,
       );
-      set({ fileIndex: data, indexStatus: "ready" });
+      if (request === indexRequest) set({ fileIndex: data, indexStatus: "ready" });
     } catch {
-      set({ indexStatus: "error" });
+      if (request === indexRequest) set({ indexStatus: "error" });
     }
   },
 
   invalidateIndex: () => {
-    set({ indexStatus: "idle", fileIndex: [] });
+    ++indexRequest;
+    set({ indexStatus: "idle", fileIndex: [], indexProjectName: null });
   },
 
   invalidateFolder: async (projectName: string, folderPath: string) => {
@@ -370,6 +375,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   clearSelection: () => set({ selectedFiles: [] }),
 
   reset: () => {
+    ++indexRequest;
     cancelPrefetch();
     // Abort all in-flight requests
     for (const load of get().inflight.values()) load.controller.abort();
@@ -382,6 +388,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       loadedPaths: new Set(),
       inflight: new Map(),
       indexStatus: "idle",
+      indexProjectName: null,
       selectedFiles: [],
       inlineAction: null,
       clipboard: null,
