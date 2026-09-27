@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.5] - 2026-09-27
+
+### Improved
+- New Codex chats reply about 2.5 s sooner, and starting one no longer freezes the whole server for a couple of seconds.
+- The Codex session list loads about 4x faster.
+
 ## [0.23.4] - 2026-09-27
 
 ### Improved
