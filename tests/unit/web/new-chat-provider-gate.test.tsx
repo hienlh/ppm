@@ -4,19 +4,28 @@ import { act } from "react";
 
 installDom();
 afterAll(uninstallDom);
-const { NewChatProviderGate } = await import("../../../src/web/components/chat/new-chat-provider-gate");
+const { NewChatProviderGate, useNewChatPreparation } = await import("../../../src/web/components/chat/new-chat-provider-gate");
+const { clearChatPreparationCache } = await import("../../../src/web/lib/chat-preparation-cache");
 const { usePanelStore } = await import("../../../src/web/stores/panel-store");
 const { api } = await import("../../../src/web/lib/api-client");
+const { updateAISettings } = await import("../../../src/web/lib/api-settings");
 const settings = { default_provider: "codex", new_chat_provider_mode: "follow-focus",
   providers: { codex: { permission_mode: "plan" }, claude: { permission_mode: "acceptEdits" } } };
 let view: Mounted | null = null;
 let get: ReturnType<typeof spyOn>;
+let preparation: ReturnType<typeof useNewChatPreparation>;
+
+function Composer({ providerId }: { providerId: unknown }) {
+  preparation = useNewChatPreparation();
+  return <><span>Composer {String(providerId)}</span><input aria-label="Draft" /></>;
+}
 
 function Harness() {
   const metadata = usePanelStore((s) => s.panels.main!.tabs[0]!.metadata!);
-  return <NewChatProviderGate tabId="new" metadata={metadata}><span>Composer {String(metadata.providerId)}</span></NewChatProviderGate>;
+  return <NewChatProviderGate tabId="new" metadata={metadata}><Composer providerId={metadata.providerId} /></NewChatProviderGate>;
 }
 beforeEach(() => {
+  clearChatPreparationCache();
   usePanelStore.setState({ currentProject: "project", focusedPanelId: "main", grid: [["main"]],
     lastFocusedChatProviders: {}, panels: { main: { id: "main", activeTabId: "new", tabHistory: ["new"],
       tabs: [{ id: "new", type: "chat", title: "Chat", projectId: "project", closable: true,
@@ -25,15 +34,22 @@ beforeEach(() => {
 });
 afterEach(async () => { await view?.unmount(); view = null; get.mockRestore(); });
 
-it("waits for settings before mounting the composer and applies the selected provider's permissions", async () => {
+it("keeps the composer mounted while preparing and applies the selected provider's permissions", async () => {
   let resolve!: (value: unknown) => void;
   get.mockImplementation((path: string) => path === "/api/settings/ai"
     ? new Promise((done) => { resolve = done; }) : Promise.resolve([{ id: "codex", name: "Codex" }]));
   view = await mount(<Harness />);
   expect(view.container.textContent).toContain("Preparing chat");
-  expect(view.container.textContent).not.toContain("Composer");
+  expect(view.container.textContent).toContain("Composer");
+  const input = view.container.querySelector("input")!;
+  input.value = "draft typed during preparation";
+  const first = preparation.prepare();
+  expect(preparation.prepare()).toBe(first);
   await act(async () => { resolve(settings); });
+  expect(await first).toEqual({ providerId: "codex", permissionMode: "plan" });
   expect(view.container.textContent).toBe("Composer codex");
+  expect(view.container.querySelector("input")).toBe(input);
+  expect(input.value).toBe("draft typed during preparation");
   expect(usePanelStore.getState().panels.main!.tabs[0]!.metadata!.permissionMode).toBe("plan");
 });
 
@@ -42,7 +58,11 @@ it("offers the sole available provider when the selected provider is unavailable
     ? settings : [{ id: "claude", name: "Claude" }]));
   view = await mount(<Harness />);
   expect(view.container.textContent).toContain("codex is not available");
-  expect(view.container.textContent).not.toContain("Composer");
+  expect(view.container.textContent).toContain("Composer");
+  expect(usePanelStore.getState().panels.main!.tabs[0]!.metadata!.providerId).toBeUndefined();
+  await act(async () => {
+    await expect(preparation.prepare()).rejects.toThrow("codex is not available");
+  });
   await click(view.container.querySelector("button"));
   expect(view.container.textContent).toBe("Composer claude");
   expect(usePanelStore.getState().panels.main!.tabs[0]!.metadata!.permissionMode).toBe("acceptEdits");
@@ -55,7 +75,77 @@ it("lets the user retry a settings failure without falling back silently", async
       ? settings : [{ id: "codex", name: "Codex" }]));
   view = await mount(<Harness />);
   expect(view.container.textContent).toContain("Could not load chat settings");
+  expect(view.container.textContent).toContain("Composer");
+  expect(usePanelStore.getState().panels.main!.tabs[0]!.metadata!.providerId).toBeUndefined();
   fail = false;
   await click(view.container.querySelector("button"));
   expect(view.container.textContent).toBe("Composer codex");
+});
+
+it("returns the actual provider and permission mode after the user changes the resolved selection", async () => {
+  get.mockImplementation((path: string) => Promise.resolve(path === "/api/settings/ai"
+    ? settings : [{ id: "codex", name: "Codex" }, { id: "claude", name: "Claude" }]));
+  view = await mount(<Harness />);
+  await act(async () => {
+    const store = usePanelStore.getState();
+    const metadata = store.panels.main!.tabs[0]!.metadata!;
+    store.updateTab("new", { metadata: { ...metadata, providerId: "claude", permissionMode: "acceptEdits" } });
+  });
+  expect(await preparation.prepare()).toEqual({ providerId: "claude", permissionMode: "acceptEdits" });
+});
+
+it("keeps the draft available when preparation times out and ignores a late response", async () => {
+  let resolve!: (value: unknown) => void;
+  get.mockImplementation((path: string) => path === "/api/settings/ai"
+    ? new Promise((done) => { resolve = done; }) : Promise.resolve([{ id: "codex", name: "Codex" }]));
+  const originalTimeout = globalThis.setTimeout;
+  const timers: Array<() => void> = [];
+  const timeout = spyOn(globalThis, "setTimeout");
+  timeout.mockImplementation(((callback: () => void, ms: number, ...args: unknown[]) => {
+    if (ms === 30_000) { timers.push(callback); return 0; }
+    return originalTimeout(callback, ms, ...args);
+  }) as typeof setTimeout);
+  try {
+    view = await mount(<Harness />);
+    const input = view.container.querySelector("input");
+    const request = preparation.prepare();
+    await act(async () => {
+      for (const expire of timers) expire();
+      await expect(request).rejects.toThrow("timed out");
+    });
+    expect(view.container.textContent).toContain("Retry");
+    expect(view.container.querySelector("input")).toBe(input);
+    await act(async () => { resolve(settings); });
+    expect(usePanelStore.getState().panels.main!.tabs[0]!.metadata!.providerId).toBeUndefined();
+  } finally { timeout.mockRestore(); }
+});
+
+it("rejects settings invalidated by a save and retries with fresh provider permissions", async () => {
+  let resolveOld!: (value: unknown) => void;
+  const fresh = { default_provider: "claude", new_chat_provider_mode: "default",
+    providers: { claude: { permission_mode: "acceptEdits" } } };
+  get.mockImplementation((path: string) => path === "/api/settings/ai"
+    ? new Promise((resolve) => { resolveOld = resolve; })
+    : Promise.resolve([{ id: "codex", name: "Codex" }, { id: "claude", name: "Claude" }]));
+  const put = spyOn(api, "put").mockResolvedValue(fresh);
+  try {
+    view = await mount(<Harness />);
+    const input = view.container.querySelector("input");
+    const old = preparation.prepare();
+    await act(async () => {
+      await updateAISettings({ default_provider: "claude", new_chat_provider_mode: "default" });
+      resolveOld(settings);
+      await expect(old).rejects.toThrow("Chat settings changed");
+    });
+    const metadata = usePanelStore.getState().panels.main!.tabs[0]!.metadata!;
+    expect(metadata.providerPending).toBe(true);
+    expect(metadata.providerId).toBeUndefined();
+    expect(metadata.permissionMode).toBeUndefined();
+    expect(view.container.querySelector("input")).toBe(input);
+    get.mockImplementation((path: string) => Promise.resolve(path === "/api/settings/ai"
+      ? fresh : [{ id: "claude", name: "Claude" }]));
+    await click(view.container.querySelector("button"));
+    expect(await preparation.prepare()).toEqual({ providerId: "claude", permissionMode: "acceptEdits" });
+    expect(view.container.textContent).toBe("Composer claude");
+  } finally { put.mockRestore(); }
 });

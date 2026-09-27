@@ -77,6 +77,8 @@ interface MessageInputProps {
   isStreaming?: boolean;
   onCancel?: () => void;
   disabled?: boolean;
+  /** Input is usable while provider-dependent controls are still preparing. */
+  configurationPending?: boolean;
   projectName?: string;
   /** Slash picker state change */
   onSlashStateChange?: (visible: boolean, filter: string) => void;
@@ -170,6 +172,7 @@ export const MessageInput = memo(function MessageInput({
   onEffortChange,
   thinking,
   onThinkingChange,
+  configurationPending = false,
 }: MessageInputProps) {
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
@@ -324,10 +327,11 @@ export const MessageInput = memo(function MessageInput({
     if (initialValue && !valueRef.current) {
       writeTextareas(initialValue);
       // Focus and move cursor to end
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         const ta = textareaRef.current;
         if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
       }, 50);
+      return () => clearTimeout(timer);
     }
   }, [initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -365,20 +369,23 @@ export const MessageInput = memo(function MessageInput({
     const next = current.trim() ? `${current}\n\n${restore.text}` : restore.text;
     writeTextareas(next);
     onContentChange?.(next, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       const ta = getVisibleTextarea();
       if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
     }, 50);
+    return () => clearTimeout(timer);
   }, [restore?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-focus on mount when requested
   useEffect(() => {
     if (!autoFocus) return;
-    setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
+    const timer = setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
+    return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cache per project/provider/session, with a TTL for externally installed skills.
   const loadSlashItems = useCallback(() => {
+    if (configurationPending) return;
     if (!projectName) {
       slashItemsRef.current = [];
       onSlashItemsLoaded?.([], []);
@@ -393,7 +400,11 @@ export const MessageInput = memo(function MessageInput({
         slashItemsRef.current = [];
         onSlashItemsLoaded?.([], []);
       });
-  }, [projectName, providerId, sessionId, onSlashItemsLoaded]);
+  }, [projectName, providerId, sessionId, onSlashItemsLoaded, configurationPending]);
+
+  useEffect(() => {
+    if (!configurationPending && slashPickerOpenRef.current) loadSlashItems();
+  }, [configurationPending, loadSlashItems]);
 
   // Load on the first slash interaction below. Opening a transcript should
   // not enumerate skills (or start a provider CLI) before the user needs them.
@@ -923,6 +934,7 @@ export const MessageInput = memo(function MessageInput({
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: mode chip + provider selector row */}
         <div className="flex items-center gap-1 px-2 pt-2 md:hidden relative">
+          {!configurationPending && <>
           <ModeChip
             mode={permissionMode ?? "bypassPermissions"}
             onClick={() => setModeSelectorOpen((v) => !v)}
@@ -933,6 +945,7 @@ export const MessageInput = memo(function MessageInput({
             open={modeSelectorOpen}
             onOpenChange={setModeSelectorOpen}
           />
+          </>}
           {onProviderChange && projectName && (
             <ProviderSelector
               value={providerId ?? "claude"}
@@ -1019,7 +1032,7 @@ export const MessageInput = memo(function MessageInput({
         <div className="hidden md:block">
           <div className="flex items-center gap-1.5 px-2.5 pt-2.5">
             {/* Mode indicator chip */}
-            <div className="relative">
+            {!configurationPending && <div className="relative">
               <ModeChip
                 mode={permissionMode ?? "bypassPermissions"}
                 onClick={() => setModeSelectorOpen((v) => !v)}
@@ -1030,7 +1043,7 @@ export const MessageInput = memo(function MessageInput({
                 open={modeSelectorOpen}
                 onOpenChange={setModeSelectorOpen}
               />
-            </div>
+            </div>}
             {/* Provider selector — only when no active session */}
             {onProviderChange && projectName && (
               <ProviderSelector

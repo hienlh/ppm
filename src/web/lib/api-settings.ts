@@ -1,4 +1,5 @@
 import { api } from "./api-client";
+import { clearChatPreparationCache } from "./chat-preparation-cache";
 
 export interface OAuthProfileData {
   account?: {
@@ -85,9 +86,9 @@ export interface PickedAccount {
  * Null means nothing is usable right now (Claude) or no managed account exists (Codex, which
  * then runs on the ambient ~/.codex login).
  */
-export function pickAccountForTab(providerId: string): Promise<PickedAccount | null> {
+export function pickAccountForTab(providerId: string, signal?: AbortSignal): Promise<PickedAccount | null> {
   const path = providerId === "codex" ? "/api/codex-accounts/pick" : "/api/accounts/pick";
-  return api.post<PickedAccount | null>(path);
+  return api.post<PickedAccount | null>(path, undefined, { signal });
 }
 
 export function addAccount(params: { apiKey: string; label?: string }): Promise<AccountInfo> {
@@ -228,7 +229,10 @@ export function getAISettings(): Promise<AISettings> {
 }
 
 export function updateAISettings(settings: Partial<AISettings>): Promise<AISettings> {
-  return api.put<AISettings>("/api/settings/ai", settings);
+  return api.put<AISettings>("/api/settings/ai", settings).then((result) => {
+    clearChatPreparationCache();
+    return result;
+  });
 }
 
 // ── Proxy ────────────────────────────────────────────────────────────

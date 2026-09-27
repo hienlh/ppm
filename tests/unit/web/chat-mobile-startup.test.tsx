@@ -117,3 +117,21 @@ it("requests the file index on the first @ interaction, without loading slash co
   await typeText("@src");
   expect(get).toHaveBeenCalledTimes(1);
 });
+
+it("waits for the resolved provider before loading a slash picker opened during preparation", async () => {
+  const get = spyOn(api, "get").mockResolvedValue({ items: [], recentNames: [] });
+  spies.push(get);
+  let finish!: () => void;
+  function Composer() {
+    const [pending, setPending] = useState(true);
+    finish = () => setPending(false);
+    return <MessageInput projectName="mobile-startup" providerId={pending ? "claude" : "codex"}
+      configurationPending={pending} onSend={() => {}} />;
+  }
+  view = await mount(<Composer />);
+  await typeText("/");
+  expect(get).not.toHaveBeenCalled();
+  await act(async () => finish());
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(get.mock.calls[0]![0]).toContain("providerId=codex");
+});

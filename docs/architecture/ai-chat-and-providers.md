@@ -26,6 +26,22 @@ change Codex's reset schedule. Users can disable the guard per account.
 
 ## Chat startup
 
+New tabs mount the composer immediately. Provider selection and permissions
+prepare in the background, sharing a 60-second in-memory cache per project.
+Saving AI settings invalidates that cache and pending selections; an unavailable
+provider is surfaced without silently choosing another. Only selection and
+permission fields are cached, not provider credentials.
+
+An early send displays the pending message, waits for preparation and the tab's
+account claim, then creates the session and sends once after the socket greeting.
+Errors retain the draft for an explicit retry; reload never automatically resends.
+Remote drafts hydrate without overwriting text typed, erased or submitted since
+the request started. Account claims are shared by preparation and first send.
+
+Recent history and usage show correctly scoped cached data immediately and refresh
+after 500 ms. Provider/model lists load when their selectors open. These reads
+never gate typing or first-send preparation.
+
 The initial history request also covers an idle WebSocket greeting while it is
 pending; completed turns and truncated replays still trigger recovery reads.
 Slash commands load when the user opens the `/` picker. The `@` picker loads a
@@ -44,7 +60,7 @@ fresh while the drawer is closed, without fetching an unused index.
 
 ## Model discovery cache
 
-The chat model picker shares successful model lists across chat tabs, keyed by
+When opened, the chat model picker shares successful model lists across chat tabs, keyed by
 project and provider, in browser memory for five minutes. Expired lists remain
 visible while a refresh runs; failed or empty refreshes retain the last usable
 list. Reloading the page clears this browser cache. Codex discovery also keeps

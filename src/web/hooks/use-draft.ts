@@ -46,6 +46,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
   const [loading, setLoading] = useState(true);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const sessionRef = useRef(sessionId);
+  const editRevision = useRef(0);
   sessionRef.current = sessionId;
 
   const effectiveId = sessionId ?? "__new__";
@@ -57,6 +58,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
       return;
     }
     let cancelled = false;
+    const revision = editRevision.current;
     // StrictMode repeats mount effects. Keep the recovered value for both
     // runs, but never reuse it after navigating to another conversation.
     if (recoveryRef.current.projectName !== projectName || recoveryRef.current.sessionId !== sessionId) {
@@ -74,7 +76,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
         `${projectUrl(projectName)}/chat/drafts/${encodeURIComponent(effectiveId)}`,
       )
       .then((data) => {
-        if (cancelled || keepRecoveredDraft) return;
+        if (cancelled || keepRecoveredDraft || editRevision.current !== revision) return;
         if (data) {
           let attachments: DraftAttachment[] = [];
           try { attachments = JSON.parse(data.attachments); } catch { /* ignore */ }
@@ -83,7 +85,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
           setDraft(null);
         }
       })
-      .catch(() => { if (!cancelled && !keepRecoveredDraft) setDraft(null); })
+      .catch(() => { if (!cancelled && !keepRecoveredDraft && editRevision.current === revision) setDraft(null); })
       .finally(() => {
         clearTimeout(releaseTimer);
         if (!cancelled) setLoading(false);
@@ -94,6 +96,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
   // Debounced save (1s)
   const save = useCallback(
     (content: string, attachments?: DraftAttachment[]) => {
+      ++editRevision.current;
       if (!projectName) return;
       try {
         sessionStorage.setItem(localKeyRef.current, JSON.stringify({ content, attachments: attachments ?? [] }));
@@ -150,6 +153,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
    * behind and restore it into the next new tab.
    */
   const clear = useCallback((draftId?: string) => {
+    ++editRevision.current;
     if (!projectName) return;
     recoveryRef.current.draft = null;
     try {

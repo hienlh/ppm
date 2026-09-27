@@ -72,7 +72,7 @@ export function ModelThinkingSelector({
   useEffect(() => {
     let active = true;
     setModelResult(null);
-    if (!projectName || !providerId) return;
+    if (!open || !projectName || !providerId) return;
     const entry = modelCache.get(cacheKey);
     if (entry && Date.now() < entry.expiry) return;
     api
@@ -87,7 +87,7 @@ export function ModelThinkingSelector({
         if (active) setModelResult({ projectName, providerId, models: entry?.models ?? [], error: !entry });
       });
     return () => { active = false; };
-  }, [projectName, providerId, cacheKey]);
+  }, [projectName, providerId, cacheKey, open]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
@@ -107,7 +107,7 @@ export function ModelThinkingSelector({
   }, [open, isMobile]);
 
   const current = models.find((m) => m.value === model);
-  const modelDisplay = loading ? "Loading models..." : current ? shortLabel(current.label) : "Model";
+  const modelDisplay = current ? shortLabel(current.label) : model ? shortLabel(model) : "Model";
   const effortValue = effort ?? DEFAULT_EFFORT;
   const showModelList = models.length > 0 || Boolean(modelStatus);
   const chipText = chipLabel(modelDisplay, effortValue);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronDown, ChevronUp, Pin, PinOff, Search, X } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { formatRelativeDate } from "@/lib/format-date";
@@ -12,6 +12,7 @@ import { compareSessionsByActivity, type SessionInfo, type ProjectTag } from "..
 
 const MAX_RECENT_SESSIONS = 5;
 const FETCH_SESSIONS_LIMIT = 20;
+const recentSessionsCache = new Map<string, SessionInfo[]>();
 
 interface SessionListPanelProps {
   projectName: string | undefined;
@@ -20,35 +21,46 @@ interface SessionListPanelProps {
 }
 
 export function SessionListPanel({ projectName, onSelectSession, className }: SessionListPanelProps) {
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [loading, setLoading] = useState(false);
+  return <ProjectSessionListPanel key={projectName} projectName={projectName} onSelectSession={onSelectSession} className={className} />;
+}
+
+function ProjectSessionListPanel({ projectName, onSelectSession, className }: SessionListPanelProps) {
+  const [sessions, setSessions] = useState<SessionInfo[]>(() => projectName ? recentSessionsCache.get(projectName) ?? [] : []);
+  const [ready, setReady] = useState(false);
+  const requestRef = useRef(0);
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
-  const { projectTags, tagCounts, loadTags } = useProjectTags(projectName);
+  const { projectTags, tagCounts, loadTags } = useProjectTags(ready ? projectName : undefined);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setReady(true), 500);
+    return () => { clearTimeout(timer); ++requestRef.current; };
+  }, []);
 
   const loadSessions = useCallback(async (query?: string) => {
     if (!projectName) return;
-    setLoading(true);
+    const request = ++requestRef.current;
     try {
       const params = new URLSearchParams({ limit: String(FETCH_SESSIONS_LIMIT) });
       if (query) params.set("q", query);
       const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions?${params}`);
-      setSessions(data.sessions.slice(0, FETCH_SESSIONS_LIMIT));
+      if (request !== requestRef.current) return;
+      const next = data.sessions.slice(0, FETCH_SESSIONS_LIMIT);
+      if (!query) recentSessionsCache.set(projectName, next);
+      setSessions(next);
     } catch {
       // silently ignore
-    } finally {
-      setLoading(false);
     }
   }, [projectName]);
 
-  useEffect(() => { loadSessions(); }, [loadSessions]);
-
-  // Re-fetch when debounced search query changes
+  // One delayed initial read, then server-side search. Keep cached rows visible.
   useEffect(() => {
+    if (!ready) return;
     loadSessions(debouncedSearch || undefined);
-  }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { ++requestRef.current; };
+  }, [ready, debouncedSearch, loadSessions]);
 
   const togglePin = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
     e.stopPropagation();
@@ -60,6 +72,8 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
       } else {
         await api.put(url);
       }
+      const cached = recentSessionsCache.get(projectName);
+      if (cached) recentSessionsCache.set(projectName, cached.map((s) => s.id === session.id ? { ...s, pinned: !session.pinned } : s).sort(compareSessionsByActivity));
       setSessions((prev) => {
         const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
         return updated.sort(compareSessionsByActivity);
@@ -70,9 +84,11 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
   }, [projectName]);
 
   const handleTagChanged = useCallback((sid: string, tag: { id: number; name: string; color: string } | null) => {
+    const cached = projectName ? recentSessionsCache.get(projectName) : undefined;
+    if (cached && projectName) recentSessionsCache.set(projectName, cached.map((s) => s.id === sid ? { ...s, tag } : s));
     setSessions((prev) => prev.map((s) => s.id === sid ? { ...s, tag } : s));
     loadTags();
-  }, [loadTags]);
+  }, [loadTags, projectName]);
 
   // Tag filter is client-side; search is now server-side via ?q=
   const filtered = selectedTagId !== null
@@ -83,7 +99,7 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
   const recentSessions = showAll ? allRecentSessions : allRecentSessions.slice(0, MAX_RECENT_SESSIONS);
   const hasMore = allRecentSessions.length > MAX_RECENT_SESSIONS;
 
-  if (loading || !projectName || sessions.length === 0) return null;
+  if (!projectName || (sessions.length === 0 && !searchQuery)) return null;
 
   return (
     <div className={className}>
