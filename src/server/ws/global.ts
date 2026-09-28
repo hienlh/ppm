@@ -18,7 +18,7 @@
  * example, make an editor re-fetch its file twice per change).
  */
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
-import { onIndexRebuilt } from "../../services/file-list-index.service.ts";
+import { onIndexRebuilt, warmIndex } from "../../services/file-list-index.service.ts";
 import { configService } from "../../services/config.service.ts";
 import { onDesignEvent } from "../../services/design/design-events.ts";
 import { resolve } from "node:path";
@@ -72,6 +72,8 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
   if (!project) return;
 
   void startWatching(projectName, project.path);
+  // A client opened this project: have its file list ready before the palette asks for it.
+  warmIndex(project.path);
   watchedProject.set(ws, projectName);
 }
 

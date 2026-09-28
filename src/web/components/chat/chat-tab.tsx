@@ -12,6 +12,8 @@ import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
+import { useFileStore } from "@/stores/file-store";
+import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
@@ -1057,6 +1059,14 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, []);
 
   // --- File picker handlers ---
+  // An open @-picker keeps the file index current, like the palette — see `openIndexReader`.
+  useEffect(() => {
+    if (showFilePicker && projectName) return useFileStore.getState().openIndexReader(projectName);
+  }, [showFilePicker, projectName]);
+  // A project too long to send is searched on the server as the @-query changes.
+  const indexRemote = useFileStore((s) => s.indexRemote);
+  const remoteFileItems = useRemoteFileSearch(projectName, fileFilter, { enabled: showFilePicker && indexRemote, kind: "all" });
+
   const handleFileStateChange = useCallback((visible: boolean, filter: string) => {
     setShowFilePicker(visible);
     setFileFilter(filter);
@@ -1247,7 +1257,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           projectName={projectName}
         />
         <FilePicker
-          items={fileItems}
+          items={indexRemote ? remoteFileItems : fileItems}
           filter={fileFilter}
           onSelect={handleFileSelect}
           onClose={handleFileClose}

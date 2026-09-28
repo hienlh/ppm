@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, projectUrl } from "@/lib/api-client";
-import type { FileEntry, FileDirEntry } from "../../types/project";
+import type { FileEntry, FileDirEntry, FileIndexTooLarge } from "../../types/project";
+import { REMOTE_FILE_SEARCH_FROM_ENTRIES } from "../../shared/file-index-limits";
 import { entriesToNodes, mergeChildren } from "./file-tree-merge-helpers";
 import { schedulePrefetch, cancelPrefetch } from "./file-tree-prefetch";
 import { visibleNodesOf } from "@/components/explorer/flatten-visible-tree";
@@ -90,6 +91,13 @@ interface FileStore {
    * every change was a 22 MB download per change on a large project.
    */
   indexStale: boolean;
+  /**
+   * The project's list is too long to send (`REMOTE_FILE_SEARCH_FROM_ENTRIES`): `fileIndex` stays
+   * empty, and whatever would read it searches on the server instead (`useRemoteFileSearch`).
+   */
+  indexRemote: boolean;
+  /** Moves each time an index lands, so a search on the server knows to ask again. */
+  indexRevision: number;
   /** The project `fileIndex` belongs to (or is being loaded for); null when none is. */
   indexProject: string | null;
   selectedFiles: string[];
@@ -108,6 +116,14 @@ interface FileStore {
   loadIndex(projectName: string): Promise<void>;
   /** Fetch the index if it is missing, failed or stale — for UI about to show it. */
   ensureIndex(projectName: string): void;
+  /**
+   * For UI showing the index for as long as it is open (the palette, a picker): `ensureIndex`,
+   * and fetch it again each time the server's rebuild lists other paths, until the returned
+   * release is called — so a file created while the palette is open appears in it.
+   */
+  openIndexReader(projectName: string): () => void;
+  /** `files:index-changed`: the server rebuilt `projectName`'s index and it lists other paths. */
+  indexRebuilt(projectName: string): void;
   /** A file in `projectName` changed: keep the index, but refetch it before it is next read. */
   markIndexStale(projectName: string): void;
   invalidateIndex(): void;
@@ -162,6 +178,8 @@ interface InflightLoad {
 let indexEpoch = 0;
 let indexChanges = 0;
 let indexLoad: Promise<void> | null = null;
+/** Open `openIndexReader`s. Only while one is open does a rebuild cost a download. */
+let indexReaders = 0;
 
 function abandonIndexLoad(): void {
   indexEpoch++;
@@ -178,6 +196,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
   inflight: new Map<string, InflightLoad>(),
   indexStatus: "idle",
   indexStale: false,
+  indexRemote: false,
+  indexRevision: 0,
   indexProject: null,
   selectedFiles: [],
   inlineAction: null,
@@ -324,18 +344,25 @@ export const useFileStore = create<FileStore>((set, get) => ({
     const epoch = ++indexEpoch;
     const changesSeen = indexChanges;
     if (get().indexProject !== projectName) {
-      set({ indexProject: projectName, fileIndex: [], indexStatus: "loading", indexStale: false });
+      set({ indexProject: projectName, fileIndex: [], indexStatus: "loading", indexStale: false, indexRemote: false });
     } else if (get().indexStatus !== "ready") {
       // A list already on screen stays there while its replacement loads.
       set({ indexStatus: "loading" });
     }
     const load = (async () => {
       try {
-        const data = await api.get<FileEntry[]>(
-          `${projectUrl(projectName)}/files/index`,
+        const data = await api.get<FileEntry[] | FileIndexTooLarge>(
+          `${projectUrl(projectName)}/files/index?max=${REMOTE_FILE_SEARCH_FROM_ENTRIES}`,
         );
         if (epoch !== indexEpoch) return;
-        set({ fileIndex: data, indexStatus: "ready", indexStale: indexChanges !== changesSeen });
+        const remote = !Array.isArray(data);
+        set({
+          fileIndex: remote ? [] : data,
+          indexRemote: remote,
+          indexRevision: get().indexRevision + 1,
+          indexStatus: "ready",
+          indexStale: indexChanges !== changesSeen,
+        });
       } catch {
         if (epoch !== indexEpoch) return;
         // A failed refresh keeps the list it was replacing; only a first load reports it.
@@ -354,6 +381,30 @@ export const useFileStore = create<FileStore>((set, get) => ({
     void get().loadIndex(projectName);
   },
 
+  openIndexReader: (projectName: string) => {
+    indexReaders++;
+    get().ensureIndex(projectName);
+    let open = true;
+    return () => {
+      if (!open) return;
+      open = false;
+      indexReaders--;
+    };
+  },
+
+  indexRebuilt: (projectName: string) => {
+    get().markIndexStale(projectName);
+    if (indexReaders === 0 || projectName !== get().indexProject) return;
+    // A load already on its way may carry the list from before the rebuild: it lands stale.
+    if (indexLoad) {
+      void indexLoad.then(() => {
+        if (indexReaders > 0 && projectName === get().indexProject) get().ensureIndex(projectName);
+      });
+    } else {
+      void get().loadIndex(projectName);
+    }
+  },
+
   markIndexStale: (projectName: string) => {
     if (projectName !== get().indexProject) return;
     indexChanges++;
@@ -362,7 +413,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   invalidateIndex: () => {
     abandonIndexLoad();
-    set({ indexProject: null, indexStatus: "idle", fileIndex: [], indexStale: false });
+    set({ indexProject: null, indexStatus: "idle", fileIndex: [], indexStale: false, indexRemote: false });
   },
 
   invalidateFolder: async (projectName: string, folderPath: string) => {
@@ -442,6 +493,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       inflight: new Map(),
       indexStatus: "idle",
       indexStale: false,
+      indexRemote: false,
       indexProject: null,
       selectedFiles: [],
       inlineAction: null,

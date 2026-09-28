@@ -13,11 +13,14 @@ import {
   removeEntrySync,
   renameEntrySync,
 } from "./fs-ops/fs-core-ops.ts";
-import type { FileNode, FileEntry, FileDirEntry } from "../types/project.ts";
+import type { FileNode, FileDirEntry, FileEntry } from "../types/project.ts";
+import type { IndexBuild } from "./file-index/index-walk.ts";
+import type { SearchKind } from "./file-index/index-search.ts";
 import {
   listDir as listDirImpl,
   listDirBatch as listDirBatchImpl,
   buildIndex as buildIndexImpl,
+  searchFileIndex,
   invalidateIndexCache,
   markIndexStale,
   clearIndexCache,
@@ -281,11 +284,17 @@ class FileService {
   }
 
   /**
-   * Build flat file index for palette/search (delegates to file-list-index.service).
-   * Cached per project; a file change marks it stale via markIndexStale().
+   * Build flat file index for palette/search (delegates to file-list-index.service), as the
+   * ready-to-send `/files/index` response. Cached per project; a file change marks it stale
+   * via markIndexStale().
    */
-  buildIndex(projectPath: string): Promise<FileEntry[]> {
+  buildIndex(projectPath: string): Promise<IndexBuild> {
     return buildIndexImpl(projectPath);
+  }
+
+  /** Search the flat file index on the server (delegates to file-list-index.service). */
+  searchIndex(projectPath: string, query: string, kind: SearchKind, limit: number): Promise<FileEntry[]> {
+    return searchFileIndex(projectPath, query, kind, limit);
   }
 
   /** Block access to sensitive paths (.git/) */

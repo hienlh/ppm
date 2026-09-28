@@ -6,6 +6,8 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { app } from "../../../src/server/index.ts";
+import { Hono } from "hono";
+import { gzipJson } from "../../../src/server/middleware/gzip-json.ts";
 
 let tmpDir: string;
 let projectPath: string;
@@ -67,5 +69,56 @@ describe("gzip-json middleware", () => {
     expect(res.headers.get("Content-Encoding")).toBeNull();
     const json = (await res.json()) as any;
     expect(json.ok).toBe(true);
+  });
+});
+
+/** The longest the event loop went without running a 1 ms timer while `work` ran. */
+async function worstTimerGapDuring(work: () => Promise<unknown>): Promise<number> {
+  let worst = 0;
+  let last = performance.now();
+  let ticking = true;
+  const tick = () => {
+    const now = performance.now();
+    worst = Math.max(worst, now - last);
+    last = now;
+    if (ticking) setTimeout(tick, 1);
+  };
+  tick();
+  await work();
+  ticking = false;
+  // A synchronous gzip can run entirely inside microtasks, ending before any timer fires again.
+  return Math.max(worst, performance.now() - last);
+}
+
+describe("gzip-json middleware on a large body", () => {
+  // Paths like a big project's file index, and about as long as nxsys-workspace's (22 MB), so the
+  // blocking a synchronous gzip would cost stays well clear of a coarse Windows timer tick.
+  const big = JSON.stringify({ ok: true, data: Array.from({ length: 260_000 }, (_, i) => ({ path: `packages/app-${i % 97}/src/module-${i}/index.ts`, name: "index.ts", type: "file" })) });
+  const bigApp = new Hono();
+  bigApp.use("*", gzipJson);
+  bigApp.get("/big", (c) => c.body(big, 200, { "Content-Type": "application/json" }));
+
+  it("compresses it off the event loop, so other requests are not kept waiting", async () => {
+    // Calibrate against this machine: how long the synchronous call would stop the loop.
+    const bytes = new TextEncoder().encode(big);
+    const started = performance.now();
+    Bun.gzipSync(bytes);
+    const blockingMs = performance.now() - started;
+
+    // The probe's own floor: about 1 ms on Linux and macOS, but Windows keeps a coarse timer
+    // (15.6 ms by default), which on its own would use up the margin below.
+    const idleGapMs = await worstTimerGapDuring(() => Bun.sleep(100));
+
+    let res!: Response;
+    let body!: Uint8Array;
+    const worstGapMs = await worstTimerGapDuring(async () => {
+      res = await bigApp.request("/big", { headers: { "Accept-Encoding": "gzip" } });
+      body = new Uint8Array(await res.arrayBuffer());
+    });
+
+    expect(res.headers.get("Content-Encoding")).toBe("gzip");
+    expect(new TextDecoder().decode(Bun.gunzipSync(body))).toBe(big);
+    expect(Number(res.headers.get("Content-Length"))).toBe(body.byteLength);
+    expect(worstGapMs).toBeLessThan(idleGapMs + blockingMs / 2);
   });
 });

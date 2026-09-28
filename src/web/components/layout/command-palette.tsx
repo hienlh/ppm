@@ -28,6 +28,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useIsTouchOnly } from "@/hooks/use-is-touch-only";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
+import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
 import { useExtensionStore } from "@/stores/extension-store";
 import { extensionIcon } from "@/lib/extension-icons";
 import { useCompareStore } from "@/stores/compare-store";
@@ -129,8 +130,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const fileIndex = useFileStore((s) => s.fileIndex);
   const indexStatus = useFileStore((s) => s.indexStatus);
   const indexProject = useFileStore((s) => s.indexProject);
+  const indexRemote = useFileStore((s) => s.indexRemote);
   const loadIndex = useFileStore((s) => s.loadIndex);
-  const ensureIndex = useFileStore((s) => s.ensureIndex);
+  const openIndexReader = useFileStore((s) => s.openIndexReader);
   const fileTree = useFileStore((s) => s.tree);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
@@ -152,6 +154,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     () => splitSourceLocation(deferredQuery)?.path ?? deferredQuery,
     [deferredQuery],
   );
+  // A project too long to send is searched on the server as the query changes. What comes back
+  // is ranked below with everything else, exactly as the list itself would have been.
+  const remoteFiles = useRemoteFileSearch(activeProject?.name, searchPath, {
+    enabled: open && indexRemote && !!searchPath.trim() && !isPathQuery(searchPath),
+  });
 
   /**
    * Read when an item is actually picked, rather than closed over per command: the file
@@ -338,7 +345,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     const projectId = activeProject?.name ?? null;
     const meta = activeProject ? { projectName: activeProject.name } : undefined;
     // Filter index to files only — directories are in the index for palette "open folder" affordances but not for file-open commands
-    const files = indexStatus === "ready" && indexProject === activeProject?.name ? fileIndex.filter((e) => e.type === "file") : flattenFiles(fileTree);
+    const files = indexRemote
+      ? remoteFiles
+      : indexStatus === "ready" && indexProject === activeProject?.name ? fileIndex.filter((e) => e.type === "file") : flattenFiles(fileTree);
 
     return files.map((f) => ({
       id: `file:${f.path}`,
@@ -351,7 +360,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       isIgnored: ("isIgnored" in f ? f.isIgnored : undefined) as boolean | undefined,
       action: () => openFileTab(f.path, f.name, projectId, meta),
     }));
-  }, [indexStatus, indexProject, fileIndex, fileTree, activeProject, openFileTab]);
+  }, [indexStatus, indexProject, indexRemote, remoteFiles, fileIndex, fileTree, activeProject, openFileTab]);
 
   // Filesystem commands — from cached API results
   const fsCommands = useMemo<CommandItem[]>(() => {
@@ -474,11 +483,12 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     setSelectedIdx(0);
   }, []);
 
-  // Load the file index as the palette opens, or refresh it if files changed since. Not on
-  // `indexStatus`: a failed load would retry itself in a loop — the hint below has a retry.
+  // Load the file index as the palette opens, or refresh it if files changed since, and keep it
+  // current while it stays open. Not on `indexStatus`: a failed load would retry itself in a
+  // loop — the hint below has a retry.
   useEffect(() => {
-    if (open && activeProject) ensureIndex(activeProject.name);
-  }, [open, activeProject, ensureIndex]);
+    if (open && activeProject) return openIndexReader(activeProject.name);
+  }, [open, activeProject, openIndexReader]);
 
   // Reset state when opening
   useEffect(() => {

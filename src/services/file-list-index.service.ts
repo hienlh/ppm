@@ -3,39 +3,49 @@
  * Lazy-load file tree listing and flat index building for palette/search.
  * Implements listDir() (1-level) and buildIndex() (recursive) with filter support.
  * Index results are cached per project path; a file change marks them stale (see IndexEntry).
+ * The walk itself runs on the file index worker (file-index/), off the thread serving requests.
  */
 
-import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
-import { resolve, relative, join, sep } from "node:path";
-import ignore, { type Ignore } from "ignore";
-import type { FileEntry, FileDirEntry } from "../types/project.ts";
+import { existsSync, readdirSync } from "node:fs";
+import { resolve, sep } from "node:path";
+import type { Ignore } from "ignore";
+import type { FileDirEntry, FileEntry } from "../types/project.ts";
 import { matchesGlob, resolveFilter } from "./file-filter.service.ts";
 import { SecurityError, NotFoundError } from "./file.service.ts";
+import { loadGitignore, type IndexBuild } from "./file-index/index-walk.ts";
+import { fileIndexRunner } from "./file-index/file-index-runner.ts";
+import type { SearchKind } from "./file-index/index-search.ts";
 
 // ---------------------------------------------------------------------------
 // Index cache keyed by absolute project path
 // ---------------------------------------------------------------------------
 
 /**
- * One project's index. A file change marks it `stale` instead of dropping it; the next request
- * starts a rebuild, and is answered with the list already held if that rebuild takes longer
- * than `REBUILD_GRACE_MS`. It used to be dropped, so the explorer's refetch after every change
- * walked the project on the request itself — nxsys-workspace (181k entries) took 6.2 s per walk,
- * and a session writing test artefacts into it kept the server frozen until the supervisor
- * killed it.
+ * One project's index. A file change marks it `stale` instead of dropping it, and the list is
+ * walked again in the background a second later (see `refreshDelay`), so the palette opens on a
+ * list that is already current. A request that finds it stale is answered with the rebuild if
+ * that lands within `REBUILD_GRACE_MS`, and with the list already held otherwise. It used to be
+ * dropped, so the explorer's refetch after every change walked the project on the request
+ * itself — nxsys-workspace (181k entries) took 6.2 s per walk, and a session writing test
+ * artefacts into it kept the server frozen until the supervisor killed it.
  */
 interface IndexEntry {
-  entries: FileEntry[] | null;
-  /** Something under the project changed since `entries` was walked. */
+  build: IndexBuild | null;
+  /** Something under the project changed since `build` was walked. */
   stale: boolean;
   /** The walk under way, shared by every request that arrives while it runs. */
-  building: Promise<FileEntry[]> | null;
+  building: Promise<IndexBuild> | null;
   /**
    * A request found a change that landed after the running walk began, which that walk may
-   * have passed by — so walk once more when it ends. Only a request sets it: a change nobody
-   * asks about costs nothing, however long a session keeps writing.
+   * have passed by — so walk once more as soon as it ends, instead of after `refreshDelay`.
+   * Only for a project quick to walk (`QUICK_WALK_MS`); a slow one keeps to its schedule.
    */
   rewalk: boolean;
+  /** The background walk a change scheduled. */
+  refreshTimer: ReturnType<typeof setTimeout> | null;
+  /** When the last walk ended, and how long it took: what spaces background walks out. */
+  lastWalkEndedAt: number;
+  lastWalkMs: number;
 }
 
 const indexCache = new Map<string, IndexEntry>();
@@ -58,34 +68,54 @@ export function onIndexRebuilt(listener: RebuiltListener): () => void {
  * list held was built with the old filters, so it is wrong rather than merely old.
  */
 export function invalidateIndexCache(projectPath: string): void {
+  const entry = indexCache.get(projectPath);
+  if (entry?.refreshTimer) clearTimeout(entry.refreshTimer);
   indexCache.delete(projectPath);
 }
 
-/** A file changed: keep serving the index held, and rebuild it on the next request. */
+/** A file changed: keep serving the index held, and walk it again in the background. */
 export function markIndexStale(projectPath: string): void {
   const entry = indexCache.get(projectPath);
-  if (entry) entry.stale = true;
+  if (!entry) return;
+  entry.stale = true;
+  scheduleRefresh(projectPath, entry);
+}
+
+/**
+ * Walk a project nobody has asked about yet, so its first palette opens on a ready list. The
+ * walk runs on the index worker; a failure is left to the first request to report.
+ */
+export function warmIndex(projectPath: string): void {
+  if (indexCache.has(projectPath)) return;
+  buildIndex(projectPath).catch(() => {});
 }
 
 /** Clear all cached indexes (e.g. for tests) */
 export function clearIndexCache(): void {
+  for (const entry of indexCache.values()) {
+    if (entry.refreshTimer) clearTimeout(entry.refreshTimer);
+  }
   indexCache.clear();
 }
 
-// ---------------------------------------------------------------------------
-// Gitignore loader (shared utility)
-// ---------------------------------------------------------------------------
+/**
+ * How long after a change to walk again. A second, so a burst of writes costs one walk — but no
+ * sooner after the last walk ended than that walk took, so a project as slow as nxsys-workspace
+ * (~7 s) keeps the worker busy at most half the time while a session writes into it without end.
+ */
+export function refreshDelay(now: number, lastWalkEndedAt: number, lastWalkMs: number): number {
+  return Math.max(REFRESH_AFTER_CHANGE_MS, lastWalkEndedAt + lastWalkMs - now);
+}
 
-function loadGitignore(projectPath: string): Ignore {
-  const ig = ignore();
-  const gitignorePath = join(projectPath, ".gitignore");
-  if (existsSync(gitignorePath)) {
-    try {
-      const content = readFileSync(gitignorePath, "utf-8");
-      ig.add(content);
-    } catch { /* unreadable — skip */ }
-  }
-  return ig;
+function scheduleRefresh(projectPath: string, entry: IndexEntry): void {
+  // With no list yet the first request walks, and a walk under way reschedules when it ends.
+  // Starting a walk and dropping the entry both clear the timer, so one that fires has work to do.
+  if (entry.refreshTimer || !entry.build || entry.building) return;
+  entry.refreshTimer = setTimeout(() => {
+    entry.refreshTimer = null;
+    startBuild(projectPath, entry);
+  }, refreshDelay(Date.now(), entry.lastWalkEndedAt, entry.lastWalkMs));
+  entry.refreshTimer.unref?.();
 }
 
 // ---------------------------------------------------------------------------
@@ -190,63 +220,93 @@ function listDirWithContext(projectPath: string, relPath: string, { filter, ig }
 // ---------------------------------------------------------------------------
 
 /**
- * How many directory entries the walk handles before handing the event loop back. An entry
- * costs a few glob tests and two gitignore checks — ~34 µs on nxsys-workspace — so a slice is
- * about 10 ms, which is as long as a health probe or a chat stream waits. Counted rather than
- * timed so that how often it yields does not depend on the machine.
- */
-const ENTRIES_PER_SLICE = 256;
-
-/**
  * How long a request for a stale index waits for the rebuild before it is answered with the
  * list already held. Most projects are walked well inside it — PPM's own 3.2k entries take
  * ~80 ms — so a file just created is in the palette the first time it opens. nxsys-workspace
- * (181k entries, ~7.3 s) is answered with the list it had, and `files:index-changed` follows.
+ * (181k entries, ~7 s) is answered with the list it had, and `files:index-changed` follows.
  */
 const REBUILD_GRACE_MS = 1000;
 
+/** See `refreshDelay`. */
+const REFRESH_AFTER_CHANGE_MS = 1000;
+
 /**
- * Flat index of all files in the project for palette/search.
+ * The slowest walk a request waits for. A slower project is answered with the list it has at
+ * once and rebuilt on its own schedule, and whatever is showing the list gets the rebuild when
+ * `files:index-changed` says it landed. Measured on a 186k-entry project written into every
+ * 50 ms: waiting for its ~1 s walks made every palette open take 969 ms (p50), and walking again
+ * straight after each walk that a request found stale kept the worker walking without a break.
+ */
+const QUICK_WALK_MS = 250;
+
+/**
+ * Flat index of all files in the project for palette/search, as the `/files/index` response.
  * Applies filesExclude + searchExclude + optional gitignore.
  *
- * Only a project with no list yet waits for the whole walk. A stale list is replaced if its
- * rebuild lands within `graceMs` and returned as it is otherwise, the rebuild carrying on
- * behind it — see `IndexEntry`. `graceMs` 0 answers with the held list at once.
+ * Only a project with no list yet waits for the whole walk. A stale list of a project that is
+ * quick to walk is replaced if its rebuild lands within `graceMs`; any other stale list is
+ * returned as it is, the rebuild carrying on behind it — see `IndexEntry`. `graceMs` 0 answers
+ * with the held list at once.
  */
-export function buildIndex(projectPath: string, graceMs = REBUILD_GRACE_MS): Promise<FileEntry[]> {
+export function buildIndex(projectPath: string, graceMs = REBUILD_GRACE_MS): Promise<IndexBuild> {
   let entry = indexCache.get(projectPath);
   if (!entry) {
-    entry = { entries: null, stale: true, building: null, rewalk: false };
+    entry = { build: null, stale: true, building: null, rewalk: false, refreshTimer: null, lastWalkEndedAt: 0, lastWalkMs: 0 };
     indexCache.set(projectPath, entry);
   }
+  const held = entry.build;
+  const waits = !held || entry.lastWalkMs <= QUICK_WALK_MS;
   if (entry.stale) {
-    if (entry.building) entry.rewalk = true;
+    // A slow list is refreshed on its schedule; this only re-arms one a failed walk left unset.
+    if (!waits) scheduleRefresh(projectPath, entry);
+    else if (entry.building) entry.rewalk = true;
     else startBuild(projectPath, entry);
   }
-  const held = entry.entries;
   const building = entry.building;
   if (!building) return Promise.resolve(held!);
   if (!held) return building;
-  if (graceMs <= 0) return Promise.resolve(held);
-  const graceOver = new Promise<FileEntry[]>((resolve) => setTimeout(() => resolve(held), graceMs));
+  if (graceMs <= 0 || !waits) return Promise.resolve(held);
+  const graceOver = new Promise<IndexBuild>((resolve) => setTimeout(() => resolve(held), graceMs));
   return Promise.race([building.catch(() => held), graceOver]);
 }
 
-function startBuild(projectPath: string, entry: IndexEntry): Promise<FileEntry[]> {
-  const previous = entry.entries;
+/**
+ * The best `limit` entries of the project's list for `query`, best first, searched where the list
+ * is held (see `index-search.ts`) — for a project whose list is too long to send to a browser.
+ * Searches the list `buildIndex` would answer with, and never waits for a rebuild: this is asked
+ * once per keystroke.
+ */
+export async function searchFileIndex(projectPath: string, query: string, kind: SearchKind, limit: number): Promise<FileEntry[]> {
+  const build = await buildIndex(projectPath, 0);
+  return fileIndexRunner.search(projectPath, build, query, kind, limit);
+}
+
+function startBuild(projectPath: string, entry: IndexEntry): Promise<IndexBuild> {
+  const previous = entry.build;
+  if (entry.refreshTimer) {
+    clearTimeout(entry.refreshTimer);
+    entry.refreshTimer = null;
+  }
   // A change from here on may land behind the walk, so it has to leave the list stale again.
   entry.stale = false;
   entry.rewalk = false;
-  const build = walkIndex(projectPath).then(
-    (entries) => {
+  const filter = resolveFilter(projectPath);
+  const build = fileIndexRunner.run(projectPath, {
+    exclude: [...filter.filesExclude, ...filter.searchExclude],
+    useIgnoreFiles: filter.useIgnoreFiles,
+  }).then(
+    (next) => {
       entry.building = null;
-      entry.entries = entries;
+      entry.build = next;
+      entry.lastWalkEndedAt = Date.now();
+      entry.lastWalkMs = next.walkMs;
       if (previous) {
-        const changed = !sameEntries(previous, entries);
+        const changed = previous.hash !== next.hash;
         for (const listener of rebuiltListeners) listener(projectPath, changed);
       }
       if (entry.rewalk) startBuild(projectPath, entry);
-      return entries;
+      else if (entry.stale) scheduleRefresh(projectPath, entry);
+      return next;
     },
     (e) => {
       entry.building = null;
@@ -260,69 +320,4 @@ function startBuild(projectPath: string, entry: IndexEntry): Promise<FileEntry[]
     build.catch((e) => console.warn(`[file-index] rebuilding ${projectPath} failed: ${(e as Error).message}`));
   }
   return build;
-}
-
-/** Same paths, types and ignore flags in the same order — everything a client renders. */
-function sameEntries(a: FileEntry[], b: FileEntry[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i]!;
-    const y = b[i]!;
-    if (x.path !== y.path || x.type !== y.type || x.isIgnored !== y.isIgnored) return false;
-  }
-  return true;
-}
-
-async function walkIndex(rootPath: string): Promise<FileEntry[]> {
-  const filter = resolveFilter(rootPath);
-  const ig = filter.useIgnoreFiles ? loadGitignore(rootPath) : null;
-  const allExclude = [...filter.filesExclude, ...filter.searchExclude];
-  const results: FileEntry[] = [];
-
-  // Depth-first on an explicit stack, in the order the recursive walk it replaces produced.
-  const stack: { dirPath: string; dirEntries: Dirent[]; next: number }[] = [];
-  const enter = (dirPath: string) => {
-    try { stack.push({ dirPath, dirEntries: readdirSync(dirPath, { withFileTypes: true }), next: 0 }); }
-    catch { /* unreadable — skip */ }
-  };
-  enter(rootPath);
-
-  let sinceYield = 0;
-  while (stack.length > 0) {
-    const frame = stack[stack.length - 1]!;
-    const entry = frame.dirEntries[frame.next++];
-    if (!entry) {
-      stack.pop();
-      continue;
-    }
-    if (++sinceYield >= ENTRIES_PER_SLICE) {
-      sinceYield = 0;
-      await new Promise<void>((r) => setTimeout(r, 0));
-    }
-
-    const fullPath = join(frame.dirPath, entry.name);
-    const relPath = relative(rootPath, fullPath);
-    const relPosix = relPath.split("\\").join("/");
-
-    // Apply glob exclusion (check full relative path and bare entry name)
-    // These are HARD excludes — .git, node_modules, dist, etc.
-    if (matchesGlob(relPosix, allExclude)) continue;
-    if (matchesGlob(entry.name, allExclude)) continue;
-
-    // Apply gitignore rules — SOFT exclude only (mark with isIgnored flag).
-    // Huge dirs like node_modules/dist/build are already hard-excluded by glob above.
-    let isIgnored = false;
-    if (ig) {
-      const checkPath = entry.isDirectory() ? `${relPosix}/` : relPosix;
-      isIgnored = ig.ignores(checkPath) || ig.ignores(relPosix);
-    }
-
-    if (entry.isDirectory()) {
-      results.push({ path: relPosix, name: entry.name, type: "directory" });
-      enter(fullPath);
-    } else {
-      results.push({ path: relPosix, name: entry.name, type: "file", ...(isIgnored && { isIgnored: true }) });
-    }
-  }
-  return results;
 }
