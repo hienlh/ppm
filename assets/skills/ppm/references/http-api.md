@@ -162,6 +162,16 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 - `POST   /api/loopback/callback`
 
+## /api/lsp
+
+- `GET    /api/lsp/status`
+- `GET    /api/lsp/projectPath`
+- `POST   /api/lsp/install`
+- `GET    /api/lsp/projectPath`
+- `GET    /api/lsp/servers`
+- `POST   /api/lsp/install`
+- `POST   /api/lsp/uninstall`
+
 ## /api/mcp-auth
 
 - `GET    /api/mcp-auth/status`
@@ -243,6 +253,8 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/settings/ai`
 - `PUT    /api/settings/ai`
 - `GET    /api/settings/ai`
+- `GET    /api/settings/ai/providers/status`
+- `POST   /api/settings/ai/providers/:id/probe`
 - `GET    /api/settings/ai/providers/:id/models`
 - `GET    /api/settings/keybindings`
 - `PUT    /api/settings/keybindings`
@@ -292,13 +304,27 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `DELETE /api/settings/themes/:id`
 - `PATCH  /api/settings/themes/:id`
 
+## /api/speech
+
+- `GET    /api/speech/status`
+- `POST   /api/speech/install`
+- `POST   /api/speech/uninstall`
+- `POST   /api/speech/transcribe`
+
 ## /api/system
 
+- `GET    /api/system/hardware`
+- `GET    /api/system/app-icon/:id`
 - `GET    /api/system/resources`
 - `GET    /api/system/resources/stream`
 - `POST   /api/system/resources/stream/:sid/ping`
 - `DELETE /api/system/resources/stream/:sid`
+- `GET    /api/system/resources/process/:pid`
+- `POST   /api/system/resources/signal`
 - `POST   /api/system/resources/kill`
+- `GET    /api/system/services`
+- `GET    /api/system/services/:scope/:unit`
+- `POST   /api/system/services/:scope/:unit/:action`
 - `GET    /api/system/host`
 
 ## /api/teams
@@ -313,6 +339,8 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 - `GET    /api/tunnel`
 - `GET    /api/tunnel/port`
+- `POST   /api/tunnel/enabled`
+- `GET    /api/tunnel/tunnel`
 - `POST   /api/tunnel/start`
 - `GET    /api/tunnel/port`
 - `POST   /api/tunnel/stop`
@@ -360,4 +388,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.6 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.7 -->
