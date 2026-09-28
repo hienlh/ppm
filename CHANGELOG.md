@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.7] - 2026-09-28
 
 ### Added
 
@@ -59,11 +59,30 @@
   - Each plan is undone by its own inverse — `bun remove` in PPM's directory, deleting the binary `GOBIN` put there (not `go clean -i`, which would reach into the user's module cache), and for rust-analyzer `rustup component remove`, which is again the one that leaves PPM's directory, for the same reason adding it did. Idle sessions for that server are shut down first; one with an editor open is left running, exactly as the session cap leaves it alone — a session that vanishes under a tab answers every later request with "no longer running" until it is reopened, and on Windows a running binary cannot be unlinked at all.
   - **A compiled PPM could never reach the TypeScript server it ships**, which is what put that dialog in front of a user on a machine where PPM supposedly bundles one. `bundledServerEntry` resolves through `createRequire(import.meta.url)`, and in a compiled binary that URL is `file:///$bunfs/root/…`, so resolution falls back to the process's *current directory* — `~/.ppm` for the systemd unit. Measured: from inside the checkout it answers the real path, from anywhere else `null`, i.e. "TypeScript is not installed" on every release binary. Had it resolved, the spawn was `[process.execPath, entry]` — the PPM executable, which reaches PPM's own CLI, the same trap that made `<ppm> x @openai/codex app-server` die as "unknown command". Both of PPM's own copies now run through the bun that `resolveBunPath()` finds.
 
+- **Speech to text for the chat mic, run on the host.** Whisper runs locally, so dictation works in any browser rather than only the ones that ship a speech API.
+- **A master switch for the public tunnel**, so sharing can be switched off without uninstalling anything.
+- **A prompt-cache countdown in the composer**, built from the window the API reports rather than guessed from the credential's shape.
+- **The compaction notice says what it saved**, and warns before a turn would land on a cold cache.
+- **Searchable pickers wherever a branch or repository is chosen** — branch review, Add Worktree, the repository picker, and a new status-bar control that checks out a branch or tag the way VS Code does.
+- **Ctrl+` toggles the terminal panel**, the way VS Code does.
+- **The account cards in the chat panel got a switch a thumb can hit.**
+
 ### Fixed
 
 - **A restart could leave PPM running with nothing listening on its port.** `systemctl restart` brings the new supervisor up while the outgoing one is still committing and checkpointing, and SQLite's default is to fail a contended lock **instantly** — measured, 0ms to `SQLiteError: database is locked`, against 1.5s-and-a-row for a connection that asks for a `busy_timeout`. Nothing in PPM asked for one; only the query audit's own database did, at 2s. The throw landed on the tunnel-config read in supervisor startup, arrived as an unhandled rejection, and ended startup at that line — **before** the edge forwarder, the process that owns the public port, was ever spawned. The server child came back 90 seconds later on its health check; the edge has no equivalent, because the probe that would respawn it is armed just after the spawn that never happened. So PPM sat there healthy on its loopback port and dark on 3210 for eight minutes, and the only way back was another restart. Two changes. Every connection PPM opens now sets `busy_timeout = 5000` — 5s rather than the audit's 2s, because one snapshot of a 300MB database measures ~1.2s and the wait has to cover a checkpoint plus whatever writes queued behind it. And that config read can no longer decide whether the edge is spawned: it falls back to **sharing off**, deliberately not to the resolver's own default, since an absent config row means "on" and a row that merely could not be read must never publish a tunnel for someone who had sharing switched off.
 
 - **Codex disappeared from chat after a restart, and nothing on screen said why.** The provider is registered once, at startup, behind a probe that runs `bun x @openai/codex --version` — and bun re-fetches the npm manifest whenever its cached copy has gone stale, so a server restarting during a network blip probes a perfectly good install and is told `error: ConnectionRefused downloading package manifest @openai/codex`. Measured, that probe fails in **0ms**; the provider is then skipped for the whole life of the process, which on a machine running PPM as a service means until somebody thinks to restart it. There was nothing to notice it by, either: the composer hides its provider chip while only one provider is registered, so Codex did not render greyed out, it simply was not there — one line in the log was the entire record, while Settings went on showing a Codex tab, because a provider keeps its config entry once it has ever been configured. Registration is now retried on its own — 30s, 1m, 2m, 5m, then every 15 minutes, stopping the moment it succeeds and never armed at all for the one failure retrying cannot fix, a host with no bun. Verified against a real server pointed at an unreachable registry: probe 1 failed at 03:04:20, probe 2 registered at 03:04:50, no restart. Settings → AI now carries the reason on the provider's own tab with the time of the next automatic check and a **Check again** button, so the answer to "why is Codex not in the picker" is on the page rather than in `~/.ppm/ppm.log`.
+
+- **PPM's own systemd unit was offered Stop, Restart and Disable.** `/proc/self/cgroup` is read whole, so its trailing newline landed on the innermost path segment and PPM never recognised itself in the list.
+- **Starting a tunnel from the API ignored the master switch**, raising a public URL from the server process — which the supervisor never learns a pid for, so nothing reaps it until the next restart.
+- **A stalled speech-to-text model download waited forever** rather than failing, with no way back but restarting the server. The timeout is on idleness, so a slow link still finishes a 1.5 GB model.
+- **`git checkout <ref>` with no `--` read the ref as a pathspec** when no such ref existed, silently restoring every unstaged change under a directory of that name and exiting 0.
+- **Uninstalling a language server left any other server sharing that install running** against files it no longer had.
+- **Codex ran through the wrong executable when PPM is a compiled binary**, and read the account before waiting for a new sign-in to load.
+- **PPM's own sessions were hidden from the SDK's session list** because its entrypoint had no name.
+- **The idle notice quoted a number the SDK never reports.**
+- **A database missing `codex_accounts` was left half-migrated.** One migration ran an unguarded `UPDATE` where every statement around it is wrapped, so the ladder threw partway through — and there is no transaction around it to undo the steps that had already run.
+- **A host tool whose child outlived it made the five-second timeout do nothing.** Killing a process does not close its pipes, so reading its output went on until the grandchild exited: measured, the process was gone at 150 ms and the read took the full five seconds. The Services, drives and GPU pages could hang well past the bound they advertise.
 
 ## [0.23.6] - 2026-09-28
 
