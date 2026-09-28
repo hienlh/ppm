@@ -1,13 +1,16 @@
 import path from "node:path";
 import simpleGit, { type SimpleGit } from "simple-git";
 import { isBinaryContent } from "./binary-content.ts";
+import { FOR_EACH_REF_ARGS, parseForEachRef } from "./git-refs/for-each-ref.ts";
 import type {
+  CheckoutMode,
   FileFullDiff,
   GitStatus,
   GitFileChange,
   GitCommit,
   GitBranch,
   GitGraphData,
+  GitRef,
   GitWorktree,
 } from "../types/git.ts";
 
@@ -319,8 +322,28 @@ class GitService {
     await this.git(projectPath).checkoutBranch(name, from ?? "HEAD");
   }
 
-  async checkout(projectPath: string, ref: string): Promise<void> {
-    await this.git(projectPath).checkout(ref);
+  /**
+   * `track` is not a nicety: `git checkout origin/foo` lands on a **detached
+   * HEAD**, because the remote-tracking ref is not a branch anyone can commit
+   * to. `-t` is what creates the local `foo` that follows it. The picker
+   * chooses between the three modes; the service only has to keep them apart.
+   */
+  async checkout(
+    projectPath: string,
+    ref: string,
+    mode: CheckoutMode = "checkout",
+  ): Promise<void> {
+    const flags = mode === "detach" ? ["--detach"] : mode === "track" ? ["-t"] : [];
+    // `--` or the ref is read as a pathspec when no such ref exists: `git checkout src`
+    // in a repository with no branch named `src` restores every unstaged change under
+    // that directory, silently and with exit 0. `assertSafeRev` refuses a leading dash
+    // and a range, but a plain directory name is a legitimate ref shape.
+    await this.git(projectPath).checkout([...flags, ref, "--"]);
+  }
+
+  /** Every local branch, remote-tracking branch and tag, newest commit first. */
+  async refs(projectPath: string): Promise<GitRef[]> {
+    return parseForEachRef(await this.git(projectPath).raw(FOR_EACH_REF_ARGS));
   }
 
   async deleteBranch(

@@ -4,6 +4,7 @@
  * Validates:
  *   - KEY_ACTIONS contains a "toggle-dock" entry with defaultKey "Mod+'"
  *   - The entry is categorized as "general"
+ *   - Ctrl+` also reaches the same toggle, on desktop only
  *   - toggleDock() flips dock.visible (happy path + reverse)
  *
  * Does NOT test the React hook or browser KeyboardEvent dispatch — those
@@ -24,7 +25,7 @@ const localStorageStub = {
 (globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
 
 // Imports after localStorage stub
-import { KEY_ACTIONS } from "../../../src/web/stores/keybindings-store";
+import { KEY_ACTIONS, matchesDockBacktick, useKeybindingsStore } from "../../../src/web/stores/keybindings-store";
 import { usePanelStore } from "../../../src/web/stores/panel-store";
 
 // ---------------------------------------------------------------------------
@@ -88,5 +89,48 @@ describe("toggleDock store action", () => {
     usePanelStore.setState({ dock: { visible: false, height: 40 } });
     usePanelStore.getState().toggleDock();
     expect(usePanelStore.getState().dock.height).toBe(40);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ctrl+` — VS Code's terminal toggle, desktop only
+// ---------------------------------------------------------------------------
+
+/** Minimal stand-in for the fields the combo matchers read. */
+function keyEvent(key: string, mods: Partial<Record<"ctrlKey" | "metaKey" | "altKey" | "shiftKey", boolean>> = {}) {
+  return {
+    key,
+    ctrlKey: mods.ctrlKey ?? false,
+    metaKey: mods.metaKey ?? false,
+    altKey: mods.altKey ?? false,
+    shiftKey: mods.shiftKey ?? false,
+  } as KeyboardEvent;
+}
+
+describe("matchesDockBacktick", () => {
+  it("matches Ctrl+` on desktop", () => {
+    expect(matchesDockBacktick(keyEvent("`", { ctrlKey: true }), false)).toBe(true);
+  });
+
+  it("does not match on mobile — the dock is the mobile nav's bottom sheet there", () => {
+    expect(matchesDockBacktick(keyEvent("`", { ctrlKey: true }), true)).toBe(false);
+  });
+
+  it("a bare backtick does not match — Ctrl is required", () => {
+    expect(matchesDockBacktick(keyEvent("`"), false)).toBe(false);
+  });
+
+  it("extra modifiers do not match", () => {
+    expect(matchesDockBacktick(keyEvent("`", { ctrlKey: true, shiftKey: true }), false)).toBe(false);
+    expect(matchesDockBacktick(keyEvent("`", { ctrlKey: true, altKey: true }), false)).toBe(false);
+    expect(matchesDockBacktick(keyEvent("`", { metaKey: true }), false)).toBe(false);
+  });
+
+  it("no customizable action claims Ctrl+`, so nothing shadows it", () => {
+    const { matchesEvent } = useKeybindingsStore.getState();
+    const e = keyEvent("`", { ctrlKey: true });
+    for (const action of KEY_ACTIONS) {
+      expect(matchesEvent(e, action.id), `${action.id} claims Ctrl+\``).toBe(false);
+    }
   });
 });

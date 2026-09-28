@@ -21,6 +21,47 @@ export interface GitBranch {
   remotes: string[];
 }
 
+/**
+ * One checkout target for the branch picker: a local branch, a remote-tracking
+ * branch or a tag, together with the commit it points at.
+ *
+ * Separate from `GitBranch` because that shape is what the graph draws and it
+ * carries no commit metadata — the picker needs an author, a subject and a date
+ * per row, and it needs tags, which `branches()` never returns.
+ */
+export interface GitRef {
+  /** Full ref name: `refs/heads/main`, `refs/remotes/origin/main`, `refs/tags/v1`. */
+  refName: string;
+  /** Short name, as a user reads it and as git checks it out by: `main`, `origin/main`, `v1`. */
+  name: string;
+  type: "branch" | "remote" | "tag";
+  /** True for the one local branch HEAD is on. */
+  current: boolean;
+  /** The commit this ref resolves to — dereferenced, so an annotated tag names its commit. */
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  /** ISO 8601 commit date. */
+  date: string;
+  /** Upstream ref short name (`origin/main`), or null. Local branches only. */
+  upstream: string | null;
+  /** Commits ahead of / behind `upstream`; both 0 when there is none. */
+  ahead: number;
+  behind: number;
+  /** An upstream is configured but no longer exists on the remote. */
+  gone: boolean;
+}
+
+/**
+ * How `git checkout` is asked to move HEAD.
+ *
+ * `track` exists because a remote-tracking ref is not a branch: plain
+ * `git checkout origin/foo` lands on a detached HEAD, and `-t` is what creates
+ * the local `foo` that follows it.
+ */
+export type CheckoutMode = "checkout" | "detach" | "track";
+
 export interface GitStatus {
   current: string | null;
   /** Commits ahead of the upstream branch. */
