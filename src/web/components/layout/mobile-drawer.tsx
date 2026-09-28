@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
-import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone, Settings } from "@/lib/icons";
+import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone, Settings, Smartphone } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -25,6 +25,8 @@ import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
+import { useOpenAndroid } from "@/components/android/open-android";
+import { useAndroidAvailable } from "@/components/android/use-android-available";
 import { openSettings } from "@/components/settings/open-settings";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
@@ -84,6 +86,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   const contributions = useExtensionStore((s) => s.contributions);
   const { available: remoteDesktopAvailable } = useRemoteDesktopAvailable();
   const openRemoteDesktop = useOpenRemoteDesktop();
+  const openAndroid = useOpenAndroid();
+  const { available: androidAvailable } = useAndroidAvailable();
   const [activeTab, setActiveTab] = useState<SidebarActiveTab>(initialTab ?? "explorer");
   const [cloudOpen, setCloudOpen] = useState(false);
 
@@ -121,6 +125,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     { icon: FolderTree, label: "Files", badge: "os-explorer", onClick: () => { onClose(); void openExplorer(); } },
     ...(remoteDesktopAvailable
       ? [{ icon: MonitorSmartphone, label: "Remote", badge: "remote-desktop", onClick: () => { onClose(); openRemoteDesktop(); } } satisfies FooterTileDef]
+      : []),
+    ...(androidAvailable
+      ? [{ icon: Smartphone, label: "Android", badge: "android", onClick: () => { onClose(); openAndroid(); } } satisfies FooterTileDef]
       : []),
     { icon: Cloud, label: "Cloud", onClick: () => setCloudOpen(true) },
     // Also not a sidebar tab — settings open as their own tab here, window on desktop.
