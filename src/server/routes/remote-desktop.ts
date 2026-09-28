@@ -1,8 +1,9 @@
 /**
  * `GET /api/remote-desktop/capabilities` (read-only, always answerable — includes the host's
  * requirements checklist), `POST /api/remote-desktop/requirements/:id/:action` (host-side
- * fixes: OS permission prompt, open its Settings pane) and `POST /api/remote-desktop/session` (mints the single-use WS
- * nonce). Guard style mirrors
+ * fixes: OS permission prompt, open its Settings pane), `POST /api/remote-desktop/session` (mints the single-use WS
+ * nonce) and `POST /api/remote-desktop/whep/:ticket` (the WebRTC handshake, forwarded to the
+ * session's own loopback relay). Guard style mirrors
  * `named-tunnel.ts`: `authMiddleware` already passes every request through when PPM auth is
  * disabled, so a feature that hands out host control must enforce `auth.enabled` itself, plus
  * a same-origin check so a foreign page can't drive it via ambient browser credentials.
@@ -15,6 +16,10 @@ import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-des
 import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-desktop-nonce.ts";
 import { listDisplays } from "../../services/remote-desktop/remote-desktop-displays.ts";
 import { remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
+import { resolveWhepTarget } from "../../services/remote-desktop/remote-desktop-whep-registry.ts";
+import {
+  relayStatus, startMediamtxInstall, uninstallMediamtx,
+} from "../../services/remote-desktop/mediamtx-install.service.ts";
 
 export const remoteDesktopRoutes = new Hono();
 
@@ -83,4 +88,92 @@ remoteDesktopRoutes.post("/session", (c) => {
   const rejected = assertSessionAllowed(c);
   if (rejected) return rejected;
   return c.json(ok({ nonce: mintRemoteDesktopNonce(), wsPath: "/ws/remote-desktop" }));
+});
+
+/**
+ * WHEP: the browser posts an SDP offer, the relay answers with an SDP answer, and media then
+ * flows peer-to-peer over the relay's ICE port.
+ *
+ * The relay's signalling port is bound to loopback (`mediamtx-config.ts`), so this proxy is
+ * the only way to reach it — and it is deliberately **ticket-addressed, never URL-addressed**:
+ * the client presents a ticket PPM minted for its own session and handed it over the
+ * already-authenticated WebSocket. Forwarding a client-supplied URL here would turn a feature
+ * that already carries host control into an SSRF hole.
+ *
+ * `Location` from the relay is not passed back: it addresses 127.0.0.1 and means nothing to
+ * the browser. MediaMTX drops the session on its own when the peer connection goes away.
+ */
+const MAX_SDP_BYTES = 64 * 1024;
+
+remoteDesktopRoutes.post("/whep/:ticket", async (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+
+  const target = resolveWhepTarget(c.req.param("ticket"));
+  // One answer for unknown and for expired: a distinguishable pair would say whether a ticket
+  // ever existed.
+  if (!target) return c.json(err("unknown or expired WebRTC ticket"), 404);
+
+  const contentType = c.req.header("content-type") ?? "";
+  if (!contentType.startsWith("application/sdp")) {
+    return c.json(err("expected application/sdp"), 415);
+  }
+  const offer = await c.req.text();
+  if (offer.length > MAX_SDP_BYTES) return c.json(err("SDP offer too large"), 413);
+
+  let answer: Response;
+  try {
+    answer = await fetch(target, {
+      method: "POST",
+      headers: { "content-type": "application/sdp" },
+      body: offer,
+    });
+  } catch {
+    // The relay died between the ticket being handed out and this call.
+    return c.json(err("the WebRTC relay is not reachable"), 502);
+  }
+
+  const body = await answer.text();
+  if (!answer.ok) return c.json(err(`relay rejected the offer (${answer.status})`), 502);
+  return new Response(body, {
+    status: 201,
+    headers: { "content-type": "application/sdp", "cache-control": "no-store" },
+  });
+});
+
+/**
+ * The WebRTC relay's own install lifecycle, for the Settings pane.
+ *
+ * Behind the same guards as `/session`: downloading and unpacking an executable onto the host
+ * is host control, and the same-origin check keeps a foreign page from triggering it with
+ * ambient credentials.
+ */
+remoteDesktopRoutes.get("/relay", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  return c.json(ok(relayStatus()));
+});
+
+remoteDesktopRoutes.post("/relay/install", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  try {
+    return c.json(ok(startMediamtxInstall()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 409);
+  }
+});
+
+remoteDesktopRoutes.post("/relay/uninstall", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  try {
+    // False means a copy PPM did not install — the host's own, which is not PPM's to remove.
+    const removed = uninstallMediamtx();
+    return removed
+      ? c.json(ok({ removed }))
+      : c.json(err("this copy was not installed by PPM"), 409);
+  } catch (e) {
+    return c.json(err((e as Error).message), 409);
+  }
 });

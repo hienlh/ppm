@@ -19,6 +19,7 @@ import { api } from "@/lib/api-client";
 import { useSettingsStore } from "@/stores/settings-store";
 import { resolveRemoteDesktopWsUrl } from "./remote-desktop-ws-url";
 import { useH264CanvasDecoder, type DecoderStatus } from "./use-h264-canvas-decoder";
+import { useWebrtcCanvasVideo } from "./use-webrtc-canvas-video";
 import {
   DEFAULT_PRESET_ID, parsePresetId, type QualityChoice, type QualityPresetId,
 } from "../../../shared/remote-desktop-quality";
@@ -36,6 +37,9 @@ const FRAME_AUDIO = 2;
 export interface UseRemoteDesktopConnectionResult {
   connState: RemoteDesktopConnState;
   errorMessage: string | null;
+  /** Which transport is carrying the picture. `webrtc` means the host's relay is in use and
+   *  this socket carries only control messages. */
+  transport: "websocket" | "webrtc";
   decoderStatus: DecoderStatus;
   decoderErrorMessage: string | null;
   sendMessage: (msg: Record<string, unknown>) => void;
@@ -162,6 +166,11 @@ export function useRemoteDesktopConnection(
   const [codec, setCodecState] = useState<string | null>(codecRef.current);
 
   const decoder = useH264CanvasDecoder(canvasRef);
+  const webrtc = useWebrtcCanvasVideo(canvasRef);
+  /** Which transport is actually carrying the picture. The server decides: it answers with a
+   *  `webrtc` message only when its relay is installed and came up, and otherwise frames access
+   *  units onto this socket exactly as before. */
+  const [transport, setTransport] = useState<"websocket" | "webrtc">("websocket");
   const audio = useOpusAudioPlayer();
   const [audioOn, setAudioOn] = useState(false);
   const [privacyOn, setPrivacyOn] = useState(false);
@@ -306,6 +315,11 @@ export function useRemoteDesktopConnection(
         ws.send(JSON.stringify({
           type: "auth", nonce, ...(displayId ? { displayId } : {}), cursor: showCursorRef.current,
           ...(codecRef.current ? { codec: codecRef.current } : {}),
+          // Always asked for; the host grants it only when its relay is installed. There is no
+          // setting for this because there is nothing to choose between: WebRTC measured
+          // better on every axis, and on a plain-HTTP LAN origin the WebCodecs path cannot
+          // start at all (`VideoDecoder` is secure-context only).
+          webrtc: true,
         }));
         // Re-pin across a reconnect so a deliberate choice is not silently reset to balanced.
         if (pinnedRef.current) ws.send(JSON.stringify(qualityMessage(pinnedRef.current)));
@@ -315,7 +329,18 @@ export function useRemoteDesktopConnection(
         if (typeof event.data === "string") {
           let msg: Record<string, unknown>;
           try { msg = JSON.parse(event.data); } catch { return; }
-          if (msg.type === "config" && typeof msg.codec === "string") {
+          if (msg.type === "webrtc" && typeof msg.whepPath === "string") {
+            // Sent on connect and again after any respawn (a quality change restarts the
+            // publisher, which drops the browser's reader), so this re-runs the handshake.
+            setTransport("webrtc");
+            // This message stands in for `config` on the relay transport, so the same state it
+            // would have set is applied here — otherwise the quality and codec menus show
+            // their defaults instead of what the host is running.
+            applyQualityMessage(msg);
+            setCodecState(typeof msg.encoder === "string" ? msg.encoder : null);
+            webrtc.start(msg.whepPath);
+            setConnState("streaming");
+          } else if (msg.type === "config" && typeof msg.codec === "string") {
             // A second `config` arrives on every quality change: the new ffmpeg has its own SPS
             // and resolution, and `configure()` closes the old decoder and waits for a keyframe.
             applyQualityMessage(msg);
@@ -394,24 +419,31 @@ export function useRemoteDesktopConnection(
       try { wsRef.current?.close(); } catch { /* tearing down regardless */ }
       wsRef.current = null;
       try { decoder.reset(); } catch { /* tearing down regardless */ }
+      try { webrtc.stop(); } catch { /* tearing down regardless */ }
       try { audio.reset(); } catch { /* tearing down regardless */ }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect is driven by `generation` + the display pick
   }, [generation, displayId]);
 
   const reconnect = useCallback(() => setGeneration((g) => g + 1), []);
-  const getTotalBytes = useCallback(() => totalBytesRef.current, []);
+  // On the relay transport no video crosses this socket, so the byte counter that feeds the
+  // KB/s stat has to come from WebRTC's own inbound-rtp report instead.
+  const getTotalBytes = useCallback(
+    () => (transport === "webrtc" ? webrtc.getTotalBytes() : totalBytesRef.current),
+    [transport, webrtc],
+  );
 
   return {
     connState,
     errorMessage,
-    decoderStatus: decoder.status,
-    decoderErrorMessage: decoder.errorMessage,
+    transport,
+    decoderStatus: transport === "webrtc" ? webrtc.status : decoder.status,
+    decoderErrorMessage: transport === "webrtc" ? webrtc.errorMessage : decoder.errorMessage,
     sendMessage,
     reconnect,
     getTotalBytes,
-    getFrameCount: decoder.getFrameCount,
-    frameSize: decoder.frameSize,
+    getFrameCount: transport === "webrtc" ? webrtc.getFrameCount : decoder.getFrameCount,
+    frameSize: transport === "webrtc" ? webrtc.frameSize : decoder.frameSize,
     quality,
     setQuality,
     setCustomQuality,
