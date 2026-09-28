@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.23.6] - 2026-09-28
+
+### Added
+- A "Use reset" button on a Codex account card spends one of its free rate-limit resets, offered only once a limit is reached and after a confirmation that the weekly reset date will move.
+
 ## [0.23.5] - 2026-09-27
 
 ### Improved
