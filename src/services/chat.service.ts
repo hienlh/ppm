@@ -18,6 +18,11 @@ import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
 import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
 import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
+import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
+import type { TraceOrigin } from "../shared/session-trace.ts";
+
+/** What a caller passes to send: the provider's options plus which door the run came through. */
+export type ChatSendOpts = SendMessageOpts & { origin?: TraceOrigin };
 
 /**
  * Events after which a design session's files may have settled: the end of a turn, and a
@@ -107,18 +112,48 @@ class ChatService {
     return provider.deleteSession(sessionId);
   }
 
+  /**
+   * The one door every run goes through — WebSocket, scheduler, bots, group chat, Jira, CLI —
+   * which is why it is also where a run is written to the session trace. The trace observes
+   * and never alters: every event is yielded exactly as the provider produced it.
+   */
   async *sendMessage(
     providerId: string,
     sessionId: string,
     message: string,
-    opts?: SendMessageOpts,
+    opts?: ChatSendOpts,
+  ): AsyncIterable<ChatEvent> {
+    const { origin, ...sendOpts } = opts ?? {};
+    const run = new TraceRun({ sessionId, providerId, origin, message, opts: sendOpts });
+    let outcome: "completed" | "consumer_closed" | "failed" = "consumer_closed";
+    try {
+      yield* this.streamRun(run, providerId, sessionId, message, sendOpts);
+      outcome = "completed";
+    } catch (e) {
+      run.fail(e);
+      outcome = "failed";
+      throw e;
+    } finally {
+      run.end(outcome);
+    }
+  }
+
+  private async *streamRun(
+    run: TraceRun,
+    providerId: string,
+    sessionId: string,
+    message: string,
+    opts: SendMessageOpts,
   ): AsyncIterable<ChatEvent> {
     const provider = providerRegistry.get(providerId);
     if (!provider) {
-      yield { type: "error", message: `Provider "${providerId}" not found` };
+      const event: ChatEvent = { type: "error", message: `Provider "${providerId}" not found` };
+      run.observe(event);
+      yield event;
       return;
     }
     const prepared = await this.prepareSendOptions(providerId, sessionId, message, opts);
+    run.contextAdded(prepared.sharedContext, provider.supportsSharedContext ? "provider" : "message");
     this.rememberSharedContext(providerId, sessionId, prepared.sharedContext);
     let finished = false;
     let activeSessionId = sessionId;
@@ -153,6 +188,7 @@ class ChatService {
           // Not awaited: the snapshot is debounced and must never hold up or fail the turn.
           scheduleTurnSnapshot(activeSessionId, this.getSession(activeSessionId)?.projectPath);
         }
+        run.observe(event);
         yield event;
       }
       finished = true;
@@ -222,18 +258,52 @@ class ChatService {
   }
 
   /** Push a live follow-up through the same context policy as sendMessage. */
-  async pushMessage(providerId: string, sessionId: string, message: string, opts?: SendMessageOpts): Promise<void> {
+  async pushMessage(providerId: string, sessionId: string, message: string, opts?: ChatSendOpts): Promise<void> {
     const provider = providerRegistry.get(providerId);
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
     const streaming = provider as typeof provider & {
       pushMessage?: (id: string, content: string, options: SendMessageOpts) => void;
     };
     if (!streaming.pushMessage) return;
-    const prepared = await this.prepareSendOptions(providerId, sessionId, message, opts);
+    const { origin, ...sendOpts } = opts ?? {};
+    const prepared = await this.prepareSendOptions(providerId, sessionId, message, sendOpts);
+    // Written before the push, so the input precedes every event it causes in the trace.
+    traceFollowUp(sessionId, providerId, message, {
+      ...sendOpts,
+      origin,
+      sharedContext: prepared.sharedContext,
+      contextVia: provider.supportsSharedContext ? "provider" : "message",
+    });
     streaming.pushMessage(sessionId,
       provider.supportsSharedContext ? message : withSharedContext(message, prepared.sharedContext),
       { ...prepared, sharedContext: provider.supportsSharedContext ? prepared.sharedContext : undefined });
     this.rememberSharedContext(providerId, sessionId, prepared.sharedContext);
+  }
+
+  /**
+   * Stop a session's query. An input to the run like a message is, so it goes through here
+   * rather than straight to the provider — otherwise the trace shows a turn that just stops.
+   */
+  abortQuery(providerId: string, sessionId: string, reason: string, origin?: TraceOrigin): void {
+    const provider = providerRegistry.get(providerId);
+    if (!provider?.abortQuery) return;
+    traceAbort(sessionId, providerId, reason, origin);
+    provider.abortQuery(sessionId, reason);
+  }
+
+  /** Answer an approval request or a question, and record the answer in the trace. */
+  resolveApproval(
+    providerId: string,
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+    data?: unknown,
+    extra: { reason?: string; origin?: TraceOrigin } = {},
+  ): void {
+    const provider = providerRegistry.get(providerId);
+    if (typeof provider?.resolveApproval !== "function") return;
+    traceApproval(sessionId, providerId, requestId, approved, { data, ...extra });
+    provider.resolveApproval(requestId, approved, data);
   }
 
   /** Look up a session across all providers (for WS handler) */

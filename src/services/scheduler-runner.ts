@@ -1,6 +1,5 @@
 /** Single-run execution for scheduled agents: session reuse, stream drain, bounded output. */
 import { chatService } from "./chat.service.ts";
-import { providerRegistry } from "../providers/registry.ts";
 import { setScheduleSessionId } from "./scheduler-db.service.ts";
 import type { Schedule, RunResult } from "../types/scheduler.ts";
 
@@ -62,16 +61,16 @@ export async function runScheduleOnce(schedule: Schedule, sessionId: string): Pr
   let resultSubtype: string | undefined;
   let timedOut = false;
 
-  const provider = providerRegistry.get(schedule.provider_id);
   const killer = setTimeout(() => {
     timedOut = true;
-    try { provider?.abortQuery?.(sessionId, "scheduler-timeout"); } catch { /* best-effort */ }
+    try { chatService.abortQuery(schedule.provider_id, sessionId, "scheduler-timeout", "scheduler"); } catch { /* best-effort */ }
   }, schedule.timeout_ms);
 
   try {
     const stream = chatService.sendMessage(schedule.provider_id, sessionId, schedule.prompt, {
       permissionMode: schedule.permission_mode,
       ...(schedule.max_turns != null && { maxTurns: schedule.max_turns }),
+      origin: "scheduler",
     });
     for await (const event of stream) {
       if (event.type === "text") {
