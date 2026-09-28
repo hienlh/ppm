@@ -10,7 +10,8 @@
  * Does NOT test the React hook or browser KeyboardEvent dispatch — those
  * require a DOM and belong in integration tests.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // ---------------------------------------------------------------------------
 // In-memory localStorage stub — panel-store reads/writes localStorage on import
@@ -22,7 +23,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 // Imports after localStorage stub
 import { KEY_ACTIONS, matchesDockBacktick, useKeybindingsStore } from "../../../src/web/stores/keybindings-store";

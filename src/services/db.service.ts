@@ -1170,7 +1170,12 @@ export function runMigrations(database: Database): void {
   if (current < 49) {
     // Daily guard was introduced as an opt-in during development. Ship it enabled so every
     // weekly-only account starts paced; Plus accounts simply do not surface or use it.
-    database.exec(`UPDATE codex_accounts SET daily_guard_enabled = 1`);
+    //
+    // Guarded like every statement around it, and for the same reason: the ladder runs against
+    // databases that do not have this table yet. Unguarded, the throw escapes `runMigrations`
+    // and leaves the database half-migrated at whatever version the previous step wrote —
+    // there is no transaction around the ladder to undo it.
+    try { database.exec(`UPDATE codex_accounts SET daily_guard_enabled = 1`); } catch { /* no accounts table yet */ }
     database.exec(`PRAGMA user_version = 49;`);
   }
 

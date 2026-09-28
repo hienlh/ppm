@@ -8,15 +8,20 @@
  * The property that must hold: sharing is ONLY for requests still in flight. Once
  * one settles its entry is dropped, so this can never serve a stale response.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
-// api-client touches localStorage at call time; stub before importing it.
+// api-client touches localStorage at call time; stub before importing it. Through
+// `installGlobal` so the real one comes back: the test process shares one DOM, and a Map
+// standing in for web storage in every later file is how one suite's UI state becomes
+// another's.
 const store = new Map<string, string>();
-(globalThis as any).localStorage = {
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
-};
+});
+afterAll(uninstallDom);
 
 const { api, ApiClient } = await import("../../../src/web/lib/api-client");
 

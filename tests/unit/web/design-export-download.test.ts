@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 import { Window } from "happy-dom";
 
 /**
@@ -10,11 +11,12 @@ import { Window } from "happy-dom";
  */
 
 const store = new Map<string, string>();
-(globalThis as { localStorage?: unknown }).localStorage = {
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
-};
+});
+afterAll(uninstallDom);
 
 const { EXPORT_BLOB_TYPE, NEW_TAB_REL, fetchDesignExport, saveBlobAsFile } =
   await import("../../../src/web/lib/design/design-export-client");

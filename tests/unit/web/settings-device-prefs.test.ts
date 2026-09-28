@@ -10,7 +10,8 @@
  * at all. So they are written to localStorage only, and read back from
  * localStorage only.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 interface StoreShape {
   wordWrap: boolean;
@@ -31,14 +32,16 @@ let requests: { url: string; method: string; body: unknown }[] = [];
 /** What `/api/settings/ui-prefs` answers with. */
 let serverPrefs: Record<string, unknown> = {};
 
+// Through the harness so the real `localStorage` and `fetch` come back: the test process
+// shares one DOM, and this file replaces both on every test.
 function installGlobals() {
-  (globalThis as unknown as { localStorage: unknown }).localStorage = {
+  installGlobal("localStorage", {
     getItem: (k: string) => store[k] ?? null,
     setItem: (k: string, v: string) => { store[k] = v; },
     removeItem: (k: string) => { delete store[k]; },
     clear: () => { store = {}; },
-  };
-  (globalThis as unknown as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
+  });
+  installGlobal("fetch", async (url: string, init?: RequestInit) => {
     requests.push({
       url: String(url),
       method: init?.method ?? "GET",
@@ -50,8 +53,9 @@ function installGlobals() {
       : String(url).includes("/api/settings/ui-prefs") ? { ok: true, data: serverPrefs }
       : { ok: true, data: null };
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
-  };
+  });
 }
+afterAll(uninstallDom);
 
 /** A fresh module instance, so the initial state is read from `store` as set up. */
 async function loadStore(persisted?: Record<string, unknown>): Promise<() => StoreShape> {

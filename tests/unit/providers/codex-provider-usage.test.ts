@@ -2,15 +2,28 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider.ts";
 import { CodexJsonRpcClient } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
 import { createCodexAccount, removeCodexAccount } from "../../../src/services/codex-account.service.ts";
-import { setSessionCodexAccount } from "../../../src/services/db.service.ts";
+import { getDb, setSessionCodexAccount } from "../../../src/services/db.service.ts";
 
 describe("Codex provider usage account", () => {
   const accountIds: string[] = [];
+  const boundSessions: string[] = [];
   const spies: Array<{ mockRestore(): void }> = [];
+
+  /** Bind and remember, so the row does not outlive the test that wrote it. */
+  function bindSession(sessionId: string, accountId: string): void {
+    setSessionCodexAccount(sessionId, accountId);
+    boundSessions.push(sessionId);
+  }
 
   afterEach(() => {
     for (const spy of spies.splice(0)) spy.mockRestore();
     for (const id of accountIds.splice(0)) removeCodexAccount(id);
+    // The accounts are removed above, but the rows binding sessions to them are in the
+    // database the whole suite shares — left behind, they are sessions pointing at accounts
+    // that no longer exist, and the account-selection tests later in the run read them.
+    for (const sessionId of boundSessions.splice(0)) {
+      getDb().query("DELETE FROM session_metadata WHERE session_id = ?").run(sessionId);
+    }
   });
 
   function account(label: string) {
@@ -22,7 +35,7 @@ describe("Codex provider usage account", () => {
   it("uses the bound managed home and label instead of the ambient login", async () => {
     account("Other account");
     const bound = account("Session account");
-    setSessionCodexAccount("usage-bound", bound.id);
+    bindSession("usage-bound", bound.id);
     const start = spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation(() => {});
     spies.push(start);
     spies.push(spyOn(CodexJsonRpcClient.prototype, "notify").mockImplementation(() => {}));
@@ -83,7 +96,7 @@ describe("Codex provider usage account", () => {
 
   it("names nothing when the session is bound to an account that no longer exists", async () => {
     account("Still present");
-    setSessionCodexAccount("usage-dangling", "deleted-account-id");
+    bindSession("usage-dangling", "deleted-account-id");
     const start = spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation(() => {});
     spies.push(start);
 

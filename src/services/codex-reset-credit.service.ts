@@ -31,13 +31,26 @@ export interface ResetCreditResult {
   usage: UsageInfo;
 }
 
-/** The two ways out to Codex, replaceable so a test can stand in for the app-server. */
+/**
+ * The ways out to Codex, replaceable so a test can stand in for the app-server.
+ *
+ * All three of them. `refresh` was reached directly for a while, which left one door open in
+ * a seam whose whole point is that there are none: a test that faked the other two still made
+ * a real usage read on the way out, and the only sign of it was the call taking whatever the
+ * network took — five seconds and a timeout when something earlier in the process had left a
+ * connection to wait on.
+ */
 export interface ResetCreditCodexPorts {
   readUsage: (codexHome: string) => Promise<UsageInfo>;
   consume: (codexHome: string, idempotencyKey: string, creditId?: string) => Promise<ResetCreditOutcome>;
+  refresh: (accountId: string) => Promise<UsageInfo>;
 }
 
-const LIVE_PORTS: ResetCreditCodexPorts = { readUsage: fetchCodexUsageLive, consume: consumeCodexResetCredit };
+const LIVE_PORTS: ResetCreditCodexPorts = {
+  readUsage: fetchCodexUsageLive,
+  consume: consumeCodexResetCredit,
+  refresh: (accountId) => refreshUsage("codex", accountId),
+};
 
 export async function spendCodexResetCredit(accountId: string, ports: ResetCreditCodexPorts = LIVE_PORTS): Promise<ResetCreditResult> {
   const account = getCodexAccount(accountId);
@@ -63,7 +76,7 @@ export async function spendCodexResetCredit(accountId: string, ports: ResetCredi
     const outcome = await ports.consume(account.home, randomUUID(), live.resetCredits?.nextCreditId);
     if (outcome === "reset") clearCodexAccountUsageLimit(accountId);
     console.log(`[codex] account ${accountId} reset credit → ${outcome}`);
-    return { outcome, usage: await refreshUsage("codex", accountId) };
+    return { outcome, usage: await ports.refresh(accountId) };
   } finally {
     inFlight.delete(accountId);
   }

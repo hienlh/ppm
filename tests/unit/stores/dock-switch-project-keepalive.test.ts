@@ -5,7 +5,8 @@
  * (TabPool keep-alive) and lose the PTY — violating "switch project: dock
  * terminal stays alive".
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // Minimal in-memory localStorage stub — must be set before store import.
 const memStore: Record<string, string> = {};
@@ -15,7 +16,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 import { usePanelStore } from "../../../src/web/stores/panel-store";
 import { DOCK_PANEL_ID, savePanelLayout, createDockPanel } from "../../../src/web/stores/panel-utils";

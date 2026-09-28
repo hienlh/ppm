@@ -9,12 +9,20 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 const SRC = (path: string) => readFileSync(resolve(import.meta.dir, "../../../src/web", path), "utf8");
 
-/** A `window` whose `matchMedia` answers from a table. */
+/**
+ * A `window` whose `matchMedia` answers from a table.
+ *
+ * Through `installGlobal` rather than a bare assignment, and restored rather than deleted.
+ * The test process shares one DOM, so deleting `window` here took it away from every file
+ * that ran afterwards — the sentinel and dialog tests two directories along went red, and
+ * only when they shared a batch with this file.
+ */
 function installWindow(answers: Record<string, boolean>, innerWidth = 1920): void {
-  (globalThis as any).window = {
+  installGlobal("window", {
     innerWidth,
     matchMedia: (query: string) => ({
       matches: answers[query] ?? false,
@@ -22,12 +30,10 @@ function installWindow(answers: Record<string, boolean>, innerWidth = 1920): voi
       addEventListener() {},
       removeEventListener() {},
     }),
-  };
+  });
 }
 
-afterEach(() => {
-  delete (globalThis as any).window;
-});
+afterEach(uninstallDom);
 
 const TOUCH_ONLY = "(pointer: coarse) and (hover: none)";
 
@@ -50,7 +56,7 @@ describe("isTouchOnlyDevice", () => {
   });
 
   it("answers false rather than throwing where matchMedia is missing", async () => {
-    (globalThis as any).window = { innerWidth: 1920 };
+    installGlobal("window", { innerWidth: 1920 });
     const { isTouchOnlyDevice } = await import("../../../src/web/hooks/use-is-touch-only.ts");
 
     expect(isTouchOnlyDevice()).toBe(false);
@@ -67,7 +73,10 @@ describe("what the editor and the setting gate on", () => {
   it("gates the language server on the device, not the viewport", () => {
     const editor = SRC("components/editor/code-editor.tsx");
     expect(editor).toContain("const lspWanted = lspEnabled && !isTouchOnly;");
-    expect(editor).toContain("const lspOn = lspWanted && lspServable;");
+    // The device half and the buffer half, without pinning the rest of the line: `lspOn`
+    // has since gained `&& !htmlPreviewVisible`, and asserting the whole line verbatim made
+    // an unrelated editor feature fail a test about which question gates the server.
+    expect(editor).toMatch(/const lspOn = lspWanted && lspServable\b/);
     expect(editor).not.toMatch(/lsp(On|Wanted) = .*isPhone/);
   });
 

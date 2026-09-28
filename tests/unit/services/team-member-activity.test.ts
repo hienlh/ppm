@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm, writeFile, appendFile } from "fs/promises";
+import { utimesSync } from "node:fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -86,11 +87,15 @@ describe("indexTranscriptsByMember", () => {
 
   it("keeps the most recently written transcript when a name repeats", async () => {
     const older = await writeAgent("old", { name: "dev-p8" }, [record("2026-09-03T01:00:00.000Z", "assistant", [])]);
-    await writeAgent("new", { name: "dev-p8" }, [record("2026-09-03T02:00:00.000Z", "assistant", [])]);
-    // Make the second file unambiguously newer regardless of filesystem timestamp resolution.
-    await appendFile(join(dir, "agent-new.jsonl"), record("2026-09-03T03:00:00.000Z", "assistant", []), "utf-8");
+    const newer = await writeAgent("new", { name: "dev-p8" }, [record("2026-09-03T02:00:00.000Z", "assistant", [])]);
+    // The mtimes are set rather than inferred from write order. The index compares them with a
+    // strict `>`, so two files written in the same filesystem tick are decided by `readdir`
+    // order instead — and on a coarse-granularity filesystem (overlayfs under Docker) that is
+    // exactly what happened, picking the older transcript on Linux and not on Windows.
+    utimesSync(older.transcript, new Date(1_000_000), new Date(1_000_000));
+    utimesSync(newer.transcript, new Date(2_000_000), new Date(2_000_000));
     const picked = indexTranscriptsByMember(dir).get("dev-p8");
-    expect(picked!.transcriptPath).not.toBe(older.transcript);
+    expect(picked!.transcriptPath).toBe(newer.transcript);
   });
 });
 

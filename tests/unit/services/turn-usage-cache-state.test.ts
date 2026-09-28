@@ -3,9 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
-import { getDb, closeDb, insertTurnUsage, getLastTurnCacheState } from "../../../src/services/db.service.ts";
+import { getDb, closeDb, setDb, openTestDb, insertTurnUsage, getLastTurnCacheState } from "../../../src/services/db.service.ts";
 
 const tempDirs: string[] = [];
+
+const originalPpmHome = process.env.PPM_HOME;
 
 beforeEach(() => {
   const home = mkdtempSync(join(tmpdir(), "ppm-turn-cache-"));
@@ -18,6 +20,14 @@ beforeEach(() => {
 
 afterAll(() => {
   closeDb();
+  // `PPM_HOME` is process-wide and the suite shares one process, so leaving it pointed at a
+  // temp home hands that home to every file after this one. The database goes back too: this
+  // file closed the in-memory one the preload opened for the whole run, and the files after it
+  // that never set a home of their own have nothing else to read.
+  if (originalPpmHome === undefined) delete process.env.PPM_HOME;
+  else process.env.PPM_HOME = originalPpmHome;
+  _resetPpmDir();
+  setDb(openTestDb());
   for (const dir of tempDirs) {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* sqlite handles linger */ }
   }

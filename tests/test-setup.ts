@@ -20,7 +20,7 @@ setDb(openTestDb());
 
 // Bring the config service up against that throwaway database. It refuses to persist until
 // load() has run, because writing pristine defaults over a live instance once blanked the auth
-// token and deleted every project — but here PPM_HOME is a fresh temp dir and the database is
+// token and deleted every project â€” but here PPM_HOME is a fresh temp dir and the database is
 // in-memory, so there is nothing to protect and fixtures write config legitimately.
 configService.load();
 
@@ -28,7 +28,11 @@ configService.load();
 const config = (configService as any).config;
 config.auth.enabled = false;
 
-// Cleanup temp dir after all tests (best-effort)
+// A DOM for the whole process, installed before any module is imported. See
+// `installDomForProcess` for why nothing later is early enough.
+import { installDomForProcess } from "./helpers/react-dom.tsx";
+installDomForProcess();
+
 process.on("exit", () => {
   try { rmSync(testPpmHome, { recursive: true, force: true }); } catch {}
 });

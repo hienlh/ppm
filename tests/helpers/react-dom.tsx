@@ -113,39 +113,108 @@ export async function emitServerEvent(source: FakeEventSource | undefined, type:
 /** What each replaced global held before the DOM went in, so `uninstallDom` can put it back. */
 const replaced = new Map<string, { value: unknown; existed: boolean }>();
 
-function replaceGlobal(key: string, value: unknown): void {
-  if (!replaced.has(key)) {
-    replaced.set(key, { value: (globalThis as Record<string, unknown>)[key], existed: key in globalThis });
+/**
+ * Whether this DOM belongs to the whole test process rather than to one file.
+ *
+ * Set by `installDomForProcess()`, which the preload calls. It is what makes `uninstallDom()`
+ * a no-op — see the note there.
+ */
+let domIsProcessWide = false;
+
+/**
+ * Install the DOM for the life of the process, from the test preload.
+ *
+ * The DOM has to exist before any UI module is *imported*, and only a preload runs early enough
+ * to guarantee that: radix decides once, while its module body runs, whether it is in a browser,
+ * and the whole suite shares one process. So a file that imports a component with no DOM
+ * installed left every radix primitive in its server mode for the rest of the run — a dialog
+ * then rendered into nothing, in a different file, with the failure count rising as more UI
+ * tests were added. An `installDom()` call in `beforeAll` cannot fix that; imports are evaluated
+ * before any hook runs.
+ *
+ * Separate from `installDom()` so the flag is only ever set by the one caller that can honestly
+ * claim it.
+ */
+export function installDomForProcess(url?: string): void {
+  installDom(url);
+  domIsProcessWide = true;
+}
+
+/** True once the preload has installed the process-wide DOM. */
+export function isDomProcessWide(): boolean {
+  return domIsProcessWide;
+}
+
+/**
+ * What `installGlobal()` overwrote, kept apart from the DOM's own globals.
+ *
+ * These are restored on `uninstallDom()` even when the DOM itself is process-wide, and that
+ * separation is load-bearing: a stub belongs to the file that installed it, where the DOM
+ * belongs to the run. Folding the two together left one file's `IntersectionObserver` — a
+ * double-purpose name, since it is in `DOM_GLOBALS` too — standing in for happy-dom's in every
+ * file after it, which is order-dependent breakage of exactly the kind this harness exists to
+ * avoid.
+ */
+const customGlobals = new Map<string, { value: unknown; existed: boolean }>();
+
+function recordAndSet(
+  into: Map<string, { value: unknown; existed: boolean }>,
+  key: string,
+  value: unknown,
+): void {
+  if (!into.has(key)) {
+    into.set(key, { value: (globalThis as Record<string, unknown>)[key], existed: key in globalThis });
   }
   (globalThis as Record<string, unknown>)[key] = value;
+}
+
+function restoreAll(from: Map<string, { value: unknown; existed: boolean }>): void {
+  for (const [key, prev] of from) {
+    if (prev.existed) (globalThis as Record<string, unknown>)[key] = prev.value;
+    else delete (globalThis as Record<string, unknown>)[key];
+  }
+  from.clear();
+}
+
+function replaceGlobal(key: string, value: unknown): void {
+  recordAndSet(replaced, key, value);
 }
 
 /**
  * Put `globalThis` back the way it was.
  *
- * Every DOM test file calls this from `afterAll`, and the reason is the whole point of
- * `dom-harness-isolation.test.ts`: these globals outlive the file that installed them, so
- * whatever runs next in the same process inherits a browser it never asked for. That is how
- * `os.cpus()` started answering 8 on a 24-core host — a failure that reads as flakiness,
- * because it depends on which files happened to share a batch.
+ * A no-op once the preload owns the DOM, which is the normal case: taking it down would leave
+ * every file after this one mounting into globals that no longer exist, and the ordering the
+ * process-wide install exists to guarantee cannot survive a teardown in the middle of a run.
+ *
+ * What it used to buy is bought differently now. `DOM_GLOBALS` is the blast radius and is kept
+ * as small as the components need — `File`, `Blob`, `FormData` and `URL` are deliberately not on
+ * it — and the one value server-side code actually reads through a DOM global,
+ * `navigator.hardwareConcurrency`, is carried across rather than replaced. That is what stopped
+ * `os.cpus()` answering 8 on a 24-core host.
+ *
+ * Still honoured for a file-scoped `installDom()`, so a test that wants its own DOM and cleans
+ * up after itself behaves as before.
  */
 export function uninstallDom(): void {
-  for (const [key, prev] of replaced) {
-    if (prev.existed) (globalThis as Record<string, unknown>)[key] = prev.value;
-    else delete (globalThis as Record<string, unknown>)[key];
-  }
-  replaced.clear();
+  // The calling file's own stubs always go back, DOM or no DOM: they are its to clean up.
+  restoreAll(customGlobals);
+  if (domIsProcessWide) return;
+  restoreAll(replaced);
   delete (globalThis as Record<string, unknown>).__ppmDomInstalled;
 }
 
 /**
  * Replace one more global for the life of the calling test file — a stub for something neither
- * Bun nor happy-dom has, such as `IntersectionObserver`. Restored by `uninstallDom()` along
- * with everything the DOM itself replaced, which a bare `globalThis.X = …` in a test file is
- * not: that one outlives the file and lands on whatever runs next in the process.
+ * Bun nor happy-dom has, such as `IntersectionObserver`. Restored by `uninstallDom()`, which a
+ * bare `globalThis.X = …` in a test file is not: that one outlives the file and lands on
+ * whatever runs next in the process.
+ *
+ * Recorded apart from the DOM's own globals so it is restored even when the DOM is not — see
+ * `customGlobals`.
  */
 export function installGlobal(key: string, value: unknown): void {
-  replaceGlobal(key, value);
+  recordAndSet(customGlobals, key, value);
 }
 
 /** Install a DOM on `globalThis`. Safe to call from several test files. */

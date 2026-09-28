@@ -9,7 +9,8 @@
  * "Re-dock" (parking a live tab in __dock__ without restarting its PTY) is an
  * explicit user action via redockTab — never a side effect of close.
  */
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, spyOn, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory localStorage stub — must be set before store import
@@ -21,7 +22,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 // Import AFTER stubbing localStorage
 import { usePanelStore } from "../../../src/web/stores/panel-store";

@@ -11,7 +11,16 @@ import {
 } from "../../../src/services/codex-account-auth-state.ts";
 import { _resetCodexCooldownsForTesting } from "../../../src/services/codex-account-cooldown.ts";
 
-const mk = (label: string) => createCodexAccount({ label, type: "apiKey", creds: { type: "apiKey", apiKey: "k-" + label } });
+/**
+ * An account with the daily guard off, because nothing here is about the guard.
+ *
+ * `createCodexAccount` turns it on by default, and a guarded account makes
+ * `resolveCodexAccountForSession` fetch usage over the network before answering — a five-second
+ * timeout in a test about which accounts are signed out.
+ */
+const mk = (label: string) => createCodexAccount({
+  label, type: "apiKey", creds: { type: "apiKey", apiKey: "k-" + label }, dailyGuardEnabled: false,
+});
 
 describe("signed-out codex accounts", () => {
   beforeEach(() => {

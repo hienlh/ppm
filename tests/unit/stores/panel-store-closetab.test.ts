@@ -9,7 +9,8 @@
  * with a minimal in-memory implementation because closeTab (panel-store.ts) and
  * savePanelLayout (panel-utils.ts) call it.
  */
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, spyOn, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory localStorage stub — must be set before store import
@@ -21,7 +22,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 // Import AFTER stubbing localStorage so panel-utils.ts persistence calls succeed
 import { usePanelStore } from "../../../src/web/stores/panel-store";

@@ -9,10 +9,16 @@
  * 24-core host, and three tests in `system-metrics/cpu-memory-collector` failed
  * — but only when they happened to share a batch with a DOM test, which reads
  * as flakiness rather than as a cause.
+ *
+ * The DOM itself is no longer installed and removed per file: the test preload installs one
+ * for the process, because radix reads whether it is in a browser while its module body runs
+ * and a file that imported a component with no DOM present left every radix primitive in its
+ * server mode for the rest of the run. So what has to be proven here changed shape. It is no
+ * longer "the DOM goes away again" but "the DOM stays and each file's own stubs do not".
  */
 import { describe, it, expect, afterAll } from "bun:test";
 import os from "node:os";
-import { installDom, uninstallDom } from "../../helpers/react-dom.tsx";
+import { installDom, installGlobal, isDomProcessWide, uninstallDom } from "../../helpers/react-dom.tsx";
 
 /**
  * The real values, taken from a process with no DOM in it.
@@ -69,27 +75,32 @@ describe("the DOM harness leaves the process alone", () => {
     expect(body.get("file")).toBeInstanceOf(File);
   });
 
-  it("hands every global back when the file that installed it is done", () => {
-    // The event classes cannot be left to Bun — a happy-dom node rejects an event built in
-    // another realm — so they are installed and then restored, which is the only reason a
-    // suite that runs after a DOM file gets its own `Event` back.
+  it("hands a file's own stubs back, and keeps the DOM the preload owns", () => {
+    // The two halves of `uninstallDom()` have different scopes, and conflating them is what
+    // broke this harness. A stub belongs to the file that installed it: leaving one in place
+    // makes every later file test against it, and an `IntersectionObserver` or a `window` of
+    // one file's own is enough to fail a suite two directories along. The DOM belongs to the
+    // *run*, because radix decides whether it is in a browser while its module body executes
+    // — so taking the DOM down mid-run poisons every component imported after that point.
     installDom();
     const dom = globalThis as Record<string, unknown>;
-    const [domEvent, domWindow, domDocument] = [dom.Event, dom.window, dom.document];
-    expect(typeof document.createElement).toBe("function");
+    const realWindow = dom.window;
+    const stub = { innerWidth: 1 };
+    installGlobal("window", stub);
+    expect(dom.window).toBe(stub);
 
     uninstallDom();
 
-    // Identity rather than absence: another file in the same batch may legitimately have had a
-    // `window` stub of its own before this one ran, and the guarantee is that it gets *that*
-    // back — not that the name is unbound.
-    expect(dom.Event).not.toBe(domEvent);
-    expect(dom.window).not.toBe(domWindow);
-    expect(dom.document).not.toBe(domDocument);
-    expect(os.cpus().length).toBe(pristine.cpus);
-
-    installDom(); // the rest of this file, and anything after it, still gets one on request
+    expect(dom.window).toBe(realWindow);
     expect(typeof document.createElement).toBe("function");
+    expect(os.cpus().length).toBe(pristine.cpus);
+  });
+
+  it("says which of the two it is, so the contract above is not guessed at", () => {
+    // Under `bun test` the preload owns the DOM, so `uninstallDom()` must not remove it. A
+    // file-scoped `installDom()` keeps the old behaviour, which is why the flag exists rather
+    // than the two cases being told apart by inspection.
+    expect(isDomProcessWide()).toBe(true);
   });
 
   it("still installs a working document", () => {

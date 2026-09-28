@@ -7,7 +7,8 @@
  * Uses the REAL openTab/closeTab/redockTab flow so id-derivation + panel-registry
  * edge cases are exercised (not synthetic seed state only).
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 const memStore: Record<string, string> = {};
 const localStorageStub = {
@@ -16,7 +17,8 @@ const localStorageStub = {
   removeItem: (k: string) => { delete memStore[k]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 (globalThis as unknown as { fetch: () => Promise<Response> }).fetch = () => Promise.resolve(new Response("{}"));
 
 import { usePanelStore } from "../../../src/web/stores/panel-store";

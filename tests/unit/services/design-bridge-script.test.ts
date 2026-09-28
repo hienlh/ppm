@@ -161,10 +161,13 @@ describe("navigation guard", () => {
   });
 
   it("cancels a cross-document navigate event where the Navigation API exists", () => {
-    const navigation = new EventTarget();
+    // Both halves come from the DOM's realm on purpose. The test process shares one installed
+    // DOM, so the bare `Event` global is happy-dom's — and an `EventTarget` from Bun's realm
+    // refuses to dispatch it, with a message that names the argument rather than the mismatch.
+    const navigation = new window.EventTarget();
     const h = boot("", { navigation });
     const navigate = (init: { url: string; sameDocument?: boolean; hashChange?: boolean; cancelable?: boolean }): boolean => {
-      const event = Object.assign(new Event("navigate", { cancelable: init.cancelable ?? true }), {
+      const event = Object.assign(new window.Event("navigate", { cancelable: init.cancelable ?? true }), {
         hashChange: init.hashChange ?? false, destination: { url: init.url, sameDocument: init.sameDocument ?? false },
       });
       navigation.dispatchEvent(event);

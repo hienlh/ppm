@@ -19,10 +19,13 @@ let liveError: Error | null = null;
 const consumed: { home: string; key: string; creditId?: string }[] = [];
 let outcome: ResetCreditOutcome = "reset";
 
-/** Codex stand-in: the quota read and the consume call, recorded. */
+/** Codex stand-in: the quota read, the consume call and the read back afterwards. */
 const fakeCodex: ResetCreditCodexPorts = {
   readUsage: async () => { if (liveError) throw liveError; return liveUsage; },
   consume: async (home, key, creditId) => { consumed.push({ home, key, creditId }); return outcome; },
+  // The third door. Without it the service read usage for real on the way out, which is a
+  // network call in a test whose whole point is that Codex is faked.
+  refresh: async () => liveUsage,
 };
 const spendCodexResetCredit = (id: string) => spendWith(id, fakeCodex);
 
