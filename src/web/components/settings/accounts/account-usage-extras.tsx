@@ -5,7 +5,8 @@
  * - `ScopedBucketRows` — a model's own weekly limit (Claude's "Fable"), one bar per model,
  *   labelled with the name the provider gives it.
  * - `ResetCreditsChip` — how many free rate-limit resets Codex has granted the account and
- *   when the next one lapses. PPM only reports these; they are spent from Codex itself.
+ *   when the next one lapses. Spending one is `CodexResetCreditButton`, shown beside it only
+ *   once a limit is reached.
  */
 
 import { RotateCcw } from "@/lib/icons";
@@ -32,7 +33,7 @@ export function ResetCreditsChip({ credits }: { credits?: ResetCredits }) {
     : `Codex has granted this account ${n} free rate-limit reset${n === 1 ? "" : "s"}`
       + `${credits.title ? ` (${credits.title})` : ""}.`
       + `${credits.nextExpiresAt ? ` The next one expires on ${new Date(credits.nextExpiresAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.` : ""}`
-      + " Use one from the Codex app when a limit is reached — PPM only shows the count.";
+      + " A \"Use reset\" button appears here once a limit is reached; a reset moves the weekly reset date, so spending one earlier wastes it.";
   return (
     <AccountHint className={`inline-flex items-center gap-1 ${n > 0 ? "text-primary" : ""}`} hint={hint}>
       <RotateCcw className="size-3 shrink-0" aria-hidden />

@@ -28,6 +28,7 @@ import { CodexUsageRows } from "./codex-usage-rows";
 import { CODEX_SIGNED_OUT_HINT, useCodexAccounts, type CodexAccount } from "./use-codex-accounts";
 import { CodexSignInAgainDialog } from "./codex-sign-in-again-dialog";
 import { ResetCreditsChip } from "./account-usage-extras";
+import { CodexResetCreditButton } from "./codex-reset-credit-button";
 import { AccountHint } from "./account-hint";
 import { codexPlanLabel } from "../../../../shared/codex-plan-label.ts";
 import { dailyGuardState } from "../../../../shared/codex-daily-guard.ts";
@@ -137,8 +138,9 @@ export function CodexAccountsSection() {
                   </div>
                   <CodexUsageRows usage={u} />
                   {u.resetCredits && (
-                    <div className="text-[10px] text-text-subtle">
+                    <div className="flex items-center gap-2 flex-wrap text-[10px] text-text-subtle">
                       <ResetCreditsChip credits={u.resetCredits} />
+                      <CodexResetCreditButton account={a} usage={u} onDone={(m) => { c.setMsg(m); void c.load(); }} />
                     </div>
                   )}
                   {u.session == null && (() => {

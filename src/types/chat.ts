@@ -230,6 +230,8 @@ export interface ResetCredits {
   nextExpiresAt?: string;
   /** What the soonest one resets, as Codex words it ("Full reset (Weekly + 5 hr)"). */
   title?: string;
+  /** Codex's opaque id of that soonest-expiring credit — the one "Use reset" spends. */
+  nextCreditId?: string;
 }
 
 /** Result subtype from SDK ResultMessage */

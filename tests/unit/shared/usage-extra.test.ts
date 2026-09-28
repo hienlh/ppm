@@ -5,7 +5,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   parseClaudeScopedLimits, parseCodexResetCredits, serializeUsageExtra, deserializeUsageExtra,
-  usageExtraSignature, scopedBucket,
+  usageExtraSignature, scopedBucket, usageLimitReached, canUseResetCredit,
 } from "../../../src/shared/usage-extra.ts";
 
 /** `GET /api/oauth/usage`: Fable only appears in `limits[]`; the legacy per-model keys are null. */
@@ -63,9 +63,34 @@ describe("codex reset credits", () => {
     expect(c.title).toBe("Full reset");
   });
 
+  it("names the soonest-expiring credit as the one to spend", () => {
+    expect(parseCodexResetCredits(CODEX_RATE_LIMITS)!.nextCreditId).toBe("b");
+  });
+
   it("tells 'none reported' apart from 'zero left'", () => {
     expect(parseCodexResetCredits({})).toBeUndefined();
     expect(parseCodexResetCredits({ rateLimitResetCredits: { credits: [] } })).toEqual({ available: 0 });
+  });
+});
+
+describe("when a reset may be offered", () => {
+  const b = (utilization: number) => ({ utilization });
+  const credits = { available: 1 };
+
+  it("only at a reached limit, on either window", () => {
+    expect(usageLimitReached({ session: b(1), weekly: b(0.3) })).toBe(true);
+    expect(usageLimitReached({ weekly: b(1) })).toBe(true);
+    // Rounds like the card: 99.5% reads as 100% there, so it counts here too.
+    expect(usageLimitReached({ weekly: b(0.995) })).toBe(true);
+    expect(usageLimitReached({ session: b(0.98), weekly: b(0.9) })).toBe(false);
+    expect(usageLimitReached({})).toBe(false);
+  });
+
+  it("needs a credit left as well", () => {
+    expect(canUseResetCredit({ weekly: b(1), resetCredits: credits })).toBe(true);
+    expect(canUseResetCredit({ weekly: b(1), resetCredits: { available: 0 } })).toBe(false);
+    expect(canUseResetCredit({ weekly: b(1) })).toBe(false);
+    expect(canUseResetCredit({ weekly: b(0.5), resetCredits: credits })).toBe(false);
   });
 });
 

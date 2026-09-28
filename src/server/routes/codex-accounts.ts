@@ -4,6 +4,7 @@ import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrat
 import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin, startBrowserLogin, submitBrowserCallback, getBrowserLoginStatus, cancelBrowserLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 import { isCodexAccountAuthFailed } from "../../services/codex-account-auth-state.ts";
+import { ResetCreditRefusedError, spendCodexResetCredit } from "../../services/codex-reset-credit.service.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
 export const codexAccountsRoutes = new Hono();
@@ -63,6 +64,19 @@ codexAccountsRoutes.patch("/:id", async (c) => {
   const updated = setCodexDailyGuard(c.req.param("id"), body.dailyGuardEnabled);
   if (!updated) return c.json(err("Account not found"), 404);
   return c.json(ok(updated));
+});
+
+/**
+ * POST /api/codex-accounts/:id/reset-credit — spend one free rate-limit reset.
+ * Refused with 409 unless a limit is reached right now (checked live) and a credit is left.
+ */
+codexAccountsRoutes.post("/:id/reset-credit", async (c) => {
+  try {
+    return c.json(ok(await spendCodexResetCredit(c.req.param("id"))));
+  } catch (e) {
+    if (e instanceof ResetCreditRefusedError) return c.json(err(e.message), e.status);
+    return c.json(err((e as Error).message), 502);
+  }
 });
 
 /** Set the selection strategy. */
