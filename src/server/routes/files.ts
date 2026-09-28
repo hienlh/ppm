@@ -5,6 +5,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { fileService, SecurityError, NotFoundError, ValidationError } from "../../services/file.service.ts";
 import { readSystemFileSync } from "../../services/fs-browse.service.ts";
 import { ok, err } from "../../types/api.ts";
+import type { FileIndexTooLarge } from "../../types/project.ts";
+import { REMOTE_FILE_SEARCH_LIMIT } from "../../shared/file-index-limits.ts";
 import { errorStatus } from "../helpers/error-status.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
 import { handleMediaProbe, handleMediaTranscode, handleMediaTranscodeStop } from "../helpers/media-route-handlers.ts";
@@ -63,20 +65,60 @@ fileRoutes.post("/list-batch", async (c) => {
 });
 
 /**
- * GET /files/index
+ * A project's first walk can outlast Bun's 10 s idle timeout — nxsys-workspace took 7.6 s on an
+ * idle server and more on a busy one — and Bun then cuts the request off with the walk nearly
+ * done. The walk no longer stops the server, so waiting is safe; 30 s is as long as the browser
+ * waits for headers. `c.env` is the Bun server that `app.fetch(req, server)` passed.
+ */
+function outlastFirstWalk(c: { env: unknown; req: { raw: Request } }): void {
+  (c.env as { timeout?: (request: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, 30);
+}
+
+/** Most entries a `/files/index/search` answers with. */
+const MAX_INDEX_SEARCH_LIMIT = 500;
+
+/**
+ * GET /files/index?max=<n>
  * Returns flat array of all project files {path, name} for palette/search.
  * Result is cached; a file change marks it stale, and the stale list is served while it rebuilds.
+ * With `max`, a project holding more entries than that answers `FileIndexTooLarge` instead of the
+ * list, to be searched with `/files/index/search`.
  */
 fileRoutes.get("/index", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    // A project's first walk can outlast Bun's 10 s idle timeout — nxsys-workspace took 7.6 s on
-    // an idle server and more on a busy one — and Bun then cuts the request off with the walk
-    // nearly done. The walk no longer stops the server, so waiting is safe; 30 s is as long as
-    // the browser waits for headers. `c.env` is the Bun server that `app.fetch(req, server)` passed.
-    (c.env as { timeout?: (request: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, 30);
-    const entries = await fileService.buildIndex(projectPath);
-    return c.json(ok(entries));
+    outlastFirstWalk(c);
+    // The body is serialised and gzipped once per walk, on the index worker: nxsys-workspace's
+    // is 22 MB, which cost ~120 ms of the event loop to serialise and compress per download.
+    const build = await fileService.buildIndex(projectPath);
+    const max = Number(c.req.query("max"));
+    if (max > 0 && build.count > max) return c.json(ok<FileIndexTooLarge>({ tooLarge: true, count: build.count }));
+    const gzip = (c.req.header("Accept-Encoding") ?? "").includes("gzip");
+    return new Response(gzip ? build.gzip : build.json, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(gzip && { "Content-Encoding": "gzip", Vary: "Accept-Encoding" }),
+      },
+    });
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/**
+ * GET /files/index/search?q=<query>&kind=file|all&limit=<n>
+ * The best entries of the file index for `q`, best first — ranked as the palette ranks a list it
+ * holds — searched on the server, for a project whose list is too long to send. `kind=all`
+ * includes directories. A blank `q` answers the first entries in list order.
+ */
+fileRoutes.get("/index/search", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    outlastFirstWalk(c);
+    const query = c.req.query("q") ?? "";
+    const kind = c.req.query("kind") === "all" ? "all" : "file";
+    const limit = Math.min(Math.max(Math.trunc(Number(c.req.query("limit"))) || REMOTE_FILE_SEARCH_LIMIT, 1), MAX_INDEX_SEARCH_LIMIT);
+    return c.json(ok(await fileService.searchIndex(projectPath, query, kind, limit)));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }

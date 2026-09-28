@@ -18,7 +18,8 @@ import { syncRunningSessions } from "@/lib/sync-running-sessions";
  *   file tree to consume, and marks the file index stale.
  * - `files:index-changed` → marks the file index stale: the server rebuilt it behind the list
  *   it had been serving, and the paths differ. Neither event fetches the index — on a large
- *   project that is a 22 MB download — so it is refreshed only when something opens to read it.
+ *   project that is a 22 MB download — unless something is showing it right now (the palette,
+ *   a picker; see `openIndexReader`); otherwise it is refreshed when something opens to read it.
  * - `session:unread_changed` → cross-device unread sync.
  * - `session:phase_changed` → keeps the tab-strip spinner and title indicator
  *   correct for sessions whose tab is not mounted, and — critically — clears them
@@ -77,7 +78,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
       }
 
       if (type === "files:index-changed") {
-        if (typeof data.projectName === "string") useFileStore.getState().markIndexStale(data.projectName);
+        if (typeof data.projectName === "string") useFileStore.getState().indexRebuilt(data.projectName);
         return;
       }
 

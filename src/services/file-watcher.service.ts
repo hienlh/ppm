@@ -1,13 +1,17 @@
+import { readFileSync } from "node:fs";
 import { WatchTree } from "./file-watcher/watch-tree.ts";
+import { inotifyAvailable } from "./file-watcher/linux-inotify.ts";
 
 const DEBOUNCE_MS = 500;
 /**
  * Directory budgets. These bound the directories PPM *covers*, which is not the same as
- * the inotify watches it holds: measured on Linux, watching a directory costs one
- * descriptor for it plus one for every file inside — 4 directories holding 600 files
+ * the inotify watches it holds: measured on Linux, watching a directory with `fs.watch` costs
+ * one descriptor for it plus one for every file inside — 4 directories holding 600 files
  * come to 604, recursive and non-recursive alike. So a directory cap bounds handles and
  * walk cost, not descriptors; what keeps PPM inside the machine-wide 524288 ceiling is
- * never registering `node_modules` in the first place.
+ * never registering `node_modules` in the first place. (Linux with glibc now watches through
+ * raw inotify instead, where a directory costs one watch and no descriptor — see
+ * `file-watcher/linux-inotify.ts`; the per-file cost is the `fs.watch` fallback's.)
  *
  * The per-project cap is hard. The total is best-effort: a tree keeps growing after
  * it starts, through `syncChildDir` -> `cover`, up to its own `maxDirs` — and on
@@ -28,6 +32,36 @@ const MAX_DIRS_TOTAL = 30_000;
  * watcher. A late project now gets a small budget and the truncation warning instead.
  */
 const MIN_DIRS_PER_PROJECT = 1_000;
+/**
+ * Raw inotify's caps. There a directory is one kernel watch and ~1.2 KB of heap, with no
+ * descriptor, and the caps above — sized for `fs.watch`'s per-file descriptors — cut
+ * nxsys-workspace off at 12,000 of its 28,684 directories, so a change past that point never
+ * arrived. Covering all of it measured 0.35 s with no pause over 2 ms, for 34 MB of heap
+ * against 13 MB at the old cap. What bounds this backend is `fs.inotify.max_user_watches`,
+ * which every program the user runs draws on (code-server alone held 308k of them here), so
+ * PPM takes at most a quarter of it — and a machine where that quarter is smaller than the
+ * `fs.watch` caps keeps those, which is what PPM already took there.
+ */
+const INOTIFY_MAX_DIRS_PER_PROJECT = 100_000;
+const INOTIFY_MAX_DIRS_TOTAL = 250_000;
+
+/** The per-project and total directory caps for a watching backend on a machine with this watch limit. */
+export function watchBudgets(rawInotify: boolean, maxUserWatches: number): { perProject: number; total: number } {
+  const total = rawInotify ? Math.min(INOTIFY_MAX_DIRS_TOTAL, Math.floor(maxUserWatches / 4)) : 0;
+  if (total <= MAX_DIRS_TOTAL) return { perProject: MAX_DIRS_PER_PROJECT, total: MAX_DIRS_TOTAL };
+  return { perProject: Math.min(INOTIFY_MAX_DIRS_PER_PROJECT, total), total };
+}
+
+let budgets: { perProject: number; total: number } | undefined;
+function hostBudgets(): { perProject: number; total: number } {
+  if (budgets) return budgets;
+  const rawInotify = inotifyAvailable();
+  let maxUserWatches = 0; // unreadable: keep the `fs.watch` caps
+  if (rawInotify) {
+    try { maxUserWatches = Number(readFileSync("/proc/sys/fs/inotify/max_user_watches", "utf8").trim()) || 0; } catch {}
+  }
+  return (budgets = watchBudgets(rawInotify, maxUserWatches));
+}
 
 type ChangeCallback = (projectName: string, path: string) => void;
 
@@ -60,7 +94,7 @@ export function onFileChange(cb: ChangeCallback): void {
  * reached so far. The walk hands the event loop back every few hundred directories, so its
  * count climbs for seconds — and a second project opened during one used to size its budget
  * against that unfinished number, which is how two projects starting together could each be
- * told there was room and overshoot `MAX_DIRS_TOTAL` between them. Over-counting is the safe
+ * told there was room and overshoot the total between them. Over-counting is the safe
  * direction: the reservation is released the moment the walk lands and reports its real size.
  */
 function totalCoveredDirs(): number {
@@ -110,10 +144,8 @@ export function startWatching(projectName: string, projectPath: string): Promise
     return existing.ready;
   }
 
-  const maxDirs = Math.max(
-    MIN_DIRS_PER_PROJECT,
-    Math.min(MAX_DIRS_PER_PROJECT, MAX_DIRS_TOTAL - totalCoveredDirs()),
-  );
+  const { perProject, total } = hostBudgets();
+  const maxDirs = Math.max(MIN_DIRS_PER_PROJECT, Math.min(perProject, total - totalCoveredDirs()));
   const entry: WatchEntry = {
     tree: new WatchTree({
       root: projectPath,

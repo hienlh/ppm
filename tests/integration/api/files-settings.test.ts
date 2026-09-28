@@ -7,6 +7,10 @@ import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { clearIndexCache, buildIndex } from "../../../src/services/file-list-index.service.ts";
 import { app } from "../../../src/server/index.ts";
+import type { IndexBuild } from "../../../src/services/file-index/index-walk.ts";
+import type { FileEntry } from "../../../src/types/project.ts";
+
+const indexEntries = (build: IndexBuild): FileEntry[] => JSON.parse(new TextDecoder().decode(build.json)).data;
 
 async function req(path: string, init?: RequestInit) {
   const url = `http://localhost${path}`;
@@ -197,7 +201,7 @@ describe("PATCH /api/settings/files", () => {
     writeFileSync(resolve(projectPath, "skip.log"), "");
 
     // Prime the index cache — should include both files
-    const initialIndex = await buildIndex(projectPath);
+    const initialIndex = indexEntries(await buildIndex(projectPath));
     const initialFiles = initialIndex.filter((e) => e.type === "file").map((e) => e.path);
     expect(initialFiles).toContain("keep.ts");
     expect(initialFiles).toContain("skip.log");
@@ -212,7 +216,7 @@ describe("PATCH /api/settings/files", () => {
     // After PATCH, the cache should be cleared — next buildIndex rebuilds with new filters
     // We can't use the route here (route uses per-project path), so we verify the cache
     // was cleared by checking buildIndex() rebuilds (not returning stale cached result)
-    const postPatchIndex = await buildIndex(projectPath);
+    const postPatchIndex = indexEntries(await buildIndex(projectPath));
     const postPatchFiles = postPatchIndex.filter((e) => e.type === "file").map((e) => e.path);
     expect(postPatchFiles).toContain("keep.ts");
     expect(postPatchFiles).not.toContain("skip.log");

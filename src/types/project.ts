@@ -31,6 +31,15 @@ export interface FileEntry {
   isIgnored?: boolean;
 }
 
+/**
+ * `/files/index?max=` for a project holding more entries than `max`: too long to send, so it is
+ * searched with `/files/index/search` instead.
+ */
+export interface FileIndexTooLarge {
+  tooLarge: true;
+  count: number;
+}
+
 /** Entry returned by /files/list (single directory level) */
 export interface FileDirEntry {
   name: string;

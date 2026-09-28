@@ -12,6 +12,7 @@ const { MessageInput } = await import("../../../src/web/components/chat/message-
 const { FilePicker } = await import("../../../src/web/components/chat/file-picker");
 const { fsChanged } = await import("../../../src/web/components/os-explorer/explorer-store");
 const { api } = await import("../../../src/web/lib/api-client");
+const { REMOTE_FILE_SEARCH_FROM_ENTRIES } = await import("../../../src/shared/file-index-limits");
 const projectA = { name: "index-a", path: "C:\\projects\\index-a" };
 const projectB = { name: "index-b", path: "C:\\projects\\index-b" };
 const fileA: FileNode = { name: "only-a.ts", path: "only-a.ts", type: "file" };
@@ -76,7 +77,7 @@ it("does not expose project A's cached files to a composer for B", async () => {
   expect(view.container.querySelector("output")!.textContent).toBe("");
   expect(get).not.toHaveBeenCalled();
   await openPicker();
-  expect(get.mock.calls[0]![0]).toBe("/api/project/index-b/files/index");
+  expect(get.mock.calls[0]![0]).toBe(`/api/project/index-b/files/index?max=${REMOTE_FILE_SEARCH_FROM_ENTRIES}`);
   expect(view.container.textContent).not.toContain(fileA.name);
   await act(async () => response.resolve([fileB]));
   expect(view.container.textContent).toContain(fileB.name);
@@ -127,7 +128,7 @@ for (const event of ["file:changed", "fsChanged"] as const) {
     expect(useFileStore.getState().fileIndex).toEqual([fileA]);
     await openPicker();
     expect(get).toHaveBeenCalledTimes(1);
-    expect(get.mock.calls[0]![0]).toBe("/api/project/index-a/files/index");
+    expect(get.mock.calls[0]![0]).toBe(`/api/project/index-a/files/index?max=${REMOTE_FILE_SEARCH_FROM_ENTRIES}`);
     await act(async () => response.resolve([fileA, newFile]));
     expect(view.container.textContent).toContain(newFile.name);
     expect(useFileStore.getState().indexStale).toBe(false);

@@ -151,6 +151,43 @@ describe("GET /files/index", () => {
     expect(time2).toBeLessThanOrEqual(time1 + 10);
   });
 
+  it("sends the list gzipped as the worker built it, to a client that accepts gzip", async () => {
+    const plain = await req(`/api/project/${projectName}/files/index`);
+    const zipped = await req(`/api/project/${projectName}/files/index`, { headers: { "Accept-Encoding": "gzip, deflate, br" } });
+
+    expect(plain.headers.get("Content-Encoding")).toBeNull();
+    expect(zipped.headers.get("Content-Encoding")).toBe("gzip");
+    expect(zipped.headers.get("Vary")).toBe("Accept-Encoding");
+    const body = new Uint8Array(await zipped.arrayBuffer());
+    // Compressed once: the JSON middleware leaves an encoded body alone.
+    expect(new TextDecoder().decode(Bun.gunzipSync(body))).toBe(await plain.text());
+  });
+
+  it("answers a list longer than `max` with its size instead", async () => {
+    const all = ((await (await req(`/api/project/${projectName}/files/index`)).json()) as any).data;
+    const over = (await (await req(`/api/project/${projectName}/files/index?max=${all.length - 1}`)).json()) as any;
+    expect(over.data).toEqual({ tooLarge: true, count: all.length });
+    const within = (await (await req(`/api/project/${projectName}/files/index?max=${all.length}`)).json()) as any;
+    expect(within.data).toEqual(all);
+  });
+
+  it("searches the list on the server, best first", async () => {
+    writeFileSync(resolve(projectPath, "src/util-extra.ts"), "");
+    invalidateIndexCache(projectPath);
+    const search = async (query: string) =>
+      ((await (await req(`/api/project/${projectName}/files/index/search?${query}`)).json()) as any).data.map((e: any) => e.path);
+
+    // The palette's order: the filename that has the query in one piece beats the one that only
+    // has its letters in order.
+    expect(await search("q=utils")).toEqual(["src/utils.ts", "src/util-extra.ts"]);
+    expect(await search("q=xtra")).toEqual(["src/util-extra.ts"]);
+    expect(await search("q=src&kind=all&limit=1")).toEqual(["src"]);
+    expect(await search("q=src&limit=1")).not.toEqual(["src"]);
+    // A blank query answers the first files, as a picker shows before anything is typed.
+    expect((await search("q=")).length).toBeGreaterThan(0);
+    expect(await search("q=u&limit=-3")).toHaveLength(1);
+  });
+
   it("rebuilds index after cache invalidation", async () => {
     // First call
     const res1 = await req(`/api/project/${projectName}/files/index`);
