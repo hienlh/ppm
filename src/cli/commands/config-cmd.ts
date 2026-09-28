@@ -122,6 +122,18 @@ export function registerConfigCommands(program: Command): void {
 
         console.log(`${C.green}Updated:${C.reset} ${key} = ${value}`);
         console.log(`${C.cyan}Saved to:${C.reset} ${configService.getConfigPath()}`);
+
+        // The supervisor owns cloudflared and caches its own copy of the config,
+        // so a write alone would sit there until the next restart. Nudge it the
+        // same way the HTTP switch does; a machine with no supervisor running
+        // just keeps the persisted choice for its next start.
+        if (key === "tunnel.enabled") {
+          const { requestTunnelReload } = await import("../../services/supervisor-state.ts");
+          const reload = requestTunnelReload();
+          console.log(reload === "sent"
+            ? `${C.cyan}Applied:${C.reset} asked the running PPM to ${all.tunnel && (all.tunnel as { enabled?: boolean }).enabled ? "start" : "stop"} its tunnel`
+            : `${C.cyan}Note:${C.reset} no running supervisor to apply it to (${reload}) — takes effect on next start`);
+        }
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
         process.exit(1);
