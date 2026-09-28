@@ -880,6 +880,14 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   // setup, disable, or token rotation since the last spawn must be picked up
   // before deciding what to spawn next.
   namedTunnelMode = await readTunnelConfigFresh();
+  // The freshest possible view of the master switch, so consult it here rather than
+  // relying on all six call sites remembering to. Two of them — the Windows
+  // leaked-probe-handle restart and the edge probe's respawns — do not, and a
+  // respawn is exactly when a switch flipped since the last spawn should take hold.
+  if (!namedTunnelMode.enabled) {
+    log("INFO", "Public tunnel is switched off — not spawning cloudflared");
+    return;
+  }
 
   let bin: string;
   try {

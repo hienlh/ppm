@@ -101,6 +101,23 @@ describe("POST /tunnel/enabled — the master switch", () => {
     expect(status.data.enabled).toBe(false);
   });
 
+  it("refuses to start a tunnel while it is switched off", async () => {
+    // Otherwise the switch is advisory: the share popover's own Start button reaches this
+    // route and raises a public URL past it — one the supervisor holds no pid for, so
+    // nothing reaps it until the next restart's orphan sweep.
+    const app = createApp();
+    await app.request("/tunnel/enabled", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+
+    const res = await app.request("/tunnel/start", { method: "POST" });
+
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).error).toContain("switched off");
+  });
+
   it("round-trips back on", async () => {
     const app = createApp();
     const post = (enabled: boolean) => app.request("/tunnel/enabled", {

@@ -51,6 +51,13 @@ tunnelRoutes.post("/start", async (c) => {
   // round-robins between the two, so ~half of requests hit whichever origin the
   // stale connector still points at.
   const cfg = resolveTunnelConfig(getConfigValue("tunnel"));
+  // The master switch has to hold here too, or it is not one. This route spawns
+  // cloudflared from the *server* process, which the supervisor never learns a pid
+  // for — so a public URL raised past a switched-off tunnel is also one nothing
+  // will reap except the next restart's orphan sweep.
+  if (!cfg.enabled) {
+    return c.json(err("public tunnel is switched off"), 409);
+  }
   if (cfg.mode === "named") {
     return c.json(err("named tunnel is supervisor-managed"), 409);
   }
