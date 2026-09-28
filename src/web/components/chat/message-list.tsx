@@ -18,6 +18,9 @@ import { extractJsonlPath } from "./pre-compact-button";
 import { MarkdownContent } from "./message-markdown";
 import { UserBubble } from "./message-user-bubble";
 import { InterleavedEvents, ThinkingIndicator } from "./message-events";
+import { CompactionDivider } from "./compaction-divider";
+import { IdleCacheNotice } from "./idle-cache-notice";
+import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
 import { RenderErrorBoundary } from "@/components/shared/markdown-error-boundary";
 
 import {
@@ -50,6 +53,8 @@ interface MessageListProps {
   connectingElapsed?: number;
   statusMessage?: string | null;
   compactStatus?: "compacting" | null;
+  /** Prompt-cache clock for the idle re-cache notice; null when PPM cannot measure it. */
+  promptCache?: PromptCacheState | null;
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
   onFork?: (userMessage: string, messageId?: string) => void;
@@ -127,6 +132,7 @@ export function MessageList({
   connectingElapsed,
   statusMessage,
   compactStatus,
+  promptCache,
   projectName,
   onFork,
   onEdit,
@@ -454,6 +460,10 @@ export function MessageList({
                 data-msg-index={globalIdx}
                 className="px-4 pt-4 select-none"
               >
+                {/* Above the summary rather than beside it: the rule is what marks
+                    where the conversation was cut, and the summary is the first
+                    message on the new side of it. */}
+                {msg.compaction && <CompactionDivider compaction={msg.compaction} />}
                 <RenderErrorBoundary fallbackContent={msg.content}>
                   <MessageBubble
                     message={msg}
@@ -479,6 +489,11 @@ export function MessageList({
               </div>
             );
           })}
+          {/* Idle only: once a turn starts the cache question is already answered, and the
+              thinking indicator below owns that space. */}
+          {!isStreaming && !pendingApproval && (
+            <IdleCacheNotice promptCache={promptCache ?? null} />
+          )}
           {hasTrailing && (
             <div className="px-4 pt-4 pb-4 space-y-4 select-none">
               {pendingApproval && (

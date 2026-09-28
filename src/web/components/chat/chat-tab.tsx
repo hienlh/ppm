@@ -301,6 +301,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     pendingApproval,
     contextWindowPct,
     compactStatus,
+    promptCache,
     mcpNeedsAuth,
     statusMessage,
     sessionTitle,
@@ -1027,6 +1028,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         connectingElapsed={connectingElapsed}
         statusMessage={statusMessage}
         compactStatus={compactStatus}
+        promptCache={promptCache}
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
         onEdit={!isStreaming ? handleEdit : undefined}
@@ -1158,6 +1160,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             onEffortChange={setEffort}
             thinking={thinking}
             onThinkingChange={setThinking}
+            promptCache={promptCache}
           />
         )}
       </div>
