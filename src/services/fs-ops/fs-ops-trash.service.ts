@@ -47,28 +47,40 @@ function osaLiteral(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function windowsCommand(path: string, isDirectory: boolean): string[] {
+/**
+ * How a backend binary is found, replaceable for the same reason `TrashRunner` is.
+ *
+ * Which tool is present is as much a property of the host as what running it does, and
+ * leaving the lookup outside the seam meant a test could fake the run and still be refused
+ * before reaching it — on any machine without `gio` or `trash-put`, which includes the
+ * container the suite runs in.
+ */
+export type TrashLookup = (name: string) => string | null;
+
+const defaultLookup: TrashLookup = (name) => Bun.which(name);
+
+function windowsCommand(path: string, isDirectory: boolean, which: TrashLookup): string[] {
   const method = isDirectory ? "DeleteDirectory" : "DeleteFile";
   const script =
     "Add-Type -AssemblyName Microsoft.VisualBasic; " +
     `[Microsoft.VisualBasic.FileIO.FileSystem]::${method}(${psLiteral(path)},'OnlyErrorDialogs','SendToRecycleBin')`;
-  const shell = Bun.which("powershell") ?? Bun.which("pwsh");
+  const shell = which("powershell") ?? which("pwsh");
   if (!shell) throw noTrash("powershell not found on PATH");
   return [shell, "-NoProfile", "-NonInteractive", "-Command", script];
 }
 
 /** Paths are always absolute here, so no leading-dash option confusion. */
-function posixCommand(path: string): string[] {
+function posixCommand(path: string, which: TrashLookup): string[] {
   if (process.platform === "darwin") {
-    const trash = Bun.which("trash");
+    const trash = which("trash");
     if (trash) return [trash, path];
-    const osascript = Bun.which("osascript");
+    const osascript = which("osascript");
     if (!osascript) throw noTrash("neither trash nor osascript found on PATH");
     return [osascript, "-e", `tell application "Finder" to delete POSIX file ${osaLiteral(path)}`];
   }
-  const gio = Bun.which("gio");
+  const gio = which("gio");
   if (gio) return [gio, "trash", path];
-  const trashPut = Bun.which("trash-put");
+  const trashPut = which("trash-put");
   if (trashPut) return [trashPut, path];
   throw noTrash("neither gio nor trash-put found on PATH");
 }
@@ -85,7 +97,7 @@ async function isDirectoryTarget(path: string): Promise<boolean> {
 
 export async function trashPath(
   path: string,
-  options?: { run?: TrashRunner },
+  options?: { run?: TrashRunner; which?: TrashLookup },
 ): Promise<{ trashed: true; path: string }> {
   const target = resolvePath(path);
   assertAllowed(target);
@@ -94,8 +106,9 @@ export async function trashPath(
   await assertNotProtected(target);
   const isDir = await isDirectoryTarget(target);
 
+  const which = options?.which ?? defaultLookup;
   const cmd =
-    process.platform === "win32" ? windowsCommand(target, isDir) : posixCommand(target);
+    process.platform === "win32" ? windowsCommand(target, isDir, which) : posixCommand(target, which);
 
   const run = options?.run ?? spawnRunner;
   let result: { exitCode: number; stderr: string };

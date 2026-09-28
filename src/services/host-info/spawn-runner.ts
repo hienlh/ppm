@@ -41,6 +41,9 @@ export const defaultRunner: Runner = async (argv, timeoutMs = DEFAULT_TIMEOUT_MS
     return { stdout: "", stderr: e?.message ?? String(e), code: null, timedOut: false };
   }
   let timedOut = false;
+  /** Resolves when the timeout fires, so the readers below stop waiting with the process. */
+  let giveUp!: () => void;
+  const abandoned = new Promise<void>((resolve) => { giveUp = resolve; });
   const killTimer = setTimeout(() => {
     timedOut = true;
     try {
@@ -48,12 +51,29 @@ export const defaultRunner: Runner = async (argv, timeoutMs = DEFAULT_TIMEOUT_MS
     } catch {
       // Process already exited between the timer firing and the kill call.
     }
+    giveUp();
   }, timeoutMs);
+
+  /**
+   * The output, or nothing once the run has been given up on.
+   *
+   * Killing the process does **not** close its pipes. A shell that forks rather than execs
+   * leaves a grandchild holding the write end, so draining stdout goes on until *that* exits —
+   * measured, `proc.exited` came back at the 150ms timeout while the drain ran the full five
+   * seconds, which means `timeoutMs` bounded nothing at all. The pending read is left to settle
+   * on its own and discarded rather than cancelled: cancelling a subprocess stream has crashed
+   * Bun on Windows before, and there is nothing here worth that risk.
+   */
+  const readOrAbandon = (stream: ReadableStream<Uint8Array>): Promise<string> =>
+    Promise.race([
+      new Response(stream).text().catch(() => ""),
+      abandoned.then(() => ""),
+    ]);
 
   try {
     const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      readOrAbandon(proc.stdout),
+      readOrAbandon(proc.stderr),
       proc.exited,
     ]);
     return { stdout, stderr, code, timedOut };
