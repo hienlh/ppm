@@ -67,7 +67,9 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id: string) {
-          if (id.includes("node_modules/mermaid")) return "vendor-mermaid";
+          // Let the dynamic Mermaid import own its dependencies. A manual
+          // vendor group absorbs shared helpers and makes Markdown import the
+          // entire diagram engine even when the transcript contains no diagram.
           if (id.includes("node_modules/@xterm")) return "vendor-xterm";
           if (
             id.includes("node_modules/react-markdown") ||
@@ -85,8 +87,18 @@ export default defineConfig({
     host: true,
     port: 5173,
     allowedHosts: true,
+    // Vite turns this on by itself when it sees an AI agent in the environment (CLAUDECODE,
+    // AI_AGENT, ...), which is how PPM's dev server is usually started. Its client then
+    // forwards unhandled rejections over the HMR socket without catching the send, so once
+    // a tunnel drops that socket each failed send is itself an unhandled rejection: a tab
+    // was measured spinning at ~87k rejections/s and 150% CPU until reloaded.
+    forwardConsole: false,
     proxy: {
-      "/api": process.env.PPM_DEV_API ?? "http://localhost:8081",
+      "/api": {
+        target: process.env.PPM_DEV_API ?? "http://localhost:8081",
+        // HTML preview CSP must refer to the browser-facing authority.
+        changeOrigin: false,
+      },
       "/ws": {
         target: process.env.PPM_DEV_API ?? "http://localhost:8081",
         ws: true,

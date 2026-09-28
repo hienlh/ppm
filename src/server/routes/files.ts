@@ -1,3 +1,4 @@
+import { searchProjectContent, ProjectSearchError } from "../../services/project-content-search.service";
 import { Hono } from "hono";
 import { resolve, isAbsolute } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
@@ -303,23 +304,6 @@ fileRoutes.post("/rename", async (c) => {
   }
 });
 
-/** Convert glob pattern (VSCode-style) to RegExp for path filtering.
- *  - `*.ts`       → matches any .ts file in any directory
- *  - `src/**`     → matches any file under src/
- *  - `src/**\/*.ts` → matches .ts files under src/
- */
-function globToPathRegex(glob: string): RegExp {
-  const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars
-    .replace(/\*\*/g, "\x00") // temp placeholder for **
-    .replace(/\*/g, "[^/]*") // * = within one segment
-    .replace(/\x00/g, ".*") // ** = across segments
-    .replace(/\?/g, "[^/]"); // ? = single non-slash char
-  // No slash in pattern → match at any depth (like **/<pattern>)
-  const re = glob.includes("/") ? `^${escaped}($|/)` : `(^|/)${escaped}($|/)`;
-  return new RegExp(re);
-}
-
 /** GET /files/resolve?name=filename — resolve filename to project path(s) */
 fileRoutes.get("/resolve", (c) => {
   try {
@@ -335,67 +319,19 @@ fileRoutes.get("/resolve", (c) => {
   }
 });
 
-/** GET /files/search?q=...&caseSensitive=false — search file content with grep */
+/** GET /files/search ? bounded, asynchronous project content search. */
 fileRoutes.get("/search", async (c) => {
-  const projectPath = c.get("projectPath");
-  const q = (c.req.query("q") ?? "").trim();
-  const caseSensitive = c.req.query("caseSensitive") === "true";
-  const wholeWord = c.req.query("wholeWord") === "true";
-  const useRegex = c.req.query("regex") === "true";
-  const include = (c.req.query("include") ?? "").trim();
-
-  if (!useRegex && q.length < 2) return c.json(ok({ results: [], total: 0 }));
-  if (useRegex && q.length < 1) return c.json(ok({ results: [], total: 0 }));
-
-  // Build include path filter regexes (post-filter, supports paths + globs)
-  const includeFilters = include
-    ? include.split(",").map((s) => s.trim()).filter(Boolean).map(globToPathRegex)
-    : [];
-
-  // Build the grep pattern
-  let pattern = useRegex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (wholeWord) pattern = `\\b${pattern}\\b`;
-
   try {
-    const EXCLUDE_DIRS = ["node_modules", ".git", "dist", ".next", "build", ".turbo", "coverage", "__pycache__"];
-    const excludeDirArgs = EXCLUDE_DIRS.flatMap((d) => ["--exclude-dir", d]);
-    const excludeArgs = ["--exclude=*.min.js", "--exclude=*.map", "--exclude=*.lock", "--exclude=bun.lock"];
-    const flags = ["-rn", "--max-count=5", "-I", "-E", ...(caseSensitive ? [] : ["-i"])];
-
-    const proc = Bun.spawnSync({
-      cmd: ["grep", ...flags, ...excludeDirArgs, ...excludeArgs, "--", pattern, projectPath],
-      stdout: "pipe",
-      stderr: "pipe",
+    const result = await searchProjectContent(c.get("projectPath"), {
+      query: (c.req.query("q") ?? "").trim(),
+      caseSensitive: c.req.query("caseSensitive") === "true",
+      wholeWord: c.req.query("wholeWord") === "true",
+      regex: c.req.query("regex") === "true",
+      include: (c.req.query("include") ?? "").trim(),
     });
-
-    const raw = proc.stdout.toString();
-    if (!raw.trim()) return c.json(ok({ results: [], total: 0 }));
-
-    // Parse grep output: /abs/path/file.ts:42:content
-    const fileMap = new Map<string, { lineNum: number; content: string }[]>();
-    for (const line of raw.split("\n")) {
-      if (!line) continue;
-      // Strip projectPath prefix, then split on first two colons
-      const rel = line.startsWith(projectPath) ? line.slice(projectPath.length + 1) : line;
-      const firstColon = rel.indexOf(":");
-      if (firstColon < 0) continue;
-      const secondColon = rel.indexOf(":", firstColon + 1);
-      if (secondColon < 0) continue;
-      const filePath = rel.slice(0, firstColon);
-      const lineNum = parseInt(rel.slice(firstColon + 1, secondColon), 10);
-      const content = rel.slice(secondColon + 1).trimEnd();
-      if (!filePath || isNaN(lineNum)) continue;
-      // Apply include path filter if specified
-      if (includeFilters.length > 0 && !includeFilters.some((re) => re.test(filePath))) continue;
-      if (!fileMap.has(filePath)) fileMap.set(filePath, []);
-      fileMap.get(filePath)!.push({ lineNum, content });
-    }
-
-    const results = Array.from(fileMap.entries()).map(([file, matches]) => ({ file, matches }));
-    const total = results.reduce((sum, r) => sum + r.matches.length, 0);
-    return c.json(ok({ results, total }));
-  } catch (e) {
-    return c.json(err((e as Error).message), 500);
+    return c.json(ok(result));
+  } catch (error) {
+    return c.json(err((error as Error).message), error instanceof ProjectSearchError ? error.status : 500);
   }
 });
 

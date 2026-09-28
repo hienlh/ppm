@@ -5,9 +5,12 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
+import { OnboardingRunDocumentPreview } from "@/components/onboarding/onboarding-run-document-preview";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
 import { applyBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
 import { useIsMobile, isMobileDevice } from "@/hooks/use-is-mobile";
@@ -18,6 +21,8 @@ import { LspStatus } from "./lsp-status";
 import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal, ShieldCheck, ShieldOff } from "@/lib/icons";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
+import { HtmlPreview } from "./html-preview";
+import { HtmlPreviewToolbar } from "./html-preview-toolbar";
 import { EditorLanguagePicker } from "./editor-language-picker";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
@@ -87,6 +92,14 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const [encoding, setEncoding] = useState<string>("utf-8");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadedFile, setLoadedFile] = useState<string | null>(null);
+  const activeTabId = useTabStore((s) => s.activeTabId);
+  const [onboardingRefresh, setOnboardingRefresh] = useState(0);
+  useEffect(() => {
+    const refresh = () => setOnboardingRefresh((n) => n + 1);
+    window.addEventListener("ppm:onboarding-refresh", refresh);
+    return () => window.removeEventListener("ppm:onboarding-refresh", refresh);
+  }, []);
   const [unsaved, setUnsaved] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestContentRef = useRef<string>("");
@@ -136,6 +149,11 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const isAudio = AUDIO_EXTS.has(ext);
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
+  const isHtml = (ext === "html" || ext === "htm") && !isUntitled && inlineContent == null;
+  const [htmlMode, setHtmlMode] = useState<"edit" | "preview">("preview");
+  const [htmlRevision, setHtmlRevision] = useState(0);
+  const [htmlCodeOpened, setHtmlCodeOpened] = useState(false);
+  const htmlPreviewVisible = isHtml && htmlMode === "preview";
   const isCsv = ext === "csv";
   // Explicit language override (from language picker / New DB Query); falls back to file extension.
   const langOverride = metadata?.language as string | undefined;
@@ -322,6 +340,17 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // Detect external (absolute) file path — not relative to project
   const isExternalFile = filePath ? /^(\/|[A-Za-z]:[/\\])/.test(filePath) : false;
 
+  useEffect(() => {
+    if (!projectName || !filePath || !tabId || activeTabId !== tabId || loading || error || !mounted ||
+      loadedFile !== `${projectName}:${filePath}` || inlineContent != null || isUntitled || isSqlite || encoding === "base64" ||
+      htmlPreviewVisible || isImage || isPdf || isDocx || isVideo || isAudio || (isMarkdown && mdMode === "preview") || (isCsv && csvMode === "table")) return;
+    const node = mounted.editor.getDomNode();
+    const visible = !!node?.isConnected && !!node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    if (visible) emitOnboardingEvidence({ type: "file-ready", projectName, tabId, visible,
+      isRunDocument: /^(readme(?:\..*)?|package\.json)$/i.test(basename(filePath)) });
+  }, [onboardingRefresh, projectName, filePath, tabId, activeTabId, loading, error, mounted, loadedFile, inlineContent, isUntitled,
+    isSqlite, encoding, isImage, isPdf, isDocx, isVideo, isAudio, isMarkdown, mdMode, isCsv, csvMode, htmlPreviewVisible]);
+
   // Load file content
   useEffect(() => {
     if (inlineContent != null) { setLoading(false); return; }
@@ -338,6 +367,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
 
     setLoading(true);
     setError(null);
+    setLoadedFile(null);
+    let cancelled = false;
 
     const readUrl = isExternalFile
       ? `/api/fs/read?path=${encodeURIComponent(filePath)}`
@@ -346,17 +377,20 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     api
       .get<{ content: string; encoding?: string }>(readUrl)
       .then((data) => {
+        if (cancelled) return;
         setContent(data.content);
-        if (data.encoding) setEncoding(data.encoding);
+        setEncoding(data.encoding ?? "utf-8");
+        setLoadedFile(`${projectName}:${filePath}`);
         latestContentRef.current = data.content;
         setLoading(false);
       })
       .catch((err) => {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load file");
         setLoading(false);
       });
 
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+    return () => { cancelled = true; if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [filePath, projectName, isImage, isPdf, isDocx, isExternalFile, isUntitled]);
 
   // Manual reload: re-fetch content from disk (fallback when fs watch misses a change)
@@ -448,7 +482,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // buffer no server can serve must not switch the built-in worker back on underneath the
   // project file in the next tab.
   const lspWanted = lspEnabled && !isTouchOnly;
-  const lspOn = lspWanted && lspServable;
+  const lspOn = lspWanted && lspServable && !htmlPreviewVisible;
   const [lsp, setLsp] = useState<EditorLspState>({ status: null, diagnostics: [] });
   const handleLspState = useCallback((next: EditorLspState) => setLsp(next), []);
 
@@ -782,6 +816,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   return (
     <div
       ref={containerRef}
+      data-onboarding="file"
       className="flex flex-col h-full w-full overflow-hidden"
       style={mobileHeight ? { height: `${mobileHeight}px`, maxHeight: `${mobileHeight}px` } : undefined}
     >
@@ -807,7 +842,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         </div>
       )}
       {/* Breadcrumb + Toolbar bar — desktop only */}
-      {filePath && projectName && tabId && (
+      {!isHtml && filePath && projectName && tabId && (
         <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0">
           <EditorBreadcrumb
             filePath={filePath}
@@ -851,7 +886,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       )}
 
       {/* Language + SQL toolbar for untitled / external files (no project breadcrumb) */}
-      {inlineContent == null && tabId && (isUntitled || (filePath && !projectName)) && (
+      {!isHtml && inlineContent == null && tabId && (isUntitled || (filePath && !projectName)) && (
         <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0 px-2">
           <span className="text-xs text-muted-foreground truncate flex-1">
             {isUntitled ? `Untitled-${metadata?.untitledNumber ?? 1}` : (filePath ? basename(filePath) : "Untitled")}
@@ -861,15 +896,33 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         </div>
       )}
 
+      {isHtml && filePath && (
+        <HtmlPreviewToolbar mode={htmlMode} onModeChange={(mode) => {
+          if (mode === "edit") setHtmlCodeOpened(true);
+          setHtmlMode(mode);
+        }}
+          onRefresh={() => { setHtmlMode("preview"); setHtmlRevision((value) => value + 1); }} unsaved={unsaved}
+          onReloadCode={reloadFile} refreshing={refreshing}
+          breadcrumb={projectName && tabId ? <EditorBreadcrumb filePath={filePath} projectName={projectName} tabId={tabId} className="flex items-center min-w-0 overflow-x-auto scrollbar-none gap-0.5" /> : <span className="truncate text-xs text-muted-foreground">{basename(filePath)}</span>}
+          filePath={filePath} projectName={projectName} wordWrap={wrapOn} onToggleWordWrap={toggleWrap}
+          inlineBlame={inlineBlame} onToggleInlineBlame={canBlame ? toggleInlineBlame : undefined}
+          language={effectiveLanguage} onLanguageChange={handleLanguageChange}
+          lspEnabled={lspWanted} onToggleLsp={lspServable && !isTouchOnly ? setLspEnabled : undefined} />
+      )}
+
       {/* Content area */}
-      {isCsv && csvMode === "table" ? (
+      {htmlPreviewVisible && filePath && (
+        <HtmlPreview filePath={filePath} projectName={projectName} revision={htmlRevision} />
+      )}
+      {htmlPreviewVisible && !htmlCodeOpened ? null : isCsv && csvMode === "table" ? (
         <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>}>
           <CsvPreview content={content ?? ""} onContentChange={handleChange} wordWrap={wrapOn} />
         </Suspense>
       ) : isMarkdown && mdMode === "preview" ? (
-        <MarkdownPreview content={content ?? ""} />
+        <MarkdownPreview content={content ?? ""} projectName={projectName} filePath={filePath} tabId={tabId}
+          ready={!loading && !error && loadedFile === `${projectName}:${filePath}` && inlineContent == null && !isUntitled} />
       ) : (
-        <div className="flex-1 overflow-hidden min-h-0">
+        <div className={htmlPreviewVisible ? "hidden" : "flex-1 overflow-hidden min-h-0"}>
           <Editor
             height="100%"
             key={effectiveLanguage}
@@ -877,7 +930,10 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             // Before, not on, mount: the model is created with its language
             // id first, and a model created against an unregistered id is
             // plaintext for good.
-            beforeMount={registerDotenvLanguage}
+            beforeMount={(monaco) => {
+              prepareMonacoTheme(monaco);
+              registerDotenvLanguage(monaco);
+            }}
             value={content ?? ""}
             onChange={inlineContent != null ? undefined : handleChange}
             onMount={handleEditorMount}
@@ -931,7 +987,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       )}
 
       {/* Mobile toolbar — bottom, like terminal */}
-      {isMobile && (
+      {isMobile && !htmlPreviewVisible && (
         <EditorMobileToolbar
           editorRef={editorRef}
           readOnly={inlineContent != null}
@@ -1048,11 +1104,12 @@ function LoadingSpinner() {
   return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
 }
 
-function MarkdownPreview({ content }: { content: string }) {
+function MarkdownPreview({ content, ...context }: { content: string; projectName?: string; filePath?: string; tabId?: string; ready: boolean }) {
   return (
     <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded m-4" />}>
-      <MarkdownRenderer content={content} className="flex-1 overflow-auto p-4" />
+      <OnboardingRunDocumentPreview {...context}>
+        <MarkdownRenderer content={content} className="flex-1 overflow-auto p-4" />
+      </OnboardingRunDocumentPreview>
     </Suspense>
   );
 }
-

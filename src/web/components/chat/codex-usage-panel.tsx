@@ -25,8 +25,10 @@ import { codexPlanLabel } from "../../../shared/codex-plan-label.ts";
 import { dailyGuardState } from "../../../shared/codex-daily-guard.ts";
 import { UsagePanelShell } from "./usage-panel-shell";
 
-interface CodexAccount { id: string; label: string; type: string; planType?: string | null; status?: "active" | "disabled"; dailyGuardEnabled?: boolean }
-type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly">;
+import { CODEX_SIGNED_OUT_HINT, type CodexAccount } from "@/components/settings/accounts/use-codex-accounts";
+import { CodexSignInAgainDialog } from "@/components/settings/accounts/codex-sign-in-again-dialog";
+import { CodexResetCreditButton } from "@/components/settings/accounts/codex-reset-credit-button";
+type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly" | "resetCredits">;
 
 /** Matches the whole-percent figure the bars show, so a refusal agrees with the card. */
 function atCap(util: number | null | undefined): boolean {
@@ -66,6 +68,8 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
   const [selectingId, setSelectingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
+  /** The signed-out account whose "Sign in again" chip was pressed. */
+  const [signInAgain, setSignInAgain] = useState<CodexAccount | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,6 +102,7 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
    */
   const unselectableReason = useCallback((account: CodexAccount, u: Usage): string | null => {
     if (account.status === "disabled") return "Disabled";
+    if (account.signedOut) return "Signed out — sign in again first";
     if (atCap(u.fiveHour)) return `5-hour limit reached${u.session?.resetsAt ? ` — resets ${formatResetTime(u.session)}` : ""}`;
     if (atCap(u.sevenDay)) return `Weekly limit reached${u.weekly?.resetsAt ? ` — resets ${formatResetTime(u.weekly)}` : ""}`;
     return null;
@@ -175,6 +180,7 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
   );
 
   return (
+    <>
     <UsagePanelShell
       title="Codex Usage"
       onClose={onClose}
@@ -205,9 +211,20 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
             dailyGuard={guard ? { enabled: !!a.dailyGuardEnabled, state: guard } : undefined}
             onDailyGuardToggle={guard ? () => void handleDailyGuardToggle(a.id, !!a.dailyGuardEnabled) : undefined}
             dailyGuardToggling={togglingId === a.id}
+            reauthHint={a.signedOut ? CODEX_SIGNED_OUT_HINT : undefined}
+            resetCredits={u.resetCredits}
+            resetCreditAction={
+              <CodexResetCreditButton account={a} usage={u} onDone={(m) => { setPanelError(m); void reload(); }} />
+            }
+            // Only a ChatGPT sign-in can be renewed in place; a dead API key is replaced.
+            onReauth={a.type === "chatgpt" ? () => setSignInAgain(a) : undefined}
           />
         );
       })}
     </UsagePanelShell>
+    {signInAgain && (
+      <CodexSignInAgainDialog account={signInAgain} onClose={() => setSignInAgain(null)} onDone={() => void load()} />
+    )}
+    </>
   );
 }

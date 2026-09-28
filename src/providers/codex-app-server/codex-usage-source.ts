@@ -3,6 +3,8 @@ import type { ProviderUsageSource } from "../../services/provider-usage/usage-so
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
 import { listCodexAccounts, getCodexAccount } from "../../services/codex-account.service.ts";
 import { fetchCodexUsageLive } from "./codex-usage-fetch.ts";
+import { isCodexAuthFailure } from "./codex-auth-failure.ts";
+import { markCodexAccountAuthFailed, clearCodexAccountAuthFailure } from "../../services/codex-account-auth-state.ts";
 
 /**
  * Codex's plug into the shared usage layer.
@@ -29,7 +31,18 @@ export const codexUsageSource: ProviderUsageSource = {
     // object would be persisted as a real reading for an account that is gone.
     if (!account) throw new Error(`codex account ${accountId} no longer exists`);
 
-    const usage = await fetchCodexUsageLive(account.home);
+    let usage: UsageInfo;
+    try {
+      usage = await fetchCodexUsageLive(account.home);
+    } catch (e) {
+      // The sweep is the one thing that reads every account on a timer, so it is what keeps
+      // a signed-out account benched between turns — and what notices it first, before any
+      // turn is spent on it.
+      const message = (e as Error)?.message ?? String(e);
+      if (isCodexAuthFailure(message)) markCodexAccountAuthFailed(account.id, message.slice(0, 256));
+      throw e;
+    }
+    clearCodexAccountAuthFailure(account.id);
     // The rate-limit payload carries the plan name, which the parser puts in
     // activeAccountLabel; the account's own label is the truthful one.
     return { ...usage, activeAccountId: account.id, activeAccountLabel: account.label };

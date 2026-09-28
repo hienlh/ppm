@@ -15,7 +15,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { hydrateWorkspaceFromServer } from "@/stores/panel-utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useTheme } from "@/theme/use-theme";
-import { initShikiThemeSync, warmShiki } from "@/theme/adapters/shiki-adapter";
+import { initShikiThemeSync } from "@/theme/adapters/shiki-adapter";
 import { initMonacoThemeSync } from "@/theme/adapters/monaco-adapter";
 import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync";
@@ -24,6 +24,7 @@ import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
 import { WakeLockMobileBadge } from "@/components/layout/wake-lock-indicator";
 import { useTabPrefetch } from "@/hooks/use-tab-prefetch";
+import { useFileIndexInvalidation } from "@/hooks/use-file-index-invalidation";
 import { useGlobalEvents } from "@/hooks/use-global-events";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
@@ -41,6 +42,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { UploadProgressPanel } from "@/components/os-explorer/upload/upload-progress-panel";
 import { cn } from "@/lib/utils";
 import { isRecoveryReloadPending } from "@/lib/chunk-recovery";
+import { OnboardingRoot } from "@/components/onboarding/onboarding-root";
 
 // Lazy: the explorer feature (views, actions, skins, icon map) is the same heavy bundle the
 // desktop floating window already keeps out of the initial chunk (see `WINDOW_CONTENT`) —
@@ -58,10 +60,11 @@ const RemoteDesktopMobileSheet = lazy(() =>
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
 export function App() {
+  useFileIndexInvalidation();
   const [authState, setAuthState] = useState<AuthState>("checking");
   const isMobileViewport = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | undefined>();
+  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "search" | "history" | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
 
   const [mountedProjects, setMountedProjects] = useState<Set<string>>(
@@ -69,10 +72,9 @@ export function App() {
   );
   // Resolves the active theme from the store and applies CSS vars to <html>.
   useTheme();
-  // Sync Shiki syntax highlighting to the active theme + warm the highlighter.
+  // Subscribe to themes without downloading either editor engine at startup.
   useEffect(() => {
     initShikiThemeSync();
-    warmShiki();
     initMonacoThemeSync();
   }, []);
   const deviceName = useSettingsStore((s) => s.deviceName);
@@ -306,7 +308,7 @@ export function App() {
         {/* Main layout */}
         <div className="flex flex-1 overflow-hidden">
           {/* Desktop unified nav rail (wordmark + project switcher + section rail + panel) */}
-          <Sidebar />
+          {!isMobileViewport && <Sidebar />}
 
           {/* Content area — keep-alive per project. `relative` is the positioning context
               the floating window layer measures and clamps its windows against. */}
@@ -350,6 +352,13 @@ export function App() {
         <ProjectBottomSheet
           isOpen={projectSheetOpen}
           onClose={() => setProjectSheetOpen(false)}
+        />
+        <OnboardingRoot
+          paletteOpen={paletteOpen}
+          navigationOpen={drawerOpen || projectSheetOpen}
+          openProjects={() => setProjectSheetOpen(true)}
+          openNavigation={(tab) => { setDrawerTab(tab as "explorer" | "git" | "search" | "history"); setDrawerOpen(true); }}
+          closeNavigation={() => { setDrawerOpen(false); setProjectSheetOpen(false); }}
         />
 
         {/* Command palette (Shift+Shift) */}

@@ -1,0 +1,109 @@
+/* PPM Design Tokens — Aurora Dark (default) + Aurora Light
+   Extracted from src/web/theme/builtin/aurora.ts and globals.css.
+   Link from designs with: <link rel="stylesheet" href="../tokens.css"> */
+
+:root {
+  /* ── Colour: surfaces ── */
+  --color-bg: #0a0e17;
+  --color-bg-gradient: radial-gradient(ellipse at 50% 0%, #0e1626, #080b12);
+  --color-rail: #141820;
+  --color-panel: #141820;
+  --color-panel-2: #141c2e;
+
+  /* ── Colour: borders ── */
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-soft: rgba(255, 255, 255, 0.06);
+
+  /* ── Colour: text ── */
+  --color-text: #eaeefb;
+  --color-text-2: #9aa6c2;
+  --color-text-3: #64708c;
+
+  /* ── Colour: accent ── */
+  --color-accent: #5b8cff;
+  --color-accent-fg: #ffffff;
+  --color-accent-2: #a06bff;
+
+  /* ── Colour: semantic ── */
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
+  --color-info: #38bdf8;
+
+  /* ── Typography ── */
+  --font-sans: "Geist Variable", "Geist", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", "Inter", "Noto Sans", Cantarell,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Monaspace Argon", "Monaspace Argon Var", ui-monospace,
+    "SF Mono", "Cascadia Code", "Noto Sans Mono", "DejaVu Sans Mono",
+    Consolas, monospace;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-md: 15px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+
+  /* ── Spacing (4px base) ── */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Border radius ── */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-card: 18px;
+
+  /* ── Shadows ── */
+  --shadow-panel: 0 30px 70px -24px rgba(0, 0, 0, 0.65);
+  --shadow-float: 0 8px 24px -10px rgba(0, 0, 0, 0.5);
+
+  /* ── Scrollbar ── */
+  --scrollbar-width: 5px;
+
+  /* ── Transitions ── */
+  --transition-theme: 0.25s ease-out;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* ── Colour: surfaces ── */
+    --color-bg: #f3f7ff;
+    --color-bg-gradient: radial-gradient(ellipse at 50% 0%, #f3f7ff, #e8edf7);
+    --color-rail: #fafcff;
+    --color-panel: #fafcff;
+    --color-panel-2: #ffffff;
+
+    /* ── Colour: borders ── */
+    --color-border: rgba(20, 30, 60, 0.12);
+    --color-border-soft: rgba(20, 30, 60, 0.07);
+
+    /* ── Colour: text ── */
+    --color-text: #0f1a33;
+    --color-text-2: #4a5878;
+    --color-text-3: #8391ad;
+
+    /* ── Colour: accent ── */
+    --color-accent: #2f6bff;
+    --color-accent-fg: #ffffff;
+    --color-accent-2: #7c4dff;
+
+    /* ── Colour: semantic ── */
+    --color-success: #059f6b;
+    --color-warning: #d98a00;
+    --color-error: #dc2626;
+    --color-info: #0891b2;
+
+    /* ── Shadows ── */
+    --shadow-panel: 0 30px 70px -24px rgba(0, 0, 0, 0.12);
+    --shadow-float: 0 8px 24px -10px rgba(0, 0, 0, 0.1);
+  }
+}

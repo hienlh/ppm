@@ -1,4 +1,8 @@
-/** Add a Codex account through browser login, device code, or an API key. */
+/**
+ * Add a Codex account through browser login, device code, or an API key — or, with
+ * `reloginLabel`, sign an existing ChatGPT account in again. That mode drops the label and
+ * API-key parts: the account keeps its name, and a key is not a sign-in to renew.
+ */
 
 import { ExternalLink, KeyRound, Loader2, MonitorSmartphone } from "@/lib/icons";
 import {
@@ -17,7 +21,10 @@ export function CodexAddAccountDialog({
   open, onOpenChange, label, onLabelChange, apiKey, onApiKeyChange,
   adding, onAddApiKey, deviceWaiting, onStartDevice, device, error,
   browser, onStartBrowser, loginStarting, callbackUrl, onCallbackUrlChange, submittingCallback, onSubmitCallback,
+  reloginLabel,
 }: {
+  /** Present when signing an existing account in again; names it in the title. */
+  reloginLabel?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   label: string;
@@ -43,18 +50,22 @@ export function CodexAddAccountDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-sm">Add Codex Account</DialogTitle>
+          <DialogTitle className="text-sm">{reloginLabel ? `Sign in again — ${reloginLabel}` : "Add Codex Account"}</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
-            Choose browser login, a device code, or an OpenAI API key.
+            {reloginLabel
+              ? "Sign in with ChatGPT to renew this account. It keeps its name, its settings and the chats bound to it."
+              : "Choose browser login, a device code, or an OpenAI API key."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="codex-label" className="text-xs">Label (optional)</Label>
-            <Input id="codex-label" placeholder="e.g. Personal, Work" value={label}
-              onChange={(e) => onLabelChange(e.target.value)} disabled={loginBusy} className="text-xs" />
-          </div>
+          {!reloginLabel && (
+            <div className="space-y-1.5">
+              <Label htmlFor="codex-label" className="text-xs">Label (optional)</Label>
+              <Input id="codex-label" placeholder="e.g. Personal, Work" value={label}
+                onChange={(e) => onLabelChange(e.target.value)} disabled={loginBusy} className="text-xs" />
+            </div>
+          )}
           <div className="rounded-md border p-3 space-y-2">
             <p className="text-[11px] font-medium">Browser login</p>
             <Button size="sm" className="w-full cursor-pointer gap-1.5" onClick={onStartBrowser} disabled={loginBusy}>
@@ -108,23 +119,27 @@ export function CodexAddAccountDialog({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex-1 border-t" />
-            <span className="text-[10px] text-muted-foreground">or paste an API key</span>
-            <div className="flex-1 border-t" />
-          </div>
+          {!reloginLabel && (
+            <>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 border-t" />
+                <span className="text-[10px] text-muted-foreground">or paste an API key</span>
+                <div className="flex-1 border-t" />
+              </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="codex-api-key" className="text-xs">OpenAI API key</Label>
-            <Input
-              id="codex-api-key"
-              type="password"
-              placeholder="sk-..."
-              value={apiKey}
-              onChange={(e) => onApiKeyChange(e.target.value)}
-              className="text-xs font-mono"
-            />
-          </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="codex-api-key" className="text-xs">OpenAI API key</Label>
+                <Input
+                  id="codex-api-key"
+                  type="password"
+                  placeholder="sk-..."
+                  value={apiKey}
+                  onChange={(e) => onApiKeyChange(e.target.value)}
+                  className="text-xs font-mono"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {loginStarting && <p role="status" className="text-xs">Starting login...</p>}
@@ -134,15 +149,17 @@ export function CodexAddAccountDialog({
           <Button size="sm" variant="outline" className="text-xs cursor-pointer" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button
-            size="sm"
-            className="text-xs cursor-pointer gap-1.5"
-            onClick={onAddApiKey}
-            disabled={!apiKey.trim() || loginBusy}
-          >
-            {adding ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
-            Add key
-          </Button>
+          {!reloginLabel && (
+            <Button
+              size="sm"
+              className="text-xs cursor-pointer gap-1.5"
+              onClick={onAddApiKey}
+              disabled={!apiKey.trim() || loginBusy}
+            >
+              {adding ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
+              Add key
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

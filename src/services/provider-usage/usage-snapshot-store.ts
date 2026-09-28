@@ -8,6 +8,7 @@ import {
   type LimitSnapshotRow,
 } from "../db.service.ts";
 import { AMBIENT_ACCOUNT_KEY } from "./usage-source.ts";
+import { deserializeUsageExtra, serializeUsageExtra, usageExtraSignature } from "../../shared/usage-extra.ts";
 
 /**
  * The durable half of the usage layer: turning a provider's `UsageInfo` into a
@@ -58,7 +59,7 @@ export function snapshotToUsage(row: LimitSnapshotRow): UsageInfo & { lastFetche
   if (row.weekly_sonnet_util != null) {
     usage.weeklySonnet = toBucket(row.weekly_sonnet_util, row.weekly_sonnet_resets_at ?? "", 168);
   }
-  return usage;
+  return { ...usage, ...deserializeUsageExtra(row.extra_json) };
 }
 
 /** Read the newest stored snapshot for one provider account, or undefined. */
@@ -89,6 +90,7 @@ function hasChanged(usage: UsageInfo, last: LimitSnapshotRow | null): boolean {
   if (moved(usage.weeklySonnet?.utilization, last.weekly_sonnet_util)) return true;
   if (usage.session?.resetsAt && usage.session.resetsAt !== (last.five_hour_resets_at ?? "")) return true;
   if (usage.weekly?.resetsAt && usage.weekly.resetsAt !== (last.weekly_resets_at ?? "")) return true;
+  if (usageExtraSignature(serializeUsageExtra(usage)) !== usageExtraSignature(last.extra_json)) return true;
   return false;
 }
 
@@ -101,7 +103,8 @@ function hasChanged(usage: UsageInfo, last: LimitSnapshotRow | null): boolean {
  */
 export function writeStoredUsage(providerId: string, accountId: string, usage: UsageInfo): void {
   const hasAnyBucket = usage.session != null || usage.weekly != null
-    || usage.weeklyOpus != null || usage.weeklySonnet != null;
+    || usage.weeklyOpus != null || usage.weeklySonnet != null
+    || !!usage.weeklyScoped?.length || usage.resetCredits != null;
   if (!hasAnyBucket) return;
 
   const id = accountId === AMBIENT_ACCOUNT_KEY ? null : accountId;
@@ -121,6 +124,7 @@ export function writeStoredUsage(providerId: string, accountId: string, usage: U
     weekly_opus_resets_at: usage.weeklyOpus?.resetsAt ?? null,
     weekly_sonnet_util: usage.weeklySonnet?.utilization ?? null,
     weekly_sonnet_resets_at: usage.weeklySonnet?.resetsAt ?? null,
+    extra_json: serializeUsageExtra(usage),
   });
   cleanupOldLimitSnapshots();
 }

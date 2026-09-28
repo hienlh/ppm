@@ -167,6 +167,8 @@ class ConfigService {
     dbProjects: { path: string; name: string; color: string | null }[],
   ): PpmConfig {
     const config = structuredClone(DEFAULT_CONFIG);
+    // Existing installs without an AI row must also retain the old tab behavior.
+    config.ai.new_chat_provider_mode = "default";
     for (const [key, jsonValue] of Object.entries(dbRows)) {
       if (key in config && key !== "projects") {
         try {

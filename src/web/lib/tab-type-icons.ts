@@ -7,13 +7,15 @@
  */
 import {
   Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Puzzle, Sparkles, Users, CircleX,
-  GitCommitHorizontal,
+  GitCommitHorizontal, Palette,
   type LucideIcon,
 } from "@/lib/icons";
 import type { ElementType } from "react";
 import type { TabType } from "@/stores/tab-store";
 import { fileIconElement } from "@/lib/file-icons";
 import { PROVIDER_LOGOS } from "@/lib/provider-logos";
+import { viewTypeIcon } from "@/lib/extension-icons";
+import { useExtensionStore } from "@/stores/extension-store";
 
 export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   terminal: Terminal,
@@ -33,6 +35,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   "ai-resource": Sparkles,
   group: Users,
   problems: CircleX,
+  design: Palette,
 };
 
 /** Resolve the icon for a tab type, falling back to a generic glyph. */
@@ -69,6 +72,18 @@ export function getTabIcon(tab: TabIconSubject): ElementType {
   if (tab.type === "chat") {
     const logo = PROVIDER_LOGOS[(tab.metadata?.providerId as string | undefined) ?? "claude"];
     if (logo) return logo;
+  }
+  // A panel an extension opened is labelled with the icon its manifest gave the
+  // command that opens it — read here rather than stored on the tab, so a tab
+  // that was already open when the extension declared one picks it up too.
+  // Falls back to the puzzle piece, which is the honest answer for a panel
+  // whose extension has not said what it is.
+  if (tab.type === "extension" || tab.type === "extension-webview") {
+    const contributed = viewTypeIcon(
+      useExtensionStore.getState().contributions,
+      tab.metadata?.viewType as string | undefined,
+    );
+    if (contributed) return contributed;
   }
   return getTabTypeIcon(tab.type);
 }

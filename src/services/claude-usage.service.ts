@@ -15,6 +15,8 @@ import { startProviderUsagePolling, stopProviderUsagePolling, sweepUsageSource }
 import { refreshUsage as refreshProviderUsage } from "./provider-usage/usage-registry.ts";
 import { claudeUsageSource } from "./claude-usage-source.ts";
 import { resetUsageRuntimeState } from "./provider-usage/index.ts";
+import { deserializeUsageExtra, parseClaudeScopedLimits, scopedBucket } from "../shared/usage-extra.ts";
+import type { ScopedLimitBucket } from "../types/chat.ts";
 
 export interface LimitBucket {
   utilization: number;
@@ -30,6 +32,8 @@ export interface ClaudeUsage {
   weekly?: LimitBucket;
   weeklyOpus?: LimitBucket;
   weeklySonnet?: LimitBucket;
+  /** Per-model weekly limits ("Fable", …) — see `shared/usage-extra.ts`. */
+  weeklyScoped?: ScopedLimitBucket[];
   totalCostUsd?: number;
 }
 
@@ -93,6 +97,8 @@ function snapshotToUsage(row: LimitSnapshotRow): ClaudeUsage {
   if (row.weekly_util != null) result.weekly = dbBucketToLimitBucket(row.weekly_util, row.weekly_resets_at ?? "", 168);
   if (row.weekly_opus_util != null) result.weeklyOpus = dbBucketToLimitBucket(row.weekly_opus_util, row.weekly_opus_resets_at ?? "", 168);
   if (row.weekly_sonnet_util != null) result.weeklySonnet = dbBucketToLimitBucket(row.weekly_sonnet_util, row.weekly_sonnet_resets_at ?? "", 168);
+  const { weeklyScoped } = deserializeUsageExtra(row.extra_json);
+  if (weeklyScoped) result.weeklyScoped = weeklyScoped;
   return result;
 }
 
@@ -124,6 +130,13 @@ async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
   if (raw.seven_day) data.weekly = parseApiBucket(raw.seven_day, 168);
   if (raw.seven_day_opus) data.weeklyOpus = parseApiBucket(raw.seven_day_opus, 168);
   if (raw.seven_day_sonnet) data.weeklySonnet = parseApiBucket(raw.seven_day_sonnet, 168);
+  // A model with its own weekly cap (Fable) is reported only in `limits[]`. When the legacy
+  // opus/sonnet key is also present for the same model, keep the legacy bar and skip the
+  // duplicate rather than showing one limit twice.
+  const scoped = parseClaudeScopedLimits(raw)
+    .filter((s) => !(data.weeklyOpus && /^opus\b/i.test(s.label)) && !(data.weeklySonnet && /^sonnet\b/i.test(s.label)))
+    .map(scopedBucket);
+  if (scoped.length) data.weeklyScoped = scoped;
   return data;
 }
 

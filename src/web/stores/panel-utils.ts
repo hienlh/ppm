@@ -41,8 +41,12 @@ export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-moni
  * Single source for both enforcement points: the action that performs the detach, and the
  * context-menu item that offers it. Split across two files, adding a window kind meant
  * remembering both, and one of them was always the one that got forgotten.
+ *
+ * `design` is here for a different reason: its canvas accepts bridge messages only from an
+ * iframe whose parent is the main window, and a pop-out would make the iframe's parent the
+ * picture-in-picture window instead.
  */
-export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems"]);
+export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "design"]);
 
 /**
  * Prefix of the reserved panel IDs that host tabs detached into a floating window.
@@ -232,6 +236,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
       return "problems";
     case "group":
       return `group:${metadata?.groupId ?? "unknown"}`;
+    // One tab per design: the chat, the canvas and its history all belong to the design.
+    case "design":
+      return `design:${metadata?.designSlug ?? "unknown"}`;
     default:
       return `${type}:${randomId()}`;
   }

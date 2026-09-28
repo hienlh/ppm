@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
 import { Check } from "@/lib/icons";
-import { api, projectUrl } from "@/lib/api-client";
+import { getChatProviders, peekChatProviders } from "@/lib/chat-preparation-cache";
 import { PROVIDER_LOGOS } from "@/lib/provider-logos";
 import { cn } from "@/lib/utils";
 
@@ -38,20 +38,24 @@ function ProviderIcon({ providerId, className }: { providerId: string | undefine
 
 /**
  * Provider selector chip + popup — matches ModeSelector style.
- * Hidden when only 1 provider available.
+ * Available immediately; discover alternatives when opened.
  */
 export function ProviderSelector({ value, onChange, projectName }: ProviderSelectorProps) {
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [result, setResult] = useState<{ projectName: string; providers: ProviderInfo[]; error?: boolean } | null>(null);
+  const providers = result?.projectName === projectName ? result.providers : peekChatProviders(projectName) ?? [];
+  const error = result?.projectName === projectName && result.error;
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const focusedRef = useRef(0);
 
   useEffect(() => {
-    if (!projectName) return;
-    api.get<ProviderInfo[]>(`${projectUrl(projectName)}/chat/providers`)
-      .then(setProviders)
-      .catch(() => {});
-  }, [projectName]);
+    if (!open || !projectName) return;
+    let active = true;
+    getChatProviders(projectName)
+      .then((providers) => { if (active) setResult({ projectName, providers }); })
+      .catch(() => { if (active) setResult({ projectName, providers: peekChatProviders(projectName) ?? [], error: true }); });
+    return () => { active = false; };
+  }, [projectName, open]);
 
   // Close on click outside
   useEffect(() => {
@@ -80,6 +84,7 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const dir = e.key === "ArrowDown" ? 1 : -1;
+      if (!providers.length) return;
       focusedRef.current = (focusedRef.current + dir + providers.length) % providers.length;
       const el = panelRef.current?.querySelector(`[data-idx="${focusedRef.current}"]`) as HTMLElement;
       el?.focus();
@@ -90,9 +95,6 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
       if (p) { onChange(p.id); setOpen(false); }
     }
   }, [onChange, providers]);
-
-  // Hide when only 1 provider
-  if (providers.length <= 1) return null;
 
   const current = providers.find((p) => p.id === value);
 
@@ -124,6 +126,7 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
             <span className="text-xs font-medium text-text-secondary">Provider</span>
           </div>
           <div className="py-1">
+            {providers.length === 0 && <div role="status" className="px-3 py-2 text-xs text-text-secondary">{error ? "Unable to load providers" : result?.projectName === projectName ? "No providers available" : "Loading providers..."}</div>}
             {providers.map((p, idx) => {
               const isActive = p.id === value;
               return (

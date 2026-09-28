@@ -198,7 +198,7 @@ class ProxyService {
     insertProxyRequest({
       endpoint, model: parsed.model, accountLabel: providerId,
       callerIp: caller?.callerIp, callerUa: caller?.callerUa,
-      status: response.ok ? "success" : "error", durationMs,
+      status: response.ok ? "success" : response.status === 429 ? "rate_limited" : "error", durationMs,
     });
     console.log(`[proxy] POST ${endpoint} → ${response.status} ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
     return response;

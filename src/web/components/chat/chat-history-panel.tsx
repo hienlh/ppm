@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { MessageSquare, Loader2, RefreshCw } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
-import { useTabStore } from "@/stores/tab-store";
+import { openSessionInItsTab } from "@/lib/design/open-design-tab";
 import { formatRelativeDate } from "@/lib/format-date";
 import type { SessionInfo } from "../../../types/chat";
 
@@ -13,7 +13,6 @@ export function ChatHistoryPanel({ projectName }: ChatHistoryPanelProps) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const openTab = useTabStore((s) => s.openTab);
 
   const load = useCallback(async () => {
     if (!projectName) return;
@@ -67,14 +66,9 @@ export function ChatHistoryPanel({ projectName }: ChatHistoryPanelProps) {
     );
   }
 
+  // A design session opens in its design tab, where it stays in design mode.
   function openSession(session: SessionInfo) {
-    openTab({
-      type: "chat",
-      title: session.title || "Chat",
-      projectId: projectName ?? null,
-      metadata: { projectName, sessionId: session.id },
-      closable: true,
-    });
+    if (projectName) openSessionInItsTab(session, projectName);
   }
 
   return (

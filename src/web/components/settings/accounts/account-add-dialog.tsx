@@ -12,9 +12,14 @@ interface AddAccountDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: (msg?: string) => void;
+  /**
+   * The label of an account being signed in again. Only the wording changes: the add flow
+   * already updates an account it matches by email or profile id, clearing its re-auth flag.
+   */
+  signInAgainFor?: string;
 }
 
-export function AddAccountDialog({ open, onOpenChange, onSuccess }: AddAccountDialogProps) {
+export function AddAccountDialog({ open, onOpenChange, onSuccess, signInAgainFor }: AddAccountDialogProps) {
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
@@ -100,9 +105,11 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess }: AddAccountDi
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-sm">Add Claude Account</DialogTitle>
+          <DialogTitle className="text-sm">{signInAgainFor ? `Sign in again — ${signInAgainFor}` : "Add Claude Account"}</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
-            Connect via OAuth (recommended) or paste a token manually.
+            {signInAgainFor
+              ? "Log in with the same Claude account. PPM matches it by email and renews the existing card instead of adding a new one."
+              : "Connect via OAuth (recommended) or paste a token manually."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

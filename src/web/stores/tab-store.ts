@@ -19,7 +19,8 @@ export type TabType =
   | "git-log"
   | "ai-resource"
   | "group"
-  | "problems";
+  | "problems"
+  | "design";
 
 export interface Tab {
   id: string;

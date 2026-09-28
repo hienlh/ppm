@@ -20,6 +20,7 @@ import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { fsOpsRoutes } from "./routes/fs-ops.ts";
 import { fsUploadRoutes } from "./routes/fs-upload.ts";
 import { fsSqliteRoutes } from "./routes/fs-sqlite.ts";
+import { htmlPreviewRoutes } from "./routes/html-preview.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
@@ -176,10 +177,31 @@ if (process.env.NODE_ENV !== "production") {
 // Proxy routes — before auth middleware (uses own auth key)
 app.route("/proxy", proxyRoutes);
 
+// HTML assets authenticate with bounded preview capabilities, never the PPM session token.
+app.route("/api/html-preview/content", htmlPreviewRoutes.content);
+
+// Design canvas files: the same bounded-capability model, one design per token.
+import { designPreviewRoutes } from "./routes/design-preview.ts";
+app.route("/api/design-preview/content", designPreviewRoutes.content);
+
+// MCP sign-in redirect: reached by a browser navigation from the authorization server,
+// which carries no PPM token. It only completes a flow an authenticated user started.
+import { mcpAuthRoutes, mcpAuthCallbackHandler } from "./routes/mcp-auth.ts";
+import { mcpOAuthFlows } from "../services/mcp-oauth/mcp-oauth-flows.ts";
+app.get("/api/mcp-auth/callback", mcpAuthCallbackHandler);
+
+// Design MCP endpoint: called by a design session's own Claude/Codex subprocess, which has
+// no PPM token. A per-session capability token in `Authorization` is its only credential.
+import { designMcpHandler } from "../services/design/mcp/design-mcp-endpoint.ts";
+import { setServerListenAddress } from "../services/server-listen-address.ts";
+app.all("/api/design-mcp", designMcpHandler);
+
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.use("/api/*", gzipJson);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
+app.route("/api/html-preview", htmlPreviewRoutes.api);
+app.route("/api/design-preview", designPreviewRoutes.api);
 
 // Port forwarding — starts per-port Cloudflare tunnels
 app.route("/api/preview", portForwardingRoutes);
@@ -222,6 +244,7 @@ app.route("/api/loopback", loopbackRoutes);
 // API routes
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
+app.route("/api/mcp-auth", mcpAuthRoutes);
 app.route("/api/settings/themes", settingsThemesRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
@@ -596,7 +619,13 @@ export async function startServer(options: {
       while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
 
       const bunExe = process.execPath.replace(/\\/g, "\\\\");
-      const logEscaped = logFile.replace(/\\/g, "\\\\");
+      // Never ppm.log itself: `-RedirectStandardOutput` opens its target with
+      // truncate, not append, so every `ppm start` wiped the whole log since the
+      // last rotation — and the handle it holds writes at its own offset, over
+      // lines the supervisor and server append. The supervisor's `log()` and the
+      // descriptor it hands the server already append everything to ppm.log;
+      // this file only catches the supervisor's raw console output.
+      const outLog = logFile.replace(/\.log$/, ".out.log").replace(/\\/g, "\\\\");
       const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
       const winArgs = isCompiledBin ? superviseArgs : ["run", supervisorScript, ...superviseArgs];
       const argStr = winArgs.map((a) => `'${a || "_"}'`).join(",");
@@ -604,7 +633,7 @@ export async function startServer(options: {
         `$p = Start-Process -PassThru -WindowStyle Hidden`,
         `-FilePath '${bunExe}'`,
         `-ArgumentList ${argStr}`,
-        `-RedirectStandardOutput '${logEscaped}'`,
+        `-RedirectStandardOutput '${outLog}'`,
         `-RedirectStandardError '${errLog}'`,
         `; Write-Output $p.Id`,
       ].join(" ");
@@ -1053,6 +1082,8 @@ if (process.argv.includes("__serve__")) {
     // resident rust-analyzer holding a crate graph is too expensive to leave
     // to chance. Synchronous because process.exit follows immediately.
     try { lspManager.killAllSync(); } catch {}
+    // An MCP sign-in holds a Claude subprocess until it settles.
+    try { mcpOAuthFlows.disposeAll(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };
@@ -1073,6 +1104,10 @@ if (process.argv.includes("__serve__")) {
       }
     }, 200);
   }
+
+  // Child processes calling back into this server (the design MCP endpoint) need the
+  // port actually bound, which is not the configured one under the supervisor (port 0).
+  setServerListenAddress(Number(server.port), host);
 
   // Publish the port we actually bound so the edge forwarder knows where to
   // send traffic. Only meaningful when the supervisor spawned us with port 0

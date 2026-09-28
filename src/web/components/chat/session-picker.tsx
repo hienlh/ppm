@@ -3,7 +3,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import { Plus, Trash2, MessageSquare, ChevronDown, Pin, PinOff, Search, X } from "@/lib/icons";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ProviderBadge } from "./provider-selector";
-import type { SessionInfo } from "../../../types/chat";
+import { compareSessionsByActivity, type SessionInfo } from "../../../types/chat";
 
 interface SessionPickerProps {
   currentSessionId: string | null;
@@ -81,11 +81,7 @@ export function SessionPicker({
       }
       setSessions((prev) => {
         const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
-        return updated.sort((a, b) => {
-          if (a.pinned && !b.pinned) return -1;
-          if (!a.pinned && b.pinned) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        });
+        return updated.sort(compareSessionsByActivity);
       });
     } catch {
       // Silently fail
