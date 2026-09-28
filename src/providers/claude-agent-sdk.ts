@@ -1883,7 +1883,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               server_error: `Anthropic API server error. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.`,
               unknown: `API error in project "${effectiveCwd}". Debug:\n1. Run: \`cd ${effectiveCwd} && claude -p "hi"\`\n2. Check env: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause this\n3. Try: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" claude -p "hi"\`\n4. Refresh auth: \`claude login\``,
             };
-            const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
+            // A refusal also arrives as invalid_request, and the CLI's own text is the only place
+            // that says why and what to do next (rephrase in a new session, or change the model).
+            const refusalText = (msg as any).message?.stop_reason === "refusal" ? this.extractAssistantText(msg) : "";
+            const hint = refusalText || (errorHints[assistantError] ?? `API error: ${assistantError}`);
             yield { type: "error", message: hint };
             // Skip emitting the raw 401 error as text content — already shown as error event
             continue;

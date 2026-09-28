@@ -124,6 +124,54 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(done).toBeTruthy();
     });
 
+    it("says why the API refused a turn, not just that the request was invalid", async () => {
+      // A refusal comes back as a synthetic assistant message whose error is "invalid_request",
+      // and only the CLI's own text says what to do about it.
+      const cliText = "API Error: Opus 5.5's safeguards flagged this session (https://www.anthropic.com/legal/aup). Claude Code can't respond to your last message with Opus 5.5.\n\nTry rephrasing the request in a new session or change your model.";
+      const refusal = {
+        type: "assistant",
+        error: "invalid_request",
+        message: {
+          model: "<synthetic>",
+          role: "assistant",
+          stop_reason: "refusal",
+          stop_details: { type: "refusal", category: "cyber", explanation: "This request triggered restrictions on violative cyber content." },
+          content: [{ type: "text", text: cliText }],
+        },
+      };
+      mockQueryFn.mockReturnValue(createMockQueryIterator([refusal, { type: "result", subtype: "success", num_turns: 1 }]));
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) events.push(event);
+
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+      expect(errors).toEqual([cliText]);
+    });
+
+    it("keeps the generic hint for an invalid request that is not a refusal", async () => {
+      // Same error code and a text body, but no refusal: the body is the raw API error and the
+      // hint stays the one shown for every other invalid_request.
+      const invalid = {
+        type: "assistant",
+        error: "invalid_request",
+        message: {
+          model: "<synthetic>",
+          role: "assistant",
+          stop_reason: "stop_sequence",
+          content: [{ type: "text", text: "API Error: 400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"tool_use ids must be unique\"}}" }],
+        },
+      };
+      mockQueryFn.mockReturnValue(createMockQueryIterator([invalid, { type: "result", subtype: "success", num_turns: 1 }]));
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) events.push(event);
+
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+      expect(errors).toEqual(["Invalid request sent to the API."]);
+    });
+
     /**
      * The regression that shipped was the *call site*, not the helper: buildMessageParam was
      * always correct, and the opening turn simply never passed it the images. So this asserts
