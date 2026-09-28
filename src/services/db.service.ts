@@ -1150,7 +1150,7 @@ export function runMigrations(database: Database): void {
   }
 
   // This checkout's prompt-cache work first shipped as migrations 46-48 on turn_usage, before
-  // main used those numbers for accounts (it is 50-52 below now). A database that ran the local
+  // main used those numbers for accounts (it is 52-54 below now). A database that ran the local
   // ones sits past 45 without main's columns, so the version gates above skip them for good and
   // 49 then updates a column that does not exist. Added by schema rather than by version here;
   // on a database that followed main every statement is a no-op.
@@ -1195,6 +1195,23 @@ export function runMigrations(database: Database): void {
     // Codex's free rate-limit reset credits. JSON so a new model needs no migration of its own.
     try { database.exec("ALTER TABLE claude_limit_snapshots ADD COLUMN extra_json TEXT"); } catch { /* exists */ }
     database.exec(`PRAGMA user_version = 51;`);
+  }
+
+  // This checkout's turn_usage migrations below first shipped as 50-52, before main took 50
+  // for design sessions. A database that ran the local ones sits at 50-52 without main's
+  // columns, because the gate above skips them for good. Added by schema rather than by
+  // version here; on a database that followed main both statements are no-ops.
+  if (current >= 50 && current < 53) {
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN design_slug TEXT"); } catch { /* exists */ }
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN permission_mode TEXT"); } catch { /* exists */ }
+  }
+
+  // This checkout's turn_usage migrations below shipped as 51-53 until main took 51 for
+  // `claude_limit_snapshots.extra_json`. A database that ran the local ones sits at 51-53
+  // without main's column, because the gate above skips it for good. Added by schema rather
+  // than by version here; on a database that followed main the statement is a no-op.
+  if (current >= 51 && current < 54) {
+    try { database.exec("ALTER TABLE claude_limit_snapshots ADD COLUMN extra_json TEXT"); } catch { /* exists */ }
   }
 
   if (current < 52) {
