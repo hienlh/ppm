@@ -2,6 +2,76 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Adaptive guided tour
+
+The optional welcome card and Settings → General → Learn PPM open a two-screen chooser:
+experience (beginner/familiar/advanced), then goal (AI/explore/developer). Shared step IDs
+and level-specific copy live in `src/web/lib/onboarding/`; `onboarding-store.ts` owns
+versioned browser-local progress. Active guidance restores paused after reload. This is
+per browser/origin, not an account profile; changing devices or tunnel origins does not
+sync progress. Denied or corrupt storage falls back safely.
+
+Quick orientation is available from the welcome/resume card, active guide, chat welcome
+and General settings. Its optional Command Palette and navigation reference uses the
+canonical sidebar icon/label registry, explains desktop/mobile entry points and utility
+buttons, and opens the real palette on request. It never changes tour progress. While
+the reference or palette is open, Escape closes that surface without pausing the tour;
+the tour card is hidden behind the palette so it cannot cover its controls.
+
+Step changes use the shared `OnboardingStepTransition`: a 200ms fade and 12px horizontal
+slide, reversed for Back. It animates the existing DOM node without delaying state or
+duplicating controls. Rapid navigation cancels the previous animation; reduced-motion
+preferences skip animation and cancel any running transition when changed live.
+
+`OnboardingRoot` mounts only inside the authenticated app. Nonmodal hints preserve real
+workspace interactions; mobile navigation reuses the project sheet and drawer, including
+the shared SearchPanel. Collapsed guidance moves above content controls to keep Send reachable.
+Typed `ppm:onboarding-evidence` events report actual text-editor, search, terminal and Git
+readiness. Chat uses an optional transport lifecycle observer and a client-local attempt ID;
+partial output after cancellation/error/disconnection never counts as success. Canonical
+session migration preserves identity. `ppm:onboarding-refresh` requests existing readiness
+only, never replays a user send or search. History uses the chat toolbar's menu.
+
+The tour never sends prompts, executes terminal commands, edits files or changes provider
+permissions automatically. Suggestions fill only an empty hydrated focused composer after
+a user click. Completed and skipped steps remain separate. The run-instructions step is
+orientation, not proof that a program ran. Images and preview-only files offer a text-file
+alternative or skip. Settings and chat welcome can resume a paused/dismissed tour.
+
+The file-reading step accepts any successfully loaded text/source file and Markdown
+Preview, regardless of filename. Empty visible project roots offer an explicit skip;
+the tour never creates sample files. Root-list errors do not masquerade as emptiness,
+and stale requests cannot replace the current guidance. On mobile, collapsed guidance
+hides while the navigation drawer/project picker is open so the first file remains tappable.
+
+Project content search resolves grep from PATH or Git for Windows without changing the
+server environment. It runs asynchronously with timeout/output bounds, uses project-relative
+NUL-delimited filenames, and distinguishes errors from successful zero-result searches.
+The frontend surfaces the actual retryable error. The sandbox no longer injects grep into PATH.
+
+The run-instructions action opens a readable root README directly, falling back to
+package.json. A loaded visible README Markdown preview qualifies for this orientation
+step without switching to Edit, and Markdown previews also qualify for general file reading.
+Missing documents and list failures show a retry/browse/skip explanation. Only the
+user's explicit acknowledgment completes the run-instructions step.
+
+Verification uses `tests/e2e/onboarding-tour.mjs` and its isolated fixtures: fresh database,
+scratch project, local ports, allowlisted test provider and real HTTP/WebSocket routes.
+Playwright captures desktop/mobile screenshots and videos without live AI credentials.
+
+## New Chat Provider
+
+Settings → AI offers `Always use default provider` and `Follow last focused chat`.
+`ai.default_provider` is the fixed choice or the fallback when the current project has
+no focused chat. Fresh installations use follow-focus; existing configurations without
+`ai.new_chat_provider_mode` retain default mode.
+
+Focus memory is per project and browser session, across panels. Editors, terminals and
+panel chrome do not replace it. New tabs snapshot the source at creation and resolve
+settings before mounting chat or claiming an account. An unavailable provider prompts
+for an available choice. Existing tabs, resumed sessions and explicit fork/clear
+providers are preserved; changing the setting only affects new tabs.
+
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
 **Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints
@@ -143,6 +213,71 @@ When switching projects, workspaces are preserved instead of destroyed:
 - Responsive layout with proper scrolling
 
 ---
+
+### HTML file preview
+
+Saved `.html` and `.htm` files open with a single toolbar row: breadcrumb, Refresh preview, Code / Preview and an overflow menu. The single refresh button reloads the entry document, also restoring it after following an image or link inside the sandbox. Download, wrap, blame, language and language-server settings live in the menu; Code mode also offers Reload code from disk (disabled while unsaved). Controls support desktop, mobile and external files from OS Explorer. Preview renders the saved file; refreshing it does not replace the editor buffer. Once opened, the code editor stays mounted across mode changes to retain undo and cursor state. Existing tab pop-out/redock also hosts the preview.
+
+`POST /api/html-preview` requires normal API authentication and returns a one-hour capability URL under `/api/html-preview/content/:token/`. The capability serves static assets from the HTML file's directory and descendants with byte-range support for video. Realpath containment, filesystem credential guards, hidden asset restrictions and a static extension allowlist apply to each request. No PPM login token is embedded in the document. Both the iframe and response CSP sandbox scripts without same-origin privileges; resource/fetch access is limited to that preview directory. External CDNs, parent-directory assets, forms, nested frames and browser storage are intentionally unsupported. Refresh renews an expired capability; at most 128 capabilities are retained per server.
+
+### Markdown file and folder links
+
+Markdown local links are parsed independently of extensions, then resolved by `use-markdown-file-navigation` through the guarded host `/api/fs/stat` API: files open editor/viewer tabs; directories open desktop/mobile Explorer. Supports Windows/Unix paths, project-relative paths, `~/`, local `file://` URLs, percent-encoded names and line references. Relative links resolve against the message's project root. Missing or ambiguous targets open search; explicit paths never fall back to a different same-named file. Remote file authorities/UNC remain unsupported by the host filesystem policy.
+
+### Maths in messages
+
+KaTeX renders through `remark-math`, which reads `$$ … $$` only — single-dollar text maths stays off, because a sentence pricing two things in dollars would be swallowed whole between them. Models write maths as `\[ … \]` and `\( … \)` instead, and Markdown reads `\[` as an escaped bracket, so an unhandled formula rendered as a lone `[`, its body as prose and a lone `]`. `src/web/lib/markdown-math-delimiters.ts` rewrites both forms to `$$` before parsing, which has to happen on the raw text: the backslash is gone by the time there is a tree to walk. It skips fenced blocks and code spans, requires a closing delimiter (so a half-streamed formula is left alone), and bounds the inline form to one line — a Windows path such as `app\(tabs)\_layout.tsx` opens with the same two characters and would otherwise pair with a `\)` further down the message.
+
+### Markdown file links at a line
+
+A link may name one place in the file — `app.ts:120`, `app.ts:120-140`, `app.ts#L120` — which `src/web/lib/source-location.ts` splits off the path for both readers of it. The editor reveals that line (selecting the range when one is given) and a tab already open on the file is updated rather than left where it was. A suffix naming an impossible line rejects the link instead of quietly opening line 1. The same suffix travels into the command palette on the search fallback, so it strips it before matching filenames and still jumps once a candidate is picked — including in filesystem (`/`, `~/`, `C:\`) mode, where the directory is listed without it.
+
+## Design mode
+
+A **Design tab** puts a design chat beside a live, sandboxed canvas of what the agent builds: a page or a slide deck (`kind` `page` or `slides`), made of plain HTML/CSS files the user can export or hand off to real code. It opens from the sidebar's Designs section, the palette's "New Design…" (the dialog is hosted by `command-palette-design-commands.tsx`, since the palette is mounted on every layout) or the deep link `/project/<p>/design/<slug>`. The layout follows the tab's own width, not the viewport (`lib/design/design-layout-mode.ts`): a draggable chat/canvas split at 940px and up, one pane below 860px (the previous layout holds in between, so dragging a panel divider does not flicker), switched by a Canvas | Chat toggle in the toolbar. The toolbar's Layout menu pins Auto / Split / Canvas only / Chat only per device (`design-view-prefs.ts`), and Expand canvas lifts the canvas over the whole window (Esc or Exit full view to leave). Below `md` it is always one pane with a Canvas / Chat / More bar in the thumb zone. Every one of these is the same tree (`design-split-layout.tsx`) restyled by CSS, because moving the iframe reloads the design and unmounting the chat drops its socket; the one reload left is PPM's shell moving the whole tab into its mobile slot when the viewport crosses `md`. UI in `src/web/components/design/`, one tab per design, never popped out (`NON_POPPABLE_TAB_TYPES`: the bridge accepts messages only from an iframe whose parent is the main window).
+
+**Storage** (`src/services/design/`, REST under `/api/project/:name/designs`, `src/server/routes/designs.ts` plus one sub-router per feature):
+- `designs/<slug>/` is the design: `index.html` (the entry), `design.json` (`title`, `kind`, `entry`, timestamps and the agent's `tweaks[]`; unknown fields are carried through) and whatever else the agent writes.
+- `designs/DESIGN.md` and `designs/tokens.css` are the project's design system, shared by every design (a page links `../tokens.css`).
+- `designs/<slug>/.design/` is the canvas's own data and is never part of the design: its `.gitignore` is `*`, the file watcher skips it (`file-watcher/ignore-rules.ts`), the preview route never serves it. `history/<id>/{meta.json,files/}` holds snapshots (`turn`, `pre-restore`, `before-edit`, `manual`; 100 protected + 30 `before-edit` kept, tree-hash dedupe, a design over 50 MB or 5000 files is skipped), `comments.json` the pinned comments. Because nothing there is watched, History and Comments refresh on `design:history_changed` / `design:comments_changed` from `/ws/global` (`design-events.ts`).
+- Restore snapshots the current state first and swaps through a journal (`design-restore-journal.ts`), so a crash mid-restore is finished from the staged copy on the next access rather than leaving half a design.
+- Every tree operation goes through `design-safe-walk.ts` (no symlinks, no FIFOs, no credential paths, depth and size caps).
+
+**The design session** is an ordinary chat session whose `session_metadata.design_slug` is fixed at creation (`POST /chat/sessions` with `designSlug`, accepted only on a provider with `supportsDesignInstructions` — Claude and Codex). `chatService.prepareSendOptions` rebuilds the instruction block from the stored slug on every turn, whoever sends it (WebSocket, `ppm chat send`, scheduler, bots): Claude gets it appended to the `claude_code` preset, Codex as `developerInstructions` (`design-instructions.ts`). The permission mode defaults exactly as for a new chat (the provider's configured default, normally `bypassPermissions`), because a design agent reads and searches the project constantly and a stricter default asked on every file. A user who picks `acceptEdits` for a design session gets the tighter design policy: project file reads and writes are approved, shell and every other tool ask (`design-tool-policy.ts` for Claude, `workspace-write` + `untrusted` for Codex). Every `done`, and every terminal background task, schedules a `turn` snapshot 2 s later (`design-turn-snapshot.ts`). The tab keeps the session in design mode: a fork is swapped in place, `/clear` starts the next session in the same tab, the embedded history lists only this design's sessions, and opening a design session from anywhere focuses its design tab (`openSessionInItsTab`, `tabSessionId()` in `src/web/lib/tab-session-id.ts`).
+
+**The canvas** (`src/server/routes/design-preview.ts`):
+- `POST /api/design-preview` (authenticated) mints a token for one design and one purpose. A canvas token lives 30 min idle and 8 h at most, and is extended only by authenticated refreshes; within the last hour a refresh rotates it. Print and standalone tokens last 10 min and cannot be refreshed. Unauthenticated content reads never extend a token (`design-preview-tokens.ts`).
+- `/api/design-preview/content/<token>/<slug>/…` is mounted before auth and serves `designs/<slug>/**` plus the `../tokens.css` alias, nothing else. ACAO is `null`, which answers the sandboxed document's `Origin: null` and nobody else.
+- `buildDesignCsp` (`preview/design-csp.ts`): `sandbox allow-scripts` (with `allow-modals` for the print view only), inline scripts and `'unsafe-eval'`, the CDN hosts in `src/shared/design-cdn-hosts.ts` for scripts, styles, fonts and images, and `connect-src` limited to the design's own files. Accepted residuals: jsdelivr and unpkg execute any npm/GitHub code, and a design script can still navigate its own frame; there is no shell `frame-src`, so the bridge's link guard and the 3 s liveness check are what catch it.
+- The HTML is instrumented with parse5 (`preview/html-instrument.ts`): every source element gets `data-ppm-id`, its start-tag offset in the BOM-less text, valid only for that file's `gen` (16 hex chars of SHA-256; linked stylesheets report theirs in `cssGens`). The bridge script is the first thing in `<head>`.
+- A dead token serves the expired page (`preview/expired-page.ts`), which posts `expired`; the canvas re-mints and reloads.
+
+**Bridge and trust model** (`src/shared/design-bridge-protocol.ts`, frame side `src/services/design/bridge/`):
+- Messages are `{ppm: "design-bridge", v: 1, nonce, type}` envelopes. The parent accepts one only from the iframe's current `contentWindow` *and* with the nonce minted for the current load (`?n=`), and validates every field. A frame that navigated itself is still the same `contentWindow`; only the nonce tells a foreign page apart.
+- Everything the frame sends is untrusted, because the page's own scripts can post the same shapes. Nothing is ever written on a frame message alone.
+- Bridge features ship as `fn.toString()` (`bridge-script.ts`), so they may use only what they are handed; shared helpers travel as `ppm.lib`.
+- Every `ready` is a new document: a live reload, a token rotation, or the tab pool reparenting the iframe (which reloads it with the same URL). Features register `onReplay` to put their state back (scroll, picker, pins, Move target).
+
+**Write-backs:**
+- *Comments.* An anchor is `ppmId` + tag + text quote with prefix/suffix + a CSS path. It is re-resolved on every `ready` (same tag only, 0.55 similarity threshold, orphaned rather than guessed) and re-checked against the source by the server. The element context in a prompt is a snippet the server slices from the source (`design-comment-element-context.ts`), fenced as untrusted (`design-comments-prompt.ts`). "Send to AI" shows the whole message first and only fills the design chat's composer.
+- *Tweaks.* `design.json` declares controls bound to CSS custom properties. Moving one restyles the frame live; Apply patches the last winning declaration in the design's own `:root` or appends a `:root` block (`source/tweak-patch-plan.ts`). A value in `../tokens.css`, inside an at-rule or behind `!important` is refused, and values pass an allowlist, not a denylist.
+- *Move and resize.* The frame's `transform-commit` is a proposal. The parent writes it only with Move on, the chat idle, its own target, the current `ready` gen and `navigator.userActivation.isActive` (`src/web/lib/design/design-transform-proposal.ts`). The server re-checks the gen (409 `stale`) and the tag at the offset (409 `element-moved`), rate-limits (1 per 500 ms, 30 per minute), snapshots `before-edit` and writes only `translate`/`width`/`height` px into that element's `style` attribute.
+- *Undo* reverses the exact spans a canvas write replaced, with 32 characters of context on each side, so later AI edits elsewhere survive. The journal is in memory (50 writes per design, lost on restart); `cannot-undo` points to History (`design-edit-undo-journal.ts`).
+
+**Exports** (`src/server/routes/design-export.ts`, `src/services/design/export/`, client `src/web/components/design/export/`):
+- ZIP: the design folder plus `DESIGN.md`/`tokens.css`, no dotfiles or `.design/`, capped at 5000 files / 512 MB.
+- Standalone HTML: local CSS, images, fonts and scripts inlined as data URLs within per-asset and total budgets. Whatever stays linked is listed (`X-PPM-Export-Warning-List`).
+- PDF: the print view is a print-purpose token with `@page` rules and one page per `section.slide`, opened by a real `rel="noopener noreferrer"` link. Fidelity is the browser's own print engine.
+- PPTX: the bridge measures the laid-out slides (`bridge-extract-slides.ts`), `pptx-slide-mapper.ts` turns them into native text boxes, shapes and images, and `pptxgenjs` runs in a lazy chunk (`pptx-export.ts`). Gradients and shadows are approximated and images the canvas cannot read are skipped; each one is listed after the save, with the fonts PowerPoint needs.
+- Every download Blob is `application/octet-stream` (`design-export-client.ts`).
+- *Hand off to code* opens a new, ordinary chat with an editable brief (`design-handoff-prompt.ts`) that treats everything under `designs/` as untrusted reference material.
+
+**Canvas self-check.** The agent runs on the server and never sees the canvas, so the frame measures itself (`bridge-layout-grid.ts`, `bridge-layout-boxes.ts`): grid items auto-placed into implicit tracks (found with an absolutely positioned `1 / -1` probe, whose box is the explicit grid), sideways page overflow, elements running off the viewport, text cut off by an `overflow: hidden` ancestor, content squeezed under 4 px, and overlapping in-flow siblings; the parent adds the runtime issues it collected and the device frame. At most 30 findings of 300 characters, validated again by the parent and the server (`src/shared/design-canvas-check.ts`) and fenced as untrusted when an agent reads them.
+- *`design_check` tool.* `/api/design-mcp` is a minimal MCP Streamable HTTP endpoint (JSON responses only) mounted before auth and authorized by a per-session capability token (`design/mcp/`, in memory, stored by SHA-256, bound to session + project + slug, revoked with the session). `chatService` adds it to a design session's options with a URL on the port the server actually bound (`server-listen-address.ts`). Claude gets it as an `http` MCP server with the token in `Authorization` and the tool pre-approved; Codex gets a `mcp_servers.ppm_design` config override on `thread/start`/`thread/resume` with `bearer_token_env_var`, so the token lives only in that app-server's environment. A call emits `design:check_request` on `/ws/global`; the first open canvas POSTs `/designs/:slug/check/:requestId` (authenticated, 768 KB cap) and the tool returns the text plus a JPEG screenshot (≤ 1280 px, ≤ 400 KB) drawn in the frame by `modern-screenshot`, whose source the parent sends in the lazy chunk it lives in. No canvas open means an error after 20 s.
+- *After each turn* (`use-design-auto-check.ts`): when the canvas reloaded during the turn or within 8 s of its end, it is measured once quiet for 700 ms; findings go into the issues badge and, at most twice per user message, back to the agent as a `[Canvas check]` message — sent only into an empty, idle composer, otherwise added as a chip.
+- Real-browser check of the grid rule and the screenshot: `node tests/e2e/design-canvas-check-e2e.mjs` (no PPM server; needs Playwright and Chrome).
+
+End to end: `tests/e2e/design-mode-e2e.mjs` (1366 px and 390 px, isolated server, scripted providers).
 
 ## Terminal Flow
 

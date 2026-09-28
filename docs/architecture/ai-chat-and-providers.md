@@ -2,6 +2,72 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Codex child stream lifecycle
+
+App-server notifications with an explicit non-root thread ID are nested agent
+events. They cannot end the root turn, change its active turn ID, rotate its
+account, overwrite root usage, or flush its transcript. Child content stays under
+its Agent card. The WebSocket consumer buffers nested content only while the
+root turn is active; late child results never revive an idle session or create a
+reconnect replay. The frontend updates finalized Agent cards in place for late
+results/errors and ignores nested `done` events.
+
+This prevents a completed answer from disappearing after reload when a
+background agent finishes after the root response.
+
+## Codex daily guard for weekly-only accounts
+
+Daily guard spreads a seven-day quota window across five weekdays: each weekday
+unlocks another 20% of the weekly quota. Unused allowance carries forward.
+Saturday/Sunday slots keep the previous cap; a window starting on a weekend
+opens its first allowance on Monday. Slots are 24 hours from the weekly reset
+time and use UTC weekdays, consistently in the server and browser. This does not
+change Codex's reset schedule. Users can disable the guard per account.
+
+## Chat startup
+
+New tabs mount the composer immediately. Provider selection and permissions
+prepare in the background, sharing a 60-second in-memory cache per project.
+Saving AI settings invalidates that cache and pending selections; an unavailable
+provider is surfaced without silently choosing another. Only selection and
+permission fields are cached, not provider credentials.
+
+An early send displays the pending message, waits for preparation and the tab's
+account claim, then creates the session and sends once after the socket greeting.
+Errors retain the draft for an explicit retry; reload never automatically resends.
+Remote drafts hydrate without overwriting text typed, erased or submitted since
+the request started. Account claims are shared by preparation and first send.
+
+Recent history and usage show correctly scoped cached data immediately and refresh
+after 500 ms. Provider/model lists load when their selectors open. These reads
+never gate typing or first-send preparation.
+
+The initial history request also covers an idle WebSocket greeting while it is
+pending; completed turns and truncated replays still trigger recovery reads.
+Slash commands load when the user opens the `/` picker. The `@` picker loads a
+file index on demand, scoped to its project; stale responses cannot overwrite
+the index for a different project.
+
+Monaco initializes when an editor mounts, Mermaid when a diagram renders, and
+Shiki when code highlighting is needed. Theme subscriptions remain active before
+those engines load. The production bundle leaves Mermaid's dynamic import out
+of manual vendor grouping so shared dependencies do not pull the engine into
+ordinary Markdown rendering.
+
+The mobile desktop sidebar is not mounted, and the closed mobile explorer does
+not mount its file tree. App-level file-index invalidation keeps cached paths
+fresh while the drawer is closed, without fetching an unused index.
+
+## Model discovery cache
+
+When opened, the chat model picker shares successful model lists across chat tabs, keyed by
+project and provider, in browser memory for five minutes. Expired lists remain
+visible while a refresh runs; failed or empty refreshes retain the last usable
+list. Reloading the page clears this browser cache. Codex discovery also keeps
+a five-minute server memory cache, shares concurrent discovery requests, and
+serves its previous list while refreshing. The first uncached request still
+waits for Codex app-server initialization and model discovery.
+
 ## Codex context settings
 
 **AI Settings → Codex** exposes **Context window (tokens)** and **Auto-compact

@@ -22,6 +22,21 @@ export interface SendMessageOpts {
   effort?: string;
   /** Per-session thinking tri-state (see THINKING_ADAPTIVE); falls back to provider config */
   thinkingBudget?: number;
+  /**
+   * Design session instruction block. Resolved by `chatService.prepareSendOptions` from the
+   * session's stored design slug and stripped from whatever the caller passed, so it is
+   * always server-built. Claude appends it to the system prompt, Codex sends it as
+   * `developerInstructions`.
+   */
+  designInstructions?: string;
+  /** Set alongside `designInstructions`; selects the design permission policy. */
+  designSession?: boolean;
+  /**
+   * The design MCP endpoint (`design_check`) for this session: a URL on the port this server
+   * actually listens on and the session's capability token. Server-built like
+   * `designInstructions`; absent when the process serves no HTTP (the CLI).
+   */
+  designMcp?: { url: string; token: string };
 }
 
 export interface AIProvider {
@@ -29,6 +44,9 @@ export interface AIProvider {
   name: string;
   /** Handles opts.sharedContext without using it as the user's saved message/title. */
   supportsSharedContext?: boolean;
+  /** Delivers opts.designInstructions to the model on every turn. Only such providers may
+   *  host a design session; anywhere else the instructions would be silently dropped. */
+  supportsDesignInstructions?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
   getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
 
@@ -70,7 +88,7 @@ export interface AIProvider {
   /** Drop runtime skill discovery results after a user requests a refresh. */
   invalidateSkillsCache?(): void;
   /** Provider-specific usage/quota (rate limits). Used by GET /chat/usage. */
-  getUsage?(sessionId?: string): Promise<UsageInfo>;
+  getUsage?(sessionId?: string, pickedAccountId?: string): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
   /** Prompt-cache lifetime for this session, in ms — how long holding its subprocess pays. */
@@ -117,6 +135,26 @@ export interface SessionInfo {
   updatedAt?: string;
   pinned?: boolean;
   tag?: { id: number; name: string; color: string } | null;
+  /** Design this session belongs to; null/absent for an ordinary chat. */
+  designSlug?: string | null;
+}
+
+/**
+ * Keeps every history surface in the same order: pinned conversations first,
+ * then the conversation most recently written to. Older providers may not
+ * expose an update timestamp, so their creation time remains the fallback.
+ */
+export function compareSessionsByActivity(a: SessionInfo, b: SessionInfo): number {
+  if (a.pinned && !b.pinned) return -1;
+  if (!a.pinned && b.pinned) return 1;
+  return sessionActivityTime(b) - sessionActivityTime(a);
+}
+
+function sessionActivityTime(session: SessionInfo): number {
+  const updated = session.updatedAt ? Date.parse(session.updatedAt) : NaN;
+  if (Number.isFinite(updated)) return updated;
+  const created = Date.parse(session.createdAt);
+  return Number.isFinite(created) ? created : 0;
 }
 
 export interface SessionListResponse {
@@ -136,6 +174,8 @@ export interface ChatSearchResult {
   ts: string;
   pinned?: boolean;
   tag?: { id: number; name: string; color: string } | null;
+  /** Set for a design session, so a result opens in its design tab rather than as a chat. */
+  designSlug?: string | null;
 }
 
 export interface ChatSearchResponse {
@@ -169,8 +209,29 @@ export interface UsageInfo {
   weekly?: LimitBucket;
   weeklyOpus?: LimitBucket;
   weeklySonnet?: LimitBucket;
+  /** Claude's per-model weekly limits ("Fable", …), labelled by model. */
+  weeklyScoped?: ScopedLimitBucket[];
+  /** Codex's free rate-limit resets still available to this account. */
+  resetCredits?: ResetCredits;
   activeAccountId?: string;
   activeAccountLabel?: string;
+}
+
+/** A weekly limit that applies to one model only, named as the provider names it. */
+export interface ScopedLimitBucket extends LimitBucket {
+  label: string;
+}
+
+/** Free "reset my rate limits" credits Codex grants an account. */
+export interface ResetCredits {
+  /** How many can still be used. */
+  available: number;
+  /** ISO time the soonest-expiring one lapses, if any is available. */
+  nextExpiresAt?: string;
+  /** What the soonest one resets, as Codex words it ("Full reset (Weekly + 5 hr)"). */
+  title?: string;
+  /** Codex's opaque id of that soonest-expiring credit — the one "Use reset" spends. */
+  nextCreditId?: string;
 }
 
 /** Result subtype from SDK ResultMessage */

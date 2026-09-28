@@ -21,8 +21,9 @@ export interface ClaudeModelOption {
 
 /** Ordered newest/most-capable first; the first entry is not automatically the default. */
 export const CLAUDE_MODELS: readonly ClaudeModelOption[] = [
-  { value: "claude-opus-5", label: "Claude Opus 5", hint: "most powerful" },
+  { value: "claude-opus-5-5", label: "Claude Opus 5.5", hint: "balanced, recommended" },
   { value: "claude-fable-5-1", label: "Claude Fable 5.1", hint: "flagship" },
+  { value: "claude-opus-5", label: "Claude Opus 5", hint: "most powerful" },
   { value: "claude-fable-5", label: "Claude Fable 5", hint: "flagship" },
   { value: "claude-opus-4-8", label: "Claude Opus 4.8", hint: "powerful" },
   { value: "claude-opus-4-7", label: "Claude Opus 4.7", hint: "powerful" },

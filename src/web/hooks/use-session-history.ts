@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api, projectUrl } from "@/lib/api-client";
-import { useTabStore } from "@/stores/tab-store";
+import { openSessionInItsTab } from "@/lib/design/open-design-tab";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import type { SessionInfo, SessionListResponse, ProjectTag } from "../../types/chat";
+import { compareSessionsByActivity, type SessionInfo, type SessionListResponse, type ProjectTag } from "../../types/chat";
 
 const PAGE_SIZE = 50;
 
@@ -40,7 +40,6 @@ export function useSessionHistory({
   const [tagCounts, setTagCounts] = useState<Record<number, number>>({});
   const [showTagSettings, setShowTagSettings] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
-  const openTab = useTabStore((s) => s.openTab);
 
   const load = useCallback(async (query?: string) => {
     if (!projectName) return;
@@ -99,16 +98,11 @@ export function useSessionHistory({
   useEffect(() => { load(debouncedSearch || undefined); }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openSession(session: SessionInfo) {
-    if (onSelectSession) {
+    if (onSelectSession && !session.designSlug) {
       onSelectSession(session);
     } else {
-      openTab({
-        type: "chat",
-        title: session.title || "Chat",
-        projectId: projectName ?? null,
-        metadata: { projectName, sessionId: session.id, providerId: session.providerId },
-        closable: true,
-      });
+      // A design session opens in its design tab, where it stays in design mode.
+      openSessionInItsTab(session, projectName);
     }
   }
 
@@ -145,11 +139,7 @@ export function useSessionHistory({
       }
       setSessions((prev) => {
         const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
-        return updated.sort((a, b) => {
-          if (a.pinned && !b.pinned) return -1;
-          if (!a.pinned && b.pinned) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        });
+        return updated.sort(compareSessionsByActivity);
       });
     } catch { /* silent */ }
   }, [projectName]);

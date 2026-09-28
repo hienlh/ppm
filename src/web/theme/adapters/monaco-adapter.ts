@@ -56,9 +56,8 @@ loader.config({ paths: { vs: "/assets/monaco/vs" } });
 
 let monacoRef: typeof import("monaco-editor") | null = null;
 
-async function ensureDefined(theme: PpmTheme): Promise<string> {
+function ensureDefined(monaco: typeof import("monaco-editor"), theme: PpmTheme): string {
   const name = monacoThemeName(theme);
-  const monaco = monacoRef ?? (monacoRef = await loader.init());
   monaco.editor.defineTheme(name, {
     base: theme.mode === "dark" ? "vs-dark" : "vs",
     inherit: true,
@@ -78,18 +77,25 @@ function currentTheme(): PpmTheme {
 
 let subscribed = false;
 
+function applyCurrentTheme(): void {
+  // Theme changes on chat-only sessions must not download the editor runtime.
+  if (!monacoRef) return;
+  monacoRef.editor.setTheme(ensureDefined(monacoRef, currentTheme()));
+}
+
+/** Register the current theme before an Editor or DiffEditor creates its model. */
+export function prepareMonacoTheme(monaco: typeof import("monaco-editor")): void {
+  monacoRef = monaco;
+  initMonacoThemeSync();
+  applyCurrentTheme();
+}
+
 /**
- * Define + activate the Monaco theme for the current app theme, and keep it in
- * sync on theme changes. `monaco.editor.setTheme` applies globally to every
- * mounted editor. Idempotent.
+ * Subscribe without loading Monaco. Once an editor calls prepareMonacoTheme,
+ * theme changes apply globally to all mounted editors. Idempotent.
  */
 export function initMonacoThemeSync(): void {
   if (subscribed || typeof window === "undefined") return;
   subscribed = true;
-  const apply = async () => {
-    const name = await ensureDefined(currentTheme());
-    (monacoRef ?? (monacoRef = await loader.init())).editor.setTheme(name);
-  };
-  window.addEventListener(THEME_CHANGE_EVENT, () => void apply());
-  void apply();
+  window.addEventListener(THEME_CHANGE_EVENT, applyCurrentTheme);
 }

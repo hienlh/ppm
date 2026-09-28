@@ -25,7 +25,11 @@ import { CodexAddAccountDialog } from "./codex-add-account-dialog";
 import { CodexBackupDialog } from "./codex-backup-dialog";
 import { CodexRotationDialog } from "./codex-rotation-dialog";
 import { CodexUsageRows } from "./codex-usage-rows";
-import { useCodexAccounts } from "./use-codex-accounts";
+import { CODEX_SIGNED_OUT_HINT, useCodexAccounts, type CodexAccount } from "./use-codex-accounts";
+import { CodexSignInAgainDialog } from "./codex-sign-in-again-dialog";
+import { ResetCreditsChip } from "./account-usage-extras";
+import { CodexResetCreditButton } from "./codex-reset-credit-button";
+import { AccountHint } from "./account-hint";
 import { codexPlanLabel } from "../../../../shared/codex-plan-label.ts";
 import { dailyGuardState } from "../../../../shared/codex-daily-guard.ts";
 
@@ -34,6 +38,8 @@ import { dailyGuardState } from "../../../../shared/codex-daily-guard.ts";
 export function CodexAccountsSection() {
   const [dialog, setDialog] = useState<"add" | "export" | "import" | "rotation" | null>(null);
   const c = useCodexAccounts(() => setDialog(null));
+  /** The signed-out account whose "Sign in again" chip was pressed. */
+  const [signInAgain, setSignInAgain] = useState<CodexAccount | null>(null);
 
   return (
     <div className="space-y-4">
@@ -88,12 +94,21 @@ export function CodexAccountsSection() {
                   key={a.id}
                   dense
                   // Matches the Claude card that also carries a control beside the name.
-                  className="min-w-[300px] shrink-0 snap-start"
+                  className={`min-w-[300px] shrink-0 snap-start${a.signedOut ? " opacity-60" : ""}`}
                   data-testid="account-card"
                   data-account-id={a.id}
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium truncate flex-1 min-w-0">{a.label}</span>
+                    {a.signedOut && (
+                      <AccountHint
+                        className="text-[10px] text-error shrink-0 font-medium"
+                        hint={CODEX_SIGNED_OUT_HINT}
+                        onClick={a.type === "chatgpt" ? () => setSignInAgain(a) : undefined}
+                      >
+                        Sign in again
+                      </AccountHint>
+                    )}
                     <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1 shrink-0">
                       {a.type}
                     </span>
@@ -122,6 +137,12 @@ export function CodexAccountsSection() {
                     </Tooltip>
                   </div>
                   <CodexUsageRows usage={u} />
+                  {u.resetCredits && (
+                    <div className="flex items-center gap-2 flex-wrap text-[10px] text-text-subtle">
+                      <ResetCreditsChip credits={u.resetCredits} />
+                      <CodexResetCreditButton account={a} usage={u} onDone={(m) => { c.setMsg(m); void c.load(); }} />
+                    </div>
+                  )}
                   {u.session == null && (() => {
                     const guard = dailyGuardState(u.weekly);
                     return guard ? (
@@ -138,18 +159,18 @@ export function CodexAccountsSection() {
                                 </button>
                               </TooltipTrigger>
                               <TooltipContent side="top" className="max-w-64 text-xs leading-relaxed">
-                                Keeps a weekly-only Codex account on pace to last until its reset. Each day adds one seventh of the weekly quota. When usage reaches that day's cap, PPM pauses new turns until the next day. Turn it off any time to use the remaining quota freely.
+                                Spreads the weekly quota across five weekdays, adding 20% per weekday. Weekend slots keep the previous cap; unused allowance carries forward. Daily slots start at the reset time and use UTC weekdays. Turn it off any time to use the remaining quota freely.
                               </TooltipContent>
                             </Tooltip>
                           </div>
                           <p className={`text-[10px] tabular-nums ${a.dailyGuardEnabled && guard.blocked ? "text-error" : "text-text-subtle"}`}>
                             {a.dailyGuardEnabled && guard.blocked
                               ? `${Math.round(guard.used * 100)}% used / ${Math.round(guard.cap * 100)}% daily cap. New turns paused.`
-                              : `Day ${guard.day}/7, ${Math.round(guard.cap * 100)}% daily cap`}
+                              : `Weekday ${guard.day}/5, ${Math.round(guard.cap * 100)}% daily cap`}
                           </p>
                         </div>
-                        <span className="hidden" title={`Day ${guard.day}/7: hold weekly usage at or below ${Math.round(guard.cap * 100)}% to last until reset.`}>
-                          Daily guard {a.dailyGuardEnabled ? `· Day ${guard.day}/7 cap ${Math.round(guard.cap * 100)}%` : ""}
+                        <span className="hidden" title={`Weekday ${guard.day}/5: hold weekly usage at or below ${Math.round(guard.cap * 100)}% to last until reset.`}>
+                          Daily guard {a.dailyGuardEnabled ? `· Weekday ${guard.day}/5 cap ${Math.round(guard.cap * 100)}%` : ""}
                         </span>
                         <Switch
                           checked={!!a.dailyGuardEnabled}
@@ -199,6 +220,9 @@ export function CodexAccountsSection() {
         onImport={(f) => void c.doImport(f)}
         error={c.err}
       />
+      {signInAgain && (
+        <CodexSignInAgainDialog account={signInAgain} onClose={() => setSignInAgain(null)} onDone={() => void c.load()} />
+      )}
       <CodexRotationDialog
         open={dialog === "rotation"}
         onOpenChange={(v) => setDialog(v ? "rotation" : null)}

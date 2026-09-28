@@ -357,3 +357,19 @@ synchronous) and a Worker comes long before a new language.
 **Decision**: stay on Bun. If a non-JS provider is ever wanted, make `AIProvider` a process
 boundary and try it as *one provider* — the seam gives the experiment for free, a rewrite has to be
 right first time. Design: `docs/architecture/plugins-and-tracing.md`.
+
+## `Start-Process -RedirectStandardOutput` truncates, it does not append (2026-09-26)
+
+On Windows, `ppm start` and `ppm restart` launched their detached process with PowerShell's
+`Start-Process -RedirectStandardOutput ~/.ppm/ppm.log`. That parameter opens its target with
+truncate, so every start erased the log back to the last rotation. On 2026-09-26 that was a day
+and a half, including the hour a chat outage happened in, and the cause of that outage could not
+be established afterwards. The handle it holds also writes at its own offset rather than
+appending, so it overwrote lines the supervisor and server appended alongside it.
+
+The redirect now targets `ppm.out.log`, which holds only the launched process's raw console
+output. Everything that matters still reaches `ppm.log` through the supervisor's `log()` and the
+append-mode descriptor it hands the server. `tests/unit/cli/windows-launch-log-redirect.test.ts`
+fails if either call site points the redirect back at `ppm.log`. `ppm.err.log` is still
+overwritten on each start. It only duplicates the supervisor's own lines plus a crash trace from
+the last run.

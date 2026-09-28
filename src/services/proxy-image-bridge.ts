@@ -21,7 +21,7 @@ import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { join, extname } from "node:path";
 import { resolveCodexAccountForSession } from "./codex-account.service.ts";
-import { startAgentTurn, resolveProvider } from "./proxy-agent-turn.ts";
+import { startAgentTurn, resolveProvider, turnFailureResponse } from "./proxy-agent-turn.ts";
 import { openAiError } from "./proxy-openai-format.ts";
 
 /** Providers whose agent can actually produce an image. */
@@ -149,7 +149,7 @@ export async function forwardImageGeneration(providerId: string, body: ImageGene
     const produced = await runImageTurn(providerId, generationPrompt(body), body.model, []);
     return imagesResponse(produced.slice(0, Math.min(Math.max(body.n ?? 1, 1), 4)));
   } catch (e) {
-    return openAiError(502, (e as Error).message);
+    return turnFailureResponse(e, openAiError);
   }
 }
 
@@ -179,7 +179,7 @@ export async function forwardImageEdit(providerId: string, body: ImageEditBody):
     const produced = await runImageTurn(providerId, prompt, body.model, [path]);
     return imagesResponse(produced.slice(0, Math.min(Math.max(body.n ?? 1, 1), 4)));
   } catch (e) {
-    return openAiError(502, (e as Error).message);
+    return turnFailureResponse(e, openAiError);
   } finally {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   }

@@ -255,7 +255,9 @@ async function main() {
 
   if (process.platform === "win32") {
     const bunExe = process.execPath.replace(/\\\\/g, "\\\\\\\\");
-    const logPath = (P.ppmDir + "/ppm.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
+    // Not ppm.log: -RedirectStandardOutput truncates its target, which wiped the
+    // log on every restart. The server appends its own formatted lines to ppm.log.
+    const logPath = (P.ppmDir + "/ppm.out.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
     const errPath = (P.ppmDir + "/ppm.err.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
     const argStr = serverArgs.map((a: string) => "'" + (a || "_") + "'").join(",");
     const psCmd = "$p = Start-Process -PassThru -WindowStyle Hidden"

@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  startAgentTurn, usageOf, resolveProvider, proxyableProviderIds,
+  startAgentTurn, usageOf, resolveProvider, proxyableProviderIds, turnFailureResponse,
 } from "./proxy-agent-turn.ts";
 import { decodeImagePayload } from "./proxy-image-bridge.ts";
 import {
@@ -140,7 +140,7 @@ export async function forwardAgentChatCompletions(
       ? await runStreaming(providerId, body)
       : await runNonStreaming(providerId, body);
   } catch (e) {
-    return openAiError(502, (e as Error).message);
+    return turnFailureResponse(e, openAiError);
   }
 }
 

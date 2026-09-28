@@ -89,6 +89,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.ProblemsPanel,
     })),
   ),
+  design: lazy(() =>
+    import("@/components/design/design-tab").then((m) => ({
+      default: m.DesignTab,
+    })),
+  ),
 };
 
 function LoadingFallback() {

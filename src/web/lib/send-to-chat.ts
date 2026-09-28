@@ -18,6 +18,16 @@ export interface SendToChatDetail {
   projectName?: string | null;
   /** Only the chat tab with this id may consume the event. */
   targetTabId?: string;
+  /**
+   * Send the text as a message right away when the addressed composer is idle and empty;
+   * otherwise it becomes a chip as usual. Only honoured together with `targetTabId`.
+   */
+  autoSend?: boolean;
+}
+
+/** Detail of the ack a composer answers with; `sent` says the text went out as a message. */
+export interface SendToChatAck {
+  sent?: boolean;
 }
 
 /** Wall-clock activation stamp written by the panel store on every tab activation. */
@@ -81,12 +91,16 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
  *
  * Falls back through: live tab answers the event → tab exists but is not mounted
  * yet, so hand the text over as `pendingMessage` → no chat open at all, open one.
+ *
+ * `newTab` skips the first two: the text always starts a fresh, plain chat as an editable
+ * draft. For a brief that must not land in whatever conversation (or design session) the
+ * user happened to select last.
  */
-export function sendToChat(opts: { text: string; label?: string; projectName?: string | null }): void {
+export function sendToChat(opts: { text: string; label?: string; projectName?: string | null; newTab?: boolean }): void {
   const { text, label, projectName } = opts;
   if (!text.trim()) return;
 
-  const targetTabId = resolveSelectedChatTabId(projectName);
+  const targetTabId = opts.newTab ? null : resolveSelectedChatTabId(projectName);
   const store = usePanelStore.getState();
 
   if (targetTabId) {

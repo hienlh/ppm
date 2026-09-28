@@ -14,6 +14,28 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
+### Design mode (Claude Design port) (next release)
+
+- A Design tab per design: the design chat beside a live, sandboxed canvas that reloads as the
+  agent writes, at desktop, tablet, phone and slide frames. Desktop split, phone Canvas/Chat bar.
+- Design sessions (Claude and Codex) get design instructions on every turn and start in the
+  same permission mode as any new chat; a project design system (`designs/DESIGN.md`,
+  `designs/tokens.css`) is shared.
+- Version history with a snapshot after every changing turn and crash-safe restore.
+- Pinned element comments that follow their element through edits, sent to the AI as
+  server-built, fenced snippets; tweak sliders bound to CSS variables; drag and resize written
+  back into the element's `style` with an exact undo.
+- Exports: ZIP, standalone HTML, PDF via a print view, and PPTX with editable text; "Hand off to
+  code" starts an ordinary chat with a build brief.
+- See `docs/architecture/workspace-and-ui.md` → "Design mode". Verified by
+  `tests/e2e/design-mode-e2e.mjs` at 1366 px and 390 px.
+
+### Adaptive onboarding (0.22.3)
+
+- Adaptive onboarding: choose experience and goal, follow contextual guidance, pause/resume,
+  skip or replay. Includes mobile project-content search. Verified in an isolated sandbox;
+  AI recordings use a deterministic test provider, not live accounts.
+
 ### v0.18 — Windows, floating windows, whole-machine tooling (Released)
 - **Tab pop-out → floating window → Document Picture-in-Picture** — any desktop tab detaches into an
   in-app floating window and from there into an always-on-top browser PiP window; both directions
@@ -193,7 +215,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 | Dependency | Version | Risk | Notes |
 |-----------|---------|------|-------|
 | Bun | 1.3.6+ | Medium | Check security advisories weekly |
-| Claude Agent SDK | 0.3.251 | Medium | Pinned exactly — follow for API changes, new features |
+| Claude Agent SDK | 0.3.280 | Medium | Pinned exactly — follow for API changes, new features |
 | React | 19.2.4 | Low | Monitor breaking changes |
 | Hono | 4.12.8 | Low | Server + WS |
 | Vite | 8.0 | Low | Build + PWA plugin |

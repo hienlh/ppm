@@ -26,11 +26,17 @@ import {
 import { dailyGuardMessage, dailyGuardState } from "../../shared/codex-daily-guard.ts";
 import { isCodexAccountUsageLimited, markCodexAccountUsageLimited } from "../../services/codex-account-cooldown.ts";
 import { isCodexUsageLimit, codexErrorMessage, parseCodexUsageLimitReset } from "./codex-usage-limit.ts";
+import { isCodexAuthFailure, codexErrorText, codexSignedOutMessage } from "./codex-auth-failure.ts";
+import {
+  isCodexAccountAuthFailed, markCodexAccountAuthFailed, clearCodexAccountAuthFailure,
+} from "../../services/codex-account-auth-state.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
+import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, type CodexThreadParams } from "./codex-thread-params.ts";
+import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
@@ -139,6 +145,11 @@ interface LiveSession {
   channel: EventChannel;
   permission: CodexPermission;
   model?: string;
+  /** Design instructions, resent on every thread/start and thread/resume — codex does not
+   *  persist them, and the account-switch respawn has no send options to read them from. */
+  developerInstructions?: string;
+  /** A design session's `design_check` endpoint, kept for the same reason. */
+  designMcp?: DesignMcpAccess;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -156,9 +167,14 @@ interface LiveSession {
   /** A turn is running on the thread. Codex accepts exactly one at a time: a
    *  second `turn/start` resolves with the ALREADY-RUNNING turn (same id,
    *  status `inProgress`) and silently discards the new input — no error, so
-   *  nothing downstream can notice. Follow-ups therefore wait in `pendingTurns`
-   *  and are sent when the running turn reports `turn/completed`. */
+   *  nothing downstream can notice. A `next` follow-up is therefore handed to the
+   *  running turn with `turn/steer`; anything that cannot be steered waits in
+   *  `pendingTurns` and is sent when the running turn reports `turn/completed`. */
   turnInFlight?: boolean;
+  /** Follow-ups steered into the running turn. A rotation replays the turn on another
+   *  account from `lastTurnInput`, which knows nothing of these, so they are steered
+   *  into the replay again. Cleared when the turn ends. */
+  steeredInputs?: QueuedTurn[];
   /** A daily-guard usage read is in progress before the next turn starts. */
   checkingDailyGuard?: boolean;
   /** Id of the running turn — `turn/interrupt` needs it, `threadId` alone is rejected. */
@@ -174,7 +190,15 @@ interface LiveSession {
   /** The turn currently in flight, kept so a rotation can send it again on the new
    *  account. Cleared when the turn ends — there is then nothing to replay. */
   lastTurnInput?: { message: string; opts?: SendMessageOpts };
+  /** The running turn has already been reported as failed (its account is signed out) and
+   *  interrupted. Codex keeps narrating it — more retry notices, a final error, then
+   *  `turn/completed` — none of which may reach the caller a second time. Cleared by that
+   *  `turn/completed`, which is also when the queue may move on. */
+  discardingTurn?: boolean;
 }
+
+/** Why a turn is being moved to another account. */
+type RotationKind = "usage" | "auth";
 
 /** A follow-up held back because a turn was already running. */
 interface QueuedTurn {
@@ -182,12 +206,24 @@ interface QueuedTurn {
   opts?: SendMessageOpts;
   /** `later` sinks to the end of the queue; `now`/`next` go in front of it. */
   priority: "now" | "next" | "later";
+  /** Already in the transcript — being sent again on another account after a rotation. */
+  replay?: boolean;
 }
 
 interface EventChannel {
   push(ev: ChatEvent): void;
   done(): void;
   iterator: AsyncGenerator<ChatEvent, void, undefined>;
+}
+
+/** What a user message becomes on the wire, for `turn/start` and `turn/steer` alike.
+ *  Codex takes an image as a path, never as a payload, so the uploaded copy is what it
+ *  gets. Images lead: the text usually refers to them ("what is this?"). */
+function turnInput(message: string, opts?: SendMessageOpts): UserInput[] {
+  return [
+    ...(opts?.imagePaths ?? []).map((path) => ({ type: "localImage" as const, path })),
+    { type: "text" as const, text: withSharedContext(message, opts?.sharedContext), text_elements: [] },
+  ];
 }
 
 /** Next stable `rollout-N` id for a live message. Counts existing rollout-prefixed
@@ -297,6 +333,7 @@ function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestU
  */
 export class CodexAppServerProvider implements AIProvider {
   readonly supportsSharedContext = true;
+  readonly supportsDesignInstructions = true;
   readonly id = "codex";
   readonly name = "Codex";
 
@@ -305,6 +342,7 @@ export class CodexAppServerProvider implements AIProvider {
   private unstartedSessions = new Set<string>();
   private live = new Map<string, LiveSession>();
   private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
+  private modelsPending: Promise<ModelOption[]> | null = null;
   /** Keyed by `cwd\0codexHome` — skills differ per workspace AND per account. */
   private skillsCache = new Map<string, { skills: CodexSkill[]; expiry: number }>();
 
@@ -440,11 +478,14 @@ export class CodexAppServerProvider implements AIProvider {
    */
   private async startTurn(live: LiveSession, message: string, opts?: SendMessageOpts, replay = false): Promise<void> {
     if (!live.threadId) return;
-    // One turn at a time — anything sent now would be dropped without a trace.
-    // `now` additionally cuts the running turn short so this one answers next.
+    // One turn at a time — a second `turn/start` would be dropped without a trace.
+    // `next` joins the running turn the way a Claude follow-up does; `now` cuts it
+    // short so this one answers next; `later` waits for it to finish.
     if (live.turnInFlight) {
       const priority = opts?.priority ?? "next";
-      this.enqueueTurn(live, { message, opts, priority });
+      const item: QueuedTurn = { message, opts, priority, ...(replay ? { replay } : {}) };
+      if (priority === "next" && this.canSteer(live)) { this.steerTurn(live, item); return; }
+      this.enqueueTurn(live, item);
       if (priority === "now") this.interruptActiveTurn(live);
       return;
     }
@@ -479,12 +520,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.currentAssistant = "";
     live.currentEvents = [];
     live.lastUsage = undefined;
-    // Codex takes an image as a path, never as a payload, so the uploaded copy is what it
-    // gets. Images lead: the text usually refers to them ("what is this?").
-    const input: UserInput[] = [
-      ...(opts?.imagePaths ?? []).map((path) => ({ type: "localImage" as const, path })),
-      { type: "text" as const, text: withSharedContext(message, opts?.sharedContext), text_elements: [] },
-    ];
+    const input = turnInput(message, opts);
     const turnModel = codexModel(opts?.model);
     const turnEffort = opts?.effort ?? this.config?.effort;
     const configuredThinking = this.config?.thinking_budget_tokens;
@@ -507,7 +543,15 @@ export class CodexAppServerProvider implements AIProvider {
       // A quota refusal can come back as the rejection of the request itself rather than
       // as an `error` notification, and it is the same situation either way — move the
       // turn to an account that still has room instead of showing the refusal.
-      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason)) return;
+      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason, "usage")) return;
+      if (isCodexAuthFailure(reason)) {
+        this.markSessionAccountSignedOut(live, reason);
+        if (this.beginRotation(live, reason, "auth")) return;
+        live.channel.push({ type: "error", message: codexSignedOutMessage(this.sessionAccountLabel(live)) });
+        live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
+        this.endTurn(live);
+        return;
+      }
       if (!live.client.isClosed) live.channel.push({ type: "error", message: redactTruncate(reason, 256) });
       // No turn is running, so nothing will report `turn/completed` — release the
       // queue here or every later follow-up waits on a turn that never existed.
@@ -539,7 +583,64 @@ export class CodexAppServerProvider implements AIProvider {
     if (live.interruptRequested) {
       live.interruptRequested = false;
       this.interruptActiveTurn(live);
+      return;
     }
+    // Follow-ups that arrived before codex named the turn had nothing to steer into.
+    while (live.pendingTurns[0]?.priority === "next" && this.canSteer(live)) {
+      this.steerTurn(live, live.pendingTurns.shift()!);
+    }
+  }
+
+  /**
+   * Whether a follow-up may join the running turn. Not while the turn is unnamed
+   * (`turn/steer` requires its id), being interrupted for a `now` message (the input
+   * would land in a turn that is about to stop), being discarded or rotated away, or
+   * compacting — codex refuses to steer a compaction, and the refusal would only
+   * bounce the message back to the queue.
+   */
+  private canSteer(live: LiveSession): boolean {
+    return !!live.activeTurnId && !live.interruptRequested && !live.discardingTurn
+      && !live.rotating && !live.compactRequested
+      && !live.pendingTurns.some((q) => q.priority === "now");
+  }
+
+  /**
+   * Hand a follow-up to the running turn. `expectedTurnId` makes codex refuse it if that
+   * turn has already ended, so a refusal never loses the message: it is sent as a turn
+   * of its own instead, once whatever is running now finishes.
+   */
+  private steerTurn(live: LiveSession, item: QueuedTurn): void {
+    const turnId = live.activeTurnId!;
+    live.client.request("turn/steer", {
+      threadId: live.threadId,
+      expectedTurnId: turnId,
+      input: turnInput(item.message, item.opts),
+    }).then(() => {
+      live.steeredInputs = [...(live.steeredInputs ?? []), item];
+      if (item.replay) return;
+      // The answer so far belongs above the message, as it does in the rollout, which
+      // records the steered input as a user message between two agent messages.
+      if (live.currentAssistant || live.currentEvents.length) {
+        const events = live.currentEvents.length
+          ? [...live.currentEvents, ...(live.currentAssistant ? [{ type: "text", content: live.currentAssistant } as ChatEvent] : [])]
+          : undefined;
+        live.transcript.push({
+          id: nextRolloutId(live), role: "assistant", content: live.currentAssistant,
+          ...(events ? { events } : {}), timestamp: new Date().toISOString(),
+        });
+        live.currentAssistant = "";
+        live.currentEvents = [];
+      }
+      live.transcript.push({ id: nextRolloutId(live), role: "user", content: item.message, timestamp: new Date().toISOString() });
+    }).catch((err) => {
+      if (live.client.isClosed) return;
+      console.warn(`[codex] session=${live.threadId} steer refused, sending as its own turn: ${redactTruncate((err as Error)?.message ?? String(err), 200)}`);
+      const retry: QueuedTurn = { ...item, priority: "later" };
+      // `later` so it is not steered straight back into a turn that just refused it; the
+      // head of the queue because it was sent before anything waiting there.
+      if (live.turnInFlight) live.pendingTurns.unshift(retry);
+      else void this.startTurn(live, retry.message, retry.opts, retry.replay);
+    });
   }
 
   /** Running turn is over: send the next follow-up, if one is waiting. */
@@ -547,9 +648,11 @@ export class CodexAppServerProvider implements AIProvider {
     live.turnInFlight = false;
     live.activeTurnId = null;
     live.interruptRequested = false;
+    live.discardingTurn = false;
     live.lastTurnInput = undefined;
+    live.steeredInputs = undefined;
     const next = live.pendingTurns.shift();
-    if (next) void this.startTurn(live, next.message, next.opts);
+    if (next) void this.startTurn(live, next.message, next.opts, next.replay);
   }
 
   // ── Usage-limit rotation ──
@@ -566,29 +669,64 @@ export class CodexAppServerProvider implements AIProvider {
    * user untouched. That is the honest outcome: an error saying the quota is spent is worth
    * more than a silent retry on the account that just said so.
    */
-  private beginRotation(live: LiveSession, reason: string): boolean {
+  private beginRotation(live: LiveSession, reason: string, kind: RotationKind): boolean {
     const threadId = live.threadId;
     if (!threadId || live.rotating) return false;
     const currentId = getSessionCodexAccount(threadId);
     const candidates = listCodexAccounts().filter(
-      (a) => a.status !== "disabled" && a.id !== currentId && !isCodexAccountUsageLimited(a.id),
+      (a) => a.status !== "disabled" && a.id !== currentId
+        && !isCodexAccountUsageLimited(a.id) && !isCodexAccountAuthFailed(a.id),
     );
     if (candidates.length === 0) return false;
     live.rotating = true;
-    void this.rotateAccount(live, threadId, currentId, reason);
+    void this.rotateAccount(live, threadId, currentId, reason, kind);
     return true;
   }
 
-  /** Park the spent account, move the session onto a fresh one, and send the turn again. */
+  /** Mark the account serving this session as signed out, if it is a managed one. */
+  private markSessionAccountSignedOut(live: LiveSession, reason: string): void {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) : null;
+    if (accountId) markCodexAccountAuthFailed(accountId, redactTruncate(reason, 256));
+  }
+
+  private sessionAccountLabel(live: LiveSession): string | null {
+    const accountId = live.threadId ? getSessionCodexAccount(live.threadId) : null;
+    return accountId ? getCodexAccount(accountId)?.label ?? null : null;
+  }
+
+  /**
+   * The running turn's account turned out to be signed out.
+   *
+   * Recognised on codex's FIRST retry notice rather than its final error: the notice already
+   * names the 401, and waiting out the rest of the loop is ~24s of a subprocess and a request
+   * held open for an answer that cannot come. Moves the turn to another account when one can
+   * take it; otherwise reports it and interrupts the turn, discarding what codex still says
+   * about it.
+   */
+  private handleAuthFailure(live: LiveSession, reason: string): void {
+    this.markSessionAccountSignedOut(live, reason);
+    if (this.beginRotation(live, reason, "auth")) return;
+    live.discardingTurn = true;
+    this.interruptActiveTurn(live);
+    live.channel.push({ type: "error", message: codexSignedOutMessage(this.sessionAccountLabel(live)) });
+    live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
+  }
+
+  /** Bench the refused account, move the session onto a fresh one, and send the turn again. */
   private async rotateAccount(
     live: LiveSession,
     threadId: string,
     currentId: string | null,
     reason: string,
+    kind: RotationKind,
   ): Promise<void> {
     const pending = live.lastTurnInput;
-    const reset = parseCodexUsageLimitReset(reason);
-    if (currentId) markCodexAccountUsageLimited(currentId, reset?.atMs);
+    const reset = kind === "usage" ? parseCodexUsageLimitReset(reason) : null;
+    // A signed-out account was already marked by the caller; only a quota refusal parks here.
+    if (currentId && kind === "usage") markCodexAccountUsageLimited(currentId, reset?.atMs);
+    const giveUp = (): void => this.abandonRotation(live, kind === "auth"
+      ? codexSignedOutMessage(currentId ? getCodexAccount(currentId)?.label : null)
+      : this.usageLimitMessage(reason, reset?.text));
 
     let next: CodexAccount | null = null;
     try {
@@ -603,12 +741,12 @@ export class CodexAppServerProvider implements AIProvider {
       next = selectCodexAccount(currentId ? { exclude: [currentId] } : undefined);
     }
 
-    if (!next) { this.abandonRotation(live, reason, reset?.text); return; }
+    if (!next) { giveUp(); return; }
 
-    console.warn(`[codex] session=${threadId} usage limit — switching to ${next.id} (${next.label})`);
+    console.warn(`[codex] session=${threadId} ${kind === "auth" ? "account signed out" : "usage limit"} — switching to ${next.id} (${next.label})`);
     live.channel.push({
       type: "account_retry",
-      reason: "Usage limit reached — switching account",
+      reason: kind === "auth" ? "Account signed out — switching account" : "Usage limit reached — switching account",
       accountId: next.id,
       accountLabel: next.label,
     });
@@ -617,7 +755,7 @@ export class CodexAppServerProvider implements AIProvider {
       await this.respawnOn(live, threadId, next);
     } catch (e) {
       console.error(`[codex] session=${threadId} rotation to ${next.id} failed: ${redactTruncate((e as Error)?.message, 200)}`);
-      this.abandonRotation(live, reason, reset?.text);
+      giveUp();
       return;
     }
 
@@ -626,18 +764,23 @@ export class CodexAppServerProvider implements AIProvider {
     live.turnInFlight = false;
     live.activeTurnId = null;
     live.interruptRequested = false;
+    // What was steered into the refused turn is steered into its replay once that is named.
+    const steered = (live.steeredInputs ?? []).map((q) => ({ ...q, priority: "next" as const, replay: true }));
+    live.steeredInputs = undefined;
+    live.pendingTurns.unshift(...steered);
     if (pending) void this.startTurn(live, pending.message, pending.opts, true);
     else this.endTurn(live);
   }
 
-  /** No account could take the turn — report the refusal and close the turn out. */
-  private abandonRotation(live: LiveSession, reason: string, resetText?: string): void {
-    live.rotating = false;
+  private usageLimitMessage(reason: string, resetText?: string): string {
     const suffix = resetText ? ` Try again ${resetText}.` : "";
-    live.channel.push({
-      type: "error",
-      message: `${redactTruncate(reason, 512)}${suffix} Add another account in Settings → Accounts, or wait for the reset.`,
-    });
+    return `${redactTruncate(reason, 512)}${suffix} Add another account in Settings → Accounts, or wait for the reset.`;
+  }
+
+  /** No account could take the turn — report the refusal and close the turn out. */
+  private abandonRotation(live: LiveSession, message: string): void {
+    live.rotating = false;
+    live.channel.push({ type: "error", message });
     live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
     this.endTurn(live);
   }
@@ -679,20 +822,22 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd: live.cwd, codexHome: account.home });
+    client.start({ cwd: live.cwd, codexHome: account.home, env: designMcpEnv(live.designMcp) });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
 
-    const resumeBase = {
-      ...this.contextConfigOverrides(),
+    const resumeBase = buildThreadParams({
       cwd: live.cwd,
-      sandbox: live.permission.sandbox,
-      approvalPolicy: live.permission.approvalPolicy,
-      ...(live.model ? { model: live.model } : {}),
-    };
-    await this.resumeThread(client, threadId, found, account.home, resumeBase);
+      permission: live.permission,
+      model: live.model,
+      configOverrides: this.contextConfigOverrides(),
+      developerInstructions: live.developerInstructions,
+      designMcp: live.designMcp,
+    });
+    await requestWithInstructionsFallback(resumeBase,
+      (params) => this.resumeThread(client, threadId, found, account.home, params));
   }
 
   /**
@@ -713,7 +858,7 @@ export class CodexAppServerProvider implements AIProvider {
     threadId: string,
     found: { path: string; sessionsDir: string },
     codexHome: string | undefined,
-    resumeBase: Record<string, unknown>,
+    resumeBase: CodexThreadParams,
   ): Promise<unknown> {
     const target = sessionsDirForHome(codexHome);
     const path = localizeRollout(found.path, found.sessionsDir, target);
@@ -737,18 +882,24 @@ export class CodexAppServerProvider implements AIProvider {
   private async connect(sessionId: string, opts?: SendMessageOpts): Promise<LiveSession> {
     const meta = this.sessions.get(sessionId);
     const cwd = meta?.projectPath || getSessionProjectPath(sessionId) || process.cwd();
-    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode);
+    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode, { designSession: opts?.designSession });
     const model = codexModel(opts?.model ?? this.config?.model);
 
     // Only resume a rollout attributable to this project. An unknown/resumed ID
     // without one must not silently become a fresh thread with a different identity.
-    const found = locateRollout(sessionId, cwd);
-    if (!found && !this.unstartedSessions.has(sessionId)) throw missingRolloutError(sessionId);
+    // A session created here and never started has no rollout: codex names the thread with an
+    // id of its own, so no file can match this one. Looking anyway reads the head of every
+    // rollout on disk, synchronously, before the first turn can start.
+    const unstarted = this.unstartedSessions.has(sessionId);
+    const found = unstarted ? null : locateRollout(sessionId, cwd);
+    if (!found && !unstarted) throw missingRolloutError(sessionId);
 
     const client = new CodexJsonRpcClient();
     const channel = createEventChannel();
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
+      developerInstructions: opts?.designInstructions,
+      designMcp: opts?.designSession ? opts.designMcp : undefined,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -762,17 +913,22 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd, codexHome: account?.home });
+    client.start({ cwd, codexHome: account?.home, env: designMcpEnv(live.designMcp) });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
 
-    const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}), ...this.contextConfigOverrides() };
+    const resumeBase = buildThreadParams({
+      cwd, permission, model,
+      configOverrides: this.contextConfigOverrides(),
+      developerInstructions: live.developerInstructions,
+      designMcp: live.designMcp,
+    });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
-    const result = found
-      ? await this.resumeThread(client, sessionId, found, account?.home, resumeBase)
-      : await client.request("thread/start", resumeBase);
+    const result = await requestWithInstructionsFallback(resumeBase, (params) => found
+      ? this.resumeThread(client, sessionId, found, account?.home, params)
+      : client.request("thread/start", params));
 
     const threadId = extractThreadId(result) ?? (found ? sessionId : null);
     if (!threadId) throw new Error("codex thread/start returned no thread id");
@@ -796,39 +952,69 @@ export class CodexAppServerProvider implements AIProvider {
       if (account) setSessionCodexAccount(threadId, account.id);
     }
     // Snapshot persisted history so live message ids continue the rollout-N
-    // numbering (empty for a brand-new thread; full prior transcript on resume).
-    live.history = fromCodexSessionsDirs(threadId, (d) => {
+    // numbering (empty for a brand-new thread; full prior transcript on resume). A new thread
+    // has nothing to snapshot, and its rollout may not be on disk yet — searching for it would
+    // fall back to reading the head of every other rollout.
+    live.history = found ? fromCodexSessionsDirs(threadId, (d) => {
       const msgs = getRolloutMessages(d, threadId, cwd);
       return msgs.length > 0 ? msgs : null;
-    }) ?? [];
+    }) ?? [] : [];
     return live;
   }
 
   private handleNotification(live: LiveSession, notif: JsonRpcNotification): void {
+    // One app-server also streams spawned threads. Resolve ownership before any
+    // turn/account state changes, even if the child's launch card has not arrived.
+    const notificationThreadId = threadIdFromNotification(notif.params);
+    const isChild = !!notificationThreadId && (live.threadId
+      ? notificationThreadId !== live.threadId
+      : live.subagentThreadIds.has(notificationThreadId));
+    const parentToolUseId = isChild ? subagentCardId(notificationThreadId!) : undefined;
     // A quota refusal is an ordinary `error` notification, so it has to be recognised
     // before the mapper turns it into a plain error card in front of the user.
-    if (notif.method === "error" && !live.rotating) {
+    if (!isChild && notif.method === "error" && !live.rotating && !live.discardingTurn) {
+      // Retry notices count too: the headline says only "Reconnecting... N/5", but their
+      // details name the 401, and waiting for the final error costs the whole retry loop.
+      const authText = codexErrorText(notif.params);
+      if (isCodexAuthFailure(authText)) { this.handleAuthFailure(live, authText); return; }
       const reason = codexErrorMessage(notif.params);
-      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason)) return;
+      if (isCodexUsageLimit(reason) && this.beginRotation(live, reason, "usage")) return;
     }
     // Mid-rotation the subprocess behind this session is being replaced. Anything it still
     // emits describes the turn that was refused — including its `turn/completed`, which
     // would close the turn the caller is about to be given a second time.
     if (live.rotating) return;
-    if (notif.method === "item/agentMessage/delta") {
+    // A turn already reported as failed: swallow the rest of it, and let the queue move on
+    // only once codex confirms it is over.
+    if (live.discardingTurn) {
+      if (!isChild && notif.method === "turn/completed") {
+        live.discardingTurn = false;
+        live.currentAssistant = "";
+        live.currentEvents = [];
+        this.endTurn(live);
+      }
+      return;
+    }
+    if (!isChild && notif.method === "turn/completed"
+        && (notif.params as { turn?: { status?: string } })?.turn?.status === "completed" && live.threadId) {
+      // An answered turn is proof the login works, whatever was observed before.
+      const accountId = getSessionCodexAccount(live.threadId);
+      if (accountId) clearCodexAccountAuthFailure(accountId);
+    }
+    if (!isChild && notif.method === "item/agentMessage/delta") {
       const d = (notif.params as { delta?: string })?.delta;
       if (typeof d === "string") live.currentAssistant += d;
     }
-    if (notif.method === "thread/tokenUsage/updated") {
+    if (!isChild && notif.method === "thread/tokenUsage/updated") {
       const usage = parseTokenUsage(notif.params, live.model);
       if (usage) live.lastUsage = usage;
     }
-    const notificationThreadId = threadIdFromNotification(notif.params);
-    const parentToolUseId = notificationThreadId && live.subagentThreadIds.has(notificationThreadId)
-      ? subagentCardId(notificationThreadId)
-      : undefined;
     const events = mapCodexEvent(notif, live.threadId ?? "");
     for (const ev of events) {
+      // Child lifecycle notifications must never terminate or change the phase
+      // of the root stream. Keep only content and diagnostics under its card.
+      if (isChild && ev.type !== "text" && ev.type !== "thinking"
+          && ev.type !== "tool_use" && ev.type !== "tool_result" && ev.type !== "error") continue;
       // The counts arrive on their own notification just before the turn ends,
       // so `done` is where they become visible to a consumer.
       if (ev.type === "done" && live.lastUsage) {
@@ -838,13 +1024,13 @@ export class CodexAppServerProvider implements AIProvider {
       const nested = parentToolUseId ? { ...ev, parentToolUseId } as ChatEvent : ev;
       live.channel.push(nested);
       // Accumulate tool calls into the turn so getMessages (live) keeps them.
-      if (nested.type === "tool_use" || nested.type === "tool_result") live.currentEvents.push(nested);
+      if ((!isChild || live.turnInFlight) && (nested.type === "tool_use" || nested.type === "tool_result")) live.currentEvents.push(nested);
       if (nested.type === "tool_use" && nested.tool === "Agent" && typeof nested.toolUseId === "string"
           && nested.toolUseId.startsWith("subagent-")) {
         live.subagentThreadIds.add(nested.toolUseId.slice("subagent-".length));
       }
     }
-    if (notif.method === "turn/completed") {
+    if (!isChild && notif.method === "turn/completed") {
       if (live.currentAssistant || live.currentEvents.length) {
         const turnEvents = live.currentEvents.length
           ? [...live.currentEvents, ...(live.currentAssistant ? [{ type: "text", content: live.currentAssistant } as ChatEvent] : [])]
@@ -858,7 +1044,7 @@ export class CodexAppServerProvider implements AIProvider {
       live.currentEvents = [];
       this.endTurn(live);
     }
-    if (notif.method === "turn/started") {
+    if (!isChild && notif.method === "turn/started") {
       // Codex is the authority on whether the thread is busy — take the flag from
       // it rather than only from what this side believes it started.
       live.turnInFlight = true;
@@ -869,7 +1055,7 @@ export class CodexAppServerProvider implements AIProvider {
     // (the thread/compacted notification is deprecated). Surface the compact-summary
     // marker inline so the chat UI offers "load previous conversation". The turn's
     // own turn/completed provides the `done`.
-    if (notif.method === "item/completed" && live.compactRequested
+    if (!isChild && notif.method === "item/completed" && live.compactRequested
         && (notif.params as { item?: { type?: string } })?.item?.type === "contextCompaction") {
       live.compactRequested = false;
       const file = fromCodexSessionsDirs(live.threadId ?? undefined,
@@ -1075,6 +1261,15 @@ export class CodexAppServerProvider implements AIProvider {
 
   async listModels(): Promise<ModelOption[]> {
     if (this.modelsCache && Date.now() < this.modelsCache.expiry) return this.modelsCache.models;
+    if (!this.modelsPending) {
+      this.modelsPending = this.loadModels().finally(() => { this.modelsPending = null; });
+    }
+    // A refresh must not block the picker once a successful list is available.
+    if (this.modelsCache) return this.modelsCache.models;
+    return this.modelsPending;
+  }
+
+  private async loadModels(): Promise<ModelOption[]> {
     const client = new CodexJsonRpcClient();
     try {
       // Without a CODEX_HOME the app-server falls back to the machine's own
@@ -1147,12 +1342,14 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   /** Read the session's account without advancing the account-selection strategy. */
-  async getUsage(sessionId?: string): Promise<UsageInfo> {
+  async getUsage(sessionId?: string, pickedAccountId?: string): Promise<UsageInfo> {
     // Idempotent, and needed because a caller can reach the provider before the
     // server has started background polling — an unregistered source would make
     // the shared layer answer {} instead of reading codex.
     registerUsageSource(codexUsageSource);
-    const accountId = sessionId ? getSessionCodexAccount(sessionId) : null;
+    // An unopened chat has a claimed account but no session binding yet.
+    // Read that exact account without advancing the selection strategy.
+    const accountId = sessionId ? getSessionCodexAccount(sessionId) : pickedAccountId ?? null;
     const bound = accountId ? getCodexAccount(accountId) : null;
     if (bound) {
       // Through the shared layer, so this answers from the cache or the stored
@@ -1166,12 +1363,12 @@ export class CodexAppServerProvider implements AIProvider {
       };
     }
 
-    // Nothing bound yet — a session binds on its first send. Name the account
+    // No binding or explicit tab claim — a session binds on its first send. Name the account
     // that will serve it, but do NOT read its quota: that spawns an app-server
     // against a login which is not yet this session's, and which a round-robin
     // or lowest-usage pick may never hand it. So the toolbar can say WHO will
     // answer without PPM touching that account on a session's behalf before
-    // the session owns it. The numbers arrive with the first turn.
+    // the session owns it. Quota is read once a tab claims it or a session binds it.
     //
     // Skipped when the session names an account that no longer exists: naming
     // a different one there would be a lie about a binding that already failed.

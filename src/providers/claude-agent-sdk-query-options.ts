@@ -5,7 +5,10 @@
 // outside this set and crashes the subprocess (notably "extra" — the app UI
 // label "Extra" must map to "xhigh" before reaching this layer).
 
-import type { ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { McpHttpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import {
+  CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
+} from "../services/design/mcp/design-mcp-tool.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -72,6 +75,70 @@ export function isThinkingEnabled(
 ): boolean {
   const effective = sessionBudget ?? configBudget;
   return effective == null ? true : effective !== 0;
+}
+
+/** The only system-prompt shape PPM sends: Claude Code's own prompt, optionally extended. */
+export interface PresetSystemPromptOption {
+  type: "preset";
+  preset: "claude_code";
+  append?: string;
+}
+
+/**
+ * Compose the SDK `systemPrompt` option from the provider's "Additional Instructions"
+ * (`system_prompt`) and a design session's instruction block.
+ *
+ * Both are appended to the preset, never used as a replacing `custom` prompt: the setting
+ * is labelled as *additional* instructions, and replacing Claude Code's prompt would drop
+ * its tool-use guidance. Computed on every turn, so nothing depends on the SDK recording
+ * the prompt on the session's first request.
+ */
+export function buildSystemPromptOption(
+  additional?: string,
+  design?: string,
+): PresetSystemPromptOption {
+  const parts = [additional, design]
+    .map((part) => part?.trim())
+    .filter((part): part is string => !!part);
+  return parts.length
+    ? { type: "preset", preset: "claude_code", append: parts.join("\n\n") }
+    : { type: "preset", preset: "claude_code" };
+}
+
+/**
+ * A PreToolUse hook's permission verdict in the shape the CLI actually honours.
+ *
+ * `hookEventName` is not decoration: the bundled CLI reads `permissionDecision` only when
+ * `hookSpecificOutput.hookEventName === "PreToolUse"`, and it rejects a callback hook whose
+ * output names no (or another) event with "Hook returned incorrect event name". Without
+ * it, a "deny" the user clicked is not a deny. The reason travels as
+ * `permissionDecisionReason`, the field the CLI reports back to the model.
+ */
+export function preToolUseDecision(decision: "allow" | "deny", reason?: string) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse" as const,
+      permissionDecision: decision,
+      ...(reason ? { permissionDecisionReason: reason } : {}),
+    },
+  };
+}
+
+/**
+ * The design MCP server (`design_check`) as the SDK's `http` server config, for a design
+ * session only; `{}` otherwise, so an ordinary chat's server list is exactly what it was.
+ * The bearer token is the session's capability and travels in the header, never the URL.
+ */
+export function designMcpServers(access: DesignMcpAccess | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_DESIGN_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: DESIGN_CHECK_TOOL_TIMEOUT_MS,
+    },
+  };
 }
 
 /** Resolve per-call overrides against provider config. Per-call wins, else config, else omit. */

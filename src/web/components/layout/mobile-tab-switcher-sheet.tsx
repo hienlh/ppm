@@ -13,6 +13,7 @@ import { useStreamingStore } from "@/stores/streaming-store";
 import { getTabIcon } from "@/lib/tab-type-icons";
 import { buildTabSwitcherGroups, type TabSortMode } from "./tab-switcher-groups";
 import type { Tab } from "@/stores/tab-store";
+import { tabSessionId } from "@/lib/tab-session-id";
 import { cn } from "@/lib/utils";
 
 const SORT_STORAGE_KEY = "ppm:tab-sort-mode";
@@ -64,10 +65,8 @@ export function MobileTabSwitcherSheet({
 
   function activate(tab: Tab) {
     usePanelStore.getState().setActiveTab(tab.id, tabPanelMap[tab.id]);
-    if (tab.type === "chat") {
-      const sid = tab.metadata?.sessionId as string | undefined;
-      if (sid) useNotificationStore.getState().clearForSession(sid);
-    }
+    const sid = tabSessionId(tab);
+    if (sid) useNotificationStore.getState().clearForSession(sid);
     onClose();
   }
 
@@ -150,7 +149,7 @@ export function MobileTabSwitcherSheet({
               {group.tabs.map((tab) => {
                 const Icon = getTabIcon(tab);
                 const isActive = tab.id === activeTabId;
-                const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string | undefined) : undefined;
+                const sessionId = tabSessionId(tab);
                 const tagColor = sessionId ? sessionTagMap[sessionId]?.color : undefined;
                 const entry = sessionId ? notifications.get(sessionId) : undefined;
                 const notiType = entry && entry.count > 0 ? entry.type : null;
