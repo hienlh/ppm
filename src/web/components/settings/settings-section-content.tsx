@@ -16,6 +16,7 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   general: lazyWithPreload(() => import("./general-settings-section").then((m) => ({ default: m.GeneralSettingsSection }))),
   appearance: lazyWithPreload(() => import("./appearance-settings-section").then((m) => ({ default: m.AppearanceSettingsSection }))),
   "language-servers": lazyWithPreload(() => import("./language-servers-section").then((m) => ({ default: m.LanguageServersSection }))),
+  "remote-desktop": lazyWithPreload(() => import("./remote-desktop-settings-section").then((m) => ({ default: m.RemoteDesktopSettingsSection }))),
   "ai-provider": lazyWithPreload(() => import("./ai-settings-section").then((m) => ({ default: m.AISettingsSection }))),
   accounts: lazyWithPreload(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
   design: lazyWithPreload(() => import("./design-settings-section").then((m) => ({ default: m.DesignSettingsSection }))),

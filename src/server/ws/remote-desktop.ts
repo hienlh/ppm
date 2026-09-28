@@ -9,7 +9,9 @@
  * client's *first* message — `{type:"auth", nonce, displayId?, cursor?, codec?}` — before
  * capture or input starts. `displayId` picks one of `/capabilities`' `displays`; absent/unknown = primary.
  * `cursor` and `codec` carry the client's saved cursor and encoder prefs, because ffmpeg takes
- * both at startup and applying them afterwards would respawn it on every connect. Kept out of
+ * both at startup and applying them afterwards would respawn it on every connect. `webrtc`
+ * asks for the relay transport; when it is not installed the session answers on this socket
+ * as before rather than failing. Kept out of
  * the query string (unlike the coarse token) so they never land in proxy/tunnel access logs.
  *
  * Both the feature flag and `auth.enabled` are re-checked here even though
@@ -66,6 +68,9 @@ async function authenticateFirstMessage(ws: RemoteDesktopWs, text: string): Prom
       // getting the pointer it has always had.
       showCursor: parsed.cursor !== false,
       encoder: typeof parsed.codec === "string" ? parsed.codec : undefined,
+      // Opt-in, and only honoured when the relay is installed: an older client sends no flag
+      // and keeps the WebSocket path it has always used.
+      webrtc: parsed.webrtc === true,
     });
   } catch (e) {
     console.error(`[remote-desktop] failed to start capture: ${(e as Error).message}`);
