@@ -47,6 +47,7 @@ import { codexUsageSource } from "./codex-usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
+import { getRolloutMessagesAsync } from "./codex-history-async.ts";
 import {
   listCodexRollouts,
   findRolloutByThreadId,
@@ -1195,10 +1196,11 @@ export class CodexAppServerProvider implements AIProvider {
     // Fail-closed: only return rollout messages attributable to this project's cwd.
     const cwd = this.sessions.get(sessionId)?.projectPath || getSessionProjectPath(sessionId);
     if (!cwd) return [];
-    return fromCodexSessionsDirs(sessionId, (d) => {
-      const msgs = getRolloutMessages(d, sessionId, cwd);
-      return msgs.length > 0 ? msgs : null;
-    }) ?? [];
+    for (const dir of codexSessionsDirs(sessionId)) {
+      const messages = await getRolloutMessagesAsync(dir, sessionId, cwd);
+      if (messages.length) return messages;
+    }
+    return [];
   }
 
   /**

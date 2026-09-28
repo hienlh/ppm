@@ -104,6 +104,14 @@ export function parseRolloutJsonl(
     loadSubagent?: (threadId: string) => SubagentTranscript | null;
   },
 ): ChatMessage[] {
+  const steps = rolloutMessageSteps(text, opts?.preCompactIndex);
+  let step = steps.next();
+  while (!step.done) step = steps.next(step.value ? opts?.loadSubagent?.(step.value) ?? null : null);
+  return step.value;
+}
+
+/** Shared parser; HTTP readers yield between batches and load children asynchronously. */
+export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Generator<string | null, ChatMessage[], SubagentTranscript | null> {
   const messages: ChatMessage[] = [];
   let i = 0;
   let pendingEvents: ChatEvent[] = [];
@@ -130,7 +138,9 @@ export function parseRolloutJsonl(
     pendingEvents = [];
   };
 
+  let batch = 0;
   for (const line of completeLines(text)) {
+    if (++batch % 32 === 0) yield null;
     const rec = parseLine(line);
     if (!rec) continue;
     const p = rec.payload ?? {};
@@ -157,7 +167,7 @@ export function parseRolloutJsonl(
         } else if (mapped.kind === "subagent") {
           const { activity } = mapped;
           if (!subagentTranscripts.has(activity.threadId)) {
-            subagentTranscripts.set(activity.threadId, opts?.loadSubagent?.(activity.threadId) ?? null);
+            subagentTranscripts.set(activity.threadId, (yield activity.threadId) ?? null);
           }
           const transcript = subagentTranscripts.get(activity.threadId) ?? null;
           pendingEvents.push(activity.done
@@ -187,12 +197,12 @@ export function parseRolloutJsonl(
       else if (typeof p.type === "string" && p.type.endsWith("_call_output")) pendingEvents.push(fnOutputToToolResult(p));
       else if (typeof p.type === "string" && p.type.endsWith("_call")) pendingEvents.push(genericCallToToolUse(p));
     } else if (rec.type === "compacted") {
-      if (opts?.preCompactIndex) {
+      if (preCompactIndex) {
         // One segment per request, the way the Claude parser's `oneSegment` does.
         // The requested boundary ends the walk; every boundary before it closes a
         // stretch nobody asked for, so what was collected is dropped rather than
         // prepended — the card at the head of the segment is what leads back to it.
-        if (++compactionsSeen === opts.preCompactIndex) {
+        if (++compactionsSeen === preCompactIndex) {
           if (pendingEvents.length) flushAssistant("", ts);
           break;
         }
@@ -234,7 +244,7 @@ const HEADER_FIRST_READ_BYTES = 32 * 1024;
  * line — possibly a split multi-byte character — is dropped by `completeLines`, so a partial
  * read never parses a partial record.
  */
-function readSessionMeta(
+export function readSessionMeta(
   file: string,
   opts?: { withTitle?: boolean; titleIf?: (header: RolloutHeader) => boolean },
 ): RolloutHeader | null {
@@ -365,7 +375,7 @@ export function findRolloutByThreadId(sessionsDir: string, threadId: string, req
  * failure) writes a transcript with nothing in it but the error, so without this
  * its card in the parent is blank and says nothing about what went wrong.
  */
-function terminalError(text: string): string {
+export function terminalError(text: string): string {
   for (const line of completeLines(text).reverse()) {
     const rec = parseLine(line);
     if (rec?.type !== "event_msg") continue;
@@ -455,7 +465,7 @@ function compactionSummaries(text: string): string[] {
  * thread id is a uuid whose last group can be all digits, and a trailing `-12` would
  * then be indistinguishable from an index.
  */
-function compactCard(summary: string, threadId: string, index: number, file: string): ChatMessage {
+export function compactCard(summary: string, threadId: string, index: number, file: string): ChatMessage {
   return {
     id: `codex-compact-${threadId}#${index}`,
     role: "assistant",

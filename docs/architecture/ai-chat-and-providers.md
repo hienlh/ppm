@@ -407,7 +407,22 @@ if (entry.phase !== "idle" && entry.abort) {
 - Second message (while streaming): abort current, wait, start new runStreamLoop
 - Priority modes (future): could queue messages for intelligent interleaving
 
+### Draft recovery
+
+Chat drafts are saved synchronously to browser `sessionStorage`, scoped by
+project, chat tab and session, alongside the debounced server save. A page
+reload during session creation or connection restores the local text to the
+composer without automatically sending it. Creating or editing into a new
+session moves the local draft to that session; handing the message to the
+socket clears it. This protects reloads in the same browser tab, not delivery
+after the socket accepts a message or recovery after browser storage is cleared.
+
 ### WebSocket Reconnection Sync
+
+Codex history loaded from disk uses asynchronous file reads and yields between
+parser batches so usage, health and other requests can run during a long read.
+Subagent lookups share a directory index within that history request. The
+synchronous reader remains available for provider operations that require it.
 
 Chat sockets receive a server heartbeat every 15 seconds. The client reconnects
 after 45 seconds without any incoming frame, including sockets that still report
