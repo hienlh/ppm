@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { configService } from "../../../src/services/config.service.ts";
 import { app } from "../../../src/server/index.ts";
+import { chatService } from "../../../src/services/chat.service.ts";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -82,6 +83,30 @@ describe("Chat REST API", () => {
     expect(json.ok).toBe(true);
     expect(Array.isArray(json.data.sessions)).toBe(true);
     expect(json.data.sessions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("GET /chat/sessions lists the most recently updated conversation first", async () => {
+    const original = chatService.listSessions.bind(chatService);
+    const oldButActive = {
+      id: "history-old-but-active", providerId: "mock", title: "Old but active",
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-02-03T00:00:00.000Z",
+    };
+    const newerButIdle = {
+      id: "history-newer-but-idle", providerId: "mock", title: "Newer but idle",
+      createdAt: "2026-02-02T00:00:00.000Z", updatedAt: "2026-02-02T00:00:00.000Z",
+    };
+    (chatService as typeof chatService & { listSessions: typeof chatService.listSessions }).listSessions = async () => [
+      newerButIdle, oldButActive,
+    ];
+
+    try {
+      const res = await req("/chat/sessions?providerId=mock");
+      const json = await res.json() as any;
+      expect(json.data.sessions.slice(0, 2).map((s: { id: string }) => s.id))
+        .toEqual([oldButActive.id, newerButIdle.id]);
+    } finally {
+      chatService.listSessions = original;
+    }
   });
 
   it("GET /chat/sessions?providerId=mock filters by provider", async () => {

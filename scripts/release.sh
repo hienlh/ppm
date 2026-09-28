@@ -69,6 +69,12 @@ echo "  ✓ on main · clean · in sync with origin · version $VERSION"
 echo "[1/6] Regenerating skill assets + building frontend..."
 bun run generate:skill || fail "generate:skill failed."
 bun run build:web      || fail "build:web failed."
+# `npm publish --ignore-scripts` below deliberately skips `prepublishOnly`, so
+# the release path must run the two post-build steps itself. Monaco is loaded
+# dynamically from `dist/web/assets/monaco/vs`; without this copy an editor
+# receives its file contents but spins forever waiting for the AMD loader.
+bun scripts/copy-monaco.ts || fail "copy-monaco failed."
+bun scripts/precompress-web.ts || fail "precompress-web failed."
 
 # Skill assets are generated artifacts kept in git (mirrors the published pkg).
 # Commit + push them if regeneration changed anything, so the tag we cut below

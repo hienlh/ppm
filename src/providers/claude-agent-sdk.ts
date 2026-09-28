@@ -5,7 +5,9 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { buildModelQueryOptions } from "./claude-agent-sdk-query-options.ts";
+import { buildModelQueryOptions, buildSystemPromptOption, designMcpServers, preToolUseDecision } from "./claude-agent-sdk-query-options.ts";
+import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
+import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
@@ -215,6 +217,7 @@ interface PendingApproval {
  */
 export class ClaudeAgentSdkProvider implements AIProvider {
   readonly supportsSharedContext = true;
+  readonly supportsDesignInstructions = true;
   id = "claude";
   name = "Claude";
 
@@ -887,23 +890,34 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const providerConfig = this.getProviderConfig();
     const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
-    const systemPromptOpt = providerConfig.system_prompt
-      ? { type: "custom" as const, value: providerConfig.system_prompt }
-      : { type: "preset" as const, preset: "claude_code" as const };
+    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
+    // A design session in acceptEdits auto-approves file tools only while they target the
+    // project, and asks for everything else. Any other mode the user picks for a design
+    // session behaves exactly as that mode does in an ordinary chat.
+    const designPolicy = !!opts?.designSession && permissionMode === "acceptEdits";
+    // No project root means nothing can be proven inside it, so every file tool asks.
+    const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
 
     // Build allowedTools based on permission mode.
     // SDK auto-approves everything in allowedTools (skips canUseTool callback).
     // In non-bypass modes, only pre-approve read-only tools so write/execute tools
     // go through the permission evaluation chain → canUseTool callback.
+    // The design policy pre-approves nothing: the read-only list would let Read and Grep
+    // reach any path on disk and every MCP tool run unasked, which is exactly what a
+    // design session's agent (fed page content it did not write) must not do.
     const readOnlyTools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
     const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
     const teamTools = providerConfig.agent_teams
       ? ["TeamCreate", "TeamDelete", "SendMessage", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
       : [];
     const mcpTools = ["mcp__*"];
-    const allowedTools = isBypass
-      ? [...readOnlyTools, ...writeTools, ...teamTools, ...mcpTools]
-      : [...readOnlyTools, ...mcpTools];
+    // `design_check` only reads the canvas, so a design session never asks before it runs.
+    const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    const allowedTools = designPolicy
+      ? (designCheckTool ? [designCheckTool] : [])
+      : isBypass
+        ? [...readOnlyTools, ...writeTools, ...teamTools, ...mcpTools]
+        : [...readOnlyTools, ...mcpTools];
 
     /**
      * Approval events to yield from the generator.
@@ -942,6 +956,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         }
         return { behavior: "deny" as const, message: "User skipped the question" };
       }
+      // The PreToolUse hook normally settles design-policy tools before this runs; this is
+      // the fail-closed backstop for any path that reaches the callback without it.
+      if (designPolicy && toolName !== designCheckTool && designToolDecision(toolName, input, designRoot) !== "allow") {
+        const result = await waitForApproval(toolName, input);
+        if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
+      }
       return { behavior: "allow" as const, updatedInput: input };
     };
 
@@ -958,18 +978,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Bypass mode: allow everything
       if (isBypass) return {};
 
-      // Read-only tools: always allow
-      if (readOnlyTools.includes(toolName)) return {};
-
       // AskUserQuestion: handled by canUseTool callback
       if (toolName === "AskUserQuestion") return {};
 
+      if (designCheckTool && toolName === designCheckTool) return preToolUseDecision("allow");
+
+      // Design policy: project-scoped file tools pass, everything else falls through to
+      // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
+      // auto-approvals (which include some shell commands) never get a say.
+      if (designPolicy) {
+        if (designToolDecision(toolName, hookInput?.tool_input, designRoot) === "allow") {
+          return preToolUseDecision("allow");
+        }
+      } else if (readOnlyTools.includes(toolName)) {
+        // Read-only tools: always allow
+        return {};
+      }
+
       // Non-bypass mode: ask FE for approval on write/execute tools
       const result = await waitForApproval(toolName, hookInput?.tool_input);
-      if (result.approved) {
-        return { hookSpecificOutput: { permissionDecision: "allow" } };
-      }
-      return { hookSpecificOutput: { permissionDecision: "deny", message: "User denied tool execution" } };
+      if (result.approved) return preToolUseDecision("allow");
+      return preToolUseDecision("deny", "User denied tool execution");
     };
 
     // Hooks config: add our permission hook for non-bypass modes
@@ -1078,14 +1107,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
-      // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats),
-      // merged with servers inherited from Claude Code's ~/.claude.json for this project.
-      // PPM DB entries override inherited ones on name conflict.
-      const ownServers = mcpConfigService.list();
-      const inheritedServers = providerConfig.inherit_claude_mcp !== false
-        ? listInheritedClaudeMcpServers(effectiveCwd)
-        : {};
-      const mcpServers = { ...inheritedServers, ...ownServers };
+      const mcpServers = { ...this.resolveMcpServers(effectiveCwd), ...designMcpServers(opts?.designSession ? opts.designMcp : undefined) };
       const hasMcp = Object.keys(mcpServers).length > 0;
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
@@ -1340,6 +1362,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             } else {
               console.log(`[sdk] session=${sessionId} init: sdk_session_id=${sdkSid}`);
             }
+            // Carry each MCP server's connection state so the host can offer a sign-in
+            // for the ones reporting `needs-auth`.
+            const initServers = (msg as any).mcp_servers;
+            yield {
+              type: "system" as any,
+              subtype,
+              ...(Array.isArray(initServers) && { mcpServers: initServers }),
+            } as any;
+            continue;
           }
 
           // Detect compacting status
@@ -2114,6 +2145,83 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     }
   }
 
+
+  /**
+   * MCP servers for a query in `cwd`: PPM's own (read fresh — the user may add or remove
+   * one between chats) over those inherited from Claude Code's ~/.claude.json for this
+   * project. PPM entries win on a name conflict.
+   */
+  private resolveMcpServers(cwd: string): Record<string, unknown> {
+    const inherited = this.getProviderConfig().inherit_claude_mcp !== false
+      ? listInheritedClaudeMcpServers(cwd)
+      : {};
+    return { ...inherited, ...mcpConfigService.list() };
+  }
+
+  /**
+   * A subprocess that never receives a prompt, for control requests only — MCP status
+   * and MCP sign-in. It is configured like a chat query in `cwd` (same CLI, settings
+   * sources and MCP servers), so it sees exactly the servers a chat there would, and it
+   * never calls the model. The caller owns it and must `close()` it: an OAuth flow's
+   * localhost callback listener lives inside this process.
+   */
+  openMcpControlQuery(cwd: string): { query: any; close: () => void } {
+    const providerConfig = this.getProviderConfig();
+    const cliExecutablePath = resolveCliExecutablePath(
+      (providerConfig as { cli_command?: string }).cli_command,
+    );
+    const mcpServers = this.resolveMcpServers(cwd);
+    const { generator, controller } = createMessageChannel();
+    const q = query({
+      prompt: generator,
+      options: {
+        ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),
+        ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
+        cwd,
+        settingSources: ["user", "project"],
+        // No account: MCP OAuth tokens belong to the CLI's own credential store, the same
+        // one an interactive `claude` writes, and no model call is ever made here.
+        env: this.buildQueryEnv(cwd, null),
+        settings: { permissions: { allow: [], deny: [] } },
+        ...(Object.keys(mcpServers).length > 0 && { mcpServers }),
+        stderr: (chunk: string) => {
+          const line = chunk.trim();
+          if (line) console.log(`[mcp-control] stderr: ${line.slice(0, 300)}`);
+        },
+      } as any,
+    });
+    let closed = false;
+    return {
+      query: q,
+      close: () => {
+        if (closed) return;
+        closed = true;
+        controller.done();
+        q.close();
+      },
+    };
+  }
+
+  /**
+   * Reconnect one MCP server inside a live chat subprocess, so a sign-in finished
+   * elsewhere shows up without restarting the conversation. Returns the server's status
+   * afterwards, or null when the session has no live subprocess.
+   */
+  async reconnectMcpServer(sessionId: string, serverName: string): Promise<string | null> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return null;
+    try {
+      await ss.query.reconnectMcpServer(serverName);
+    } catch (e) {
+      console.warn(`[sdk] session=${sessionId} reconnectMcpServer(${serverName}) failed: ${(e as Error).message}`);
+    }
+    try {
+      const statuses: Array<{ name: string; status: string }> = await ss.query.mcpServerStatus();
+      return statuses.find((s) => s.name === serverName)?.status ?? null;
+    } catch {
+      return null;
+    }
+  }
 
   /** Abort and fully teardown the streaming session — user must resume to continue */
   abortQuery(sessionId: string, source = "unknown"): void {

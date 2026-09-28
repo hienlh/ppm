@@ -40,6 +40,8 @@ export function ClaudeAccountsSection() {
   const [profileView, setProfileView] = useState<{ profile: OAuthProfileData; accountId: string } | null>(null);
   const [exportPreselect, setExportPreselect] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"add" | "export" | "import" | "rotation" | "token-test" | null>(null);
+  /** Label of the account whose "Sign in again" chip opened the add dialog. */
+  const [signInAgainFor, setSignInAgainFor] = useState<string | undefined>(undefined);
 
   function handleSuccess(msg?: string) {
     void reload();
@@ -84,7 +86,7 @@ export function ClaudeAccountsSection() {
         refreshing={refreshing}
         disabled={initialLoading}
         actions={<>
-          <Button size="sm" className="cursor-pointer gap-1.5" onClick={() => setDialog("add")}>
+          <Button size="sm" className="cursor-pointer gap-1.5" onClick={() => { setSignInAgainFor(undefined); setDialog("add"); }}>
             <Plus className="size-4" /> Add account
           </Button>
           <Button size="sm" variant="outline" className="cursor-pointer gap-1.5" onClick={() => { setExportPreselect(null); setDialog("export"); }}>
@@ -138,6 +140,7 @@ export function ClaudeAccountsSection() {
                 onDelete={(id, display) => setDeleteTarget({ id, display })}
                 onExport={(id) => { setExportPreselect(id); setDialog("export"); }}
                 onViewProfile={(profile, accountId) => setProfileView({ profile, accountId })}
+                onReauth={() => { setSignInAgainFor(entry.accountLabel ?? entry.accountId.slice(0, 8)); setDialog("add"); }}
                 flash={flashIds.has(entry.accountId)}
               />
             ))}
@@ -161,7 +164,12 @@ export function ClaudeAccountsSection() {
         />
       )}
 
-      <AddAccountDialog open={dialog === "add"} onOpenChange={(v) => setDialog(v ? "add" : null)} onSuccess={handleSuccess} />
+      <AddAccountDialog
+        open={dialog === "add"}
+        onOpenChange={(v) => { setDialog(v ? "add" : null); if (!v) setSignInAgainFor(undefined); }}
+        onSuccess={handleSuccess}
+        signInAgainFor={signInAgainFor}
+      />
       <ExportAccountsDialog
         open={dialog === "export"}
         onOpenChange={(v) => { setDialog(v ? "export" : null); if (!v) setExportPreselect(null); }}

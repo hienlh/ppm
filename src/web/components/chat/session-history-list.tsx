@@ -2,7 +2,7 @@ import { Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot,
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { cn } from "@/lib/utils";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
-import { useTabStore } from "@/stores/tab-store";
+import { openSessionInItsTab } from "@/lib/design/open-design-tab";
 import { formatRelativeDate } from "@/lib/format-date";
 import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
@@ -73,7 +73,6 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
     enableKeyboardShortcuts: variant === "bar",
   });
   const notifications = useNotificationStore((s) => s.notifications);
-  const openTab = useTabStore((s) => s.openTab);
 
   const isSidebar = variant === "sidebar";
   // Content-aware unified search is a sidebar affordance; the bar keeps its
@@ -82,13 +81,10 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
   const showSearch = isSidebar && h.searchQuery.trim().length > 0;
 
   function openResult(r: ChatSearchResult) {
-    openTab({
-      type: "chat",
-      title: r.title || "Chat",
-      projectId: projectName,
-      metadata: { projectName, sessionId: r.sessionId, providerId: r.providerId },
-      closable: true,
-    });
+    openSessionInItsTab(
+      { id: r.sessionId, providerId: r.providerId, title: r.title ?? undefined, designSlug: r.designSlug },
+      projectName,
+    );
     onNavigate?.();
   }
 

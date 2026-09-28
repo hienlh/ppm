@@ -550,7 +550,7 @@ All tab routing and rendering components now include fallback guards for unknown
 | @monaco-editor/react | Code editor | 4.7.0 |
 | @xterm/xterm | Terminal emulator | 6.1.0-beta.285 |
 | zustand | State management | 5.0.11 |
-| @anthropic-ai/claude-agent-sdk | AI provider | 0.3.251 (pinned) |
+| @anthropic-ai/claude-agent-sdk | AI provider | 0.3.280 (pinned) |
 | vite | Frontend bundler | 8.0 |
 | tailwindcss | Utility CSS | 4.2 |
 | radix-ui | Accessible components | 1.4.3 |

@@ -320,6 +320,87 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(opts.allowedTools).toContain("ToolSearch");
     });
 
+    it("appends the Additional Instructions setting to the preset instead of replacing it", async () => {
+      const claude = (configService as any).config.ai.providers.claude;
+      const saved = claude.system_prompt;
+      claude.system_prompt = "Answer in French.";
+      try {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+        expect(mockQueryFn.mock.calls[0]![0].options.systemPrompt)
+          .toEqual({ type: "preset", preset: "claude_code", append: "Answer in French." });
+      } finally {
+        claude.system_prompt = saved;
+      }
+    });
+
+    it("keeps an ordinary non-bypass session's pre-approved tools and hook", async () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+      const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+      for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "acceptEdits" })) { /* consume */ }
+      const opts = mockQueryFn.mock.calls[0]![0].options;
+      expect(opts.allowedTools).toEqual(["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch", "mcp__*"]);
+      expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
+      const hook = opts.hooks.PreToolUse[0].hooks[0];
+      expect(await hook({ tool_name: "Read", tool_input: { file_path: "/etc/hosts" } })).toEqual({});
+    });
+
+    describe("design session", () => {
+      const designOpts = { designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits" };
+
+      async function startDesignTurn() {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", designOpts)) { /* consume */ }
+        return mockQueryFn.mock.calls[0]![0].options;
+      }
+
+      it("appends the design block and pre-approves nothing", async () => {
+        const opts = await startDesignTurn();
+        expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "# Design mode" });
+        expect(opts.allowedTools).toEqual([]);
+        expect(opts.permissionMode).toBe("acceptEdits");
+      });
+
+      it("lets project file tools through the hook with a verdict the CLI honours", async () => {
+        const hook = (await startDesignTurn()).hooks.PreToolUse[0].hooks[0];
+        expect(await hook({ tool_name: "Write", tool_input: { file_path: "designs/x/index.html" } }))
+          .toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+      });
+
+      it("asks for shell and for files outside the project, and a denial denies", async () => {
+        const hook = (await startDesignTurn()).hooks.PreToolUse[0].hooks[0];
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        for (const input of [
+          { tool_name: "Bash", tool_input: { command: "ls" } },
+          { tool_name: "Read", tool_input: { file_path: "/etc/hosts" } },
+          { tool_name: "mcp__github__create_issue", tool_input: {} },
+        ]) {
+          const before = new Set(pending.keys());
+          const verdict = hook(input);
+          await new Promise((r) => setTimeout(r, 0));
+          const requestId = [...pending.keys()].find((k) => !before.has(k));
+          expect(requestId).toBeTruthy();
+          provider.resolveApproval(requestId!, false);
+          expect(await verdict).toEqual({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "User denied tool execution",
+            },
+          });
+        }
+      });
+
+      it("falls back to the mode's ordinary behaviour when the user picks another mode", async () => {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", { ...designOpts, permissionMode: "bypassPermissions" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        expect(opts.allowedTools).toContain("Bash");
+        expect(opts.systemPrompt.append).toBe("# Design mode");
+      });
+    });
+
     it("sets maxTurns to 1000", async () => {
       mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
       const session = await provider.createSession({});

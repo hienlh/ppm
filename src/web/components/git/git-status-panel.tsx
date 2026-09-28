@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
 import {
   Plus,
   Minus,
@@ -134,6 +135,29 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
   // whose children are. This resolves which one every call below talks to.
   const gitRepo = useGitRepo(projectName);
   const gitRoot = gitRepo.repo?.path ?? activeProjectPath;
+  const panelRef = useRef<HTMLDivElement>(null);
+  const requestId = useRef(0);
+  const repoKey = `${projectName}:${gitRepo.repo?.path ?? ""}`;
+  const currentRepoKey = useRef(repoKey);
+  if (currentRepoKey.current !== repoKey) {
+    currentRepoKey.current = repoKey;
+    requestId.current++;
+  }
+  const [loadedRepoKey, setLoadedRepoKey] = useState<string | null>(null);
+  const activeProjectName = useProjectStore((s) => s.activeProject?.name);
+  const activeTabId = useTabStore((s) => s.activeTabId);
+  const [onboardingRefresh, setOnboardingRefresh] = useState(0);
+  useEffect(() => {
+    const refresh = () => setOnboardingRefresh((n) => n + 1);
+    window.addEventListener("ppm:onboarding-refresh", refresh);
+    return () => window.removeEventListener("ppm:onboarding-refresh", refresh);
+  }, []);
+  useEffect(() => {
+    if (!projectName || projectName !== activeProjectName || (tabId && tabId !== activeTabId) ||
+      !gitRepo.repo || loading || error || !status || loadedRepoKey !== repoKey) return;
+    const visible = !!panelRef.current?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    if (visible) emitOnboardingEvidence({ type: "git-ready", projectName, visible });
+  }, [onboardingRefresh, projectName, activeProjectName, tabId, activeTabId, gitRepo.repo, loading, error, status, loadedRepoKey, repoKey]);
   // Git Graph extension is available when it has registered its command.
   const gitGraphAvailable = useExtensionStore(
     (s) => s.contributions?.commands?.some((c) => c.command === "git-graph.view") ?? false,
@@ -143,12 +167,15 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     // No repository resolved yet: the panel is showing the picker, and asking
     // git in the container folder is what produced the error this replaced.
     if (!projectName || !gitRepo.repo) return;
+    const id = ++requestId.current;
     try {
       setLoading(true);
       const data = await api.get<GitStatus>(
         gitRepo.gitUrl("/status"),
       );
+      if (id !== requestId.current) return;
       setStatus(data);
+      setLoadedRepoKey(`${projectName}:${gitRepo.repo.path}`);
       setGitChangesCount(
         projectName,
         data.staged.length + data.unstaged.length + data.untracked.length,
@@ -156,9 +183,10 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
       useGitStatusStore.getState().setMeta(projectName, data);
       setError(null);
     } catch (e) {
+      if (id !== requestId.current) return;
       setError(e instanceof Error ? e.message : "Failed to fetch status");
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   }, [projectName, gitRepo, setGitChangesCount]);
 
@@ -166,7 +194,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     fetchStatus();
     // Auto-reload every 5 seconds
     const interval = setInterval(fetchStatus, 5000);
-    return () => clearInterval(interval);
+    return () => { requestId.current++; clearInterval(interval); };
   }, [fetchStatus]);
 
   const stageFiles = async (files: string[]) => {
@@ -460,7 +488,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div ref={panelRef} data-onboarding="git" className="flex flex-col h-full overflow-hidden">
       <SidebarHeader icon={GitBranch} title={status?.current ? `On: ${status.current}` : "Source Control"}>
         <Button
           variant={viewMode === "flat" ? "secondary" : "ghost"}

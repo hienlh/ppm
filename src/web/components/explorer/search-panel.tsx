@@ -6,6 +6,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { projectUrl, api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { FileIcon } from "@/lib/file-icons";
+import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
 
 interface SearchMatch {
   lineNum: number;
@@ -63,7 +64,7 @@ function OptionButton({ active, onClick, title, children }: { active: boolean; o
   );
 }
 
-export function SearchPanel() {
+export function SearchPanel({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const openTab = useTabStore((s) => s.openTab);
 
@@ -82,8 +83,25 @@ export function SearchPanel() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const requestId = useRef(0);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
+  // Invalidate synchronously during render, including the debounce gap.
+  const signature = JSON.stringify([activeProject?.name, query, caseSensitive, wholeWord, useRegex, filesFilter]);
+  const currentSignature = useRef(signature);
+  if (currentSignature.current !== signature) {
+    currentSignature.current = signature;
+    requestId.current++;
+  }
 
   const doSearch = useCallback(async (q: string, cs: boolean, ww: boolean, rx: boolean, ff: string) => {
+    const id = ++requestId.current;
+    setSearchError(null);
+    setSearched(false);
+    setLoading(false);
+    setResults([]);
+    setTotal(0);
     setRegexError(false);
     if (!activeProject || (!rx && q.length < 2) || (rx && q.length < 1)) {
       setResults([]);
@@ -100,19 +118,30 @@ export function SearchPanel() {
       const data = await api.get<{ results: SearchResult[]; total: number }>(
         `${projectUrl(activeProject.name)}/files/search?${params}`
       );
+      if (id !== requestId.current) return;
       setResults(data.results);
       setTotal(data.total);
-    } catch {
+      setSearched(true);
+      const visible = !!panelRef.current?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+      if (visible) emitOnboardingEvidence({ type: "search-succeeded", projectName: activeProject.name, requestId: String(id), visible });
+    } catch (error) {
+      if (id !== requestId.current) return;
       setResults([]);
+      setSearchError(error instanceof Error ? error.message : "Unable to search this project.");
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   }, [activeProject]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSearched(false);
+    setSearchError(null);
+    setResults([]);
+    setTotal(0);
+    setLoading(false);
     debounceRef.current = setTimeout(() => doSearch(query, caseSensitive, wholeWord, useRegex, filesFilter), 300);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => { requestId.current++; if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, caseSensitive, wholeWord, useRegex, filesFilter, doSearch]);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -129,6 +158,7 @@ export function SearchPanel() {
       projectId: activeProject.name,
       closable: true,
     });
+    onNavigate?.();
   }
 
   function toggleCollapse(file: string) {
@@ -169,7 +199,7 @@ export function SearchPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div ref={panelRef} data-onboarding="search" className="flex flex-col h-full">
       {/* Search input + options */}
       <div className="p-2 border-b border-border space-y-1.5">
         {/* Search row */}
@@ -265,7 +295,8 @@ export function SearchPanel() {
           {!loading && !replacing && replaceCount !== null && (
             <span className="text-success">{replaceCount} replacement{replaceCount !== 1 ? "s" : ""} made</span>
           )}
-          {!loading && !replacing && replaceCount === null && !regexError && query.length >= 2 && results.length === 0 && <span>No results</span>}
+          {searchError && <span role="alert" className="text-destructive">Search failed: {searchError} <button className="underline" onClick={() => void doSearch(query, caseSensitive, wholeWord, useRegex, filesFilter)}>Retry search</button></span>}
+          {!loading && !replacing && !searchError && searched && replaceCount === null && !regexError && results.length === 0 && <span>No results</span>}
           {!loading && !replacing && replaceCount === null && total > 0 && (
             <span>{total} result{total !== 1 ? "s" : ""} in {results.length} file{results.length !== 1 ? "s" : ""}</span>
           )}

@@ -36,6 +36,7 @@ let highlighterPromise: Promise<Highlighter> | null = null;
 // createHighlighter settles (kicked off early via warmShiki).
 let readyHighlighter: Highlighter | null = null;
 let activeThemeName = "github-dark-dimmed";
+let pendingTheme: string | Record<string, unknown> = activeThemeName;
 const loadedLangs = new Set(PRELOAD_LANGS);
 const loadedThemes = new Set(BUILTIN_SHIKI_THEMES);
 
@@ -56,10 +57,22 @@ function cacheSet(key: string, html: string): void {
 
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
+    const requestedTheme = pendingTheme;
     highlighterPromise = createHighlighter({
       themes: BUILTIN_SHIKI_THEMES,
       langs: PRELOAD_LANGS,
-    }).then((hl) => {
+    }).then(async (hl) => {
+      const name = typeof requestedTheme === "string" ? requestedTheme : requestedTheme.name;
+      if (typeof name === "string" && !loadedThemes.has(name)) {
+        try {
+          await hl.loadTheme(requestedTheme as never);
+          loadedThemes.add(name);
+        } catch {
+          // A broken imported theme must not leave a rejected singleton and
+          // disable code highlighting for the rest of the browser session.
+          if (activeThemeName === name) activeThemeName = "github-dark-dimmed";
+        }
+      }
       readyHighlighter = hl;
       return hl;
     });
@@ -131,6 +144,12 @@ export function getActiveShikiTheme(): string {
  * JSON (imported themes, Phase 3). Returns the resolved theme name.
  */
 async function setActiveShikiTheme(shikiTheme: string | Record<string, unknown>): Promise<void> {
+  pendingTheme = shikiTheme;
+  if (!highlighterPromise) {
+    const name = typeof shikiTheme === "string" ? shikiTheme : shikiTheme.name;
+    if (typeof name === "string") activeThemeName = name;
+    return;
+  }
   const hl = await getHighlighter();
   if (typeof shikiTheme === "string") {
     if (!loadedThemes.has(shikiTheme)) {

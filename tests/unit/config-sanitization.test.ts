@@ -17,6 +17,16 @@ describe("sanitizeConfig — multi-provider", () => {
     expect(sanitizeConfig(config)).toBe(false);
   });
 
+  it("repairs missing or invalid chat provider modes to the legacy default", () => {
+    for (const mode of [undefined, null, "recent", false]) {
+      const config = makeConfig();
+      (config.ai as unknown as Record<string, unknown>).new_chat_provider_mode = mode;
+      expect(sanitizeConfig(config)).toBe(true);
+      expect(config.ai.new_chat_provider_mode).toBe("default");
+      expect(sanitizeConfig(config)).toBe(false);
+    }
+  });
+
   it("fixes invalid default_provider to claude", () => {
     const config = makeConfig();
     config.ai.default_provider = "nonexistent";

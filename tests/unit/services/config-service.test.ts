@@ -25,6 +25,25 @@ describe("ConfigService (SQLite-backed)", () => {
   });
 
   describe("load()", () => {
+    it("uses follow-focus for fresh installs and default for legacy AI settings", () => {
+      const fresh = configService.load();
+      expect(fresh.ai.new_chat_provider_mode).toBe("follow-focus");
+      expect(JSON.parse(getConfigValue("ai")!).new_chat_provider_mode).toBe("follow-focus");
+
+      delete fresh.ai.new_chat_provider_mode;
+      setConfigValue("ai", JSON.stringify(fresh.ai));
+      expect(configService.load().ai.new_chat_provider_mode).toBe("default");
+      expect(JSON.parse(getConfigValue("ai")!).new_chat_provider_mode).toBe("default");
+
+      configService.set("ai", { ...configService.get("ai"), new_chat_provider_mode: "follow-focus" });
+      expect(configService.load().ai.new_chat_provider_mode).toBe("follow-focus");
+    });
+
+    it("preserves default behavior for existing installs without an AI row", () => {
+      setConfigValue("device_name", JSON.stringify("existing-device"));
+      expect(configService.load().ai.new_chat_provider_mode).toBe("default");
+    });
+
     it("migrates legacy AI settings to sharing enabled and preserves an explicit opt-out", () => {
       const config = configService.load();
       delete config.ai.share_provider_context;

@@ -5,13 +5,14 @@ import { unlink } from "node:fs/promises";
 import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
+import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
 import type { SlashItem } from "../../services/slash-discovery/types.ts";
 import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
@@ -31,7 +32,7 @@ import {
   getIndexStatus as chatSearchGetIndexStatus,
   getKnownSessionCount as chatSearchKnownCount,
 } from "../../services/chat-search.service.ts";
-import type { ChatSearchResult, ChatSearchResponse } from "../../types/chat.ts";
+import { compareSessionsByActivity, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -135,7 +136,7 @@ chatRoutes.get("/usage", async (c) => {
         const { invalidateUsage } = await import("../../services/provider-usage/usage-registry.ts");
         invalidateUsage(providerId);
       }
-      try { return c.json(ok(await provider.getUsage(c.req.query("session")))); } catch { return c.json(ok({})); }
+      try { return c.json(ok(await provider.getUsage(c.req.query("session"), c.req.query("accountId")))); } catch { return c.json(ok({})); }
     }
     return c.json(ok({}));
   }
@@ -157,6 +158,7 @@ chatRoutes.get("/usage", async (c) => {
     weekly: usage.weekly,
     weeklyOpus: usage.weeklyOpus,
     weeklySonnet: usage.weeklySonnet,
+    weeklyScoped: usage.weeklyScoped,
     totalCostUsd: usage.totalCostUsd,
     activeAccountId: usage.activeAccountId,
     activeAccountLabel: usage.activeAccountLabel,
@@ -166,7 +168,12 @@ chatRoutes.get("/usage", async (c) => {
 /** GET /chat/providers — list available AI providers */
 chatRoutes.get("/providers", (c) => {
   try {
-    return c.json(ok(providerRegistry.list()));
+    // The capability rides along so a client offering design sessions can list only the
+    // providers that will actually deliver the instructions.
+    return c.json(ok(providerRegistry.list().map((p) => ({
+      ...p,
+      supportsDesignInstructions: !!providerRegistry.get(p.id)?.supportsDesignInstructions,
+    }))));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -221,18 +228,17 @@ chatRoutes.get("/sessions", async (c) => {
     const seen = new Set<string>();
     const deduped = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
     const tagMap = getSessionTags(deduped.map((s) => s.id));
-    const enriched = deduped.map((s) => ({ ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null }));
+    const designSlugs = getSessionDesignSlugs(deduped.map((s) => s.id));
+    const enriched = deduped.map((s) => ({
+      ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null,
+    }));
 
     // Collapse edit-message branch trees: each tree shows a single row (its
     // most recently active node). Pinned sessions are never collapsed.
     const collapsed = collapseTreesToHeads(enriched);
 
-    // Sort: pinned first, then by createdAt desc
-    collapsed.sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+    // Pinned first, then most recently active (not merely most recently created).
+    collapsed.sort(compareSessionsByActivity);
 
     // Server-side search + tag filter
     let filtered = collapsed;
@@ -318,6 +324,9 @@ chatRoutes.get("/search", async (c) => {
       });
     }
 
+    const designSlugs = getSessionDesignSlugs(results.map((r) => r.sessionId));
+    for (const r of results) r.designSlug = designSlugs[r.sessionId] ?? null;
+
     // Pinned first, then title matches above content, then most-recent within group.
     results.sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
@@ -332,6 +341,16 @@ chatRoutes.get("/search", async (c) => {
 });
 
 /** GET /chat/sessions/:id/messages — get message history */
+/**
+ * The design a session belongs to, if any. A chat tab asks on open: every surface that opens
+ * sessions as plain chats (a notification, a search hit, a link) would otherwise take a design
+ * session out of design mode, and this lets the tab hand itself over to the design tab.
+ */
+chatRoutes.get("/sessions/:id/design", (c) => {
+  const id = c.req.param("id");
+  return c.json(ok({ designSlug: getSessionDesignSlugs([id])[id] ?? null }));
+});
+
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
     const requestedId = c.req.param("id");
@@ -375,13 +394,25 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown }>();
+    // A design session is only created on a provider that will carry its instructions;
+    // anywhere else it would silently be an ordinary chat that believes it is not.
+    const designSlug = body.designSlug;
+    if (designSlug !== undefined && designSlug !== null) {
+      if (!isValidDesignSlug(designSlug)) return c.json(err("Invalid designSlug"), 400);
+      const provider = body.providerId ? providerRegistry.get(body.providerId) : providerRegistry.getDefault();
+      if (!provider) return c.json(err(`Provider "${body.providerId}" not found`), 400);
+      if (!provider.supportsDesignInstructions) {
+        return c.json(err(`Provider "${provider.id}" does not support design sessions`), 400);
+      }
+    }
     const session = await chatService.createSession(body.providerId, {
       projectName,
       projectPath,
       title: body.title,
     });
     if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
+    if (isValidDesignSlug(designSlug)) setSessionDesignSlug(session.id, designSlug);
     // The tab claimed an account when it opened and showed its name; honour that here so
     // the first message runs on the account the user was actually looking at. Advisory,
     // never authoritative: bindPickedAccount re-checks the id against the server's own
@@ -691,6 +722,8 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         });
         // Register forked session with provider + DB so it's tracked in memory
         setSessionMetadata(result.sessionId, projectName, projectPath);
+        // Before the resume below: a fork of a design chat must stay a design chat.
+        copySessionDesignSettings(sourceId, result.sessionId);
         // Persist the inherited user-set title so the collapsed-tree head shows
         // it regardless of the SDK-derived summary.
         if (inheritedTitle) setSessionTitle(result.sessionId, inheritedTitle);
@@ -754,6 +787,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         projectName, projectPath, title: inheritedTitle ?? "Forked Chat",
       });
       if (inheritedTitle) setSessionTitle(session.id, inheritedTitle);
+      copySessionDesignSettings(sourceId, session.id);
       return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     }
   } catch (e) {

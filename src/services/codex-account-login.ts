@@ -17,7 +17,9 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { buildCodexCallback, buildCodexSuccessCallback, checkCodexLoginPort, parseBrowserLogin, type BrowserLoginCallback } from "./codex-login-callback.ts";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "../providers/codex-app-server/codex-jsonrpc-client.ts";
-import { codexAccountHome, createCodexAccount, type CodexAccount } from "./codex-account.service.ts";
+import { codexAccountHome, createCodexAccount, getCodexAccount, updateCodexAccountMeta, type CodexAccount } from "./codex-account.service.ts";
+import { clearCodexAccountAuthFailure } from "./codex-account-auth-state.ts";
+import { refreshUsage } from "./provider-usage/usage-registry.ts";
 
 const CLIENT_INFO = { name: "ppm", title: "PPM", version: "0.0.0" };
 const CAPABILITIES = { experimentalApi: true, requestAttestation: false, optOutNotificationMethods: null };
@@ -78,6 +80,9 @@ interface ChatGptLogin {
   browser?: BrowserLoginCallback;
   callbackAbort?: AbortController;
   client: LoginClient; home: string; label?: string;
+  /** Signing an existing account in again: the login runs in that account's own home and
+   *  finalises by updating its row instead of creating one. */
+  reloginId?: string;
   status: DeviceLoginStatus;
   timer: ReturnType<typeof setTimeout>;
   /** True from the completion notification until the account is written. The
@@ -116,7 +121,8 @@ function disposeLogin(id: string, rmHome: boolean): void {
   clearTimeout(p.timer);
   p.callbackAbort?.abort();
   try { p.client.close(); } catch { /* ignore */ }
-  if (rmHome) { try { rmSync(p.home, { recursive: true, force: true }); } catch { /* ignore */ } }
+  // A re-login borrows a live account's home; abandoning it must never delete that.
+  if (rmHome && !p.reloginId) { try { rmSync(p.home, { recursive: true, force: true }); } catch { /* ignore */ } }
 }
 
 /** Record the outcome and stop the app-server. First settle wins, so the close
@@ -131,7 +137,8 @@ function settle(id: string, status: Exclude<DeviceLoginStatus, { state: "pending
   try { p.client.close(); } catch { /* ignore */ }
   // A failure leaves no account owning the dir, so the half-built home goes now.
   // A success must keep it: createCodexAccount adopted it as the account's home.
-  if (status.state === "error") { try { rmSync(p.home, { recursive: true, force: true }); } catch { /* ignore */ } }
+  // A failed re-login leaves the account's home alone — it still belongs to the account.
+  if (status.state === "error" && !p.reloginId) { try { rmSync(p.home, { recursive: true, force: true }); } catch { /* ignore */ } }
   p.timer = unref(setTimeout(() => { pendingLogins.delete(id); }, RESULT_GRACE_MS));
 }
 
@@ -147,6 +154,21 @@ async function finalizeLogin(id: string, notif: CompletionNotification): Promise
     const read = await p.client.request<AccountRead>("account/read", {}, CONTROL_REQUEST_TIMEOUT_MS);
     if (!read?.account) throw new Error("login completed but account is empty");
     if (p.status.state !== "pending") return;
+    if (p.reloginId) {
+      const existing = getCodexAccount(p.reloginId);
+      if (!existing) throw new Error("That account was removed while signing in. Add it again.");
+      updateCodexAccountMeta(existing.id, {
+        // The label is the user's name for this account ("Work"), not a copy of the email.
+        label: p.label || existing.label,
+        planType: read.account.planType ?? existing.planType ?? null,
+      });
+      // The fresh login is the proof: stop skipping the account and read its quota now,
+      // rather than showing the stale reading until the next five-minute sweep.
+      clearCodexAccountAuthFailure(existing.id);
+      void refreshUsage("codex", existing.id);
+      settle(id, { state: "done", account: getCodexAccount(existing.id)! });
+      return;
+    }
     const account = createCodexAccount({
       id, label: p.label || read.account.email || "ChatGPT", type: "chatgpt",
       planType: read.account.planType ?? null,
@@ -163,12 +185,19 @@ async function startChatGptLogin(
   method: "device" | "browser",
   label: string | undefined,
   makeClient: () => LoginClient,
+  reloginId?: string,
 ): Promise<ChatGptLoginStart> {
   if (method === "browser" && hasPendingBrowserLogin()) {
     throw new Error("A browser login is already in progress. Finish or cancel it first.");
   }
+  // Re-login signs the SAME account in again, in its own CODEX_HOME: the id, the sessions
+  // bound to it, its transcripts and its settings all stay. Removing and re-adding was the
+  // only way before, and it cost every one of those.
+  const target = reloginId ? getCodexAccount(reloginId) : null;
+  if (reloginId && !target) throw new Error("Account not found");
+  if (target && target.type !== "chatgpt") throw new Error("Only a ChatGPT sign-in can be renewed; replace an API key by adding it again.");
   const id = randomUUID();
-  const home = codexAccountHome(id);
+  const home = target ? target.home : codexAccountHome(id);
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const client = makeClient();
   client.onNotification((n) => {
@@ -178,7 +207,10 @@ async function startChatGptLogin(
   });
   client.onClose(() => settle(id, { state: "error", error: "login process exited" }));
   const timer = unref(setTimeout(() => settle(id, { state: "error", error: "timed out" }), method === "browser" ? BROWSER_LOGIN_TTL : DEVICE_LOGIN_TTL));
-  const pending: ChatGptLogin = { method, client, home, label, status: { state: "pending" }, timer, finalizing: false };
+  const pending: ChatGptLogin = {
+    method, client, home, label, status: { state: "pending" }, timer, finalizing: false,
+    ...(target ? { reloginId: target.id } : {}),
+  };
   pendingLogins.set(id, pending);
   try {
     if (method === "browser") await checkCodexLoginPort();
@@ -195,13 +227,14 @@ async function startChatGptLogin(
   }
 }
 
-export async function startDeviceLogin(label?: string, makeClient: () => LoginClient = () => new CodexJsonRpcClient()) {
-  const { id, userCode, verificationUrl } = await startChatGptLogin("device", label, makeClient);
+/** `reloginId` signs that existing ChatGPT account in again instead of adding a new one. */
+export async function startDeviceLogin(label?: string, makeClient: () => LoginClient = () => new CodexJsonRpcClient(), reloginId?: string) {
+  const { id, userCode, verificationUrl } = await startChatGptLogin("device", label, makeClient, reloginId);
   return { id, userCode, verificationUrl };
 }
 
-export async function startBrowserLogin(label?: string, makeClient: () => LoginClient = () => new CodexJsonRpcClient()) {
-  const { id, authUrl } = await startChatGptLogin("browser", label, makeClient);
+export async function startBrowserLogin(label?: string, makeClient: () => LoginClient = () => new CodexJsonRpcClient(), reloginId?: string) {
+  const { id, authUrl } = await startChatGptLogin("browser", label, makeClient, reloginId);
   return { id, authUrl };
 }
 
