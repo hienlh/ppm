@@ -34,6 +34,19 @@ beforeEach(() => {
 });
 afterEach(async () => { await view?.unmount(); view = null; get.mockRestore(); });
 
+it("resolves a remembered default placeholder before an immediate send", async () => {
+  usePanelStore.getState().updateTab("new", { metadata: {
+    projectName: "project", providerPending: true, focusedProviderOnOpen: "default",
+  } });
+  get.mockImplementation((path: string) => Promise.resolve(path === "/api/settings/ai"
+    ? settings : [{ id: "codex", name: "Codex" }]));
+  view = await mount(<Harness />);
+  await act(async () => {
+    expect((await preparation.prepare()).providerId).toBe("codex");
+  });
+  expect(view.container.textContent).not.toContain("default is not available");
+});
+
 it("keeps the composer mounted while preparing and applies the selected provider's permissions", async () => {
   let resolve!: (value: unknown) => void;
   get.mockImplementation((path: string) => path === "/api/settings/ai"

@@ -915,6 +915,7 @@ function rememberChatProvider(tab: Tab | undefined) {
   if (tab?.type !== "chat" || tab.metadata?.providerPending) return;
   const project = tab.projectId ?? (tab.metadata?.projectName as string | undefined) ?? state.currentProject;
   const provider = (tab.metadata?.providerId as string | undefined) ?? "claude";
+  if (provider === "default") return; // Unresolved tab placeholder, not a provider.
   if (!project || state.lastFocusedChatProviders[project] === provider) return;
   usePanelStore.setState({ lastFocusedChatProviders: {
     ...state.lastFocusedChatProviders, [project]: provider,

@@ -44,7 +44,11 @@ never gate typing or first-send preparation.
 
 The initial history request also covers an idle WebSocket greeting while it is
 pending; completed turns and truncated replays still trigger recovery reads.
-Slash commands load when the user opens the `/` picker. The `@` picker loads a
+Slash commands preload when the composer is ready. Browser-memory catalogs are
+shared across sessions by provider, with project-specific overrides and recents
+kept per project. Cached items remain available during refresh; catalogs refresh
+every 30 minutes or through the picker's reload button. A cold browser still
+needs its first catalog request. The `@` picker loads a
 file index on demand, scoped to its project; stale responses cannot overwrite
 the index for a different project.
 

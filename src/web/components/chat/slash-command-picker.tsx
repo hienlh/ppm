@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
 import { Sparkles, Terminal, Zap, Bot, RefreshCw, Clock } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
+import { clearSlashItemsCache } from "@/lib/slash-items-cache";
 import { searchFuzzy } from "../../../shared/fuzzy-search";
 
 export interface SlashItem {
@@ -136,6 +137,7 @@ export function SlashCommandPicker({
     api.del(`${projectUrl(projectName)}/chat/slash-items/cache`)
       .then(() => {
         // Trigger re-fetch by dispatching custom event (MessageInput listens on projectName)
+        clearSlashItemsCache(projectName);
         window.dispatchEvent(new CustomEvent("ppm:slash-items-refresh"));
       })
       .finally(() => setRefreshing(false));

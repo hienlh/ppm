@@ -19,7 +19,7 @@ import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { SlashItem } from "./slash-command-picker";
-import { fetchSlashItems, clearSlashItemsCache } from "@/lib/slash-items-cache";
+import { fetchSlashItems, getCachedSlashItems, subscribeSlashItems, SLASH_ITEMS_TTL_MS } from "@/lib/slash-items-cache";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
 import { PromptCacheChip } from "./prompt-cache-chip";
@@ -405,36 +405,47 @@ export const MessageInput = memo(function MessageInput({
     return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cache per project/provider/session, with a TTL for externally installed skills.
+  // Reuse provider skills immediately and refresh project overrides in the background.
+  const slashLoadRef = useRef(0);
   const loadSlashItems = useCallback(() => {
+    const request = ++slashLoadRef.current;
     if (configurationPending) return;
     if (!projectName) {
       slashItemsRef.current = [];
       onSlashItemsLoaded?.([], []);
       return;
     }
+    const cached = getCachedSlashItems(projectName, providerId);
+    slashItemsRef.current = cached?.items ?? [];
+    onSlashItemsLoaded?.(cached?.items ?? [], cached?.recentNames ?? []);
     fetchSlashItems(projectName, providerId, sessionId)
       .then((data) => {
+        if (request !== slashLoadRef.current) return;
         slashItemsRef.current = data.items;
         onSlashItemsLoaded?.(data.items, data.recentNames);
       })
-      .catch(() => {
-        slashItemsRef.current = [];
-        onSlashItemsLoaded?.([], []);
-      });
+      .catch(() => { /* Keep usable skills when a refresh fails. */ });
   }, [projectName, providerId, sessionId, onSlashItemsLoaded, configurationPending]);
 
   useEffect(() => {
-    if (!configurationPending && slashPickerOpenRef.current) loadSlashItems();
-  }, [configurationPending, loadSlashItems]);
+    loadSlashItems();
+    const unsubscribe = subscribeSlashItems(() => {
+      if (!projectName) return;
+      const cached = getCachedSlashItems(projectName, providerId);
+      if (cached && !configurationPending) {
+        slashItemsRef.current = cached.items;
+        onSlashItemsLoaded?.(cached.items, cached.recentNames);
+      }
+    });
+    const timer = setInterval(loadSlashItems, SLASH_ITEMS_TTL_MS);
+    return () => { ++slashLoadRef.current; unsubscribe(); clearInterval(timer); };
+  }, [loadSlashItems, projectName, providerId, onSlashItemsLoaded, configurationPending]);
 
-  // Load on the first slash interaction below. Opening a transcript should
-  // not enumerate skills (or start a provider CLI) before the user needs them.
+  // Warm the catalog on mount so the first slash interaction need not wait.
 
   // Refresh button invalidated the server cache — drop ours too, then refetch.
   useEffect(() => {
     const handler = () => {
-      clearSlashItemsCache(projectName);
       loadSlashItems();
     };
     window.addEventListener("ppm:slash-items-refresh", handler);
