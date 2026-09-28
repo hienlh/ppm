@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Bug, Cloud, FolderTree, MonitorSmartphone } from "@/lib/icons";
+import { Settings, Bug, Cloud, FolderTree, MonitorSmartphone, Smartphone } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
+import { useOpenAndroid } from "@/components/android/open-android";
+import { useAndroidAvailable } from "@/components/android/use-android-available";
 import { openSettings } from "@/components/settings/open-settings";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
@@ -160,6 +162,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   }, []);
 
   const openRemoteDesktop = useOpenRemoteDesktop();
+  const openAndroid = useOpenAndroid();
+  const { available: androidAvailable } = useAndroidAvailable();
   const { available: remoteDesktopAvailable } = useRemoteDesktopAvailable();
 
   const handleReportBug = () => openBugReportPopup(version);
@@ -228,6 +232,9 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
         <FooterUtil icon={FolderTree} label="File Explorer" featureBadge="os-explorer" onClick={() => void openExplorer()} />
         {remoteDesktopAvailable && (
           <FooterUtil icon={MonitorSmartphone} label="Remote Desktop" featureBadge="remote-desktop" onClick={openRemoteDesktop} />
+        )}
+        {androidAvailable && (
+          <FooterUtil icon={Smartphone} label="Android" featureBadge="android" onClick={openAndroid} />
         )}
         <FooterUtil icon={Bug} label="Report Bug" onClick={handleReportBug} />
         <FooterUtil icon={Settings} label="Settings" onClick={() => openSettings()} />

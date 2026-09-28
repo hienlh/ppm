@@ -64,6 +64,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.ConflictEditor,
     })),
   ),
+  android: lazy(() =>
+    import("@/components/android/android-tab").then((m) => ({
+      default: m.AndroidTab,
+    })),
+  ),
   "system-monitor": lazy(() =>
     import("@/components/system/system-monitor-tab").then((m) => ({
       default: m.SystemMonitorTab,

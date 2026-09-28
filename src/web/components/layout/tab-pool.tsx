@@ -40,6 +40,7 @@ export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: R
   extension: lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
   "extension-webview": lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
   "conflict-editor": lazyWithPreload(() => import("@/components/editor/conflict-editor").then((m) => ({ default: m.ConflictEditor }))),
+  android: lazyWithPreload(() => import("@/components/android/android-tab").then((m) => ({ default: m.AndroidTab }))),
   "system-monitor": lazyWithPreload(() => import("@/components/system/system-monitor-tab").then((m) => ({ default: m.SystemMonitorTab }))),
   "git-log": lazyWithPreload(() => import("@/components/git/git-log-panel").then((m) => ({ default: m.GitLogPanel }))),
   "ai-resource": lazyWithPreload(() => import("@/components/ai-resources/ai-resource-editor").then((m) => ({ default: m.AiResourceEditor }))),

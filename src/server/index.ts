@@ -33,8 +33,10 @@ import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
 import { lspWebSocket } from "./ws/lsp.ts";
+import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
+import { isAndroidEmulatorEnabled } from "../services/android/android-flag.ts";
 import { ok, err } from "../types/api.ts";
 
 /** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
@@ -238,6 +240,12 @@ app.get("/api/system/event-loop", async (c) => {
 // Remote desktop (video capture + input) — on by default, opt-out via REMOTE_DESKTOP_ENABLED=0, see remote-desktop-flag.ts
 import { remoteDesktopRoutes } from "./routes/remote-desktop.ts";
 app.route("/api/remote-desktop", remoteDesktopRoutes);
+
+// Android emulator — OFF by default, opt-in via ANDROID_EMULATOR_ENABLED=1, see android-flag.ts.
+// Unlike remote desktop this spawns multi-gigabyte emulator processes, and most hosts have no
+// Android SDK at all, so it stays dark until somebody asks for it.
+import { androidRoutes } from "./routes/android.ts";
+app.route("/api/android", androidRoutes);
 
 // Finishes an OAuth loopback login started from another device
 import { loopbackRoutes } from "./routes/oauth-loopback.ts";
@@ -987,6 +995,20 @@ if (process.argv.includes("__serve__")) {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
+      if (url.pathname === "/ws/android") {
+        // Same shape and the same reasoning as the remote-desktop branch above: an explicit
+        // branch so this can never fall through to the terminal (shell) handler, with the flag
+        // and `auth.enabled` re-checked independently of `isWsUpgradeAuthorized`, which returns
+        // true unconditionally when PPM auth is disabled.
+        if (!isAndroidEmulatorEnabled()) return new Response("Not Found", { status: 404 });
+        if (!configService.get("auth").enabled) {
+          return new Response("Forbidden: android emulator control requires PPM authentication to be enabled", { status: 403 });
+        }
+        const upgraded = server.upgrade(req, { data: { type: "android" } });
+        if (upgraded) return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
       if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
         const projectName = decodeURIComponent(parts[3] ?? "");
@@ -1042,6 +1064,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.open(ws);
         else if (t === "global") globalWebSocket.open(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.open(ws);
+        else if (t === "android") androidWebSocket.open(ws);
         else if (t === "terminal") terminalWebSocket.open(ws);
         else if (t === "lsp") lspWebSocket.open(ws);
         else ws.close(1008, "unknown socket type");
@@ -1053,6 +1076,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.message(ws, msg);
         else if (t === "global") globalWebSocket.message(ws, msg);
         else if (t === "remote-desktop") remoteDesktopWebSocket.message(ws, msg);
+        else if (t === "android") androidWebSocket.message(ws, msg);
         else if (t === "terminal") terminalWebSocket.message(ws, msg);
         else if (t === "lsp") lspWebSocket.message(ws, msg);
       },
@@ -1063,6 +1087,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.close(ws);
         else if (t === "global") globalWebSocket.close(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.close(ws);
+        else if (t === "android") androidWebSocket.close(ws);
         else if (t === "terminal") terminalWebSocket.close(ws);
         else if (t === "lsp") lspWebSocket.close(ws);
       },

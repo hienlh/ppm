@@ -44,6 +44,9 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   group: true,
   problems: false,
   design: false,
+  // A viewer in a floating window is an ordinary tab move: `ReparentingTab` keeps one mount,
+  // so it is still one WS session and one controller lease.
+  android: true,
 };
 
 export function isPoppableTabType(type: unknown): type is TabType {
