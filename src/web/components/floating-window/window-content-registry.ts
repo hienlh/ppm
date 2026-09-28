@@ -7,7 +7,7 @@
  * icon/virtualisation deps) never lands in the initial bundle.
  */
 
-import { lazy, type ComponentType, type LazyExoticComponent } from "react";
+import { lazyWithPreload, type PreloadableComponent } from "@/lib/lazy-with-preload";
 import type { WindowKind } from "./window-store-types";
 
 export interface WindowContentProps {
@@ -17,13 +17,13 @@ export interface WindowContentProps {
   payload?: Record<string, unknown>;
 }
 
-export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentType<WindowContentProps>>> = {
-  explorer: lazy(() => import("@/components/os-explorer/explorer-window-content")),
-  "team-member": lazy(() => import("@/components/chat/team-member-window-content")),
-  "system-monitor": lazy(() => import("@/components/system/system-monitor-window-content")),
-  "tab-host": lazy(() => import("./tab-host-window-content")),
-  "remote-desktop": lazy(() => import("@/components/remote-desktop/remote-desktop-window-content")),
-  settings: lazy(() => import("@/components/settings/settings-window-content")),
+export const WINDOW_CONTENT: Record<WindowKind, PreloadableComponent<WindowContentProps>> = {
+  explorer: lazyWithPreload(() => import("@/components/os-explorer/explorer-window-content")),
+  "team-member": lazyWithPreload(() => import("@/components/chat/team-member-window-content")),
+  "system-monitor": lazyWithPreload(() => import("@/components/system/system-monitor-window-content")),
+  "tab-host": lazyWithPreload(() => import("./tab-host-window-content")),
+  "remote-desktop": lazyWithPreload(() => import("@/components/remote-desktop/remote-desktop-window-content")),
+  settings: lazyWithPreload(() => import("@/components/settings/settings-window-content")),
 };
 
 /** Titlebar text for a window. Falls back to the kind's generic name. */

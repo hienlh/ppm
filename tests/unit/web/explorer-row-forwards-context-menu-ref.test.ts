@@ -1,7 +1,13 @@
-import { describe, it, expect } from "bun:test";
-import { ListRowInteractive } from "../../../src/web/components/os-explorer/views/list-row.tsx";
-import { IconsViewTileInteractive } from "../../../src/web/components/os-explorer/views/icons-view-tile.tsx";
-import { ColumnRowInteractive } from "../../../src/web/components/os-explorer/views/column-row.tsx";
+import { describe, it, expect, afterAll } from "bun:test";
+import { installDom, uninstallDom } from "../../helpers/react-dom.tsx";
+
+// Before the components: they reach `react-dom`, which binds `document` as its module loads, and
+// a first load with no DOM leaves every later test file in this process rendering portals nowhere.
+installDom();
+afterAll(uninstallDom);
+const { ListRowInteractive } = await import("../../../src/web/components/os-explorer/views/list-row.tsx");
+const { IconsViewTileInteractive } = await import("../../../src/web/components/os-explorer/views/icons-view-tile.tsx");
+const { ColumnRowInteractive } = await import("../../../src/web/components/os-explorer/views/column-row.tsx");
 
 /**
  * Regression guard for the row-context-menu bug: `ContextMenuTrigger asChild` clones its

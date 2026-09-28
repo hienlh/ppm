@@ -25,6 +25,7 @@ import { useWakeLock } from "@/hooks/use-wake-lock";
 import { WakeLockMobileBadge } from "@/components/layout/wake-lock-indicator";
 import { useTabPrefetch } from "@/hooks/use-tab-prefetch";
 import { useFileIndexInvalidation } from "@/hooks/use-file-index-invalidation";
+import { useUiPreload } from "@/hooks/use-ui-preload";
 import { useGlobalEvents } from "@/hooks/use-global-events";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
@@ -146,6 +147,10 @@ export function App() {
   // Warm a few recent chat tabs during idle time (desktop only). Tabs mount
   // lazily, so this trades a little background work for instant tab switching.
   useTabPrefetch();
+
+  // Load every tab's and window's code during idle time (desktop or Wi-Fi), so the
+  // first one of each kind opens without waiting on its chunk or a spinner.
+  useUiPreload(authState === "authenticated");
 
   // Warn before closing browser tab (prevents accidental Ctrl+W)
   useEffect(() => {
