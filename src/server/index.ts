@@ -270,6 +270,10 @@ app.route("/api/jira", jiraRoutes);
 import { schedulesRoutes } from "./routes/schedules.ts";
 app.route("/api/schedules", schedulesRoutes);
 
+// Session trace — browser logs in, a session's timeline out
+import { traceRoutes } from "./routes/trace.ts";
+app.route("/api/trace", traceRoutes);
+
 // AI resources (skills / agents / commands) management
 import { aiResourcesRoutes } from "./routes/ai-resources.ts";
 app.route("/api/ai-resources", aiResourcesRoutes);
@@ -877,6 +881,30 @@ if (process.argv.includes("__serve__")) {
 
     runCleanup();
     setInterval(runCleanup, 24 * 60 * 60 * 1000);
+  }
+
+  // Same again for the session trace: age, then size. Skipped until something has been traced.
+  {
+    const { existsSync } = await import("node:fs");
+    const { getTraceDbPath } = await import("../services/session-trace/session-trace-db.ts");
+    const { cleanupSessionTrace } = await import("../services/session-trace/session-trace-cleanup.ts");
+
+    const runTraceCleanup = () => {
+      if (!existsSync(getTraceDbPath())) return;
+      try {
+        const { retention_days, max_size_mb } = configService.get("session_trace");
+        const { deletedByAge, deletedBySize, freedBytes } = cleanupSessionTrace(retention_days, max_size_mb);
+        const removed = deletedByAge + deletedBySize;
+        if (removed > 0) {
+          console.log(`[session-trace] pruned ${removed} rows (${(freedBytes / 1024 / 1024).toFixed(1)} MB freed)`);
+        }
+      } catch (e) {
+        console.error(`[session-trace] cleanup failed: ${(e as Error).message}`);
+      }
+    };
+
+    runTraceCleanup();
+    setInterval(runTraceCleanup, 24 * 60 * 60 * 1000);
   }
 
   // On Windows the supervisor reaps the previous server's whole process tree

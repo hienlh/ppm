@@ -35,6 +35,7 @@ export interface PpmConfig {
   clawbot?: PPMBotConfig;
   cloud_url?: string;
   query_audit: QueryAuditConfig;
+  session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
 }
 
@@ -66,6 +67,13 @@ export interface QueryAuditConfig {
   /** Entries older than this are pruned. */
   retention_days: number;
   /** Hard ceiling for query-audit.db; oldest entries go first once it is hit. */
+  max_size_mb: number;
+}
+
+export interface SessionTraceConfig {
+  /** Rows older than this are pruned. */
+  retention_days: number;
+  /** Hard ceiling for session-trace.db; oldest rows go first once it is hit. */
   max_size_mb: number;
 }
 
@@ -168,6 +176,10 @@ export const DEFAULT_CONFIG: PpmConfig = {
     },
   },
   query_audit: {
+    retention_days: 30,
+    max_size_mb: 500,
+  },
+  session_trace: {
     retention_days: 30,
     max_size_mb: 500,
   },

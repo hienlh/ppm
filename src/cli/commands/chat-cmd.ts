@@ -167,7 +167,7 @@ export function registerChatCommands(program: Command): void {
           process.exit(1);
         }
 
-        const events = chatService.sendMessage(session.providerId, session.id, message);
+        const events = chatService.sendMessage(session.providerId, session.id, message, { origin: "cli" });
         await streamEvents(events);
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
@@ -210,7 +210,7 @@ export function registerChatCommands(program: Command): void {
             process.stdout.write(`${C.bold}${C.magenta}Claude:${C.reset} `);
 
             try {
-              const events = chatService.sendMessage(session.providerId, session.id, trimmed);
+              const events = chatService.sendMessage(session.providerId, session.id, trimmed, { origin: "cli" });
               await streamEvents(events, async (_requestId, tool, input) => {
                 const approved = await promptApproval(tool, input);
                 return approved;
