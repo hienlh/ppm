@@ -55,6 +55,7 @@ beforeEach(() => {
   post = spyOn(api, "post").mockImplementation((path: string) => {
     if (path.endsWith("/pick")) return claim.promise;
     if (path.endsWith("/chat/sessions")) return create.promise;
+    if (path.endsWith("/chat/prewarm")) return Promise.resolve({});
     throw new Error(`Unexpected POST: ${path}`);
   });
   send = spyOn(WsClient.prototype, "send").mockImplementation(() => {});

@@ -9,5 +9,6 @@ export type {
   UsageInfo,
   LimitBucket,
   SendMessageOpts,
+  PrewarmInput,
   ModelOption,
 } from "../types/chat.ts";

@@ -45,6 +45,13 @@ export interface BashPartialEntry {
   lineCount: number;
 }
 
+/** The per-session picks a message carries; a pick the user never made is left out. */
+export interface TurnSettings {
+  model?: string;
+  effort?: string;
+  thinking?: boolean;
+}
+
 interface UseChatReturn {
   messages: ChatMessage[];
   /** Messages flattened with pre-compact expansions prepended before their compact cards. */
@@ -93,6 +100,8 @@ interface UseChatReturn {
   thinking: boolean;
   /** Toggle per-session thinking on/off */
   setThinking: (enabled: boolean) => void;
+  /** The picks the next message carries, exactly as `sendMessage` attaches them. */
+  turnSettings: () => TurnSettings;
   /** Team activity state from WS events */
   teamActivity: TeamActivityState;
   /** All team messages (ref-backed, updated live) */
@@ -1291,6 +1300,12 @@ export function useChat(
     };
   }, [sessionId, providerId, projectName, updateTeamActivity, loadTeamDetail]);
 
+  const turnSettings = useCallback((): TurnSettings => ({
+    ...(modelRef.current && { model: modelRef.current }),
+    ...(effortRef.current && { effort: effortRef.current }),
+    ...(thinkingRef.current !== null && { thinking: thinkingRef.current }),
+  }), []);
+
   const sendMessage = useCallback(
     (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] }) => {
       // An attachment-only message is legitimate now that images travel with it: the
@@ -1352,12 +1367,10 @@ export function useChat(
         priority: opts?.priority,
         images: opts?.images,
         imagePaths: opts?.imagePaths,
-        ...(modelRef.current && { model: modelRef.current }),
-        ...(effortRef.current && { effort: effortRef.current }),
-        ...(thinkingRef.current !== null && { thinking: thinkingRef.current }),
+        ...turnSettings(),
       }));
     },
-    [send, isConnected, connectedSessionId],
+    [send, isConnected, connectedSessionId, turnSettings],
   );
 
   const setModel = useCallback(
@@ -1597,6 +1610,7 @@ export function useChat(
     setEffort,
     thinking,
     setThinking,
+    turnSettings,
     teamActivity,
     teamMessages,
     markTeamRead,

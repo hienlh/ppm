@@ -10,6 +10,7 @@ import type {
   ChatEvent,
   ChatMessage,
   SendMessageOpts,
+  PrewarmInput,
 } from "../providers/provider.interface.ts";
 import { compareSessionsByActivity } from "../types/chat.ts";
 import { buildDesignInstructions } from "./design/design-instructions.ts";
@@ -65,6 +66,12 @@ class ChatService {
       setSessionProvider(session.id, provider.id);
     } catch { /* non-fatal */ }
     return session;
+  }
+
+  /** Start the process the next new chat in a project will run on, where the provider can. */
+  async prewarm(providerId: string | undefined, input: PrewarmInput): Promise<void> {
+    const provider = providerId ? providerRegistry.get(providerId) : providerRegistry.getDefault();
+    await provider?.prewarm?.(input);
   }
 
   async resumeSession(

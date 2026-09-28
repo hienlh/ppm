@@ -64,6 +64,8 @@ export interface AIProvider {
   ): AsyncIterable<ChatEvent>;
 
   // Optional capabilities — providers implement what they support
+  /** Start the process a chat about to be created will run on, ahead of its first message. */
+  prewarm?(input: PrewarmInput): Promise<void>;
   resolveApproval?(requestId: string, approved: boolean, data?: unknown): void;
   onToolApproval?: (callback: ToolApprovalHandler) => void;
   abortQuery?(sessionId: string, source?: string): void;
@@ -116,6 +118,21 @@ export interface SessionConfig {
   projectName?: string;
   projectPath?: string;
   title?: string;
+  /**
+   * Take the CLI `prewarm` started in this project, if one is waiting. Only the new-chat
+   * route asks: a scheduled run or a bot taking it would leave the tab it was started for
+   * to boot one of its own.
+   */
+  adoptWarmSpare?: boolean;
+}
+
+/** What `prewarm` needs to start the CLI a new chat's first message will run on. */
+export interface PrewarmInput {
+  projectPath: string;
+  /** The account the new-chat tab claimed, which its session will be bound to. */
+  accountId?: string;
+  /** The per-session picks the first message will carry. */
+  opts?: Pick<SendMessageOpts, "permissionMode" | "model" | "effort" | "thinkingBudget">;
 }
 
 export interface ProjectTag {
