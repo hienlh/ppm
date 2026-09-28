@@ -1,7 +1,7 @@
 import { ChevronRight, ChevronDown, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRam } from "@/lib/format-bytes";
-import { cpuColor, formatDiskCell, formatGpuCell, formatNetCell, sumOptionalBps } from "./process-row-format";
+import { cpuColor, formatDiskCell, formatGpuCell, formatNetCell, formatSwapCell, sumOptionalBps } from "./process-row-format";
 import { optionalCellClassName, type ProcessGridResult } from "./process-columns-grid";
 import type { ProcessGroup } from "../../../types/system-metrics";
 
@@ -50,6 +50,11 @@ export function ProcessGroupRow({ group, expanded, grid, killProtected, onToggle
       </div>
       <span className={cn("text-right", cpuColor(group.cpu))}>{group.cpu.toFixed(1)}%</span>
       <span className="text-right text-text-secondary">{formatRam(group.ramMB)}</span>
+      {grid.columns.swap && (
+        <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "swap"))}>
+          {formatSwapCell(group.swapMB)}
+        </span>
+      )}
       {grid.columns.disk && (
         <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "disk"))}>
           {formatDiskCell(group.diskReadBps, group.diskWriteBps)}

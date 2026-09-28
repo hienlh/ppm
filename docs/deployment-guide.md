@@ -526,6 +526,29 @@ light and a full tier with leases. It is the backend for the System Monitor wind
 PPM auth. On Windows a single long-lived PowerShell collector serves every tick — never spawn one
 per tick.
 
+The full tier also carries the per-device rows the Performance page draws (one entry per disk, NIC
+and GPU) plus the static hardware inventory those pages label themselves with — DIMM slots, disk
+models and serials, link speeds, driver and API versions. On Linux all of it comes from `/proc`,
+`/sys`, `/run/udev/data`, DRM fdinfo, RAPL and hwmon, so nothing here needs root or a helper
+daemon; a field the host cannot measure is omitted rather than sent as `0`, and the UI renders an
+omitted field as an em dash.
+
+`/api/system/services*` is the Services page: `systemctl list-units` + one bulk `systemctl show`
+per scope (two spawns, not one per unit), with `journalctl -o json` behind the per-unit log. Unit
+actions (start/stop/restart/enable/disable) are separate authenticated routes and are confirmed in
+the UI before they run. `/api/system/app-icon/:id` serves an application's own desktop-entry icon;
+it accepts `?token=` because an `<img>` cannot send an `Authorization` header, and it is safe to
+widen to because it takes an app id, never a path.
+
+Each Linux process row also carries its swapped memory (`VmSwap` from `/proc/<pid>/status`) and a
+`unitKey` of `"<scope>:<unit>"` read from `/proc/<pid>/cgroup` — about 4.5 ms per full tick for 560
+processes, beside the 1.7 ms `/proc/<pid>/io` already costs. The Services page's per-unit CPU,
+memory, swap, drive and GPU are summed from those rows **in the browser**, not in the services
+route: the route has no counter state and computing rates there would give the same process two
+different figures on two pages of one window. The scope is part of the key because a unit name
+alone is ambiguous — `dbus-broker.service` commonly exists in both scopes — and a user unit
+belonging to another uid is deliberately dropped, since it is not on this page at all.
+
 ### Daemon state
 ```bash
 ppm status --json      # pid, port, host, shareUrl, tunnel state

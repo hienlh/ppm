@@ -92,13 +92,13 @@ describe("createDarwinProcessCollector", () => {
     const r = await createDarwinProcessCollector(run).collect();
     expect(r.rows).toEqual([]);
     expect(r.warnings[0]).toContain("ps exited");
-    expect(r.columns).toEqual({ disk: false, gpu: false, net: false });
+    expect(r.columns).toEqual({ disk: false, gpu: false, net: false, swap: false });
   });
 
   test("without an injected nettop collector no unit test can spawn one, and Net is not offered", async () => {
     const run: Runner = async () => ({ stdout: TICK, stderr: "", code: 0, timedOut: false });
     const r = await createDarwinProcessCollector(run).collect();
-    expect(r.columns).toEqual({ disk: false, gpu: false, net: false });
+    expect(r.columns).toEqual({ disk: false, gpu: false, net: false, swap: false });
     expect(r.rows[0]!.netInBytes).toBeUndefined();
   });
 
@@ -115,7 +115,7 @@ describe("createDarwinProcessCollector", () => {
     // Disk and GPU stay unmeasured on macOS.
     expect(chrome.diskReadBytes).toBeUndefined();
     expect(chrome.gpuPct).toBeUndefined();
-    expect(r.columns).toEqual({ disk: false, gpu: false, net: true });
+    expect(r.columns).toEqual({ disk: false, gpu: false, net: true, swap: false });
   });
 
   test("a failed nettop sample leaves the rows without net figures rather than zeros", async () => {

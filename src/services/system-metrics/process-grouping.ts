@@ -16,7 +16,7 @@ const POSIX_BOUNDARY_NAMES: ReadonlySet<string> = new Set(["launchd", "systemd",
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
 /** The optional per-process columns, which roll up by summation. */
-type OptionalMetric = "diskReadBps" | "diskWriteBps" | "gpuPct" | "gpuMemMB" | "netInBps" | "netOutBps";
+type OptionalMetric = "swapMB" | "diskReadBps" | "diskWriteBps" | "gpuPct" | "gpuMemMB" | "netInBps" | "netOutBps";
 
 /**
  * Sum over the members that HAVE a value; `undefined` when none does, so a
@@ -129,6 +129,7 @@ export function groupProcesses(
       count: g.procs.length,
       ppm: g.procs.some((p) => p.ppm),
       pids: g.procs.map((p) => p.pid),
+      swapMB: sumOptional(g.procs, "swapMB"),
       diskReadBps: sumOptional(g.procs, "diskReadBps"),
       diskWriteBps: sumOptional(g.procs, "diskWriteBps"),
       gpuPct: sumOptional(g.procs, "gpuPct"),

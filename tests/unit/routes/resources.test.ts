@@ -6,6 +6,7 @@ import { createResourceRoutes } from "../../../src/server/routes/resources.ts";
 import { SystemMetricsService, MAX_STREAM_SUBSCRIBERS } from "../../../src/services/system-metrics/system-metrics.service.ts";
 import type { PlatformCollectors } from "../../../src/services/system-metrics/system-metrics-platform.ts";
 import type { RawProcessRow } from "../../../src/services/system-metrics/process-collector-types.ts";
+import type { HardwareInventory } from "../../../src/types/system-hardware.ts";
 
 const row = (pid: number, ppid: number, name: string, startedAt: number): RawProcessRow =>
   ({ pid, ppid, name, command: null, cpuMs: 0, ramMB: 1, startedAt });
@@ -18,6 +19,8 @@ function harness() {
     processes: { collect: async () => ({ rows: [row(1, 0, "systemd", 1), row(300, 1, "bun", 10), row(400, 1, "notepad", 20)], warnings: [] }), stop: () => {} },
     diskNet: async () => ({ disk: null, net: null, warnings: [] }),
     gpus: { collect: async () => [], isDisabled: () => false },
+    devices: null,
+    apps: null,
   };
   const service = new SystemMetricsService({
     collectors,
@@ -30,8 +33,15 @@ function harness() {
     log: () => {},
     exitHooks: false,
   });
-  const app = new Hono().route("/api/system", createResourceRoutes(service));
-  return { app, service, killed, advanceClock: (ms: number) => { clock += ms; } };
+  const hardware: HardwareInventory = {
+    platform: "linux",
+    ts: 1,
+    disks: [{ id: "nvme0n1", model: "THNSF5256GPUK TOSHIBA", kind: "nvme", capacityBytes: 256060514304, systemDisk: true, removable: false }],
+    nics: [{ id: "enp3s0", kind: "wired", ipv4: ["192.168.1.10"], ipv6: [] }],
+    gpus: [],
+  };
+  const app = new Hono().route("/api/system", createResourceRoutes(service, async () => hardware));
+  return { app, service, killed, hardware, advanceClock: (ms: number) => { clock += ms; } };
 }
 
 const KILL_HEADERS = { "Content-Type": "application/json", "X-PPM-Request": "1" };
@@ -172,5 +182,23 @@ describe("mounting", () => {
     const mount = src.indexOf('app.route("/api/system", resourceRoutes)');
     expect(auth).toBeGreaterThan(0);
     expect(mount).toBeGreaterThan(auth);
+  });
+});
+
+describe("GET /api/system/hardware", () => {
+  test("serves the static inventory the snapshot's device ids key into", async () => {
+    const { app, hardware } = harness();
+    const res = await app.request("/api/system/hardware");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data).toEqual(hardware);
+  });
+
+  test("the inventory carries the model and capacity a 2 s tick must never repeat", async () => {
+    const { app } = harness();
+    const { data } = await (await app.request("/api/system/hardware")).json();
+    expect(data.disks[0]).toMatchObject({ id: "nvme0n1", kind: "nvme", systemDisk: true });
+    expect(data.nics[0]).toMatchObject({ id: "enp3s0", kind: "wired" });
   });
 });

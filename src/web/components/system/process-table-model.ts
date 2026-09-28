@@ -102,7 +102,7 @@ export function buildRows(input: BuildRowsInput): BuildRowsResult {
 }
 
 /** Three-state sort toggle: desc -> asc -> off, shared by every sortable column. */
-export function toggleSort(current: SortKey, dir: SortDir, clicked: Exclude<SortKey, null>): [SortKey, SortDir] {
+export function toggleSort<K extends string>(current: K | null, dir: SortDir, clicked: K): [K | null, SortDir] {
   if (current !== clicked) return [clicked, "desc"];
   if (dir === "desc") return [clicked, "asc"];
   return [null, "desc"];

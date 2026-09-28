@@ -6,10 +6,13 @@ import { buildProcessGrid, gridCssVars } from "./process-columns-grid";
 import { ProcessTableToolbar, ProcessTableHeader, ProcessTableFooter } from "./process-table-toolbar";
 import { ProcessGroupRow } from "./process-group-row";
 import { ProcessRow } from "./process-row";
+import { ProcessRowMenu } from "./process-row-menu";
+import { ProcessDetailsDialog } from "./process-details-dialog";
 import { KillConfirmDialog } from "./kill-confirm-dialog";
 import { useProcessKill } from "./use-process-kill";
+import { useProcessSignal } from "./use-process-signal";
 import { useColumnWidths } from "./use-column-widths";
-import type { MetricsSnapshot, SortDir, SortKey } from "../../../types/system-metrics";
+import type { MetricsSnapshot, ProcessInfo, SortDir, SortKey } from "../../../types/system-metrics";
 
 /** Older cached bundles/snapshots (mid-rollout) predate `processColumns` — default
  *  every optional column off rather than let a missing field throw. */
@@ -31,6 +34,13 @@ export function ProcessTable({ snapshot }: ProcessTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const { pendingKill, groupProtected, requestKillProcess, requestKillGroup, confirmKill, cancelKill } =
     useProcessKill(snapshot);
+  const { send: sendSignal } = useProcessSignal();
+  // Held as the whole row rather than a pid: the dialog needs a name to show while
+  // it is fetching, and the row can leave the table before the answer arrives.
+  const [details, setDetails] = useState<ProcessInfo | null>(null);
+  // Absent on a light-tier frame and on any host with no signal support, in which
+  // case the menu simply has no Send-signal submenu.
+  const signals = snapshot.signals ?? [];
   const { widths, begin: onResizeStart, reset: onResizeReset } = useColumnWidths();
 
   const { rows, totals } = useMemo(
@@ -128,7 +138,15 @@ export function ProcessTable({ snapshot }: ProcessTableProps) {
                     onKillClick={requestKillGroup}
                   />
                 ) : (
-                  <ProcessRow proc={row.proc} indent={row.indent} grid={grid} onKillClick={requestKillProcess} />
+                  <ProcessRowMenu
+                    proc={row.proc}
+                    signals={signals}
+                    onDetails={setDetails}
+                    onKill={requestKillProcess}
+                    onSignal={(proc, signal, tree) => void sendSignal(proc, signal, tree)}
+                  >
+                    <ProcessRow proc={row.proc} indent={row.indent} grid={grid} onKillClick={requestKillProcess} />
+                  </ProcessRowMenu>
                 )}
               </div>
             );
@@ -140,6 +158,11 @@ export function ProcessTable({ snapshot }: ProcessTableProps) {
         target={pendingKill}
         onConfirm={confirmKill}
         onCancel={cancelKill}
+      />
+      <ProcessDetailsDialog
+        pid={details?.pid ?? null}
+        name={details?.name ?? ""}
+        onClose={() => setDetails(null)}
       />
     </div>
   );
