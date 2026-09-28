@@ -146,6 +146,23 @@ export function itemToToolUse(item: Item): ChatEvent {
 }
 
 /** Build the tool_result from a completed ThreadItem. */
+/**
+ * An MCP result's content blocks as readable text, with any image reduced to a label. A
+ * block's base64 payload (a `design_check` screenshot is up to half a megabyte) would
+ * otherwise be the visible result, and ride through the turn buffer and the JSONL with it.
+ */
+export function mcpResultText(result: unknown): string | undefined {
+  if (result == null) return undefined;
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return typeof result === "string" ? result : JSON.stringify(result);
+  return content.map((block) => {
+    const b = (block ?? {}) as { type?: unknown; text?: unknown; mimeType?: unknown };
+    if (b.type === "text" && typeof b.text === "string") return b.text;
+    if (b.type === "image") return `[image ${typeof b.mimeType === "string" ? b.mimeType : ""}]`.replace(" ]", "]");
+    return JSON.stringify(block);
+  }).join("\n");
+}
+
 export function itemToToolResult(item: Item): ChatEvent {
   const type = item.type;
   let output = "";
@@ -158,7 +175,7 @@ export function itemToToolResult(item: Item): ChatEvent {
     exitCode = typeof exit === "number" ? exit : undefined;
     isError = exitCode != null && exitCode !== 0;
   } else if (type === "mcpToolCall") {
-    output = redactTruncate(item.result ?? item.error ?? "");
+    output = redactTruncate(mcpResultText(item.result) ?? item.error ?? "");
     isError = item.error != null;
   } else if (type === "fileChange") {
     const changes = Array.isArray(item.changes) ? item.changes : [];
@@ -197,11 +214,15 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
       return typeof p.delta === "string" ? [{ type: "text", content: p.delta }] : [];
 
     case "item/reasoning/textDelta":
-    // `summary` is what turn/start requests for PPM's Thinking switch. Recent
-    // app-server builds stream it under this method, while older builds used
-    // textDelta directly. Both are safe, user-visible reasoning summaries.
+    // Preserve provider text verbatim; summaryTextDelta is the summary stream
+    // requested by turn/start, textDelta is the supported content stream.
     case "item/reasoning/summaryTextDelta":
       return typeof p.delta === "string" ? [{ type: "thinking", content: p.delta }] : [];
+
+    case "item/reasoning/summaryPartAdded":
+      // Separate sections, including the first section of a new reasoning item,
+      // without inserting whitespace between individual streaming chunks.
+      return [{ type: "thinking", content: "\n\n" }];
 
     case "item/started": {
       const item = asObj(p.item) as Item;
@@ -249,6 +270,14 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
       const message = typeof err.message === "string" ? err.message
         : typeof p.message === "string" ? p.message
         : "codex error";
+      // `willRetry: true` is codex narrating its own retry loop ("Reconnecting...
+      // 2/5"), not a failure: the turn is still running and ends with either an
+      // answer or a final `willRetry: false` error. Reporting each one as an error
+      // put a card per attempt in the chat and made the proxy give up on a turn
+      // at the first reconnect.
+      if (p.willRetry === true) {
+        return [{ type: "status_update", phase: "retrying", message: redactTruncate(message, 256) }];
+      }
       return [{ type: "error", message: redactTruncate(message, 1024) }];
     }
 

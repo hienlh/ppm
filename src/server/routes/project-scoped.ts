@@ -8,6 +8,7 @@ import { fileRoutes } from "./files.ts";
 import { sqliteRoutes } from "./sqlite.ts";
 import { workspaceRoutes } from "./workspace.ts";
 import { downloadRoutes } from "./file-download.ts";
+import { designRoutes } from "./designs.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -35,3 +36,4 @@ projectScopedRouter.route("/files", fileRoutes);
 projectScopedRouter.route("/sqlite", sqliteRoutes);
 projectScopedRouter.route("/workspace", workspaceRoutes);
 projectScopedRouter.route("/files/download", downloadRoutes);
+projectScopedRouter.route("/designs", designRoutes);

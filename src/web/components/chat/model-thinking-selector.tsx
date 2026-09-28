@@ -10,6 +10,10 @@ interface ModelOption {
   label: string;
 }
 
+// Shared by chat tabs; keep successful lists visible while refreshing an old entry.
+const modelCache = new Map<string, { models: ModelOption[]; expiry: number }>();
+const MODEL_CACHE_TTL = 5 * 60 * 1000;
+
 interface ModelThinkingSelectorProps {
   model: string | null;
   effort: string | null;
@@ -46,18 +50,44 @@ export function ModelThinkingSelector({
   providerId,
   disabled,
 }: ModelThinkingSelectorProps) {
-  const [models, setModels] = useState<ModelOption[]>([]);
+  const cacheKey = JSON.stringify([projectName, providerId]);
+  const cached = modelCache.get(cacheKey);
+  const [modelResult, setModelResult] = useState<{
+    projectName: string;
+    providerId: string;
+    models: ModelOption[];
+    error?: boolean;
+  } | null>(null);
+  // Never render another provider/project's options, even before effects run.
+  const result = modelResult?.projectName === projectName && modelResult.providerId === providerId
+    ? modelResult : cached ? { ...cached, error: false } : null;
+  const models = result?.models ?? [];
+  const loading = Boolean(projectName && providerId && !result);
+  const modelStatus = loading ? "Loading models..." : result?.error
+    ? "Unable to load models" : models.length === 0 ? "No models available" : null;
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
-    if (!projectName || !providerId) return;
+    let active = true;
+    setModelResult(null);
+    if (!open || !projectName || !providerId) return;
+    const entry = modelCache.get(cacheKey);
+    if (entry && Date.now() < entry.expiry) return;
     api
       .get<ModelOption[]>(`${projectUrl(projectName)}/chat/providers/${providerId}/models`)
-      .then(setModels)
-      .catch(() => {});
-  }, [projectName, providerId]);
+      .then((models) => {
+        // The backend also returns [] on discovery failure. Don't replace a usable list.
+        const usable = models.length > 0 ? models : entry?.models ?? models;
+        if (active && models.length > 0) modelCache.set(cacheKey, { models, expiry: Date.now() + MODEL_CACHE_TTL });
+        if (active) setModelResult({ projectName, providerId, models: usable });
+      })
+      .catch(() => {
+        if (active) setModelResult({ projectName, providerId, models: entry?.models ?? [], error: !entry });
+      });
+    return () => { active = false; };
+  }, [projectName, providerId, cacheKey, open]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
@@ -79,7 +109,7 @@ export function ModelThinkingSelector({
   const current = models.find((m) => m.value === model);
   const modelDisplay = current ? shortLabel(current.label) : model ? shortLabel(model) : "Model";
   const effortValue = effort ?? DEFAULT_EFFORT;
-  const showModelList = models.length > 1;
+  const showModelList = models.length > 0 || Boolean(modelStatus);
   const chipText = chipLabel(modelDisplay, effortValue);
 
   const pick = (fn: () => void) => {
@@ -93,6 +123,7 @@ export function ModelThinkingSelector({
       {showModelList && (
         <div className="flex-1 min-w-0 py-1">
           <SectionLabel>Model</SectionLabel>
+          {modelStatus && <div role="status" className="px-3 py-2 text-xs text-text-secondary">{modelStatus}</div>}
           {models.map((m) => (
             <OptionRow key={m.value} active={m.value === model} onClick={() => pick(() => onModelChange(m.value))}>
               <span className="flex-1 truncate">{shortLabel(m.label)}</span>

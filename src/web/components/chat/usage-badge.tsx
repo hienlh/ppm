@@ -25,6 +25,8 @@ import { AccountBucketRow } from "@/components/settings/accounts/account-bucket-
 import { useAccountsData } from "@/components/settings/accounts/use-accounts-data";
 import { formatLastUpdated, formatResetTime, pctColor } from "@/components/settings/accounts/account-usage-format";
 import { UsagePanelShell } from "./usage-panel-shell";
+import { AddAccountDialog } from "@/components/settings/accounts/account-add-dialog";
+import { ScopedBucketRows } from "@/components/settings/accounts/account-usage-extras";
 
 /** Matches the whole-percent figure the usage bars show, so a refusal agrees with the card. */
 function atCap(util: number | null | undefined): boolean {
@@ -91,6 +93,8 @@ export function UsageDetailPanel({
   // One strip for anything that went wrong in this panel — a refused switch or a refused
   // toggle. Two separate messages in two places would be harder to notice, not clearer.
   const [panelError, setPanelError] = useState<string | null>(null);
+  /** Label of the account whose "Sign in again" chip was pressed; opens the sign-in dialog. */
+  const [signInAgainFor, setSignInAgainFor] = useState<string | null>(null);
 
   if (!visible) return null;
 
@@ -159,6 +163,7 @@ export function UsageDetailPanel({
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
 
   return (
+    <>
     <UsagePanelShell
       title="Usage"
       meta={lastFetchedAt && (
@@ -172,12 +177,13 @@ export function UsageDetailPanel({
       cardCount={usages.length}
       fallback={initialLoading ? (
         <p className="text-[10px] text-text-subtle">Loading...</p>
-      ) : usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet ? (
+      ) : usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet || usage.weeklyScoped?.length ? (
         <div className="space-y-2.5">
           <AccountBucketRow label="5-Hour Session" bucket={usage.session} />
           <AccountBucketRow label="Weekly" bucket={usage.weekly} />
           <AccountBucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
           <AccountBucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
+          <ScopedBucketRows buckets={usage.weeklyScoped} />
         </div>
       ) : (
         <p className="text-xs text-text-subtle">No usage data available</p>
@@ -220,9 +226,19 @@ export function UsageDetailPanel({
             selecting={selectingId === entry.accountId}
             onToggle={handleToggle}
             toggling={togglingId === entry.accountId}
+            onReauth={() => setSignInAgainFor(entry.accountLabel ?? entry.accountId.slice(0, 8))}
           />
         );
       })}
     </UsagePanelShell>
+    {signInAgainFor && (
+      <AddAccountDialog
+        open
+        onOpenChange={(v) => { if (!v) setSignInAgainFor(null); }}
+        onSuccess={(msg) => { setSignInAgainFor(null); void reload(); if (msg) setPanelError(msg); }}
+        signInAgainFor={signInAgainFor}
+      />
+    )}
+    </>
   );
 }

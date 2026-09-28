@@ -31,7 +31,10 @@ export interface AccountsData {
 /** Utilisation across all four buckets, as a comparable string. */
 function utilisationKey(entry: AccountUsageEntry): string {
   const u = entry.usage;
-  return [u.session?.utilization, u.weekly?.utilization, u.weeklyOpus?.utilization, u.weeklySonnet?.utilization].join("|");
+  return [
+    u.session?.utilization, u.weekly?.utilization, u.weeklyOpus?.utilization, u.weeklySonnet?.utilization,
+    ...(u.weeklyScoped ?? []).map((b) => `${b.label}:${b.utilization}`),
+  ].join("|");
 }
 
 export function useAccountsData(enabled = true): AccountsData {

@@ -122,11 +122,17 @@ export class ApiClient {
     }
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
+  /**
+   * No default timeout, unlike `get`: a POST is not idempotent, so cutting one off
+   * mid-flight can leave the server having done the work with nobody to tell. A
+   * caller that would rather fail loudly than wait passes its own `signal`.
+   */
+  async post<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: this.headers(),
       body: body != null ? JSON.stringify(body) : undefined,
+      signal: options?.signal,
     });
     return this.handleResponse<T>(res);
   }

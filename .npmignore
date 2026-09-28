@@ -21,6 +21,10 @@ skills-lock.json
 # carries this machine's port and public tunnel URL, so it must never ship.
 .rollout-mark
 
+# Design-mode workspaces made while working on PPM itself. Their history lives in
+# `.design/`, which only its own `.gitignore` hides, and npm does not read that.
+/designs/
+
 # Dev files
 .claude/
 .github/

@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef, useEffect, useMemo, startTransition } from "react";
+import { ChatAttemptLifecycle, type ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useWebSocket } from "./use-websocket";
 import { api, projectUrl } from "@/lib/api-client";
 import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expansions";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { tabSessionId } from "@/lib/tab-session-id";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
@@ -68,6 +70,8 @@ interface UseChatReturn {
   compactStatus: "compacting" | null;
   /** Prompt-cache clock for this session; drives the idle re-cache notice. */
   promptCache: PromptCacheState | null;
+  /** MCP servers this session's subprocess reported as needing a sign-in. */
+  mcpNeedsAuth: string[];
   statusMessage: string | null;
   sessionTitle: string | null;
   /**
@@ -115,7 +119,7 @@ function isSessionTabActive(sid: string): boolean {
   const { panels } = usePanelStore.getState();
   for (const panel of Object.values(panels)) {
     const activeTab = panel.tabs.find((t) => t.id === panel.activeTabId);
-    if (activeTab?.type === "chat" && activeTab.metadata?.sessionId === sid) return true;
+    if (tabSessionId(activeTab) === sid) return true;
   }
   return false;
 }
@@ -134,7 +138,12 @@ export function useChat(
    * empty even though the conversation is on disk under the new id.
    */
   onSessionMigrated?: (newSessionId: string) => void,
+  onAttempt?: (event: ChatAttemptEvent) => void,
 ): UseChatReturn {
+  const attemptObserverRef = useRef(onAttempt);
+  attemptObserverRef.current = onAttempt;
+  const attemptRef = useRef<ChatAttemptLifecycle | null>(null);
+  if (!attemptRef.current) attemptRef.current = new ChatAttemptLifecycle((event) => attemptObserverRef.current?.(event));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   /** Map of compactMessageId → pre-compact messages (already ID-prefixed). Ephemeral. */
   const [expansions, setExpansions] = useState<Map<string, ChatMessage[]>>(new Map());
@@ -149,6 +158,8 @@ export function useChat(
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [compactStatus, setCompactStatus] = useState<"compacting" | null>(null);
   const [promptCache, setPromptCache] = useState<PromptCacheState | null>(null);
+  /** MCP servers this session's subprocess reported as needing a sign-in. */
+  const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -198,6 +209,12 @@ export function useChat(
   const turnFinalizedRef = useRef(false);
   const historyRequestRef = useRef<AbortController | null>(null);
   const queuedReplayMessagesRef = useRef<MessageEvent[]>([]);
+  /** Highest streamed event sequence received from the server for this session. */
+  const streamSeqRef = useRef(0);
+  /** A full replay is already on its way; do not flood snapshots for one gap. */
+  const resyncInFlightRef = useRef(false);
+  /** The bounded server replay omitted an old prefix; idle history reload repairs it. */
+  const replayTruncatedRef = useRef(false);
   const handleMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
   /** True while replaying turn_events — suppresses setPendingApproval */
   const isReplayingRef = useRef(false);
@@ -214,6 +231,7 @@ export function useChat(
   const replayTurnUserMsgRef = useRef<string | null>(null);
   /** When the last full-transcript fetch completed — guards redundant idle refetches */
   const historyLoadedAtRef = useRef(0);
+  const initialHistoryPendingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   // Held in a ref so the socket handler always calls the latest callback without
@@ -455,9 +473,12 @@ export function useChat(
           // rate limit, usage cap or auth. Say so now rather than at the next usage poll.
           setLiveAccount({ id: ev.accountId, label: ev.accountLabel });
         }
-        // Clear previous streaming events (error text from failed attempt)
-        // and start fresh with only the retry notification
-        streamingEventsRef.current = [ev as ChatEvent];
+        // Append, never reset. A retry can land mid-turn — after tool calls and text that
+        // are already in the transcript — and the provider resumes that same turn, so
+        // clearing here hid everything before the retry until `done` reloaded history.
+        // The failed attempt itself adds nothing to clear: the provider swallows the
+        // error message instead of streaming it as text.
+        streamingEventsRef.current.push(ev as ChatEvent);
         syncMessages();
         break;
       }
@@ -545,6 +566,18 @@ export function useChat(
           if (routeToFinalizedParent(ev as ChatEvent, pid)) { /* nested */ }
           break;
         }
+        // Background Codex agents can finish after the root answer. Update the
+        // finalized card without flushing empty streaming refs over history.
+        if (phaseRef.current === "idle" && trId?.startsWith("subagent-")) {
+          setMessages(prev => prev.map(message => {
+            if (!message.events?.some(e => e.type === "tool_use" && e.toolUseId === trId)) return message;
+            return { ...message, events: message.events.map(e =>
+              e.type === "tool_use" && e.toolUseId === trId
+                ? { ...e, result: { output: ev.output, isError: ev.isError, exitCode: ev.exitCode } }
+                : e) };
+          }));
+          break;
+        }
         upsertStreamingEvent((e) => !!trId && e.type === "tool_result" && (e as any).toolUseId === trId);
         syncMessages();
         break;
@@ -614,6 +647,12 @@ export function useChat(
       }
 
       case "error": {
+        if (ev.parentToolUseId) {
+          if (routeToParent(ev as ChatEvent, ev.parentToolUseId)) syncMessages();
+          else routeToFinalizedParent(ev as ChatEvent, ev.parentToolUseId);
+          break;
+        }
+        if (!isReplayingRef.current) attemptRef.current?.fail();
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -708,6 +747,9 @@ export function useChat(
       }
 
       case "done": {
+        // A nested completion must never finalize or reset the root stream.
+        if (ev.parentToolUseId) break;
+        if (!isReplayingRef.current) attemptRef.current?.finish(!!streamingContentRef.current.trim());
         // Idempotent: may receive duplicate done (provider + stream loop finally)
         if (phaseRef.current === "idle") break;
         if (ev.contextWindowPct != null) {
@@ -793,12 +835,39 @@ export function useChat(
       return;
     }
 
-    // Ignore keepalive pings
-    if ((data as any).type === "ping") return;
-
     if (isReplayingRef.current) {
       queuedReplayMessagesRef.current.push(event);
       return;
+    }
+
+    // A ping carries the latest stream sequence. If it is ahead of what the tab
+    // has seen, request the server's in-flight buffer immediately. This catches
+    // a tunnel that keeps heartbeats alive while dropping content frames.
+    if ((data as any).type === "ping") {
+      const serverSeq = (data as any).streamSeq;
+      if (typeof serverSeq === "number" && serverSeq > streamSeqRef.current
+        && !resyncInFlightRef.current && !replayTruncatedRef.current) {
+        resyncInFlightRef.current = true;
+        sendRef.current(JSON.stringify({ type: "resync" }));
+      }
+      return;
+    }
+
+    // Live stream frames must be contiguous. A higher number is evidence that
+    // a tunnel/proxy skipped a content frame; request one full snapshot and let
+    // the replay establish the authoritative cursor below.
+    const streamSeq = (data as any).streamSeq;
+    if (typeof streamSeq === "number") {
+      if (replayTruncatedRef.current) {
+        // The prefix is unavailable from the bounded buffer. Continue showing
+        // fresh frames and let the normal idle transcript reload fill the gap.
+        streamSeqRef.current = Math.max(streamSeqRef.current, streamSeq);
+      } else if (streamSeq === streamSeqRef.current + 1) {
+        streamSeqRef.current = streamSeq;
+      } else if (streamSeq > streamSeqRef.current && !resyncInFlightRef.current) {
+        resyncInFlightRef.current = true;
+        sendRef.current(JSON.stringify({ type: "resync" }));
+      }
     }
 
     // file:changed, session:unread_changed and jira:* are app-wide and now arrive
@@ -839,8 +908,15 @@ export function useChat(
     if ((data as any).type === "session_migrated") {
       const migratedTo = (data as any).newSessionId as string | undefined;
       if (migratedTo && migratedTo !== sessionIdRef.current) {
+        attemptRef.current?.migrate(migratedTo);
         onSessionMigratedRef.current?.(migratedTo);
       }
+      return;
+    }
+
+    if ((data as any).type === "mcp_status") {
+      const list = (data as any).needsAuth;
+      setMcpNeedsAuth(Array.isArray(list) ? list : []);
       return;
     }
 
@@ -875,11 +951,14 @@ export function useChat(
       // Safety: idle phase means no turn running — ensure compact indicator does not linger.
       // BE should broadcast compact_status=done too, but this is a belt-and-braces clear.
       if (p === "idle") {
+        const replayWasTruncated = replayTruncatedRef.current;
+        resyncInFlightRef.current = false;
+        replayTruncatedRef.current = false;
         setCompactStatus(null);
         setStatusMessage(null);
         // Completion can arrive after lost content/done frames. Reconcile once
         // the turn is idle so the answer appears without a manual reload.
-        if (wasActive && !turnFinalizedRef.current) refetchRef.current?.();
+        if (replayWasTruncated || (wasActive && !turnFinalizedRef.current)) refetchRef.current?.();
       }
       return;
     }
@@ -933,14 +1012,18 @@ export function useChat(
       // The server is the only holder of when the cache was last written and how big the
       // replayed prefix was — neither is in the transcript, so a reload has to be told.
       setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
+      setMcpNeedsAuth(Array.isArray(state.mcpNeedsAuth) ? state.mcpNeedsAuth : []);
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
       // and the full transcript finished loading moments ago — on boot the WS
       // connects right after the mount fetch and this refetch would re-download
       // the entire history (and remount every transcript image) for no reason.
       if (p === "idle") {
+        const replayWasTruncated = replayTruncatedRef.current;
+        resyncInFlightRef.current = false;
+        replayTruncatedRef.current = false;
         const historyFresh = Date.now() - historyLoadedAtRef.current < 5000;
-        if (!(wasIdle && historyFresh)) refetchRef.current?.();
+        if (replayWasTruncated || !(wasIdle && (historyFresh || initialHistoryPendingRef.current))) refetchRef.current?.();
         setIsReconnecting(false);
       }
       // If streaming, turn_events message will follow
@@ -1015,6 +1098,13 @@ export function useChat(
         } else {
           replayRafRef.current = 0;
           isReplayingRef.current = false;
+          const snapshotSeq = (data as any).streamSeq;
+          const truncated = (data as any).truncated === true;
+          replayTruncatedRef.current = truncated;
+          if (!truncated && typeof snapshotSeq === "number") {
+            streamSeqRef.current = snapshotSeq;
+          }
+          resyncInFlightRef.current = false;
           setIsReconnecting(false);
           // Preserve websocket order: live text/done must follow the snapshot,
           // even when rebuilding a large snapshot takes several frames.
@@ -1039,9 +1129,10 @@ export function useChat(
     url: wsUrl,
     onMessage: handleMessage,
     autoConnect: !!sessionId && !!projectName,
-    idleTimeoutMs: 45_000, // Server sends a heartbeat every 15 seconds.
+    idleTimeoutMs: 45_000, // Server sends a heartbeat every 5 seconds.
     onConnectionChange: (connected) => {
       if (!connected) {
+        attemptRef.current?.fail();
         setIsConnected(false);
         setIsReconnecting(true);
       }
@@ -1055,9 +1146,13 @@ export function useChat(
   // Load history and reset state when session changes
   useEffect(() => {
     let cancelled = false;
+    attemptRef.current?.select(sessionId);
     const historyReconciled = historyReconciledRef.current;
     turnFinalizedRef.current = false;
     historyActivityRef.current++;
+    streamSeqRef.current = 0;
+    resyncInFlightRef.current = false;
+    replayTruncatedRef.current = false;
 
     // Keep the user's unconfirmed model/thinking picks across the draft→real transition
     // (null → id), but drop them when switching between two existing sessions so one
@@ -1076,6 +1171,8 @@ export function useChat(
     setPendingApproval(null);
     if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     setCompactStatus(null);
+    // Another session's subprocess saw another MCP state; its session_state brings its own.
+    setMcpNeedsAuth([]);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
     // Drop the previous session's version groups. Keeping them would let the
@@ -1123,6 +1220,7 @@ export function useChat(
     const staleIds = new Set(messagesRef.current.map((m) => m.id));
 
     if (sessionId && projectName) {
+      initialHistoryPendingRef.current = true;
       setMessagesLoading(true);
       // Via api.get, not raw fetch: the loading screen is gated on this settling,
       // and a stalled request would otherwise hold the transcript hostage until
@@ -1170,7 +1268,10 @@ export function useChat(
           }
         })
         .finally(() => {
-          if (!cancelled) setMessagesLoading(false);
+          if (!cancelled) {
+            initialHistoryPendingRef.current = false;
+            setMessagesLoading(false);
+          }
         });
     } else {
       setMessages([]);
@@ -1178,6 +1279,7 @@ export function useChat(
 
     return () => {
       cancelled = true;
+      initialHistoryPendingRef.current = false;
       historyRequestRef.current?.abort();
       historyRequestRef.current = null;
       if (syncRafRef.current) clearTimeout(syncRafRef.current);
@@ -1197,6 +1299,7 @@ export function useChat(
       historyActivityRef.current++;
 
       const isFollowUp = phaseRef.current !== "idle";
+      if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
       turnFinalizedRef.current = false;
 
       if (isFollowUp) {
@@ -1254,7 +1357,7 @@ export function useChat(
         ...(thinkingRef.current !== null && { thinking: thinkingRef.current }),
       }));
     },
-    [send],
+    [send, isConnected, connectedSessionId],
   );
 
   const setModel = useCallback(
@@ -1321,6 +1424,7 @@ export function useChat(
   );
 
   const cancelStreaming = useCallback(() => {
+    attemptRef.current?.fail();
     if (phaseRef.current === "idle") return;
     send(JSON.stringify({ type: "cancel" }));
     const finalContent = streamingContentRef.current;
@@ -1482,6 +1586,7 @@ export function useChat(
     contextWindowPct,
     compactStatus,
     promptCache,
+    mcpNeedsAuth,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

@@ -16,6 +16,8 @@ import { configService } from "./config.service.ts";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getOrFetchUsage } from "./provider-usage/usage-registry.ts";
 import { isCodexAccountUsageLimited } from "./codex-account-cooldown.ts";
+import { isCodexAccountAuthFailed } from "./codex-account-auth-state.ts";
+import { codexSignedOutMessage } from "../providers/codex-app-server/codex-auth-failure.ts";
 import { dailyGuardMessage, dailyGuardState } from "../shared/codex-daily-guard.ts";
 import type { UsageInfo } from "../providers/provider.interface.ts";
 
@@ -149,6 +151,35 @@ export function setCodexDailyGuard(id: string, enabled: boolean): CodexAccount |
 
 export class CodexDailyGuardError extends Error {}
 
+/** Every managed account that could serve is signed out. */
+export class CodexSignedOutError extends Error {}
+
+/**
+ * Accounts that can be handed a turn at all: switched on, and not known to be signed out.
+ *
+ * Both exclusions are hard. Off is the user's say-so; signed out is an account that will
+ * refuse every turn after ~24s of codex retrying, so handing it back "because nothing else
+ * was left" buys a slow failure instead of a fast one.
+ */
+function servableAccounts(): CodexAccount[] {
+  return listCodexAccounts().filter((a) => a.status !== "disabled" && !isCodexAccountAuthFailed(a.id));
+}
+
+/**
+ * Throw when accounts are enabled but every one of them is signed out.
+ *
+ * Without this the selector finds nothing, the caller falls back to the ambient ~/.codex
+ * login — usually absent or stale on a machine that manages accounts — and the turn fails
+ * with an error that names neither account.
+ */
+function assertSomeAccountSignedIn(): void {
+  const enabled = listCodexAccounts().filter((a) => a.status !== "disabled");
+  if (enabled.length === 0 || enabled.some((a) => !isCodexAccountAuthFailed(a.id))) return;
+  throw new CodexSignedOutError(enabled.length === 1
+    ? codexSignedOutMessage(enabled[0]!.label)
+    : `Every Codex account is signed out (${enabled.map((a) => a.label).join(", ")}). Press "Sign in again" on their cards in Settings → Accounts → Codex.`);
+}
+
 /** Remove the account row and its CODEX_HOME dir. */
 export function removeCodexAccount(id: string): void {
   const acct = getCodexAccount(id);
@@ -242,7 +273,7 @@ export function selectCodexAccount(opts?: { strategy?: CodexStrategy; usageOf?: 
   // `exclude` is hard for the same reason: its only caller is the rotation away from an
   // account that just refused the turn, and falling back to it would rotate in a circle.
   const excluded = new Set(opts?.exclude ?? []);
-  const all = listCodexAccounts().filter((a) => a.status !== "disabled" && !excluded.has(a.id));
+  const all = servableAccounts().filter((a) => !excluded.has(a.id));
   if (all.length === 0) return null;
   if (all.length === 1) return all[0]!;
   const strategy = opts?.strategy ?? getCodexStrategy();
@@ -276,7 +307,7 @@ export function peekCodexAccount(): CodexAccount | null {
   // Status and the quota park are the two things this can filter on without going async, so
   // it does both. Usage lives behind a fetch and stays out of reach here; the consuming pick
   // endpoint reads it instead.
-  const accts = withQuotaLeft(listCodexAccounts().filter((a) => a.status !== "disabled"));
+  const accts = withQuotaLeft(servableAccounts());
   if (accts.length === 0) return null;
   if (accts.length === 1) return accts[0]!;
   return getCodexStrategy() === "fill-first" ? accts[0]! : null;
@@ -287,6 +318,11 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   // Session-less callers (the model list) have nothing sticky to honour and fall
   // straight through to the configured strategy.
   const sticky = sessionId ? getSessionCodexAccount(sessionId) : null;
+  // A signed-out account lets go of its sessions too: it would refuse the turn after
+  // codex's full retry loop, and there is no quota reset to wait for.
+  assertSomeAccountSignedIn();
+  const keepable = (a: CodexAccount | null): a is CodexAccount =>
+    !!a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id) && !isCodexAccountAuthFailed(a.id);
   // A binding is held for the prompt cache, not honoured unconditionally: an account the
   // user has switched off has to let go of the sessions sitting on it, or turning it off
   // would do nothing for exactly the conversations already using it. An account parked for
@@ -296,7 +332,7 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   // account able to serve it cannot. Parked accounts count as unable for the same reason
   // they are skipped below, so a pool of two where one is out of quota resolves without a
   // network read at all.
-  const usable = listCodexAccounts().filter((a) => a.status !== "disabled" && !isCodexAccountUsageLimited(a.id));
+  const usable = servableAccounts().filter((a) => !isCodexAccountUsageLimited(a.id));
   const guarded = usable.filter((a) => a.dailyGuardEnabled);
   if (guarded.length > 0) {
     const usages = await getAllCodexUsages();
@@ -309,8 +345,7 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
     });
     if (blocked.length > 0) {
       const stickyAccount = sticky ? getCodexAccount(sticky) : null;
-      if (stickyAccount && !blocked.includes(stickyAccount.id)
-          && stickyAccount.status !== "disabled" && !isCodexAccountUsageLimited(stickyAccount.id)) return stickyAccount;
+      if (keepable(stickyAccount) && !blocked.includes(stickyAccount.id)) return stickyAccount;
       if (blocked.length === usable.length && sessionId) {
         const account = getCodexAccount(blocked[0]!);
         const usage = account ? usages[account.id] : undefined;
@@ -321,13 +356,13 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
     }
     if (sticky) {
       const a = getCodexAccount(sticky);
-      if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
+      if (keepable(a)) return a;
     }
     return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
   }
   if (sticky) {
     const a = getCodexAccount(sticky);
-    if (a && a.status !== "disabled" && !isCodexAccountUsageLimited(a.id)) return a;
+    if (keepable(a)) return a;
   }
   if (usable.length <= 1) return selectCodexAccount();
   // Usage is read for every strategy, not just lowest-usage: it is also what lets the

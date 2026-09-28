@@ -6,6 +6,155 @@
 
 - **Codex disappeared from chat after a restart, and nothing on screen said why.** The provider is registered once, at startup, behind a probe that runs `bun x @openai/codex --version` — and bun re-fetches the npm manifest whenever its cached copy has gone stale, so a server restarting during a network blip probes a perfectly good install and is told `error: ConnectionRefused downloading package manifest @openai/codex`. Measured, that probe fails in **0ms**; the provider is then skipped for the whole life of the process, which on a machine running PPM as a service means until somebody thinks to restart it. There was nothing to notice it by, either: the composer hides its provider chip while only one provider is registered, so Codex did not render greyed out, it simply was not there — one line in the log was the entire record, while Settings went on showing a Codex tab, because a provider keeps its config entry once it has ever been configured. Registration is now retried on its own — 30s, 1m, 2m, 5m, then every 15 minutes, stopping the moment it succeeds and never armed at all for the one failure retrying cannot fix, a host with no bun. Verified against a real server pointed at an unreachable registry: probe 1 failed at 03:04:20, probe 2 registered at 03:04:50, no restart. Settings → AI now carries the reason on the provider's own tab with the time of the next automatic check and a **Check again** button, so the answer to "why is Codex not in the picker" is on the page rather than in `~/.ppm/ppm.log`.
 
+## [0.23.6] - 2026-09-28
+
+### Added
+- A "Use reset" button on a Codex account card spends one of its free rate-limit resets, offered only once a limit is reached and after a confirmation that the weekly reset date will move.
+
+## [0.23.5] - 2026-09-27
+
+### Improved
+- New Codex chats reply about 2.5 s sooner, and starting one no longer freezes the whole server for a couple of seconds.
+- The Codex session list loads about 4x faster.
+
+## [0.23.4] - 2026-09-27
+
+### Improved
+- New chat tabs accept typing immediately, prepare provider settings in the background, and safely queue early sends.
+
+### Fixed
+- Codex reads mid-turn follow-up messages during the running task instead of waiting for the turn to finish.
+
+## [0.23.3] - 2026-09-27
+
+### Added
+- Show per-model Claude weekly limits and available Codex rate-limit reset credits.
+
+### Improved
+- Load mobile chats faster by deferring editors, diagrams, file indexes and slash commands, and deduplicating history requests.
+
+### Fixed
+- Background agents no longer leave completed chats stuck processing or erase answers after reload.
+- Preserve unsent chat drafts across reloads and show progress while the first message connects.
+- Starting or restarting PPM on Windows no longer overwrites the server log.
+
+## [0.23.2] - 2026-09-26
+
+### Added
+- "Sign in again" and "Expired" on an account card are now buttons (Claude and Codex, in Settings and the chat usage panels); a Codex account signs in again in place and keeps its settings and chats.
+
+### Fixed
+- A Codex account whose login was revoked no longer takes PPM down: it is marked signed out and skipped, turns move to another account, and requests fail within milliseconds instead of hanging.
+- Codex's own "Reconnecting..." retries are no longer reported as errors, so a turn that recovers is not cut short.
+- The `/proxy/<provider>` endpoints run at most 4 requests at once and answer the rest with 429 + Retry-After instead of stalling the server.
+
+## [0.23.1] - 2026-09-25
+
+### Fixed
+- Spinning icons no longer keep a browser core busy: a tool card's spinner cost about a fifth of a CPU core for as long as the tool ran, because the browser redraws an animated SVG on the main thread. The spin now runs on a wrapper the browser can animate on its own.
+
+## [0.23.0] - 2026-09-25
+
+### Added
+- Design mode: a Design tab with the design chat beside a live preview of what the AI builds, as a page or a slide deck, at desktop, tablet, phone or slide size; a Canvas/Chat bar on phones.
+- Design chats on Claude and Codex follow the project's design system (`designs/DESIGN.md`, `designs/tokens.css`) and start in the same permission mode as any new chat.
+- Design version history: a snapshot after every AI turn that changes the design, and restore.
+- Comments pinned to elements of a design, which stay on their element through edits and go to the AI in one message.
+- Tweak sliders, colours and choices the AI declares, previewed live and applied into the design's CSS.
+- Drag and resize elements on the canvas, saved into the design, with an undo that keeps later AI changes.
+- Export a design as ZIP, a single HTML file, PDF or PowerPoint with editable text, or hand it off to a new chat that builds it in the project's code.
+- The design AI checks the rendered canvas: a `design_check` tool (layout problems, errors, screenshot) for Claude and Codex, plus an automatic check after each turn that reports problems back.
+- The Design tab splits chat and preview or shows one of them based on its own width, with a Layout menu (Auto / Split / Canvas only / Chat only) and a full-window preview.
+- A design chat opened from chat history, search or a notification opens in its Design tab.
+
+### Fixed
+- Text and tool calls already streamed no longer disappear from a chat when a turn switches account midway (rate limit or token refresh).
+- Claude's "Additional Instructions" setting now actually reaches the model; it applies to new sessions and is added to Claude Code's own prompt rather than replacing it.
+- Allow/deny answers in a Claude chat's tool approval prompt are sent in the form the Claude CLI accepts, so a denied tool is reliably blocked.
+- The automatic database snapshot before a schema upgrade is taken again; it had been skipped since schema version 47.
+
+## [0.22.11] - 2026-09-25
+
+### Fixed
+- Open chat tabs no longer each keep their own full copy of the project's file list for the `@` picker; they share one. A browser with ten chat tabs on a 42k-file project was holding ten copies.
+- A PPM dev server started from an AI agent session no longer lets a browser tab spin at 150% CPU after a tunnel drops Vite's HMR socket. Vite enables console forwarding by itself in that case, and it retried every failed send forever; it is now turned off.
+
+## [0.22.10] - 2026-09-24
+
+### Added
+- Sign in to MCP servers that need OAuth (Vanta, plugin connectors) from the chat's new sign-in bar, Settings → AI Provider, or the AI Resources panel; hiding the bar is remembered per server.
+
+## [0.22.9] - 2026-09-23
+
+### Fixed
+- Chats on Claude Opus 5.5 no longer fail with "Claude Code 2.1.251 does not support this model"; the bundled Claude Agent SDK is now 0.3.280.
+
+## [0.22.8] - 2026-09-23
+
+### Fixed
+- The mobile drawer's utility tiles (Files, Remote, Cloud, Settings, Bug) stay on one row instead of dropping the last one onto a line of its own, and each NEW/BETA badge sits on its icon.
+
+## [0.22.7] - 2026-09-23
+
+### Added
+- Claude Opus 5.5 (`claude-opus-5-5`) in the model list.
+
+### Changed
+- New installs default to Claude Opus 5.5 and Codex GPT-6 Sol, the current balanced coding models; existing configs are untouched.
+
+## [0.22.6] - 2026-09-23
+
+### Changed
+- Make chat welcome tour actions compact and consistent, while preserving touch targets and keyboard focus.
+
+## [0.22.5] - 2026-09-23
+
+### Fixed
+- Chat file links carrying a line number (`app.ts:160`) open the file and jump to that line instead of doing nothing.
+- The Command Palette understands the same `:line` suffix, so the search fallback still lands on the right line.
+- Maths written with `\[ … \]` or `\( … \)` renders instead of showing a stray bracket and raw LaTeX.
+
+## [0.22.4] - 2026-09-22
+
+### Fixed
+- Recover chat streaming after tunnel WebSocket gaps instead of showing the response only when the turn ends.
+
+## [0.22.3] - 2026-09-22
+
+### Added
+- Adaptive guided tours with experience levels, task choices, saved progress and mobile support.
+- Quick orientation for Command Palette and navigation, with reduced-motion-aware step transitions.
+- Project-content search in the mobile navigation drawer.
+- Sandboxed HTML preview with compact controls and local static assets.
+
+### Fixed
+- Find run instructions opens README or package.json; file guidance supports arbitrary text, Markdown previews and empty projects.
+- Content search finds Git for Windows grep without PATH changes and reports failures separately from empty results.
+- Sort chat history by latest activity and cache model lists, including shared Codex discovery requests.
+- Render thinking as Markdown and preserve Codex summary sections.
+- Validate model updates using the saved provider type.
+- Include Monaco assets in published packages so the editor finishes loading.
+
+## [0.22.2] - 2026-09-22
+
+### Added
+- New chats can follow the last focused chat's provider across panels or always use the configured default.
+
+### Fixed
+- Show the selected Codex account's usage before sending the first message.
+- Restore unsent first messages and drafts when session creation or connection fails.
+- Fix loading Codex history before compaction on Windows and validate transcript paths.
+- Clear stale model options when switching chat providers.
+
+## [0.22.1] - 2026-09-18
+
+### Fixed
+- **An extension's panels wear the icon its manifest declares.** Git Graph, Blame, File History, Compare, Interactive Rebase and Reflog were six tabs with the same puzzle piece on them, and the extension list in Settings drew one too — the names had been in the manifest all along, with nothing reading them. Three separate half-tables of icon names became one, so a name that works in the command palette now works on a tab and in a tree view as well.
+
+### Changed
+- **The Git Graph is panned by dragging it, and has no scrollbar of its own.** The scrollbar sat in the 24px header row with its thumb across the word "Graph", and moving it under the header only traded that for a strip taking a row between the header and the first commit. Drag the graph sideways instead — the pointer says so, a finger still scrolls the list vertically, and a drag no longer opens the commit it ends on. A thin marker shows where in the lanes you are while something is moving them, and fades out after.
+- **Codex's daily guard paces a weekly quota over five weekdays, not seven days.** A seventh of the week each day meant the allowance kept rising over a weekend nobody was working, and the week's real capacity was already spent by Thursday. Weekdays are counted in UTC so every device agrees on which day it is.
+
 ## [0.22.0] - 2026-09-18
 
 ### Added

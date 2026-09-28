@@ -358,7 +358,8 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     savePersistedExpanded(activeProject.name, useFileStore.getState().expandedPaths);
   }, [expandedPaths, activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Handle WS file:changed → invalidate folder + index
+  // Index invalidation is app-wide so it also works with this drawer closed.
+  // The mounted tree only refreshes the affected folder.
   useEffect(() => {
     if (!activeProject) return;
     const projectName = activeProject.name;
@@ -375,8 +376,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
         const parentPath = changedPath.includes("/")
           ? changedPath.slice(0, changedPath.lastIndexOf("/"))
           : "";
-        store.invalidateIndex();
-        store.loadIndex(projectName);
         store.invalidateFolder(projectName, parentPath);
       }, 300);
     };
@@ -399,8 +398,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       const relative = relativeProjectPath(root, absoluteDir);
       if (relative == null) return; // outside this project — not the tree's concern
       const store = useFileStore.getState();
-      store.invalidateIndex();
-      store.loadIndex(projectName);
       store.invalidateFolder(projectName, relative);
     });
   }, [activeProject]);

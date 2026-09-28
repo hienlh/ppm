@@ -1,3 +1,5 @@
+import { usePanelStore } from "@/stores/panel-store";
+import { useProjectStore } from "@/stores/project-store";
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
 import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "@/lib/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
@@ -8,7 +10,7 @@ import { downscaleImage } from "@/lib/image-resize";
 import { INLINE_IMAGE_LIMITS } from "@/lib/image-resize-limits";
 import { randomId } from "@/lib/utils";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
-import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatDetail } from "@/lib/send-to-chat";
+import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatAck, type SendToChatDetail } from "@/lib/send-to-chat";
 import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { stepHistory } from "./message-history-recall";
@@ -72,12 +74,15 @@ export interface ChatAttachment {
 export type MessagePriority = 'now' | 'next' | 'later';
 
 interface MessageInputProps {
+  draftReady?: boolean;
   /** Tab id of the owning chat tab — addresses "Send to Chat" at this tab only. */
   tabId?: string;
   onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => void;
   isStreaming?: boolean;
   onCancel?: () => void;
   disabled?: boolean;
+  /** Input is usable while provider-dependent controls are still preparing. */
+  configurationPending?: boolean;
   projectName?: string;
   /** Slash picker state change */
   onSlashStateChange?: (visible: boolean, filter: string) => void;
@@ -99,6 +104,13 @@ interface MessageInputProps {
   initialValue?: string;
   /** Bumping this counter clears the textarea (e.g. parent cancels an edit). */
   clearSignal?: number;
+  /**
+   * A message that could not be sent, handed back. A fresh `nonce` applies it even
+   * when `text` equals the last one — `initialValue` cannot do this, because it only
+   * reacts to a *changed* value, and the text of a failed send is often exactly the
+   * draft the composer was already prefilled with.
+   */
+  restore?: { text: string; nonce: number } | null;
   /** Called on content change for draft auto-save */
   onContentChange?: (content: string, attachments?: Array<{ name: string; path: string }>) => void;
   /** Returns this session's user messages, oldest first — powers ArrowUp/Down recall */
@@ -134,6 +146,7 @@ interface MessageInputProps {
 
 export const MessageInput = memo(function MessageInput({
   tabId,
+  draftReady = true,
   onSend,
   isStreaming,
   onCancel,
@@ -150,6 +163,7 @@ export const MessageInput = memo(function MessageInput({
   onExternalPathsConsumed,
   initialValue,
   clearSignal,
+  restore,
   onContentChange,
   getUserHistory,
   autoFocus,
@@ -165,6 +179,7 @@ export const MessageInput = memo(function MessageInput({
   thinking,
   onThinkingChange,
   promptCache,
+  configurationPending = false,
 }: MessageInputProps) {
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
@@ -301,10 +316,17 @@ export const MessageInput = memo(function MessageInput({
   // may consume it, or the same output lands in every open chat at once.
   useEffect(() => {
     const handler = (e: Event) => {
-      const { text, label, targetTabId } = ((e as CustomEvent).detail ?? {}) as SendToChatDetail;
+      const { text, label, targetTabId, autoSend } = ((e as CustomEvent).detail ?? {}) as SendToChatDetail;
       if (!text) return;
       if (targetTabId ? targetTabId !== tabId : !ownsGlobalShortcut(getVisibleTextarea())) return;
-      window.dispatchEvent(new Event(SEND_TO_CHAT_ACK_EVENT));
+      // Sent as-is only into an idle, empty composer: anything the user has typed or
+      // attached is theirs, and the text joins it as a chip for them to send instead.
+      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !valueRef.current.trim() && attachments.length === 0;
+      window.dispatchEvent(new CustomEvent<SendToChatAck>(SEND_TO_CHAT_ACK_EVENT, { detail: { sent: send } }));
+      if (send) {
+        onSend(text, []);
+        return;
+      }
       const att: ChatAttachment = {
         id: randomId(),
         name: label ?? "Terminal output",
@@ -318,7 +340,7 @@ export const MessageInput = memo(function MessageInput({
     };
     window.addEventListener(SEND_TO_CHAT_EVENT, handler);
     return () => window.removeEventListener(SEND_TO_CHAT_EVENT, handler);
-  }, [getVisibleTextarea, tabId]);
+  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend]);
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
   // A restored draft can land after the input is already on screen, so never
@@ -327,26 +349,65 @@ export const MessageInput = memo(function MessageInput({
     if (initialValue && !valueRef.current) {
       writeTextareas(initialValue);
       // Focus and move cursor to end
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         const ta = textareaRef.current;
         if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
       }, 50);
+      return () => clearTimeout(timer);
     }
   }, [initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A tour suggestion is an explicit user action. Hydrated or typed drafts always win.
+  useEffect(() => {
+    const suggest = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!draftReady || disabled || isStreaming || valueRef.current || attachments.length || agentTag || !tabId) return;
+      if (detail?.projectName !== projectName || (detail.tabId && detail.tabId !== tabId) || typeof detail.text !== "string") return;
+      const panels = usePanelStore.getState();
+      const active = detail.tabId
+        ? Object.values(panels.panels).some((panel) => panel.activeTabId === tabId)
+        : panels.panels[panels.focusedPanelId]?.activeTabId === tabId;
+      if (!active || document.hidden) return;
+      writeTextareas(detail.text);
+      onContentChange?.(detail.text);
+      getVisibleTextarea()?.focus();
+    };
+    window.addEventListener("ppm:onboarding-prompt", suggest);
+    return () => window.removeEventListener("ppm:onboarding-prompt", suggest);
+  }, [draftReady, disabled, isStreaming, attachments.length, agentTag, tabId, projectName, onContentChange, writeTextareas, getVisibleTextarea]);
 
   // Parent-driven clear (e.g. cancelling an edit) — skip initial mount (0).
   useEffect(() => {
     if (clearSignal) writeTextareas("");
   }, [clearSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // An unsent message coming back. The send can fail up to ~45 s after Enter, by which
+  // time the user may be typing something new — so the text goes AFTER what is there
+  // rather than over it. Reported as a content change so it is saved as the draft
+  // again; `writeTextareas` alone tells nobody.
+  useEffect(() => {
+    if (!restore?.nonce || !restore.text) return;
+    const current = valueRef.current;
+    const next = current.trim() ? `${current}\n\n${restore.text}` : restore.text;
+    writeTextareas(next);
+    onContentChange?.(next, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+    const timer = setTimeout(() => {
+      const ta = getVisibleTextarea();
+      if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [restore?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-focus on mount when requested
   useEffect(() => {
     if (!autoFocus) return;
-    setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
+    const timer = setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
+    return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cache per project/provider/session, with a TTL for externally installed skills.
   const loadSlashItems = useCallback(() => {
+    if (configurationPending) return;
     if (!projectName) {
       slashItemsRef.current = [];
       onSlashItemsLoaded?.([], []);
@@ -361,10 +422,14 @@ export const MessageInput = memo(function MessageInput({
         slashItemsRef.current = [];
         onSlashItemsLoaded?.([], []);
       });
-  }, [projectName, providerId, sessionId, onSlashItemsLoaded]);
+  }, [projectName, providerId, sessionId, onSlashItemsLoaded, configurationPending]);
 
-  // Load when projectName changes (cache hit after the first tab in a project)
-  useEffect(() => { loadSlashItems(); }, [loadSlashItems]);
+  useEffect(() => {
+    if (!configurationPending && slashPickerOpenRef.current) loadSlashItems();
+  }, [configurationPending, loadSlashItems]);
+
+  // Load on the first slash interaction below. Opening a transcript should
+  // not enumerate skills (or start a provider CLI) before the user needs them.
 
   // Refresh button invalidated the server cache — drop ours too, then refetch.
   useEffect(() => {
@@ -385,8 +450,15 @@ export const MessageInput = memo(function MessageInput({
         onFileItemsLoaded?.([]);
         return;
       }
-      const { fileIndex } = useFileStore.getState();
-      const nodes: FileNode[] = fileIndex.map((e) => ({ name: e.name, path: e.path, type: e.type }));
+      // Share the store's array rather than mapping it: every mounted chat tab runs this,
+      // and a project index can hold tens of thousands of entries, so a per-tab copy
+      // kept one full duplicate alive for each open chat. Consumers only read it.
+      const files = useFileStore.getState();
+      if (filePickerOpenRef.current && files.indexStatus === "idle" && useProjectStore.getState().activeProject?.name === projectName) {
+        void files.loadIndex(projectName);
+        return;
+      }
+      const nodes: FileNode[] = files.indexProjectName === projectName ? files.fileIndex : [];
       fileItemsRef.current = nodes;
       onFileItemsLoaded?.(nodes);
     };
@@ -734,7 +806,7 @@ export const MessageInput = memo(function MessageInput({
       // Check for slash anywhere in text (after whitespace or at start)
       if (hasSlash) {
         const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
-        if (slashMatch && slashItemsRef.current.length > 0) {
+        if (slashMatch) {
           if (!slashPickerOpenRef.current) loadSlashItems();
           const filter = slashMatch[1] ?? "";
           onSlashStateChange?.(true, filter);
@@ -747,7 +819,11 @@ export const MessageInput = memo(function MessageInput({
       // Check for @ anywhere in text (after whitespace or at start)
       if (hasAt) {
         const atMatch = textBefore.match(/@(\S*)$/);
-        if (atMatch && fileItemsRef.current.length > 0) {
+        if (atMatch) {
+          const files = useFileStore.getState();
+          if (projectName && (files.indexProjectName !== projectName || files.indexStatus === "idle" || files.indexStatus === "error")) {
+            void files.loadIndex(projectName);
+          }
           onFileStateChange?.(true, atMatch[1] ?? "");
           filePickerOpenRef.current = true;
           if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
@@ -759,7 +835,7 @@ export const MessageInput = memo(function MessageInput({
       if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
       if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
     },
-    [onSlashStateChange, onFileStateChange, loadSlashItems],
+    [onSlashStateChange, onFileStateChange, loadSlashItems, projectName],
   );
 
   /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */
@@ -855,7 +931,7 @@ export const MessageInput = memo(function MessageInput({
   const showCancel = isStreaming && !hasContent;
 
   return (
-    <div className="p-2 md:p-3">
+    <div data-onboarding="chat-input" className="p-2 md:p-3">
       {/* Rounded input container */}
       <div
         className="border border-border rounded-[var(--rad)] bg-panel shadow-[var(--shadow-float)] cursor-text"
@@ -887,6 +963,7 @@ export const MessageInput = memo(function MessageInput({
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: mode chip + provider selector row */}
         <div className="flex flex-wrap items-center gap-1 px-2 pt-2 md:hidden relative">
+          {!configurationPending && <>
           <ModeChip
             mode={permissionMode ?? "bypassPermissions"}
             onClick={() => setModeSelectorOpen((v) => !v)}
@@ -897,6 +974,7 @@ export const MessageInput = memo(function MessageInput({
             open={modeSelectorOpen}
             onOpenChange={setModeSelectorOpen}
           />
+          </>}
           {onProviderChange && projectName && (
             <ProviderSelector
               value={providerId ?? "claude"}
@@ -986,7 +1064,7 @@ export const MessageInput = memo(function MessageInput({
         <div className="hidden md:block">
           <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5">
             {/* Mode indicator chip */}
-            <div className="relative">
+            {!configurationPending && <div className="relative">
               <ModeChip
                 mode={permissionMode ?? "bypassPermissions"}
                 onClick={() => setModeSelectorOpen((v) => !v)}
@@ -997,7 +1075,7 @@ export const MessageInput = memo(function MessageInput({
                 open={modeSelectorOpen}
                 onOpenChange={setModeSelectorOpen}
               />
-            </div>
+            </div>}
             {/* Provider selector — only when no active session */}
             {onProviderChange && projectName && (
               <ProviderSelector

@@ -3,7 +3,8 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
@@ -19,6 +20,8 @@ import { formatTurnUsageLog, prefixTokens } from "../../shared/turn-usage.ts";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle.ts";
 import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
+import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
+import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -49,7 +52,7 @@ function resolveSessionThinkingEnabled(sessionId: string): boolean {
   );
 }
 
-const PING_INTERVAL_MS = 15_000; // 15s keepalive
+const PING_INTERVAL_MS = 5_000; // Detect an active stream gap promptly through a tunnel.
 /**
  * When an abandoned session's entry is dropped.
  *
@@ -117,10 +120,14 @@ interface SessionEntry {
   lastImplicitTeamProbe?: number;
   /** Compact indicator state — sticky until turn ends or boundary received, synced on reconnect */
   compactStatus?: "compacting" | null;
+  /** MCP servers the subprocess reported as `needs-auth` at init — drives the chat's sign-in bar */
+  mcpNeedsAuth?: string[];
   /** toolUseIds of Bash/Agent calls launched with run_in_background — their spy outlives the tool_result */
   backgroundToolUseIds?: Set<string>;
   /** Nested-agent children buffered into turnEvents this turn (see MAX_NESTED_TURN_EVENTS) */
   nestedBuffered?: number;
+  /** Monotonic sequence for streamed events, used to detect a downstream content gap. */
+  streamSeq: number;
   /** When the last client left, for evicting the least recently used warm subprocess */
   idleSince?: number;
   /** When the last turn completed — the moment this session's prompt cache was last written */
@@ -133,6 +140,12 @@ interface SessionEntry {
   lastTurnCacheTtlMs?: number;
   /** A compaction the last turn ended on, which leaves the cached prefix inapplicable */
   lastTurnCompactedAt?: number;
+  /**
+   * When the message that opened the current turn reached the server — what "time to first
+   * event" is measured from. The consumer loop outlives turns, so its own clock would count
+   * the idle gap before a follow-up as waiting on the provider.
+   */
+  turnRequestedAt?: { at: number; cold: boolean };
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
 }
@@ -309,6 +322,28 @@ function broadcastBackgroundRegistry(sessionId: string): void {
 /** Tracks active sessions — persists even when FE disconnects */
 const activeSessions = new Map<string, SessionEntry>();
 
+registerMcpSignInSync({
+  sessions: () => activeSessions.entries(),
+  broadcast: (sessionId, event) => broadcast(sessionId, event),
+  reconnect: async (providerId, sessionId, serverName) => {
+    const provider = providerRegistry.get(providerId) as { reconnectMcpServer?: (s: string, n: string) => Promise<string | null> } | undefined;
+    return provider?.reconnectMcpServer?.(sessionId, serverName) ?? null;
+  },
+  // Background agents and shells outlive the turn inside the subprocess; a sign-in elsewhere
+  // must never be what kills them.
+  canDrop: (sessionId) => {
+    const entry = activeSessions.get(sessionId);
+    if (!entry || entry.isStreamingActive) return false;
+    if ((entry.backgroundToolUseIds?.size ?? 0) > 0) return false;
+    return !backgroundShellRegistry.list(sessionId).some((sh) => sh.status !== "stopped");
+  },
+  dropIdle: (sessionId, serverName) => dropIdleSubprocess(
+    sessionId,
+    "mcp_sign_in",
+    `Subprocess released: it could not see the new ${serverName} sign-in, the next turn starts a fresh one`,
+  ),
+});
+
 /** Check if any frontend client is currently connected via WebSocket */
 export function hasActiveClient(): boolean {
   for (const entry of activeSessions.values()) {
@@ -382,9 +417,12 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   const evType = (event as any)?.type;
+  const streamed = evType && BUFFERABLE_TYPES.has(evType)
+    ? { ...(event as Record<string, unknown>), streamSeq: ++entry.streamSeq }
+    : event;
   if (evType && BUFFERABLE_TYPES.has(evType)) {
     if (entry.turnEvents.length < MAX_TURN_EVENTS) {
-      entry.turnEvents.push({ ...(event as Record<string, unknown>) });
+      entry.turnEvents.push(streamed);
     }
     // Enrich: embed tool_result onto matching tool_use for reconnect reliability.
     // Reconnecting clients may miss separate tool_result events — this ensures
@@ -402,11 +440,11 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
       }
     }
   }
-  broadcast(sessionId, event);
+  broadcast(sessionId, streamed);
 }
 
 /**
- * Emit a nested-agent child read off disk. Buffered for reconnect replay only
+ * Emit a nested-agent child from the provider or disk. Buffered for reconnect replay only
  * while its turn is still in flight and under the nested budget; a background
  * agent that outlives the turn streams its children unbuffered, since the next
  * turn's replay is not the place for them and reload restores them from disk.
@@ -515,11 +553,18 @@ function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): voi
 function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
   const entry = activeSessions.get(sessionId);
   if (!entry || entry.turnEvents.length === 0) return;
+  const lastBufferedSeq = (entry.turnEvents[entry.turnEvents.length - 1] as { streamSeq?: number } | undefined)?.streamSeq ?? 0;
+  const truncated = lastBufferedSeq < entry.streamSeq;
   try {
     ws.send(JSON.stringify({
       type: "turn_events",
       events: entry.turnEvents,
       userMessage: entry.currentUserMessage ?? null,
+      // This is an authoritative full snapshot, not a delta. `truncated` tells
+      // the client it must wait for the normal idle history reload to recover
+      // frames beyond the bounded replay buffer.
+      streamSeq: entry.streamSeq,
+      ...(truncated ? { truncated: true } : {}),
     }));
   } catch (e) {
     console.warn(`[chat] session=${sessionId} sendTurnEvents failed: ${(e as Error).message}`);
@@ -529,7 +574,7 @@ function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
 /** Set up per-client application-level ping */
 function setupClientPing(entry: SessionEntry, ws: ChatWsSocket): void {
   const interval = setInterval(() => {
-    try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* ws may be closed */ }
+    try { ws.send(JSON.stringify({ type: "ping", streamSeq: entry.streamSeq })); } catch { /* ws may be closed */ }
   }, PING_INTERVAL_MS);
   entry.pingIntervals.set(ws, interval);
 }
@@ -656,10 +701,27 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       const ev = event as any;
       const evType = ev.type ?? "unknown";
 
+      // Child streams can outlive the root turn. Their content and terminal
+      // events belong to the Agent card, never to the root turn's lifecycle.
+      if (ev.parentToolUseId) {
+        emitNestedChild(sessionId, event);
+        continue;
+      }
+      // Codex's synthetic Agent card result has no parentToolUseId. A late
+      // completion still updates connected cards, but cannot start a root turn
+      // or create replay that would replace the completed assistant history.
+      if (evType === "tool_result" && ev.toolUseId?.startsWith("subagent-") && entry.phase === "idle") {
+        broadcast(sessionId, event);
+        continue;
+      }
+
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
         const sub = (ev as any).subtype;
-        if (sub === "compacting") {
+        if (sub === "init" && Array.isArray(ev.mcpServers)) {
+          entry.mcpNeedsAuth = needsAuthServerNames(ev.mcpServers);
+          broadcast(sessionId, mcpStatusEvent(entry.mcpNeedsAuth));
+        } else if (sub === "compacting") {
           entry.compactStatus = "compacting";
           console.log(`[chat] session=${sessionId} compact_status=compacting (persisted on entry)`);
           broadcast(sessionId, { type: "compact_status", status: "compacting" });
@@ -722,9 +784,13 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
-        const waitMs = Date.now() - startTime;
-        console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType}`);
-        logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType})`);
+        const requested = entry.turnRequestedAt;
+        entry.turnRequestedAt = undefined;
+        // A turn nobody sent over this socket (scheduler, remote trigger) has no receipt time.
+        const waitMs = Date.now() - (requested?.at ?? startTime);
+        const path = requested ? (requested.cold ? "cold" : "warm") : "unsent";
+        console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType} path=${path}`);
+        logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType}, ${path})`);
         if (heartbeat) clearInterval(heartbeat);
         const newPhase = evType === "thinking" ? "thinking" : "streaming";
         setPhase(sessionId, newPhase);
@@ -956,6 +1022,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // Consumer loop continues — query waits for next message in generator
       if (evType === "done") {
         entry.turnEvents = [];
+        entry.nestedBuffered = 0;
         entry.pendingApprovalEvent = undefined;
         // Clear stale compact status if turn ended without compact_boundary.
         // SDK may emit `status: compacting` without a matching boundary (deferred,
@@ -1058,6 +1125,7 @@ export const chatWebSocket = {
         pendingApproval: existing.pendingApprovalEvent ?? null,
         sessionTitle: session?.title || null,
         compactStatus: existing.compactStatus ?? null,
+        mcpNeedsAuth: existing.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1103,6 +1171,7 @@ export const chatWebSocket = {
       phase: "idle",
       turnEvents: [],
       isStreamingActive: false,
+      streamSeq: 0,
       teamWatchers: new Map(),
       teamNames: new Set(),
       compactStatus: null,
@@ -1163,7 +1232,7 @@ export const chatWebSocket = {
       if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
       const newEntry: SessionEntry = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
-        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false,
+        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false, streamSeq: 0,
         teamWatchers: new Map(), teamNames: new Set(), compactStatus: null,
         model: getSessionModel(sessionId) ?? undefined,
       };
@@ -1183,7 +1252,7 @@ export const chatWebSocket = {
     // Client-initiated handshake — FE sends "ready" after onopen.
     // Re-send status so tunnel connections (Cloudflare) that missed the
     // open-handler message still get connected/status confirmation.
-    if (parsed.type === "ready") {
+    if (parsed.type === "ready" || parsed.type === "resync") {
       ws.send(JSON.stringify({
         type: "session_state",
         sessionId,
@@ -1191,6 +1260,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1208,6 +1278,8 @@ export const chatWebSocket = {
     }
 
     if (parsed.type === "message") {
+      // Taken before any awaited work below (slash rewrites, resume), which is part of the wait.
+      const messageReceivedAt = Date.now();
       // Images count as content: a message may carry only a picture, with nothing typed.
       const hasInlineImages = Array.isArray((parsed as { images?: unknown }).images)
         && ((parsed as { images: unknown[] }).images.length > 0);
@@ -1237,6 +1309,12 @@ export const chatWebSocket = {
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
+        // A design session keeps its mode for callers that pass none (CLI, scheduler), so
+        // the one the user picked here is written back rather than living in this socket.
+        if (VALID_PERMISSION_MODES.includes(parsed.permissionMode as typeof VALID_PERMISSION_MODES[number])
+          && getSessionDesignSlug(sessionId)) {
+          setSessionPermissionMode(sessionId, parsed.permissionMode);
+        }
       }
       // Store model override — sticky for this session
       if (parsed.model) {
@@ -1325,6 +1403,10 @@ export const chatWebSocket = {
 
       // Store user message for reconnect replay (turn_events includes only assistant events)
       entry.currentUserMessage = parsed.content;
+      // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
+      if (!entry.isStreamingActive || entry.phase === "idle") {
+        entry.turnRequestedAt = { at: messageReceivedAt, cold: !entry.isStreamingActive };
+      }
 
       if (!entry.isStreamingActive) {
         // First message or post-crash recovery: start persistent consumer
@@ -1400,6 +1482,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1426,6 +1509,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1446,6 +1530,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
@@ -1469,6 +1554,9 @@ export const chatWebSocket = {
       broadcastBackgroundRegistry(sessionId);
       const provider = providerRegistry.get(providerId);
       const instruction = `Call the KillShell tool with task_id "${shellId}" to stop that background command, then reply with just "Stopped.".`;
+      if (!entry.isStreamingActive || entry.phase === "idle") {
+        entry.turnRequestedAt = { at: Date.now(), cold: !entry.isStreamingActive };
+      }
       if (!entry.isStreamingActive) {
         if (provider && "resumeSession" in provider) await (provider as any).resumeSession(sessionId);
         if (entry.projectPath && provider && "ensureProjectPath" in provider) {

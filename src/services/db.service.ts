@@ -6,7 +6,9 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
-export const CURRENT_SCHEMA_VERSION = 52;
+// Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
+// any database already at this version, so a stale value silently drops that backup.
+export const CURRENT_SCHEMA_VERSION = 54;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1155,30 +1157,48 @@ export function runMigrations(database: Database): void {
   }
 
   if (current < 50) {
+    // A design session is an ordinary session carrying the slug of the design it works on,
+    // plus the permission mode it runs under. The mode is stored per session because
+    // callers without a UI (CLI, scheduler, bots) pass none, and a design session must not
+    // fall back to the provider-wide default (usually bypass). NULL = an ordinary session.
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN design_slug TEXT"); } catch { /* exists */ }
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN permission_mode TEXT"); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 50;`);
+  }
+
+  if (current < 51) {
+    // Usage details that have no fixed column: Claude's per-model weekly limits (Fable and
+    // whatever comes next arrive as `limits[]` entries, not as `seven_day_<model>` keys) and
+    // Codex's free rate-limit reset credits. JSON so a new model needs no migration of its own.
+    try { database.exec("ALTER TABLE claude_limit_snapshots ADD COLUMN extra_json TEXT"); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 51;`);
+  }
+
+  if (current < 52) {
     // The idle-cache notice had to live entirely in server memory, because nothing on disk
     // said when a session last cached or how much. `recorded_at` answers the first; this
     // column answers the second with a figure the summed token columns cannot give —
     // see `TurnUsage.contextTokens`. Null on every existing row: unmeasured, not zero.
     try { database.exec("ALTER TABLE turn_usage ADD COLUMN context_tokens INTEGER"); } catch { /* column exists */ }
-    database.exec(`PRAGMA user_version = 50;`);
+    database.exec(`PRAGMA user_version = 52;`);
   }
 
-  if (current < 51) {
+  if (current < 53) {
     // The cache window was inferred from the credential's shape — an `sk-ant-oat` prefix
     // meaning a subscription and therefore an hour. The API states it outright in
     // `usage.cache_creation`, and that answer has to outlive the process the way the rest of
     // the last turn's facts now do. Null on existing rows: unreported, so the guess stands.
     try { database.exec("ALTER TABLE turn_usage ADD COLUMN cache_ttl_ms INTEGER"); } catch { /* column exists */ }
-    database.exec(`PRAGMA user_version = 51;`);
+    database.exec(`PRAGMA user_version = 53;`);
   }
 
-  if (current < 52) {
+  if (current < 54) {
     // A compaction makes the cached prefix inapplicable rather than stale, and the window in
     // which that matters is between the compaction and the user's next message — a window a
     // restart lands inside often enough to be worth surviving. Null on existing rows: no
     // compaction is known, which is what every turn before this recorded anyway.
     try { database.exec("ALTER TABLE turn_usage ADD COLUMN compacted_at INTEGER"); } catch { /* column exists */ }
-    database.exec(`PRAGMA user_version = 52;`);
+    database.exec(`PRAGMA user_version = 54;`);
   }
 }
 
@@ -1366,12 +1386,14 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget)
-      SELECT ?, model, effort, thinking_budget FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode)
+      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
-        thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget)
+        thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
+        design_slug = COALESCE(session_metadata.design_slug, excluded.design_slug),
+        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode)
     `).run(newSessionId, oldSessionId);
     database.query(
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
@@ -1477,6 +1499,61 @@ export function setSessionThinking(sessionId: string, budget: number | null): vo
   getDb().query(
     "INSERT INTO session_metadata (session_id, thinking_budget) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET thinking_budget = excluded.thinking_budget",
   ).run(sessionId, budget);
+}
+
+/** Design this session works on (`designs/<slug>/`); null for an ordinary chat. */
+export function getSessionDesignSlug(sessionId: string): string | null {
+  const row = getDb().query("SELECT design_slug FROM session_metadata WHERE session_id = ?").get(sessionId) as { design_slug: string | null } | null;
+  return row?.design_slug ?? null;
+}
+
+export function setSessionDesignSlug(sessionId: string, slug: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, design_slug) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET design_slug = excluded.design_slug",
+  ).run(sessionId, slug);
+}
+
+/** Design slugs for many sessions at once (history lists); sessions without one are absent. */
+export function getSessionDesignSlugs(sessionIds: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  // Chunked well under SQLite's bound-parameter limit, which a long history page can reach.
+  for (let i = 0; i < sessionIds.length; i += 500) {
+    const chunk = sessionIds.slice(i, i + 500);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = getDb().query(
+      `SELECT session_id, design_slug FROM session_metadata WHERE design_slug IS NOT NULL AND session_id IN (${placeholders})`,
+    ).all(...chunk) as { session_id: string; design_slug: string }[];
+    for (const r of rows) result[r.session_id] = r.design_slug;
+  }
+  return result;
+}
+
+/** Permission mode stored for this session; null = the caller's or provider's default applies. */
+export function getSessionPermissionMode(sessionId: string): string | null {
+  const row = getDb().query("SELECT permission_mode FROM session_metadata WHERE session_id = ?").get(sessionId) as { permission_mode: string | null } | null;
+  return row?.permission_mode ?? null;
+}
+
+export function setSessionPermissionMode(sessionId: string, mode: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, permission_mode) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET permission_mode = excluded.permission_mode",
+  ).run(sessionId, mode);
+}
+
+/**
+ * Give a fork the design identity of its source, so forking a design chat yields another
+ * design chat rather than an ordinary one that has quietly lost its instructions and its
+ * safer permission default. A no-op for a source that is not a design session.
+ */
+export function copySessionDesignSettings(sourceSessionId: string, targetSessionId: string): void {
+  if (sourceSessionId === targetSessionId) return;
+  const slug = getSessionDesignSlug(sourceSessionId);
+  if (!slug) return;
+  getDb().transaction(() => {
+    setSessionDesignSlug(targetSessionId, slug);
+    const mode = getSessionPermissionMode(sourceSessionId);
+    if (mode) setSessionPermissionMode(targetSessionId, mode);
+  })();
 }
 
 // ---------------------------------------------------------------------------
@@ -1873,6 +1950,8 @@ export interface LimitSnapshotRow {
   weekly_opus_resets_at: string | null;
   weekly_sonnet_util: number | null;
   weekly_sonnet_resets_at: string | null;
+  /** JSON {@link import("../shared/usage-extra.ts").UsageExtra}: per-model weekly limits, reset credits. */
+  extra_json?: string | null;
   recorded_at: string;
 }
 
@@ -1882,8 +1961,8 @@ export function insertLimitSnapshot(
   getDb().query(
     `INSERT INTO claude_limit_snapshots
       (provider, account_id, five_hour_util, five_hour_resets_at, weekly_util, weekly_resets_at,
-       weekly_opus_util, weekly_opus_resets_at, weekly_sonnet_util, weekly_sonnet_resets_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       weekly_opus_util, weekly_opus_resets_at, weekly_sonnet_util, weekly_sonnet_resets_at, extra_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     data.provider ?? DEFAULT_USAGE_PROVIDER,
     data.account_id ?? null,
@@ -1891,6 +1970,7 @@ export function insertLimitSnapshot(
     data.weekly_util ?? null, data.weekly_resets_at ?? null,
     data.weekly_opus_util ?? null, data.weekly_opus_resets_at ?? null,
     data.weekly_sonnet_util ?? null, data.weekly_sonnet_resets_at ?? null,
+    data.extra_json ?? null,
   );
 }
 

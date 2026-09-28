@@ -29,6 +29,7 @@ import { MobileTabSwitcherSheet } from "@/components/layout/mobile-tab-switcher-
 import { getTabIcon } from "@/lib/tab-type-icons";
 import { countDockTabs } from "@/components/layout/dock-tabs";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
+import { tabSessionId } from "@/lib/tab-session-id";
 
 interface MobileNavProps { onMenuPress: () => void; onProjectsPress: () => void; }
 
@@ -109,7 +110,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const menuTabIdx = menuTabId ? menuTabPanelTabs.findIndex((t) => t.id === menuTabId) : -1;
 
   // Chat-session context for the long-press menu (Mark as unread / Set Tag)
-  const menuSessionId = menuTab?.type === "chat" ? (menuTab.metadata?.sessionId as string | undefined) : undefined;
+  const menuSessionId = tabSessionId(menuTab);
   const menuNotiType = menuSessionId ? ((notifications.get(menuSessionId)?.count ?? 0) > 0) : false;
   // Editor "Compare with Selected" only when a different file in the same project is selected
   const menuFilePath = menuTab?.metadata?.filePath as string | undefined;
@@ -236,7 +237,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   }, [activeProject?.name, projectTags, loadTags]);
 
   // Session tag map — same fetch pattern as desktop tab-bar so mobile tabs can show tag bar
-  const chatSessionIds = tabs.filter((t) => t.type === "chat" && t.metadata?.sessionId).map((t) => t.metadata!.sessionId as string);
+  const chatSessionIds = tabs.map(tabSessionId).filter((id): id is string => !!id);
   useEffect(() => {
     if (!activeProject?.name || chatSessionIds.length === 0) return;
     api.get<{ sessions: { id: string; tag?: { id: number; name: string; color: string } | null }[] }>(

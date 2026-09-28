@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "./sql-completion-provider";
 import { getStatementAtCursor } from "./split-sql-statements";
 
@@ -73,6 +74,7 @@ export function SqlQueryEditor({ onExecute, loading, defaultValue = "SELECT * FR
   return (
     <div className="h-full overflow-hidden">
       <Editor
+        beforeMount={prepareMonacoTheme}
         height="100%"
         language="sql"
         theme={monacoTheme}

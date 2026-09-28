@@ -4,34 +4,80 @@ import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
 import { selectInlineImages } from "@/lib/image-resize-limits";
 import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
+import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
+import { useDesignSessionRedirect } from "@/hooks/use-design-session-redirect";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
-import { getAISettings, pickAccountForTab } from "@/lib/api-settings";
+import { getAISettings } from "@/lib/api-settings";
+import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { TeamWorkingBar } from "./team-working-bar";
+import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
+import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-gate";
+import { UserBubble } from "./message-user-bubble";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
+import { patchTabMetadata } from "@/lib/patch-tab-metadata";
 
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
 
+/** A fork a host has taken over: the forked session, and the message to resend in it. */
+export interface ChatForkRequest {
+  sessionId: string;
+  providerId: string;
+  pendingMessage: string;
+}
+
 interface ChatTabProps {
   metadata?: Record<string, unknown>;
   tabId?: string;
+  /**
+   * Replaces "open a new chat tab" (`/clear`) for a host that keeps its conversation in
+   * place — a design tab starts the next session inside itself, where it stays in design mode.
+   */
+  onNewSession?: (clearedFrom?: string) => void;
+  /** Replaces "open the fork in a new tab"; the host swaps the fork into itself. */
+  onFork?: (fork: ChatForkRequest) => void;
+  /** Lists only this design's sessions in the history picker. */
+  historyFilter?: string;
 }
 
-export function ChatTab({ metadata, tabId }: ChatTabProps) {
+/**
+ * How long a first message may wait for its session to be created, and then for the
+ * new socket to report connected, before it is handed back to the user. Generous
+ * because a codex app-server cold start alone takes ~30 s; the point is only that
+ * "forever, silently" is not an option.
+ */
+const SESSION_CREATE_TIMEOUT_MS = 30_000;
+const PENDING_SEND_TIMEOUT_MS = 45_000;
+
+export function ChatTab(props: ChatTabProps) {
+  const { metadata, tabId } = props;
+  return tabId && metadata ? (
+    <NewChatProviderGate tabId={tabId} metadata={metadata}>
+      <ChatTabContent {...props} />
+    </NewChatProviderGate>
+  ) : <ChatTabContent {...props} />;
+}
+
+function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }: ChatTabProps) {
+  const preparation = useNewChatPreparation();
+  const metadataRef = useRef(metadata);
+  metadataRef.current = metadata;
+  // A design chat is created with its slug and keeps the design's name as its tab title.
+  const designSlug = typeof metadata?.designSlug === "string" && metadata.designSlug ? metadata.designSlug : undefined;
   const [sessionId, setSessionId] = useState<string | null>(
     (metadata?.sessionId as string) ?? null,
   );
@@ -50,9 +96,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleSessionMigrated = useCallback((newSessionId: string) => {
     setSessionId(newSessionId);
   }, []);
-  const [providerId, setProviderId] = useState<string>(
+  const [providerOverride, setProviderId] = useState<string>(
     (metadata?.providerId as string) ?? "claude",
   );
+  const providerId = !sessionId && preparation.providerId ? preparation.providerId : providerOverride;
 
   // Slash picker state
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
@@ -71,9 +118,24 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [permissionMode, setPermissionMode] = useState<string | undefined>(
     (metadata?.permissionMode as string) ?? undefined,
   );
+  useEffect(() => {
+    if (!preparation?.pending && !sessionId && metadata?.providerId) {
+      setProviderId(metadata.providerId as string);
+      setPermissionMode(metadata.permissionMode as string | undefined);
+    }
+  }, [preparation?.pending, metadata?.providerId, metadata?.permissionMode, sessionId]);
 
-  // Pending message to send after WS connects (replaces unreliable setTimeout)
-  const pendingSendRef = useRef<{ content: string; permissionMode?: string; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] } | null>(null);
+  // Pending message to send after WS connects (replaces unreliable setTimeout).
+  // `draftId` is the draft it was composed under, deleted only once the message has
+  // really been handed to the socket; until then that row is the only other copy.
+  const pendingSendRef = useRef<{
+    content: string;
+    draftId: string;
+    permissionMode?: string;
+    images?: Array<{ data: string; mediaType: string }>;
+    imagePaths?: string[];
+  } | null>(null);
+  const pendingSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
@@ -84,22 +146,24 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   // Use tab's own project, not global activeProject (keep-alive: hidden tabs must not react to switches)
   const projectName = (metadata?.projectName as string) ?? "";
+  useDesignSessionRedirect({ tabId, sessionId, designSlug, projectName, providerId });
   const updateTab = useTabStore((s) => s.updateTab);
   const version = useSettingsStore((s) => s.version);
 
   // Usage runs independently — auto-refreshes on interval. Scoped to this session so the
   // account shown is the one bound to it, not whichever session ran most recently.
   const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, reloadUsage } =
-    useUsage(projectName, providerId, sessionId ?? undefined);
+    useUsage(projectName, providerId, sessionId ?? undefined,
+      metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined, !preparation?.pending);
 
   // Draft auto-save/restore
-  const { draft, draftLoading, saveDraft, clearDraft } = useDraft(projectName, sessionId);
+  const { draft, draftLoading, saveDraft, clearDraft, cancelPendingSave, moveDraft } = useDraft(projectName, sessionId, tabId);
 
   // Load global default permission mode on mount (if no per-session override)
   useEffect(() => {
-    if (permissionMode) return;
+    if (permissionMode || preparation?.pending) return;
     getAISettings().then((s) => {
-      const provider = s.providers[s.default_provider ?? "claude"];
+      const provider = s.providers[providerId];
       setPermissionMode(provider?.permission_mode ?? "bypassPermissions");
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -110,18 +174,19 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   // is the only account that matters, and it is the one the server re-routes when an
   // account goes bad. Keeping the tab's copy alongside it would give the chip a second,
   // staler answer to the same question.
+  //
+  // Merged into the metadata the store holds now, never the `metadata` prop: the prop is
+  // whatever this component last rendered with, and spreading it back would revert keys a
+  // host (a design tab) or the panel store wrote in the meantime.
   useEffect(() => {
     if (!tabId || !sessionId) return;
-    updateTab(tabId, {
-      metadata: {
-        ...metadata,
-        sessionId,
-        providerId,
-        permissionMode,
-        pickedAccountId: undefined,
-        pickedAccountLabel: undefined,
-        pickedAccountProvider: undefined,
-      },
+    patchTabMetadata(tabId, {
+      sessionId,
+      providerId,
+      permissionMode,
+      pickedAccountId: undefined,
+      pickedAccountLabel: undefined,
+      pickedAccountProvider: undefined,
     });
   }, [sessionId, providerId, permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -133,8 +198,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
    */
   const handleProviderChange = useCallback((id: string) => {
     setProviderId(id);
-    if (tabId) updateTab(tabId, { metadata: { ...metadata, providerId: id } });
-  }, [tabId, metadata, updateTab]);
+    if (tabId) patchTabMetadata(tabId, { providerId: id });
+  }, [tabId]);
 
   /** The account this tab claimed while it had no session yet, and who it was claimed from. */
   const pickedAccountId = metadata?.pickedAccountId as string | undefined;
@@ -158,24 +223,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
    * mind about who is answering. The claim is consumed — several tabs opened in a row
    * deliberately spread across the pool, and are allowed to collide.
    */
-  useEffect(() => {
-    if (!tabId || sessionId || claimMatchesProvider) return;
-    let cancelled = false;
-    pickAccountForTab(providerId)
-      .then((picked) => {
-        if (cancelled || !picked) return;
-        updateTab(tabId, {
-          metadata: {
-            ...metadata,
-            pickedAccountId: picked.id,
-            pickedAccountLabel: picked.label,
-            pickedAccountProvider: providerId,
-          },
-        });
-      })
-      .catch(() => { /* leave the chip blank rather than naming an account we did not get */ });
-    return () => { cancelled = true; };
-  }, [tabId, sessionId, providerId, claimMatchesProvider]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ensureAccountClaim = useChatAccountClaim(tabId, providerId,
+    !sessionId && !preparation?.pending && !claimMatchesProvider);
 
   /**
    * Move this chat onto an account the user picked in the panel.
@@ -211,9 +260,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       return null;
     }
     if (!tabId) return null;
-    updateTab(tabId, {
-      metadata: { ...metadata, pickedAccountId: accountId, pickedAccountLabel: label, pickedAccountProvider: providerId },
-    });
+    patchTabMetadata(tabId, { pickedAccountId: accountId, pickedAccountLabel: label, pickedAccountProvider: providerId });
     return null;
   }, [sessionId, projectName, tabId, metadata, providerId, updateTab, reloadUsage]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -227,6 +274,16 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
    * minutes behind a switch the user had just made.
    */
   const [servingAccount, setServingAccount] = useState<{ id: string; label: string | null } | null>(null);
+
+  const tourTabActive = usePanelStore((state) => Object.values(state.panels).some((panel) => panel.activeTabId === tabId));
+  const observeAttempt = useCallback((event: ChatAttemptEvent) => {
+    if (!tabId) return;
+    const visible = !document.hidden && Object.values(usePanelStore.getState().panels).some((panel) => panel.activeTabId === tabId);
+    const types = { started: "chat-started", succeeded: "chat-succeeded", failed: "chat-failed", session: "chat-session" } as const;
+    window.dispatchEvent(new CustomEvent("ppm:onboarding-evidence", {
+      detail: { ...event, type: types[event.type], projectName, tabId, visible },
+    }));
+  }, [projectName, tabId]);
 
   const {
     messages,
@@ -245,6 +302,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     contextWindowPct,
     compactStatus,
     promptCache,
+    mcpNeedsAuth,
     statusMessage,
     sessionTitle,
     liveAccount,
@@ -266,7 +324,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     bashPartialOutput,
     backgroundShells,
     killBackgroundShell,
-  } = useChat(sessionId, providerId, projectName, handleSessionMigrated);
+  } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt);
+
+  useEffect(() => {
+    if (!tabId || !tourTabActive || draftLoading || isStreaming) return;
+    const announce = () => window.dispatchEvent(new CustomEvent("ppm:onboarding-evidence", {
+      detail: { type: "chat-opened", projectName, tabId, sessionId, visible: !document.hidden },
+    }));
+    announce();
+    window.addEventListener("ppm:onboarding-refresh", announce);
+    return () => window.removeEventListener("ppm:onboarding-refresh", announce);
+  }, [tabId, projectName, sessionId, tourTabActive, draftLoading, isStreaming]);
 
   // The stream's report is the second writer. A turn that ran — or was forced onto another
   // account mid-flight — is ground truth, and it arrives after whatever the picker last said.
@@ -291,15 +359,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   // session has a team so the working bar below the conversation stays truthful.
   const primaryTeam = teamActivity?.teamNames?.[0] ?? "";
   const { members: teamMembers } = useTeamActivityFeed(primaryTeam, !!primaryTeam);
-
-  // Flush pending message once WS connects (replaces unreliable setTimeout)
-  useEffect(() => {
-    if (isConnected && pendingSendRef.current) {
-      const { content, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths } = pendingSendRef.current;
-      pendingSendRef.current = null;
-      sendMessage(content, { permissionMode: pm, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
-    }
-  }, [isConnected, sendMessage]);
 
   // Auto-clear notification badge when this tab is active and document is visible.
   // Checks ALL panels (not just focused) so split-panel scenarios also clear.
@@ -327,29 +386,126 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     };
   }, [sessionId, tabId]);
 
-  // Update tab title when SDK summary arrives
+  // Update tab title when SDK summary arrives. A design tab is named after its design, not
+  // after whichever of its sessions happens to be open.
   useEffect(() => {
-    if (tabId && sessionTitle) {
+    if (tabId && sessionTitle && !designSlug) {
       updateTab(tabId, { title: sessionTitle });
     }
   }, [sessionTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pending fork message — show in input for user to edit, not auto-send
   const [forkDraft, setForkDraft] = useState<string | undefined>(metadata?.pendingMessage as string | undefined);
-  // Pending edit: when set, the next send forks at `anchorMsgId` and continues
-  // in THIS tab (swap sessionId) instead of opening a new tab.
-  // anchorMsgId = fork anchor (prev message); ownMsgId = the edited message itself (for highlight).
-  const [editFork, setEditFork] = useState<{ anchorMsgId?: string; ownMsgId?: string } | null>(null);
-  // Local echo of a just-sent edited message. The forked session's WS connect can
-  // be slow (codex app-server cold start ~30s), and the real optimistic message is
-  // only added after `isConnected`. Show this immediately so the edit doesn't
-  // vanish while the new session spins up; cleared once the real message arrives.
   // True from the moment an edit is submitted until the forked session starts
   // responding. Drives a "working" indicator so the ~10s fork + codex connect
   // doesn't leave the user staring at a frozen screen. (No optimistic message
   // echo — appending it to the still-visible source transcript would render the
   // edit in the wrong place; the real message appears once the fork loads.)
   const [editForking, setEditForking] = useState(false);
+  // Covers session creation AND the wait for its socket greeting. Streaming
+  // starts only after the queued first message reaches that socket.
+  const [firstSendPending, setFirstSendPending] = useState(false);
+  const [firstSendPreview, setFirstSendPreview] = useState<{ content: string; timestamp: string } | null>(null);
+  const firstSendAttempt = useRef(0);
+  const firstSendLocked = useRef(false);
+  const firstSendContent = useRef<string | null>(null);
+
+  /**
+   * A message that could not be sent, on its way back into the composer. A nonce
+   * rather than the bare string: the text is often identical to the draft the
+   * composer was prefilled with, and a value that does not change applies nothing.
+   */
+  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
+
+  /**
+   * Give an unsent message back to the user.
+   *
+   * The composer empties itself the moment Enter is pressed, and the first send of a
+   * new tab still has a session to create and a socket to open before anything leaves
+   * the browser. Whichever of those fails, the text goes back into the input — the
+   * composer re-saves it as the draft so a reload keeps it — and the failure is said
+   * out loud: a cleared input over an unchanged transcript reads as nothing having
+   * happened at all.
+   *
+   * What comes back is the full message as it would have been sent, attachment
+   * markers included. The files themselves are already uploaded and the markers name
+   * them, so re-sending still hands the model every file; the composer has no way to
+   * re-attach them as chips, and a picture-only message would otherwise come back as
+   * nothing at all.
+   */
+  const restoreUnsentMessage = useCallback((content: string, reason: string) => {
+    firstSendLocked.current = false;
+    firstSendContent.current = null;
+    setFirstSendPreview(null);
+    setFirstSendPending(false);
+    setRestore({ text: content, nonce: Date.now() });
+    toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
+  }, []);
+
+  /**
+   * Drop a pending send that never got its socket; hand the text back.
+   *
+   * The draft it was composed under is cleared first: the composer re-saves the
+   * restored text under the session the tab is on now, and leaving the old row
+   * behind would prefill the next new tab with this message as well.
+   */
+  const abandonPendingSend = useCallback((reason: string) => {
+    const preparingContent = firstSendContent.current;
+    ++firstSendAttempt.current;
+    firstSendLocked.current = false;
+    setFirstSendPending(false);
+    setFirstSendPreview(null);
+    if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
+    setEditForking(false);
+    const pending = pendingSendRef.current;
+    if (!pending) {
+      if (preparingContent) restoreUnsentMessage(preparingContent, reason);
+      return;
+    }
+    pendingSendRef.current = null;
+    clearDraft(pending.draftId);
+    restoreUnsentMessage(pending.content, reason);
+  }, [restoreUnsentMessage, clearDraft]);
+
+  /**
+   * Queue a message for the moment the (new) session's socket reports connected.
+   * Bounded: a socket that never says hello would otherwise keep the text in a ref
+   * with nothing on screen, for as long as the tab lives.
+   */
+  const queuePendingSend = useCallback((pending: NonNullable<typeof pendingSendRef.current>) => {
+    pendingSendRef.current = pending;
+    if (pendingSendTimerRef.current) clearTimeout(pendingSendTimerRef.current);
+    pendingSendTimerRef.current = setTimeout(
+      () => abandonPendingSend("The chat did not connect in time."),
+      PENDING_SEND_TIMEOUT_MS,
+    );
+  }, [abandonPendingSend]);
+
+  // Flush pending message once WS connects (replaces unreliable setTimeout)
+  useEffect(() => {
+    if (isConnected && pendingSendRef.current) {
+      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths } = pendingSendRef.current;
+      pendingSendRef.current = null;
+      if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
+      sendMessage(content, { permissionMode: pm, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
+      firstSendLocked.current = false;
+      firstSendContent.current = null;
+      setFirstSendPreview(null);
+      setFirstSendPending(false);
+      clearDraft(draftId);
+    }
+  }, [isConnected, sendMessage, clearDraft]);
+
+  // A closed tab takes its pending message with it; the timer must not fire into an
+  // unmounted component.
+  useEffect(() => () => {
+    ++firstSendAttempt.current;
+    if (pendingSendTimerRef.current) clearTimeout(pendingSendTimerRef.current);
+  }, []);
+  // Pending edit: when set, the next send forks at `anchorMsgId` and continues
+  // in THIS tab (swap sessionId) instead of opening a new tab.
+  // anchorMsgId = fork anchor (prev message); ownMsgId = the edited message itself (for highlight).
+  const [editFork, setEditFork] = useState<{ anchorMsgId?: string; ownMsgId?: string } | null>(null);
   // Bumped to tell MessageInput to clear its textarea when an edit is cancelled.
   const [clearInputSignal, setClearInputSignal] = useState(0);
   // True while a same-tree version swap loads: versions share an identical prefix,
@@ -363,17 +519,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     if (prevMsgsLoadingRef.current && !messagesLoading) setStaleSwap(false);
     prevMsgsLoadingRef.current = !!messagesLoading;
   }, [messagesLoading]);
-  // Input mounts once the first draft load settles, then STAYS mounted across
-  // same-tab session swaps — unmounting would flash and lose typed text.
-  // Per-session drafts still apply via MessageInput's initialValue effect.
-  const [inputReady, setInputReady] = useState(false);
-  useEffect(() => {
-    if (!draftLoading) setInputReady(true);
-  }, [draftLoading]);
+  // The composer stays mounted from the first paint; drafts hydrate in the background.
   useEffect(() => {
     if (forkDraft && isConnected && sessionId && tabId) {
       // Clear from tab metadata once consumed
-      updateTab(tabId, { metadata: { ...metadata, pendingMessage: undefined } });
+      patchTabMetadata(tabId, { pendingMessage: undefined });
     }
   }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -390,6 +540,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   }, [editForking]);
 
   const handleNewSession = useCallback((title?: string, clearedFrom?: string) => {
+    if (onNewSession) {
+      onNewSession(clearedFrom);
+      return;
+    }
     useTabStore.getState().openTab({
       type: "chat",
       title: title || "AI Chat",
@@ -397,16 +551,19 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       projectId: projectName || null,
       closable: true,
     });
-  }, [projectName, providerId]);
+  }, [projectName, providerId, onNewSession]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
-    setEditForking(false);
+    // A message still waiting for its own session's socket must not ride the
+    // connect of the one picked here: `isConnected` is session-scoped, so the flush
+    // would fire on the selected conversation and post it there.
+    abandonPendingSend("You switched to another chat before it connected.");
     setSessionId(session.id);
     setProviderId(session.providerId);
-    if (tabId) updateTab(tabId, { title: session.title || "Chat" });
+    if (tabId && !designSlug) updateTab(tabId, { title: session.title || "Chat" });
     // Immediately clear notification for the selected session
     useNotificationStore.getState().clearForSession(session.id);
-  }, [tabId, updateTab]);
+  }, [tabId, updateTab, abandonPendingSend, designSlug]);
 
   /** Fork current session and open new tab with the forked session, resending userMessage */
   const handleFork = useCallback(async (userMessage: string, messageId?: string) => {
@@ -417,7 +574,12 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
         { messageId },
       );
-      // Open new chat tab with forked session — it will send userMessage on connect
+      // A host that keeps the conversation in place takes the fork over; otherwise open a
+      // new chat tab with the forked session — it will send userMessage on connect.
+      if (onFork) {
+        onFork({ sessionId: forked.id, providerId, pendingMessage: userMessage });
+        return;
+      }
       useTabStore.getState().openTab({
         type: "chat",
         title: `Fork: ${userMessage.slice(0, 30)}`,
@@ -437,7 +599,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           : msg,
       });
     }
-  }, [sessionId, projectName, providerId]);
+  }, [sessionId, projectName, providerId, onFork]);
 
   /** Edit a user message: prefill input + arm same-tab fork on next send */
   const handleEdit = useCallback((userMessage: string, messageId?: string, ownMsgId?: string) => {
@@ -462,43 +624,53 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       // session's codex connect can take ~10s; don't await in silence.
       setEditForking(true);
       try {
+        // Bounded like session creation below, and with the same accepted cost: a
+        // fork the server finished after the abort is a stray sibling in the tree.
         const forked = await api.post<{ id: string }>(
           `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}&mode=edit`,
           { messageId: anchorMsgId },
+          { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) },
         );
         // The tree gained a sibling. Swapping sessionId below refetches
         // /messages, which carries a fresh versionMap, so the switcher's n/m
         // counts update without any cache to invalidate.
         // Queue the edited message — flushed by the connect effect once the WS
-        // reconnects to the forked session.
-        pendingSendRef.current = { content: fullContent, permissionMode };
+        // reconnects to the forked session. The draft was composed under the
+        // source session, so that is the one to clear when it goes.
+        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode });
+        moveDraft(forked.id);
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
-        if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: forked.id } });
+        if (tabId) patchTabMetadata(tabId, { sessionId: forked.id });
         setSessionId(forked.id);
       } catch (e) {
         setEditForking(false);
-        const msg = (e as Error)?.message || "Unknown error";
+        const msg = (e as Error)?.name === "TimeoutError"
+          ? "The server did not answer in time."
+          : (e as Error)?.message || "Unknown error";
         toast.error("Cannot edit from this message", {
           description: msg.includes("not found") || msg.includes("Invalid upToMessageId")
             ? "The original message is no longer available in the session transcript."
             : msg,
         });
+        // The edited text was cleared from the composer on Enter — put it back.
+        setRestore({ text: fullContent, nonce: Date.now() });
       }
     },
-    [sessionId, projectName, providerId, permissionMode, tabId, updateTab, metadata],
+    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft],
   );
 
   /** Swap THIS tab to another version's session (version switcher prev/next) */
   const handleSwitchVersion = useCallback(
     (targetSessionId: string) => {
       if (!targetSessionId || targetSessionId === sessionId) return;
-      setEditForking(false);
+      // Same as handleSelectSession: a queued edit must not land in the version switched to.
+      abandonPendingSend("You switched to another version before it connected.");
       setStaleSwap(true);
-      if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: targetSessionId } });
+      if (tabId) patchTabMetadata(tabId, { sessionId: targetSessionId });
       setSessionId(targetSessionId);
     },
-    [sessionId, tabId, updateTab, metadata],
+    [sessionId, tabId, abandonPendingSend],
   );
 
   /** Build message content with file references and inline text snippets prepended */
@@ -558,30 +730,65 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       if (!fullContent.trim() && images.length === 0) return;
 
       if (!sessionId) {
+        if (firstSendLocked.current) return;
+        firstSendLocked.current = true;
+        firstSendContent.current = fullContent;
+        const attempt = ++firstSendAttempt.current;
+        setFirstSendPending(true);
+        setFirstSendPreview({ content: fullContent, timestamp: new Date().toISOString() });
         try {
+          const prepared = preparation?.pending ? await preparation.prepare() : null;
+          if (attempt !== firstSendAttempt.current) return;
+          const selectedProvider = prepared?.providerId ?? providerId;
+          const selectedPermission = prepared?.permissionMode ?? permissionMode ?? preparation.permissionMode;
+          setProviderId(selectedProvider);
+          setPermissionMode(selectedPermission);
+          const picked = await ensureAccountClaim(selectedProvider);
+          if (attempt !== firstSendAttempt.current) return;
+          const latest = metadataRef.current;
+          const accountId = latest?.pickedAccountProvider === selectedProvider
+            ? latest.pickedAccountId as string | undefined : picked?.id;
           const pName = projectName;
+          // Bounded: the composer is already empty by now, and a create call that hangs
+          // (a stale tunnel connection after a long idle is the usual way) would otherwise
+          // leave it empty over an unchanged transcript for as long as the tab lives.
+          // Accepted cost: a create the server completed after the abort leaves one empty
+          // session behind, which the retry does not reuse.
           const session = await api.post<Session>(`${projectUrl(pName)}/chat/sessions`, {
-            providerId,
+            providerId: selectedProvider,
             title: content.slice(0, 50),
             // Set by /clear — the session only exists now, so persist the lineage here.
             clearedFrom: metadata?.clearedFrom as string | undefined,
             // The account this tab claimed on open and has been displaying since. Redeeming
             // it here is what makes that display true rather than a guess.
-            accountId: pickedAccountId,
-          });
+            accountId,
+            // Fixed at creation: the server gives every turn of this session the design's
+            // instructions and the design permission default.
+            ...(designSlug && { designSlug }),
+          }, { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) });
+          if (attempt !== firstSendAttempt.current) return;
+          moveDraft(session.id);
           setSessionId(session.id);
           setProviderId(session.providerId);
-          // Queue message — will be sent by effect when WS reports isConnected
-          pendingSendRef.current = { content: fullContent, permissionMode, images, imagePaths };
+          // Queue message — will be sent by effect when WS reports isConnected. It was
+          // composed under the new-tab draft, which is what to clear once it goes.
+          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode: selectedPermission, images, imagePaths });
           return;
         } catch (e) {
+          if (attempt !== firstSendAttempt.current) return;
           console.error("Failed to create session:", e);
+          const msg = (e as Error)?.name === "TimeoutError"
+            ? "The server did not answer in time."
+            : `Could not start the chat: ${(e as Error)?.message || "unknown error"}.`;
+          restoreUnsentMessage(fullContent, msg);
           return;
         }
       }
       sendMessage(fullContent, { permissionMode, priority, ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
+      // Only now: the message is on (or queued for) a live session's socket.
+      clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, moveDraft, preparation, ensureAccountClaim],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -589,7 +796,15 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const slashItemsRef = useRef(slashItems);
   slashItemsRef.current = slashItems;
 
-  /** Stable wrapper for MessageInput onSend — clears forkDraft + draft and delegates to handleSend */
+  /**
+   * Stable wrapper for MessageInput onSend — drops the prefill and delegates.
+   *
+   * The draft is NOT deleted here. The composer has already emptied itself, so the
+   * saved draft is the only other copy of the text until the send actually happens;
+   * each send path deletes it at the moment the message reaches a socket, and puts
+   * the text back when it cannot. Only the save still waiting on its debounce is
+   * dropped, or it would land under whichever session the tab is on a second later.
+   */
   const handleInputSend = useCallback(
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
       // Client-handled built-ins act on the UI, so they must not reach the SDK.
@@ -598,7 +813,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         const item = slashItemsRef.current.find(
           (i) => i.handler === "client" && (i.name === slash[1] || i.aliases?.includes(slash[1]!)),
         );
-        if (item?.name === "clear") {
+        // This local action must also work before the lazily loaded picker
+        // catalog arrives (for example, paste /clear and immediately submit).
+        if (slash[1] === "clear" || item?.name === "clear") {
           clearDraft();
           handleNewSession(slash[2]?.trim(), sessionId ?? undefined);
           return;
@@ -606,16 +823,19 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       }
 
       setForkDraft(undefined);
-      clearDraft();
+      // Save synchronously in this browser tab before the composer clears. A
+      // recovery reload can happen before either the POST or draft debounce ends.
+      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+      cancelPendingSave();
       if (editFork && sessionId && projectName) {
         const anchor = editFork.anchorMsgId;
         setEditFork(null);
         void handleEditSend(buildMessageWithAttachments(content, attachments), anchor);
         return;
       }
-      handleSend(content, attachments, priority);
+      void handleSend(content, attachments, priority);
     },
-    [handleSend, clearDraft, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
+    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -746,6 +966,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   return (
     <div
+      data-onboarding="chat"
       className="flex flex-col h-full relative"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -786,7 +1007,15 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       <BackgroundCommandBar shells={backgroundShells} onKill={killBackgroundShell} />
 
       {/* Messages */}
-      <MessageList
+      {firstSendPending ? (
+        <div className="flex-1 overflow-y-auto p-4">
+          {firstSendPreview && <UserBubble content={firstSendPreview.content} timestamp={firstSendPreview.timestamp} projectName={projectName} />}
+          <div role="status" className="flex items-center gap-2 pt-3 text-sm text-text-secondary">
+            <Loader2 className="size-4 animate-spin" />
+            <span>Starting conversation...</span>
+          </div>
+        </div>
+      ) : <MessageList
         messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
@@ -812,15 +1041,19 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
-      />
+      />}
 
       {/* Teammates still working — pinned here so it is the last thing under the conversation */}
       <TeamWorkingBar teamName={primaryTeam} members={teamMembers} projectName={projectName} />
+
+      {/* MCP servers this session cannot use until someone signs in */}
+      <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-panel shrink-0">
         {/* Unified toolbar: History, Config, Usage, Bug report, Connection */}
         <ChatHistoryBar
+          tabId={tabId}
           projectName={projectName}
           usageInfo={usageInfo}
           usageLoading={usageLoading}
@@ -830,8 +1063,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           providerId={providerId}
           pickedAccountLabel={servingAccount?.label ?? (claimMatchesProvider ? pickedAccountLabel : null)}
           pickedAccountId={servingAccount?.id ?? (claimMatchesProvider ? pickedAccountId ?? null : null)}
-          onSelectAccount={handleSelectAccount}
+          onSelectAccount={!preparation.pending && !firstSendPending ? handleSelectAccount : undefined}
           onSelectSession={handleSelectSession}
+          historyFilter={historyFilter}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}
           isConnected={isConnected}
           onReload={() => {
@@ -886,16 +1120,20 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           </div>
         )}
 
-        {/* Input — gate on first draft load to avoid empty→filled flash, then keep mounted */}
-        {(inputReady || !draftLoading) && (
+        {/* Input is available immediately; network preparation never gates typing. */}
+        {(
           <MessageInput
+            draftReady={!draftLoading}
+            configurationPending={preparation.pending}
             tabId={tabId}
             onSend={handleInputSend}
+            disabled={firstSendPending}
             isStreaming={isStreaming}
             onCancel={cancelStreaming}
             autoFocus={!(metadata?.sessionId) || !!forkDraft}
             initialValue={forkDraft ?? draft?.content}
             clearSignal={clearInputSignal}
+            restore={restore}
             projectName={projectName}
             onSlashStateChange={handleSlashStateChange}
             onSlashItemsLoaded={handleSlashItemsLoaded}
@@ -910,12 +1148,14 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             onContentChange={handleContentChange}
             getUserHistory={getUserHistory}
             permissionMode={permissionMode}
-            onModeChange={setPermissionMode}
-            providerId={providerId}
+            onModeChange={!preparation?.pending && !firstSendPending ? setPermissionMode : undefined}
+            providerId={preparation?.providerId ?? providerId}
             sessionId={sessionId ?? undefined}
-            onProviderChange={!sessionId ? handleProviderChange : undefined}
+            // A design chat's provider was chosen among those that carry design instructions;
+            // the composer's picker offers every provider, so it is not offered here.
+            onProviderChange={!sessionId && !designSlug && !preparation?.pending && !firstSendPending ? handleProviderChange : undefined}
             model={model}
-            onModelChange={setModel}
+            onModelChange={!preparation?.pending && !firstSendPending ? setModel : undefined}
             effort={effort}
             onEffortChange={setEffort}
             thinking={thinking}

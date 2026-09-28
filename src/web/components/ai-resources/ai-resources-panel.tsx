@@ -18,6 +18,7 @@ import { openResourceTab } from "./open-resource-tab";
 import { useMcpServers } from "./use-mcp-servers";
 import { McpGroup, serverPreview } from "./mcp-group";
 import { NewResourceMenu } from "./new-resource-menu";
+import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
 
 type TypeFilter = "all" | AiResourceType | "mcp";
 const FILTERS: { id: TypeFilter; label: string }[] = [
@@ -181,6 +182,9 @@ export function AiResourcesPanel() {
 
       {/* List */}
       <div className="flex-1 min-h-0 overflow-y-auto">
+        {/* First, and outside the states below: it is something to act on, it has its own
+            data source, and under "All" the MCP group sits below hundreds of skills. */}
+        {showMcp && <McpSignInList project={activeProject?.name} search={search} />}
         {error ? (
           <div className="p-4 text-center text-xs text-destructive">{error}</div>
         ) : loading && !result ? (

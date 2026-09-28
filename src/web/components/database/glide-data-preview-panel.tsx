@@ -3,6 +3,7 @@ import { Eye, Sparkles, WrapText, ExternalLink, X, GripHorizontal } from "@/lib/
 import Editor from "@monaco-editor/react";
 import { Loader2 } from "@/lib/icons";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 
 export interface PreviewData {
   title: string;
@@ -94,6 +95,7 @@ export function GlideDataPreviewPanel({ data, onClose, onOpenInTab }: PreviewPan
       </div>
       <div className="flex-1 min-h-0">
         <Editor
+          beforeMount={prepareMonacoTheme}
           height="100%"
           language={data.language === "plaintext" ? undefined : data.language}
           value={displayContent}
