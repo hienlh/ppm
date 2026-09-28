@@ -334,7 +334,11 @@ class GitService {
     mode: CheckoutMode = "checkout",
   ): Promise<void> {
     const flags = mode === "detach" ? ["--detach"] : mode === "track" ? ["-t"] : [];
-    await this.git(projectPath).checkout([...flags, ref]);
+    // `--` or the ref is read as a pathspec when no such ref exists: `git checkout src`
+    // in a repository with no branch named `src` restores every unstaged change under
+    // that directory, silently and with exit 0. `assertSafeRev` refuses a leading dash
+    // and a range, but a plain directory name is a legitimate ref shape.
+    await this.git(projectPath).checkout([...flags, ref, "--"]);
   }
 
   /** Every local branch, remote-tracking branch and tag, newest commit first. */

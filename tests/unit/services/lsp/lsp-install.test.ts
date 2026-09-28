@@ -36,10 +36,20 @@ function tempDir(prefix = "ppm-lsp-install-"): string {
   return dir;
 }
 
-/** A PATH holding nothing but executables with these names, so `Bun.which` finds exactly them. */
+/**
+ * A PATH holding nothing but executables with these names, so `Bun.which` finds exactly them.
+ *
+ * Windows resolves a bare command through `PATHEXT`, so a file called `go` with a shebang is
+ * not an executable there and `Bun.which` walks straight past it — which made every Go and
+ * rustup case here fail on Windows while passing everywhere else.
+ */
 function fakeToolchain(...names: string[]): string {
   const dir = tempDir("ppm-fake-bin-");
   for (const name of names) {
+    if (process.platform === "win32") {
+      writeFileSync(join(dir, `${name}.cmd`), "@echo off\r\nexit /b 0\r\n");
+      continue;
+    }
     const file = join(dir, name);
     writeFileSync(file, "#!/bin/sh\nexit 0\n");
     chmodSync(file, 0o755);
@@ -102,6 +112,8 @@ function fakeRunner(options: { result?: Partial<RunResult>; onRun?: (call: Call)
 
 const typescript = serverById("typescript")!;
 const gopls = serverById("gopls")!;
+/** What `go install` leaves in `GOBIN`, which carries `.exe` on Windows — as the product expects. */
+const GOPLS_BIN = process.platform === "win32" ? "gopls.exe" : "gopls";
 const rustAnalyzer = serverById("rust-analyzer")!;
 
 /** What `bun add typescript-language-server` leaves: the package, with its bin. */
@@ -162,7 +174,7 @@ describe("installing a Go server", () => {
   it("builds it into PPM's bin directory with GOBIN, never into the user's", async () => {
     fakeToolchain("go");
     const { run, calls } = fakeRunner({
-      onRun: (call) => writeFileSync(join(call.env!.GOBIN!, "gopls"), "binary"),
+      onRun: (call) => writeFileSync(join(call.env!.GOBIN!, GOPLS_BIN), "binary"),
     });
 
     await installLanguageServer(gopls, { run });
@@ -171,7 +183,7 @@ describe("installing a Go server", () => {
     expect(calls[0]!.env!.GOBIN).toBe(join(lspInstallDir(), "bin"));
     // The caches stay where the user's Go keeps them; only the destination is PPM's.
     expect(calls[0]!.env!.GOMODCACHE).toBeUndefined();
-    expect(existsSync(join(lspInstallDir(), "bin", "gopls"))).toBe(true);
+    expect(existsSync(join(lspInstallDir(), "bin", GOPLS_BIN))).toBe(true);
   });
 
   it("fails when the build reported success but produced no binary", async () => {
@@ -325,7 +337,7 @@ describe("removing a server", () => {
   });
 
   it("deletes the Go binary PPM built, and runs no toolchain at all", async () => {
-    const binary = join(lspInstallDir(), "bin", "gopls");
+    const binary = join(lspInstallDir(), "bin", GOPLS_BIN);
     mkdirSync(join(lspInstallDir(), "bin"), { recursive: true });
     writeFileSync(binary, "binary");
     const { run, calls } = fakeRunner();

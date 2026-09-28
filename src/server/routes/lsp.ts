@@ -18,7 +18,7 @@ import { Hono, type Context } from "hono";
 import { sep } from "node:path";
 import { lspManager } from "../../services/lsp/lsp-manager.ts";
 import { installLanguageServer, lspInstallDir, uninstallLanguageServer } from "../../services/lsp/lsp-install.ts";
-import { lspLanguageForPath, serverById } from "../../services/lsp/server-registry.ts";
+import { lspLanguageForPath, serverById, serversSharingInstall } from "../../services/lsp/server-registry.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -113,8 +113,12 @@ lspGlobalRoutes.post("/uninstall", async (c) => {
 
   try {
     // The idle sessions first: the files are about to go, and on Windows a running binary
-    // cannot be unlinked at all.
-    await lspManager.stopIdle(definition.id);
+    // cannot be unlinked at all. Every server the package serves, not just the row that was
+    // clicked — `vscode-langservers-extracted` is JSON, HTML and CSS, so removing the JSON
+    // row deletes files an open `.html` buffer is still running out of.
+    for (const id of new Set([definition.id, ...serversSharingInstall(definition).map((s) => s.id)])) {
+      await lspManager.stopIdle(id);
+    }
     await uninstallLanguageServer(definition);
     return c.json(ok({ id: definition.id, displayName: definition.displayName }));
   } catch (e) {
