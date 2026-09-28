@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, existsSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -166,5 +166,39 @@ describe("startWhisperInstall", () => {
   it("refuses a model it does not know, without starting anything", () => {
     expect(() => startWhisperInstall("gpt-4-audio")).toThrow(/unknown model/);
     expect(getWhisperStatus("linux", "x64").install).toBeNull();
+  });
+
+  /** Waits for the job to settle, so a failure is asserted rather than raced. */
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      if (getWhisperStatus("linux", "x64").install?.done) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  it("does not extract an archive whose bytes are not the ones it pinned", async () => {
+    // The digest check lives in `downloadVerified` and has its own test. What this pins is
+    // the *call site*: that the install passes the catalogue's real hash and stops on a
+    // mismatch before anything is unpacked. Hand it a hash the job never compares against
+    // and this stays green while the gate is gone.
+    const served = new TextEncoder().encode("not the archive whisper.cpp publishes");
+    const fetchFn = async () =>
+      new Response(served, { status: 200, headers: { "content-length": String(served.byteLength) } });
+
+    startWhisperInstall("base-q5_1", { platform: "linux", arch: "x64", fetchFn });
+    await settle();
+
+    const job = getWhisperStatus("linux", "x64").install!;
+    expect(job.done).toBe(true);
+    expect(job.error ?? "").toMatch(/checksum mismatch/);
+    // Naming the digest it expected is what makes this about the *catalogue's* hash rather
+    // than about any hash at all: passing an empty or wrong one still mismatches, and would
+    // otherwise be indistinguishable from the correct wiring.
+    expect(job.error ?? "").toContain(whisperAssetFor("linux", "x64")!.sha256);
+    // The bin directory is made before the download, so what matters is that nothing
+    // landed in it — and that no half-written `.part` survived to be adopted by a retry.
+    expect(readdirSync(whisperBinDir())).toEqual([]);
+    expect(readdirSync(resolve(home, "whisper", "tmp"))).toEqual([]);
+    expect(existsSync(resolve(home, "whisper", "models", modelById("base-q5_1")!.file))).toBe(false);
   });
 });
