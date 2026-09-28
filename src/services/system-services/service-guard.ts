@@ -13,6 +13,7 @@
  */
 import type { ServiceAction, ServiceScope } from "../../types/system-services.ts";
 import { SERVICE_ACTIONS } from "../../types/system-services.ts";
+import { systemdHierarchy } from "./app-cgroup-linux.ts";
 
 /** Actions that take a running unit away. `start` and `enable` never do. */
 const DISRUPTIVE: readonly ServiceAction[] = ["stop", "restart", "disable"];
@@ -46,10 +47,19 @@ export interface ServiceGuardContext {
  *
  * Slices are not returned: they are not one of the three unit types the page
  * lists, so they can never be the target of an action anyway.
+ *
+ * The file is parsed by `systemdHierarchy` rather than split directly. Two
+ * reasons, and both are the difference between refusing PPM's own unit and
+ * offering a Stop button for it. The kernel terminates the line, so a direct
+ * split ends on `"ppm.service\n"`, which no suffix test matches. And under
+ * cgroup v1 the file is one line per controller, whose hierarchies need not
+ * agree — only the `name=systemd` line describes the unit tree.
  */
 export function selfUnitChain(cgroup: string | null): string[] {
   if (!cgroup) return [];
-  return cgroup
+  const path = systemdHierarchy(cgroup);
+  if (!path) return [];
+  return path
     .split("/")
     .filter((part) => part.endsWith(".service") || part.endsWith(".scope") || part.endsWith(".socket"));
 }

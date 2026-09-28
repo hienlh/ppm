@@ -4,7 +4,13 @@ import {
 } from "../../../../src/services/system-services/service-guard.ts";
 import { SERVICE_ACTIONS } from "../../../../src/types/system-services.ts";
 
-const PPM_CGROUP = "/user.slice/user-1000.slice/user@1000.service/app.slice/ppm.service";
+/**
+ * What the kernel actually writes, newline included. The argument is the *file's
+ * contents*, not a path: it comes straight from `readSelfCgroup()`, which is an
+ * untrimmed `readFileSync`. A fixture that hand-strips the terminator tests a
+ * string production never sees, and passes while the guard is inoperative.
+ */
+const PPM_CGROUP = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/ppm.service\n";
 const ctx = { selfCgroup: PPM_CGROUP };
 
 describe("selfUnitChain", () => {
@@ -12,14 +18,29 @@ describe("selfUnitChain", () => {
     expect(selfUnitChain(PPM_CGROUP)).toEqual(["user@1000.service", "ppm.service"]);
   });
 
+  test("the line terminator does not cost the innermost unit", () => {
+    // The whole guard hangs off this: `"ppm.service\n".endsWith(".service")` is false, so a
+    // direct split drops PPM's own unit and every refusal with it.
+    expect(selfUnitChain(PPM_CGROUP)).toContain("ppm.service");
+  });
+
   test("a system-wide PPM and a bare scope are handled too", () => {
-    expect(selfUnitChain("/system.slice/ppm.service")).toEqual(["ppm.service"]);
-    expect(selfUnitChain("/user.slice/app.slice/app-code-123.scope")).toEqual(["app-code-123.scope"]);
+    expect(selfUnitChain("0::/system.slice/ppm.service\n")).toEqual(["ppm.service"]);
+    expect(selfUnitChain("0::/user.slice/app.slice/app-code-123.scope\n")).toEqual(["app-code-123.scope"]);
+  });
+
+  test("cgroup v1 is one line per controller, and only systemd's describes the unit tree", () => {
+    const v1 =
+      "12:pids:/user.slice/user-1000.slice/user@1000.service/app.slice/ppm.service\n" +
+      "11:memory:/user.slice/user-1000.slice/user@1000.service/app.slice/ppm.service\n" +
+      "1:name=systemd:/user.slice/user-1000.slice/user@1000.service/app.slice/ppm.service\n";
+    expect(selfUnitChain(v1)).toEqual(["user@1000.service", "ppm.service"]);
   });
 
   test("no cgroup means no dynamic refusals, never a crash", () => {
     expect(selfUnitChain(null)).toEqual([]);
     expect(selfUnitChain("")).toEqual([]);
+    expect(selfUnitChain("0::\n")).toEqual([]);
   });
 });
 

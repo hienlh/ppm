@@ -20,7 +20,9 @@ function servicesApp(reply: (argv: string[]) => RunResult = (argv) =>
   const calls: string[][] = [];
   const deps: SystemdDeps = {
     run: async (argv) => { calls.push(argv); return reply(argv); },
-    guard: { selfCgroup: "/user.slice/user@1000.service/app.slice/ppm.service" },
+    // Verbatim `/proc/self/cgroup` contents, trailing newline included: that is what
+    // the collector reads, and a bare path here would not exercise the parser at all.
+    guard: { selfCgroup: "0::/user.slice/user@1000.service/app.slice/ppm.service\n" },
   };
   const app = new Hono();
   app.route("/api/system", createSystemServiceRoutes(deps));
