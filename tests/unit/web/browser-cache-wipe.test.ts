@@ -5,39 +5,28 @@
  * failed login). A password change never goes through either path, so it
  * must leave the cache alone.
  */
-import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll, spyOn } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 const localStore = new Map<string, string>();
 const sessionStore = new Map<string, string>();
 
-// Put back afterwards: every file in this process shares these globals, and a bare
-// `window` object left behind has no `addEventListener` for the next file's modules.
-const savedGlobals = {
-  localStorage: (globalThis as any).localStorage,
-  sessionStorage: (globalThis as any).sessionStorage,
-  window: (globalThis as any).window,
-};
-afterAll(() => {
-  for (const [key, value] of Object.entries(savedGlobals)) {
-    if (value === undefined) delete (globalThis as any)[key];
-    else (globalThis as any)[key] = value;
-  }
-});
-
-(globalThis as any).localStorage = {
+// Through `installGlobal` so the process-wide DOM's own storage and `fetch` come back
+// afterwards. `window` itself is the real one: a bare object standing in for it would be
+// what any module first imported here bound its listeners to, for the rest of the run.
+afterAll(uninstallDom);
+installGlobal("localStorage", {
   getItem: (k: string) => localStore.get(k) ?? null,
   setItem: (k: string, v: string) => void localStore.set(k, v),
   removeItem: (k: string) => void localStore.delete(k),
   get length() { return localStore.size; },
   key: (i: number) => [...localStore.keys()][i] ?? null,
-};
-(globalThis as any).sessionStorage = {
+});
+installGlobal("sessionStorage", {
   getItem: (k: string) => sessionStore.get(k) ?? null,
   setItem: (k: string, v: string) => void sessionStore.set(k, v),
   removeItem: (k: string) => void sessionStore.delete(k),
-};
-// The 401 path reloads the page; nothing here needs a real navigation.
-(globalThis as any).window = { location: { reload: () => {} } };
+});
 
 const { api, setAuthToken, clearAuthToken, getAuthToken } = await import("../../../src/web/lib/api-client");
 const { idbSet, idbGet } = await import("../../../src/web/lib/browser-cache/idb-keyval-cache");
@@ -56,13 +45,13 @@ function flushMicrotasks(): Promise<void> {
 }
 
 function stub401() {
-  (globalThis as any).fetch = () =>
+  installGlobal("fetch", () =>
     Promise.resolve(
       new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
       }),
-    );
+    ));
 }
 
 /** Seeds every layer the wipe has to reach, so a test can assert all of them
@@ -73,9 +62,17 @@ async function seedCaches(): Promise<void> {
   writeChatPreparationSettings({ default_provider: "claude", providers: {} });
 }
 
+// The 401 path reloads the page; nothing here needs a real navigation, and the DOM this
+// process shares must not be navigated away under the files that run after this one.
+let reload: ReturnType<typeof spyOn>;
 beforeEach(() => {
   localStore.clear();
   sessionStore.clear();
+  reload = spyOn(window.location, "reload").mockImplementation(() => {});
+});
+afterEach(() => {
+  reload.mockRestore();
+  installGlobal("fetch", realFetch);
 });
 
 describe("wipe wiring — token drop", () => {
@@ -104,8 +101,7 @@ describe("wipe wiring — token drop", () => {
     expect(getAuthToken()).toBeNull();
     expect(await idbGet("seed:key")).toBeUndefined();
     expect(readChatPreparationSettings()).toBeNull();
-
-    (globalThis as any).fetch = realFetch;
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });
 

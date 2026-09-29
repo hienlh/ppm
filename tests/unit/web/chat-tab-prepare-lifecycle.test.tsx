@@ -28,19 +28,6 @@ let bodies: unknown[] = [];
 let view: Mounted | null = null;
 const spies: Array<{ mockRestore(): void }> = [];
 
-/**
- * Replaces one `api` method. Assigned rather than `spyOn`'d: another file in the same
- * process `mock.module`s `api-client` with an `api` that has no `put` or `del`, and
- * `spyOn` on a missing method installs nothing.
- */
-function stubApi(method: "put" | "del", impl: () => Promise<unknown>): { mockRestore(): void } {
-  const target = api as unknown as Record<string, unknown>;
-  const had = Object.prototype.hasOwnProperty.call(target, method);
-  const original = target[method];
-  target[method] = impl;
-  return { mockRestore: () => { if (had) target[method] = original; else delete target[method]; } };
-}
-
 function prepared(permission: string, overrides: Record<string, unknown> = {}) {
   return {
     resolvedProviderId: "claude", providerId: "claude",
@@ -86,8 +73,8 @@ beforeEach(() => {
       return Promise.resolve([]);
     }),
     spyOn(api, "post").mockImplementation((path: string) => Promise.reject(new Error(`Unexpected POST: ${path}`))),
-    stubApi("put", () => Promise.resolve({})),
-    stubApi("del", () => Promise.resolve(undefined)),
+    spyOn(api, "put").mockImplementation(() => Promise.resolve({})),
+    spyOn(api, "del").mockImplementation(() => Promise.resolve(undefined)),
     spyOn(WsClient.prototype, "send").mockImplementation(() => {}),
     spyOn(WsClient.prototype, "connect").mockImplementation(() => {}),
     spyOn(WsClient.prototype, "onMessage").mockImplementation(() => () => {}),

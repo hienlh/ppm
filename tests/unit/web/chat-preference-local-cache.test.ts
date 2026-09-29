@@ -5,16 +5,21 @@
  * and neither may ever hold account ids, labels or other secrets, even if a
  * caller hands the writer a full settings object that has them.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
+// Through `installGlobal` so the process-wide DOM's own storage comes back afterwards:
+// a bare assignment left this Map (with no `clear()`) standing in for web storage in
+// every file that ran later.
 const store = new Map<string, string>();
-(globalThis as any).localStorage = {
+afterAll(uninstallDom);
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
   get length() { return store.size; },
   key: (i: number) => [...store.keys()][i] ?? null,
-};
+});
 
 const {
   readChatPreparationSettings,

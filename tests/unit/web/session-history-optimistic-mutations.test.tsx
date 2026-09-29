@@ -29,17 +29,9 @@ const spies: Array<{ mockRestore(): void }> = [];
 const row = () => useSessionListStore.getState().byProject[projectCacheId(ref)]?.sessions.find((s) => s.id === "row-1");
 const click = { stopPropagation() {} } as unknown as React.MouseEvent;
 
-/**
- * Replaces one `api` method for a test. Assigned rather than `spyOn`'d: another file in
- * the same process `mock.module`s `api-client` with an `api` that has no `put`, `patch`
- * or `del`, and `spyOn` on a missing method installs nothing.
- */
+/** Replaces one `api` method for a test; `api` is a singleton, so the spy comes back off. */
 function stubApi(method: "put" | "patch" | "del", impl: () => Promise<unknown>) {
-  const target = api as unknown as Record<string, unknown>;
-  const had = Object.prototype.hasOwnProperty.call(target, method);
-  const original = target[method];
-  target[method] = impl;
-  spies.push({ mockRestore: () => { if (had) target[method] = original; else delete target[method]; } });
+  spies.push(spyOn(api, method).mockImplementation(impl as never));
 }
 
 function deferred() {

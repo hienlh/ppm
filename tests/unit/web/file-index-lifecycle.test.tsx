@@ -41,6 +41,20 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+/**
+ * A `get` that serves the file index from `index` and answers the composer's mount-time
+ * slash-catalog preload with an empty catalog, so the assertions below count file-index
+ * requests only: the preload is a different resource, and whether it ran says nothing
+ * about when the index loads.
+ */
+function spyIndexGet(index: (path: string) => Promise<FileNode[]>) {
+  const get = spyOn(api, "get").mockImplementation(((path: string) =>
+    path.includes("/chat/slash-items") ? Promise.resolve({ items: [], recentNames: [] }) : index(path)) as typeof api.get);
+  spies.push(get);
+  const indexCalls = () => get.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/files/index"));
+  return { get, indexCalls };
+}
+
 function Invalidation() {
   useFileIndexInvalidation();
   return null;
@@ -70,13 +84,12 @@ it("does not expose project A's cached files to a composer for B", async () => {
   useFileStore.setState({ indexProjectName: projectA.name, indexStatus: "ready", fileIndex: [fileA] });
   useProjectStore.setState({ activeProject: projectB });
   const response = deferred<FileNode[]>();
-  const get = spyOn(api, "get").mockImplementation(() => response.promise);
-  spies.push(get);
+  const { indexCalls } = spyIndexGet(() => response.promise);
   view = await mount(<Composer projectName={projectB.name} />);
   expect(view.container.querySelector("output")!.textContent).toBe("");
-  expect(get).not.toHaveBeenCalled();
+  expect(indexCalls()).toEqual([]);
   await openPicker();
-  expect(get.mock.calls[0]![0]).toBe("/api/project/index-b/files/index");
+  expect(indexCalls()).toEqual(["/api/project/index-b/files/index"]);
   expect(view.container.textContent).not.toContain(fileA.name);
   await act(async () => response.resolve([fileB]));
   expect(view.container.textContent).toContain(fileB.name);
@@ -108,8 +121,7 @@ for (const event of ["file:changed", "fsChanged"] as const) {
   it(`invalidates ${event} with the drawer closed, then refreshes on @ and while its picker stays open`, async () => {
     useFileStore.setState({ indexProjectName: projectA.name, indexStatus: "ready", fileIndex: [fileA] });
     const response = deferred<FileNode[]>();
-    const get = spyOn(api, "get").mockImplementation(() => response.promise);
-    spies.push(get);
+    const { indexCalls } = spyIndexGet(() => response.promise);
     // Only the app-level subscription and composer exist: no drawer/file tree.
     view = await mount(<><Invalidation /><Composer projectName={projectA.name} /></>);
     const change = async (project = projectA) => act(async () => {
@@ -120,17 +132,16 @@ for (const event of ["file:changed", "fsChanged"] as const) {
     await change(projectB);
     expect(useFileStore.getState().indexStatus).toBe("ready");
     await change();
-    expect(get).not.toHaveBeenCalled();
+    expect(indexCalls()).toEqual([]);
     expect(useFileStore.getState().indexStatus).toBe("idle");
     expect(useFileStore.getState().fileIndex).toEqual([]);
     expect(view.container.querySelector("output")!.textContent).toBe("");
     await openPicker();
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(get.mock.calls[0]![0]).toBe("/api/project/index-a/files/index");
+    expect(indexCalls()).toEqual(["/api/project/index-a/files/index"]);
     await act(async () => response.resolve([fileA, newFile]));
     expect(view.container.textContent).toContain(newFile.name);
     await change();
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(indexCalls()).toHaveLength(2);
     expect(useFileStore.getState().indexStatus).toBe("ready");
   });
 }

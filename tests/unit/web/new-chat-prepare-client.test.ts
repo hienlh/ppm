@@ -2,25 +2,22 @@
  * `/chat/prepare` client: one POST per tab id, fanned out into every cache the parts of
  * a sessionless tab would otherwise fetch on their own.
  *
- * Order-independent on purpose. The request goes through an injected transport rather
- * than a spy on `api.post`, because another file in the same process `mock.module`s
- * `api-client` — after that, the module's `api` and `projectUrl` are the mock's, and a
- * spy or a hard-coded URL here would be testing whichever file happened to run first.
- * The globals this file stubs are put back afterwards for the same reason.
+ * The request goes through the client's injected transport, and `localStorage` is an
+ * in-memory stub installed through `installGlobal`, so this file's cache writes stay out
+ * of the web storage the rest of the process shares and the real one comes back
+ * afterwards. `window` is the process-wide DOM's own.
  */
 import { afterAll, afterEach, beforeEach, expect, it } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
-const saved = { localStorage: (globalThis as any).localStorage, window: (globalThis as any).window };
 const store = new Map<string, string>();
-const localStub = {
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
   get length() { return store.size; },
   key: (i: number) => [...store.keys()][i] ?? null,
-};
-(globalThis as any).localStorage ??= localStub;
-(globalThis as any).window ??= new EventTarget();
+});
 
 const { projectUrl } = await import("../../../src/web/lib/api-client");
 const {
@@ -37,10 +34,7 @@ const { projectCacheId } = await import("../../../src/web/lib/browser-cache/cach
 afterAll(() => {
   __setPrepareTransportForTest(null);
   __clearPrepareForTest();
-  for (const [key, value] of Object.entries(saved)) {
-    if (value === undefined) delete (globalThis as any)[key];
-    else (globalThis as any)[key] = value;
-  }
+  uninstallDom();
 });
 
 const project = { name: "prep-proj", path: "/prep-proj" };

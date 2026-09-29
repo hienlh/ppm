@@ -5,6 +5,7 @@
  * or simply no browser at all).
  */
 import { describe, it, expect, afterEach } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 import {
   idbGet,
   idbGetEntry,
@@ -95,26 +96,31 @@ describe("idb-keyval-cache — memory fallback", () => {
  * rejects and never hangs — and the memory store takes over.
  */
 describe("idb-keyval-cache — a hostile IndexedDB", () => {
+  // Every fake goes in through `installGlobal`, so whatever the process had before —
+  // nothing, today — is what the next file sees, rather than a `delete` guessing at it.
   afterEach(() => {
-    delete (globalThis as any).indexedDB;
+    uninstallDom();
     __resetIdbForTest();
   });
 
   /** A fake whose `open()` hands back a request the test drives by hand. */
   function fakeIndexedDb(onOpen: (req: Record<string, any>) => void): { opens: number } {
     const counter = { opens: 0 };
-    (globalThis as any).indexedDB = {
+    installGlobal("indexedDB", {
       open: () => {
         counter.opens++;
         const req: Record<string, any> = {};
         queueMicrotask(() => onOpen(req));
         return req;
       },
-    };
+    });
     return counter;
   }
 
   it("falls back when merely reading the indexedDB global throws", async () => {
+    // Recorded first so `uninstallDom()` knows what to put back; the throwing getter a
+    // plain value cannot express is then laid over it.
+    installGlobal("indexedDB", undefined);
     Object.defineProperty(globalThis, "indexedDB", {
       configurable: true,
       get() { throw new DOMException("The operation is insecure.", "SecurityError"); },

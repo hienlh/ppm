@@ -4,30 +4,24 @@
  * full match keeps today's pending placeholder for `ChatTab`/`NewChatProviderGate` to
  * resolve over the network.
  *
- * No DOM — `panel-store.ts` reads `localStorage` at import time, so a plain in-memory
- * stub (not `installDom()`, which every OTHER file in this process shares once
- * installed) keeps this file's writes from leaking into anything else.
+ * `localStorage` is an in-memory stub installed through `installGlobal`, so this file's
+ * writes stay out of the web storage every other file in the process shares, and the
+ * real one comes back afterwards. `window` is the process-wide DOM's own: a bare
+ * `EventTarget` in its place is what modules first imported here would bind their
+ * listeners to for the rest of the run.
  */
 import { afterAll, beforeEach, expect, it } from "bun:test";
-
-// Put back afterwards: these globals are shared by every file in the process.
-const savedGlobals = { localStorage: (globalThis as any).localStorage, window: (globalThis as any).window };
-afterAll(() => {
-  for (const [key, value] of Object.entries(savedGlobals)) {
-    if (value === undefined) delete (globalThis as any)[key];
-    else (globalThis as any)[key] = value;
-  }
-});
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 const store = new Map<string, string>();
-(globalThis as any).localStorage = {
+afterAll(uninstallDom);
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
   get length() { return store.size; },
   key: (i: number) => [...store.keys()][i] ?? null,
-};
-(globalThis as any).window = new EventTarget();
+});
 
 const { usePanelStore } = await import("../../../src/web/stores/panel-store");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
