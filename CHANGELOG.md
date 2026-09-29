@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.23.8] - 2026-09-30
+
+### Changed
+
+- **A new chat tab is ready the moment it opens.** Provider, mode and model chips and the `/` list show on the first frame from a copy saved in the browser. The account, draft, usage and tags then arrive in one request instead of six.
+- **Recent chats appear instantly everywhere.** The sidebar, welcome screen, tab bar and history panel share one saved list, refreshed in the background with a small "Syncing…" note. Renaming, pinning, tagging or deleting a chat updates the list at once.
+- A new tab's usage chip now shows the account that tab will actually run on.
+
+### Fixed
+
+- The `/` command list is loaded as soon as a chat opens, so typing `/` right away no longer waits for it.
+- Opening a Codex chat no longer stalls other requests while its history is read.
+- Session titles, recent chats and saved commands cached in the browser are wiped when you are signed out.
+
 ## [0.23.7] - 2026-09-28
 
 ### Added
