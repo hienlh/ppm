@@ -13,8 +13,8 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
-import { getAISettings } from "@/lib/api-settings";
 import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
+import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { TeamWorkingBar } from "./team-working-bar";
@@ -27,7 +27,9 @@ import { ChatHistoryBar } from "./chat-history-bar";
 import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-gate";
 import { UserBubble } from "./message-user-bubble";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
-import { patchTabMetadata } from "@/lib/patch-tab-metadata";
+import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
+import { useSessionListStore } from "@/stores/session-list-store";
+import { projectRefForName } from "@/stores/session-list-sync-triggers";
 
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
@@ -81,6 +83,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   const [sessionId, setSessionId] = useState<string | null>(
     (metadata?.sessionId as string) ?? null,
   );
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
 
   /**
    * Follow the session id when the provider adopts its own.
@@ -94,6 +98,12 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
    * reload rather than only lasting the turn.
    */
   const handleSessionMigrated = useCallback((newSessionId: string) => {
+    // Read from the metadata ref, not the `projectName` const below — this
+    // callback is created before that binding exists in this function body.
+    const pn = metadataRef.current?.projectName as string | undefined;
+    if (sessionIdRef.current && pn) {
+      useSessionListStore.getState().replaceSessionId(projectRefForName(pn), sessionIdRef.current, newSessionId);
+    }
     setSessionId(newSessionId);
   }, []);
   const [providerOverride, setProviderId] = useState<string>(
@@ -118,6 +128,29 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   const [permissionMode, setPermissionMode] = useState<string | undefined>(
     (metadata?.permissionMode as string) ?? undefined,
   );
+  /**
+   * Whether prepare's fresh permission may replace the one this tab carries.
+   *
+   * Only a mode that came from the local cache (`permissionModeSource: "cache"`), or no
+   * mode at all, is a placeholder for the server's answer. A mode the user picked by hand
+   * ("user") or one the tab inherited from a session it already ran ("inherited" — a
+   * design tab's `/clear` remounts this component with the previous session's mode still
+   * in metadata) is a decision, and a fresh default must not quietly loosen it. A mode
+   * with no recorded source predates the distinction and is kept for the same reason.
+   * The source lives in metadata rather than in component state so it survives exactly
+   * that remount; the ref covers a tab the panel store does not know.
+   */
+  const permissionChosenByUser = useRef(false);
+  const permissionReplaceable = useCallback((): boolean => {
+    if (permissionChosenByUser.current) return false;
+    const current = (tabId ? currentTabMetadata(tabId) : undefined) ?? metadataRef.current;
+    return !current?.permissionMode || current.permissionModeSource === "cache";
+  }, [tabId]);
+  const handleModeChange = useCallback((mode: string) => {
+    permissionChosenByUser.current = true;
+    setPermissionMode(mode);
+    if (tabId) patchTabMetadata(tabId, { permissionMode: mode, permissionModeSource: "user" });
+  }, [tabId]);
   useEffect(() => {
     if (!preparation?.pending && !sessionId && metadata?.providerId) {
       setProviderId(metadata.providerId as string);
@@ -146,6 +179,62 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Use tab's own project, not global activeProject (keep-alive: hidden tabs must not react to switches)
   const projectName = (metadata?.projectName as string) ?? "";
+
+  /**
+   * Every sessionless chat tab (new, `/clear`, a design's chat, a reload mid-resolution)
+   * fires one `/chat/prepare`, kept per tab id by the prepare client. Started from a lazy
+   * state initializer — during this component's first render, not inside an effect —
+   * because a child's own mount effect (the composer's slash-item load, a few lines of
+   * JSX down) would otherwise run first and never get the chance to join it: on mount,
+   * effects fire child-before-parent, but a component's own render always completes, for
+   * its whole subtree, before any of them run at all.
+   *
+   * Once per mounted instance, never per render: a re-render after the client's join
+   * window must not POST again. A remount only prepares again when this sessionless
+   * stretch was never prepared successfully, and the pick is skipped whenever the tab
+   * already holds a claim, so one tab never consumes two accounts.
+   */
+  useState(() => {
+    if (!tabId || sessionId || !projectName || isPrepared(tabId)) return null;
+    const pendingOnOpen = metadata?.providerPending === true;
+    const openedOn = pendingOnOpen ? undefined : metadata?.providerId as string | undefined;
+    const claimedFor = typeof metadata?.pickedAccountId === "string" ? metadata.pickedAccountProvider : undefined;
+    startPrepare(tabId, projectRefForName(projectName), {
+      ...(pendingOnOpen
+        ? { focusedProvider: metadata?.focusedProviderOnOpen as string | undefined }
+        : { providerId: openedOn }),
+      // A pending tab does not know its provider yet, so any claim it carries counts.
+      skipPick: claimedFor !== undefined && (pendingOnOpen || claimedFor === openedOn),
+    });
+    return null;
+  });
+
+  // Once the tab has a session nothing may join its old prepare again — a design tab's
+  // `/clear` remounts under this same tab id, and would otherwise restore the draft that
+  // was just sent along with the settings it was prepared with.
+  useEffect(() => {
+    if (tabId && sessionId) forgetPrepare(tabId);
+  }, [tabId, sessionId]);
+
+  // The chip shown before any message is sent should reflect the account's real
+  // permission as soon as prepare answers, not only once the user finally sends —
+  // unless the mode the tab carries is a decision rather than a cached default.
+  useEffect(() => {
+    if (!tabId || sessionId) return;
+    const prepared = getPrepare(tabId);
+    if (!prepared) return;
+    let cancelled = false;
+    prepared.then((result) => {
+      if (cancelled || !permissionReplaceable()) return;
+      const fresh = result.settings.providers[result.providerId]?.permission_mode ?? "bypassPermissions";
+      if (fresh !== metadataRef.current?.permissionMode) {
+        setPermissionMode(fresh);
+        patchTabMetadata(tabId, { permissionMode: fresh, permissionModeSource: "cache" });
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [tabId, sessionId, permissionReplaceable]);
+
   useDesignSessionRedirect({ tabId, sessionId, designSlug, projectName, providerId });
   const updateTab = useTabStore((s) => s.updateTab);
   const version = useSettingsStore((s) => s.version);
@@ -154,19 +243,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // account shown is the one bound to it, not whichever session ran most recently.
   const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, reloadUsage } =
     useUsage(projectName, providerId, sessionId ?? undefined,
-      metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined, !preparation?.pending);
+      metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined,
+      !preparation?.pending, tabId);
 
   // Draft auto-save/restore
   const { draft, draftLoading, saveDraft, clearDraft, cancelPendingSave, moveDraft } = useDraft(projectName, sessionId, tabId);
-
-  // Load global default permission mode on mount (if no per-session override)
-  useEffect(() => {
-    if (permissionMode || preparation?.pending) return;
-    getAISettings().then((s) => {
-      const provider = s.providers[providerId];
-      setPermissionMode(provider?.permission_mode ?? "bypassPermissions");
-    }).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist sessionId, providerId, and permissionMode to tab metadata.
   //
@@ -178,12 +259,17 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // Merged into the metadata the store holds now, never the `metadata` prop: the prop is
   // whatever this component last rendered with, and spreading it back would revert keys a
   // host (a design tab) or the panel store wrote in the meantime.
+  //
+  // A mode a session ran with is no longer a cached default: if this tab goes sessionless
+  // again (a design `/clear`), its next session keeps it rather than taking prepare's.
   useEffect(() => {
     if (!tabId || !sessionId) return;
+    const source = currentTabMetadata(tabId)?.permissionModeSource === "user" ? "user" : "inherited";
     patchTabMetadata(tabId, {
       sessionId,
       providerId,
       permissionMode,
+      permissionModeSource: permissionMode ? source : undefined,
       pickedAccountId: undefined,
       pickedAccountLabel: undefined,
       pickedAccountProvider: undefined,
@@ -392,6 +478,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     if (tabId && sessionTitle && !designSlug) {
       updateTab(tabId, { title: sessionTitle });
     }
+    if (sessionId && projectName && sessionTitle) {
+      useSessionListStore.getState().renameSession(projectRefForName(projectName), sessionId, sessionTitle);
+    }
   }, [sessionTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pending fork message — show in input for user to edit, not auto-send
@@ -544,14 +633,21 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       onNewSession(clearedFrom);
       return;
     }
+    // The new tab starts from the global default like any new chat, so this tab's mode is
+    // handed over only as a cached placeholder: it keeps the chip from opening blank, and
+    // both the local cache (`openTab`) and the fresh prepare still replace it.
     useTabStore.getState().openTab({
       type: "chat",
       title: title || "AI Chat",
-      metadata: { projectName, providerId, ...(clearedFrom && { clearedFrom }) },
+      metadata: {
+        projectName, providerId,
+        ...(permissionMode && { permissionMode, permissionModeSource: "cache" }),
+        ...(clearedFrom && { clearedFrom }),
+      },
       projectId: projectName || null,
       closable: true,
     });
-  }, [projectName, providerId, onNewSession]);
+  }, [projectName, providerId, permissionMode, onNewSession]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
     // A message still waiting for its own session's socket must not ride the
@@ -574,6 +670,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
         { messageId },
       );
+      useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
+        id: forked.id, providerId, title: userMessage.slice(0, 50), createdAt: new Date().toISOString(),
+        // A fork keeps its design, so a design tab's history list still shows it.
+        ...(designSlug && { designSlug }),
+      });
       // A host that keeps the conversation in place takes the fork over; otherwise open a
       // new chat tab with the forked session — it will send userMessage on connect.
       if (onFork) {
@@ -599,7 +700,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           : msg,
       });
     }
-  }, [sessionId, projectName, providerId, onFork]);
+  }, [sessionId, projectName, providerId, onFork, designSlug]);
 
   /** Edit a user message: prefill input + arm same-tab fork on next send */
   const handleEdit = useCallback((userMessage: string, messageId?: string, ownMsgId?: string) => {
@@ -631,6 +732,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           { messageId: anchorMsgId },
           { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) },
         );
+        useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
+          id: forked.id, providerId, title: fullContent.slice(0, 50), createdAt: new Date().toISOString(),
+          ...(designSlug && { designSlug }),
+        });
         // The tree gained a sibling. Swapping sessionId below refetches
         // /messages, which carries a fresh versionMap, so the switcher's n/m
         // counts update without any cache to invalidate.
@@ -657,7 +762,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         setRestore({ text: fullContent, nonce: Date.now() });
       }
     },
-    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft],
+    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft, designSlug],
   );
 
   /** Swap THIS tab to another version's session (version switcher prev/next) */
@@ -737,12 +842,23 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         setFirstSendPending(true);
         setFirstSendPreview({ content: fullContent, timestamp: new Date().toISOString() });
         try {
-          const prepared = preparation?.pending ? await preparation.prepare() : null;
+          const resolved = preparation?.pending ? await preparation.prepare() : null;
           if (attempt !== firstSendAttempt.current) return;
-          const selectedProvider = prepared?.providerId ?? providerId;
-          const selectedPermission = prepared?.permissionMode ?? permissionMode ?? preparation.permissionMode;
+          const selectedProvider = resolved?.providerId ?? providerId;
+          let selectedPermission = resolved?.permissionMode ?? permissionMode ?? preparation.permissionMode;
+
+          // The tab's own `/chat/prepare` may still be running (a send within the first
+          // second) or may already carry a fresher permission than the one the tab opened
+          // with — bounded by the promise's own request timeout, so a dead server never
+          // holds up a send: on failure the values already resolved above are used as-is.
+          const prepared = tabId ? await getPrepare(tabId)?.catch(() => undefined) : undefined;
+          if (attempt !== firstSendAttempt.current) return;
+          if (prepared && permissionReplaceable()) {
+            selectedPermission = prepared.settings.providers[selectedProvider]?.permission_mode ?? selectedPermission;
+          }
           setProviderId(selectedProvider);
           setPermissionMode(selectedPermission);
+          if (tabId) patchTabMetadata(tabId, { permissionMode: selectedPermission });
           const picked = await ensureAccountClaim(selectedProvider);
           if (attempt !== firstSendAttempt.current) return;
           const latest = metadataRef.current;
@@ -767,6 +883,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             ...(designSlug && { designSlug }),
           }, { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) });
           if (attempt !== firstSendAttempt.current) return;
+          useSessionListStore.getState().upsertSession(projectRefForName(pName), {
+            id: session.id, providerId: session.providerId, title: session.title, createdAt: session.createdAt,
+            ...(designSlug && { designSlug }),
+          });
           moveDraft(session.id);
           setSessionId(session.id);
           setProviderId(session.providerId);
@@ -788,7 +908,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, moveDraft, preparation, ensureAccountClaim],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, moveDraft, preparation, ensureAccountClaim, tabId, permissionReplaceable],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -1148,7 +1268,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             onContentChange={handleContentChange}
             getUserHistory={getUserHistory}
             permissionMode={permissionMode}
-            onModeChange={!preparation?.pending && !firstSendPending ? setPermissionMode : undefined}
+            onModeChange={!preparation?.pending && !firstSendPending ? handleModeChange : undefined}
             providerId={preparation?.providerId ?? providerId}
             sessionId={sessionId ?? undefined}
             // A design chat's provider was chosen among those that carry design instructions;

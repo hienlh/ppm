@@ -18,6 +18,10 @@ import { useTheme } from "@/theme/use-theme";
 import { initShikiThemeSync } from "@/theme/adapters/shiki-adapter";
 import { initMonacoThemeSync } from "@/theme/adapters/monaco-adapter";
 import { getAuthToken } from "@/lib/api-client";
+import { hydrateProjectCache, peekLastProjectRef } from "@/lib/browser-cache/project-cache-hydration";
+// Registers the slash-list hydrator before boot hydration runs; the chat tab that
+// otherwise loads this module sits in a lazy chunk.
+import "@/lib/slash-items-cache";
 import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
@@ -170,6 +174,20 @@ export function App() {
     });
     // Server-persisted project switcher prefs (sort mode + recent open-times)
     useProjectStore.getState().hydrateUiPrefs();
+  }, [authState]);
+
+  // Start warming the last-active project's cache as early as possible —
+  // before fetchProjects() even resolves — using the {name, path} this
+  // browser remembered from its previous visit. A first-ever visit (or a URL
+  // pointing at a different project than the remembered one) has nothing to
+  // go on yet; hydration for it starts once switchProject runs below instead.
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const urlState = initialUrlRef.current;
+    const cachedRef = peekLastProjectRef();
+    if (cachedRef && (!urlState.projectName || urlState.projectName === cachedRef.name)) {
+      void hydrateProjectCache(cachedRef);
+    }
   }, [authState]);
 
   // Fetch projects after auth, then restore workspace + URL

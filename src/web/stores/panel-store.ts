@@ -29,6 +29,12 @@ import {
 import { saveWindowPanels } from "./window-panel-persistence";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { tabSessionId } from "@/lib/tab-session-id";
+import { hydrateProjectCache } from "@/lib/browser-cache/project-cache-hydration";
+import { projectCacheId } from "@/lib/browser-cache/cache-keys";
+import { readChatPreparationSettings, readChatProviders } from "@/lib/chat-preference-local-cache";
+import { resolveNewChatProvider } from "@/lib/new-chat-provider";
+import { useProjectStore } from "./project-store";
+import { projectRefForName } from "./session-list-sync-triggers";
 import {
   makeToggleDock,
   makeSetDockVisible,
@@ -63,6 +69,41 @@ function pickDockActiveTab(dockPanel: Panel | undefined, projectName: string): s
     if (projTabs.some((t) => t.id === id)) return id;
   }
   return projTabs[projTabs.length - 1]!.id;
+}
+
+/**
+ * A new sessionless chat tab's metadata, resolved synchronously from the local cache —
+ * "warm" — so the first painted frame already has a provider and permission. When the
+ * cache cannot answer (no settings cached yet, or the resolved provider is not in the
+ * cached list), the pending placeholder is kept and `ChatTab` resolves it over the
+ * network instead.
+ */
+function resolveChatOpenMetadata(project: string | undefined, focusedProvider: string | undefined): Record<string, unknown> {
+  const settings = readChatPreparationSettings();
+  const cachedProviders = project ? readChatProviders(projectCacheId(projectRefForName(project))) : null;
+  const resolvedProviderId = settings ? resolveNewChatProvider(settings, focusedProvider) : null;
+  if (settings && resolvedProviderId && cachedProviders?.some((p) => p.id === resolvedProviderId)) {
+    return {
+      providerId: resolvedProviderId,
+      permissionMode: settings.providers[resolvedProviderId]?.permission_mode ?? "bypassPermissions",
+      // A cached default, which the tab's fresh prepare may still replace — unlike a mode
+      // the user picks or a session ran with (see `permissionReplaceable` in chat-tab.tsx).
+      permissionModeSource: "cache",
+    };
+  }
+  return { providerPending: true, focusedProviderOnOpen: focusedProvider };
+}
+
+/**
+ * The permission for a sessionless chat tab opened on a known provider (`/clear`, a
+ * provider-specific "new chat"), so its chip is not blank until prepare answers. Only
+ * fills in a mode the caller left empty or marked as a cached placeholder; a mode the
+ * caller decided is kept as given.
+ */
+function resolveChatOpenPermission(metadata: Record<string, unknown>, providerId: string): Record<string, unknown> {
+  if (metadata.permissionMode && metadata.permissionModeSource !== "cache") return {};
+  const cached = readChatPreparationSettings()?.providers[providerId]?.permission_mode;
+  return cached ? { permissionMode: cached, permissionModeSource: "cache" } : {};
 }
 
 function pushHistory(history: string[], id: string): string[] {
@@ -232,6 +273,15 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     redockFromWindow: makeRedockFromWindow(set, get),
 
     switchProject: (projectName) => {
+      // Every switch path lands here, so this is the one place that must start
+      // warming the new project's cache — mounting the tabs that read it comes
+      // right after. `__global__` is a virtual workspace with no server-side
+      // project (and no path), so there is nothing to hydrate for it.
+      if (projectName !== "__global__") {
+        const project = useProjectStore.getState().projects.find((p) => p.name === projectName);
+        if (project) void hydrateProjectCache(project);
+      }
+
       // Window panels are global, not part of any project's layout blob, so they are
       // merged into the flat map once — before the first project reads it.
       hydrateWindowPanels(set, get);
@@ -482,12 +532,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (!panel) return "";
 
       if (tabDef.type === "chat" && !tabDef.metadata?.sessionId && !tabDef.metadata?.providerId) {
-        const project = tabDef.projectId ?? (tabDef.metadata?.projectName as string | undefined) ?? get().currentProject;
-        tabDef = { ...tabDef, metadata: {
-          ...tabDef.metadata,
-          providerPending: true,
-          focusedProviderOnOpen: project ? get().lastFocusedChatProviders[project] : undefined,
-        } };
+        const project = tabDef.projectId ?? (tabDef.metadata?.projectName as string | undefined) ?? get().currentProject ?? undefined;
+        const focusedProvider = project ? get().lastFocusedChatProviders[project] : undefined;
+        tabDef = { ...tabDef, metadata: { ...tabDef.metadata, ...resolveChatOpenMetadata(project, focusedProvider) } };
+      } else if (tabDef.type === "chat" && tabDef.metadata && !tabDef.metadata.sessionId && typeof tabDef.metadata.providerId === "string") {
+        tabDef = { ...tabDef, metadata: { ...tabDef.metadata, ...resolveChatOpenPermission(tabDef.metadata, tabDef.metadata.providerId) } };
       }
 
       // Terminal: compute next available index if not provided

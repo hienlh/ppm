@@ -347,6 +347,10 @@ export class CodexAppServerProvider implements AIProvider {
   private modelsPending: Promise<ModelOption[]> | null = null;
   /** Keyed by `cwd\0codexHome` — skills differ per workspace AND per account. */
   private skillsCache = new Map<string, { skills: CodexSkill[]; expiry: number }>();
+  /** Same key, in-flight spawns only — a second caller within the same window joins this
+   *  instead of starting its own app-server. Without it, `/chat/prepare`'s 400ms slash
+   *  budget left a cold cache spawning one app-server per concurrent request. */
+  private skillsPending = new Map<string, Promise<CodexSkill[]>>();
 
   private get config() {
     try { return configService.get("ai").providers["codex"] ?? null; } catch { return null; }
@@ -1360,6 +1364,19 @@ export class CodexAppServerProvider implements AIProvider {
     const hit = this.skillsCache.get(key);
     if (hit && Date.now() < hit.expiry) return hit.skills;
 
+    const pending = this.skillsPending.get(key);
+    if (pending) return pending;
+
+    const request = this.fetchSkills(key, cwd, home);
+    this.skillsPending.set(key, request);
+    try {
+      return await request;
+    } finally {
+      this.skillsPending.delete(key);
+    }
+  }
+
+  private async fetchSkills(key: string, cwd: string, home: string | undefined): Promise<CodexSkill[]> {
     const client = new CodexJsonRpcClient();
     try {
       client.start({ cwd, codexHome: home });

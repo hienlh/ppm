@@ -14,6 +14,8 @@ import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
+import { useSessionListStore } from "@/stores/session-list-store";
+import { projectRefForName } from "@/stores/session-list-sync-triggers";
 
 interface ApprovalRequest {
   requestId: string;
@@ -1262,9 +1264,18 @@ export function useChat(
           });
           historyLoadedAtRef.current = Date.now();
         })
-        .catch(() => {
+        .catch((err) => {
           if (!cancelled && historyReconciledRef.current === historyReconciled) {
             setMessages((prev) => prev.filter((m) => !staleIds.has(m.id)));
+            // Another device deleted this session between opening the tab and
+            // this fetch resolving — drop the now-stale row from every shared
+            // history list instead of leaving it clickable to a 404. Only a real
+            // 404 counts: a message that merely says "not found" ("Provider …
+            // not found") is some other failure, and must not drop a live row.
+            // (Read by shape, not `instanceof ApiError`: the status is all that matters.)
+            if ((err as { status?: unknown } | null)?.status === 404 && projectName) {
+              useSessionListStore.getState().removeSession(projectRefForName(projectName), sessionId);
+            }
           }
         })
         .finally(() => {

@@ -8,11 +8,14 @@ import { SessionContextMenu } from "./session-context-menu";
 import { ProviderBadge } from "./provider-selector";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
-import { compareSessionsByActivity, type SessionInfo, type ProjectTag } from "../../../types/chat";
+import { projectCacheId } from "@/lib/browser-cache/cache-keys";
+import { useSessionListStore, EMPTY_SESSIONS, commitOptimistic } from "@/stores/session-list-store";
+import { useProjectRef } from "@/stores/session-list-sync-triggers";
+import { SessionListSyncIndicator } from "./session-list-sync-indicator";
+import type { SessionInfo, ProjectTag } from "../../../types/chat";
 
 const MAX_RECENT_SESSIONS = 5;
 const FETCH_SESSIONS_LIMIT = 20;
-const recentSessionsCache = new Map<string, SessionInfo[]>();
 
 interface SessionListPanelProps {
   projectName: string | undefined;
@@ -25,72 +28,66 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
 }
 
 function ProjectSessionListPanel({ projectName, onSelectSession, className }: SessionListPanelProps) {
-  const [sessions, setSessions] = useState<SessionInfo[]>(() => projectName ? recentSessionsCache.get(projectName) ?? [] : []);
-  const [ready, setReady] = useState(false);
+  const project = useProjectRef(projectName);
+  const id = project ? projectCacheId(project) : null;
+
+  // Cached rows render on the first frame; the store syncs in the background
+  // (deduplicated with every other reader of this project).
+  useEffect(() => {
+    if (project) void useSessionListStore.getState().ensure(project);
+  }, [project]);
+  const storeSessions = useSessionListStore((s) => (id ? s.byProject[id]?.sessions : undefined) ?? EMPTY_SESSIONS);
+
+  const [searchResults, setSearchResults] = useState<SessionInfo[] | null>(null);
   const requestRef = useRef(0);
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
-  const { projectTags, tagCounts, loadTags } = useProjectTags(ready ? projectName : undefined);
+  const { projectTags, tagCounts, loadTags } = useProjectTags(projectName);
 
+  // Server-side title search runs on its own request — the shared store only
+  // ever holds the unfiltered first page.
   useEffect(() => {
-    const timer = setTimeout(() => setReady(true), 500);
-    return () => { clearTimeout(timer); ++requestRef.current; };
-  }, []);
-
-  const loadSessions = useCallback(async (query?: string) => {
-    if (!projectName) return;
+    if (!projectName || !debouncedSearch) { setSearchResults(null); return; }
     const request = ++requestRef.current;
-    try {
-      const params = new URLSearchParams({ limit: String(FETCH_SESSIONS_LIMIT) });
-      if (query) params.set("q", query);
-      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions?${params}`);
-      if (request !== requestRef.current) return;
-      const next = data.sessions.slice(0, FETCH_SESSIONS_LIMIT);
-      if (!query) recentSessionsCache.set(projectName, next);
-      setSessions(next);
-    } catch {
-      // silently ignore
-    }
-  }, [projectName]);
-
-  // One delayed initial read, then server-side search. Keep cached rows visible.
-  useEffect(() => {
-    if (!ready) return;
-    loadSessions(debouncedSearch || undefined);
+    (async () => {
+      try {
+        const params = new URLSearchParams({ limit: String(FETCH_SESSIONS_LIMIT), q: debouncedSearch });
+        const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions?${params}`);
+        if (request !== requestRef.current) return;
+        setSearchResults(data.sessions.slice(0, FETCH_SESSIONS_LIMIT));
+      } catch {
+        // silently ignore
+      }
+    })();
     return () => { ++requestRef.current; };
-  }, [ready, debouncedSearch, loadSessions]);
+  }, [projectName, debouncedSearch]);
+
+  const sessions = searchResults ?? storeSessions.slice(0, FETCH_SESSIONS_LIMIT);
 
   const togglePin = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
     e.stopPropagation();
-    if (!projectName) return;
-    const url = `${projectUrl(projectName)}/chat/sessions/${session.id}/pin`;
-    try {
-      if (session.pinned) {
-        await api.del(url);
-      } else {
-        await api.put(url);
-      }
-      const cached = recentSessionsCache.get(projectName);
-      if (cached) recentSessionsCache.set(projectName, cached.map((s) => s.id === session.id ? { ...s, pinned: !session.pinned } : s).sort(compareSessionsByActivity));
-      setSessions((prev) => {
-        const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
-        return updated.sort(compareSessionsByActivity);
-      });
-    } catch {
-      // silently ignore
-    }
-  }, [projectName]);
+    if (!project) return;
+    const url = `${projectUrl(project.name)}/chat/sessions/${session.id}/pin`;
+    const nextPinned = !session.pinned;
+    const pinIn = (pinned: boolean) => setSearchResults((prev) =>
+      prev ? prev.map((s) => s.id === session.id ? { ...s, pinned } : s) : prev);
+    // Optimistic; a refused change re-syncs the store (`commitOptimistic`) and puts the
+    // search page's row back as it was.
+    useSessionListStore.getState().setPinned(project, session.id, nextPinned);
+    pinIn(nextPinned);
+    const ok = await commitOptimistic(project, () => (nextPinned ? api.put(url) : api.del(url)));
+    if (!ok) pinIn(!nextPinned);
+  }, [project]);
 
   const handleTagChanged = useCallback((sid: string, tag: { id: number; name: string; color: string } | null) => {
-    const cached = projectName ? recentSessionsCache.get(projectName) : undefined;
-    if (cached && projectName) recentSessionsCache.set(projectName, cached.map((s) => s.id === sid ? { ...s, tag } : s));
-    setSessions((prev) => prev.map((s) => s.id === sid ? { ...s, tag } : s));
+    if (project) useSessionListStore.getState().setSessionTag(project, sid, tag);
+    setSearchResults((prev) => prev ? prev.map((s) => s.id === sid ? { ...s, tag } : s) : prev);
     loadTags();
-  }, [loadTags, projectName]);
+  }, [loadTags, project]);
 
-  // Tag filter is client-side; search is now server-side via ?q=
+  // Tag filter is client-side; search is server-side via ?q=
   const filtered = selectedTagId !== null
     ? sessions.filter((s) => s.tag?.id === selectedTagId)
     : sessions;
@@ -136,7 +133,10 @@ function ProjectSessionListPanel({ projectName, onSelectSession, className }: Se
 
       {recentSessions.length > 0 && (
         <div className="flex flex-col gap-2 w-full mt-4">
-          <p className="text-xs text-text-subtle text-center">Recent chats</p>
+          <p className="text-xs text-text-subtle text-center">
+            Recent chats
+            {project && <SessionListSyncIndicator project={project} className="ml-1.5" />}
+          </p>
           <div className="w-full rounded-md border border-border bg-surface overflow-hidden">
             {recentSessions.map((s) => (
               <SessionRow key={s.id} session={s} projectName={projectName} projectTags={projectTags} onSelect={onSelectSession} onTogglePin={togglePin} onTagChanged={handleTagChanged} />

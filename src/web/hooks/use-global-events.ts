@@ -4,6 +4,7 @@ import { getAuthToken } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { syncRunningSessions } from "@/lib/sync-running-sessions";
+import { syncAllKnownProjects } from "@/stores/session-list-sync-triggers";
 
 /**
  * App-wide event bus client (`/ws/global`).
@@ -63,6 +64,10 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
           client.send(JSON.stringify({ type: "watch", projectName: projectRef.current }));
         }
         void syncRunningSessions();
+        // Missed session/tag updates while the socket was down (another
+        // device renamed, pinned or deleted a session) — re-sync every
+        // project this browser already knows about.
+        syncAllKnownProjects();
         return;
       }
 

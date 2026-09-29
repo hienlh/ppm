@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api, projectUrl } from "@/lib/api-client";
+import { getPrepare } from "@/lib/new-chat-prepare-client";
 
 export interface DraftAttachment {
   name: string;
@@ -71,10 +72,16 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
     const releaseTimer = setTimeout(() => {
       if (!cancelled) setLoading(false);
     }, GATE_RELEASE_MS);
-    api
-      .get<DraftResult | null>(
-        `${projectUrl(projectName)}/chat/drafts/${encodeURIComponent(effectiveId)}`,
-      )
+    const fetchFromServer = () => api.get<DraftResult | null>(
+      `${projectUrl(projectName)}/chat/drafts/${encodeURIComponent(effectiveId)}`,
+    );
+    // A sessionless tab's `/chat/prepare` already read the `__new__` draft; joining it
+    // (rather than also GETting) only falls back to the plain fetch when the prepare
+    // request itself failed — a `draft: null` inside a settled response means "no draft"
+    // and is used as-is, the same as the GET path's own null case below.
+    const prepared = sessionId === null && tabId ? getPrepare(tabId) : undefined;
+    const request = prepared ? prepared.then((result) => result.draft, fetchFromServer) : fetchFromServer();
+    request
       .then((data) => {
         if (cancelled || keepRecoveredDraft || editRevision.current !== revision) return;
         if (data) {
@@ -91,7 +98,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; clearTimeout(releaseTimer); };
-  }, [projectName, effectiveId]);
+  }, [projectName, effectiveId, tabId, sessionId]);
 
   // Debounced save (1s)
   const save = useCallback(

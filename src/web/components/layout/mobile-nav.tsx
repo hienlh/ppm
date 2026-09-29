@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   Terminal, Menu, X, Layers, Plus,
   Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp,
@@ -21,6 +21,8 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { downloadFile } from "@/lib/file-download";
 import { FileActions } from "@/components/explorer/file-actions";
 import { api, projectUrl } from "@/lib/api-client";
+import { projectCacheId } from "@/lib/browser-cache/cache-keys";
+import { useSessionListStore, EMPTY_SESSIONS, commitOptimistic } from "@/stores/session-list-store";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useVisualViewport } from "@/hooks/use-visual-viewport";
 import { useIsMobile } from "@/hooks/use-is-mobile";
@@ -91,7 +93,6 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const activeTabId = (activeGridPanelId ? panels[activeGridPanelId]?.activeTabId : null) ?? null;
   const notifications = useNotificationStore((s) => s.notifications);
   const compareSelection = useCompareStore((s) => s.selection);
-  const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
 
   const [menuTabId, setMenuTabId] = useState<string | null>(null);
   const [tabSheetOpen, setTabSheetOpen] = useState(false);
@@ -222,32 +223,23 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const { projectTags, loadTags } = useProjectTags(activeProject?.name);
   const assignTagToSession = useCallback(async (sessionId: string, tagId: number | null) => {
     if (!activeProject?.name) return;
-    try {
-      if (tagId !== null) {
-        await api.patch(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`, { tagId });
-        const tag = projectTags.find((t) => t.id === tagId);
-        if (tag) setSessionTagMap((prev) => ({ ...prev, [sessionId]: { id: tag.id, name: tag.name, color: tag.color } }));
-      } else {
-        await api.del(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`);
-        setSessionTagMap((prev) => { const n = { ...prev }; delete n[sessionId]; return n; });
-      }
-      loadTags();
-    } catch { /* silent */ }
+    const ref = { name: activeProject.name, path: activeProject.path };
+    const tag = tagId !== null ? projectTags.find((t) => t.id === tagId) : undefined;
+    if (tagId !== null && !tag) { setMenuTabId(null); return; }
+    // Optimistic; a refused change re-syncs the store (`commitOptimistic`).
+    useSessionListStore.getState().setSessionTag(ref, sessionId, tag ? { id: tag.id, name: tag.name, color: tag.color } : null);
     setMenuTabId(null);
-  }, [activeProject?.name, projectTags, loadTags]);
+    const url = `${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`;
+    await commitOptimistic(ref, () => (tagId !== null ? api.patch(url, { tagId }) : api.del(url)));
+    loadTags();
+  }, [activeProject, projectTags, loadTags]);
 
-  // Session tag map — same fetch pattern as desktop tab-bar so mobile tabs can show tag bar
-  const chatSessionIds = tabs.map(tabSessionId).filter((id): id is string => !!id);
-  useEffect(() => {
-    if (!activeProject?.name || chatSessionIds.length === 0) return;
-    api.get<{ sessions: { id: string; tag?: { id: number; name: string; color: string } | null }[] }>(
-      `${projectUrl(activeProject.name)}/chat/sessions?limit=50`,
-    ).then((data) => {
-      const map: Record<string, { id: number; name: string; color: string }> = {};
-      for (const s of data.sessions) { if (s.tag) map[s.id] = s.tag; }
-      setSessionTagMap(map);
-    }).catch(() => {});
-  }, [activeProject?.name, chatSessionIds.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Session→tag map derived from the shared store — same source the desktop
+  // tab bar, sidebar and welcome screen read, so no separate fetch here.
+  const sessionListId = activeProject ? projectCacheId(activeProject) : null;
+  const storeSessions = useSessionListStore((s) => (sessionListId ? s.byProject[sessionListId]?.sessions : undefined) ?? EMPTY_SESSIONS);
+  const sessionTagMap: Record<string, { id: number; name: string; color: string }> = {};
+  for (const s of storeSessions) { if (s.tag) sessionTagMap[s.id] = s.tag; }
   const ordered = resolveOrder(projects, customOrder ?? null);
   const allNames = ordered.map((p) => p.name);
   const activeIdx = ordered.findIndex((p) => p.name === activeProject?.name);

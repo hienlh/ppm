@@ -1,5 +1,6 @@
 import { api } from "./api-client";
 import { clearChatPreparationCache } from "./chat-preparation-cache";
+import { writeChatPreparationSettings } from "./chat-preference-local-cache";
 
 export interface OAuthProfileData {
   account?: {
@@ -84,9 +85,12 @@ export interface PickedAccount {
  *
  * Consumes a pick rather than previewing one, so call it once per tab and keep the answer.
  * Null means nothing is usable right now (Claude) or no managed account exists (Codex, which
- * then runs on the ambient ~/.codex login).
+ * then runs on the ambient ~/.codex login). Every other provider has no account pool at all,
+ * so it gets null without a request: sending it to Claude's `/pick` would advance Claude's
+ * round-robin for a chat that never runs on a Claude account.
  */
 export function pickAccountForTab(providerId: string, signal?: AbortSignal): Promise<PickedAccount | null> {
+  if (providerId !== "claude" && providerId !== "codex") return Promise.resolve(null);
   const path = providerId === "codex" ? "/api/codex-accounts/pick" : "/api/accounts/pick";
   return api.post<PickedAccount | null>(path, undefined, { signal });
 }
@@ -231,6 +235,9 @@ export function getAISettings(): Promise<AISettings> {
 export function updateAISettings(settings: Partial<AISettings>): Promise<AISettings> {
   return api.put<AISettings>("/api/settings/ai", settings).then((result) => {
     clearChatPreparationCache();
+    // Keep the local cache's answer in sync with what the server just accepted, so the
+    // next tab opened (even before a fresh `/chat/prepare` lands) resolves warm from it.
+    writeChatPreparationSettings(result);
     return result;
   });
 }

@@ -17,7 +17,11 @@ import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
 import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { compareSessionsByActivity, type SessionInfo, type SessionListResponse, type ProjectTag } from "../../../types/chat";
+import { projectCacheId } from "@/lib/browser-cache/cache-keys";
+import { useSessionListStore, EMPTY_SESSIONS, commitOptimistic } from "@/stores/session-list-store";
+import { projectRefForName, useProjectRef } from "@/stores/session-list-sync-triggers";
+import { sortSessions, removeSession, renameSession, setPinned, setSessionTag } from "@/lib/session-list-merge";
+import type { SessionInfo, SessionListResponse } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 
@@ -87,7 +91,19 @@ export function ChatHistoryBar({
   teamActivity, teamMessages, onTeamOpen,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const project = useProjectRef(projectName);
+  const id = project ? projectCacheId(project) : null;
+  const storeSessions = useSessionListStore((s) => (id ? s.byProject[id]?.sessions : undefined) ?? EMPTY_SESSIONS);
+  const storeHasMoreDefault = useSessionListStore((s) => (id ? s.byProject[id]?.hasMore : undefined) ?? false);
+  const storeSyncing = useSessionListStore((s) => (id ? s.byProject[id]?.isSyncing : undefined) ?? false);
+  const tagsState = useSessionListStore((s) => (id ? s.byProject[id]?.tags : undefined) ?? null);
+  // The base page (unfiltered, un-paginated) is fetched once for every open
+  // chat tab of this project and shared through the store; only the panel's
+  // own search page and "load more" rows are fetched here directly.
+  useEffect(() => { if (project) void useSessionListStore.getState().ensure(project); }, [project]);
+  const [pagedExtra, setPagedExtra] = useState<SessionInfo[]>([]);
+  const [pageHasMore, setPageHasMore] = useState<boolean | null>(null);
+  const [searchFirstPage, setSearchFirstPage] = useState<SessionInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
   const notifications = useNotificationStore((s) => s.notifications);
   const hasUnread = useNotificationStore((s) => sessionId ? s.notifications.has(sessionId) : false);
@@ -97,15 +113,19 @@ export function ChatHistoryBar({
   const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
-  const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
-  const [tagCounts, setTagCounts] = useState<Record<number, number>>({});
   const [showTagSettings, setShowTagSettings] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const PAGE_SIZE = 50;
+
+  const basePage = debouncedSearch ? (searchFirstPage ?? []) : storeSessions;
+  const sessions = sortSessions([...basePage, ...pagedExtra]);
+  const hasMore = pageHasMore ?? (debouncedSearch ? false : storeHasMoreDefault);
+  const effectiveLoading = loading || (!debouncedSearch && storeSyncing);
+  const projectTags = tagsState?.tags ?? [];
+  const tagCounts = tagsState?.counts ?? {};
 
   const togglePanel = (panel: PanelType) => {
     setActivePanel((prev) => prev === panel ? null : panel);
@@ -113,19 +133,25 @@ export function ChatHistoryBar({
 
   const load = useCallback(async (query?: string) => {
     if (!projectName) return;
+    setPagedExtra([]);
+    setPageHasMore(null);
+    if (!query) {
+      setSearchFirstPage(null);
+      if (project) await useSessionListStore.getState().sync(project);
+      return;
+    }
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: "0" });
-      if (query) params.set("q", query);
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: "0", q: query });
       const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?${params}`);
-      setSessions(data.sessions);
-      setHasMore(data.hasMore);
+      setSearchFirstPage(data.sessions);
+      setPageHasMore(data.hasMore);
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
-  }, [projectName]);
+  }, [projectName, project]);
 
   const loadMore = useCallback(async () => {
     if (!projectName || loadingMore || !hasMore) return;
@@ -136,44 +162,29 @@ export function ChatHistoryBar({
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(unpinnedCount) });
       if (debouncedSearch) params.set("q", debouncedSearch);
       const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?${params}`);
-      setSessions((prev) => {
-        const existingIds = new Set(prev.map((s) => s.id));
-        const newSessions = data.sessions.filter((s) => !existingIds.has(s.id));
-        return [...prev, ...newSessions];
+      setPagedExtra((prev) => {
+        const existingIds = new Set([...basePage, ...prev].map((s) => s.id));
+        return [...prev, ...data.sessions.filter((s) => !existingIds.has(s.id))];
       });
-      setHasMore(data.hasMore);
+      setPageHasMore(data.hasMore);
     } catch {
       // silent
     } finally {
       setLoadingMore(false);
     }
-  }, [projectName, loadingMore, hasMore, sessions, debouncedSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName, loadingMore, hasMore, sessions, debouncedSearch, basePage]);
 
-  // Load sessions when history panel opens
+  // Search re-fetches on its own request; clearing it falls back to the
+  // store's shared first page (already kept fresh by `ensure` above).
   useEffect(() => {
-    if (activePanel === "history" && sessions.length === 0) load();
-  }, [activePanel]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Re-fetch when debounced search query changes (server-side search)
-  useEffect(() => {
-    if (activePanel === "history") load(debouncedSearch || undefined);
+    if (activePanel !== "history") return;
+    load(debouncedSearch || undefined);
   }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch tags
   const loadTags = useCallback(async () => {
-    if (!projectName) return;
-    try {
-      const data = await api.get<{ tags: ProjectTag[]; counts: Record<number, number> }>(
-        `${projectUrl(projectName)}/tags`,
-      );
-      setProjectTags(data.tags);
-      setTagCounts(data.counts);
-    } catch { /* silent */ }
-  }, [projectName]);
-
-  useEffect(() => {
-    if (activePanel === "history" && projectName) loadTags();
-  }, [activePanel, projectName, loadTags]);
+    if (project) await useSessionListStore.getState().refreshTags(project);
+  }, [project]);
 
   function openSession(session: SessionInfo) {
     if (tabId) window.dispatchEvent(new CustomEvent("ppm:onboarding-evidence", {
@@ -202,12 +213,18 @@ export function ChatHistoryBar({
       setEditingId(null);
       return;
     }
-    try {
-      await api.patch(`${projectUrl(projectName)}/chat/sessions/${editingId}`, { title: editingTitle.trim() });
-      setSessions((prev) => prev.map((s) => s.id === editingId ? { ...s, title: editingTitle.trim() } : s));
-    } catch { /* silent */ }
+    const title = editingTitle.trim();
+    const sid = editingId;
+    const ref = project ?? projectRefForName(projectName);
+    // Optimistic: every list shows the new title now; a refused save re-syncs the store
+    // (`commitOptimistic`) and reloads this bar's own pages.
+    useSessionListStore.getState().renameSession(ref, sid, title);
+    setPagedExtra((prev) => renameSession(prev, sid, title));
+    setSearchFirstPage((prev) => prev ? renameSession(prev, sid, title) : prev);
     setEditingId(null);
-  }, [editingId, editingTitle, projectName]);
+    const ok = await commitOptimistic(ref, () => api.patch(`${projectUrl(projectName)}/chat/sessions/${sid}`, { title }));
+    if (!ok) void load(debouncedSearch || undefined);
+  }, [editingId, editingTitle, projectName, project, load, debouncedSearch]);
 
   const cancelEditing = useCallback(() => setEditingId(null), []);
 
@@ -215,33 +232,37 @@ export function ChatHistoryBar({
     e.stopPropagation();
     if (!projectName) return;
     const url = `${projectUrl(projectName)}/chat/sessions/${session.id}/pin`;
-    try {
-      if (session.pinned) {
-        await api.del(url);
-      } else {
-        await api.put(url);
-      }
-      setSessions((prev) => {
-        const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
-        return updated.sort(compareSessionsByActivity);
-      });
-    } catch { /* silent */ }
-  }, [projectName]);
+    const nextPinned = !session.pinned;
+    const ref = project ?? projectRefForName(projectName);
+    useSessionListStore.getState().setPinned(ref, session.id, nextPinned);
+    setPagedExtra((prev) => setPinned(prev, session.id, nextPinned));
+    setSearchFirstPage((prev) => prev ? setPinned(prev, session.id, nextPinned) : prev);
+    const ok = await commitOptimistic(ref, () => (nextPinned ? api.put(url) : api.del(url)));
+    if (!ok) void load(debouncedSearch || undefined);
+  }, [projectName, project, load, debouncedSearch]);
 
   const deleteSession = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
     e.stopPropagation();
     if (!projectName) return;
     if (!window.confirm("Delete this session? This cannot be undone.")) return;
-    try {
-      await api.del(`${projectUrl(projectName)}/chat/sessions/${session.id}?providerId=${session.providerId}`);
-      setSessions((prev) => prev.filter((s) => s.id !== session.id));
-    } catch { /* silent */ }
-  }, [projectName]);
+    const ref = project ?? projectRefForName(projectName);
+    useSessionListStore.getState().removeSession(ref, session.id);
+    setPagedExtra((prev) => removeSession(prev, session.id));
+    setSearchFirstPage((prev) => prev ? removeSession(prev, session.id) : prev);
+    const ok = await commitOptimistic(ref, () =>
+      api.del(`${projectUrl(projectName)}/chat/sessions/${session.id}?providerId=${session.providerId}`));
+    if (!ok) void load(debouncedSearch || undefined);
+  }, [projectName, project, load, debouncedSearch]);
 
+  /** Applies a tag change to every list at once — called before the request is sent
+   * (see `SessionContextMenu`), and again with the old tag if it is refused. */
   const handleTagChanged = useCallback((sid: string, tag: { id: number; name: string; color: string } | null) => {
-    setSessions((prev) => prev.map((s) => s.id === sid ? { ...s, tag } : s));
+    const ref = project ?? (projectName ? projectRefForName(projectName) : null);
+    if (ref) useSessionListStore.getState().setSessionTag(ref, sid, tag);
+    setPagedExtra((prev) => setSessionTag(prev, sid, tag));
+    setSearchFirstPage((prev) => prev ? setSessionTag(prev, sid, tag) : prev);
     loadTags(); // Refetch counts from API for accuracy
-  }, [loadTags]);
+  }, [loadTags, project, projectName]);
 
   const bulkDelete = useCallback(async () => {
     if (!projectName) return;
@@ -251,11 +272,14 @@ export function ChatHistoryBar({
     if (!num || num < 1) return;
     if (!window.confirm(`Delete all unpinned sessions older than ${num} days? This cannot be undone.`)) return;
     setLoading(true);
-    try {
-      await api.del(`${projectUrl(projectName)}/chat/sessions?olderThanDays=${num}`);
-      load(debouncedSearch || undefined);
-    } catch { /* silent */ }
-  }, [projectName, load, debouncedSearch]);
+    const ref = project ?? projectRefForName(projectName);
+    useSessionListStore.getState().removeOlderThan(ref, num);
+    await commitOptimistic(ref, () => api.del(`${projectUrl(projectName)}/chat/sessions?olderThanDays=${num}`));
+    // Reloaded either way: the local rule only approximates the server's, so even a
+    // successful delete is corrected by what the server says it kept.
+    await load(debouncedSearch || undefined);
+    setLoading(false);
+  }, [projectName, project, load, debouncedSearch]);
 
   // Keyboard shortcuts: 1-9 to assign tags to current session
   useEffect(() => {
@@ -266,8 +290,9 @@ export function ChatHistoryBar({
       if (num >= 1 && num <= projectTags.length && sessionId) {
         const tag = projectTags[num - 1];
         if (tag) {
-          api.patch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/tag`, { tagId: tag.id }).catch(() => {});
           handleTagChanged(sessionId, { id: tag.id, name: tag.name, color: tag.color });
+          void commitOptimistic(projectRefForName(projectName), () =>
+            api.patch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/tag`, { tagId: tag.id }));
         }
       }
     };
@@ -460,11 +485,11 @@ export function ChatHistoryBar({
             </button>
             <button
               onClick={() => load(debouncedSearch || undefined)}
-              disabled={loading}
+              disabled={effectiveLoading}
               className="p-0.5 rounded text-text-subtle hover:text-text-secondary transition-colors disabled:opacity-50"
               title="Refresh"
             >
-              <RefreshCw className={`size-3 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`size-3 ${effectiveLoading ? "animate-spin" : ""}`} />
             </button>
           </div>
 
@@ -508,7 +533,7 @@ export function ChatHistoryBar({
           )}
 
           <div className="max-h-[200px] overflow-y-auto">
-            {loading && scopedSessions.length === 0 ? (
+            {effectiveLoading && scopedSessions.length === 0 ? (
               <div className="flex items-center justify-center py-3">
                 <Loader2 className="size-3.5 animate-spin text-text-subtle" />
               </div>

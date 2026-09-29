@@ -81,7 +81,7 @@ async function typeText(text: string) {
   });
 }
 
-it("loads slash commands only on first slash and opens the picker when the deferred list arrives", async () => {
+it("preloads slash commands on mount, with no second request to open the picker, then opens once the deferred list arrives", async () => {
   const list = deferred<unknown>();
   const get = spyOn(api, "get").mockImplementation(() => list.promise);
   spies.push(get);
@@ -95,27 +95,30 @@ it("loads slash commands only on first slash and opens the picker when the defer
     </>;
   }
   view = await mount(<Composer />);
-  expect(get).not.toHaveBeenCalled();
-  await typeText("/");
+  // Preloaded eagerly on mount — not deferred until the first `/` — so the first slash
+  // typed already has an in-flight (or, in a warm tab, an already-settled) request behind it.
   expect(get).toHaveBeenCalledTimes(1);
   expect(get.mock.calls[0]![0]).toBe("/api/project/mobile-startup/chat/slash-items?providerId=claude&sessionId=slash-session");
   expect(view.container.textContent).not.toContain("Explain this project");
+  await typeText("/");
+  expect(get).toHaveBeenCalledTimes(1); // opening the picker joins the preload, no second GET
   await act(async () => list.resolve({ items: [{ type: "skill", name: "explain", description: "Explain this project" }], recentNames: [] }));
   expect(view.container.textContent).toContain("Explain this project");
 });
 
-it("requests the file index on the first @ interaction, without loading slash commands", async () => {
+it("requests the file index on the first @ interaction, without a second slash-items request", async () => {
   useFileStore.setState({ indexStatus: "idle", fileIndex: [] });
-  const get = spyOn(api, "get").mockResolvedValue([]);
+  const get = spyOn(api, "get").mockImplementation((path: string) =>
+    Promise.resolve(path.includes("/files/index") ? [] : { items: [], recentNames: [] }));
   spies.push(get);
   view = await mount(<MessageInput projectName="mobile-startup" onSend={() => {}} />);
-  expect(get).not.toHaveBeenCalled();
+  expect(get).toHaveBeenCalledTimes(1); // the mount-time slash preload
   await typeText("@");
-  expect(get).toHaveBeenCalledTimes(1);
-  expect(get.mock.calls[0]![0]).toContain("/files/index");
+  expect(get).toHaveBeenCalledTimes(2);
+  expect(get.mock.calls[1]![0]).toContain("/files/index");
   expect(useFileStore.getState().indexStatus).toBe("ready");
   await typeText("@src");
-  expect(get).toHaveBeenCalledTimes(1);
+  expect(get).toHaveBeenCalledTimes(2);
 });
 
 it("waits for the resolved provider before loading a slash picker opened during preparation", async () => {

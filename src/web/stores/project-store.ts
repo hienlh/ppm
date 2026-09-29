@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { api, getAuthToken } from "@/lib/api-client";
 import { resizeImageToWebp } from "@/lib/resize-image";
 import { useProjectFrameworkStore } from "@/stores/project-framework-store";
+import { idbDeletePrefix } from "@/lib/browser-cache/idb-keyval-cache";
+import { projectCacheId, providers as providersKey, type ProjectCacheRef } from "@/lib/browser-cache/cache-keys";
+import { forgetProjectHydration } from "@/lib/browser-cache/project-cache-hydration";
 
 export interface Project {
   name: string;
@@ -75,8 +78,15 @@ export type SortMode = "recent" | "priority" | "name";
 const SORT_KEY = "ppm-project-sort";
 
 function loadSortModeLS(): SortMode {
-  const v = localStorage.getItem(SORT_KEY);
-  return v === "recent" || v === "name" ? v : "priority";
+  // Runs at module load (it seeds the store's initial state below), so a
+  // storage-less environment — a test with no DOM, private browsing with
+  // storage disabled — must fall through to the default rather than throw.
+  try {
+    const v = localStorage.getItem(SORT_KEY);
+    return v === "recent" || v === "name" ? v : "priority";
+  } catch {
+    return "priority";
+  }
 }
 
 /** Sort projects by recent usage (most recent first) */
@@ -103,6 +113,24 @@ function saveCustomOrder(order: string[]) {
   try {
     localStorage.setItem(CUSTOM_ORDER_KEY, JSON.stringify(order));
   } catch { /* ignore */ }
+}
+
+/**
+ * Evicts a project's browser cache — its IndexedDB entries (slash, sessions,
+ * tags, all sharing the `projectCacheId` prefix), its localStorage provider
+ * list, and its hydration dedupe entry. A rename or a delete leaves the old
+ * `name + path` combination behind for good, so nothing will ever address
+ * this id again; there is nothing left to keep it around for.
+ */
+async function evictProjectCache(project: ProjectCacheRef): Promise<void> {
+  const id = projectCacheId(project);
+  await idbDeletePrefix(`${id}:`);
+  try {
+    localStorage.removeItem(providersKey(id));
+  } catch {
+    // ignore
+  }
+  forgetProjectHydration(id);
 }
 
 /** Resolve display order: custom order if set, else preserve server order */
@@ -273,13 +301,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   renameProject: async (name, newName) => {
+    const before = get().projects.find((p) => p.name === name);
     await api.patch(`/api/projects/${encodeURIComponent(name)}`, { name: newName });
+    if (before) void evictProjectCache(before);
     // Refetch to get updated list
     await get().fetchProjects();
   },
 
   deleteProject: async (name) => {
+    const before = get().projects.find((p) => p.name === name);
     await api.del(`/api/projects/${encodeURIComponent(name)}`);
+    if (before) void evictProjectCache(before);
     set((s) => {
       const projects = s.projects.filter((p) => p.name !== name);
       const customOrder = s.customOrder ? s.customOrder.filter((n) => n !== name) : null;

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { accountService } from "../../services/account.service.ts";
 import { accountSelector } from "../../services/account-selector.service.ts";
+import { pickClaudeAccount } from "../../services/account-pick.service.ts";
 import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts";
 import { getAllAccountUsages, getUsageForAccount, refreshUsageForAccount, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
@@ -60,11 +61,7 @@ accountsRoutes.get("/active", (c) => {
  * that session's binding. Null means nothing is usable right now, and the caller must say so
  * rather than showing a stale name.
  */
-accountsRoutes.post("/pick", (c) => {
-  const picked = accountSelector.next();
-  if (!picked) return c.json(ok(null));
-  return c.json(ok({ id: picked.id, label: picked.label ?? picked.email ?? null }));
-});
+accountsRoutes.post("/pick", (c) => c.json(ok(pickClaudeAccount())));
 
 /** GET /api/accounts/settings */
 accountsRoutes.get("/settings", (c) => {

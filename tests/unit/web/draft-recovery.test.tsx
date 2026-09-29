@@ -1,11 +1,17 @@
 import { afterAll, afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { act, StrictMode, useState } from "react";
 import { installDom, uninstallDom, mount, type Mounted } from "../../helpers/react-dom";
-import { useDraft } from "../../../src/web/hooks/use-draft";
-import { api } from "../../../src/web/lib/api-client";
 
 installDom();
 afterAll(uninstallDom);
+// Dynamic, and after installDom(): useDraft now reaches new-chat-prepare-client.ts,
+// which (via the account-claim hook) transitively imports panel-store.ts — and that
+// reads `localStorage` at import time. A static import above would have run before
+// installDom() ever executed, since ES imports are hoisted ahead of a module's own
+// top-level statements.
+const { useDraft } = await import("../../../src/web/hooks/use-draft");
+const { api } = await import("../../../src/web/lib/api-client");
+const { startPrepare, __clearPrepareForTest } = await import("../../../src/web/lib/new-chat-prepare-client");
 let view: Mounted | null = null;
 let current: ReturnType<typeof useDraft>;
 let selectSession: (id: string | null) => void;
@@ -23,6 +29,8 @@ afterEach(async () => {
   await view?.unmount(); view = null;
   for (const spy of spies.splice(0)) spy.mockRestore();
   sessionStorage.clear();
+  __clearPrepareForTest();
+  localStorage.clear();
 });
 async function remount(element: React.ReactNode) {
   await view?.unmount();
@@ -60,4 +68,37 @@ for (const tab of ["tab-a", ""]) it(`moves a pending first draft and clears both
   expect(current.draft).toBeNull();
   await remount(<Harness tab={tab} session="created" />);
   expect(current.draft).toBeNull();
+});
+
+it("joins the tab's own prepare for a brand-new draft, without a separate GET", async () => {
+  const get = spyOn(api, "get");
+  const post = spyOn(api, "post").mockResolvedValue({
+    resolvedProviderId: "claude", providerId: "claude",
+    settings: { default_provider: "claude", providers: {} }, providers: [],
+    pickedAccount: null, usage: null,
+    draft: { content: "from prepare", attachments: "[]", updatedAt: "" },
+    tags: null, slash: { items: [], recentNames: [] },
+  });
+  startPrepare("prepare-tab", { name: "project", path: "project" }, { providerId: "claude" });
+  view = await mount(<Harness tab="prepare-tab" />);
+  await act(async () => {});
+  expect(current.draft?.content).toBe("from prepare");
+  expect(get).not.toHaveBeenCalled();
+  post.mockRestore(); get.mockRestore();
+});
+
+it("a recovered local draft still wins over a fresher prepare draft after a reload", async () => {
+  view = await mount(<Harness tab="prepare-tab-2" />);
+  await act(async () => { current.saveDraft("unsaved text"); current.cancelPendingSave(); });
+  const post = spyOn(api, "post").mockResolvedValue({
+    resolvedProviderId: "claude", providerId: "claude",
+    settings: { default_provider: "claude", providers: {} }, providers: [],
+    pickedAccount: null, usage: null,
+    draft: { content: "stale prepare draft", attachments: "[]", updatedAt: "" },
+    tags: null, slash: { items: [], recentNames: [] },
+  });
+  startPrepare("prepare-tab-2", { name: "project", path: "project" }, { providerId: "claude" });
+  await remount(<Harness tab="prepare-tab-2" />);
+  expect(current.draft?.content).toBe("unsaved text");
+  post.mockRestore();
 });
