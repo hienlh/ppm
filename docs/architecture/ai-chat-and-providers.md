@@ -62,6 +62,41 @@ The mobile desktop sidebar is not mounted, and the closed mobile explorer does
 not mount its file tree. App-level file-index invalidation keeps cached paths
 fresh while the drawer is closed, without fetching an unused index.
 
+## New chat preparation
+
+`openTab()` resolves a new chat tab's provider and permission synchronously from the
+local cache (`chat-preference-local-cache.ts`): when AI settings and the project's
+cached provider list both exist and the resolved provider is still in that list, the
+tab opens "warm" with `permissionModeSource: "cache"`. Otherwise it opens with
+`providerPending: true` and the composer's own prepare resolves it.
+
+Every sessionless chat tab (new, `/clear`, a design's chat, a reload mid-resolution)
+fires exactly one `POST /api/project/:name/chat/prepare` on mount
+(`new-chat-prepare-client.ts`), deduped per tab id so a re-render or remount inside the
+post-settle join window does not POST again. Body: `{providerId?, focusedProvider?,
+skipPick?}` — `skipPick` is set once the tab already holds an account claim for the
+provider it is about to prepare, so one tab never consumes two accounts. Response
+(`src/services/chat-prepare/chat-prepare.service.ts`): `{resolvedProviderId,
+providerId, settings, providers, pickedAccount, usage, draft, tags, slash}`, where
+`pickedAccount` is `{id, label} | null | "timeout" | "skipped"`.
+
+Draft, tags and slash items each run under their own budget via `settleWithinBudget`
+(`src/services/chat-prepare/settle-within-budget.ts`) and fall back to `null` instead
+of delaying the response: slash 400ms, everything else 1000ms as a defensive cap on
+otherwise-instant reads. The account pick and its usage run as one sequential part
+beside those — Codex's pick is itself budgeted at 1500ms, and a picked account's usage
+gets its own 800ms budget. A timed-out Codex pick skips selection outright rather than
+risk advancing the round-robin or double-claiming an account.
+
+The response seeds every cache a consumer would otherwise fetch separately (settings,
+provider list, slash items, tags, usage, the account claim). On first send, the tab
+awaits its own prepare and applies the fresh permission only when its
+`permissionModeSource` is still `"cache"` — a mode the user picked, or one a
+resumed/inherited session carries, is never overwritten by a stale prepare.
+
+`GET /chat/usage` honours `?accountId=` for the Claude provider only when `?session=`
+is absent — a session's own binding always wins once one exists.
+
 ## Model discovery cache
 
 When opened, the chat model picker shares successful model lists across chat tabs, keyed by
@@ -428,7 +463,7 @@ parser batches so usage, health and other requests can run during a long read.
 Subagent lookups share a directory index within that history request. The
 synchronous reader remains available for provider operations that require it.
 
-Chat sockets receive a server heartbeat every 15 seconds. The client reconnects
+Chat sockets receive a server heartbeat every 5 seconds. The client reconnects
 after 45 seconds without any incoming frame, including sockets that still report
 OPEN, and checks for a stale connection when the tab becomes visible. Replay
 finishes before queued live frames are applied. If a turn becomes idle without a

@@ -72,6 +72,35 @@ settings before mounting chat or claiming an account. An unavailable provider pr
 for an available choice. Existing tabs, resumed sessions and explicit fork/clear
 providers are preserved; changing the setting only affects new tabs.
 
+## Shared session-list store
+
+`src/web/stores/session-list-store.ts` holds one recent-session list per project — its
+first page (50 sessions), tags, `isSyncing` and `lastSyncError` — so every surface that
+shows recent chats reads the same state instead of fetching its own copy: the sidebar
+history panel (including the mobile drawer), the welcome `SessionListPanel` (in
+`chat-welcome` and `editor-panel`), the tab bar / mobile nav's tag map, and
+`chat-history-bar`'s first page. It is hydrated from IndexedDB (see [Browser cache
+layer](data-and-storage.md#browser-cache-layer)) and kept fresh by one deduplicated sync
+per project (`GET /chat/sessions` + `/tags`, in-flight promises keyed outside the store
+so the dedupe check itself never triggers a re-render).
+
+Sync triggers (`session-list-sync-triggers.ts`): a consumer's first `ensure()` call, the
+tab going visible while its data is stale (`STALE_MS` = 15s), and a `/ws/global`
+reconnect (which re-syncs every project this browser already knows about, not just the
+active one — a background tab's tag map still reads the store). There is no polling.
+
+Local mutations (rename, pin, tag, delete, bulk-delete-older-than) patch the store
+optimistically before the request is sent, via `commitOptimistic`: on failure the
+project is re-synced, which replaces the optimistic rows with whatever the server still
+has — the rollback, without each call site keeping its own undo. A create or fork is
+upserted only after the server has answered, since only then is there a real session id
+to show. Search, load-more pagination, and design/onboarding session scans stay on their
+own direct requests — this store only ever holds the first page.
+
+A syncing indicator (`session-list-sync-indicator.tsx`, `role="status"`,
+`text-text-dim`) sits in the sidebar's header row and inline after "Recent chats" on the
+welcome panel — no tap target, outside the thumb zone.
+
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
 **Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints
