@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.9] - 2026-09-30
+
+### Fixed
+
+- The Codex usage refresh button fetches current quota for every account instead of showing a stored snapshot.
+- Codex account cards in an open usage panel update as background quota polling runs.
+
 ## [0.23.8] - 2026-09-30
 
 ### Changed
