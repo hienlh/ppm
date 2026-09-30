@@ -54,8 +54,8 @@ import { OnboardingRoot } from "@/components/onboarding/onboarding-root";
 const MobileExplorerSheet = lazy(() =>
   import("@/components/os-explorer/mobile/mobile-explorer-sheet").then((m) => ({ default: m.MobileExplorerSheet })),
 );
-const TeamMemberSheet = lazy(() =>
-  import("@/components/chat/team-member-sheet").then((m) => ({ default: m.TeamMemberSheet })),
+const AgentSessionSheet = lazy(() =>
+  import("@/components/chat/agent-session-sheet").then((m) => ({ default: m.AgentSessionSheet })),
 );
 const RemoteDesktopMobileSheet = lazy(() =>
   import("@/components/remote-desktop/remote-desktop-mobile-sheet").then((m) => ({ default: m.RemoteDesktopMobileSheet })),
@@ -390,12 +390,12 @@ export function App() {
           <MobileExplorerSheet />
         </Suspense>
 
-        {/* Mobile stand-in for the team-member window, which WindowLayer never renders below md */}
+        {/* Mobile stand-in for the agent-session window, which WindowLayer never renders below md */}
         <Suspense fallback={null}>
-          <TeamMemberSheet />
+          <AgentSessionSheet />
         </Suspense>
 
-        {/* Mobile full-screen remote-desktop viewer — same reason as TeamMemberSheet above */}
+        {/* Mobile full-screen remote-desktop viewer — same reason as AgentSessionSheet above */}
         <Suspense fallback={null}>
           <RemoteDesktopMobileSheet />
         </Suspense>

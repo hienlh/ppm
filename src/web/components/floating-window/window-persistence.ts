@@ -23,11 +23,12 @@ export interface PersistedWindow {
 
 /**
  * Kinds that may come back after a reload. Derived from WINDOW_KINDS so a new kind is
- * restorable by default; `team-member` is the one exclusion, because its body streams a
- * live subagent session that no longer exists after a reload — restoring it would open
- * an empty shell the user never asked for.
+ * restorable by default; `agent-session` is the one exclusion, because its body streams a
+ * live agent/teammate transcript that no longer exists after a reload — restoring it would
+ * open an empty shell the user never asked for. A persisted blob from before the kind was
+ * renamed (`team-member`) simply matches nothing here and is dropped the same way.
  */
-const RESTORABLE_KINDS: readonly WindowKind[] = WINDOW_KINDS.filter((k) => k !== "team-member");
+const RESTORABLE_KINDS: readonly WindowKind[] = WINDOW_KINDS.filter((k) => k !== "agent-session");
 const STATES: WindowVisualState[] = ["normal", "maximized", "minimized"];
 
 function isRect(v: unknown): v is Rect {

@@ -14,7 +14,7 @@
 import { Users } from "@/lib/icons";
 import type { TeamMemberActivity } from "@/hooks/use-team-activity-feed";
 import { currentStep, formatDuration, shortAgentType } from "./team-member-activity-format";
-import { useOpenTeamMember } from "./use-open-team-member";
+import { useOpenAgentSession } from "./use-open-agent-session";
 
 interface TeamWorkingBarProps {
   teamName: string;
@@ -23,7 +23,7 @@ interface TeamWorkingBarProps {
 }
 
 export function TeamWorkingBar({ teamName, members, projectName }: TeamWorkingBarProps) {
-  const openMember = useOpenTeamMember();
+  const openAgentSession = useOpenAgentSession();
   const working = members.filter((m) => m.workState === "working");
   if (!teamName || working.length === 0) return null;
 
@@ -37,7 +37,19 @@ export function TeamWorkingBar({ teamName, members, projectName }: TeamWorkingBa
           <button
             key={member.name}
             type="button"
-            onClick={() => openMember({ teamName, memberName: member.name, projectName })}
+            onClick={() =>
+              // teamName doubles as the session id for the common implicit-team case; this
+              // bar has no sessionId/providerId prop of its own (chat-tab.tsx, which does,
+              // is outside this phase's file ownership), so it defaults to Claude — phase 5
+              // replaces this bar with one driven by the hub's own running-agents feed.
+              openAgentSession({
+                projectName: projectName ?? "",
+                providerId: "claude",
+                sessionId: teamName,
+                source: { kind: "member", teamName, memberName: member.name },
+                title: `Session — ${member.name}`,
+              })
+            }
             className="flex w-full items-center gap-2 rounded px-1 py-1.5 min-h-[36px] text-left text-xs hover:bg-surface transition-colors"
             title={`Open ${member.name}'s work session`}
           >

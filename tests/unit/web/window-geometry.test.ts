@@ -5,7 +5,9 @@ import {
   cascadeSpawnRect,
   clampRect,
   nudgeRect,
+  portraitSpawnRect,
   windowZIndex,
+  CASCADE_STEP,
   KEEP_VISIBLE,
   MAX_WINDOWS,
   MIN_SIZE,
@@ -176,6 +178,32 @@ describe("gestureDisplacement", () => {
       dy: 25,
     });
     expect(gestureDisplacement([initial[0] + 10, initial[1]], initial, 0)).toEqual({ dx: 10, dy: 0 });
+  });
+});
+
+describe("portraitSpawnRect", () => {
+  it("spawns a ~9:16 rect pinned to the top-right", () => {
+    const r = portraitSpawnRect([], { w: 1280, h: 800 });
+    expect(r).toEqual(R(836, 48, 396, 704));
+  });
+
+  it("shrinks to the 360px minimum width on a short layer, without breaking MIN_SIZE.h", () => {
+    const r = portraitSpawnRect([], { w: 1280, h: 300 });
+    expect(r.w).toBe(MIN_SIZE.w);
+    expect(r.h).toBeGreaterThanOrEqual(MIN_SIZE.h);
+  });
+
+  it("cascades each new spawn and wraps back to the first slot after the cap", () => {
+    const bounds = { w: 1600, h: 900 };
+    const rects: Rect[] = [];
+    for (let i = 0; i < MAX_WINDOWS; i++) {
+      const r = portraitSpawnRect(rects, bounds);
+      expect(clampRect(r, bounds)).toEqual(r);
+      rects.push(r);
+    }
+    expect(rects[0]!.x - rects[1]!.x).toBe(CASCADE_STEP);
+    expect(rects[1]!.y - rects[0]!.y).toBe(CASCADE_STEP);
+    expect(portraitSpawnRect(rects, bounds)).toEqual(portraitSpawnRect([], bounds));
   });
 });
 

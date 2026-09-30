@@ -145,12 +145,18 @@ export function ToolCard({
   completed,
   projectName,
   bashPartialOutput,
+  variant = "chat",
 }: {
   tool: ChatEvent;
   result?: ChatEvent;
   completed?: boolean;
   projectName?: string;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
+  /** "window" inside an agent-session window: a nested Agent/Task card must keep expanding
+   *  inline there (the window already *is* the live view of that work) rather than opening
+   *  a second window — phase 5 reads this to decide when a card becomes a one-line summary
+   *  that opens a window versus one that only ever expands in place. No-op for now. */
+  variant?: "chat" | "window";
 }) {
   const [expanded, setExpanded] = useState(() => {
     // Edit/MultiEdit cards open by default so the inline diff is visible without
@@ -283,7 +289,7 @@ export function ToolCard({
           {partial && <StreamingBashOutput content={partial.content} lineCount={partial.lineCount} />}
           {/* Subagent children: render nested tool events */}
           {hasChildren && (
-            <SubagentChildren events={children!} projectName={projectName} />
+            <SubagentChildren events={children!} projectName={projectName} variant={variant} />
           )}
           {imagePath && (
             <ToolImagePreview filePath={imagePath} projectName={projectName ?? ""} />
@@ -753,7 +759,13 @@ function CollapsibleOutput({ output }: { output: string }) {
  *  session with the same step rendering the inline Agent card uses.
  *  `className` overrides the container so a full-height surface can drop the
  *  card's fixed max-height. */
-export function SubagentChildren({ events, projectName, className }: { events: ChatEvent[]; projectName?: string; className?: string }) {
+export function SubagentChildren({ events, projectName, className, variant = "chat" }: {
+  events: ChatEvent[];
+  projectName?: string;
+  className?: string;
+  /** Forwarded to every child `ToolCard` — see its own doc comment. */
+  variant?: "chat" | "window";
+}) {
   // Group children similar to InterleavedEvents: pair tool_use + tool_result, merge text
   type ChildGroup =
     | { kind: "text"; content: string }
@@ -806,7 +818,16 @@ export function SubagentChildren({ events, projectName, className }: { events: C
             </div>
           );
         }
-        return <ToolCard key={`sc-${i}`} tool={g.tool} result={g.result} completed={!!(g.result)} projectName={projectName} />;
+        return (
+          <ToolCard
+            key={`sc-${i}`}
+            tool={g.tool}
+            result={g.result}
+            completed={!!(g.result)}
+            projectName={projectName}
+            variant={variant}
+          />
+        );
       })}
     </div>
   );

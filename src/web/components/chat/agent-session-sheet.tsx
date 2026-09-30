@@ -1,28 +1,28 @@
 /**
- * Full-screen mobile presentation of a teammate's work session.
+ * Full-screen mobile presentation of an agent's or teammate's work session.
  *
- * Hosts the same content component the desktop floating window uses, so the steps,
- * refresh and error states are shared code rather than a parallel mobile build.
- * Self-gated singleton, mounted once at the app root beside the other overlays.
+ * Hosts the same content component the desktop floating window uses, so steps, prompt and
+ * status are shared code rather than a parallel mobile build. Self-gated singleton, mounted
+ * once at the app root beside the other overlays.
  */
 
 import { lazy, Suspense } from "react";
 import { X } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
-import { useTeamMemberSheet } from "./use-open-team-member";
+import { useAgentSessionSheetStore } from "./agent-session-sheet-store";
 
-const TeamMemberWindowContent = lazy(() => import("./team-member-window-content"));
+const AgentSessionWindowContent = lazy(() => import("./agent-session-window-content"));
 
-export function TeamMemberSheet() {
-  const payload = useTeamMemberSheet((s) => s.payload);
-  const close = useTeamMemberSheet((s) => s.close);
+export function AgentSessionSheet() {
+  const payload = useAgentSessionSheetStore((s) => s.payload);
+  const close = useAgentSessionSheetStore((s) => s.close);
   if (!payload) return null;
 
   return (
     <BottomSheet open onClose={close} zIndex={45} className="flex h-[var(--sheet-vh)] flex-col p-0">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 shrink-0">
         <span className="truncate text-sm font-medium text-text-primary">
-          Session — {payload.memberName}
+          {payload.title ?? "Agent session"}
         </span>
         <button
           type="button"
@@ -36,8 +36,8 @@ export function TeamMemberSheet() {
       <div className="min-h-0 flex-1 overflow-auto">
         <Suspense fallback={<div className="p-4 text-sm text-text-2">Loading…</div>}>
           {/* No floating window backs this sheet, so the id is only an identity for the content. */}
-          <TeamMemberWindowContent
-            id={`sheet-${payload.memberName}`}
+          <AgentSessionWindowContent
+            id={`sheet-${payload.sessionId}`}
             payload={payload as unknown as Record<string, unknown>}
           />
         </Suspense>

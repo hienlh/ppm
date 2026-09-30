@@ -19,7 +19,7 @@ export interface WindowContentProps {
 
 export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentType<WindowContentProps>>> = {
   explorer: lazy(() => import("@/components/os-explorer/explorer-window-content")),
-  "team-member": lazy(() => import("@/components/chat/team-member-window-content")),
+  "agent-session": lazy(() => import("@/components/chat/agent-session-window-content")),
   "system-monitor": lazy(() => import("@/components/system/system-monitor-window-content")),
   "tab-host": lazy(() => import("./tab-host-window-content")),
   "remote-desktop": lazy(() => import("@/components/remote-desktop/remote-desktop-window-content")),
@@ -30,10 +30,9 @@ export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentTyp
 export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>): string {
   const explicit = payload?.title;
   if (typeof explicit === "string" && explicit.trim()) return explicit;
-  if (kind === "team-member") {
-    const member = payload?.memberName;
-    return typeof member === "string" && member ? `Session — ${member}` : "Team member";
-  }
+  // Every agent-session window is opened with an explicit title (member name or card
+  // description) by its opener, so this only fires for a malformed/legacy payload.
+  if (kind === "agent-session") return "Agent session";
   if (kind === "system-monitor") return "System Monitor";
   if (kind === "remote-desktop") return "Remote Desktop";
   if (kind === "settings") return "Settings";

@@ -11,12 +11,18 @@ import { RefreshCw } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
-import { useOpenTeamMember } from "./use-open-team-member";
+import { useOpenAgentSession } from "./use-open-agent-session";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
 import { TeamMemberList } from "./team-member-list";
 import { TeamMessageList } from "./team-message-list";
+import type { AgentTranscriptProviderId } from "../../../shared/agent-transcript-protocol";
 
 type TeamTab = "members" | "messages";
+
+/** Claude and Codex are the only hubs that exist — anything else falls back to Claude. */
+function normalizeProviderId(id: string | undefined): AgentTranscriptProviderId {
+  return id === "codex" ? "codex" : "claude";
+}
 
 interface TeamActivityPanelProps {
   teamNames: string[];
@@ -25,6 +31,10 @@ interface TeamActivityPanelProps {
   sessionId?: string | null;
   /** Passed to a member window so its steps resolve project-relative paths. */
   projectName?: string;
+  /** Which provider's hub to subscribe the session window on. Not yet forwarded by
+   *  `chat-history-bar.tsx` (out of this phase's file ownership) — defaults to Claude,
+   *  the common case, until that wiring lands. */
+  providerId?: string;
 }
 
 /** Implicit teams are named after the session, which is an unreadable uuid. */
@@ -32,10 +42,10 @@ function teamLabel(name: string, sessionId?: string | null): string {
   return name === sessionId ? "Team (current session)" : name;
 }
 
-export function TeamActivityPanel({ teamNames, messages, sessionId, projectName }: TeamActivityPanelProps) {
+export function TeamActivityPanel({ teamNames, messages, sessionId, projectName, providerId }: TeamActivityPanelProps) {
   const [selectedTeam, setSelectedTeam] = useState(teamNames[0] ?? "");
   const [tab, setTab] = useState<TeamTab>("members");
-  const openMember = useOpenTeamMember();
+  const openAgentSession = useOpenAgentSession();
   // Touch needs the 44px minimum even at desktop width; a mouse does not.
   const coarse = usePrefersCoarsePointer();
 
@@ -51,9 +61,20 @@ export function TeamActivityPanel({ teamNames, messages, sessionId, projectName 
 
   const openMemberSession = useCallback(
     (memberName: string) => {
-      openMember({ teamName: selectedTeam, memberName, projectName });
+      // Implicit teams are named after the session id, so this is exact for the common case;
+      // an explicit (named, reused-across-sessions) team falls back to its own name, which is
+      // wrong for the hub's per-session subscription but no worse than today's handle lookup.
+      const resolvedSessionId = sessionId ?? selectedTeam;
+      if (!resolvedSessionId) return;
+      openAgentSession({
+        projectName: projectName ?? "",
+        providerId: normalizeProviderId(providerId),
+        sessionId: resolvedSessionId,
+        source: { kind: "member", teamName: selectedTeam, memberName },
+        title: `Session — ${memberName}`,
+      });
     },
-    [openMember, selectedTeam, projectName],
+    [openAgentSession, selectedTeam, projectName, providerId, sessionId],
   );
 
   /**

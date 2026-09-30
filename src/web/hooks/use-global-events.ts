@@ -5,6 +5,14 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { syncRunningSessions } from "@/lib/sync-running-sessions";
 import { syncAllKnownProjects } from "@/stores/session-list-sync-triggers";
+import { notifyGlobalReady, sendIfOpen, setGlobalWsClient } from "@/lib/global-ws-channel";
+
+/** How often the client pings — well under the server's own idle timeout, so a live but
+ *  silent socket never gets reaped as dead. */
+const PING_INTERVAL_MS = 20_000;
+/** No message (including a pong) for this long means the socket is dead even though it
+ *  never fired close/error — force a fresh connect rather than waiting on the browser. */
+const IDLE_TIMEOUT_MS = 45_000;
 
 /**
  * App-wide event bus client (`/ws/global`).
@@ -30,8 +38,18 @@ import { syncAllKnownProjects } from "@/stores/session-list-sync-triggers";
  *   `design:comments_changed`). A design's `.design/` folder is not watched, so these
  *   are the only signal that its snapshots or comments changed.
  *
+ * - `agent-transcript:events` / `agent-transcript:error` / `agent-activity` → re-dispatched
+ *   as window events for `useAgentSessionStream` and the running-agents bar. Several of
+ *   those hooks can be subscribed at once (one per open session window), each filtering the
+ *   broadcast down to its own `subId` — same pattern as the other re-dispatches here.
+ *
  * Also tells the server which project to watch, so file watching follows the
  * active project instead of depending on a chat socket existing.
+ *
+ * Registers its `WsClient` with `global-ws-channel` and pings every 20s: the hub protocol's
+ * subscriptions (`useAgentSessionStream`) must never queue a send while this socket is
+ * down, so they need to know the instant it actually goes idle rather than only on the next
+ * browser-level close/error.
  */
 export function useGlobalEvents(enabled: boolean, projectName?: string): void {
   const clientRef = useRef<WsClient | null>(null);
@@ -44,8 +62,11 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
     if (!enabled) return;
 
     const token = getAuthToken();
-    const client = new WsClient(`/ws/global${token ? `?token=${encodeURIComponent(token)}` : ""}`);
+    const client = new WsClient(`/ws/global${token ? `?token=${encodeURIComponent(token)}` : ""}`, {
+      idleTimeoutMs: IDLE_TIMEOUT_MS,
+    });
     clientRef.current = client;
+    setGlobalWsClient(client);
 
     const unsubscribe = client.onMessage((event) => {
       let data: { type?: string; [k: string]: unknown };
@@ -68,6 +89,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         // device renamed, pinned or deleted a session) — re-sync every
         // project this browser already knows about.
         syncAllKnownProjects();
+        notifyGlobalReady();
         return;
       }
 
@@ -103,17 +125,28 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         return;
       }
 
-      if (type.startsWith("jira:") || type.startsWith("tunnel:") || type.startsWith("design:")) {
+      if (
+        type.startsWith("jira:")
+        || type.startsWith("tunnel:")
+        || type.startsWith("design:")
+        || type.startsWith("agent-transcript:")
+        || type === "agent-activity"
+      ) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));
       }
     });
 
     client.connect();
+    const pingTimer = setInterval(() => {
+      sendIfOpen(JSON.stringify({ type: "ping" }));
+    }, PING_INTERVAL_MS);
 
     return () => {
+      clearInterval(pingTimer);
       unsubscribe();
       client.disconnect();
       clientRef.current = null;
+      setGlobalWsClient(null);
     };
   }, [enabled]);
 
