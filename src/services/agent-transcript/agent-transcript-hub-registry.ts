@@ -57,7 +57,7 @@ export function getOrCreateHub(owned: OwnedSession): SessionHub {
   const key = hubKey(owned.providerId, owned.sessionId);
   const existing = sessionHubs.get(key);
   if (existing) return existing;
-  const hub = createSessionHub(key, owned, dropClientEverywhere, tokenStillValid);
+  const hub = createSessionHub(key, owned, dropClientEverywhere, unregisterTranscriptSub, tokenStillValid);
   sessionHubs.set(key, hub);
   return hub;
 }

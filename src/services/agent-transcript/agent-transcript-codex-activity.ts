@@ -10,9 +10,8 @@
  * way to find further descendants, bounded in both count and depth so a
  * runaway spawn loop cannot make this unbounded work.
  */
-import { statSync } from "node:fs";
 import { dirname } from "node:path";
-import { agentTranscriptFsIo, statSizeSafe } from "./agent-transcript-fs-io.ts";
+import { cachedReadTailText, mtimeOf } from "./agent-transcript-codex-tail-cache.ts";
 import { agentTranscriptClock } from "./agent-transcript-hub-clock.ts";
 import { completeLines, parseLine } from "../../providers/codex-app-server/codex-rollout-header.ts";
 import { parseSubagentActivity } from "../../providers/codex-app-server/codex-subagent-thread.ts";
@@ -20,7 +19,6 @@ import { mapRolloutItem } from "../../providers/codex-app-server/codex-rollout-i
 import { findRolloutByThreadId, isCodexRolloutPath } from "../../providers/codex-app-server/codex-history.ts";
 import { INDEX_REFRESH_MS } from "../../shared/agent-transcript-protocol.ts";
 
-const TAIL_BYTES = 256 * 1024;
 /** How many spawn levels deep the descendant scan follows before giving up. */
 const MAX_DESCENDANT_DEPTH = 8;
 /** Hard cap so a runaway spawn loop cannot make this scan unbounded. */
@@ -74,19 +72,6 @@ export interface CodexDescendant {
   lastStep?: string;
 }
 
-/** Read the tail of a file as text, dropping a possibly-partial first line. */
-function readTailText(path: string): { text: string; size: number } | null {
-  const size = statSizeSafe(path);
-  if (size === null) return null;
-  const start = Math.max(0, size - TAIL_BYTES);
-  const buf = agentTranscriptFsIo.readRange(path, start, size - start);
-  const text = buf.toString("utf8");
-  // A mid-file read almost always starts inside a record; `completeLines`
-  // already drops an unterminated trailing line, this drops the stray
-  // leading one the same way a truncated head would.
-  return { text: start > 0 ? text.slice(text.indexOf("\n") + 1) : text, size };
-}
-
 /** A short, one-line label for the most recent tool call in a tail of rollout records. */
 function lastStepFromLines(lines: string[]): string | undefined {
   let label: string | undefined;
@@ -125,7 +110,7 @@ function subagentActivityFromLines(lines: string[]): Map<string, boolean> {
  * child), each resolved to its own file and last-write time.
  */
 function directDescendants(rolloutPath: string, dirs: string[], projectPath: string): CodexDescendant[] {
-  const tail = readTailText(rolloutPath);
+  const tail = cachedReadTailText(rolloutPath);
   if (!tail) return [];
   const lines = completeLines(tail.text);
   const activity = subagentActivityFromLines(lines);
@@ -142,7 +127,7 @@ function directDescendants(rolloutPath: string, dirs: string[], projectPath: str
       if (found && isCodexRolloutPath(found)) { file = found; break; }
     }
     if (!file) continue;
-    const childTail = readTailText(file);
+    const childTail = cachedReadTailText(file);
     out.push({
       threadId,
       path: file,
@@ -152,14 +137,6 @@ function directDescendants(rolloutPath: string, dirs: string[], projectPath: str
     });
   }
   return out;
-}
-
-function mtimeOf(path: string): number {
-  try {
-    return statSync(path).mtimeMs;
-  } catch {
-    return 0;
-  }
 }
 
 /**

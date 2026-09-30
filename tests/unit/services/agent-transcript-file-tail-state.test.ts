@@ -13,6 +13,11 @@ import { join } from "node:path";
 import { createFileTailState } from "../../../src/services/agent-transcript/agent-transcript-file-tail-state.ts";
 import { processFileTail } from "../../../src/services/agent-transcript/agent-transcript-file-tail-feed.ts";
 import type { TranscriptFileRef } from "../../../src/services/agent-transcript/agent-transcript-sources.ts";
+import type { AgentTranscriptEventsMsg } from "../../../src/shared/agent-transcript-protocol.ts";
+// Read-only import of the CLIENT's own merge reducer — N1's whole point is
+// that the server's `k`/`replace` choices must produce the right result once
+// they reach this exact function, not just look right in isolation.
+import { applyEnvelopeBatch } from "../../../src/web/lib/agent-session-stream-merge.ts";
 
 describe("agent transcript file tail state", () => {
   let dir: string;
@@ -76,14 +81,16 @@ describe("agent transcript file tail state", () => {
     expect(processFileTail(fstate, Date.now()).envelopes).toEqual([]);
   });
 
-  // M1 — a Codex tool_result answering an earlier tool_use reuses that
-  // tool_use's original `k` rather than minting a new, unmatchable one.
-  it("M1: a Codex replace envelope reuses the original envelope's key", () => {
+  // M1 / N1 — a `CommandExecution` item emits a `tool_use` AND a `tool_result`
+  // SHARING the same toolUseId. The tail parser flags the second one
+  // `replace` purely because it has seen that id before (it does not track
+  // which TYPE saw it) — reusing the key by id alone made the tool_result
+  // overwrite the tool_use in place and the step disappeared client-side
+  // (N1). The fix keys the replacement map by `${type}:${toolUseId}`, so a
+  // tool_result never reuses a tool_use's key: each keeps its own, distinct.
+  it("N1: a CommandExecution's tool_use and tool_result get distinct keys, neither replacing the other", () => {
     dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
     const file = join(dir, "rollout-x.jsonl");
-    // One line so the tool_use and tool_result are produced in the SAME
-    // read, which is exactly where a freshly-minted key would differ most
-    // obviously from the original.
     writeFileSync(file, codexHeader() + codexItemCompleted("call1", "output", "2026-10-01T00:00:01Z"));
     const ref: TranscriptFileRef = { key: "root-session", path: file, provider: "codex" };
     const fstate = createFileTailState(ref, 0, Date.now());
@@ -93,8 +100,55 @@ describe("agent transcript file tail state", () => {
     const [toolUse, toolResult] = result.envelopes;
     expect(toolUse!.ev.type).toBe("tool_use");
     expect(toolResult!.ev.type).toBe("tool_result");
-    expect(toolResult!.replace).toBe(true);
-    expect(toolResult!.k).toBe(toolUse!.k);
+    expect(toolUse!.k).not.toBe(toolResult!.k);
+    // Neither is a "replace" — there is nothing of the SAME type to replace yet.
+    expect(toolUse!.replace).toBeUndefined();
+    expect(toolResult!.replace).toBeUndefined();
+  });
+
+  // N1 — a genuine re-emit (a second record naming the SAME tool call id)
+  // replaces only the entry of the SAME type: the second tool_use reuses the
+  // first tool_use's key, the second tool_result reuses the first
+  // tool_result's key, and the two families never cross.
+  it("N1: a replayed tool_use for the same id replaces only the tool_use, not the tool_result", () => {
+    dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
+    const file = join(dir, "rollout-x.jsonl");
+    writeFileSync(
+      file,
+      codexHeader()
+        + codexItemCompleted("call1", "first output", "2026-10-01T00:00:01Z")
+        + codexItemCompleted("call1", "updated output", "2026-10-01T00:00:02Z"),
+    );
+    const ref: TranscriptFileRef = { key: "root-session", path: file, provider: "codex" };
+    const fstate = createFileTailState(ref, 0, Date.now());
+
+    const result = processFileTail(fstate, Date.now());
+    expect(result.envelopes).toHaveLength(4);
+    const [toolUse1, toolResult1, toolUse2, toolResult2] = result.envelopes;
+    expect(toolUse2!.replace).toBe(true);
+    expect(toolResult2!.replace).toBe(true);
+    expect(toolUse2!.k).toBe(toolUse1!.k); // the SECOND tool_use replaces the FIRST tool_use
+    expect(toolResult2!.k).toBe(toolResult1!.k); // likewise for the tool_results
+    expect(toolUse1!.k).not.toBe(toolResult1!.k); // the two families never cross
+  });
+
+  // N1 end-to-end — the server's envelopes fed through the CLIENT's own
+  // merge reducer must leave both a tool_use and a tool_result behind, not
+  // one silently overwriting the other.
+  it("N1 end-to-end: applyEnvelopeBatch keeps both the tool_use and tool_result entries", () => {
+    dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
+    const file = join(dir, "rollout-x.jsonl");
+    writeFileSync(file, codexHeader() + codexItemCompleted("call1", "output", "2026-10-01T00:00:01Z"));
+    const ref: TranscriptFileRef = { key: "root-session", path: file, provider: "codex" };
+    const fstate = createFileTailState(ref, 0, Date.now());
+    const result = processFileTail(fstate, Date.now());
+
+    const msg: AgentTranscriptEventsMsg = {
+      type: "agent-transcript:events", subId: "s1", events: result.envelopes,
+      cursor: {}, available: true, running: true,
+    };
+    const entries = applyEnvelopeBatch([], msg);
+    expect(entries.map((e) => e.ev.type).sort()).toEqual(["tool_result", "tool_use"]);
   });
 
   // H6 — a single tick must not read an unbounded amount of a file: a large

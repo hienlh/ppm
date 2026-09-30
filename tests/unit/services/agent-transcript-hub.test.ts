@@ -29,14 +29,17 @@ import { tickActivity } from "../../../src/services/agent-transcript/agent-trans
 import {
   _computeRunningAgentsCallCountForTest, _resetComputeRunningAgentsCallCountForTest,
 } from "../../../src/services/agent-transcript/agent-transcript-activity.ts";
+import { _resetCodexDescendantLookupCache } from "../../../src/services/agent-transcript/agent-transcript-codex-activity.ts";
+import { _resetCodexTailReadCache } from "../../../src/services/agent-transcript/agent-transcript-codex-tail-cache.ts";
 import {
   _debugHubSnapshotForTest, _getSessionHubForTest, _resetAgentTranscriptHubForTest,
   handleAgentActivitySubscribe, handleAgentActivityUnsubscribe, handleAgentTranscriptClientClosed,
   handleAgentTranscriptSubscribe, handleAgentTranscriptUnsubscribe,
 } from "../../../src/services/agent-transcript/agent-transcript-hub.ts";
 import type { AgentTranscriptWsLike } from "../../../src/services/agent-transcript/agent-transcript-ws-like.ts";
-import type {
-  AgentActivityMsg, AgentTranscriptErrorMsg, AgentTranscriptEventsMsg,
+import {
+  IDLE_TICK_MS, LIVE_TICK_MS,
+  type AgentActivityMsg, type AgentTranscriptErrorMsg, type AgentTranscriptEventsMsg,
 } from "../../../src/shared/agent-transcript-protocol.ts";
 
 const PROJECT_A = "project-a";
@@ -78,6 +81,8 @@ describe("agent transcript hub", () => {
     _resetAgentTranscriptIndexCache();
     _resetAgentTranscriptHubForTest();
     _resetComputeRunningAgentsCallCountForTest();
+    _resetCodexDescendantLookupCache();
+    _resetCodexTailReadCache();
     resetAgentTranscriptClockForTest();
     resetAgentTranscriptFsIoForTest();
     noOpTimers();
@@ -739,5 +744,158 @@ describe("agent transcript hub", () => {
     const ws = makeWs();
     subscribe(ws, "s1", "toolu_old");
     expect(eventsMessages(ws)[0]!.running).toBe(false);
+  });
+
+  // ── Round 2 ──
+
+  // N2 — a Codex descendant discovered via `links` (a nested grandchild) must
+  // survive an unsubscribe/resubscribe cycle carrying the cursor the server
+  // itself handed out for it, not just the direct card's own thread.
+  it("N2: a Codex descendant discovered via links survives a resubscribe with the old cursor", () => {
+    const ROOT = "77777777-1111-2222-3333-444444444444";
+    const CHILD_A = "88888888-1111-2222-3333-444444444444";
+    const GRANDCHILD_B = "99999999-1111-2222-3333-444444444444";
+    writeCodexSession(ROOT, PROJECT_A_PATH);
+    const childFile = writeCodexHeaderOnly(CHILD_A, PROJECT_A_PATH, ROOT);
+    const grandchildFile = writeCodexHeaderOnly(GRANDCHILD_B, PROJECT_A_PATH, CHILD_A);
+    appendFileSync(grandchildFile, codexItemCompleted("gc-call1", "grandchild output", "2026-10-01T00:00:01Z"));
+    appendFileSync(childFile, subagentActivityLine(GRANDCHILD_B, "started", "2026-10-01T00:00:02Z"));
+
+    const ws1 = makeWs();
+    handleAgentTranscriptSubscribe(ws1, {
+      type: "agent-transcript:subscribe", subId: "s1", projectName: PROJECT_A,
+      providerId: "codex", sessionId: ROOT, source: { kind: "card", cardId: `subagent-${CHILD_A}` },
+    });
+    const firstCursor = eventsMessages(ws1)[0]!.cursor;
+    expect(Object.keys(firstCursor)).toEqual(expect.arrayContaining([CHILD_A, GRANDCHILD_B]));
+    handleAgentTranscriptUnsubscribe(ws1, { type: "agent-transcript:unsubscribe", subId: "s1" });
+
+    // A new step lands in the grandchild's OWN rollout while nobody is subscribed.
+    appendFileSync(grandchildFile, codexItemCompleted("gc-call2", "second output", "2026-10-01T00:00:03Z"));
+
+    const ws2 = makeWs();
+    handleAgentTranscriptSubscribe(ws2, {
+      type: "agent-transcript:subscribe", subId: "s2", projectName: PROJECT_A,
+      providerId: "codex", sessionId: ROOT, source: { kind: "card", cardId: `subagent-${CHILD_A}` },
+      cursor: firstCursor,
+    });
+    const allEvents = eventsMessages(ws2).flatMap((m) => m.events);
+    expect(allEvents.some((e) => e.ev.type === "tool_result" && (e.ev as any).output === "second output")).toBe(true);
+  });
+
+  // N3 — a throw while processing one subscription must drop only that one:
+  // the client is told via a normal `agent-transcript:error`, and any other
+  // subscription the same socket holds keeps streaming.
+  it("N3: a throw in one subscription's tick drops only that subscription, not the whole client", () => {
+    const sessionDir = ownClaude();
+    writeCard(sessionDir, "toolu_a", "agenta");
+    const fileB = writeCard(sessionDir, "toolu_b", "agentb");
+    const ws = makeWs();
+    subscribe(ws, "sA", "toolu_a");
+    subscribe(ws, "sB", "toolu_b");
+    expect(_debugHubSnapshotForTest("claude", SESSION_ID).transcriptSubs).toBe(2);
+
+    const hub = _getSessionHubForTest("claude", SESSION_ID)!;
+    const subA = hub.subscriptions.get(ws)!.get("sA")!;
+    (subA as any).files = null; // simulate an unexpected internal failure reading THIS subscription only
+
+    appendFileSync(fileB, toolResultLine("tu1", "still alive"));
+    agentTranscriptClock.now = () => Date.now() + 1000;
+    expect(() => tickTranscripts(hub)).not.toThrow();
+
+    // subA: dropped, the client told exactly once, nothing else.
+    expect(_debugHubSnapshotForTest("claude", SESSION_ID).transcriptSubs).toBe(1);
+    expect(ws.sent.filter((m) => m.type === "agent-transcript:error")).toEqual([
+      { type: "agent-transcript:error", subId: "sA", code: "bad_request" },
+    ]);
+
+    // subB: unaffected, still streaming on the SAME socket.
+    const bMsgs = eventsMessages(ws).filter((m) => m.subId === "sB");
+    expect(bMsgs.some((m) => m.events.some((e) => e.ev.type === "tool_result"))).toBe(true);
+  });
+
+  // N4 — a throwing read on the activity ticker (an un-awaited `setInterval`
+  // callback) must never surface as an unhandled promise rejection.
+  it("N4: a throwing Codex descendant read does not produce an unhandled rejection", async () => {
+    const ROOT = "77777777-1111-2222-3333-444444444444";
+    const rootFile = writeCodexHeaderOnly(ROOT, PROJECT_A_PATH);
+    appendFileSync(rootFile, subagentActivityLine("88888888-1111-2222-3333-444444444444", "started", "2026-10-01T00:00:01Z"));
+
+    const ws = makeWs();
+    handleAgentActivitySubscribe(ws, {
+      type: "agent-activity:subscribe", subId: "a1", projectName: PROJECT_A, providerId: "codex", sessionId: ROOT,
+    });
+    const hub = _getSessionHubForTest("codex", ROOT)!;
+
+    let unhandled: unknown = null;
+    const onUnhandled = (reason: unknown) => { unhandled = reason; };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      agentTranscriptFsIo.readRange = () => {
+        throw new Error("simulated EIO");
+      };
+      await tickActivity(hub);
+      await new Promise((r) => setTimeout(r, 10)); // let a stray rejection surface, if any
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(unhandled).toBeNull();
+  });
+
+  // N5 — a large, already-idle (by mtime) backlog must drain at the LIVE
+  // cadence until fully caught up (not the 2s idle cadence), and `more` must
+  // stay true across the whole drain.
+  it("N5: a large old backlog drains at the fast cadence until caught up, then idle", () => {
+    const sessionDir = ownClaude();
+    writeBigCard(sessionDir, "toolu_oldbig", "agentoldbig", 8000); // comfortably over the 512KB budget
+    agentTranscriptFsIo.statMtimeMs = () => Date.now() - 5 * 60_000;
+
+    const ws = makeWs();
+    subscribe(ws, "s1", "toolu_oldbig");
+    const first = eventsMessages(ws)[0]!;
+    expect(first.running).toBe(false); // idle by mtime (M4)
+    expect(first.more).toBe(true); // backlog remains past the read budget (H6)
+
+    const hub = _getSessionHubForTest("claude", SESSION_ID)!;
+    const sub = hub.subscriptions.get(ws)!.get("s1")!;
+    expect(sub.nextTickAt - Date.now()).toBeLessThan(IDLE_TICK_MS); // fast cadence despite `running: false`
+
+    let fakeNow = Date.now();
+    let guard = 0;
+    while (guard < 50) {
+      fakeNow += 260;
+      agentTranscriptClock.now = () => fakeNow;
+      tickTranscripts(hub);
+      guard++;
+      if (!eventsMessages(ws).at(-1)!.more) break;
+    }
+    expect(guard).toBeLessThan(50); // actually finished, did not loop forever
+    expect(sub.nextTickAt - fakeNow).toBeGreaterThanOrEqual(IDLE_TICK_MS); // caught up AND idle → slows down
+  });
+
+  // H5 remainder — an unchanged Codex descendant's 256KB tail read is not
+  // repeated every 3s tick; only its cheap stat is.
+  it("H5 remainder: an unchanged Codex descendant's tail is read once, not every tick", async () => {
+    const ROOT = "77777777-1111-2222-3333-444444444444";
+    const CHILD = "88888888-1111-2222-3333-444444444444";
+    const rootFile = writeCodexHeaderOnly(ROOT, PROJECT_A_PATH);
+    appendFileSync(rootFile, subagentActivityLine(CHILD, "started", "2026-10-01T00:00:01Z"));
+    writeCodexHeaderOnly(CHILD, PROJECT_A_PATH, ROOT);
+
+    // Installed before the FIRST read (the subscribe-time compute runs
+    // synchronously for Codex) so that read is the one counted as "first".
+    let readCalls = 0;
+    agentTranscriptFsIo.readRange = (p, s, l) => { readCalls++; return realAgentTranscriptFsIo.readRange(p, s, l); };
+
+    const ws = makeWs();
+    handleAgentActivitySubscribe(ws, {
+      type: "agent-activity:subscribe", subId: "a1", projectName: PROJECT_A, providerId: "codex", sessionId: ROOT,
+    });
+    const hub = _getSessionHubForTest("codex", ROOT)!;
+    const afterFirst = readCalls;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    await tickActivity(hub); // nothing changed on disk since the first tick
+    expect(readCalls).toBe(afterFirst);
   });
 });

@@ -31,10 +31,18 @@ export function addActivitySubscription(hub: SessionHub, ws: AgentTranscriptWsLi
   }
   subIds.add(subId);
   ensureActivityTicker(hub);
+  // Guarded the same way `tickActivity` is below: this runs un-awaited, so a
+  // throw anywhere in `computeRunningAgents` (a descendant read racing a
+  // delete, a locked rollout) would otherwise become an unhandled rejection
+  // rather than something this function can react to.
   void (async () => {
-    const now = agentTranscriptClock.now();
-    const running = await computeRunningAgents(hub.owned, now);
-    if (!hub.tokenStillValid(ws) || !pushActivity(ws, [subId], running)) hub.onSendFailure(ws);
+    try {
+      const now = agentTranscriptClock.now();
+      const running = await computeRunningAgents(hub.owned, now);
+      if (!hub.tokenStillValid(ws) || !pushActivity(ws, [subId], running)) hub.onSendFailure(ws);
+    } catch {
+      console.warn(`[agent-activity] hub=${hub.key} subId=${subId} initial compute failed`);
+    }
   })();
 }
 
@@ -67,16 +75,29 @@ function pushActivity(ws: AgentTranscriptWsLike, subIds: string[], running: Agen
   return true;
 }
 
-/** One 3s wake: compute the running list once for the whole hub and fan it out
- *  to every subscriber — a per-session scan (Codex especially) is not cheap
- *  enough to repeat once per client watching the same session. */
+/**
+ * One 3s wake: compute the running list once for the whole hub and fan it
+ * out to every subscriber — a per-session scan (Codex especially) is not
+ * cheap enough to repeat once per client watching the same session.
+ *
+ * Wrapped in its own try/catch because this is invoked as `void tickActivity(hub)`
+ * (fire-and-forget, from an un-awaited `setInterval` callback): a throw
+ * anywhere in `computeRunningAgents` — a descendant rollout that disappears
+ * or locks up between the stat and the read that bounds it — would otherwise
+ * surface as an unhandled promise rejection, counted the same way an
+ * uncaught exception is, on a 3s timer instead of the 250ms one C1 fixed.
+ */
 export async function tickActivity(hub: SessionHub): Promise<void> {
   if (hub.activitySubs.size === 0) return;
-  const now = agentTranscriptClock.now();
-  const running = await computeRunningAgents(hub.owned, now);
-  const failed: AgentTranscriptWsLike[] = [];
-  for (const [ws, subIds] of hub.activitySubs) {
-    if (!hub.tokenStillValid(ws) || !pushActivity(ws, [...subIds], running)) failed.push(ws);
+  try {
+    const now = agentTranscriptClock.now();
+    const running = await computeRunningAgents(hub.owned, now);
+    const failed: AgentTranscriptWsLike[] = [];
+    for (const [ws, subIds] of hub.activitySubs) {
+      if (!hub.tokenStillValid(ws) || !pushActivity(ws, [...subIds], running)) failed.push(ws);
+    }
+    for (const ws of failed) hub.onSendFailure(ws);
+  } catch {
+    console.warn(`[agent-activity] hub=${hub.key} tick failed`);
   }
-  for (const ws of failed) hub.onSendFailure(ws);
 }

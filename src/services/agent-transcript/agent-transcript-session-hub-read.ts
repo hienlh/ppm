@@ -101,7 +101,7 @@ function tagEntries(entries: FileEntry[]): TaggedEnvelope[] {
  * — a client wiping its view on `reset: true` must not lose content from a
  * file that did not itself change.
  */
-function readSubscription(hub: SessionHub, sub: TranscriptSubscription, now: number): { items: TaggedEnvelope[]; reset: boolean } {
+function readSubscription(hub: SessionHub, sub: TranscriptSubscription, now: number): { items: TaggedEnvelope[]; reset: boolean; hasMoreBacklog: boolean } {
   refreshClaudeCardFiles(hub, sub, now);
 
   let entries: FileEntry[] = [...sub.files.entries()].map(([key, f]) => ({ key, result: processFileTail(f, now) }));
@@ -110,7 +110,15 @@ function readSubscription(hub: SessionHub, sub: TranscriptSubscription, now: num
 
   entries = [...entries, ...addDiscoveredCodexFiles(hub, sub, entries, now)];
 
-  return { items: tagEntries(entries), reset };
+  const hasMoreBacklog = entries.some(({ result }) => result.hasMoreBacklog);
+  return { items: tagEntries(entries), reset, hasMoreBacklog };
+}
+
+interface PushOutcome {
+  sent: boolean;
+  /** Whether a per-tick read budget left bytes unread — the caller must keep
+   *  polling at the live cadence, even for an otherwise-idle subscription. */
+  hasMoreBacklog: boolean;
 }
 
 /**
@@ -123,15 +131,16 @@ function readSubscription(hub: SessionHub, sub: TranscriptSubscription, now: num
  * `alwaysSend` covers the subscribe-time call: a client that subscribed
  * already caught up (cursor === current size) still gets one confirming
  * message — silence would be indistinguishable from a subscribe that never
- * reached the hub at all. A live tick with nothing new sends nothing, or
- * every idle subscription would cost a message every 250ms/2s forever.
+ * reached the hub at all. A live tick with nothing new AND nothing left to
+ * catch up on sends nothing, or every idle subscription would cost a message
+ * every 250ms/2s forever.
  */
-function pushUpdate(hub: SessionHub, ws: AgentTranscriptWsLike, sub: TranscriptSubscription, now: number, alwaysSend: boolean): boolean {
+function pushUpdate(hub: SessionHub, ws: AgentTranscriptWsLike, sub: TranscriptSubscription, now: number, alwaysSend: boolean): PushOutcome {
   const preTickCursor = buildCursor(sub);
-  const { items, reset } = readSubscription(hub, sub, now);
+  const { items, reset, hasMoreBacklog } = readSubscription(hub, sub, now);
   const pages = paginateTagged(items);
   if (pages.length === 0) {
-    if (!reset && !alwaysSend) return true;
+    if (!reset && !alwaysSend && !hasMoreBacklog) return { sent: true, hasMoreBacklog: false };
     pages.push([]);
   }
   const running = !isIdle(sub, now);
@@ -148,25 +157,38 @@ function pushUpdate(hub: SessionHub, ws: AgentTranscriptWsLike, sub: TranscriptS
       cursor: { ...runningCursor },
       available: true,
       running,
-      ...(i < pages.length - 1 ? { more: true as const } : {}),
+      // Not just "another page is already queued behind this one" — also
+      // true on the LAST page when the read budget left bytes unread, so the
+      // client keeps showing "still catching up" instead of "done".
+      ...(i < pages.length - 1 || hasMoreBacklog ? { more: true as const } : {}),
       ...(reset && i === 0 ? { reset: true as const } : {}),
     };
-    if (!sendWsMessage(ws, msg)) return false;
+    if (!sendWsMessage(ws, msg)) return { sent: false, hasMoreBacklog };
   }
-  return true;
+  return { sent: true, hasMoreBacklog };
 }
 
+export type PushResult =
+  | { outcome: "ok"; hasMoreBacklog: boolean }
+  | { outcome: "send-failed"; hasMoreBacklog: boolean }
+  | { outcome: "error"; hasMoreBacklog: false };
+
 /**
- * `pushUpdate`, but a throw anywhere in the read/parse/send path drops the
- * push (treated the same as a failed `send`) instead of reaching the caller.
- * A single malformed record or a raced file error must never climb out of a
+ * `pushUpdate`, but a throw anywhere in the read/parse/send path is caught
+ * and reported as `outcome: "error"` instead of reaching the caller — a
+ * single malformed record or a raced file error must never climb out of a
  * WS message handler or a `setInterval` tick into an uncaught exception that
- * takes the whole server down.
+ * takes the whole server down. Distinct from `"send-failed"` (the socket
+ * itself is gone) because the caller must react very differently: a
+ * send failure means the WHOLE client is unreachable and every hub should
+ * drop it; a thrown error means only THIS subscription's own read/parse
+ * broke, and every other subscription on the same socket must keep working.
  */
-export function safePushUpdate(hub: SessionHub, ws: AgentTranscriptWsLike, sub: TranscriptSubscription, now: number, alwaysSend: boolean): boolean {
+export function safePushUpdate(hub: SessionHub, ws: AgentTranscriptWsLike, sub: TranscriptSubscription, now: number, alwaysSend: boolean): PushResult {
   try {
-    return pushUpdate(hub, ws, sub, now, alwaysSend);
+    const { sent, hasMoreBacklog } = pushUpdate(hub, ws, sub, now, alwaysSend);
+    return sent ? { outcome: "ok", hasMoreBacklog } : { outcome: "send-failed", hasMoreBacklog };
   } catch {
-    return false;
+    return { outcome: "error", hasMoreBacklog: false };
   }
 }

@@ -7,10 +7,9 @@
  * complete — the hub needs that to hand a client back a cursor for exactly
  * what it was sent, not for however far the read happened to reach that tick.
  */
-import type { ChatEvent } from "../../types/chat.ts";
-import { buildEnvelope, makeEnvelope } from "./agent-transcript-envelope.ts";
+import { buildEnvelope } from "./agent-transcript-envelope.ts";
 import { agentTranscriptFsIo, statMtimeSafe } from "./agent-transcript-fs-io.ts";
-import { resetFileTailState, type FileTailState } from "./agent-transcript-file-tail-state.ts";
+import { codexEnvelope, resetFileTailState, type FileTailState } from "./agent-transcript-file-tail-state.ts";
 import type { AgentTranscriptEnvelope } from "../../shared/agent-transcript-protocol.ts";
 
 /** Upper bound on bytes read from one file in one tick, so a multi-MB backlog
@@ -25,22 +24,6 @@ export interface FeedOutcome {
   consumedThrough: number[];
   /** Thread ids a Codex card's tail parser discovered since the last feed (nested spawns). */
   links: string[];
-}
-
-function toolUseIdOf(ev: ChatEvent): string | undefined {
-  return "toolUseId" in ev ? ev.toolUseId : undefined;
-}
-
-/** One Codex event → its envelope, reusing the id's first-issued key on a replace so the
- *  client's upsert-by-`k` lands on the entry it is meant to update instead of appending. */
-function codexEnvelope(fstate: FileTailState, fileKey: string, freshKey: string, e: { ev: ChatEvent; ts: number; replace?: boolean }): AgentTranscriptEnvelope {
-  const id = toolUseIdOf(e.ev);
-  if (e.replace && id) {
-    const original = fstate.toolUseKeyById.get(id);
-    if (original) return makeEnvelope(original, e.ev, e.ts, true);
-  }
-  if (id) fstate.toolUseKeyById.set(id, freshKey);
-  return makeEnvelope(freshKey, e.ev, e.ts, e.replace ? true : undefined);
 }
 
 /**
@@ -102,7 +85,7 @@ function feedChunk(fstate: FileTailState, newChunk: Buffer, growthAt: number): F
     }
     for (const e of fed.events) {
       const freshKey = `${fstate.ref.key}:${chunkStartOffset}:${idx++}`;
-      envelopes.push(codexEnvelope(fstate, fstate.ref.key, freshKey, e));
+      envelopes.push(codexEnvelope(fstate, freshKey, e));
       consumedThrough.push(fileOffset);
     }
     links.push(...fed.links);
@@ -114,6 +97,14 @@ function feedChunk(fstate: FileTailState, newChunk: Buffer, growthAt: number): F
 export interface ProcessFileResult extends FeedOutcome {
   /** The client must discard prior state for this file: truncation, or a Codex compaction/rollback. */
   reset: boolean;
+  /**
+   * True when the file still has unread bytes past `PER_TICK_READ_BUDGET_BYTES`
+   * after this call. The tick scheduler must keep polling at the live cadence
+   * while this is true — a finished-but-large transcript (idle by mtime, so
+   * `running: false`) would otherwise drain in slow idle-cadence chunks
+   * instead of catching up as fast as the budget allows.
+   */
+  hasMoreBacklog: boolean;
 }
 
 const EMPTY_RESULT: FeedOutcome = { envelopes: [], consumedThrough: [], links: [] };
@@ -133,7 +124,7 @@ export function processFileTail(fstate: FileTailState, now: number): ProcessFile
   try {
     size = agentTranscriptFsIo.statSize(fstate.ref.path);
   } catch {
-    return { ...EMPTY_RESULT, reset: false };
+    return { ...EMPTY_RESULT, reset: false, hasMoreBacklog: false };
   }
 
   let truncated = false;
@@ -147,7 +138,7 @@ export function processFileTail(fstate: FileTailState, now: number): ProcessFile
     fstate.pendingBytes = Buffer.alloc(0);
     diskPos = fstate.offset;
   }
-  if (size <= diskPos) return { ...EMPTY_RESULT, reset: truncated };
+  if (size <= diskPos) return { ...EMPTY_RESULT, reset: truncated, hasMoreBacklog: false };
 
   const growthAt = statMtimeSafe(fstate.ref.path) ?? now;
   const toRead = Math.min(size - diskPos, PER_TICK_READ_BUDGET_BYTES);
@@ -155,12 +146,16 @@ export function processFileTail(fstate: FileTailState, now: number): ProcessFile
   try {
     chunk = agentTranscriptFsIo.readRange(fstate.ref.path, diskPos, toRead);
   } catch {
-    return { ...EMPTY_RESULT, reset: truncated };
+    return { ...EMPTY_RESULT, reset: truncated, hasMoreBacklog: size > diskPos };
   }
 
   const fed = feedChunk(fstate, chunk, growthAt);
+  const remainderAfterNormalRead = size > fstate.offset + fstate.pendingBytes.length;
   if (!fed.parserReset) {
-    return { envelopes: fed.envelopes, consumedThrough: fed.consumedThrough, links: fed.links, reset: truncated };
+    return {
+      envelopes: fed.envelopes, consumedThrough: fed.consumedThrough, links: fed.links,
+      reset: truncated, hasMoreBacklog: remainderAfterNormalRead,
+    };
   }
 
   // The parser's own history was rewritten (Codex compaction/rollback): the
@@ -174,8 +169,12 @@ export function processFileTail(fstate: FileTailState, now: number): ProcessFile
   try {
     full = agentTranscriptFsIo.readRange(fstate.ref.path, 0, Math.min(size, PER_TICK_READ_BUDGET_BYTES));
   } catch {
-    return { ...EMPTY_RESULT, reset: true };
+    return { ...EMPTY_RESULT, reset: true, hasMoreBacklog: size > 0 };
   }
   const fed2 = feedChunk(fstate, full, growthAt);
-  return { envelopes: fed2.envelopes, consumedThrough: fed2.consumedThrough, links: fed2.links, reset: true };
+  const remainderAfterResync = size > fstate.offset + fstate.pendingBytes.length;
+  return {
+    envelopes: fed2.envelopes, consumedThrough: fed2.consumedThrough, links: fed2.links,
+    reset: true, hasMoreBacklog: remainderAfterResync,
+  };
 }

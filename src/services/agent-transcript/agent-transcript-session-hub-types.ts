@@ -30,6 +30,14 @@ export interface SessionHub {
    * everywhere, not just in the hub that happened to detect it.
    */
   onSendFailure: (ws: AgentTranscriptWsLike) => void;
+  /**
+   * Owned by the top-level registry, same reason as `onSendFailure` — drop
+   * ONE subscription's bookkeeping everywhere it is tracked (this hub's own
+   * map AND the registry's per-client `subId` index), not just here. Used
+   * when a single subscription's own tick throws: the rest of that socket's
+   * subscriptions, on this hub or any other, must keep working.
+   */
+  onSubscriptionError: (ws: AgentTranscriptWsLike, subId: string) => void;
   /** True while `ws`'s token snapshot still matches the live config. */
   tokenStillValid: (ws: AgentTranscriptWsLike) => boolean;
 }
@@ -38,6 +46,7 @@ export function createSessionHub(
   key: string,
   owned: OwnedSession,
   onSendFailure: (ws: AgentTranscriptWsLike) => void,
+  onSubscriptionError: (ws: AgentTranscriptWsLike, subId: string) => void,
   tokenStillValid: (ws: AgentTranscriptWsLike) => boolean,
 ): SessionHub {
   return {
@@ -48,6 +57,7 @@ export function createSessionHub(
     tickHandle: null,
     activityHandle: null,
     onSendFailure,
+    onSubscriptionError,
     tokenStillValid,
   };
 }

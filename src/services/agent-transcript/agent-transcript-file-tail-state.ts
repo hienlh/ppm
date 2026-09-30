@@ -14,10 +14,13 @@
  * cannot make sense of (a fresh parser's own internal buffering, if it had
  * any, would not know a prefix was already spent elsewhere).
  */
+import type { ChatEvent } from "../../types/chat.ts";
 import type { TranscriptFileRef } from "./agent-transcript-sources.ts";
 import { createAgentTranscriptLineParser } from "../subagent-transcript-merger.ts";
 import { createRolloutTailParser } from "../../providers/codex-app-server/codex-rollout-tail-parser.ts";
+import { makeEnvelope } from "./agent-transcript-envelope.ts";
 import { statMtimeSafe } from "./agent-transcript-fs-io.ts";
+import type { AgentTranscriptEnvelope } from "../../shared/agent-transcript-protocol.ts";
 
 export interface FileTailState {
   ref: TranscriptFileRef;
@@ -62,4 +65,36 @@ export function resetFileTailState(fstate: FileTailState, now: number): void {
   fstate.claudeParser = fstate.ref.provider === "claude" ? createAgentTranscriptLineParser({ midFile: false, maxEvents: Infinity }) : undefined;
   fstate.codexParser = fstate.ref.provider === "codex" ? createRolloutTailParser() : undefined;
   fstate.toolUseKeyById = new Map();
+}
+
+function toolUseIdOf(ev: ChatEvent): string | undefined {
+  return "toolUseId" in ev ? ev.toolUseId : undefined;
+}
+
+/**
+ * One Codex event → its envelope, reusing the id's first-issued key on a
+ * replace so the client's upsert-by-`k` lands on the entry it is meant to
+ * update instead of appending.
+ *
+ * Keyed by `${type}:${toolUseId}`, NOT by id alone: a single `CommandExecution`
+ * item emits a `tool_use` and a `tool_result` sharing the SAME id, and the
+ * tail parser flags the second one `replace` because it only tracks "has
+ * this id been seen", not "as which type". Keying on id alone made a
+ * `tool_result` reuse its own `tool_use`'s key — the client then replaced
+ * the tool_use IN PLACE with the result and the step vanished. `replace` is
+ * only ever honoured here when a PRIOR envelope of the SAME type for the
+ * SAME id exists; otherwise a fresh key is minted (and `replace` dropped —
+ * there is nothing for it to refer to).
+ */
+export function codexEnvelope(fstate: FileTailState, freshKey: string, e: { ev: ChatEvent; ts: number; replace?: boolean }): AgentTranscriptEnvelope {
+  const id = toolUseIdOf(e.ev);
+  if (!id) return makeEnvelope(freshKey, e.ev, e.ts, undefined);
+
+  const mapKey = `${e.ev.type}:${id}`;
+  if (e.replace) {
+    const original = fstate.toolUseKeyById.get(mapKey);
+    if (original) return makeEnvelope(original, e.ev, e.ts, true);
+  }
+  fstate.toolUseKeyById.set(mapKey, freshKey);
+  return makeEnvelope(freshKey, e.ev, e.ts, undefined);
 }

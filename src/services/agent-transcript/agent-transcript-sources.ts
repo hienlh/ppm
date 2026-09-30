@@ -53,6 +53,9 @@ export interface SourceError {
 const CLAUDE_CARD_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const CODEX_CARD_ID_RE = /^subagent-([0-9a-f-]{36})$/;
 const MEMBER_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** Shape of a raw Codex thread id (a `TranscriptFileRef.key`, not a `subagent-<id>`
+ *  CARD id) — reused by the hub to recognize a descendant key in a cursor. */
+export const CODEX_THREAD_ID_RE = /^[0-9a-f-]{36}$/i;
 
 /** How far up a chain of spawned Codex threads a card id is chased before giving up. */
 const MAX_CHAIN_DEPTH = 8;
@@ -190,11 +193,7 @@ export function resolveSources(owned: OwnedSession, source: AgentTranscriptSourc
 }
 
 /** Test-only: clear the 2s resolve cache between cases. */
-export function _resetSourcesCache(): void {
-  cache.clear();
-}
+export function _resetSourcesCache(): void { cache.clear(); }
 
 /** Test-only: current cache size, to assert the capacity bound holds. */
-export function _sourcesCacheSizeForTest(): number {
-  return cache.size;
-}
+export function _sourcesCacheSizeForTest(): number { return cache.size; }
