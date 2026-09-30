@@ -114,7 +114,7 @@ export async function commitTweaks(projectPath: string, slug: string, raw: unkno
 
     const loaded = await styleSources({ projectPath, slug }, input.entry);
     for (const [file, { source, outside }] of loaded.files) {
-      // The shared tokens.css and kit/** are never written and the canvas holds no gen for them.
+      // The shared tokens.css and systems/<id>/** are never written and the canvas holds no gen for them.
       if (!outside && input.gens[file] !== source.gen) throw new StaleTweakGenError(file, source.gen);
     }
     const texts = new Map([...loaded.files].map(([file, f]) => [file, f.source.text] as const));

@@ -2,14 +2,18 @@ import { extname, join } from "node:path";
 import archiver from "archiver";
 import { isCredentialPath } from "../../fs-path-guard.service.ts";
 import { DesignError } from "../design-error.ts";
-import { KIT_DIR_ALIAS } from "../preview/design-preview-scope.ts";
+import { DEFAULT_SYSTEM_ID, isValidSystemId, SYSTEM_FILE, systemFilesDir } from "../design-systems-paths.ts";
 import { lstatOrNull, resolveDesignDir, resolveDesignsRoot } from "../design-paths.ts";
 import { readDesignFileSafe, safeWalkDesignTree } from "../design-safe-walk.ts";
 
 /**
- * A design as a zip: `<slug>/**` plus the project's `tokens.css` and `DESIGN.md`, and the
- * shared `kit/` UI kit when the design actually links it, all rooted at `designs/` so every
- * `../tokens.css` and `../kit/…` link still resolves after unzipping.
+ * A design as a zip: `<slug>/**` plus the project's `tokens.css` and `DESIGN.md` (kept for
+ * old designs that still link the legacy `../tokens.css`), and, for every app the design
+ * actually references, that app's `systems/<id>/**` folder, all rooted at `designs/` so a
+ * `../tokens.css` or `../systems/<id>/…` link still resolves after unzipping. For the
+ * `default` app, whose real files live at the `designs/` root rather than
+ * `designs/systems/default/`, the zip re-roots them under `systems/default/` so the literal
+ * relative link in the exported HTML keeps working with no server-side alias to resolve it.
  *
  * Every file comes from the shared safe walker and is read through `readDesignFileSafe`: no
  * symlink (a link to `ppm.db` or a key is never packed), no FIFO or device, nothing whose
@@ -22,24 +26,26 @@ import { readDesignFileSafe, safeWalkDesignTree } from "../design-safe-walk.ts";
 export const MAX_ZIP_FILES = 5000;
 export const MAX_ZIP_BYTES = 512 * 1024 * 1024;
 const SHARED_FILES = ["tokens.css", "DESIGN.md"];
-/** Text files worth scanning for a `../kit/` reference; a byte pattern, not a parse. */
-const KIT_REF_EXTENSIONS = new Set([".html", ".htm", ".css", ".js", ".mjs"]);
-const KIT_REF_SCAN_BYTES = 512 * 1024;
+/** Text files worth scanning for a `../systems/<id>/` reference; a byte pattern, not a parse. */
+const SYSTEMS_REF_EXTENSIONS = new Set([".html", ".htm", ".css", ".js", ".mjs"]);
+const SYSTEMS_REF_SCAN_BYTES = 512 * 1024;
+const SYSTEMS_REF_RE = /\.\.\/systems\/([a-z0-9][a-z0-9-]{0,62})\//g;
 
 interface ZipEntry {
   name: string;
   abs: string;
 }
 
-/** Whether any of the design's own text files mentions the shared kit at all, by substring. */
-async function designReferencesKit(designDir: string): Promise<boolean> {
+/** Every app id the design's own text files reference via `../systems/<id>/`. */
+async function referencedSystemIds(designDir: string): Promise<Set<string>> {
+  const ids = new Set<string>();
   for await (const entry of safeWalkDesignTree(designDir)) {
     if (entry.rel.split("/").some((part) => part.startsWith("."))) continue;
-    if (!KIT_REF_EXTENSIONS.has(extname(entry.rel).toLowerCase()) || entry.size > KIT_REF_SCAN_BYTES) continue;
-    const bytes = await readDesignFileSafe(entry.abs, KIT_REF_SCAN_BYTES);
-    if (bytes.toString("utf8").includes("../kit/")) return true;
+    if (!SYSTEMS_REF_EXTENSIONS.has(extname(entry.rel).toLowerCase()) || entry.size > SYSTEMS_REF_SCAN_BYTES) continue;
+    const text = (await readDesignFileSafe(entry.abs, SYSTEMS_REF_SCAN_BYTES)).toString("utf8");
+    for (const m of text.matchAll(SYSTEMS_REF_RE)) if (isValidSystemId(m[1])) ids.add(m[1]!);
   }
-  return false;
+  return ids;
 }
 
 async function listZipEntries(projectPath: string, slug: string): Promise<ZipEntry[]> {
@@ -65,11 +71,30 @@ async function listZipEntries(projectPath: string, slug: string): Promise<ZipEnt
     if (!st || st.isSymbolicLink() || !st.isFile() || isCredentialPath(abs)) continue;
     add(name, abs, st.size);
   }
-  const kitDir = root ? join(root, KIT_DIR_ALIAS) : null;
-  if (kitDir && (await lstatOrNull(kitDir))?.isDirectory() && (await designReferencesKit(designDir))) {
-    for await (const entry of safeWalkDesignTree(kitDir)) {
-      if (entry.rel.split("/").some((part) => part.startsWith("."))) continue;
-      add(`${KIT_DIR_ALIAS}/${entry.rel}`, entry.abs, entry.size);
+  if (root) {
+    for (const id of await referencedSystemIds(designDir)) {
+      if (id === DEFAULT_SYSTEM_ID) {
+        for (const name of SHARED_FILES) {
+          const abs = join(root, name);
+          const st = await lstatOrNull(abs);
+          if (!st || st.isSymbolicLink() || !st.isFile() || isCredentialPath(abs)) continue;
+          add(`systems/${id}/${name}`, abs, st.size);
+        }
+        const kitDir = join(root, "kit");
+        if ((await lstatOrNull(kitDir))?.isDirectory()) {
+          for await (const entry of safeWalkDesignTree(kitDir)) {
+            if (entry.rel.split("/").some((p) => p.startsWith("."))) continue;
+            add(`systems/${id}/kit/${entry.rel}`, entry.abs, entry.size);
+          }
+        }
+        continue;
+      }
+      const dir = systemFilesDir(root, id);
+      if (!(await lstatOrNull(dir))?.isDirectory()) continue;
+      for await (const entry of safeWalkDesignTree(dir)) {
+        if (entry.rel === SYSTEM_FILE || entry.rel.split("/").some((p) => p.startsWith("."))) continue;
+        add(`systems/${id}/${entry.rel}`, entry.abs, entry.size);
+      }
     }
   }
   return entries;

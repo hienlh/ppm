@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import { isLocalHref } from "../preview/html-instrument.ts";
-import { isKitRel, TOKENS_CSS_REL, type ReadAsset } from "./design-export-asset-reader.ts";
+import { systemsRelInfo, TOKENS_CSS_REL, type ReadAsset } from "./design-export-asset-reader.ts";
 
 /**
  * Local asset inlining for the standalone-HTML export: CSS `url()`s and `@import`s become
@@ -8,7 +8,7 @@ import { isKitRel, TOKENS_CSS_REL, type ReadAsset } from "./design-export-asset-
  *
  * A reference resolves against the file it is written in — a stylesheet's `url()` against
  * that stylesheet, not against the HTML — and must stay inside the design folder (the
- * shared `../tokens.css` and `../kit/**` are the allowed steps out; both sit inside
+ * shared `../tokens.css` and `../systems/<id>/**` are the allowed steps out; both sit inside
  * `designs/`). Absolute,
  * scheme and fragment references are left exactly as they are: CDN links are allowed in a
  * design and are not local. Every asset read is charged to one shared {@link InlineBudget};
@@ -63,7 +63,7 @@ export function resolveDesignRef(ref: string, baseDir: string): ResolvedRef {
   }
   if (!path || path.includes("\\") || path.includes("\0")) return { outside: true };
   const rel = posix.normalize(posix.join(baseDir, path));
-  if (rel === TOKENS_CSS_REL || isKitRel(rel)) return { rel, suffix };
+  if (rel === TOKENS_CSS_REL || systemsRelInfo(rel)) return { rel, suffix };
   if (rel === ".." || rel.startsWith("../") || rel.startsWith("/") || rel.split("/").some((s) => s.startsWith("."))) {
     return { outside: true };
   }

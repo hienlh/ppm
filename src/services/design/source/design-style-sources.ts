@@ -1,5 +1,6 @@
 import { posix } from "node:path";
-import { KIT_DIR_ALIAS, resolveScopedPath, TOKENS_CSS_ALIAS } from "../preview/design-preview-scope.ts";
+import { resolveScopedPath, SYSTEMS_DIR_ALIAS, TOKENS_CSS_ALIAS } from "../preview/design-preview-scope.ts";
+import { parseSystemsAliasTail } from "../preview/design-systems-alias.ts";
 import type { DesignRef } from "../preview/design-preview-tokens.ts";
 import { readDesignSource, type DesignSource } from "./design-source-file.ts";
 import { htmlStyleNodes } from "./html-style-blocks.ts";
@@ -11,14 +12,16 @@ import { htmlStyleNodes } from "./html-style-blocks.ts";
  * which is the order in which a later `:root` declaration beats an earlier one. CDN sheets
  * are skipped (not ours to read or write), as are links the canvas cannot load either:
  * missing files, anything outside the design folder except the shared `tokens.css` and the
- * read-only `kit/**`, and non-`.css` targets. Both shared aliases stay in the list, marked
- * `outside`, because a variable one of them sets last really does win on screen — the tweak
- * commit refuses that case rather than patching a declaration that would lose to it.
+ * read-only `systems/<id>/**`, and non-`.css` targets. Both shared aliases stay in the list,
+ * marked `outside`, because a variable one of them sets last really does win on screen — the
+ * tweak commit refuses that case rather than patching a declaration that would lose to it.
  */
 
 /** A design-relative ref that climbs out to one of the shared, read-only aliases. */
 function isSharedAliasRef(rel: string): boolean {
-  return rel === `../${TOKENS_CSS_ALIAS}` || rel === `../${KIT_DIR_ALIAS}` || rel.startsWith(`../${KIT_DIR_ALIAS}/`);
+  if (rel === `../${TOKENS_CSS_ALIAS}`) return true;
+  const prefix = `../${SYSTEMS_DIR_ALIAS}/`;
+  return rel.startsWith(prefix) && parseSystemsAliasTail(rel.slice(prefix.length)) !== null;
 }
 
 /** Local stylesheets considered per page; the preview reports gens for the same number. */

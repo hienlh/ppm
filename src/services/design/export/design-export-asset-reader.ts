@@ -3,6 +3,8 @@ import { join, resolve } from "node:path";
 import { assertNotPpmDir, isCredentialPath } from "../../fs-path-guard.service.ts";
 import { guardPreviewAsset, isInsideRoot } from "../../../server/helpers/preview-asset-guard.ts";
 import { lstatOrNull } from "../design-paths.ts";
+import { systemFilesDir } from "../design-systems-paths.ts";
+import { parseSystemsAliasTail } from "../preview/design-systems-alias.ts";
 import { readDesignFileSafe, SafeWalkError } from "../design-safe-walk.ts";
 
 /**
@@ -10,10 +12,10 @@ import { readDesignFileSafe, SafeWalkError } from "../design-safe-walk.ts";
  * design folder, through the same guards as everything else that reads a design tree.
  *
  * A design is written by an agent, so a link in it can point anywhere. A file is read only
- * when it is inside the design folder (or is the shared `../tokens.css` or `../kit/**`), is a
- * web asset by extension, sits under no dot-directory, is a regular file and not a symlink,
- * still resolves inside after `realpath`, is no credential path and not inside the PPM
- * directory — and then through `readDesignFileSafe`, which re-checks the open handle.
+ * when it is inside the design folder (or is the shared `../tokens.css` or `../systems/<id>/**`),
+ * is a web asset by extension, sits under no dot-directory, is a regular file and not a
+ * symlink, still resolves inside after `realpath`, is no credential path and not inside the
+ * PPM directory — and then through `readDesignFileSafe`, which re-checks the open handle.
  * Everything else answers `refused`, never an exception, so one bad link costs one warning
  * rather than the export.
  */
@@ -22,26 +24,30 @@ export type ReadAssetResult =
   | { ok: true; bytes: Uint8Array }
   | { ok: false; reason: "missing" | "refused" | "too-large" };
 
-/** `rel` is `/`-separated and relative to the design folder; `../tokens.css`/`../kit/…` are the way out. */
+/** `rel` is `/`-separated and relative to the design folder; `../tokens.css`/`../systems/…` are the way out. */
 export type ReadAsset = (rel: string, maxBytes: number) => Promise<ReadAssetResult>;
 
 export const TOKENS_CSS_REL = "../tokens.css";
-export const KIT_DIR_REL = "../kit";
+export const SYSTEMS_DIR_REL = "../systems";
 
-/** `rel` names a file under the shared kit folder (never the bare directory). */
-export function isKitRel(rel: string): boolean {
-  return rel !== KIT_DIR_REL && rel.startsWith(`${KIT_DIR_REL}/`);
+/** `rel`'s app id and the path under its design-system folder, or null when it is not one. */
+export function systemsRelInfo(rel: string): { id: string; rest: string } | null {
+  if (rel !== SYSTEMS_DIR_REL && !rel.startsWith(`${SYSTEMS_DIR_REL}/`)) return null;
+  return parseSystemsAliasTail(rel.slice(SYSTEMS_DIR_REL.length + 1));
 }
 
 export function createDesignAssetReader(designDir: string, designsRoot: string): ReadAsset {
   return async (rel, maxBytes) => {
     const tokens = rel === TOKENS_CSS_REL;
-    const kit = !tokens && isKitRel(rel);
-    const root = tokens || kit ? designsRoot : designDir;
-    if (!tokens && !kit && (rel === "" || rel.includes("\0") || rel.includes("\\") || rel.split("/").some((s) => s === ".." || s.startsWith(".")))) {
+    const sys = !tokens ? systemsRelInfo(rel) : null;
+    const root = tokens ? designsRoot : sys ? systemFilesDir(designsRoot, sys.id) : designDir;
+    if (!tokens && !sys && (rel === "" || rel.includes("\0") || rel.includes("\\") || rel.split("/").some((s) => s === ".." || s.startsWith(".")))) {
       return { ok: false, reason: "refused" };
     }
-    const target = tokens ? join(designsRoot, "tokens.css") : kit ? join(designsRoot, rel.slice(3)) : resolve(designDir, ...rel.split("/"));
+    if (sys && (sys.rest === "" || sys.rest.split("/").some((s) => s === "" || s === ".." || s.startsWith(".")))) {
+      return { ok: false, reason: "refused" };
+    }
+    const target = tokens ? join(designsRoot, "tokens.css") : sys ? join(root, ...sys.rest.split("/")) : resolve(designDir, ...rel.split("/"));
     try {
       if (!isInsideRoot(root, target)) return { ok: false, reason: "refused" };
       guardPreviewAsset(target, root);
