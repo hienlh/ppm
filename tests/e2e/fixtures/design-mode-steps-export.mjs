@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { moreMenu, overlay, toolbar, until, waitCanvasReady } from "./design-mode-helpers.mjs";
+import { overlay, toolbar, until, waitCanvasReady } from "./design-mode-helpers.mjs";
 
 /**
  * Every export, checked in the file it produces: ZIP, standalone HTML, the print view and its
- * PDF, and PPTX with real text boxes; then "Hand off to code".
+ * PDF, and PPTX with real text boxes; then "Build in new chat".
  */
 
 async function exportEntry(ctx, label) {
@@ -83,25 +83,27 @@ export async function stepExports(ctx) {
   ctx.record("PPTX has three slides and the heading as editable text");
 }
 
-export async function stepHandOff(ctx) {
+export async function stepBuildInNewChat(ctx) {
   const before = await tabsOf(ctx);
   const plain = before.find((t) => t.id === ctx.plainTabId);
   assert.ok(plain, "the ordinary chat tab is open");
-  await moreMenu(ctx, "Hand off to code");
+  await toolbar(ctx, "Build in new chat");
   const after = await until("a new chat tab", async () => { const tabs = await tabsOf(ctx); return tabs.length === before.length + 1 && tabs; });
   const added = after.find((t) => !before.some((b) => b.id === t.id));
   assert.equal(added.type, "chat");
-  assert.equal(added.metadata.designSlug, undefined, "hand-off is not a design chat");
-  const draft = await until("the hand-off draft", async () => {
+  assert.equal(added.metadata.designSlug, undefined, "the new chat is not a design chat");
+  const draft = await until("the build-in-new-chat draft", async () => {
     const value = await ctx.page.locator('textarea[placeholder="Ask anything..."]:visible').first().inputValue();
     return value.includes(`designs/${ctx.slug}/`) && value;
   });
   assert.ok(draft.includes("DESIGN.md") && draft.includes("untrusted"), draft);
+  await until("the canvas screenshot attached to the draft", () =>
+    ctx.page.getByRole("button", { name: /^Preview /, exact: false }).first().isVisible().then((v) => (v ? true : null)));
   const untouched = (await tabsOf(ctx)).find((t) => t.id === ctx.plainTabId);
   assert.deepEqual(untouched.metadata, plain.metadata, "the existing chat tab is untouched");
   await ctx.page.evaluate(async (id) => (await import("/stores/panel-store.ts")).usePanelStore.getState().closeTab(id), added.id);
   await focusTab(ctx, ctx.tabId);
-  ctx.record("hand-off opens a new plain chat with the brief as a draft");
+  ctx.record("Build in new chat opens a new plain chat with the brief draft and one image attachment");
 }
 
 export async function tabsOf(ctx) {

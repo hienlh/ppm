@@ -6,8 +6,9 @@ import { pageInstrumentation } from "./fixtures/design-mode-page-instrumentation
 import { stepCanvasSecurity, stepChatToCanvas, stepHistory, stepNoDotDesignEvents } from "./fixtures/design-mode-steps-canvas.mjs";
 import { stepPicker } from "./fixtures/design-mode-steps-picker.mjs";
 import { stepMoveDesktop, stepMovePhone, stepTweaks } from "./fixtures/design-mode-steps-edit.mjs";
-import { stepExports, stepHandOff } from "./fixtures/design-mode-steps-export.mjs";
+import { stepBuildInNewChat, stepExports } from "./fixtures/design-mode-steps-export.mjs";
 import { stepVariants } from "./fixtures/design-mode-steps-variants.mjs";
+import { stepKitStyles } from "./fixtures/design-mode-steps-kit.mjs";
 import {
   stepDesignModeHolds, stepMobilePanes, stepNewDesignDialog, stepNormalChat, stepSplitAndExpiry,
 } from "./fixtures/design-mode-steps-session.mjs";
@@ -26,7 +27,7 @@ const desktop = (ctx) => !ctx.mobile;
 const phone = (ctx) => ctx.mobile;
 /**
  * Mostly in requirement order; `when` limits a step to one layout. The ordinary chat runs
- * before the hand-off, which must leave that chat untouched.
+ * before build-in-new-chat, which must leave that chat untouched.
  */
 const STEPS = [
   { name: "chat to canvas", run: stepChatToCanvas },
@@ -38,12 +39,15 @@ const STEPS = [
   { name: "move handles", run: stepMovePhone, when: phone },
   { name: "exports", run: stepExports },
   { name: "normal chat", run: stepNormalChat },
-  { name: "hand-off", run: stepHandOff },
+  { name: "build in new chat", run: stepBuildInNewChat },
   { name: "mobile panes", run: stepMobilePanes, when: phone },
   { name: "design mode holds", run: stepDesignModeHolds },
   { name: "split and expiry", run: stepSplitAndExpiry, when: desktop },
   { name: "new design dialog", run: stepNewDesignDialog },
   { name: "variants", run: stepVariants },
+  // Opens and switches focus to a design of its own, same as "variants" just above: kept
+  // after every step that assumes the original deck's tab is still the one in view.
+  { name: "kit styles", run: stepKitStyles },
   { name: "no .design events", run: stepNoDotDesignEvents },
 ];
 
@@ -58,6 +62,9 @@ try {
   await mkdir(designs, { recursive: true });
   await writeFile(join(designs, "tokens.css"), ":root { --brand: #0f766e; }\n");
   await writeFile(join(designs, "DESIGN.md"), "# Design system\n\nTeal brand colour, Arial.\n");
+  await mkdir(join(designs, "kit", "icons"), { recursive: true });
+  await writeFile(join(designs, "kit", "app.css"), ".kit-card { background-color: rgb(15, 23, 42); color: #fff; padding: 8px; }\n");
+  await writeFile(join(designs, "kit", "icons", "star.svg"), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/></svg>\n');
   const created = await fetch(`${harness.api}/api/projects`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: harness.project, name: PROJECT }),
   });

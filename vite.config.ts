@@ -1,4 +1,5 @@
-import { defineConfig } from "vite";
+import { realpathSync } from "node:fs";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
@@ -103,6 +104,16 @@ export default defineConfig({
         target: process.env.PPM_DEV_API ?? "http://localhost:8081",
         ws: true,
       },
+    },
+    fs: {
+      // A git worktree's `node_modules` is often a junction back to the main checkout's (to
+      // avoid a second install), so its *real* path sits outside the worktree root that Vite's
+      // default allow-list computes. A deep import resolved through the junction — a font, a
+      // lazy chunk such as the design canvas's screenshot library — then 403s as if it were
+      // missing. Trusting node_modules' own resolved target fixes that without widening the
+      // allow-list to anything else on disk; where node_modules is a real directory (no
+      // junction) this just repeats an already-allowed path.
+      allow: [searchForWorkspaceRoot(process.cwd()), realpathSync(resolve(process.cwd(), "node_modules"))],
     },
   },
 });
