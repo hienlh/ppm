@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { FileCode, Loader2, Palette, Pencil, Plus, Presentation, Trash2 } from "@/lib/icons";
+import { FileCode, Loader2, Palette, Pencil, Plus, Presentation, Settings, Trash2 } from "@/lib/icons";
 import { useProjectStore } from "@/stores/project-store";
+import { openSettings } from "@/components/settings/open-settings";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/adaptive-context-menu";
@@ -12,7 +13,12 @@ import { RenameDesignDialog } from "./dialogs/rename-design-dialog";
 import { DeleteDesignDialog } from "./dialogs/delete-design-dialog";
 import type { DesignSummary } from "../../../shared/design-types";
 
-/** Sidebar "Designs" section: the project's designs, newest first; tap to open. */
+const headerButton = "flex size-11 items-center justify-center rounded-md text-text-subtle hover:bg-surface-elevated hover:text-foreground md:size-7";
+
+/**
+ * Sidebar "Designs" section: the project's designs, newest first; tap to open. The header
+ * also reaches Settings → Design, where the instructions every design chat gets live.
+ */
 export function DesignsSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
   const projectName = useProjectStore((s) => s.activeProject?.name ?? "");
   const [data, setData] = useState<DesignList | null>(null);
@@ -63,10 +69,16 @@ export function DesignsSidebarPanel({ onNavigate }: { onNavigate?: () => void })
     <div className="flex h-full flex-col">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Designs</span>
-        <button type="button" onClick={() => { requestNewDesign(projectName); onNavigate?.(); }} aria-label="New design"
-          className="flex size-11 items-center justify-center rounded-md text-text-subtle hover:bg-surface-elevated hover:text-foreground md:size-7">
-          <Plus className="size-4" />
-        </button>
+        <span className="flex items-center gap-0.5">
+          <button type="button" onClick={() => { openSettings("design"); onNavigate?.(); }} aria-label="Design settings" title="Design settings"
+            className={headerButton}>
+            <Settings className="size-4" />
+          </button>
+          <button type="button" onClick={() => { requestNewDesign(projectName); onNavigate?.(); }} aria-label="New design" title="New design"
+            className={headerButton}>
+            <Plus className="size-4" />
+          </button>
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-1">
         {error ? (

@@ -18,16 +18,25 @@ const VIEWPORTS = [
   { width: 390, height: 844, mobile: true },
 ];
 
-async function openDesignSettings(page) {
+/**
+ * Selects the project, then opens Settings → Design: by the gear in the sidebar's Designs
+ * header when `viaSidebar`, otherwise directly.
+ */
+async function openDesignSettings(page, { viaSidebar = false } = {}) {
   await page.waitForFunction(async () => !!(await import("/stores/panel-store.ts")).usePanelStore);
-  await page.evaluate(async (name) => {
+  await page.evaluate(async ({ name, viaSidebar }) => {
     const projects = (await import("/stores/project-store.ts")).useProjectStore;
     await projects.getState().fetchProjects();
     projects.getState().setActiveProject(projects.getState().projects.find((p) => p.name === name));
     (await import("/stores/tab-store.ts")).useTabStore.getState().switchProject(name);
-    (await import("/components/settings/open-settings.ts")).openSettings("design");
-  }, PROJECT);
+    if (viaSidebar) (await import("/stores/settings-store.ts")).useSettingsStore.getState().setSidebarActiveTab("designs");
+    else (await import("/components/settings/open-settings.ts")).openSettings("design");
+  }, { name: PROJECT, viaSidebar });
   const box = page.locator('textarea[aria-label="Design instructions"]:visible').first();
+  if (viaSidebar) {
+    assert.equal(await box.count(), 0, "Settings → Design is not open before the gear is used");
+    await page.locator('button[aria-label="Design settings"]:visible').click({ timeout: 15000 });
+  }
   await box.waitFor({ timeout: 15000 });
   return box;
 }
@@ -69,7 +78,9 @@ try {
     const pass = (name) => { results.push({ name: `${width}px ${name}`, passed: true }); console.log(`PASS ${width}px ${name}`); };
     try {
       await page.goto(harness.web);
-      let box = await openDesignSettings(page);
+      // The phone reaches the Designs list through its drawer; the gear there is the same button.
+      let box = await openDesignSettings(page, { viaSidebar: !mobile });
+      if (!mobile) pass("the gear in the sidebar's Designs header opens Settings → Design");
       await dismissFirstSteps(page);
       await page.getByText("No design skill installed").waitFor();
       assert.ok(await page.getByText("uipro init --ai claude --global").isVisible(), "the upstream install command is shown");
