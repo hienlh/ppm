@@ -103,10 +103,10 @@ describe("commitTweaks", () => {
     expect(read("../tokens.css")).toBe(":root { --shared: #999999; }\n");
   });
 
-  it("refuses a variable that the shared kit/app.css sets last, the same as tokens.css", async () => {
+  it("refuses a variable that the shared systems/default/kit/app.css sets last, the same as tokens.css", async () => {
     mkdirSync(join(project, "designs", "kit"), { recursive: true });
     writeFileSync(join(project, "designs", "kit", "app.css"), ":root { --kit: #abcabc; }\n");
-    writeFileSync(join(dir, "index.html"), PAGE.replace("</head>", '<link rel="stylesheet" href="../kit/app.css"></head>'));
+    writeFileSync(join(dir, "index.html"), PAGE.replace("</head>", '<link rel="stylesheet" href="../systems/default/kit/app.css"></head>'));
     const manifest = JSON.parse(read("design.json"));
     writeFileSync(join(dir, "design.json"), JSON.stringify({
       ...manifest, tweaks: [...TWEAKS, { id: "kit", label: "Kit", type: "color", var: "--kit", default: "#000000" }],

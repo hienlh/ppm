@@ -140,11 +140,16 @@ export async function stepSplitAndExpiry(ctx) {
   ctx.record("an invalidated token shows the expired page, which re-mints and reloads");
 }
 
-/** Only providers that carry design instructions are offered for a new design. */
+/**
+ * Only providers that carry design instructions are offered for a new design. Scoped to the
+ * "AI provider" select specifically: an app picker select may also be present by the time
+ * this runs (apps declared earlier in the same project, by this or another viewport's run of
+ * the design-systems-per-app step, since both viewports share one server and project).
+ */
 export async function stepNewDesignDialog(ctx) {
   await ctx.page.evaluate(async (projectName) => (await import("/lib/design/design-ui-events.ts")).requestNewDesign(projectName), ctx.projectName);
   const dialog = ctx.mobile ? ctx.page.locator("div.rounded-t-2xl.bg-popover").filter({ hasText: "New design" }) : ctx.page.getByRole("dialog", { name: "New design" });
-  const select = dialog.locator("select");
+  const select = dialog.getByLabel("AI provider");
   await select.waitFor();
   const options = await select.locator("option").allTextContents();
   assert.deepEqual(options, ["Design test AI"], `providers offered: ${options}`);

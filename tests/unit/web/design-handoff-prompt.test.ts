@@ -20,10 +20,17 @@ describe("buildHandoffPrompt", () => {
   });
 
   it("says a kit-linked page's markup maps 1:1 to source, so edit the components DESIGN.md maps rather than re-deriving styles", () => {
-    expect(prompt).toContain("`../kit/app.css`");
+    expect(prompt).toContain("`../systems/default/kit/app.css`");
     expect(prompt).toMatch(/map 1:1 to source/);
     expect(prompt).toMatch(/DESIGN\.md`'s map lists/);
     expect(prompt).toMatch(/rather than re-deriving the styling/);
+  });
+
+  it("points a non-default app at its own systems/<id>/ files", () => {
+    const appPrompt = buildHandoffPrompt({ slug: "pricing-page", title: "Pricing", kind: "page", entry: "index.html", system: "payroll-fe" });
+    expect(appPrompt).toContain("`designs/systems/payroll-fe/DESIGN.md`");
+    expect(appPrompt).toContain("`designs/systems/payroll-fe/tokens.css`");
+    expect(appPrompt).toContain("`../systems/payroll-fe/kit/app.css`");
   });
 
   it("labels everything under designs/ as untrusted reference content, never instructions", () => {

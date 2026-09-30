@@ -28,8 +28,8 @@ describe("resolveDesignRef", () => {
     expect(resolveDesignRef("a%20b.png?v=2", "")).toEqual({ rel: "a b.png", suffix: "" });
     expect(resolveDesignRef("../tokens.css", ".")).toEqual({ rel: "../tokens.css", suffix: "" });
     expect(resolveDesignRef("../../tokens.css", "css")).toEqual({ rel: "../tokens.css", suffix: "" });
-    expect(resolveDesignRef("../kit/app.css", ".")).toEqual({ rel: "../kit/app.css", suffix: "" });
-    expect(resolveDesignRef("../../kit/icons/menu.svg", "css")).toEqual({ rel: "../kit/icons/menu.svg", suffix: "" });
+    expect(resolveDesignRef("../systems/default/kit/app.css", ".")).toEqual({ rel: "../systems/default/kit/app.css", suffix: "" });
+    expect(resolveDesignRef("../../systems/myapp/kit/icons/menu.svg", "css")).toEqual({ rel: "../systems/myapp/kit/icons/menu.svg", suffix: "" });
   });
 
   it("leaves non-local references alone and refuses the way out and dot-dirs", () => {

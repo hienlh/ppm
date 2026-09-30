@@ -46,8 +46,10 @@ describe("slugFromTitle", () => {
   });
 });
 
+const DEFAULT_SYSTEM = { id: "default", label: "Default", root: ".", platform: "web" as const };
+
 describe("buildDesignInstructions", () => {
-  const text = buildDesignInstructions("smoke");
+  const text = buildDesignInstructions("smoke", DEFAULT_SYSTEM);
 
   it("names the design's own folder and entry", () => {
     expect(text).toContain("designs/smoke/");
@@ -111,8 +113,8 @@ describe("buildDesignInstructions", () => {
   });
 
   it("refuses to build from an invalid slug rather than escaping it", () => {
-    expect(() => buildDesignInstructions("../x")).toThrow();
-    expect(() => buildDesignInstructions("")).toThrow();
+    expect(() => buildDesignInstructions("../x", DEFAULT_SYSTEM)).toThrow();
+    expect(() => buildDesignInstructions("", DEFAULT_SYSTEM)).toThrow();
   });
 
   it("says the agent may read the app's source, and never mentions changing it", () => {
@@ -122,12 +124,22 @@ describe("buildDesignInstructions", () => {
 
   it("covers the kit: link it, use its classes and icons, read the component map, and add a style block only for something new", () => {
     const section = text.slice(text.indexOf("## The design system"), text.indexOf("## The manifest"));
-    expect(section).toContain('href="../kit/app.css"');
-    expect(section).toContain("../kit/icons/<name>.svg");
+    expect(section).toContain('href="../systems/default/kit/app.css"');
+    expect(section).toContain("../systems/default/kit/icons/<name>.svg");
     expect(section).toMatch(/component map/);
     expect(section).toMatch(/do not invent app chrome/);
-    expect(section).toMatch(/genuinely new the kit has no classes for/);
-    expect(text).toContain("`../tokens.css` and\n  `../kit/…`");
+    expect(section).toMatch(/genuinely new the kit has no\s+classes for/);
+    expect(text).toContain("`../tokens.css` and\n  `../systems/default/…`");
+  });
+
+  it("points a non-default app at its own systems folder, root and platform", () => {
+    const mobile = buildDesignInstructions("smoke", { id: "payroll", label: "Payroll", root: "payroll-fe", platform: "mobile" });
+    const section = mobile.slice(mobile.indexOf("## The design system"), mobile.indexOf("## The manifest"));
+    expect(section).toContain("designs/systems/payroll/DESIGN.md");
+    expect(section).toContain('href="../systems/payroll/tokens.css"');
+    expect(section).toContain('href="../systems/payroll/kit/app.css"');
+    expect(section).toContain("payroll-fe");
+    expect(section).toMatch(/mobile \(React Native/);
   });
 
   it("asks the agent to compare an attached screenshot with its own check and fix differences", () => {
@@ -145,7 +157,7 @@ describe("buildDesignInstructions", () => {
   });
 
   it("asks for design_check only when the session has the tool, and always explains the automatic check", () => {
-    const withTool = buildDesignInstructions("smoke", { checkTool: true });
+    const withTool = buildDesignInstructions("smoke", DEFAULT_SYSTEM, { checkTool: true });
     expect(withTool).toContain("call the `design_check` tool");
     expect(withTool).toContain("[Canvas check]");
     expect(text).not.toContain("`design_check` tool");

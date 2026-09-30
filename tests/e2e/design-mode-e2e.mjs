@@ -12,6 +12,7 @@ import { stepKitStyles } from "./fixtures/design-mode-steps-kit.mjs";
 import {
   stepDesignModeHolds, stepMobilePanes, stepNewDesignDialog, stepNormalChat, stepSplitAndExpiry,
 } from "./fixtures/design-mode-steps-session.mjs";
+import { stepDesignSystemsPerApp } from "./fixtures/design-mode-steps-systems.mjs";
 
 // Design mode end to end, at a desktop and a phone viewport, against a disposable real
 // server (isolated PPM_HOME, scripted providers, no network). Run with Node + Bun and
@@ -49,6 +50,9 @@ const STEPS = [
   // after every step that assumes the original deck's tab is still the one in view.
   { name: "kit styles", run: stepKitStyles },
   { name: "no .design events", run: stepNoDotDesignEvents },
+  // Last: opens its own Settings/New Design flows and leaves a different tab focused, so
+  // every step above (which assumes the original deck's tab is active) must run before it.
+  { name: "design systems per app", run: stepDesignSystemsPerApp },
 ];
 
 /** `PPM_DESIGN_E2E_ONLY="variants"`: run just the named steps (comma-separated), for a focused check. */

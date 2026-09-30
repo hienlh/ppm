@@ -80,9 +80,11 @@ describe("buildUserDesignSection", () => {
   });
 });
 
+const DEFAULT_SYSTEM = { id: "default", label: "Default", root: ".", platform: "web" as const };
+
 describe("buildDesignInstructions with a user section", () => {
   it("places the user's section after every PPM rule", () => {
-    const text = buildDesignInstructions("smoke", { userSection: section("claude") });
+    const text = buildDesignInstructions("smoke", DEFAULT_SYSTEM, { userSection: section("claude") });
     const user = text.indexOf("## The user's design instructions");
     expect(user).toBeGreaterThan(text.indexOf("## Where to work"));
     expect(user).toBeGreaterThan(text.indexOf("## Assets and network"));
@@ -91,6 +93,6 @@ describe("buildDesignInstructions with a user section", () => {
   });
 
   it("is unchanged without one", () => {
-    expect(buildDesignInstructions("smoke", { userSection: "" })).toBe(buildDesignInstructions("smoke"));
+    expect(buildDesignInstructions("smoke", DEFAULT_SYSTEM, { userSection: "" })).toBe(buildDesignInstructions("smoke", DEFAULT_SYSTEM));
   });
 });

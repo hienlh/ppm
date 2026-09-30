@@ -81,18 +81,35 @@ describe("createDesignZip", () => {
     await expect(createDesignZip(project, "../other")).rejects.toMatchObject({ status: 400 });
   });
 
-  it("packs kit/ only when a design's own files actually reference it", async () => {
+  it("packs the default app's kit/ (re-rooted under systems/default/) only when referenced", async () => {
     mkdirSync(join(designs, "kit", "fonts"), { recursive: true });
     writeFileSync(join(designs, "kit", "app.css"), ":root{--k:1}");
     writeFileSync(join(designs, "kit", "fonts", "a.woff2"), "font-bytes");
     expect(Object.keys(await zipEntries(project, "landing")).sort()).toEqual([
       "DESIGN.md", "landing/design.json", "landing/img/logo.png", "landing/index.html", "tokens.css",
     ]);
-    writeFileSync(join(designs, "landing", "index.html"), '<link rel="stylesheet" href="../kit/app.css"><p>Hi</p>');
+    writeFileSync(join(designs, "landing", "index.html"), '<link rel="stylesheet" href="../systems/default/kit/app.css"><p>Hi</p>');
     const entries = await zipEntries(project, "landing");
     expect(Object.keys(entries).sort()).toEqual([
-      "DESIGN.md", "kit/app.css", "kit/fonts/a.woff2", "landing/design.json", "landing/img/logo.png", "landing/index.html", "tokens.css",
+      "DESIGN.md", "landing/design.json", "landing/img/logo.png", "landing/index.html",
+      "systems/default/DESIGN.md", "systems/default/kit/app.css", "systems/default/kit/fonts/a.woff2",
+      "systems/default/tokens.css", "tokens.css",
     ]);
-    expect(entries["kit/app.css"]).toBe(":root{--k:1}");
+    expect(entries["systems/default/kit/app.css"]).toBe(":root{--k:1}");
+    expect(entries["systems/default/tokens.css"]).toBe(":root{--accent:#f00}");
+  });
+
+  it("packs a declared app's own systems/<id>/ folder (not system.json) when referenced", async () => {
+    mkdirSync(join(designs, "systems", "myapp", "kit"), { recursive: true });
+    writeFileSync(join(designs, "systems", "myapp", "system.json"), JSON.stringify({ label: "My app", root: ".", platform: "web" }));
+    writeFileSync(join(designs, "systems", "myapp", "tokens.css"), ":root{--m:1}");
+    writeFileSync(join(designs, "systems", "myapp", "kit", "app.css"), ":root{--mk:1}");
+    writeFileSync(join(designs, "landing", "index.html"), '<link rel="stylesheet" href="../systems/myapp/tokens.css"><p>Hi</p>');
+    const entries = await zipEntries(project, "landing");
+    expect(Object.keys(entries).sort()).toEqual([
+      "DESIGN.md", "landing/design.json", "landing/img/logo.png", "landing/index.html",
+      "systems/myapp/kit/app.css", "systems/myapp/tokens.css", "tokens.css",
+    ]);
+    expect(Object.keys(entries)).not.toContain("systems/myapp/system.json");
   });
 });

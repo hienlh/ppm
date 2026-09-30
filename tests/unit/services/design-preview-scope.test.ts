@@ -38,6 +38,10 @@ describe("design preview scope", () => {
     writeFileSync(join(designs, "kit", "fonts", "a.woff2"), "font-bytes");
     writeFileSync(join(designs, "kit", ".env"), "secret");
     writeFileSync(join(designs, "kit", ".hidden", "x.css"), "hidden");
+    // A second, declared app: its files live under designs/systems/<id>/, not the legacy root.
+    mkdirSync(join(designs, "systems", "myapp", "kit"), { recursive: true });
+    writeFileSync(join(designs, "systems", "myapp", "tokens.css"), ":root{--app:1}");
+    writeFileSync(join(designs, "systems", "myapp", "kit", "app.css"), ":root{--appkit:1}");
   });
   afterEach(() => { rmSync(project, { recursive: true, force: true }); });
 
@@ -53,12 +57,29 @@ describe("design preview scope", () => {
     expect(asset).toMatchObject({ abs: join(project, "designs", "tokens.css"), rel: "../tokens.css" });
   });
 
-  it("serves any file under the kit/ alias, but never the bare directory, a dot-segment or a symlink out", async () => {
-    const css = await resolveScopedAsset(design(), "kit/app.css");
-    expect(css).toMatchObject({ abs: join(project, "designs", "kit", "app.css"), rel: "../kit/app.css" });
-    const font = await resolveScopedAsset(design(), "kit/fonts/a.woff2");
-    expect(font).toMatchObject({ abs: join(project, "designs", "kit", "fonts", "a.woff2"), rel: "../kit/fonts/a.woff2" });
-    for (const path of ["kit", "kit/", "kit/.env", "kit/.hidden/x.css", "kit/../tokens.css", "kit/../../secret.json"]) {
+  it("serves any file under systems/<id>/ for the default app, which remaps to the legacy designs/ root", async () => {
+    const css = await resolveScopedAsset(design(), "systems/default/kit/app.css");
+    expect(css).toMatchObject({ abs: join(project, "designs", "kit", "app.css"), rel: "../systems/default/kit/app.css" });
+    const font = await resolveScopedAsset(design(), "systems/default/kit/fonts/a.woff2");
+    expect(font).toMatchObject({ abs: join(project, "designs", "kit", "fonts", "a.woff2"), rel: "../systems/default/kit/fonts/a.woff2" });
+    const tokens = await resolveScopedAsset(design(), "systems/default/tokens.css");
+    expect(tokens).toMatchObject({ abs: join(project, "designs", "tokens.css") });
+    for (const path of [
+      "systems", "systems/", "systems/default", "systems/default/", "systems/default/kit/.env",
+      "systems/default/kit/.hidden/x.css", "systems/default/kit/../tokens.css", "systems/default/kit/../../secret.json",
+      "systems/Bad_Id/tokens.css", "systems/../tokens.css",
+    ]) {
+      expect(await status(path)).toBe(403);
+    }
+  });
+
+  it("serves a declared app's own systems/<id>/ folder, never another app's", async () => {
+    const css = await resolveScopedAsset(design(), "systems/myapp/kit/app.css");
+    expect(css).toMatchObject({ abs: join(project, "designs", "systems", "myapp", "kit", "app.css"), rel: "../systems/myapp/kit/app.css" });
+    const tokens = await resolveScopedAsset(design(), "systems/myapp/tokens.css");
+    expect(tokens).toMatchObject({ abs: join(project, "designs", "systems", "myapp", "tokens.css") });
+    // Climbing from inside one app's folder into another's, or out of systems/ entirely, is refused.
+    for (const path of ["systems/myapp/../default/tokens.css", "systems/myapp/../../DESIGN.md"]) {
       expect(await status(path)).toBe(403);
     }
   });

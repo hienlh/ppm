@@ -129,13 +129,18 @@ export class DesignScriptProvider extends MockProvider {
     const log = this.history.get(sessionId) ?? [];
     log.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: new Date().toISOString() });
     let answer = "Noted.";
+    const project = this.projects.get(sessionId);
     if (step) {
-      const project = this.projects.get(sessionId);
       if (!designSlug || !project) {
         yield { type: "error", message: "Scripted design step outside a design session" };
         return;
       }
       answer = await this.runStep(step, join(project, "designs", designSlug));
+    } else if (project && designSlug?.startsWith("system-") && /^Set up the design system for/.test(message)) {
+      // The real setup brief (buildDesignSystemInitPrompt), auto-sent to a showcase design's
+      // chat: writes the app's DESIGN.md/tokens.css/kit the way the real brief asks an agent
+      // to, plus the showcase page itself.
+      answer = await this.runSystemSetup(designSlug.slice("system-".length), project, join(project, "designs", designSlug));
     }
     yield { type: "text", content: answer };
     log.push({ id: crypto.randomUUID(), role: "assistant", content: answer, timestamp: new Date().toISOString() });
@@ -180,6 +185,21 @@ export class DesignScriptProvider extends MockProvider {
       return "Updated the footer.";
     }
     throw new Error(`Unknown scripted step "${step}"`);
+  }
+
+  /** What the real design-system setup brief asks an agent to produce, for one app. */
+  private async runSystemSetup(systemId: string, project: string, showcaseDir: string): Promise<string> {
+    const systemDir = systemId === "default" ? join(project, "designs") : join(project, "designs", "systems", systemId);
+    await mkdir(join(systemDir, "kit"), { recursive: true });
+    await writeFile(join(systemDir, "DESIGN.md"), "# Design system\n\nTeal brand, Arial.\n\n## Screens and components\n- Home: `src/Home.tsx`\n");
+    await writeFile(join(systemDir, "tokens.css"), ":root { --accent: #0f766e; }\n");
+    await writeFile(join(systemDir, "kit", "app.css"), ".kit-card { background-color: rgb(15, 23, 42); }\n");
+    await mkdir(showcaseDir, { recursive: true });
+    await writeFile(join(showcaseDir, "index.html"), `<!doctype html><html><head>
+<link rel="stylesheet" href="../systems/${systemId}/tokens.css">
+<link rel="stylesheet" href="../systems/${systemId}/kit/app.css">
+</head><body><h1 id="showcase-title">Design system</h1><div class="kit-card" id="showcase-card">Sample</div></body></html>\n`);
+    return "Set up the design system.";
   }
 
   override async getMessages(sessionId: string): Promise<ChatMessage[]> {

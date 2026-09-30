@@ -50,7 +50,7 @@ describe("design routes", () => {
     const listed = await (await call("")).json();
     expect(listed.ok).toBe(true);
     expect(listed.data.designs.map((d: { slug: string }) => d.slug).sort()).toEqual(["landing", "landing-2"]);
-    expect(listed.data.system).toEqual({ designMd: false, tokensCss: false });
+    expect(listed.data.systems).toMatchObject([{ id: "default", hasDesignMd: false, hasTokensCss: false }]);
 
     expect((await (await call("/landing")).json()).data.title).toBe("Landing");
     const renamed = await call("/landing", { method: "PATCH", body: JSON.stringify({ title: "Home" }) });
@@ -96,11 +96,12 @@ describe("design routes", () => {
     expect((await (await call("/home/history")).json()).data).toHaveLength(2);
   });
 
-  it("reports the design system files", async () => {
+  it("reports the design system files per app, default first", async () => {
     await create("Home");
     writeFileSync(join(project, "designs", "DESIGN.md"), "# x");
     writeFileSync(join(project, "designs", "tokens.css"), ":root{}");
-    expect((await (await call("")).json()).data.system).toEqual({ designMd: true, tokensCss: true });
+    const { systems } = (await (await call("")).json()).data;
+    expect(systems).toMatchObject([{ id: "default", hasDesignMd: true, hasTokensCss: true }]);
   });
 
   it("answers 404 for an unknown project", async () => {

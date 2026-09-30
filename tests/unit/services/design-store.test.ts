@@ -5,9 +5,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  createDesign, deleteDesign, designSystemStatus, getDesign, listDesigns, renameDesign,
-} from "../../../src/services/design/design-store.service.ts";
+import { createDesign, deleteDesign, getDesign, listDesigns, renameDesign } from "../../../src/services/design/design-store.service.ts";
+import { listDesignSystems } from "../../../src/services/design/design-systems.service.ts";
 import { buildDesignSystemInitPrompt } from "../../../src/shared/design-system-init-prompt.ts";
 
 describe("design store", () => {
@@ -33,7 +32,7 @@ describe("design store", () => {
     const [design] = await listDesigns(project);
     const html = readFileSync(join(project, "designs", design!.slug, "index.html"), "utf8");
     expect(html).not.toContain("<script>alert");
-    expect(html).toContain('href="../tokens.css"');
+    expect(html).toContain('href="../systems/default/tokens.css"');
   });
 
   it("keeps .design/ out of git", async () => {
@@ -84,16 +83,17 @@ describe("design store", () => {
     }
   });
 
-  it("returns an empty list and no design system for a project without designs/", async () => {
+  it("returns an empty list and the implicit default app for a project without designs/", async () => {
     expect(await listDesigns(project)).toEqual([]);
-    expect(await designSystemStatus(project)).toEqual({ designMd: false, tokensCss: false });
+    const [defaultSystem] = await listDesignSystems(project);
+    expect(defaultSystem).toMatchObject({ id: "default", declared: false, hasDesignMd: false, hasTokensCss: false });
     mkdirSync(join(project, "designs"));
     writeFileSync(join(project, "designs", "DESIGN.md"), "# Design");
-    expect(await designSystemStatus(project)).toEqual({ designMd: true, tokensCss: false });
+    expect((await listDesignSystems(project))[0]).toMatchObject({ hasDesignMd: true, hasTokensCss: false });
   });
 
-  it("asks the design system setup to write only DESIGN.md and tokens.css", () => {
-    const prompt = buildDesignSystemInitPrompt();
+  it("asks the design system setup to write only DESIGN.md and tokens.css for the default app", () => {
+    const prompt = buildDesignSystemInitPrompt({ id: "default", label: "Default", root: ".", platform: "web" });
     expect(prompt).toContain("designs/DESIGN.md");
     expect(prompt).toContain("designs/tokens.css");
     expect(prompt).toContain("do not modify any other file");

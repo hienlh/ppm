@@ -109,6 +109,8 @@ describe("the production asset reader", () => {
     mkdirSync(join(designs, "kit", "fonts"), { recursive: true });
     writeFileSync(join(designs, "kit", "app.css"), ":root{--kit:1}");
     writeFileSync(join(designs, "kit", "fonts", "a.woff2"), "font-bytes");
+    mkdirSync(join(designs, "systems", "myapp", "kit"), { recursive: true });
+    writeFileSync(join(designs, "systems", "myapp", "kit", "app.css"), ":root{--appkit:1}");
     writeFileSync(join(outside, "ppm.db"), "SQLite format 3");
   });
   afterEach(() => {
@@ -116,15 +118,20 @@ describe("the production asset reader", () => {
     rmSync(outside, { recursive: true, force: true });
   });
 
-  it("reads web assets in the design, tokens.css and kit/**, and refuses everything else", async () => {
+  it("reads web assets in the design, tokens.css and systems/<id>/**, and refuses everything else", async () => {
     const read = createDesignAssetReader(join(designs, "landing"), designs);
     expect(await read("a.png", 100)).toMatchObject({ ok: true });
     expect(await read("../tokens.css", 100)).toMatchObject({ ok: true });
-    expect(await read("../kit/app.css", 100)).toMatchObject({ ok: true });
-    expect(await read("../kit/fonts/a.woff2", 100)).toMatchObject({ ok: true });
+    expect(await read("../systems/default/kit/app.css", 100)).toMatchObject({ ok: true });
+    expect(await read("../systems/default/kit/fonts/a.woff2", 100)).toMatchObject({ ok: true });
+    expect(await read("../systems/myapp/kit/app.css", 100)).toMatchObject({ ok: true });
     expect(await read("missing.png", 100)).toEqual({ ok: false, reason: "missing" });
     expect(await read("a.png", 0)).toEqual({ ok: false, reason: "too-large" });
-    for (const rel of ["notes.txt", ".design/comments.json", "../landing/a.png", "../../x.png", "a\\b.png", "../kit", "../kit/.hidden"]) {
+    for (const rel of [
+      "notes.txt", ".design/comments.json", "../landing/a.png", "../../x.png", "a\\b.png",
+      "../systems", "../systems/default", "../systems/default/kit/.hidden", "../systems/Bad_Id/tokens.css",
+      "../systems/myapp/../default/tokens.css",
+    ]) {
       expect(await read(rel, 100)).toEqual({ ok: false, reason: "refused" });
     }
   });
