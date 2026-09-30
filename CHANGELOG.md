@@ -5,7 +5,9 @@
 ### Added
 - Settings → Design: your own instructions for every design chat, with `/` to name installed skills (used by Claude and Codex) and an install suggestion when no design skill is present. A gear in the sidebar's Designs header opens it.
 - Design mode: before the first build the AI asks a few short questions when the request leaves key things open, including how many variants to make.
-- Design variants: up to five alternative directions per design, a Variant switcher on the canvas, and "Use this variant" to keep one (the others stay in Version history).
+- Design variants: up to five alternative directions per design, and a Variant switcher on the canvas; keep or drop one by asking in the design chat (the dropped ones stay in Version history).
+- Design mode: "Set up design system" can also build a UI kit (`designs/kit/`) from the project's own compiled CSS, fonts and icons, so designs reproduce the real app instead of just its palette.
+- Design mode: "Build in new chat" replaces "Hand off to code" — one click opens a new chat with the brief and a screenshot of the design already attached.
 
 ### Fixed
 - A new chat's first message no longer fails when choosing its account fails; the chat starts on the server's own pick.
