@@ -380,6 +380,9 @@ describe("subagent threads (spawned agents are steps, not sessions)", () => {
     const childEvents = cards[0].children as any[];
     expect(childEvents.some((e) => e.type === "tool_use" && e.tool === "Bash")).toBe(true);
     expect(childEvents.some((e) => e.type === "text" && e.content.includes("simplify pass"))).toBe(true);
+    // The child's rollout was found and parsed — the chat can slim this card's children,
+    // since a session window can stream the rest straight back from that same file.
+    expect(cards[0].transcriptAvailable).toBe(true);
 
     // The completion answers that card, carrying the agent's closing report.
     const result = events.find((e) => e.type === "tool_result" && (e as any).toolUseId === cards[0].toolUseId) as any;
@@ -394,6 +397,9 @@ describe("subagent threads (spawned agents are steps, not sessions)", () => {
     expect(dead.children[0].content).toBe(
       "The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account.",
     ); // unwrapped from the API error codex nests as JSON
+    // Its rollout was still found and read (that is where the error text came from),
+    // so this card is stamped too even though the agent never produced a real report.
+    expect(dead.transcriptAvailable).toBe(true);
   });
 
   it("still resolves the subagent rollout by id (the parent has to read it)", () => {

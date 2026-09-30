@@ -3,6 +3,7 @@ import {
   aggregateTurnFileChanges,
   collectTurnMessages,
 } from "../../src/web/lib/aggregate-turn-file-changes.ts";
+import { applyChildToParent, slimAgentChildren } from "../../src/web/lib/agent-step-summary.ts";
 import type { ChatEvent, ChatMessage } from "../../src/types/chat.ts";
 
 function assistantMsg(events: ChatEvent[], id = "a1"): ChatMessage {
@@ -189,6 +190,49 @@ describe("aggregateTurnFileChanges", () => {
       assistantMsg([edit("/a.ts", "x", "y")]),
     ]);
     expect(withoutId[0]!.edits[0]!.editRef).toBeUndefined();
+  });
+});
+
+describe("aggregateTurnFileChanges over slimmed Agent cards (depth-2 nesting)", () => {
+  test("a grandchild Edit two Agent levels down still routes and lists after slimming", () => {
+    // Codex shape: root card -> nested subagent (depth 1) -> nested subagent (depth 2) -> Edit.
+    const deepest = toolUse("Agent", { description: "depth-2 worker" }, "nested-2", [
+      edit("/deep.ts", "x", "y", "grandchild-edit"),
+      toolResult("grandchild-edit", "file updated successfully"),
+      toolUse("Read", { file_path: "/noise.ts" }, "noise"), // dropped by slimming
+    ]);
+    const root = toolUse("Agent", { description: "root worker" }, "root-1", [
+      toolUse("Agent", { description: "depth-1 worker" }, "nested-1", [deepest]),
+    ]);
+
+    const { kept } = slimAgentChildren(root.children);
+    const slimmedRoot = { ...root, children: kept };
+    const changes = aggregateTurnFileChanges([assistantMsg([slimmedRoot])]);
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.filePath).toBe("/deep.ts");
+    expect(changes[0]!.viaSubagent).toBe(true);
+  });
+
+  test("step count equals the number of distinct child tool_use ids after two replays", () => {
+    let card = toolUse("Agent", { description: "root worker" }, "root-1");
+    const stream: ChatEvent[] = [
+      edit("/a.ts", "x", "y", "e1"),
+      toolResult("e1", "file updated successfully"),
+      toolUse("Bash", { command: "echo hi" }, "b1"),
+      toolResult("b1", "hi"),
+    ];
+    for (const ev of stream) card = applyChildToParent(card, ev);
+    // A reconnect replays the same buffered events twice — a stable step count is the
+    // one thing `children.length` could never guarantee.
+    for (const ev of stream) card = applyChildToParent(card, ev);
+    for (const ev of stream) card = applyChildToParent(card, ev);
+
+    expect((card as any).stepIds).toEqual(["e1", "b1"]);
+    expect((card as any).stepCount).toBe(2);
+    const changes = aggregateTurnFileChanges([assistantMsg([card])]);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.filePath).toBe("/a.ts");
   });
 });
 

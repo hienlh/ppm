@@ -669,6 +669,7 @@ export function ChatHistoryBar({
             messages={teamMessages ?? []}
             sessionId={sessionId}
             projectName={projectName}
+            providerId={providerId}
           />
         </div>
       )}

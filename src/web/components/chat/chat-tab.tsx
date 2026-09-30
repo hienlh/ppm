@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Loader2, Upload, X } from "@/lib/icons";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
@@ -17,7 +17,8 @@ import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
-import { TeamWorkingBar } from "./team-working-bar";
+import { RunningAgentsBar } from "./running-agents-bar";
+import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
@@ -445,6 +446,13 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // session has a team so the working bar below the conversation stays truthful.
   const primaryTeam = teamActivity?.teamNames?.[0] ?? "";
   const { members: teamMembers } = useTeamActivityFeed(primaryTeam, !!primaryTeam);
+
+  // Identity every Agent/Task card's one-line summary reads to open its session window —
+  // memoized so a card's context read doesn't churn on every unrelated re-render.
+  const agentSessionIdentity = useMemo(
+    () => ({ projectName, providerId: normalizeProviderId(providerId), sessionId: sessionId ?? "" }),
+    [projectName, providerId, sessionId],
+  );
 
   // Auto-clear notification badge when this tab is active and document is visible.
   // Checks ALL panels (not just focused) so split-panel scenarios also clear.
@@ -1085,6 +1093,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, []);
 
   return (
+    <AgentSessionProvider value={agentSessionIdentity}>
     <div
       data-onboarding="chat"
       className="flex flex-col h-full relative"
@@ -1163,8 +1172,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         bashPartialOutput={bashPartialOutput}
       />}
 
-      {/* Teammates still working — pinned here so it is the last thing under the conversation */}
-      <TeamWorkingBar teamName={primaryTeam} members={teamMembers} projectName={projectName} />
+      {/* Agents still working — pinned here so it is the last thing under the conversation */}
+      <RunningAgentsBar
+        projectName={projectName}
+        providerId={agentSessionIdentity.providerId}
+        sessionId={sessionId}
+        messages={messages}
+        teamName={primaryTeam}
+        teamMembers={teamMembers}
+      />
 
       {/* MCP servers this session cannot use until someone signs in */}
       <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />
@@ -1287,5 +1303,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
       {/* Bug report popup is now global — see BugReportPopup in app.tsx */}
     </div>
+    </AgentSessionProvider>
   );
 }

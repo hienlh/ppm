@@ -155,6 +155,9 @@ export function mergeSubagentChildren(sessionDir: string, messages: MessageLike[
       if (ev.type !== "tool_use" || (ev.tool !== "Agent" && ev.tool !== "Task") || !ev.toolUseId) continue;
       const group = groups.get(ev.toolUseId);
       if (!group) continue;
+      // A group was found on disk regardless of what it parsed to — the client can slim this
+      // card's children because a session window can always stream the rest from here.
+      (ev as { transcriptAvailable?: boolean }).transcriptAvailable = true;
       const timed: TimedChatEvent[] = [];
       for (const agent of group) timed.push(...parseAgentTranscriptTimed(agent.transcriptPath));
       // Stable sort: same-timestamp events keep transcript order.

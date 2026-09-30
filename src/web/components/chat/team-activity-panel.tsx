@@ -12,17 +12,12 @@ import { cn } from "@/lib/utils";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { useOpenAgentSession } from "./use-open-agent-session";
+import { normalizeProviderId } from "./agent-session-context";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
 import { TeamMemberList } from "./team-member-list";
 import { TeamMessageList } from "./team-message-list";
-import type { AgentTranscriptProviderId } from "../../../shared/agent-transcript-protocol";
 
 type TeamTab = "members" | "messages";
-
-/** Claude and Codex are the only hubs that exist — anything else falls back to Claude. */
-function normalizeProviderId(id: string | undefined): AgentTranscriptProviderId {
-  return id === "codex" ? "codex" : "claude";
-}
 
 interface TeamActivityPanelProps {
   teamNames: string[];
@@ -31,9 +26,8 @@ interface TeamActivityPanelProps {
   sessionId?: string | null;
   /** Passed to a member window so its steps resolve project-relative paths. */
   projectName?: string;
-  /** Which provider's hub to subscribe the session window on. Not yet forwarded by
-   *  `chat-history-bar.tsx` (out of this phase's file ownership) — defaults to Claude,
-   *  the common case, until that wiring lands. */
+  /** Which provider's hub to subscribe the session window on — forwarded by
+   *  `chat-history-bar.tsx` from the chat's own `providerId`; defaults to Claude when absent. */
   providerId?: string;
 }
 

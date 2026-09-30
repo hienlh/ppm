@@ -250,6 +250,20 @@ export type ChatEvent =
       /** Terminal state of a backgrounded Agent/Task, once its `<task-notification>` arrives.
        *  Absent on a launched-but-unfinished agent — the card renders that as still running. */
       bgStatus?: import("../shared/background-agent-status").BackgroundAgentStatus;
+      /** Agent/Task only: distinct child tool_use ids counted as "steps" so far — a Set-like
+       *  array kept stable under a WS replay redelivering the same id. */
+      stepIds?: string[];
+      /** stepIds.length, cached alongside it so the one-line card need not measure the array. */
+      stepCount?: number;
+      /** Plain-text description of the most recent step, for the one-line card. */
+      lastStep?: string;
+      /** Set by a provider when an on-disk transcript was found for this card — its `children`
+       *  are safe to reduce to the slimmed set because a session window can stream the rest
+       *  from disk instead. Never set by the live stream itself. */
+      transcriptAvailable?: boolean;
+      /** Bounded ring buffer (last 200) of child events slimming would otherwise drop —
+       *  the fallback shown in a window when no on-disk transcript exists at all. */
+      recentChildren?: ChatEvent[];
     }
   | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }

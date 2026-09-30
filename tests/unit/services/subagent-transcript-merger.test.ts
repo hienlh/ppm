@@ -64,6 +64,15 @@ describe("mergeSubagentChildren", () => {
     ];
     mergeSubagentChildren(sessionDir, messages);
     expect((messages[0]!.events![0] as any).children).toBeUndefined();
+    expect((messages[0]!.events![0] as any).transcriptAvailable).toBeUndefined();
+  });
+
+  test("stamps transcriptAvailable when a group was found on disk, even without touching children", () => {
+    const messages = [
+      { content: "", events: [{ type: "tool_use", tool: "Agent", toolUseId: "toolu_parent1", input: {} }] as ChatEvent[] },
+    ];
+    mergeSubagentChildren(sessionDir, messages);
+    expect((messages[0]!.events![0] as any).transcriptAvailable).toBe(true);
   });
 
   test("flattens a nested agent's events into the card, in time order between the parent's steps", () => {

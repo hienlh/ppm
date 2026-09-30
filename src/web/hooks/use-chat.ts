@@ -16,6 +16,13 @@ import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup }
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
+import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
+
+/** Slim every Agent/Task card a provider stamped `transcriptAvailable` on, walking
+ *  in from the REST history response before it ever reaches React state. */
+function slimHistoryMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => (m.events ? { ...m, events: slimHistoryEvents(m.events) } : m));
+}
 
 interface ApprovalRequest {
   requestId: string;
@@ -316,12 +323,8 @@ export function useChat(
         const event = events[i]!;
         if (event.type !== "tool_use") continue;
         if ((event.tool === "Agent" || event.tool === "Task") && (event as any).toolUseId === parentToolUseId) {
-          const children = [...(event.children ?? [])];
-          const id = (childEvent as any).toolUseId as string | undefined;
-          const duplicate = id ? children.findIndex((c) => c.type === childEvent.type && (c as any).toolUseId === id) : -1;
-          if (duplicate === -1) children.push(childEvent);
-          else children[duplicate] = childEvent;
-          return [[...events.slice(0, i), { ...event, children }, ...events.slice(i + 1)], true];
+          const updated = applyChildToParent(event, childEvent);
+          return [[...events.slice(0, i), updated, ...events.slice(i + 1)], true];
         }
         if (event.children?.length) {
           const [children, found] = append(event.children);
@@ -360,16 +363,7 @@ export function useChat(
       }
       if (idx === -1) return prev;
       const msg = prev[idx]!;
-      const events = msg.events!.map((e) => {
-        if (!isParent(e) || e.type !== "tool_use") return e;
-        const children = [...(e.children ?? [])];
-        // Replays can redeliver id-bearing children — upsert instead of duplicating
-        const cid = (childEvent as any).toolUseId as string | undefined;
-        const dup = cid ? children.findIndex((c) => c.type === childEvent.type && (c as any).toolUseId === cid) : -1;
-        if (dup !== -1) children[dup] = childEvent;
-        else children.push(childEvent);
-        return { ...e, children };
-      });
+      const events = msg.events!.map((e) => (isParent(e) ? applyChildToParent(e, childEvent) : e));
       return [...prev.slice(0, idx), { ...msg, events }, ...prev.slice(idx + 1)];
     });
     return true;
@@ -1237,7 +1231,7 @@ export function useChat(
           // cached bundle from before the upgrade would otherwise render an empty
           // history with no error.
           const payload = Array.isArray(data) ? { messages: data, versionMap: {} } : data;
-          let history: ChatMessage[] = Array.isArray(payload?.messages) ? payload.messages : [];
+          let history: ChatMessage[] = slimHistoryMessages(Array.isArray(payload?.messages) ? payload.messages : []);
           if (payload?.versionMap) setVersionMap(payload.versionMap);
           // The server served this transcript from a different id than the one
           // asked for: the provider had renamed the session and this tab kept the
@@ -1529,7 +1523,7 @@ export function useChat(
         if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
           historyReconciledRef.current++;
           if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
-          setMessages(payload.messages);
+          setMessages(slimHistoryMessages(payload.messages));
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
         }

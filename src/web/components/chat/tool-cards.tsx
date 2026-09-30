@@ -101,6 +101,10 @@ import { isImageExtension } from "../../../shared/image-extensions";
 import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
 import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
+import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
+import { useOpenAgentSession } from "./use-open-agent-session";
+import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
+import { agentStepInfo } from "@/lib/agent-step-summary";
 
 /** Extract tool name and input from a ChatEvent */
 function extractToolInfo(tool: ChatEvent): { toolName: string; input: Record<string, unknown> } {
@@ -168,6 +172,11 @@ export function ToolCard({
     // so show it without requiring a click.
     return !!imageReadPath(tool);
   });
+  // Called unconditionally (Rules of Hooks) even for tool types that never reach the
+  // subagent-summary branch below — cheap, and `variant`/tool type are stable for the
+  // life of one ToolCard instance, same as the `tool.type === "error"` early return above.
+  const openAgentSession = useOpenAgentSession();
+  const agentSessionIdentity = useAgentSessionContext();
 
   if (tool.type === "error") {
     return (
@@ -215,6 +224,45 @@ export function ToolCard({
 
   // Read partial output for streaming Bash/PowerShell tools
   const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
+
+  // In chat, every Agent/Task card — named teammates included — is one line that opens the
+  // live session window/sheet rather than expanding inline; `variant="window"` (the window's
+  // own nested-card rendering) keeps today's inline expansion below instead.
+  if (isSubagent && variant === "chat" && tool.type === "tool_use") {
+    const handle = addressableAgentName(toolName, input);
+    const description = handle ? "" : truncate(String((input as any).description ?? (input as any).prompt ?? ""), 60);
+    const { stepCount, lastStep } = agentStepInfo(tool);
+    const status: AgentCardStatus = (isError || bgFailed) ? "error" : isDone ? "done" : "running";
+    const cardId = toolUseId ?? "";
+    // No provider gave this card a real session identity (the group-chat transcript viewer
+    // has none) — a synthetic id the hub can never resolve still lets the card open, just
+    // straight into memory-only mode via the fallback events below.
+    const identity = agentSessionIdentity ?? {
+      projectName: projectName ?? "",
+      providerId: normalizeProviderId(undefined),
+      sessionId: `local:${cardId || "card"}`,
+    };
+    const fallbackEvents = [...(tool.children ?? []), ...(tool.recentChildren ?? [])];
+    return (
+      <AgentCardSummary
+        handle={handle}
+        description={description}
+        stepCount={stepCount}
+        lastStep={lastStep}
+        status={status}
+        bgRunning={bgRunning}
+        onOpen={() => openAgentSession({
+          projectName: identity.projectName,
+          providerId: identity.providerId,
+          sessionId: identity.sessionId,
+          source: { kind: "card", cardId },
+          title: handle ? `Session — ${handle}` : (description || "Agent session"),
+          prompt: String((input as any).prompt ?? (input as any).description ?? ""),
+        }, fallbackEvents)}
+      />
+    );
+  }
+
   const partial = (toolName === "Bash" || toolName === "PowerShell") && !hasResult && toolUseId
     ? bashPartialOutput?.current?.get(toolUseId)
     : undefined;

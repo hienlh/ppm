@@ -62,7 +62,12 @@ export function subagentCardId(threadId: string): string {
   return `subagent-${threadId}`;
 }
 
-/** The spawn, as the Agent card the chat already knows how to expand. */
+/** The spawn, as the Agent card the chat already knows how to expand.
+ *
+ * `transcript` is only ever passed by a history reader that already found and parsed the
+ * child's rollout — live streaming (`codex-event-mapper.ts`) and the tail parser call this
+ * with none, so `transcriptAvailable` stays unset there and the chat keeps this card's full
+ * live children instead of slimming away a source it cannot later stream from disk. */
 export function subagentToolUse(activity: SubagentActivity, transcript?: SubagentTranscript | null): ChatEvent {
   return {
     type: "tool_use",
@@ -70,6 +75,7 @@ export function subagentToolUse(activity: SubagentActivity, transcript?: Subagen
     input: { description: activity.path },
     toolUseId: subagentCardId(activity.threadId),
     ...(transcript?.events.length ? { children: transcript.events } : {}),
+    ...(transcript ? { transcriptAvailable: true } : {}),
   };
 }
 
