@@ -55,15 +55,14 @@ export function TeamActivityPanel({ teamNames, messages, sessionId, projectName,
 
   const openMemberSession = useCallback(
     (memberName: string) => {
-      // Implicit teams are named after the session id, so this is exact for the common case;
-      // an explicit (named, reused-across-sessions) team falls back to its own name, which is
-      // wrong for the hub's per-session subscription but no worse than today's handle lookup.
-      const resolvedSessionId = sessionId ?? selectedTeam;
-      if (!resolvedSessionId) return;
+      // A team name is not a session id — the hub's per-session subscription would name a
+      // session that never exists and fail ownership. Without the real id there is nothing
+      // to open (no worse than the old handle lookup, which had the same gap).
+      if (!sessionId) return;
       openAgentSession({
         projectName: projectName ?? "",
         providerId: normalizeProviderId(providerId),
-        sessionId: resolvedSessionId,
+        sessionId,
         source: { kind: "member", teamName: selectedTeam, memberName },
         title: `Session — ${memberName}`,
       });

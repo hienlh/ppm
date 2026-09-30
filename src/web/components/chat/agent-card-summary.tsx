@@ -10,6 +10,7 @@
 import { Bot, ChevronRight, Loader2, CheckCircle2, XCircle, Users } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
+import { formatStepCount } from "@/lib/agent-step-summary";
 
 export type AgentCardStatus = "running" | "done" | "error";
 
@@ -63,7 +64,7 @@ export function AgentCardSummary({
 
       <span className="ml-auto flex items-center gap-2 shrink-0 text-text-3">
         {bgRunning && <span className="text-[10px] text-primary">running…</span>}
-        {stepCount > 0 && <span className="font-mono text-[10px]">{stepCount} steps</span>}
+        {stepCount > 0 && <span className="font-mono text-[10px]">{formatStepCount(stepCount)}</span>}
         <StatusIcon className={cn("size-3.5", statusCls)} />
         <ChevronRight className="size-3" />
       </span>

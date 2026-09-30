@@ -3,9 +3,13 @@ import {
   agentStepInfo,
   applyChildToParent,
   describeStep,
+  formatStepCount,
+  mergeFallbackEvents,
   pushRecentChild,
+  recursiveStepCount,
   slimAgentChildren,
   slimHistoryEvents,
+  MAX_RECENT_BYTES,
   MAX_RECENT_CHILDREN,
 } from "../../../src/web/lib/agent-step-summary";
 import type { ChatEvent } from "../../../src/types/chat";
@@ -16,6 +20,11 @@ function toolUse(tool: string, input: Record<string, unknown>, toolUseId?: strin
 
 function toolResult(toolUseId: string, output = "ok"): ChatEvent {
   return { type: "tool_result", output, toolUseId };
+}
+
+/** A fresh Agent/Task parent with no routed children yet. */
+function parent(): ChatEvent {
+  return toolUse("Agent", { description: "worker" }, "parent-1");
 }
 
 describe("describeStep", () => {
@@ -96,6 +105,47 @@ describe("agentStepInfo", () => {
   });
 });
 
+describe("recursiveStepCount — nested agent totals equal the window's flat count (M5)", () => {
+  test("sums a nested Agent's own subtree on top of this card's direct steps", () => {
+    // Top card: t1 (Read, direct), t2 (Edit, direct), t3 (nested Agent — counts once for the
+    // spawn, its own gc1/gc2 counted on top). Flat on-disk total: t1,t2,t3,gc1,gc2 = 5.
+    const nestedAgent: Extract<ChatEvent, { type: "tool_use" }> = {
+      ...(toolUse("Agent", { description: "nested" }, "t3") as Extract<ChatEvent, { type: "tool_use" }>),
+      children: [
+        toolUse("Read", { file_path: "/g1.ts" }, "gc1"),
+        toolResult("gc1"),
+        toolUse("Edit", { file_path: "/g2.ts" }, "gc2"),
+        toolResult("gc2"),
+      ],
+    };
+    let top = toolUse("Agent", { description: "top" }, "top1");
+    top = applyChildToParent(top, toolUse("Read", { file_path: "/a.ts" }, "t1"));
+    top = applyChildToParent(top, toolUse("Edit", { file_path: "/b.ts" }, "t2"));
+    top = applyChildToParent(top, nestedAgent);
+
+    expect(recursiveStepCount(top as Extract<ChatEvent, { type: "tool_use" }>)).toBe(5);
+    expect(agentStepInfo(top as Extract<ChatEvent, { type: "tool_use" }>).stepCount).toBe(5);
+  });
+
+  test("a leaf agent (no nested Agent/Task) is unaffected — count equals direct steps", () => {
+    const tool = {
+      ...(toolUse("Agent", {}, "a1") as Extract<ChatEvent, { type: "tool_use" }>),
+      stepCount: 16,
+      stepIds: Array.from({ length: 16 }, (_, i) => `idx:${i}`),
+    };
+    expect(recursiveStepCount(tool)).toBe(16);
+  });
+});
+
+describe("formatStepCount", () => {
+  test("singular for exactly one step, plural otherwise", () => {
+    expect(formatStepCount(1)).toBe("1 step");
+    expect(formatStepCount(0)).toBe("0 steps");
+    expect(formatStepCount(2)).toBe("2 steps");
+    expect(formatStepCount(16)).toBe("16 steps");
+  });
+});
+
 describe("pushRecentChild", () => {
   test("upserts by toolUseId instead of duplicating on replay", () => {
     let buf: ChatEvent[] = [];
@@ -115,13 +165,33 @@ describe("pushRecentChild", () => {
     expect((buf[0] as any).content).toBe("10");
     expect((buf[buf.length - 1] as any).content).toBe(String(MAX_RECENT_CHILDREN + 9));
   });
+
+  test("also caps by approximate serialized size, dropping oldest before the count cap kicks in (L3)", () => {
+    const big = "x".repeat(50_000); // ~50KB per entry once serialized
+    let buf: ChatEvent[] = [];
+    for (let i = 0; i < 10; i++) {
+      buf = pushRecentChild(buf, { type: "text", content: `${big}-${i}` });
+    }
+    // 10 * ~50KB ≈ 500KB, well past MAX_RECENT_BYTES (256KB) and far under the 200-entry cap.
+    expect(buf.length).toBeLessThan(10);
+    const totalBytes = buf.reduce((sum, e) => sum + JSON.stringify(e).length, 0);
+    expect(totalBytes).toBeLessThanOrEqual(MAX_RECENT_BYTES);
+    // The most recent entry always survives even if it alone would exceed the budget.
+    expect((buf[buf.length - 1] as any).content).toBe(`${big}-9`);
+  });
+
+  test("stamps arrivalSeq when a seq is given; preserves the original seq across an update", () => {
+    let buf: ChatEvent[] = [];
+    buf = pushRecentChild(buf, toolUse("Bash", { command: "pending" }, "b1"), 3);
+    expect((buf[0] as any).arrivalSeq).toBe(3);
+    buf = pushRecentChild(buf, toolResult("b1", "still running"), 3);
+    buf = pushRecentChild(buf, toolResult("b1", "done"), 7); // later delivery, same entry updated
+    expect((buf[1] as any).arrivalSeq).toBe(3); // position preserved, not moved to seq 7
+    expect((buf[1] as any).output).toBe("done");
+  });
 });
 
 describe("applyChildToParent", () => {
-  function parent(): ChatEvent {
-    return toolUse("Agent", { description: "worker" }, "parent-1");
-  }
-
   test("counts a step exactly once even when the same tool_use is redelivered by a replay", () => {
     let p = parent();
     p = applyChildToParent(p, toolUse("Read", { file_path: "/a.ts" }, "c1"));
@@ -153,6 +223,37 @@ describe("applyChildToParent", () => {
     p = applyChildToParent(p, toolUse("Edit", { file_path: "/a.ts" }, "e1"));
     p = applyChildToParent(p, toolUse("Bash", { command: "echo hi" }, "b1"));
     expect((p as any).lastStep).toBe("echo hi");
+  });
+
+  test("stamps each routed child with a monotonically increasing arrivalSeq", () => {
+    let p = parent();
+    p = applyChildToParent(p, toolUse("Bash", { command: "one" }, "b1")); // -> recentChildren, seq 0
+    p = applyChildToParent(p, toolUse("Edit", { file_path: "/a.ts" }, "e1")); // -> children, seq 1
+    p = applyChildToParent(p, toolUse("Bash", { command: "two" }, "b2")); // -> recentChildren, seq 2
+    expect((p as any).recentChildren.map((c: any) => c.arrivalSeq)).toEqual([0, 2]);
+    expect((p as any).children.map((c: any) => c.arrivalSeq)).toEqual([1]);
+  });
+});
+
+describe("mergeFallbackEvents (M6)", () => {
+  test("interleaves kept children and the ring buffer back into original arrival order", () => {
+    let p = parent();
+    p = applyChildToParent(p, toolUse("Bash", { command: "read something" }, "b1")); // not kept
+    p = applyChildToParent(p, toolUse("Edit", { file_path: "/a.ts" }, "e1")); // kept
+    p = applyChildToParent(p, toolResult("e1", "file updated successfully"));
+    p = applyChildToParent(p, toolUse("Bash", { command: "read again" }, "b2")); // not kept
+
+    const merged = mergeFallbackEvents((p as any).children, (p as any).recentChildren);
+    // Arrival order was b1, e1, e1-result, b2 — a plain concatenation of children (e1, e1
+    // result) then recentChildren (b1, b2) would show the edit before the read that preceded
+    // it, which is exactly the bug M6 reports.
+    expect(merged.map((e: any) => e.toolUseId)).toEqual(["b1", "e1", "e1", "b2"]);
+  });
+
+  test("falls back to each list's own order when neither side carries an arrivalSeq", () => {
+    const kept: ChatEvent[] = [toolUse("Edit", { file_path: "/a.ts" }, "e1")];
+    const recent: ChatEvent[] = [toolUse("Bash", { command: "x" }, "b1")];
+    expect(mergeFallbackEvents(kept, recent).map((e: any) => e.toolUseId)).toEqual(["e1", "b1"]);
   });
 });
 

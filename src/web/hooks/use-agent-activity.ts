@@ -1,6 +1,6 @@
 /**
  * "Who is running right now" for one session, from the transcript hub's liveness
- * feed on `/ws/global` (phase 3's `agent-activity` push).
+ * feed on `/ws/global` (the `agent-activity` push).
  *
  * Mirrors `use-agent-session-stream.ts`'s subscribe contract exactly: a
  * subscription is never queued while the socket is down (`sendIfOpen` drops it

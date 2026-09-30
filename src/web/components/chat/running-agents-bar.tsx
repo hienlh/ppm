@@ -18,6 +18,8 @@ import type { TeamMemberActivity } from "@/hooks/use-team-activity-feed";
 import { buildRunningRows, findCardLabel } from "@/lib/running-agent-rows";
 import { formatDuration, shortAgentType } from "./team-member-activity-format";
 import { useOpenAgentSession } from "./use-open-agent-session";
+import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
+import { cn } from "@/lib/utils";
 import type { ChatMessage } from "../../../types/chat";
 import type { AgentTranscriptProviderId } from "../../../shared/agent-transcript-protocol";
 
@@ -36,6 +38,8 @@ export function RunningAgentsBar({ projectName, providerId, sessionId, messages,
   const running = useAgentActivity({ projectName, providerId, sessionId });
   const openAgentSession = useOpenAgentSession();
   const rows = useMemo(() => buildRunningRows(running, teamMembers), [running, teamMembers]);
+  // Touch needs the 44px minimum even at desktop width; a mouse keeps the tighter 36px row.
+  const coarse = usePrefersCoarsePointer();
 
   if (!sessionId || rows.length === 0) return null;
 
@@ -60,7 +64,10 @@ export function RunningAgentsBar({ projectName, providerId, sessionId, messages,
               title: name ? `Session — ${name}` : "Agent session",
               prompt: label?.description,
             })}
-            className="flex w-full items-center gap-2 rounded px-1 py-1.5 min-h-[36px] text-left text-xs hover:bg-surface transition-colors"
+            className={cn(
+              "flex w-full items-center gap-2 rounded px-1 py-1.5 text-left text-xs hover:bg-surface transition-colors",
+              coarse ? "min-h-[44px]" : "min-h-[36px]",
+            )}
             title={name ? `Open ${name}'s session` : "Open agent session"}
           >
             <span className="relative flex size-2 shrink-0">

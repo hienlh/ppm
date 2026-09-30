@@ -9,7 +9,15 @@
  * already showing focuses that window instead of spawning a duplicate. At the window cap the
  * oldest *agent-session* window is replaced — not some unrelated window the user is still
  * using — and if there is no agent-session window to replace, the open is refused instead of
- * silently evicting something else (red-team decision: focus-and-do-nothing is worse).
+ * silently evicting something else (focus-and-do-nothing would be worse).
+ *
+ * The returned callback reads the window store via `getState()` at call time rather than
+ * subscribing to it with the `useWindowStore(selector)` hook form: every `ToolCard` in every
+ * mounted chat tab calls this hook unconditionally (Bash/Read cards too, not just Agent/Task),
+ * and a window-store subscription there re-rendered all of them on every drag/resize frame of
+ * any floating window, anywhere — dragging a window made every chat tab's tool cards repaint.
+ * The callback only ever needs the *current* windows at the moment a card is tapped, never a
+ * live view of them.
  */
 import { useCallback } from "react";
 import { toast } from "sonner";
@@ -33,11 +41,6 @@ function samePayloadSource(
 /** Callback that opens a session the right way for this viewport and the current windows. */
 export function useOpenAgentSession(): (payload: AgentSessionWindowPayload, fallbackEvents?: ChatEvent[]) => void {
   const isMobile = useIsMobile();
-  const windows = useWindowStore((s) => s.windows);
-  const bounds = useWindowStore((s) => s.bounds);
-  const openWindow = useWindowStore((s) => s.open);
-  const closeWindow = useWindowStore((s) => s.close);
-  const focusWindow = useWindowStore((s) => s.focus);
   const openSheet = useAgentSessionSheetStore((s) => s.open);
 
   return useCallback(
@@ -53,11 +56,12 @@ export function useOpenAgentSession(): (payload: AgentSessionWindowPayload, fall
         return;
       }
 
+      const store = useWindowStore.getState();
       const asRecord = payload as unknown as Record<string, unknown>;
-      const all = Object.values(windows);
+      const all = Object.values(store.windows);
       const existing = all.find((w) => w.kind === "agent-session" && samePayloadSource(w.payload, payload));
       if (existing) {
-        focusWindow(existing.id);
+        store.focus(existing.id);
         return;
       }
 
@@ -67,13 +71,13 @@ export function useOpenAgentSession(): (payload: AgentSessionWindowPayload, fall
           toast.error("Too many windows open", { description: "Close one to open this session." });
           return;
         }
-        closeWindow(agentWindows[0]!.id);
+        store.close(agentWindows[0]!.id);
       }
 
       const afterClose = Object.values(useWindowStore.getState().windows);
-      const rect = portraitSpawnRect(afterClose.map((w) => w.rect), bounds);
-      openWindow("agent-session", asRecord, rect);
+      const rect = portraitSpawnRect(afterClose.map((w) => w.rect), useWindowStore.getState().bounds);
+      useWindowStore.getState().open("agent-session", asRecord, rect);
     },
-    [isMobile, windows, bounds, openWindow, closeWindow, focusWindow, openSheet],
+    [isMobile, openSheet],
   );
 }

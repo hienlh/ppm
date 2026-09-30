@@ -3,11 +3,15 @@
  * slimmed in-memory record of a subagent's work — no React, so this is directly
  * unit-testable and reusable from `use-chat.ts`'s live routing.
  *
- * A "step" is a child `tool_use` (Definitions, phase 5): nested Agent/Task calls
- * count as one step each, never expanded into their own grandchildren's count.
- * `stepIds` is a Set-like array of ids so a WS replay re-delivering the same
- * `tool_use` never double-counts — the one thing today's `children.length`
- * badge could not guarantee.
+ * A "step" is a distinct child `tool_use` id. A card's own direct children count
+ * one step each — including a nested Agent/Task call, which counts once for
+ * spawning it — and that nested call's *own* subtree is then summed in on top
+ * (`recursiveStepCount`), so the number shown on a one-line card equals the
+ * live session window's flat count of every `tool_use` in the whole on-disk
+ * transcript, not just this card's immediate children. `stepIds` is a Set-like
+ * array of ids so a WS replay re-delivering the same `tool_use` never
+ * double-counts — the one thing today's `children.length` badge could not
+ * guarantee.
  *
  * "Kept children" are what stays in memory once the full list is gone: nested
  * Agent/Task stubs (recursively slimmed the same way, so a further-nested card
@@ -23,8 +27,19 @@ import { FILE_MUTATION_TOOLS } from "./aggregate-turn-file-changes";
 /** Live cards keep at most this many "other" (not kept) child events. */
 export const MAX_RECENT_CHILDREN = 200;
 
+/** Ring buffer also evicts oldest-first once its serialized size passes this — a handful of
+ *  multi-MB tool outputs would otherwise fit comfortably under the 200-entry count cap while
+ *  still holding many megabytes per live card. */
+export const MAX_RECENT_BYTES = 256 * 1024;
+
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+/** "1 step" / "N steps" — every place a card shows its step count uses this instead of
+ *  hardcoding the plural, which read as "1 steps" for a single-step agent. */
+export function formatStepCount(count: number): string {
+  return `${count} step${count === 1 ? "" : "s"}`;
 }
 
 function truncate(value: string, max: number): string {
@@ -146,33 +161,97 @@ export function slimAgentChildren(children: ChatEvent[] | undefined): SlimAgentC
   return { stepIds, lastStep, kept };
 }
 
-/** `{stepCount, lastStep}` for the one-line card: prefers the fields a live card
- *  or a slimmed history card already carries, and only falls back to recomputing
- *  from `children` when neither is set (e.g. a card rendered straight from a
- *  server search result, or an unstamped history card that kept its full list). */
+/**
+ * Recursive count of every `tool_use` across a card's whole subtree: this card's own direct
+ * steps (a nested Agent/Task counted once, for spawning it) plus, for each such nested card,
+ * everything further inside it. A nested Agent/Task stub is always kept in `.children` (never
+ * the ring buffer — see `isKeptToolUse`), so its own `stepCount`/`stepIds` is always the latest
+ * value live-routed into it, and summing over `.children` here never revisits the same id
+ * twice: the nested card's own direct count already excludes its own id.
+ */
+export function recursiveStepCount(tool: Extract<ChatEvent, { type: "tool_use" }>): number {
+  const direct = tool.stepCount ?? tool.stepIds?.length ?? slimAgentChildren(tool.children).stepIds.length;
+  let total = direct;
+  for (const child of tool.children ?? []) {
+    if (child.type === "tool_use" && (child.tool === "Agent" || child.tool === "Task")) {
+      total += recursiveStepCount(child);
+    }
+  }
+  return total;
+}
+
+/** `{stepCount, lastStep}` for the one-line card: `stepCount` is always the recursive total
+ *  (see `recursiveStepCount`) so it equals the session window's flat count; `lastStep` prefers
+ *  the field a live card or a slimmed history card already carries, and only falls back to
+ *  recomputing from `children` when unset (e.g. a card rendered straight from a server search
+ *  result, or an unstamped history card that kept its full list). */
 export function agentStepInfo(tool: Extract<ChatEvent, { type: "tool_use" }>): { stepCount: number; lastStep?: string } {
-  if (tool.stepCount != null) return { stepCount: tool.stepCount, lastStep: tool.lastStep };
-  const { stepIds, lastStep } = slimAgentChildren(tool.children);
-  return { stepCount: stepIds.length, lastStep };
+  const stepCount = recursiveStepCount(tool);
+  if (tool.stepCount != null) return { stepCount, lastStep: tool.lastStep };
+  const { lastStep } = slimAgentChildren(tool.children);
+  return { stepCount, lastStep };
+}
+
+function approxByteSize(ev: ChatEvent): number {
+  try { return JSON.stringify(ev).length; } catch { return 0; }
+}
+
+/** Drop oldest entries (keeping at least one) while the buffer's approximate serialized
+ *  size exceeds `MAX_RECENT_BYTES` — a count cap alone lets a handful of huge tool outputs
+ *  through untouched. */
+function capByBytes(buffer: ChatEvent[]): ChatEvent[] {
+  let total = buffer.reduce((sum, e) => sum + approxByteSize(e), 0);
+  let start = 0;
+  while (total > MAX_RECENT_BYTES && start < buffer.length - 1) {
+    total -= approxByteSize(buffer[start]!);
+    start++;
+  }
+  return start > 0 ? buffer.slice(start) : buffer;
 }
 
 /**
  * Upsert `ev` into a bounded ring buffer: a WS replay re-delivering the same
  * `toolUseId` replaces the existing entry in place instead of growing the
- * buffer, and anything past `MAX_RECENT_CHILDREN` is dropped from the front.
+ * buffer, and anything past `MAX_RECENT_CHILDREN` (count) or `MAX_RECENT_BYTES`
+ * (approximate serialized size) is dropped from the front.
+ *
+ * `seq` stamps the entry's `arrivalSeq` for `mergeFallbackEvents` (M6) to later
+ * interleave this buffer back together with the kept `children` list in the
+ * order events actually arrived — omitted by direct/standalone callers that
+ * have no parent-level counter to hand it a value.
  */
-export function pushRecentChild(buffer: ChatEvent[], ev: ChatEvent): ChatEvent[] {
+export function pushRecentChild(buffer: ChatEvent[], ev: ChatEvent, seq?: number): ChatEvent[] {
   const id = (ev as { toolUseId?: string }).toolUseId;
   if (id) {
     const idx = buffer.findIndex((e) => e.type === ev.type && (e as { toolUseId?: string }).toolUseId === id);
     if (idx !== -1) {
+      const preserved = (buffer[idx] as { arrivalSeq?: number }).arrivalSeq;
       const next = [...buffer];
-      next[idx] = ev;
+      next[idx] = (seq != null ? { ...ev, arrivalSeq: preserved } : ev) as ChatEvent;
       return next;
     }
   }
-  const next = [...buffer, ev];
-  return next.length > MAX_RECENT_CHILDREN ? next.slice(next.length - MAX_RECENT_CHILDREN) : next;
+  const stamped = seq != null ? ({ ...ev, arrivalSeq: seq } as ChatEvent) : ev;
+  const next = [...buffer, stamped];
+  const capped = next.length > MAX_RECENT_CHILDREN ? next.slice(next.length - MAX_RECENT_CHILDREN) : next;
+  return capByBytes(capped);
+}
+
+/**
+ * Merge kept `children` with the bounded "other" ring buffer back into the order events
+ * actually arrived in (M6): splitting live arrivals into a kept list and a ring buffer by
+ * kind (nested-agent/file-mutation vs everything else) loses the interleaving between them —
+ * a plain concatenation showed every edit before the reads that actually preceded it. Each
+ * entry's `arrivalSeq` (stamped by `applyChildToParent`/`pushRecentChild`) says where it
+ * really sorts; an entry with none (never live-routed, e.g. a history-loaded card, which
+ * never populates both lists at once) keeps its position within its own list.
+ */
+export function mergeFallbackEvents(kept: ChatEvent[], recent: ChatEvent[]): ChatEvent[] {
+  const tag = (list: ChatEvent[]) =>
+    list.map((ev, i) => ({ ev, seq: (ev as { arrivalSeq?: number }).arrivalSeq ?? i }));
+  return [...tag(kept), ...tag(recent)]
+    .sort((a, b) => a.seq - b.seq)
+    .map((e) => e.ev);
 }
 
 /**
@@ -180,6 +259,11 @@ export function pushRecentChild(buffer: ChatEvent[], ev: ChatEvent): ChatEvent[]
  * `stepIds`/`stepCount`/`lastStep` and routing the child into either the kept
  * `children` (nested stub or file mutation, upserted by id the same way the
  * pre-slimming code deduped a replay) or the `recentChildren` ring buffer.
+ *
+ * Every routed child is stamped with the parent's monotonic `childSeq` (preserved rather
+ * than reassigned when the upsert is an update-in-place, e.g. a tool_result arriving for an
+ * already-kept tool_use) — the arrival order `mergeFallbackEvents` needs to interleave
+ * `children` and `recentChildren` back together correctly (M6).
  */
 export function applyChildToParent(parent: ChatEvent, childEvent: ChatEvent): ChatEvent {
   if (parent.type !== "tool_use") return parent;
@@ -193,15 +277,18 @@ export function applyChildToParent(parent: ChatEvent, childEvent: ChatEvent): Ch
     if (desc) lastStep = desc;
   }
 
-  const upsert = (list: ChatEvent[]): ChatEvent[] => {
+  const seq = parent.childSeq ?? 0;
+
+  const upsertKept = (list: ChatEvent[]): ChatEvent[] => {
     const id = (childEvent as { toolUseId?: string }).toolUseId;
     const idx = id ? list.findIndex((c) => c.type === childEvent.type && (c as { toolUseId?: string }).toolUseId === id) : -1;
     if (idx !== -1) {
+      const preserved = (list[idx] as { arrivalSeq?: number }).arrivalSeq;
       const next = [...list];
-      next[idx] = childEvent;
+      next[idx] = { ...childEvent, arrivalSeq: preserved } as ChatEvent;
       return next;
     }
-    return [...list, childEvent];
+    return [...list, { ...childEvent, arrivalSeq: seq } as ChatEvent];
   };
 
   const children = parent.children ?? [];
@@ -213,11 +300,11 @@ export function applyChildToParent(parent: ChatEvent, childEvent: ChatEvent): Ch
   let nextChildren = children;
   let nextRecent = recentChildren;
   if (isKeptToolUseChild) {
-    nextChildren = upsert(children);
+    nextChildren = upsertKept(children);
   } else if (childEvent.type === "tool_result" && matchesKeptToolUse(childEvent.toolUseId)) {
-    nextChildren = upsert(children);
+    nextChildren = upsertKept(children);
   } else {
-    nextRecent = pushRecentChild(recentChildren, childEvent);
+    nextRecent = pushRecentChild(recentChildren, childEvent, seq);
   }
 
   return {
@@ -227,6 +314,7 @@ export function applyChildToParent(parent: ChatEvent, childEvent: ChatEvent): Ch
     stepIds,
     stepCount: stepIds?.length,
     lastStep,
+    childSeq: seq + 1,
   };
 }
 

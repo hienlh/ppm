@@ -104,7 +104,7 @@ import { ToolImagePreview } from "./tool-image-preview";
 import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
 import { useOpenAgentSession } from "./use-open-agent-session";
 import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
-import { agentStepInfo } from "@/lib/agent-step-summary";
+import { agentStepInfo, formatStepCount, mergeFallbackEvents } from "@/lib/agent-step-summary";
 
 /** Extract tool name and input from a ChatEvent */
 function extractToolInfo(tool: ChatEvent): { toolName: string; input: Record<string, unknown> } {
@@ -158,8 +158,8 @@ export function ToolCard({
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
   /** "window" inside an agent-session window: a nested Agent/Task card must keep expanding
    *  inline there (the window already *is* the live view of that work) rather than opening
-   *  a second window — phase 5 reads this to decide when a card becomes a one-line summary
-   *  that opens a window versus one that only ever expands in place. No-op for now. */
+   *  a second window — the chat's own one-line summary branch below only fires for the
+   *  default `"chat"` variant. */
   variant?: "chat" | "window";
 }) {
   const [expanded, setExpanded] = useState(() => {
@@ -242,7 +242,7 @@ export function ToolCard({
       providerId: normalizeProviderId(undefined),
       sessionId: `local:${cardId || "card"}`,
     };
-    const fallbackEvents = [...(tool.children ?? []), ...(tool.recentChildren ?? [])];
+    const fallbackEvents = mergeFallbackEvents(tool.children ?? [], tool.recentChildren ?? []);
     return (
       <AgentCardSummary
         handle={handle}
@@ -310,7 +310,7 @@ export function ToolCard({
             <span className="text-[10px] text-warning">{partial!.lineCount} line{partial!.lineCount !== 1 ? "s" : ""} streaming…</span>
           )}
           {hasChildren && !isStreamingBash && (
-            <span className="text-[10px] text-text-3 font-mono">{children!.length} steps</span>
+            <span className="text-[10px] text-text-3 font-mono">{formatStepCount(children!.length)}</span>
           )}
           {bgRunning && (
             <span className="text-[10px] text-primary">running…</span>

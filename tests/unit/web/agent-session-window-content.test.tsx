@@ -75,7 +75,8 @@ describe("AgentSessionWindowContent", () => {
         { ev: { type: "tool_result", toolUseId: "t1", output: "ok" }, ts: 2, k: "f:0:1" },
       ],
     });
-    expect(view.container.textContent).toContain("1 steps");
+    expect(view.container.textContent).toContain("1 step");
+    expect(view.container.textContent).not.toContain("1 steps");
     expect(view.container.textContent).toContain("running");
   });
 

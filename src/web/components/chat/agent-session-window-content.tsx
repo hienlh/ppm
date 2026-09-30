@@ -13,6 +13,7 @@ import { ChevronDown, ChevronRight, Loader2 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useAgentSessionStream } from "@/hooks/use-agent-session-stream";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
+import { formatStepCount } from "@/lib/agent-step-summary";
 import { fallbackKey, useAgentSessionFallbackStore } from "./agent-session-fallback-store";
 import type { WindowContentProps } from "@/components/floating-window/window-content-registry";
 import type { AgentTranscriptProviderId, AgentTranscriptSourceKind } from "../../../shared/agent-transcript-protocol";
@@ -77,7 +78,7 @@ export default function AgentSessionWindowContent({ payload }: WindowContentProp
     <div className="flex flex-col h-full min-h-0 bg-surface @container">
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/30 shrink-0">
         <span className="truncate text-xs font-medium">{p.title ?? "Agent session"}</span>
-        {events.length > 0 && <span className="text-[10px] text-text-subtle shrink-0">{steps} steps</span>}
+        {events.length > 0 && <span className="text-[10px] text-text-subtle shrink-0">{formatStepCount(steps)}</span>}
         <StatusBadge status={status} />
         {!available && !loading && (
           <span

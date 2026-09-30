@@ -243,8 +243,8 @@ export type ResultSubtype =
   | "error_auth";
 
 export type ChatEvent =
-  | { type: "text"; content: string; parentToolUseId?: string }
-  | { type: "thinking"; content: string; parentToolUseId?: string }
+  | { type: "text"; content: string; parentToolUseId?: string; arrivalSeq?: number }
+  | { type: "thinking"; content: string; parentToolUseId?: string; arrivalSeq?: number }
   | {
       type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string; children?: ChatEvent[];
       /** Terminal state of a backgrounded Agent/Task, once its `<task-notification>` arrives.
@@ -261,11 +261,21 @@ export type ChatEvent =
        *  are safe to reduce to the slimmed set because a session window can stream the rest
        *  from disk instead. Never set by the live stream itself. */
       transcriptAvailable?: boolean;
-      /** Bounded ring buffer (last 200) of child events slimming would otherwise drop —
-       *  the fallback shown in a window when no on-disk transcript exists at all. */
+      /** Bounded ring buffer (last 200, or ~256KB serialized) of child events slimming would
+       *  otherwise drop — the fallback shown in a window when no on-disk transcript exists at
+       *  all, merged back with `children` in original arrival order via each entry's
+       *  `arrivalSeq`. */
       recentChildren?: ChatEvent[];
+      /** Monotonic counter this Agent/Task card's own `applyChildToParent` routing bumps once
+       *  per incoming child — the source of `arrivalSeq` stamped onto each routed child. */
+      childSeq?: number;
+      /** Position among this child's siblings in the order they actually arrived — set when a
+       *  child is routed by `applyChildToParent`/`pushRecentChild` with a parent's `childSeq`,
+       *  so `children` and `recentChildren` (split apart by kept-vs-ring-buffer routing) can be
+       *  merged back into arrival order instead of concatenated. */
+      arrivalSeq?: number;
     }
-  | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string }
+  | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string; arrivalSeq?: number }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }
