@@ -21,10 +21,20 @@ import { startWatching, stopWatching, onFileChange } from "../../services/file-w
 import { configService } from "../../services/config.service.ts";
 import { onDesignEvent } from "../../services/design/design-events.ts";
 import { resolve } from "node:path";
+import {
+  handleAgentActivitySubscribe, handleAgentActivityUnsubscribe,
+  handleAgentTranscriptClientClosed, handleAgentTranscriptPing,
+  handleAgentTranscriptSubscribe, handleAgentTranscriptUnsubscribe,
+} from "../../services/agent-transcript/agent-transcript-hub.ts";
+import type {
+  AgentActivitySubscribeMsg, AgentActivityUnsubscribeMsg,
+  AgentTranscriptSubscribeMsg, AgentTranscriptUnsubscribeMsg,
+} from "../../shared/agent-transcript-protocol.ts";
 
 type GlobalWsSocket = {
-  data: { type: string };
-  send: (data: string) => void;
+  /** Auth token snapshotted at upgrade (`server/index.ts`) — re-checked on every agent-transcript push. */
+  data: { type: string; token?: string | null };
+  send: (data: string) => number;
 };
 
 const clients = new Set<GlobalWsSocket>();
@@ -102,11 +112,17 @@ export const globalWebSocket = {
       return;
     }
     // Sent on connect and whenever the active project changes.
-    if (msg.type === "watch") setWatch(ws, msg.projectName ?? "");
+    if (msg.type === "watch") return setWatch(ws, msg.projectName ?? "");
+    if (msg.type === "agent-transcript:subscribe") return handleAgentTranscriptSubscribe(ws, msg as AgentTranscriptSubscribeMsg);
+    if (msg.type === "agent-transcript:unsubscribe") return handleAgentTranscriptUnsubscribe(ws, msg as AgentTranscriptUnsubscribeMsg);
+    if (msg.type === "agent-activity:subscribe") return handleAgentActivitySubscribe(ws, msg as AgentActivitySubscribeMsg);
+    if (msg.type === "agent-activity:unsubscribe") return handleAgentActivityUnsubscribe(ws, msg as AgentActivityUnsubscribeMsg);
+    if (msg.type === "ping") return handleAgentTranscriptPing(ws);
   },
 
   close(ws: GlobalWsSocket) {
     releaseWatch(ws);
+    handleAgentTranscriptClientClosed(ws);
     clients.delete(ws);
   },
 };

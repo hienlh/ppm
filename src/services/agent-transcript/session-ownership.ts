@@ -54,6 +54,21 @@ export interface AssertSessionParams {
   codexSessionsDirs?: (sessionId?: string) => string[];
 }
 
+/**
+ * Test-only fallback for callers that cannot pass `codexSessionsDirs` per
+ * call (the `/ws/global` hub never accepts a client-supplied directory list,
+ * by design) but still need Codex fixtures to live outside the real
+ * `~/.codex`. `codex-provider.ts`'s real `codexSessionsDirs` freezes
+ * `homedir()` into a module-level constant at import time, so patching
+ * `HOME`/`USERPROFILE` in a `beforeEach` has no effect on it once any test in
+ * the same process has already imported that module.
+ */
+let testCodexSessionsDirsOverride: ((sessionId?: string) => string[]) | null = null;
+
+export function _setCodexSessionsDirsForTest(fn: ((sessionId?: string) => string[]) | null): void {
+  testCodexSessionsDirsOverride = fn;
+}
+
 /** Absolute path normalized for cross-platform / case-insensitive (win32) comparison. */
 function normalizeProjectPath(p: string): string {
   const r = resolve(p);
@@ -130,6 +145,8 @@ export function assertSessionInProject(params: AssertSessionParams): OwnedSessio
   if (!SESSION_ID_RE.test(sessionId)) return { ok: false, code: "invalid_session_id" };
   if (!projectPath) return { ok: false, code: "invalid_project" };
   if (providerId === "claude") return assertClaudeSession(sessionId, projectPath);
-  if (providerId === "codex") return assertCodexSession(sessionId, projectPath, params.codexSessionsDirs ?? realCodexSessionsDirs);
+  if (providerId === "codex") {
+    return assertCodexSession(sessionId, projectPath, params.codexSessionsDirs ?? testCodexSessionsDirsOverride ?? realCodexSessionsDirs);
+  }
   return { ok: false, code: "invalid_provider" };
 }

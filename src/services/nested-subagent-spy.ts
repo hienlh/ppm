@@ -28,7 +28,7 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ChatEvent } from "../types/chat.ts";
 import { createAgentTranscriptLineParser } from "./subagent-transcript-merger.ts";
-import { groupSubagentsByCard } from "./team-member-activity/subagent-transcript-index.ts";
+import { getCachedSubagentGroups } from "./agent-transcript/agent-transcript-index-cache.ts";
 
 const POLL_INTERVAL_MS = 1000;
 /** Repeated per-file read failures (locked/replaced file) log once per this window. */
@@ -97,9 +97,9 @@ function warnThrottled(spy: SessionSpy, message: string): void {
 
 /** One poll for a session: scan the dir once, then drain each open card's nested tails. */
 function tick(spy: SessionSpy): void {
-  let groups: ReturnType<typeof groupSubagentsByCard>;
+  let groups: ReturnType<typeof getCachedSubagentGroups>;
   try {
-    groups = groupSubagentsByCard(spy.subagentsDir);
+    groups = getCachedSubagentGroups(spy.subagentsDir);
   } catch (e) {
     warnThrottled(spy, `scan failed: ${(e as Error).message}`);
     return;

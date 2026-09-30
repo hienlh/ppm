@@ -926,8 +926,13 @@ if (process.argv.includes("__serve__")) {
 
       if (url.pathname === "/ws/global") {
         // App-wide event bus: owns file watching + cross-cutting broadcasts, so
-        // they no longer depend on a chat tab being mounted.
-        const upgraded = server.upgrade(req, { data: { type: "global" } });
+        // they no longer depend on a chat tab being mounted. The token is
+        // snapshotted here — not re-read from config on every push — so the
+        // agent-transcript hub can tell a long-lived socket apart from one
+        // whose password/token has since been rotated (plan.md red-team #24).
+        const authConfig = configService.get("auth");
+        const token = authConfig.enabled ? (url.searchParams.get("token") ?? null) : null;
+        const upgraded = server.upgrade(req, { data: { type: "global", token } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
