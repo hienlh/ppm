@@ -48,7 +48,7 @@ function safeParseArgs(raw: unknown): Record<string, unknown> {
 }
 
 /** rollout `function_call` (OpenAI Responses format) → PPM tool_use. */
-function fnCallToToolUse(p: Record<string, unknown>): ChatEvent {
+export function fnCallToToolUse(p: Record<string, unknown>): ChatEvent {
   const args = safeParseArgs(p.arguments);
   const command = typeof args.command === "string" ? args.command : "";
   const callId = typeof p.call_id === "string" ? p.call_id : undefined;
@@ -60,7 +60,7 @@ function fnCallToToolUse(p: Record<string, unknown>): ChatEvent {
 }
 
 /** rollout `custom_tool_call` (apply_patch / custom tools) → PPM tool_use. */
-function customToolCallToToolUse(p: Record<string, unknown>): ChatEvent {
+export function customToolCallToToolUse(p: Record<string, unknown>): ChatEvent {
   const callId = typeof p.call_id === "string" ? p.call_id : undefined;
   if (p.name === "apply_patch" && typeof p.input === "string") {
     const changes = parseApplyPatch(p.input);
@@ -70,7 +70,7 @@ function customToolCallToToolUse(p: Record<string, unknown>): ChatEvent {
 }
 
 /** Unknown `*_call` record → generic visible tool_use (never dropped). */
-function genericCallToToolUse(p: Record<string, unknown>): ChatEvent {
+export function genericCallToToolUse(p: Record<string, unknown>): ChatEvent {
   const callId = typeof p.call_id === "string" ? p.call_id : undefined;
   const tool = String(p.name ?? p.type ?? "tool");
   const input = p.input ?? safeParseArgs(p.arguments);
@@ -78,7 +78,7 @@ function genericCallToToolUse(p: Record<string, unknown>): ChatEvent {
 }
 
 /** rollout `function_call_output` / `custom_tool_call_output` → PPM tool_result. */
-function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
+export function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
   const output = typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? "");
   const m = /exit code:\s*(\d+)/i.exec(output);
   return {
