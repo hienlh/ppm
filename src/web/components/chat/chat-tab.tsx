@@ -395,6 +395,26 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Pending fork message — show in input for user to edit, not auto-send
   const [forkDraft, setForkDraft] = useState<string | undefined>(metadata?.pendingMessage as string | undefined);
+
+  // "Build in new chat" hands a design screenshot over as a data URL on the tab's own
+  // metadata (never a live event: there is no mounted composer yet for a brand new tab). It
+  // is fed through `externalFiles`, the same drop path a screenshot dragged in by hand would
+  // take, so the upload, thumbnail and inline-image handling are exactly the drop code path's
+  // rather than a second copy of it. Cleared right away: attaching it needs no session.
+  useEffect(() => {
+    const dataUrl = metadata?.pendingAttachmentDataUrl as string | undefined;
+    if (!dataUrl || !tabId) return;
+    patchTabMetadata(tabId, { pendingAttachmentDataUrl: undefined, pendingAttachmentName: undefined });
+    const name = (metadata?.pendingAttachmentName as string | undefined) || "screenshot.jpg";
+    fetch(dataUrl)
+      .then((r) => r.blob())
+      .then((blob) => {
+        setExternalFiles([new File([blob], name, { type: blob.type || "image/jpeg" })]);
+        setTimeout(() => setExternalFiles(null), 100);
+      })
+      .catch(() => { /* best effort: the draft still opens, just without the screenshot attached */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // True from the moment an edit is submitted until the forked session starts
   // responding. Drives a "working" indicator so the ~10s fork + codex connect
   // doesn't leave the user staring at a frozen screen. (No optimistic message

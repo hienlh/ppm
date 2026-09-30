@@ -1,7 +1,7 @@
 import type { ElementType, ReactNode } from "react";
 import {
-  Code, Columns2, Download, History, Maximize2, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
-  Presentation, RefreshCw, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
+  Columns2, Download, History, Maximize2, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
+  Presentation, RefreshCw, Send, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -113,9 +113,11 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     run: (ctx) => ctx.exports.setSheetOpen(true),
   },
   {
-    // Starts a new, ordinary chat with the brief as a draft; never the design chat.
-    id: "handoff", label: "Hand off to code", icon: Code, placement: "more",
-    run: (ctx) => ctx.exports.handOff(),
+    // Starts a new, ordinary chat with the brief and a screenshot of the variant on screen
+    // as an editable draft; never the design chat. A bar button (not More) because this is
+    // the primary path into real code — Export stays for building on another machine.
+    id: "build-in-new-chat", label: "Build in new chat", icon: Send, placement: "bar",
+    run: (ctx) => ctx.exports.buildInNewChat(),
   },
   {
     // The canvas over the whole window; the chat keeps running underneath.

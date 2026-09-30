@@ -8,14 +8,19 @@ import {
 import type { SlideDoc } from "../../../../shared/design-slide-doc";
 import type { DesignTabContextValue } from "../design-tab-context";
 import { newBridgeNonce, type DesignBridge } from "../canvas/use-design-bridge";
+import { runCanvasCheck, type CanvasCheckContext } from "../canvas/use-design-canvas-check";
 
 /**
- * The Export menu's state and actions, plus "Hand off to code".
+ * The Export menu's state and actions, plus "Build in new chat".
  *
  * The print and standalone views open in a new tab, and a tab opened after an `await` is
  * eaten by popup blockers. Their tokens are therefore minted when the menu opens (`prepare`),
  * so the menu can render them as plain links the user clicks. A token lives 10 minutes and
  * cannot be refreshed, so one older than {@link VIEW_REMINT_MS} is minted again on reopen.
+ *
+ * "Build in new chat" reuses the same self-check screenshot the `design_check` tool asks
+ * for (`runCanvasCheck`): a failure there (canvas loading, the screenshot library not
+ * loading) is not fatal — the brief still opens, just without the image, with a toast saying so.
  */
 
 export type DesignExportJob = "zip" | "html" | "pptx";
@@ -36,7 +41,7 @@ export interface DesignExportFeature {
   downloadZip: () => void;
   downloadHtml: () => void;
   exportPptx: () => void;
-  handOff: () => void;
+  buildInNewChat: () => void;
   warnings: DesignExportWarnings | null;
   dismissWarnings: () => void;
 }
@@ -60,7 +65,9 @@ function extractSlides(bridge: DesignBridge): Promise<SlideDoc> {
 }
 
 /** `file` is the variant on screen: the views, the HTML download and the hand-off are of it. */
-export function useDesignExport(tab: DesignTabContextValue, bridge: DesignBridge, file: string): DesignExportFeature {
+export function useDesignExport(
+  tab: DesignTabContextValue, bridge: DesignBridge, file: string, checkContext: () => CanvasCheckContext,
+): DesignExportFeature {
   const { projectName, slug, design } = tab;
   const [views, setViews] = useState<Record<DesignViewPurpose, string | null>>({ print: null, standalone: null });
   const [viewError, setViewError] = useState<string | null>(null);
@@ -127,21 +134,29 @@ export function useDesignExport(tab: DesignTabContextValue, bridge: DesignBridge
     else toast.success(`Saved ${slug}.pptx`);
   }), [run, bridge, slug, design.title]);
 
-  const handOff = useCallback(() => {
-    try {
-      sendToChat({
-        text: buildHandoffPrompt({ slug, title: design.title, kind: design.kind, entry: file }),
-        projectName,
-        newTab: true,
+  const buildInNewChat = useCallback(() => {
+    const text = buildHandoffPrompt({ slug, title: design.title, kind: design.kind, entry: file });
+    // A missing screenshot must never block the brief itself: catch turns any failure
+    // (canvas still loading, the screenshot library not loading) into "no image".
+    runCanvasCheck(bridge, checkContext(), { screenshot: true })
+      .then((report) => report.screenshot?.dataUrl)
+      .catch(() => undefined)
+      .then((dataUrl) => {
+        try {
+          sendToChat({
+            text, projectName, newTab: true,
+            ...(dataUrl ? { imageDataUrl: dataUrl, imageName: `${slug}-${file.replace(/\.html?$/i, "")}.jpg` } : {}),
+          });
+          if (!dataUrl) toast.info("Opened without a screenshot", { description: "The canvas could not be captured just now." });
+        } catch (e) {
+          toast.error("Could not start the new chat", { description: (e as Error).message });
+        }
       });
-    } catch (e) {
-      toast.error("Could not start the hand-off", { description: (e as Error).message });
-    }
-  }, [slug, design.title, design.kind, file, projectName]);
+  }, [bridge, checkContext, slug, design.title, design.kind, file, projectName]);
 
   return useMemo(() => ({
     views, viewError, busy, canPptx: design.kind === "slides", sheetOpen, setSheetOpen, prepare,
     downloadZip: () => void download("zip"), downloadHtml: () => void download("html"),
-    exportPptx: () => void exportPptx(), handOff, warnings, dismissWarnings: () => setWarnings(null),
-  }), [views, viewError, busy, design.kind, sheetOpen, prepare, download, exportPptx, handOff, warnings]);
+    exportPptx: () => void exportPptx(), buildInNewChat, warnings, dismissWarnings: () => setWarnings(null),
+  }), [views, viewError, busy, design.kind, sheetOpen, prepare, download, exportPptx, buildInNewChat, warnings]);
 }

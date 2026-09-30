@@ -94,9 +94,14 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
  *
  * `newTab` skips the first two: the text always starts a fresh, plain chat as an editable
  * draft. For a brief that must not land in whatever conversation (or design session) the
- * user happened to select last.
+ * user happened to select last. Only a new tab may also carry an image (a data URL, e.g. a
+ * canvas screenshot): the composer of a *live* tab has its own paste/drop path for that, and
+ * bolting a second one onto the cross-tab event would duplicate it for no live caller.
  */
-export function sendToChat(opts: { text: string; label?: string; projectName?: string | null; newTab?: boolean }): void {
+export function sendToChat(opts: {
+  text: string; label?: string; projectName?: string | null; newTab?: boolean;
+  imageDataUrl?: string; imageName?: string;
+}): void {
   const { text, label, projectName } = opts;
   if (!text.trim()) return;
 
@@ -126,7 +131,11 @@ export function sendToChat(opts: { text: string; label?: string; projectName?: s
     type: "chat",
     title: "Chat",
     projectId: null,
-    metadata: { ...(projectName ? { projectName } : {}), pendingMessage: text },
+    metadata: {
+      ...(projectName ? { projectName } : {}),
+      pendingMessage: text,
+      ...(opts.imageDataUrl ? { pendingAttachmentDataUrl: opts.imageDataUrl, pendingAttachmentName: opts.imageName } : {}),
+    },
     closable: true,
   });
 }

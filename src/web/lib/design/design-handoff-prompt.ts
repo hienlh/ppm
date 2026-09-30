@@ -40,6 +40,7 @@ export function buildHandoffPrompt(input: HandoffInput): string {
     "",
     "1. Read `designs/DESIGN.md` and `designs/tokens.css` (when they exist) for the design system, then the design's own files.",
     "2. Build it in the project's actual stack, components and styling conventions. Map the design tokens onto the project's theme instead of copying raw values, and do not copy CDN usage; use the project's own dependencies.",
+    "   If the page links `../kit/app.css`, its class names and markup are the app's own — they map 1:1 to source, so read the component files `designs/DESIGN.md`'s map lists for the screens it touches and edit those, rather than re-deriving the styling from what the design looks like.",
     "3. Before changing anything, list the files you will create or change and wait for my go-ahead.",
     "4. Leave `designs/` untouched.",
     "",

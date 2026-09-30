@@ -11,7 +11,6 @@ import { useDesignFrame } from "./use-design-frame";
 import { framePreset } from "./device-frame-presets";
 import { DesignIssuesBadge, type CanvasIssue } from "./design-issues-badge";
 import { useDesignVariants, useShownVariant } from "../variants/use-design-variants";
-import { VariantPickDialog } from "../variants/design-variant-controls";
 import { useDesignCommentsFeature } from "../comments/use-design-comments-feature";
 import { DesignCommentsOverlay, DesignCommentsSidePanel } from "../comments/design-comments-layer";
 import { useDesignTweaks } from "../tweaks/use-design-tweaks";
@@ -39,7 +38,7 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   const tab = useDesignTab();
   const shownVariant = useShownVariant(tab);
   const canvas = useDesignCanvas(tab, shownVariant.file);
-  const variants = useDesignVariants(tab, shownVariant, canvas.bridge);
+  const variants = useDesignVariants(shownVariant);
   const [historyOpen, setHistoryOpen] = useState(false);
   const { frame, setFrame, stageRef, stage, fit, framed } = useDesignFrame(tab);
 
@@ -66,9 +65,10 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
     setHistoryOpen(true);
   }, [closeComments, closeTweaks]);
   const undo = useDesignUndo(tab, { openHistory });
-  const exports = useDesignExport(tab, canvas.bridge, variants.file);
-  // The self-check: on demand for the agent's design_check tool, and by itself after a turn.
+  // The self-check: on demand for the agent's design_check tool, by itself after a turn, and
+  // for the screenshot "Build in new chat" attaches.
   const checkContext = () => ({ issues: canvas.issues, frame: framePreset(frame).label });
+  const exports = useDesignExport(tab, canvas.bridge, variants.file, checkContext);
   useDesignCanvasCheckResponder({ projectName: tab.projectName, slug: tab.slug, bridge: canvas.bridge, context: checkContext });
   const layoutIssues = useDesignAutoCheck({ tab, bridge: canvas.bridge, context: checkContext });
   const { variantWarnings } = tab.design;
@@ -157,7 +157,6 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
           colours being tweaked, and the canvas has to stay in view while a slider moves. */}
       {tab.isMobile && tweaksPanel && <div className="h-[45%] shrink-0 border-t border-border">{tweaksPanel}</div>}
       <ExportWarningsSheet feature={exports} />
-      <VariantPickDialog feature={variants} />
       {tab.isMobile && (
         <>
           <ExportSheet feature={exports} />

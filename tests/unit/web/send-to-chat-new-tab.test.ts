@@ -73,4 +73,21 @@ describe("sendToChat newTab", () => {
     sendToChat({ text: "   ", projectName: "demo", newTab: true });
     expect(opened).toEqual([]);
   });
+
+  it("carries an image data URL and name on the new tab's metadata for the composer to pick up", () => {
+    sendToChat({
+      text: "Implement the design", projectName: "demo", newTab: true,
+      imageDataUrl: "data:image/jpeg;base64,AA==", imageName: "landing.jpg",
+    });
+    expect(opened[0]).toMatchObject({
+      metadata: { pendingAttachmentDataUrl: "data:image/jpeg;base64,AA==", pendingAttachmentName: "landing.jpg" },
+    });
+  });
+
+  it("opens with no attachment fields at all when there is no screenshot", () => {
+    sendToChat({ text: "Implement the design", projectName: "demo", newTab: true });
+    const meta = opened[0]!.metadata as Record<string, unknown>;
+    expect(meta.pendingAttachmentDataUrl).toBeUndefined();
+    expect("pendingAttachmentDataUrl" in meta).toBe(false);
+  });
 });
