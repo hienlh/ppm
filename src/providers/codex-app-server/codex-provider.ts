@@ -86,7 +86,7 @@ const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
  * made a switched session come back empty and silently start over as a new
  * thread, since resume is only attempted when a rollout is found.
  */
-function codexSessionsDirs(sessionId?: string): string[] {
+export function codexSessionsDirs(sessionId?: string): string[] {
   const dirs: string[] = [];
   const boundId = sessionId ? getSessionCodexAccount(sessionId) : null;
   const accounts = listCodexAccounts();

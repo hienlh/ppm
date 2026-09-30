@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mergeSubagentChildren } from "../../../src/services/subagent-transcript-merger.ts";
+import { mergeSubagentChildren, createAgentTranscriptLineParser } from "../../../src/services/subagent-transcript-merger.ts";
 import type { ChatEvent } from "../../../src/types/api.ts";
 
 let sessionDir: string;
@@ -90,5 +90,34 @@ describe("mergeSubagentChildren", () => {
     ];
     mergeSubagentChildren(join(sessionDir, "nonexistent"), messages);
     expect((messages[0]!.events![0] as any).children).toBeUndefined();
+  });
+});
+
+describe("createAgentTranscriptLineParser midFile option", () => {
+  test("default (whole file) treats the first user record as the spawn prompt and skips it", () => {
+    const T1 = "2026-10-01T10:00:00.000Z";
+    const lines = [
+      { type: "user", timestamp: T1, message: { role: "user", content: "You are an agent, do things" } },
+      // No timestamp of its own — inherits whatever the parser's lastTs currently is.
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_x", name: "Bash", input: { command: "ls" } }] } },
+    ];
+    const parser = createAgentTranscriptLineParser();
+    const events = lines.flatMap((l) => parser.feed(JSON.stringify(l)));
+    expect(events.length).toBe(1);
+    // Skipped before lastTs was ever set from T1, so the tool_use inherits the epoch default.
+    expect(events[0]!.ts).toBe(0);
+  });
+
+  test("midFile: true does not skip the first user record — a resume prompt is not mistaken for a spawn prompt", () => {
+    const T1 = "2026-10-01T10:00:00.000Z";
+    const lines = [
+      { type: "user", timestamp: T1, message: { role: "user", content: "continue from where you left off" } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_x", name: "Bash", input: { command: "ls" } }] } },
+    ];
+    const parser = createAgentTranscriptLineParser({ midFile: true });
+    const events = lines.flatMap((l) => parser.feed(JSON.stringify(l)));
+    expect(events.length).toBe(1);
+    // Processed (not skipped), so its own timestamp becomes lastTs for the untimed tool_use after it.
+    expect(events[0]!.ts).toBe(Date.parse(T1));
   });
 });

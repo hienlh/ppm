@@ -15,11 +15,11 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ChatEvent } from "../types/chat.ts";
 import { parseSessionMessage } from "./jsonl-transcript-parser.ts";
 import { groupSubagentsByCard } from "./team-member-activity/subagent-transcript-index.ts";
+import { claudeProjectsRoot } from "./agent-transcript/claude-projects-root.ts";
 
 /**
  * Locate the per-session directory (…/projects/<slug>/<sessionId>) that holds
@@ -29,8 +29,7 @@ import { groupSubagentsByCard } from "./team-member-activity/subagent-transcript
  * the session's main JSONL.
  */
 export function resolveSessionDir(sessionId: string, projectPath: string | null | undefined): string | null {
-  const home = homedir();
-  const projectsRoot = join(home, ".claude", "projects");
+  const projectsRoot = claudeProjectsRoot();
   if (projectPath) {
     const encoded = projectPath.replace(/[/\\:.]/g, "-");
     const dir = join(projectsRoot, encoded);
@@ -67,9 +66,14 @@ export interface TimedChatEvent {
  * Incremental parser for one agent transcript. Feed it JSONL lines in file
  * order (whole file at once, or a live tail's new lines) and it returns the
  * child events those lines carry, keeping the skip/limit state across calls.
+ *
+ * `midFile: true` disables the first-user-record skip: a subscriber resuming
+ * a session hub mid-file (e.g. a SendMessage resume prompt lands well after the
+ * spawn prompt) must see every user record it is fed, not just the ones after
+ * the file's first — there is no "first" from where it joined.
  */
-export function createAgentTranscriptLineParser() {
-  let isFirstUser = true;
+export function createAgentTranscriptLineParser(opts?: { midFile?: boolean }) {
+  let isFirstUser = !opts?.midFile;
   let emitted = 0;
   let lastTs = 0;
   return {
