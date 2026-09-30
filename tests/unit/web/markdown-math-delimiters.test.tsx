@@ -94,7 +94,12 @@ describe("what the renderer finally shows", () => {
 
   it("leaves a regex in a code block alone", async () => {
     const html = await render("```js\nconst re = /\\[a-z\\]/;\n```");
-    expect(html).toContain("/\\[a-z\\]/");
+    // Compared as displayed text: once the highlighter is warm, every token of the block
+    // sits in its own <span>, so the source string never appears in the markup whole.
+    const box = document.createElement("div");
+    box.innerHTML = html;
+    const shown = box.textContent ?? "";
+    expect(shown).toContain("/\\[a-z\\]/");
     expect(html).not.toContain("katex");
   });
 });
