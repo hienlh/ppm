@@ -8,9 +8,9 @@ import { designStyleRoutes } from "./design-style.ts";
 import { designUndoRoutes } from "./design-undo.ts";
 import { designExportRoutes } from "./design-export.ts";
 import { designCheckRoutes } from "./design-check.ts";
-import {
-  createDesign, deleteDesign, designSystemStatus, getDesign, listDesigns, renameDesign,
-} from "../../services/design/design-store.service.ts";
+import { designSystemRoutes } from "./design-systems.ts";
+import { createDesign, deleteDesign, getDesign, listDesigns, renameDesign } from "../../services/design/design-store.service.ts";
+import { listDesignSystems } from "../../services/design/design-systems.service.ts";
 import { listSnapshots } from "../../services/design/design-snapshots.service.ts";
 import { restoreSnapshot } from "../../services/design/design-restore.service.ts";
 
@@ -27,8 +27,8 @@ export const designRoutes = new Hono<DesignRouteEnv>();
 designRoutes.get("/", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const [designs, system] = await Promise.all([listDesigns(projectPath), designSystemStatus(projectPath)]);
-    return c.json(ok({ designs, system }));
+    const [designs, systems] = await Promise.all([listDesigns(projectPath), listDesignSystems(projectPath)]);
+    return c.json(ok({ designs, systems }));
   } catch (e) {
     return fail(c, e);
   }
@@ -38,11 +38,16 @@ designRoutes.post("/", async (c) => {
   const body = await jsonBody(c);
   if (!body) return c.json(err("Expected a JSON object"), 400);
   try {
-    return c.json(ok(await createDesign(c.get("projectPath"), { title: body.title, kind: body.kind })), 201);
+    return c.json(ok(await createDesign(c.get("projectPath"), { title: body.title, kind: body.kind, system: body.system })), 201);
   } catch (e) {
     return fail(c, e);
   }
 });
+
+// Mounted before `/:slug`: Hono matches routes in registration order, and an app id ("systems"
+// itself is a reserved, invalid design slug — see design-slug.ts) must never fall through to
+// the design-by-slug handlers below.
+designRoutes.route("/systems", designSystemRoutes);
 
 designRoutes.get("/:slug", async (c) => {
   try {

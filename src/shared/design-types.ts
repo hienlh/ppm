@@ -33,6 +33,10 @@ export interface DesignSummary {
   createdAt: string;
   /** Latest of the manifest's own timestamp and the entry file's mtime, ISO. */
   updatedAt: string;
+  /** The app this design belongs to; `"default"` when the manifest names none. */
+  system: string;
+  /** Set when this design is an app's showcase (`designs/system-<id>/`); the app's id. */
+  showcaseFor?: string;
 }
 
 /**
@@ -55,10 +59,48 @@ export interface DesignSnapshotInfo {
   treeHash: string;
 }
 
-/** Whether the project-level design system files exist (`designs/DESIGN.md`, `designs/tokens.css`). */
-export interface DesignSystemStatus {
-  designMd: boolean;
-  tokensCss: boolean;
+/**
+ * An "app" of the project: one declared design system under `designs/systems/<id>/`, or the
+ * implicit `default` app backed by the legacy `designs/DESIGN.md` + `designs/tokens.css` +
+ * `designs/kit/` (never moved). `root` is relative to the project root (`.` for the project
+ * itself); `platform` decides whether the showcase and a design built for this app render in
+ * a phone frame with native-looking components.
+ */
+export const DESIGN_PLATFORMS = ["web", "mobile"] as const;
+export type DesignPlatform = (typeof DESIGN_PLATFORMS)[number];
+
+export function isDesignPlatform(value: unknown): value is DesignPlatform {
+  return typeof value === "string" && (DESIGN_PLATFORMS as readonly string[]).includes(value);
+}
+
+export interface DesignSystemBuiltFrom {
+  /** `git rev-parse HEAD` of the app root at the moment a setup turn last finished. */
+  commit: string;
+  at: string;
+}
+
+export interface DesignSystemSummary {
+  id: string;
+  label: string;
+  /** Relative to the project root; `.` for the project itself. */
+  root: string;
+  platform: DesignPlatform;
+  /** True when `designs/systems/<id>/system.json` exists; false for the unreleased implicit default. */
+  declared: boolean;
+  builtFrom?: DesignSystemBuiltFrom;
+  /** The New Design dialog's "Skip" was chosen for this app and must not ask again. */
+  setupSkipped?: boolean;
+  hasDesignMd: boolean;
+  hasTokensCss: boolean;
+}
+
+/** Server-computed, cached per (root, HEAD); never blocks the designs list. */
+export interface DesignSystemStaleInfo {
+  stale: boolean;
+  /** Files changed since `builtFrom.commit`, restricted to the app root. Present when known. */
+  changedFiles?: number;
+  /** True when there is no repo, no `builtFrom`, or the check timed out — "unknown", not stale. */
+  unknown: boolean;
 }
 
 /** `YYYYMMDD-HHMMSS-xxxx` (UTC time + 4 hex). Checked after URL decoding, before any path use. */

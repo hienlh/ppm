@@ -9,8 +9,11 @@ export const DESIGN_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 const MAX_SLUG_LENGTH = 63;
 
+/** Reserved: `designs/systems/` is the apps folder, mounted as a sibling route of `/:slug`. */
+const RESERVED_SLUGS = new Set(["systems"]);
+
 export function isValidDesignSlug(value: unknown): value is string {
-  return typeof value === "string" && DESIGN_SLUG_RE.test(value);
+  return typeof value === "string" && DESIGN_SLUG_RE.test(value) && !RESERVED_SLUGS.has(value);
 }
 
 /**

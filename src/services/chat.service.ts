@@ -13,6 +13,7 @@ import type {
 } from "../providers/provider.interface.ts";
 import { compareSessionsByActivity } from "../types/chat.ts";
 import { buildDesignInstructions } from "./design/design-instructions.ts";
+import { resolveSystemForDesign } from "./design/design-systems.service.ts";
 import { userDesignSectionFor } from "./design/design-user-section.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
 import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
@@ -216,9 +217,10 @@ class ChatService {
     const projectPath = this.getSession(sessionId)?.projectPath ?? getSessionProjectPath(sessionId);
     const designMcp = designMcpAccessFor(sessionId, projectPath, slug);
     const userSection = await userDesignSectionFor({ providerId, sessionId, projectPath, slug });
+    const system = projectPath ? await resolveSystemForDesign(projectPath, slug) : { id: "default", label: "Default", root: ".", platform: "web" as const };
     return {
       ...rest,
-      designInstructions: buildDesignInstructions(slug, { checkTool: !!designMcp, userSection }),
+      designInstructions: buildDesignInstructions(slug, system, { checkTool: !!designMcp, userSection }),
       designSession: true,
       ...(designMcp ? { designMcp } : {}),
       ...(permissionMode ? { permissionMode } : {}),

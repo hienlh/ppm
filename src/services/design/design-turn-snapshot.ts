@@ -2,6 +2,7 @@ import { getSessionDesignSlug, getSessionProjectPath } from "../db.service.ts";
 import { isValidDesignSlug } from "./design-slug.ts";
 import { designLockKey, detachFromDesignLocks } from "./design-lock.ts";
 import { snapshotDesign } from "./design-snapshots.service.ts";
+import { recordBuiltFromIfShowcase } from "./design-systems-showcase.ts";
 
 /**
  * Snapshot a design after each turn of its design session.
@@ -54,6 +55,9 @@ export function scheduleTurnSnapshot(sessionId: string, projectPath?: string | n
       } catch (e) {
         console.warn(`[design] turn snapshot of ${slug} failed: ${(e as Error).message}`);
       }
+      // Server-recorded, not agent-written: a showcase design's every finished turn refreshes
+      // its app's builtFrom commit, which is what the stale reminder compares HEAD against.
+      await recordBuiltFromIfShowcase(project, slug);
     };
     const fire = (): void => {
       const job = detachFromDesignLocks(run);

@@ -3,8 +3,8 @@ import type { DesignKind } from "../../shared/design-types.ts";
 /**
  * The `index.html` a new design starts with: enough structure for the canvas to render
  * something and for the agent to extend, following the same conventions its instructions
- * describe (a `:root` block for tweakable values, `../tokens.css` when the project has one,
- * `<section class="slide">` at 1280x720 for decks).
+ * describe (a `:root` block for tweakable values, `../systems/<id>/tokens.css` when the
+ * design's app has one, `<section class="slide">` at 1280x720 for decks).
  */
 
 function escapeHtml(text: string): string {
@@ -68,9 +68,9 @@ const SLIDES_STYLE = `    :root {
     .slide h1 { margin: 0 0 24px; font-size: 64px; color: var(--accent); }
     .slide p { margin: 0; font-size: 28px; color: #4b5563; }`;
 
-export function starterHtml(kind: DesignKind, title: string, hasTokens: boolean): string {
+export function starterHtml(kind: DesignKind, title: string, hasTokens: boolean, systemId: string): string {
   const safeTitle = escapeHtml(title);
-  const tokensLink = hasTokens ? `  <link rel="stylesheet" href="../tokens.css">\n` : "";
+  const tokensLink = hasTokens ? `  <link rel="stylesheet" href="../systems/${systemId}/tokens.css">\n` : "";
   const body =
     kind === "slides"
       ? `  <section class="slide">

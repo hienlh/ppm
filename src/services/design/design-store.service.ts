@@ -1,15 +1,15 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Stats } from "node:fs";
-import {
-  isDesignKind, type DesignKind, type DesignSummary, type DesignSystemStatus,
-} from "../../shared/design-types.ts";
+import { isDesignKind, type DesignKind, type DesignSummary } from "../../shared/design-types.ts";
 import { isValidDesignSlug, slugFromTitle } from "./design-slug.ts";
 import { lstatOrNull, resolveDesignDir, resolveDesignsRoot } from "./design-paths.ts";
 import { ensureDotDesign, writeFileAtomic } from "./design-fs.ts";
 import {
   DEFAULT_ENTRY, MANIFEST_FILE, normalizeTitle, parseManifest, serializeManifest, type DesignManifest,
 } from "./design-manifest.ts";
+import { manifestShowcaseFor, manifestSystemId, systemManifestFields } from "./design-manifest-system.ts";
+import { DEFAULT_SYSTEM_ID, isValidSystemId, systemFilesDir } from "./design-systems-paths.ts";
 import { starterHtml } from "./design-starter-template.ts";
 import { DesignError } from "./design-error.ts";
 import { designLockKey, withDesignLock } from "./design-lock.ts";
@@ -38,10 +38,13 @@ export async function summarize(designDir: string, slug: string, manifest: Desig
   const updated = Math.max(Date.parse(manifest.updatedAt), entry?.mtimeMs ?? 0);
   const { title, kind, createdAt } = manifest;
   const { variants, warnings } = await resolveDesignVariants(designDir, manifest);
+  const showcaseFor = manifestShowcaseFor(manifest);
   return {
     slug, title, kind, entry: manifest.entry, variants,
     ...(warnings.length ? { variantWarnings: warnings } : {}),
     createdAt, updatedAt: new Date(updated).toISOString(),
+    system: manifestSystemId(manifest),
+    ...(showcaseFor ? { showcaseFor } : {}),
   };
 }
 
@@ -96,11 +99,22 @@ function candidateSlug(base: string, n: number): string {
  * non-recursive mkdir, which fails if it already exists, so two creates racing for one
  * title end up in two folders rather than one overwriting the other.
  */
-export async function createDesign(projectPath: string, input: { title: unknown; kind: unknown }): Promise<DesignSummary> {
+export async function createDesign(
+  projectPath: string, input: { title: unknown; kind: unknown; system?: unknown },
+): Promise<DesignSummary> {
   const title = normalizeTitle(input.title);
   if (!title) throw new DesignError(400, "EBADTITLE", "A design needs a title");
   if (input.kind !== undefined && !isDesignKind(input.kind)) throw new DesignError(400, "EBADKIND", "Unknown design kind");
   const kind: DesignKind = isDesignKind(input.kind) ? input.kind : "page";
+  let systemId = DEFAULT_SYSTEM_ID;
+  if (input.system !== undefined && input.system !== DEFAULT_SYSTEM_ID) {
+    if (!isValidSystemId(input.system)) throw new DesignError(400, "EBADSYSTEM", "Invalid app id");
+    // Lazy import: the systems service never needs to know about the design store, but
+    // validating "this app exists" here would otherwise force a cycle the other way.
+    const { getDesignSystem } = await import("./design-systems.service.ts");
+    await getDesignSystem(projectPath, input.system); // 404s for an undeclared id
+    systemId = input.system;
+  }
   const root = await resolveDesignsRoot(projectPath, { create: true });
   if (!root) throw new DesignError(500, "EDESIGNROOT", "Could not create designs/");
   const base = slugFromTitle(title) || "design";
@@ -116,10 +130,13 @@ export async function createDesign(projectPath: string, input: { title: unknown;
     }
     try {
       const now = new Date().toISOString();
-      const manifest: DesignManifest = { title, kind, entry: DEFAULT_ENTRY, createdAt: now, updatedAt: now, extra: { tweaks: [] } };
-      const hasTokens = !!(await regularFileStat(join(root, "tokens.css")));
+      const manifest: DesignManifest = {
+        title, kind, entry: DEFAULT_ENTRY, createdAt: now, updatedAt: now,
+        extra: { tweaks: [], ...systemManifestFields(systemId) },
+      };
+      const hasTokens = !!(await regularFileStat(join(systemFilesDir(root, systemId), "tokens.css")));
       await ensureDotDesign(dir);
-      await writeFile(join(dir, DEFAULT_ENTRY), starterHtml(kind, title, hasTokens));
+      await writeFile(join(dir, DEFAULT_ENTRY), starterHtml(kind, title, hasTokens, systemId));
       await writeFile(join(dir, MANIFEST_FILE), serializeManifest(manifest));
       return await summarize(dir, slug, manifest);
     } catch (e) {
@@ -153,10 +170,3 @@ export async function deleteDesign(projectPath: string, slug: string): Promise<v
   });
 }
 
-/** Whether the project design system exists yet (`designs/DESIGN.md`, `designs/tokens.css`). */
-export async function designSystemStatus(projectPath: string): Promise<DesignSystemStatus> {
-  const root = await resolveDesignsRoot(projectPath);
-  if (!root) return { designMd: false, tokensCss: false };
-  const [md, css] = await Promise.all([regularFileStat(join(root, "DESIGN.md")), regularFileStat(join(root, "tokens.css"))]);
-  return { designMd: !!md, tokensCss: !!css };
-}

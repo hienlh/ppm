@@ -2,6 +2,7 @@ import { DESIGN_CDN_HOSTS } from "../../shared/design-cdn-hosts.ts";
 import { TWEAK_SCHEMA_EXAMPLE } from "../../shared/design-tweaks.ts";
 import { MAX_DESIGN_VARIANTS } from "../../shared/design-variants.ts";
 import { isValidDesignSlug } from "./design-slug.ts";
+import { designSystemInstructionsBlock, type DesignInstructionsSystem } from "./design-instructions-system-block.ts";
 
 /** How many questions the agent may ask before a first build. */
 export const MAX_CLARIFYING_QUESTIONS = 3;
@@ -16,7 +17,9 @@ const TWEAK_EXAMPLE_JSON = JSON.stringify(TWEAK_SCHEMA_EXAMPLE, null, 2);
  * throws rather than being escaped. `userSection` is the owner's own global setting
  * (`buildUserDesignSection`), placed last and subordinate to everything before it.
  */
-export function buildDesignInstructions(slug: string, opts: { checkTool?: boolean; userSection?: string } = {}): string {
+export function buildDesignInstructions(
+  slug: string, system: DesignInstructionsSystem, opts: { checkTool?: boolean; userSection?: string } = {},
+): string {
   if (!isValidDesignSlug(slug)) throw new Error(`invalid design slug "${slug}"`);
   const dir = `designs/${slug}/`;
   const cdnList = DESIGN_CDN_HOSTS.map((host) => `  - https://${host}`).join("\n");
@@ -44,25 +47,7 @@ or anything else that helps the design match the product.
 - Never read, search, list or write anything under a \`.design/\` directory. It holds the
   canvas's own snapshots and comments and is not part of the design.
 
-## The design system
-- Before your first change, read \`designs/DESIGN.md\` if it exists. It describes the
-  project's visual language (colours, type, spacing, components) and, once a UI kit has been
-  set up, a \`## Screens and components\` map from each screen or component to its real
-  source files. Follow it.
-- If \`designs/tokens.css\` exists, link it from the page with a relative path
-  (\`<link rel="stylesheet" href="../tokens.css">\`) and use its custom properties rather
-  than hard-coding the same values again.
-- If \`designs/kit/app.css\` exists, link it too (\`<link rel="stylesheet" href="../kit/app.css">\`)
-  and build the markup with the app's own class names, not new utility classes the compiled
-  CSS does not have; use \`../kit/icons/<name>.svg\` for icons rather than inventing your own.
-  When the request is, or touches, a screen that already exists in the app, read the source
-  files DESIGN.md's component map lists for it first and reproduce that structure faithfully
-  before changing anything — do not invent app chrome (navigation, headers, layout) that is
-  not in the source. For something genuinely new the kit has no classes for, add a small
-  \`<style>\` block in the design rather than a class the compiled CSS lacks.
-- If the user attached a screenshot of the real app, treat it as the target: after checking
-  your work (see below), compare its own screenshot against the one attached and fix visible
-  differences — layout, spacing, icons, type — before saying you are done.
+${designSystemInstructionsBlock(system)}
 
 ## The manifest: \`${dir}design.json\`
 - It is a JSON object. Keep the fields it already has. \`kind\` was set when the design was
@@ -122,7 +107,7 @@ ${TWEAK_EXAMPLE_JSON}
 ## Assets and network
 - Reference local files with relative paths only (\`./hero.png\`, \`styles.css\`). Absolute
   paths, \`file:\` URLs and paths that climb out of \`${dir}\` (other than \`../tokens.css\` and
-  \`../kit/…\`) do not resolve in the canvas.
+  \`../systems/${system.id}/…\`) do not resolve in the canvas.
 - The canvas may load scripts, styles, fonts and images from these hosts and nowhere else:
 ${cdnList}
 - There is no other network access: \`fetch\`, XHR, WebSockets and third-party embeds are
