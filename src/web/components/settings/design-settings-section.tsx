@@ -12,6 +12,7 @@ import { extractSkillMentions, utf8ByteLength } from "../../../shared/design-ski
 import { needsDesignSkillSuggestion } from "../../../shared/design-skill-suggestion";
 import { DesignInstructionsEditor } from "./design-instructions-editor";
 import { DesignSkillMentionStatus } from "./design-skill-mention-status";
+import { DesignAppsSettingsSection } from "./design-apps-settings-section";
 
 /** One picker list across providers; the first provider's copy of a shared name wins. */
 function mergeSkills(settings: DesignSettings): SlashItem[] {
@@ -94,6 +95,12 @@ export function DesignSettingsSection() {
 
   return (
     <div className="space-y-4">
+      {projectName && (
+        <>
+          <DesignAppsSettingsSection projectName={projectName} />
+          <div className="h-px bg-border" />
+        </>
+      )}
       <div className="space-y-1">
         <p className="text-sm font-medium">Design instructions</p>
         <p className="text-xs leading-relaxed text-text-subtle">

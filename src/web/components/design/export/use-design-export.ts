@@ -135,7 +135,7 @@ export function useDesignExport(
   }), [run, bridge, slug, design.title]);
 
   const buildInNewChat = useCallback(() => {
-    const text = buildHandoffPrompt({ slug, title: design.title, kind: design.kind, entry: file });
+    const text = buildHandoffPrompt({ slug, title: design.title, kind: design.kind, entry: file, system: design.system });
     // A missing screenshot must never block the brief itself: catch turns any failure
     // (canvas still loading, the screenshot library not loading) into "no image".
     runCanvasCheck(bridge, checkContext(), { screenshot: true })
@@ -152,7 +152,7 @@ export function useDesignExport(
           toast.error("Could not start the new chat", { description: (e as Error).message });
         }
       });
-  }, [bridge, checkContext, slug, design.title, design.kind, file, projectName]);
+  }, [bridge, checkContext, slug, design.title, design.kind, design.system, file, projectName]);
 
   return useMemo(() => ({
     views, viewError, busy, canPptx: design.kind === "slides", sheetOpen, setSheetOpen, prepare,

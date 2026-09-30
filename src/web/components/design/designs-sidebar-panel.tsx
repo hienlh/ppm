@@ -11,9 +11,15 @@ import { openDesignTab } from "@/lib/design/open-design-tab";
 import { DESIGNS_CHANGED_EVENT, requestNewDesign } from "@/lib/design/design-ui-events";
 import { RenameDesignDialog } from "./dialogs/rename-design-dialog";
 import { DeleteDesignDialog } from "./dialogs/delete-design-dialog";
+import { DesignSystemsSidebarGroup } from "./design-systems-sidebar-group";
 import type { DesignSummary } from "../../../shared/design-types";
 
 const headerButton = "flex size-11 items-center justify-center rounded-md text-text-subtle hover:bg-surface-elevated hover:text-foreground md:size-7";
+
+/** Every design except each app's showcase, which is shown in its own "Design systems" group. */
+function ordinaryDesigns(data: DesignList): DesignSummary[] {
+  return data.designs.filter((d) => !d.showcaseFor);
+}
 
 /**
  * Sidebar "Designs" section: the project's designs, newest first; tap to open. The header
@@ -42,7 +48,13 @@ export function DesignsSidebarPanel({ onNavigate }: { onNavigate?: () => void })
     const later = () => { if (timer) clearTimeout(timer); timer = setTimeout(load, 500); };
     const onFile = (e: Event) => {
       const d = (e as CustomEvent<{ projectName?: string; path?: string }>).detail;
-      if (d?.projectName === projectName && /^designs\/[^/]+(\/(design\.json|index\.html))?$/.test(d.path ?? "")) later();
+      const path = d.path ?? "";
+      const isDesignChange = /^designs\/[^/]+(\/(design\.json|index\.html))?$/.test(path);
+      // Anything under an app's own systems/<id>/ folder: its declaration, and the setup
+      // brief's DESIGN.md/tokens.css/kit/** output, which is what turns "not set up" into
+      // "ready" in the Design systems group.
+      const isSystemChange = /^designs\/systems\/[^/]+(\/.*)?$/.test(path);
+      if (d?.projectName === projectName && (isDesignChange || isSystemChange)) later();
     };
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<{ projectName?: string }>).detail?.projectName === projectName) load();
@@ -85,7 +97,7 @@ export function DesignsSidebarPanel({ onNavigate }: { onNavigate?: () => void })
           <p className="px-2 py-3 text-xs text-destructive">{error}</p>
         ) : data === null ? (
           <div className="flex justify-center py-6"><Loader2 className="size-4 animate-spin text-primary" /></div>
-        ) : data.designs.length === 0 ? (
+        ) : ordinaryDesigns(data).length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs text-text-subtle">
             <Palette className="size-6" />
             No designs yet. Start one and describe what you want; the AI builds it beside a live preview.
@@ -93,7 +105,7 @@ export function DesignsSidebarPanel({ onNavigate }: { onNavigate?: () => void })
               New design
             </button>
           </div>
-        ) : data.designs.map((d) => {
+        ) : ordinaryDesigns(data).map((d) => {
           const Icon = d.kind === "slides" ? Presentation : FileCode;
           return (
             <ContextMenu key={d.slug}>
@@ -116,11 +128,7 @@ export function DesignsSidebarPanel({ onNavigate }: { onNavigate?: () => void })
             </ContextMenu>
           );
         })}
-        {data && !data.system.designMd && data.designs.length > 0 && (
-          <p className="px-2 py-3 text-xs text-text-subtle">
-            No design system yet. Open a design and choose “Set up design system” to learn this project's look.
-          </p>
-        )}
+        {data && <DesignSystemsSidebarGroup projectName={projectName} systems={data.systems} onNavigate={onNavigate} />}
       </div>
       {renaming && <RenameDesignDialog projectName={projectName} design={renaming} onClose={() => setRenaming(null)} />}
       {deleting && <DeleteDesignDialog projectName={projectName} design={deleting} onClose={() => setDeleting(null)} />}

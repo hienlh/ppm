@@ -3,10 +3,10 @@ import {
   Columns2, Download, History, Maximize2, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
   Presentation, RefreshCw, Send, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
+import { toast } from "sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { deliverToDesignChat } from "@/lib/design/deliver-to-design-chat";
-import { buildDesignSystemInitPrompt } from "../../../shared/design-system-init-prompt";
+import { runDesignSystemSetup } from "@/lib/design/run-design-system-setup";
 import { DEVICE_FRAMES, type DeviceFrameId } from "./canvas/device-frame-presets";
 import type { DesignTabContextValue } from "./design-tab-context";
 import type { DesignCanvasState } from "./canvas/use-design-canvas";
@@ -68,9 +68,13 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     isActive: (ctx) => ctx.historyOpen, run: (ctx) => ctx.toggleHistory(),
   },
   {
-    // Fills the composer and waits: the user reviews the brief and sends it themselves.
+    // Targets the design's own app, not necessarily the tab it was clicked from: opens (or
+    // creates) that app's showcase design and auto-sends the setup brief there.
     id: "design-system", label: "Set up design system", icon: Sparkles, placement: "more",
-    run: (ctx) => deliverToDesignChat(ctx.tabId, buildDesignSystemInitPrompt(), "Set up design system"),
+    run: (ctx) => {
+      void runDesignSystemSetup(ctx.projectName, ctx.design.system)
+        .catch((e: Error) => toast.error("Could not start setup", { description: e.message }));
+    },
   },
   {
     // Picking needs element ids, which a file served without instrumentation does not have.

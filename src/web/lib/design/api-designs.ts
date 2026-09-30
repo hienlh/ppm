@@ -1,7 +1,5 @@
 import { api, projectUrl } from "@/lib/api-client";
-import type {
-  DesignKind, DesignSnapshotInfo, DesignSummary, DesignSystemStatus,
-} from "../../../shared/design-types";
+import type { DesignKind, DesignSnapshotInfo, DesignSummary, DesignSystemSummary } from "../../../shared/design-types";
 import type { RestoreResult } from "../../../services/design/design-restore.service";
 
 /**
@@ -12,7 +10,8 @@ import type { RestoreResult } from "../../../services/design/design-restore.serv
 
 export interface DesignList {
   designs: DesignSummary[];
-  system: DesignSystemStatus;
+  /** Every app of the project, `default` first; see `src/web/lib/design/api-design-systems.ts`. */
+  systems: DesignSystemSummary[];
 }
 
 export interface DesignPreviewCapability {
@@ -33,12 +32,12 @@ export interface DesignProvider {
 const base = (projectName: string) => `${projectUrl(projectName)}/designs`;
 const one = (projectName: string, slug: string) => `${base(projectName)}/${encodeURIComponent(slug)}`;
 
-/** Normalised at the boundary: every caller renders `designs` straight into a list. */
+/** Normalised at the boundary: every caller renders `designs`/`systems` straight into a list. */
 export async function listDesigns(projectName: string): Promise<DesignList> {
   const data = await api.get<Partial<DesignList> | null>(base(projectName));
   return {
     designs: Array.isArray(data?.designs) ? data.designs : [],
-    system: { designMd: !!data?.system?.designMd, tokensCss: !!data?.system?.tokensCss },
+    systems: Array.isArray(data?.systems) ? data.systems : [],
   };
 }
 
@@ -46,7 +45,9 @@ export function getDesign(projectName: string, slug: string): Promise<DesignSumm
   return api.get<DesignSummary>(one(projectName, slug));
 }
 
-export function createDesign(projectName: string, input: { title: string; kind: DesignKind }): Promise<DesignSummary> {
+export function createDesign(
+  projectName: string, input: { title: string; kind: DesignKind; system?: string },
+): Promise<DesignSummary> {
   return api.post<DesignSummary>(base(projectName), input);
 }
 

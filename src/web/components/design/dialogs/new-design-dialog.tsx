@@ -5,13 +5,17 @@ import { cn } from "@/lib/utils";
 import { getAISettings } from "@/lib/api-settings";
 import { resolveNewChatProvider } from "@/lib/new-chat-provider";
 import { createDesign, listDesignProviders, type DesignProvider } from "@/lib/design/api-designs";
+import { listDesignSystems, skipDesignSystemSetup } from "@/lib/design/api-design-systems";
 import { openDesignTab } from "@/lib/design/open-design-tab";
 import { announceDesignsChanged } from "@/lib/design/design-ui-events";
 import { getDesignSettings, readSkillLists } from "@/lib/design/api-design-settings";
+import { getLastUsedDesignSystem, setLastUsedDesignSystem } from "@/lib/design/last-used-design-system";
+import { runDesignSystemSetup } from "@/lib/design/run-design-system-setup";
 import { openSettings } from "@/components/settings/open-settings";
 import { DesignResponsiveDialog } from "./design-responsive-dialog";
+import { DesignSystemSetupStep } from "./design-system-setup-step";
 import { DesignSkillSuggestionHint } from "../design-skill-suggestion";
-import type { DesignKind } from "../../../../shared/design-types";
+import type { DesignKind, DesignSystemSummary } from "../../../../shared/design-types";
 import { needsDesignSkillSuggestion } from "../../../../shared/design-skill-suggestion";
 
 const MAX_TITLE_LENGTH = 120;
@@ -33,8 +37,13 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
   const [kind, setKind] = useState<DesignKind>("page");
   const [providers, setProviders] = useState<DesignProvider[] | null>(null);
   const [providerId, setProviderId] = useState("");
+  const [systems, setSystems] = useState<DesignSystemSummary[] | null>(null);
+  const [systemId, setSystemId] = useState("default");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // Shown after "Create" when the chosen app's design system is not set up yet (option B:
+  // offered at the first design, never run on its own).
+  const [confirmingSetup, setConfirmingSetup] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +55,14 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
         setProviderId((list.find((p) => p.id === preferred) ?? list[0])?.id ?? "");
       })
       .catch((e) => { if (!cancelled) { setProviders([]); setError((e as Error).message || "Could not load providers"); } });
+    listDesignSystems(projectName)
+      .then((list) => {
+        if (cancelled) return;
+        setSystems(list);
+        const last = getLastUsedDesignSystem(projectName);
+        setSystemId(last && list.some((s) => s.id === last) ? last : (list[0]?.id ?? "default"));
+      })
+      .catch(() => { if (!cancelled) setSystems([]); });
     return () => { cancelled = true; };
   }, [projectName]);
 
@@ -63,22 +80,50 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
   }, [projectName]);
 
   const trimmed = title.trim();
-  const canCreate = !!trimmed && !!providerId && !creating;
+  const canCreate = !!trimmed && !!providerId && !!systems && !creating;
+  const chosenSystem = systems?.find((s) => s.id === systemId) ?? null;
 
-  const create = async () => {
-    if (!canCreate) return;
+  const finishCreate = async (setupFirst: boolean) => {
     setCreating(true);
     setError(null);
     try {
-      const design = await createDesign(projectName, { title: trimmed, kind });
+      const design = await createDesign(projectName, { title: trimmed, kind, system: systemId });
+      setLastUsedDesignSystem(projectName, systemId);
       announceDesignsChanged(projectName);
       openDesignTab({ projectName, slug: design.slug, title: design.title, providerId, fresh: true });
+      if (setupFirst) await runDesignSystemSetup(projectName, systemId);
+      else if (chosenSystem && !chosenSystem.hasDesignMd) await skipDesignSystemSetup(projectName, systemId).catch(() => undefined);
       onClose();
     } catch (e) {
       setError((e as Error).message || "Could not create the design");
       setCreating(false);
+      setConfirmingSetup(false);
     }
   };
+
+  const create = () => {
+    if (!canCreate) return;
+    // Every app (including the implicit default) gets the offer once, the first time a
+    // design is created for it and it has no design system yet.
+    if (chosenSystem && !chosenSystem.hasDesignMd && !chosenSystem.setupSkipped) {
+      setConfirmingSetup(true);
+      return;
+    }
+    void finishCreate(false);
+  };
+
+  if (confirmingSetup && chosenSystem) {
+    return (
+      <DesignResponsiveDialog open onClose={() => { if (!creating) onClose(); }} title="New design">
+        <DesignSystemSetupStep
+          system={chosenSystem}
+          busy={creating}
+          onSetupFirst={() => void finishCreate(true)}
+          onSkip={() => void finishCreate(false)}
+        />
+      </DesignResponsiveDialog>
+    );
+  }
 
   return (
     <DesignResponsiveDialog
@@ -93,7 +138,7 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
         </Button>
       </>}
     >
-      <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void create(); }}>
+      <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); create(); }}>
         <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
           Title
           <input autoFocus value={title} maxLength={MAX_TITLE_LENGTH} onChange={(e) => setTitle(e.target.value)}
@@ -110,6 +155,15 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
             </button>
           ))}
         </div>
+        {systems && systems.length > 1 && (
+          <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
+            Which app is this for?
+            <select value={systemId} onChange={(e) => setSystemId(e.target.value)}
+              className="min-h-11 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground md:min-h-9">
+              {systems.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </label>
+        )}
         <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
           AI provider
           {providers === null ? (

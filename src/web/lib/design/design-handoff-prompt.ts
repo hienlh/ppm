@@ -16,10 +16,14 @@ export interface HandoffInput {
   title: string;
   kind: DesignKind;
   entry: string;
+  /** The design's app; defaults to the implicit "default" system at the project root. */
+  system?: string;
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const ENTRY_RE = /^[A-Za-z0-9._/-]{1,200}\.html?$/;
+const SYSTEM_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const DEFAULT_SYSTEM_ID = "default";
 
 /** One line, no markup-ish characters, at most 80 characters: the title is agent-written. */
 function safeTitle(title: string): string {
@@ -31,6 +35,8 @@ export function buildHandoffPrompt(input: HandoffInput): string {
   if (!SLUG_RE.test(input.slug)) throw new Error("Invalid design slug");
   const entry = ENTRY_RE.test(input.entry) && !input.entry.split("/").some((s) => s === ".." || s.startsWith("."))
     ? input.entry : "index.html";
+  const systemId = input.system && SYSTEM_RE.test(input.system) ? input.system : DEFAULT_SYSTEM_ID;
+  const sysDir = systemId === DEFAULT_SYSTEM_ID ? "designs/" : `designs/systems/${systemId}/`;
   const dir = `designs/${input.slug}/`;
   const what = input.kind === "slides" ? "a slide deck" : "a page";
   return [
@@ -38,9 +44,9 @@ export function buildHandoffPrompt(input: HandoffInput): string {
     "",
     "The design is a static reference: plain HTML and CSS, possibly with CDN scripts, made to be looked at, not shipped.",
     "",
-    "1. Read `designs/DESIGN.md` and `designs/tokens.css` (when they exist) for the design system, then the design's own files.",
+    `1. Read \`${sysDir}DESIGN.md\` and \`${sysDir}tokens.css\` (when they exist) for the design system, then the design's own files.`,
     "2. Build it in the project's actual stack, components and styling conventions. Map the design tokens onto the project's theme instead of copying raw values, and do not copy CDN usage; use the project's own dependencies.",
-    "   If the page links `../kit/app.css`, its class names and markup are the app's own — they map 1:1 to source, so read the component files `designs/DESIGN.md`'s map lists for the screens it touches and edit those, rather than re-deriving the styling from what the design looks like.",
+    `   If the page links \`../systems/${systemId}/kit/app.css\`, its class names and markup are the app's own — they map 1:1 to source, so read the component files \`${sysDir}DESIGN.md\`'s map lists for the screens it touches and edit those, rather than re-deriving the styling from what the design looks like.`,
     "3. Before changing anything, list the files you will create or change and wait for my go-ahead.",
     "4. Leave `designs/` untouched.",
     "",
