@@ -742,7 +742,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           const selectedPermission = prepared?.permissionMode ?? permissionMode ?? preparation.permissionMode;
           setProviderId(selectedProvider);
           setPermissionMode(selectedPermission);
-          const picked = await ensureAccountClaim(selectedProvider);
+          // The claim is advisory, and so is the server's use of it: a pick that fails
+          // starts the session on whichever account the server chooses, rather than
+          // refusing the first message.
+          const picked = await ensureAccountClaim(selectedProvider).catch(() => null);
           if (attempt !== firstSendAttempt.current) return;
           const latest = metadataRef.current;
           const accountId = latest?.pickedAccountProvider === selectedProvider

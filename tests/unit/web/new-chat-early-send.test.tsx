@@ -128,6 +128,20 @@ it("queues an early greeting until the correct provider and shared account claim
   expect(input.value).toBe("");
 });
 
+it("starts the session without an account when the account pick fails", async () => {
+  view = await mount(<Harness />);
+  await type("hello despite the pick", true);
+  await resolvePreparation();
+  expect(pickCalls()).toHaveLength(1);
+  await act(async () => { claim.reject(new Error("Server error (HTTP 500)")); });
+  expect(sessionCalls()).toHaveLength(1);
+  expect(sessionCalls()[0]![1]).toMatchObject({ providerId: "codex", accountId: undefined });
+  await act(async () => { create.resolve({ id: "first-session", providerId: "codex" }); });
+  await connectSession();
+  expect(messages()).toHaveLength(1);
+  expect(messages()[0]).toMatchObject({ content: "hello despite the pick" });
+});
+
 it("restores an early message if its provider is unavailable without creating a fallback session", async () => {
   view = await mount(<Harness />);
   await type("keep this message", true);
