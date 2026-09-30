@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { resolveScopedPath, TOKENS_CSS_ALIAS } from "../preview/design-preview-scope.ts";
+import { KIT_DIR_ALIAS, resolveScopedPath, TOKENS_CSS_ALIAS } from "../preview/design-preview-scope.ts";
 import type { DesignRef } from "../preview/design-preview-tokens.ts";
 import { readDesignSource, type DesignSource } from "./design-source-file.ts";
 import { htmlStyleNodes } from "./html-style-blocks.ts";
@@ -10,11 +10,16 @@ import { htmlStyleNodes } from "./html-style-blocks.ts";
  * Inline `<style>` blocks and local `<link rel=stylesheet>` files, in document order —
  * which is the order in which a later `:root` declaration beats an earlier one. CDN sheets
  * are skipped (not ours to read or write), as are links the canvas cannot load either:
- * missing files, anything outside the design folder except the shared `tokens.css`, and
- * non-`.css` targets. `tokens.css` stays in the list, marked `outside`, because a variable
- * it sets last really does win on screen — the tweak commit refuses that case rather than
- * patching a declaration that would lose to it.
+ * missing files, anything outside the design folder except the shared `tokens.css` and the
+ * read-only `kit/**`, and non-`.css` targets. Both shared aliases stay in the list, marked
+ * `outside`, because a variable one of them sets last really does win on screen — the tweak
+ * commit refuses that case rather than patching a declaration that would lose to it.
  */
+
+/** A design-relative ref that climbs out to one of the shared, read-only aliases. */
+function isSharedAliasRef(rel: string): boolean {
+  return rel === `../${TOKENS_CSS_ALIAS}` || rel === `../${KIT_DIR_ALIAS}` || rel.startsWith(`../${KIT_DIR_ALIAS}/`);
+}
 
 /** Local stylesheets considered per page; the preview reports gens for the same number. */
 export const MAX_LINKED_STYLE_SOURCES = 32;
@@ -54,7 +59,7 @@ export function linkedStylePath(entryRel: string, href: string): string | null {
     return null;
   }
   if (!/\.css$/i.test(rel)) return null;
-  if (rel === `../${TOKENS_CSS_ALIAS}`) return rel;
+  if (isSharedAliasRef(rel)) return rel;
   if (rel === ".." || rel.startsWith("../") || rel.startsWith("/")) return null;
   return rel;
 }
@@ -63,7 +68,8 @@ async function readLinked(design: DesignRef, rel: string): Promise<{ rel: string
   const outside = rel.startsWith("../");
   let asset: { abs: string; rel: string };
   try {
-    asset = await resolveScopedPath(design, outside ? TOKENS_CSS_ALIAS : `${design.slug}/${rel}`);
+    // Strip the leading "../" to get the scope's own path shape: "tokens.css" or "kit/…".
+    asset = await resolveScopedPath(design, outside ? rel.slice(3) : `${design.slug}/${rel}`);
   } catch {
     // Missing, or refused by the preview's own guard: the canvas does not load it, so it is not in the cascade.
     return null;

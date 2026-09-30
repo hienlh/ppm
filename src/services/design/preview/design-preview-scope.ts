@@ -7,17 +7,20 @@ import type { DesignRef } from "./design-preview-tokens.ts";
 /**
  * Which file a preview request under one token may read.
  *
- * A token covers `designs/<slug>/**` and exactly one alias, `tokens.css`, which is the
- * shared `designs/tokens.css` (a design links it as `../tokens.css`, and from
- * `/content/<token>/<slug>/index.html` that resolves to `/content/<token>/tokens.css`).
- * Everything else — another design, `DESIGN.md`, anything under a dot-directory such as
- * the design's own `.design/` — is a 403.
+ * A token covers `designs/<slug>/**` and two aliases: `tokens.css`, the shared
+ * `designs/tokens.css` (a design links it as `../tokens.css`), and `kit/**`, the shared
+ * `designs/kit/` UI kit (a design links `../kit/app.css`, `../kit/icons/<name>.svg`…). From
+ * `/content/<token>/<slug>/index.html` those resolve to `/content/<token>/tokens.css` and
+ * `/content/<token>/kit/…`. Everything else — another design, `DESIGN.md`, anything under a
+ * dot-directory such as the design's own `.design/` — is a 403.
  *
  * The design folder is re-resolved on every request rather than remembered from mint, so a
  * design deleted or swapped for a symlink after the token was issued stops being served.
  */
 
 export const TOKENS_CSS_ALIAS = "tokens.css";
+/** Bare alias prefix; a request under it is `kit/<rest>`, never the directory itself. */
+export const KIT_DIR_ALIAS = "kit";
 
 export interface ScopedAsset {
   abs: string;
@@ -57,6 +60,16 @@ export async function resolveScopedPath(design: DesignRef, path: string): Promis
     const root = await resolveDesignsRoot(design.projectPath);
     if (!root) previewDenied();
     return { abs: await containedFile(root, join(root, TOKENS_CSS_ALIAS)), rel: `../${TOKENS_CSS_ALIAS}`, designDir };
+  }
+  if (path === KIT_DIR_ALIAS || path.startsWith(`${KIT_DIR_ALIAS}/`)) {
+    const root = await resolveDesignsRoot(design.projectPath);
+    if (!root) previewDenied();
+    const tail = path.slice(KIT_DIR_ALIAS.length + 1); // "" for bare "kit", else "sub/path"
+    const segments = tail.split("/");
+    if (!tail || segments.some((s) => s === "" || s === ".." || s.startsWith("."))) previewDenied();
+    const candidate = resolve(root, KIT_DIR_ALIAS, ...segments);
+    const abs = await containedFile(root, candidate);
+    return { abs, rel: `../${path}`, designDir };
   }
   const prefix = `${design.slug}/`;
   if (!path.startsWith(prefix) || path.length === prefix.length) previewDenied();

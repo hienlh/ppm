@@ -1,13 +1,15 @@
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import archiver from "archiver";
 import { isCredentialPath } from "../../fs-path-guard.service.ts";
 import { DesignError } from "../design-error.ts";
+import { KIT_DIR_ALIAS } from "../preview/design-preview-scope.ts";
 import { lstatOrNull, resolveDesignDir, resolveDesignsRoot } from "../design-paths.ts";
 import { readDesignFileSafe, safeWalkDesignTree } from "../design-safe-walk.ts";
 
 /**
- * A design as a zip: `<slug>/**` plus the project's `tokens.css` and `DESIGN.md`, rooted at
- * `designs/` so every `../tokens.css` link still resolves after unzipping.
+ * A design as a zip: `<slug>/**` plus the project's `tokens.css` and `DESIGN.md`, and the
+ * shared `kit/` UI kit when the design actually links it, all rooted at `designs/` so every
+ * `../tokens.css` and `../kit/…` link still resolves after unzipping.
  *
  * Every file comes from the shared safe walker and is read through `readDesignFileSafe`: no
  * symlink (a link to `ppm.db` or a key is never packed), no FIFO or device, nothing whose
@@ -20,10 +22,24 @@ import { readDesignFileSafe, safeWalkDesignTree } from "../design-safe-walk.ts";
 export const MAX_ZIP_FILES = 5000;
 export const MAX_ZIP_BYTES = 512 * 1024 * 1024;
 const SHARED_FILES = ["tokens.css", "DESIGN.md"];
+/** Text files worth scanning for a `../kit/` reference; a byte pattern, not a parse. */
+const KIT_REF_EXTENSIONS = new Set([".html", ".htm", ".css", ".js", ".mjs"]);
+const KIT_REF_SCAN_BYTES = 512 * 1024;
 
 interface ZipEntry {
   name: string;
   abs: string;
+}
+
+/** Whether any of the design's own text files mentions the shared kit at all, by substring. */
+async function designReferencesKit(designDir: string): Promise<boolean> {
+  for await (const entry of safeWalkDesignTree(designDir)) {
+    if (entry.rel.split("/").some((part) => part.startsWith("."))) continue;
+    if (!KIT_REF_EXTENSIONS.has(extname(entry.rel).toLowerCase()) || entry.size > KIT_REF_SCAN_BYTES) continue;
+    const bytes = await readDesignFileSafe(entry.abs, KIT_REF_SCAN_BYTES);
+    if (bytes.toString("utf8").includes("../kit/")) return true;
+  }
+  return false;
 }
 
 async function listZipEntries(projectPath: string, slug: string): Promise<ZipEntry[]> {
@@ -48,6 +64,13 @@ async function listZipEntries(projectPath: string, slug: string): Promise<ZipEnt
     // The same rule as the walker: a regular file or nothing, never a link followed out.
     if (!st || st.isSymbolicLink() || !st.isFile() || isCredentialPath(abs)) continue;
     add(name, abs, st.size);
+  }
+  const kitDir = root ? join(root, KIT_DIR_ALIAS) : null;
+  if (kitDir && (await lstatOrNull(kitDir))?.isDirectory() && (await designReferencesKit(designDir))) {
+    for await (const entry of safeWalkDesignTree(kitDir)) {
+      if (entry.rel.split("/").some((part) => part.startsWith("."))) continue;
+      add(`${KIT_DIR_ALIAS}/${entry.rel}`, entry.abs, entry.size);
+    }
   }
   return entries;
 }

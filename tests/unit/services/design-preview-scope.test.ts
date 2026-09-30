@@ -32,6 +32,12 @@ describe("design preview scope", () => {
     writeFileSync(join(designs, "tokens.css"), ":root{}");
     writeFileSync(join(designs, "DESIGN.md"), "# system");
     writeFileSync(join(project, "secret.json"), "{}");
+    mkdirSync(join(designs, "kit", "fonts"), { recursive: true });
+    mkdirSync(join(designs, "kit", ".hidden"), { recursive: true });
+    writeFileSync(join(designs, "kit", "app.css"), ":root{--kit:1}");
+    writeFileSync(join(designs, "kit", "fonts", "a.woff2"), "font-bytes");
+    writeFileSync(join(designs, "kit", ".env"), "secret");
+    writeFileSync(join(designs, "kit", ".hidden", "x.css"), "hidden");
   });
   afterEach(() => { rmSync(project, { recursive: true, force: true }); });
 
@@ -45,6 +51,16 @@ describe("design preview scope", () => {
   it("maps the single tokens.css alias to designs/tokens.css", async () => {
     const asset = await resolveScopedAsset(design(), "tokens.css");
     expect(asset).toMatchObject({ abs: join(project, "designs", "tokens.css"), rel: "../tokens.css" });
+  });
+
+  it("serves any file under the kit/ alias, but never the bare directory, a dot-segment or a symlink out", async () => {
+    const css = await resolveScopedAsset(design(), "kit/app.css");
+    expect(css).toMatchObject({ abs: join(project, "designs", "kit", "app.css"), rel: "../kit/app.css" });
+    const font = await resolveScopedAsset(design(), "kit/fonts/a.woff2");
+    expect(font).toMatchObject({ abs: join(project, "designs", "kit", "fonts", "a.woff2"), rel: "../kit/fonts/a.woff2" });
+    for (const path of ["kit", "kit/", "kit/.env", "kit/.hidden/x.css", "kit/../tokens.css", "kit/../../secret.json"]) {
+      expect(await status(path)).toBe(403);
+    }
   });
 
   it("refuses another design, the design system notes and anything outside", async () => {

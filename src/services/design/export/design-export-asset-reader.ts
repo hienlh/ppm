@@ -10,30 +10,38 @@ import { readDesignFileSafe, SafeWalkError } from "../design-safe-walk.ts";
  * design folder, through the same guards as everything else that reads a design tree.
  *
  * A design is written by an agent, so a link in it can point anywhere. A file is read only
- * when it is inside the design folder (or is the shared `../tokens.css`), is a web asset by
- * extension, sits under no dot-directory, is a regular file and not a symlink, still resolves
- * inside after `realpath`, is no credential path and not inside the PPM directory — and then
- * through `readDesignFileSafe`, which re-checks the open handle. Everything else answers
- * `refused`, never an exception, so one bad link costs one warning rather than the export.
+ * when it is inside the design folder (or is the shared `../tokens.css` or `../kit/**`), is a
+ * web asset by extension, sits under no dot-directory, is a regular file and not a symlink,
+ * still resolves inside after `realpath`, is no credential path and not inside the PPM
+ * directory — and then through `readDesignFileSafe`, which re-checks the open handle.
+ * Everything else answers `refused`, never an exception, so one bad link costs one warning
+ * rather than the export.
  */
 
 export type ReadAssetResult =
   | { ok: true; bytes: Uint8Array }
   | { ok: false; reason: "missing" | "refused" | "too-large" };
 
-/** `rel` is `/`-separated and relative to the design folder; `../tokens.css` is the one way out. */
+/** `rel` is `/`-separated and relative to the design folder; `../tokens.css`/`../kit/…` are the way out. */
 export type ReadAsset = (rel: string, maxBytes: number) => Promise<ReadAssetResult>;
 
 export const TOKENS_CSS_REL = "../tokens.css";
+export const KIT_DIR_REL = "../kit";
+
+/** `rel` names a file under the shared kit folder (never the bare directory). */
+export function isKitRel(rel: string): boolean {
+  return rel !== KIT_DIR_REL && rel.startsWith(`${KIT_DIR_REL}/`);
+}
 
 export function createDesignAssetReader(designDir: string, designsRoot: string): ReadAsset {
   return async (rel, maxBytes) => {
     const tokens = rel === TOKENS_CSS_REL;
-    const root = tokens ? designsRoot : designDir;
-    if (!tokens && (rel === "" || rel.includes("\0") || rel.includes("\\") || rel.split("/").some((s) => s === ".." || s.startsWith(".")))) {
+    const kit = !tokens && isKitRel(rel);
+    const root = tokens || kit ? designsRoot : designDir;
+    if (!tokens && !kit && (rel === "" || rel.includes("\0") || rel.includes("\\") || rel.split("/").some((s) => s === ".." || s.startsWith(".")))) {
       return { ok: false, reason: "refused" };
     }
-    const target = tokens ? join(designsRoot, "tokens.css") : resolve(designDir, ...rel.split("/"));
+    const target = tokens ? join(designsRoot, "tokens.css") : kit ? join(designsRoot, rel.slice(3)) : resolve(designDir, ...rel.split("/"));
     try {
       if (!isInsideRoot(root, target)) return { ok: false, reason: "refused" };
       guardPreviewAsset(target, root);

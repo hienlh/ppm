@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDesign } from "../../../src/services/design/design-store.service.ts";
@@ -101,6 +101,18 @@ describe("commitTweaks", () => {
   it("refuses a variable that the shared tokens.css sets last", async () => {
     await expect(commit({ "--shared": "#6366f1" })).rejects.toMatchObject({ status: 422 });
     expect(read("../tokens.css")).toBe(":root { --shared: #999999; }\n");
+  });
+
+  it("refuses a variable that the shared kit/app.css sets last, the same as tokens.css", async () => {
+    mkdirSync(join(project, "designs", "kit"), { recursive: true });
+    writeFileSync(join(project, "designs", "kit", "app.css"), ":root { --kit: #abcabc; }\n");
+    writeFileSync(join(dir, "index.html"), PAGE.replace("</head>", '<link rel="stylesheet" href="../kit/app.css"></head>'));
+    const manifest = JSON.parse(read("design.json"));
+    writeFileSync(join(dir, "design.json"), JSON.stringify({
+      ...manifest, tweaks: [...TWEAKS, { id: "kit", label: "Kit", type: "color", var: "--kit", default: "#000000" }],
+    }));
+    await expect(commit({ "--kit": "#6366f1" })).rejects.toMatchObject({ status: 422 });
+    expect(read("../kit/app.css")).toBe(":root { --kit: #abcabc; }\n");
   });
 
   it("undoes an Apply exactly: the :root value comes back and a later edit elsewhere stays", async () => {

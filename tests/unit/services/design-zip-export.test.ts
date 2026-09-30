@@ -80,4 +80,19 @@ describe("createDesignZip", () => {
     await expect(createDesignZip(project, "missing")).rejects.toMatchObject({ status: 404 });
     await expect(createDesignZip(project, "../other")).rejects.toMatchObject({ status: 400 });
   });
+
+  it("packs kit/ only when a design's own files actually reference it", async () => {
+    mkdirSync(join(designs, "kit", "fonts"), { recursive: true });
+    writeFileSync(join(designs, "kit", "app.css"), ":root{--k:1}");
+    writeFileSync(join(designs, "kit", "fonts", "a.woff2"), "font-bytes");
+    expect(Object.keys(await zipEntries(project, "landing")).sort()).toEqual([
+      "DESIGN.md", "landing/design.json", "landing/img/logo.png", "landing/index.html", "tokens.css",
+    ]);
+    writeFileSync(join(designs, "landing", "index.html"), '<link rel="stylesheet" href="../kit/app.css"><p>Hi</p>');
+    const entries = await zipEntries(project, "landing");
+    expect(Object.keys(entries).sort()).toEqual([
+      "DESIGN.md", "kit/app.css", "kit/fonts/a.woff2", "landing/design.json", "landing/img/logo.png", "landing/index.html", "tokens.css",
+    ]);
+    expect(entries["kit/app.css"]).toBe(":root{--k:1}");
+  });
 });
