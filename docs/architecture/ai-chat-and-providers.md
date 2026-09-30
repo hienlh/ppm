@@ -15,6 +15,72 @@ results/errors and ignores nested `done` events.
 This prevents a completed answer from disappearing after reload when a
 background agent finishes after the root response.
 
+The live Agent-session window (below) reads a child's rollout through its own
+streaming tail parser instead of this buffered nested-event path — it has no
+notion of whether the root turn is active, since a background agent keeps
+writing long after the root turn finishes. A child rollout carries its own
+`session_meta` header first and its parent's (forked context) second; only the
+first describes the file, and that tail parser ignores every one after it.
+
+## Agent session transcripts
+
+Tapping an Agent/Task card, or a named teammate row, opens a floating window
+(a bottom sheet on mobile) that streams that agent's own transcript live and
+independently of the chat turn that spawned it. This runs as its own protocol
+over `/ws/global` (`src/shared/agent-transcript-protocol.ts`), not the chat
+WebSocket, so it keeps following a background agent after the root turn ends
+and works whether or not a chat tab is even mounted.
+
+**Ownership before any file is named.** `src/services/agent-transcript/session-ownership.ts`
+proves a requested `(providerId, sessionId)` belongs to the caller's project
+before anything downstream picks a path: a Claude session's JSONL must sit
+under that project's own slug directory (a DB-recorded path is accepted only
+when it independently names the same project), and a Codex session must be
+found through the existing fail-closed `cwd`-checked rollout search. Every file
+this flow reads afterward is realpath-contained under the provider's root. A
+client names only a project, a session id and a `source` (a card id or
+teammate handle) — never a path or byte range.
+
+**Sources per provider.** `agent-transcript-sources.ts` turns an owned session
+plus a `source` into the file(s) the hub may read: a Claude card's own
+transcript and its recorded nested descendants; a Codex card's rollout,
+accepted only when its `session_meta.parent_thread_id` chain reaches the
+owning session; a teammate's newest transcript, pinned to the project the same
+way a session id is (a team is itself a session). Resolutions are cached
+briefly per (session, card/member) and re-derived on that cadence, so a
+descendant spawned after the window opened is picked up without reopening it.
+
+**The hub.** One hub per `(providerId, sessionId)` (`agent-transcript-hub.ts`,
+`agent-transcript-session-hub.ts`) owns every transcript and activity
+subscription for that session. A tick reads each subscribed file from its
+last-consumed byte offset, decodes only whole lines, and pages a large backlog
+rather than reading or parsing it all at once; a subscription's own pace slows
+once its files stop growing, and a hub with nothing subscribed tears itself
+down.
+
+**Protocol.** `agent-transcript:subscribe`/`unsubscribe` carry one card's or
+teammate's steps; `agent-activity:subscribe`/`unsubscribe` carry the
+running-agents bar's "who is working right now" feed, independent of any
+window being open. A cursor is a byte offset per file the server itself
+derived on an earlier response — never a client-named range — and
+reconnecting resumes from the client's last cursor with no gap and no
+duplicate, across however many backlog pages that takes. A `reset` flag tells
+the client to discard everything for that subscription instead of appending,
+for the rare case where the file itself rewrote its own history (a
+truncated/rotated Claude transcript, a Codex compaction or rollback). Every
+error the client can see is one of four fixed codes — never a path or
+exception text.
+
+**Fallback.** A window opens with whatever steps chat already holds in memory
+(`agent-session-fallback-store.ts`) and shows them immediately; they are
+replaced the moment the hub's first real response names a readable file, and
+stay as the shown view — marked offline — when the source never resolves to
+one at all (an old session, or a transcript that never existed).
+
+**Liveness.** "Running" is derived only from whether the underlying file(s)
+are still growing, never from in-memory chat state: a replayed old session
+reads as finished even though its cards are still visible in the transcript.
+
 ## Codex daily guard for weekly-only accounts
 
 Daily guard spreads a seven-day quota window across five weekdays: each weekday

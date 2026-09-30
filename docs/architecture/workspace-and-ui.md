@@ -475,7 +475,7 @@ pointer-up that still arrives after a mid-gesture window close (e.g. dragging by
 that closes the frame).
 
 **One chrome, every kind.** `WindowSkinChrome` (`window-skin-chrome.tsx`) is the titlebar every
-window kind — explorer, team-member session, system monitor, detached tab — renders: it resolves
+window kind — explorer, agent-session, system monitor, detached tab — renders: it resolves
 the active OS skin via `useExplorerSkin()` (Settings override, else host platform; Linux → macOS)
 and delegates to that skin's `WindowsWindowChrome` / `MacosWindowChrome`
 (`src/web/components/os-explorer/skins/`), scoped entirely through `[data-skin="windows"|"macos"]`
@@ -495,6 +495,18 @@ frame while it plays in PiP, with a ≥44px "Bring back" control. The mechanics 
 style mirroring, key forwarding, resize signalling) apply to whichever window kind currently owns
 the slot — a tab-host window is only the one kind whose body is itself a portal target for another
 component (`TabPool`).
+
+**Agent session windows.** `agent-session` (renamed from `team-member` — it now also covers a
+card with no teammate handle at all) streams one agent's or teammate's transcript live; see
+[Agent session transcripts](ai-chat-and-providers.md#agent-session-transcripts) for the hub behind
+it. It spawns a portrait 9:16 rect pinned to the top-right (`portraitSpawnRect`,
+`window-geometry.ts`) instead of the landscape cascade every other kind uses — a step list reads
+top-to-bottom, so portrait wastes less of the window on line wrapping — and cascades the same way
+once more than one is open. Opening a session already showing in a window focuses that window
+instead of spawning a duplicate; at the window cap, the oldest `agent-session` window is closed to
+make room instead of leaving the request refused or evicting some unrelated window still in use,
+and the open is refused only when no `agent-session` window exists to close. Its body is never
+restored on reload (see Persistence below).
 
 #### Tab-host windows (detaching a tab into its own window)
 
@@ -527,8 +539,8 @@ component (`TabPool`).
   key (`stores/window-panel-persistence.ts`), separate from the per-project `ppm-panels-*` blob and
   not synced to the server — the same limitation window geometry (`ppm-windows`) already has.
   `WINDOW_KINDS` (`window-store-types.ts`) is the single list both the window store and
-  `window-persistence.ts` filter against; `team-member` is excluded from restore because its body
-  streams a live subagent session that cannot survive a reload.
+  `window-persistence.ts` filter against; `agent-session` is excluded from restore because its
+  body streams a live subagent session that cannot survive a reload.
 - **Reconcile.** The two halves persist separately, so a reload can restore one without the other.
   `reconcileTabHostWindows` (`stores/window-panel-reconcile.ts`), run once per project via
   `useWindowPanelReconcile()` after the window layer restores, and unconditionally below `md` (the

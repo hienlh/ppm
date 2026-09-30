@@ -99,7 +99,7 @@ These rules MUST be followed when creating or modifying any UI component. PPM is
 ## Floating Windows
 
 Desktop-only window manager (`src/web/components/floating-window/`), hosting the OS File Explorer,
-team-member sessions, the System Monitor, and detached tabs (`tab-host`). Every kind shares one
+agent sessions, the System Monitor, and detached tabs (`tab-host`). Every kind shares one
 titlebar chrome — `WindowSkinChrome` resolves the active OS skin (Settings override, else host
 platform) and renders it, whatever the window's `kind` — and one PiP capability owned by the frame,
 not by any one kind. Any future floating-window feature must follow the same contract:
@@ -131,6 +131,11 @@ not by any one kind. Any future floating-window feature must follow the same con
   every skin renders the same PiP button, absent (not disabled, never a dead control that only
   explains itself) on browsers without `documentPictureInPicture`. The "Bring back" control shown
   while a window plays in PiP is a full ≥44×44px touch target like any other primary action.
+- **Portrait default for reading windows**: a window whose body is a live, scrolling read-only
+  feed (an agent/teammate's transcript) spawns portrait (9:16), pinned top-right, instead of the
+  landscape cascade every other kind uses — a step list reads top-to-bottom and wastes width in
+  landscape. Any future "reading" kind should follow suit; a workspace kind (explorer, terminal,
+  editor) keeps the landscape default.
 - **Tab-host windows** (a tab detached from its panel, plus its optional PiP step) follow the same
   desktop-only rule as every other kind: below `md`, both detach items are hidden from the tab
   context menu and any already-detached tabs reconcile back into the grid — a windowed tab is
