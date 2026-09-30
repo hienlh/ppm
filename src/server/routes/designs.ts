@@ -13,7 +13,6 @@ import {
 } from "../../services/design/design-store.service.ts";
 import { listSnapshots } from "../../services/design/design-snapshots.service.ts";
 import { restoreSnapshot } from "../../services/design/design-restore.service.ts";
-import { pickDesignVariant } from "../../services/design/design-variant-pick.service.ts";
 
 /**
  * `/api/project/:projectName/designs` — the design folders of one project.
@@ -89,17 +88,6 @@ designRoutes.post("/:slug/history/:id/restore", async (c) => {
   if (!isSnapshotId(id)) return c.json(err("Invalid snapshot id"), 400);
   try {
     return c.json(ok(await restoreSnapshot(c.get("projectPath"), c.req.param("slug"), id)));
-  } catch (e) {
-    return fail(c, e);
-  }
-});
-
-/** "Use this variant": body `{ file, gen }`, the variant on screen and the gen it loaded with. */
-designRoutes.post("/:slug/variants/pick", async (c) => {
-  const body = await jsonBody(c);
-  if (!body) return c.json(err("Expected a JSON object"), 400);
-  try {
-    return c.json(ok(await pickDesignVariant(c.get("projectPath"), c.req.param("slug"), body)));
   } catch (e) {
     return fail(c, e);
   }

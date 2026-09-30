@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-  apiJson, canvasLoad, designFile, genOf, history, overlay, readDesign, sendDesignTurn, settleSnapshots,
-  toastText, until, waitCanvasReady, writeDesign,
+  apiJson, canvasLoad, genOf, overlay, readDesign, sendDesignTurn, settleSnapshots,
+  until, waitCanvasReady, writeDesign,
 } from "./design-mode-helpers.mjs";
 import { createDesign, openDesign } from "./design-mode-steps-canvas.mjs";
 
 /**
- * Variants: a turn that writes three of them, the canvas switcher, and "Use this variant".
- * Runs on a page design of its own, so the deck the other steps use keeps a single variant.
+ * Variants: a turn that writes three of them, and the canvas switcher. Keeping or dropping a
+ * variant is done in the design chat now, not from the canvas, so that is covered by the
+ * instructions/prompt unit tests rather than here. Runs on a page design of its own, so the
+ * deck the other steps use keeps a single variant.
  */
 
 const readyCount = (ctx) => ctx.page.evaluate(() => window.__e2e.bridge.filter((m) => m.type === "ready").length);
@@ -34,13 +35,6 @@ async function chooseVariant(ctx, name) {
   else await overlay(ctx).getByRole("radiogroup", { name: "Variant" }).getByRole("radio", { name }).click();
 }
 
-async function useThisVariant(ctx) {
-  await openSwitcher(ctx);
-  if (!ctx.mobile) await ctx.page.getByRole("menuitem", { name: /^Use this variant/ }).click();
-  else await overlay(ctx).getByRole("button", { name: "Use this variant", exact: true }).click();
-  await overlay(ctx, "Use this variant?").getByRole("button", { name: "Use this variant", exact: true }).click();
-}
-
 export async function stepVariants(ctx) {
   ctx.designTitle = `Variants ${ctx.width}`;
   ctx.slug = await createDesign(ctx, ctx.designTitle, "page");
@@ -51,7 +45,7 @@ export async function stepVariants(ctx) {
   const summary = (await apiJson(ctx, `/api/project/${encodeURIComponent(ctx.projectName)}/designs/${ctx.slug}`)).body.data;
   assert.deepEqual(summary.variants.map((v) => v.file), ["index.html", "variant-2.html", "variant-3.html"]);
 
-  // A change after the turn's snapshot, so choosing a variant has something new to save.
+  // Let the turn's own snapshot settle before editing, so the edit below is not raced by it.
   await settleSnapshots(ctx);
   const readies = await readyCount(ctx);
   await writeDesign(ctx, (await readDesign(ctx, "variant-3.html")).replace("One of three", "Still one of three"), "variant-3.html");
@@ -68,22 +62,4 @@ export async function stepVariants(ctx) {
   assert.equal(await frame.locator("#headline").textContent(), "Bold direction");
   assert.ok((await canvasLoad(ctx)).url.pathname.endsWith(`/${ctx.slug}/variant-2.html`), "the canvas loads variant-2.html");
   ctx.record("switching shows variant 2 in the canvas");
-
-  const picked = ctx.page.waitForResponse((r) => r.url().includes(`/designs/${ctx.slug}/variants/pick`));
-  await useThisVariant(ctx);
-  const res = await picked;
-  assert.equal(res.status(), 200, await res.text());
-  const { snapshotId } = (await res.json()).data;
-  await toastText(ctx.page, /Kept 2 · Bold/);
-  assert.equal(await readDesign(ctx), second, "index.html now holds variant 2");
-  assert.ok(!existsSync(designFile(ctx, "variant-2.html")) && !existsSync(designFile(ctx, "variant-3.html")), "the other variant files are gone");
-  assert.deepEqual(JSON.parse(await readDesign(ctx, "design.json")).variants, [{ file: "index.html", label: "Bold" }]);
-  await waitCanvasReady(ctx, genOf(second));
-  await until("the canvas to show index.html", async () => (await canvasLoad(ctx)).url.pathname.endsWith(`/${ctx.slug}/index.html`));
-  if (!ctx.mobile) await until("the switcher to go", async () => (await ctx.page.locator('button[aria-label^="Variant: "]:visible').count()) === 0);
-
-  const snapshot = (await history(ctx)).find((s) => s.id === snapshotId);
-  assert.equal(snapshot?.reason, "pre-variant-pick", `snapshot ${snapshotId}: ${JSON.stringify(snapshot)}`);
-  assert.equal(snapshot.fileCount, 4, "the snapshot holds all three variants and the manifest");
-  ctx.record("Use this variant keeps one page and saves the others to History", { snapshotId });
 }

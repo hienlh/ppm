@@ -77,16 +77,6 @@ export function requestCanvasPreview(projectName: string, slug: string, token?: 
   });
 }
 
-export interface DesignVariantPickResult {
-  design: DesignSummary;
-  snapshotId: string;
-}
-
-/** Keep `file` (loaded with `gen`) as the entry page and delete the other variants. */
-export function pickDesignVariant(projectName: string, slug: string, input: { file: string; gen: string }): Promise<DesignVariantPickResult> {
-  return api.post<DesignVariantPickResult>(`${one(projectName, slug)}/variants/pick`, input);
-}
-
 /** Providers that can host a design session: only they deliver the design instructions. */
 export async function listDesignProviders(projectName: string): Promise<DesignProvider[]> {
   const providers = await api.get<DesignProvider[]>(`${projectUrl(projectName)}/chat/providers`);

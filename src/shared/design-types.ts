@@ -38,10 +38,8 @@ export interface DesignSummary {
 /**
  * Why a snapshot exists. `before-edit` snapshots (taken ahead of a canvas write-back) have
  * their own, smaller retention pool so a burst of them can never push real history out.
- * `pre-variant-pick` is kept with the real history: it is the only copy of the variants
- * "Use this variant" deleted.
  */
-export const DESIGN_SNAPSHOT_REASONS = ["turn", "pre-restore", "before-edit", "manual", "pre-variant-pick"] as const;
+export const DESIGN_SNAPSHOT_REASONS = ["turn", "pre-restore", "before-edit", "manual"] as const;
 export type DesignSnapshotReason = (typeof DESIGN_SNAPSHOT_REASONS)[number];
 
 export interface DesignSnapshotInfo {

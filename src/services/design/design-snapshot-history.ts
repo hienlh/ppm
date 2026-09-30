@@ -22,7 +22,7 @@ export const HISTORY_DIR = "history";
 export const SNAPSHOT_META = "meta.json";
 export const SNAPSHOT_FILES = "files";
 
-/** Newest `turn`, `pre-restore`, `manual` and `pre-variant-pick` snapshots kept, together. */
+/** Newest `turn`, `pre-restore` and `manual` snapshots kept, together. */
 export const SNAPSHOT_CAP = 100;
 /** Newest `before-edit` snapshots kept, in a pool of their own so they cannot evict real history. */
 export const EDIT_SNAPSHOT_CAP = 30;

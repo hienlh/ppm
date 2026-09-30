@@ -1,21 +1,17 @@
-import { Check, ChevronDown, Layers, Loader2 } from "@/lib/icons";
-import { Button } from "@/components/ui/button";
+import { Check, ChevronDown, Layers } from "@/lib/icons";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
+  DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup,
   DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { DesignResponsiveDialog } from "../dialogs/design-responsive-dialog";
 import type { DesignVariantsFeature } from "./use-design-variants";
 
 /**
  * The variant switcher, on the desktop toolbar as a menu and in the phone's More sheet as
- * rows, plus the confirmation "Use this variant" asks for. Nothing renders for a design
- * with a single variant. Labels come from the agent's `design.json`; React renders them as
- * text only.
+ * rows. Nothing renders for a design with a single variant. Labels come from the agent's
+ * `design.json`; React renders them as text only. Keeping or dropping a variant happens in
+ * the design chat, not from here.
  */
-
-const PICK_LABEL = "Use this variant";
 
 export function DesignVariantMenu({ feature }: { feature: DesignVariantsFeature }) {
   if (!feature.multiple) return null;
@@ -40,10 +36,6 @@ export function DesignVariantMenu({ feature }: { feature: DesignVariantsFeature 
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem disabled={!feature.canPick} onSelect={feature.openConfirm} className="pointer-coarse:min-h-11">
-          <Check className="size-4" /> {PICK_LABEL}…
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -69,28 +61,7 @@ export function DesignVariantRows({ feature, onDone }: { feature: DesignVariants
           );
         })}
       </div>
-      <button type="button" className={row} disabled={!feature.canPick} onClick={() => { onDone(); feature.openConfirm(); }}>
-        <Check className="size-5 text-text-subtle" /> <span className="flex-1">{PICK_LABEL}</span>
-      </button>
       <div className="my-1 h-px bg-border" />
     </>
-  );
-}
-
-export function VariantPickDialog({ feature }: { feature: DesignVariantsFeature }) {
-  const others = feature.list.length - 1;
-  return (
-    <DesignResponsiveDialog
-      open={feature.confirmOpen}
-      onClose={feature.closeConfirm}
-      title={`${PICK_LABEL}?`}
-      description={`${feature.nameOf(feature.index)} becomes the design, and the other ${others} variant${others === 1 ? " is" : "s are"} deleted. They are saved to Version history first, so you can restore them from there.`}
-      footer={<>
-        <Button variant="outline" onClick={feature.closeConfirm} disabled={feature.picking}>Cancel</Button>
-        <Button onClick={feature.pick} disabled={!feature.canPick}>
-          {feature.picking && <Loader2 className="size-4 animate-spin" />} {PICK_LABEL}
-        </Button>
-      </>}
-    />
   );
 }
