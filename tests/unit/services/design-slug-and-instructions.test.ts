@@ -115,6 +115,35 @@ describe("buildDesignInstructions", () => {
     expect(() => buildDesignInstructions("")).toThrow();
   });
 
+  it("says the agent may read the app's source, and never mentions changing it", () => {
+    expect(text).toMatch(/though you may read it/);
+    expect(text).not.toMatch(/Use this variant/);
+  });
+
+  it("covers the kit: link it, use its classes and icons, read the component map, and add a style block only for something new", () => {
+    const section = text.slice(text.indexOf("## The design system"), text.indexOf("## The manifest"));
+    expect(section).toContain('href="../kit/app.css"');
+    expect(section).toContain("../kit/icons/<name>.svg");
+    expect(section).toMatch(/component map/);
+    expect(section).toMatch(/do not invent app chrome/);
+    expect(section).toMatch(/genuinely new the kit has no classes for/);
+    expect(text).toContain("`../tokens.css` and\n  `../kit/…`");
+  });
+
+  it("asks the agent to compare an attached screenshot with its own check and fix differences", () => {
+    const section = text.slice(text.indexOf("## The design system"), text.indexOf("## The manifest"));
+    expect(section).toMatch(/attached a screenshot of the real app, treat it as the target/);
+    expect(section).toMatch(/fix visible\s+differences/);
+  });
+
+  it("says keeping or dropping a variant is done in files, by name, and never calls it 'Use this variant'", () => {
+    const section = text.slice(text.indexOf("## Variants"), text.indexOf("## Assets and network"));
+    expect(section).not.toMatch(/Use this variant/);
+    expect(section).toMatch(/says which variant to keep, make it `index\.html`/);
+    expect(section).toMatch(/say to drop one instead, delete just that variant's files/);
+    expect(section).toMatch(/recoverable from Version history/);
+  });
+
   it("asks for design_check only when the session has the tool, and always explains the automatic check", () => {
     const withTool = buildDesignInstructions("smoke", { checkTool: true });
     expect(withTool).toContain("call the `design_check` tool");

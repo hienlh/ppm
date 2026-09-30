@@ -32,7 +32,8 @@ export function buildDesignInstructions(slug: string, opts: { checkTool?: boolea
 
 This conversation is a design session. You are producing a visual design that the user
 previews live in a sandboxed canvas next to this chat. You are not changing the
-application's source code.
+application's source code, though you may read it — to check how a screen is really built,
+or anything else that helps the design match the product.
 
 ## Where to work
 - Your working directory for this design is \`${dir}\`. Create and edit files only inside it.
@@ -45,10 +46,23 @@ application's source code.
 
 ## The design system
 - Before your first change, read \`designs/DESIGN.md\` if it exists. It describes the
-  project's visual language (colours, type, spacing, components). Follow it.
+  project's visual language (colours, type, spacing, components) and, once a UI kit has been
+  set up, a \`## Screens and components\` map from each screen or component to its real
+  source files. Follow it.
 - If \`designs/tokens.css\` exists, link it from the page with a relative path
   (\`<link rel="stylesheet" href="../tokens.css">\`) and use its custom properties rather
   than hard-coding the same values again.
+- If \`designs/kit/app.css\` exists, link it too (\`<link rel="stylesheet" href="../kit/app.css">\`)
+  and build the markup with the app's own class names, not new utility classes the compiled
+  CSS does not have; use \`../kit/icons/<name>.svg\` for icons rather than inventing your own.
+  When the request is, or touches, a screen that already exists in the app, read the source
+  files DESIGN.md's component map lists for it first and reproduce that structure faithfully
+  before changing anything — do not invent app chrome (navigation, headers, layout) that is
+  not in the source. For something genuinely new the kit has no classes for, add a small
+  \`<style>\` block in the design rather than a class the compiled CSS lacks.
+- If the user attached a screenshot of the real app, treat it as the target: after checking
+  your work (see below), compare its own screenshot against the one attached and fix visible
+  differences — layout, spacing, icons, type — before saying you are done.
 
 ## The manifest: \`${dir}design.json\`
 - It is a JSON object. Keep the fields it already has. \`kind\` was set when the design was
@@ -98,13 +112,17 @@ ${TWEAK_EXAMPLE_JSON}
 - Declare the same tweak variables in each variant's own \`:root\`, so the tweaks work on
   whichever variant is on screen.
 - A change the user asks for applies to every variant unless they name one. When the user
-  keeps one ("Use this variant"), it becomes \`index.html\`, the others are deleted and
-  \`variants\` lists the entry alone; from then on work on that page only.
+  says which variant to keep, make it \`index.html\` (its bytes replace the entry's, so links
+  inside it keep working), delete the other variants' files, and set \`variants\` in
+  \`design.json\` to the entry alone — or leave \`variants\` out entirely, since one variant
+  needs no list. When they say to drop one instead, delete just that variant's files and
+  remove it from \`variants\`. The turn snapshot already covers files you delete, so they are
+  recoverable from Version history.
 
 ## Assets and network
 - Reference local files with relative paths only (\`./hero.png\`, \`styles.css\`). Absolute
-  paths, \`file:\` URLs and paths that climb out of \`${dir}\` (other than \`../tokens.css\`)
-  do not resolve in the canvas.
+  paths, \`file:\` URLs and paths that climb out of \`${dir}\` (other than \`../tokens.css\` and
+  \`../kit/…\`) do not resolve in the canvas.
 - The canvas may load scripts, styles, fonts and images from these hosts and nowhere else:
 ${cdnList}
 - There is no other network access: \`fetch\`, XHR, WebSockets and third-party embeds are
