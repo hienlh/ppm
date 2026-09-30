@@ -2,7 +2,11 @@ import { expect, test, spyOn } from "bun:test";
 import { chatRoutes } from "../../../src/server/routes/chat.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider.ts";
+import { codexUsageSource } from "../../../src/providers/codex-app-server/codex-usage-source.ts";
 import * as claudeUsageService from "../../../src/services/claude-usage.service.ts";
+import { openTestDb, setDb } from "../../../src/services/db.service.ts";
+import { getUsage, refreshUsage, registerUsageSource } from "../../../src/services/provider-usage/usage-registry.ts";
+import { resetUsageRuntimeState } from "../../../src/services/provider-usage/index.ts";
 
 test("usage endpoint forwards the new tab's claimed account without creating a session", async () => {
   const provider = new CodexAppServerProvider();
@@ -16,6 +20,38 @@ test("usage endpoint forwards the new tab's claimed account without creating a s
   } finally {
     lookup.mockRestore();
     getUsage.mockRestore();
+  }
+});
+
+test("Codex manual refresh fetches fresh usage for every account despite stored snapshots", async () => {
+  setDb(openTestDb());
+  resetUsageRuntimeState();
+  const sourceAccounts = spyOn(codexUsageSource, "listAccountIds").mockReturnValue(["refresh-a", "refresh-b"]);
+  let reads = 0;
+  const sourceFetch = spyOn(codexUsageSource, "fetch").mockImplementation(async (accountId) => ({
+    session: { utilization: ++reads / 10, resetsAt: "", resetsInMinutes: 0, resetsInHours: null, windowHours: 5 },
+    activeAccountId: accountId,
+  }));
+  const provider = new CodexAppServerProvider();
+  const providerUsage = spyOn(provider, "getUsage").mockImplementation(async () => getUsage("codex", "refresh-a"));
+  const lookup = spyOn(providerRegistry, "get").mockReturnValue(provider);
+  try {
+    registerUsageSource(codexUsageSource);
+    await refreshUsage("codex", "refresh-a");
+    await refreshUsage("codex", "refresh-b");
+    expect(reads).toBe(2);
+
+    const response = await chatRoutes.request("http://localhost/usage?providerId=codex&refresh=1");
+    expect(response.status).toBe(200);
+    expect(reads).toBe(4);
+    expect((await response.json() as any).data.session.utilization).toBe(0.3);
+    expect(getUsage("codex", "refresh-b").session?.utilization).toBe(0.4);
+  } finally {
+    lookup.mockRestore();
+    providerUsage.mockRestore();
+    sourceFetch.mockRestore();
+    sourceAccounts.mockRestore();
+    resetUsageRuntimeState();
   }
 });
 

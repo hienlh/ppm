@@ -24,6 +24,8 @@ import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
 import { listCodexAccounts } from "../../services/codex-account.service.ts";
+import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-source.ts";
+import { invalidateUsage, refreshUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
@@ -104,13 +106,19 @@ chatRoutes.get("/usage", async (c) => {
   const sessionId = c.req.query("session");
   const accountId = c.req.query("accountId");
   if (c.req.query("refresh")) {
-    // `?refresh=1` is the user pressing refresh, so drop the cached value first — otherwise
-    // a provider's own getUsage answers from cache and the button does nothing visible.
     if (providerId && providerId !== "claude") {
       const provider = providerRegistry.get(providerId);
       if (provider?.getUsage) {
-        const { invalidateUsage } = await import("../../services/provider-usage/usage-registry.ts");
-        invalidateUsage(providerId);
+        if (providerId === "codex") {
+          // A memory-only invalidation promotes an old database snapshot on the next read.
+          // Fetch every account live; parallel reads stay within the client's 30s timeout.
+          registerUsageSource(codexUsageSource);
+          const accounts = codexUsageSource.listAccountIds();
+          const ids = accounts.length > 0 ? accounts : [""];
+          await Promise.all(ids.map((id) => refreshUsage("codex", id)));
+        } else {
+          invalidateUsage(providerId);
+        }
       }
     } else {
       try { await refreshUsageNow(); } catch { /* use stale cache */ }
