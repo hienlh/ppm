@@ -86,6 +86,19 @@ export const DECK_TWEAKS = [
   { id: "heading", label: "Heading size", type: "range", var: "--heading-size", min: 32, max: 96, step: 1, unit: "px", default: 64 },
 ];
 
+export const VARIANT_LABELS = ["Calm", "Bold", "Playful"];
+
+export function variantHtml(label: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>${label}</title>
+<style>:root { --accent: #0f766e; } body { margin: 0; font-family: Arial, sans-serif; } h1 { color: var(--accent); }</style>
+</head>
+<body><main><h1 id="headline">${label} direction</h1><p>One of three variants.</p></main></body>
+</html>
+`;
+}
+
 const STEP_RE = /\[\[design:([a-z-]+)\]\]/;
 const SLUG_RE = /`designs\/([a-z0-9][a-z0-9-]*)\/`/;
 
@@ -142,6 +155,16 @@ export class DesignScriptProvider extends MockProvider {
       await writeFile(join(dir, "index.html"), deckHtml());
       await writeFile(manifestPath, `${JSON.stringify({ ...manifest, tweaks: DECK_TWEAKS }, null, 2)}\n`);
       return "Built a three-slide deck.";
+    }
+    if (step === "variants") {
+      // Three directions for one page, declared the way the design instructions ask.
+      const manifestPath = join(dir, "design.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+      const files = ["index.html", "variant-2.html", "variant-3.html"];
+      for (const [i, file] of files.entries()) await writeFile(join(dir, file), variantHtml(VARIANT_LABELS[i]!));
+      const variants = files.map((file, i) => ({ file, label: VARIANT_LABELS[i] }));
+      await writeFile(manifestPath, `${JSON.stringify({ ...manifest, variants }, null, 2)}\n`);
+      return "Made three variants.";
     }
     if (step === "noop") {
       // Rewrites the same bytes: a turn that touched files but changed nothing.

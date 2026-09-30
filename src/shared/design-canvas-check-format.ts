@@ -55,12 +55,18 @@ export function formatCanvasCheck(report: CanvasCheckReport, slug: string): stri
   return lines.join("\n");
 }
 
-/** The follow-up message sent after a turn, or null when there is nothing to report. */
-export function buildAutoCheckMessage(report: CanvasCheckReport, slug: string): string | null {
+/**
+ * The follow-up message sent after a turn, or null when there is nothing to report. The
+ * canvas shows one variant at a time, so with `variants` above 1 it says the others went
+ * unchecked rather than let a clean report read as covering them.
+ */
+export function buildAutoCheckMessage(report: CanvasCheckReport, slug: string, opts: { variants?: number } = {}): string | null {
   const total = totalFindings(report);
   if (total === 0) return null;
+  const variants = opts.variants ?? 1;
   return [
     `${AUTO_CHECK_PREFIX} PPM looked at ${where(report, slug)} after your last turn and found ${total} ${total === 1 ? "problem" : "problems"}.`,
+    ...(variants > 1 ? [`That is the variant on the user's screen; the design's other ${variants - 1} variant${variants === 2 ? " was" : "s were"} not checked.`] : []),
     "",
     ...fenced(report),
     "",

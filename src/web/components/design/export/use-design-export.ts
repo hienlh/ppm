@@ -59,7 +59,8 @@ function extractSlides(bridge: DesignBridge): Promise<SlideDoc> {
   });
 }
 
-export function useDesignExport(tab: DesignTabContextValue, bridge: DesignBridge): DesignExportFeature {
+/** `file` is the variant on screen: the views, the HTML download and the hand-off are of it. */
+export function useDesignExport(tab: DesignTabContextValue, bridge: DesignBridge, file: string): DesignExportFeature {
   const { projectName, slug, design } = tab;
   const [views, setViews] = useState<Record<DesignViewPurpose, string | null>>({ print: null, standalone: null });
   const [viewError, setViewError] = useState<string | null>(null);
@@ -71,26 +72,29 @@ export function useDesignExport(tab: DesignTabContextValue, bridge: DesignBridge
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
-  // Another design (or project) means other tokens.
+  // Another design, project or variant means other views.
+  const viewsFor = useRef(file);
+  viewsFor.current = file;
   useEffect(() => {
     mintedAt.current = 0;
     setViews({ print: null, standalone: null });
-  }, [projectName, slug]);
+  }, [projectName, slug, file]);
 
   const prepare = useCallback(() => {
     if (minting.current || Date.now() - mintedAt.current < VIEW_REMINT_MS) return;
     minting.current = true;
     setViews({ print: null, standalone: null });
     setViewError(null);
-    Promise.all([mintDesignView(projectName, slug, "print"), mintDesignView(projectName, slug, "standalone")])
+    Promise.all([mintDesignView(projectName, slug, "print", file), mintDesignView(projectName, slug, "standalone", file)])
       .then(([print, standalone]) => {
-        if (!alive.current) return;
+        // A switch while minting: these views show the variant that is no longer on screen.
+        if (!alive.current || viewsFor.current !== file) return;
         mintedAt.current = Date.now();
         setViews({ print: print.url, standalone: standalone.url });
       })
       .catch((e: unknown) => { if (alive.current) setViewError((e as Error).message || "Could not prepare the views"); })
       .finally(() => { minting.current = false; });
-  }, [projectName, slug]);
+  }, [projectName, slug, file]);
 
   const run = useCallback(async (job: DesignExportJob, work: () => Promise<void>) => {
     if (busy) return;
@@ -105,14 +109,15 @@ export function useDesignExport(tab: DesignTabContextValue, bridge: DesignBridge
   }, [busy]);
 
   const download = useCallback((kind: "zip" | "html") => run(kind, async () => {
-    const file = await fetchDesignExport(projectName, slug, kind);
-    saveBlobAsFile(file.blob, file.filename);
-    if (file.warningCount > 0) {
-      setWarnings({ title: `${file.warningCount} item${file.warningCount === 1 ? "" : "s"} left linked`, items: file.warnings });
+    // The zip is the whole folder, every variant included; the single HTML file is one page.
+    const out = await fetchDesignExport(projectName, slug, kind, kind === "html" ? file : undefined);
+    saveBlobAsFile(out.blob, out.filename);
+    if (out.warningCount > 0) {
+      setWarnings({ title: `${out.warningCount} item${out.warningCount === 1 ? "" : "s"} left linked`, items: out.warnings });
     } else {
-      toast.success(`Saved ${file.filename}`);
+      toast.success(`Saved ${out.filename}`);
     }
-  }), [run, projectName, slug]);
+  }), [run, projectName, slug, file]);
 
   const exportPptx = useCallback(() => run("pptx", async () => {
     const doc = await extractSlides(bridge);
@@ -125,14 +130,14 @@ export function useDesignExport(tab: DesignTabContextValue, bridge: DesignBridge
   const handOff = useCallback(() => {
     try {
       sendToChat({
-        text: buildHandoffPrompt({ slug, title: design.title, kind: design.kind, entry: design.entry }),
+        text: buildHandoffPrompt({ slug, title: design.title, kind: design.kind, entry: file }),
         projectName,
         newTab: true,
       });
     } catch (e) {
       toast.error("Could not start the hand-off", { description: (e as Error).message });
     }
-  }, [slug, design.title, design.kind, design.entry, projectName]);
+  }, [slug, design.title, design.kind, file, projectName]);
 
   return useMemo(() => ({
     views, viewError, busy, canPptx: design.kind === "slides", sheetOpen, setSheetOpen, prepare,

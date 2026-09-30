@@ -14,6 +14,7 @@ import { starterHtml } from "./design-starter-template.ts";
 import { DesignError } from "./design-error.ts";
 import { designLockKey, withDesignLock } from "./design-lock.ts";
 import { withRecoveredDesign } from "./design-restore-journal.ts";
+import { resolveDesignVariants } from "./design-variants-resolve.ts";
 
 /** Designs listed per project, newest first. */
 export const MAX_LISTED_DESIGNS = 200;
@@ -32,14 +33,19 @@ async function regularFileStat(path: string): Promise<Stats | null> {
   return st?.isFile() ? st : null;
 }
 
-async function summarize(designDir: string, slug: string, manifest: DesignManifest): Promise<DesignSummary> {
+export async function summarize(designDir: string, slug: string, manifest: DesignManifest): Promise<DesignSummary> {
   const entry = await regularFileStat(join(designDir, ...manifest.entry.split("/")));
   const updated = Math.max(Date.parse(manifest.updatedAt), entry?.mtimeMs ?? 0);
   const { title, kind, createdAt } = manifest;
-  return { slug, title, kind, entry: manifest.entry, createdAt, updatedAt: new Date(updated).toISOString() };
+  const { variants, warnings } = await resolveDesignVariants(designDir, manifest);
+  return {
+    slug, title, kind, entry: manifest.entry, variants,
+    ...(warnings.length ? { variantWarnings: warnings } : {}),
+    createdAt, updatedAt: new Date(updated).toISOString(),
+  };
 }
 
-async function loadManifest(designDir: string, slug: string): Promise<{ manifest: DesignManifest; valid: boolean; raw: string | null }> {
+export async function loadManifest(designDir: string, slug: string): Promise<{ manifest: DesignManifest; valid: boolean; raw: string | null }> {
   const dirSt = await lstatOrNull(designDir);
   // A manifest without timestamps falls back to the folder's own age, not "now", so a
   // hand-made design does not jump to the top of the list on every read.

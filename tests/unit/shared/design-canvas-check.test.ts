@@ -79,6 +79,14 @@ describe("canvas check text for the agent", () => {
     expect(message).toContain("call design_check");
   });
 
+  it("says which variant it looked at when the design has several", () => {
+    const message = buildAutoCheckMessage(full({ file: "variant-2.html" }), "home", { variants: 3 })!;
+    expect(message).toContain("designs/home/variant-2.html at 1280x800");
+    expect(message).toContain("the design's other 2 variants were not checked");
+    expect(buildAutoCheckMessage(full(), "home", { variants: 2 })).toContain("other 1 variant was not checked");
+    expect(buildAutoCheckMessage(full(), "home", { variants: 1 })).not.toContain("variant");
+  });
+
   it("reports findings cut by the cap", () => {
     const text = formatCanvasCheck(full({ counts: { "implicit-grid": 1, overlap: 9 } }), "home");
     expect(text).toContain("10 problems found");

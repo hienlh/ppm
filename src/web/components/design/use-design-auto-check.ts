@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildAutoCheckMessage } from "../../../shared/design-canvas-check-format";
+import { designVariantsOf } from "../../../shared/design-variants";
 import {
   autoSent, INITIAL_AUTO_CHECK_ROUNDS, mayAutoSend, turnStarted,
 } from "@/lib/design/design-auto-check-rounds";
@@ -50,7 +51,7 @@ export function useDesignAutoCheck(opts: {
     try {
       const report = await runCanvasCheck(b, context(), { screenshot: false });
       setLayoutIssues(report.findings.filter((f) => f.kind !== "runtime").map((f) => ({ kind: "layout", message: f.message, source: f.element })));
-      const message = buildAutoCheckMessage(report, t.slug);
+      const message = buildAutoCheckMessage(report, t.slug, { variants: designVariantsOf(t.design).length });
       if (!message || !mayAutoSend(rounds.current)) return;
       if (autoSendToDesignChat(t.tabId, message, "Canvas check") === "sent") rounds.current = autoSent(rounds.current);
     } catch (e) {

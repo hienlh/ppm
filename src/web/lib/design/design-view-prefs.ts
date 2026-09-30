@@ -3,7 +3,8 @@ import { isDesignLayoutOverride, type DesignLayoutOverride } from "./design-layo
 
 /**
  * How this device likes its design tabs laid out: the layout picked from the toolbar's
- * menu, the chat pane's share of the split and the device frame last chosen per design.
+ * menu, the chat pane's share of the split, and the device frame and variant last chosen per
+ * design.
  *
  * Device-local on purpose (plain localStorage, never the server prefs): a desktop that
  * likes a wide chat and a Tablet frame says nothing about what a phone should show.
@@ -23,11 +24,24 @@ export interface DesignViewPrefs {
   chatPercent: number;
   /** `<project>/<slug>` → frame, oldest first. */
   frames: Record<string, DeviceFrameId>;
+  /** `<project>/<slug>` → the variant file on screen, oldest first. Checked against the list on use. */
+  variants: Record<string, string>;
 }
 
 export function defaultDesignViewPrefs(): DesignViewPrefs {
-  return { layout: "auto", chatPercent: DEFAULT_CHAT_PERCENT, frames: {} };
+  return { layout: "auto", chatPercent: DEFAULT_CHAT_PERCENT, frames: {}, variants: {} };
 }
+
+/** Newest-last entries of a stored map, the ones failing `keep` dropped, at most MAX_REMEMBERED_FRAMES. */
+function rememberedMap<T>(value: unknown, keep: (v: unknown) => v is T): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  const entries = Object.entries(value as Record<string, unknown>).filter((e): e is [string, T] => e[0].length <= 300 && keep(e[1]));
+  for (const [key, v] of entries.slice(-MAX_REMEMBERED_FRAMES)) out[key] = v;
+  return out;
+}
+
+const isStoredVariant = (v: unknown): v is string => typeof v === "string" && v.length <= 120;
 
 export function clampChatPercent(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CHAT_PERCENT;
@@ -44,14 +58,12 @@ export function parseDesignViewPrefs(raw: string | null): DesignViewPrefs {
   }
   if (!data || typeof data !== "object" || Array.isArray(data)) return defaultDesignViewPrefs();
   const obj = data as Record<string, unknown>;
-  const frames: Record<string, DeviceFrameId> = {};
-  if (obj.frames && typeof obj.frames === "object" && !Array.isArray(obj.frames)) {
-    const entries = Object.entries(obj.frames as Record<string, unknown>)
-      .filter((e): e is [string, DeviceFrameId] => e[0].length <= 300 && isDeviceFrameId(e[1]));
-    for (const [key, frame] of entries.slice(-MAX_REMEMBERED_FRAMES)) frames[key] = frame;
-  }
   const layout = isDesignLayoutOverride(obj.layout) ? obj.layout : "auto";
-  return { layout, chatPercent: clampChatPercent(obj.chatPercent), frames };
+  return {
+    layout, chatPercent: clampChatPercent(obj.chatPercent),
+    frames: rememberedMap(obj.frames, isDeviceFrameId),
+    variants: rememberedMap(obj.variants, isStoredVariant),
+  };
 }
 
 export function designFrameKey(projectName: string, slug: string): string {
@@ -63,6 +75,18 @@ export function withFrame(prefs: DesignViewPrefs, key: string, frame: DeviceFram
   const entries = Object.entries(prefs.frames).filter(([k]) => k !== key);
   entries.push([key, frame]);
   return { ...prefs, frames: Object.fromEntries(entries.slice(-MAX_REMEMBERED_FRAMES)) };
+}
+
+/** Remember the variant on screen for a design, newest last, trimming the oldest. */
+export function withVariant(prefs: DesignViewPrefs, key: string, file: string): DesignViewPrefs {
+  const entries = Object.entries(prefs.variants).filter(([k]) => k !== key);
+  entries.push([key, file]);
+  return { ...prefs, variants: Object.fromEntries(entries.slice(-MAX_REMEMBERED_FRAMES)) };
+}
+
+export function withoutVariant(prefs: DesignViewPrefs, key: string): DesignViewPrefs {
+  if (!(key in prefs.variants)) return prefs;
+  return { ...prefs, variants: Object.fromEntries(Object.entries(prefs.variants).filter(([k]) => k !== key)) };
 }
 
 export function withChatPercent(prefs: DesignViewPrefs, percent: number): DesignViewPrefs {

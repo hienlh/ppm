@@ -67,11 +67,24 @@ export function restoreDesignSnapshot(projectName: string, slug: string, id: str
   return api.post<RestoreResult>(`${one(projectName, slug)}/history/${encodeURIComponent(id)}/restore`);
 }
 
-/** Mint a canvas token, or refresh `token` (which may hand back a rotated successor). */
-export function requestCanvasPreview(projectName: string, slug: string, token?: string): Promise<DesignPreviewCapability> {
+/**
+ * Mint a canvas token, or refresh `token` (which may hand back a rotated successor). The
+ * URL comes back for `entry`, one of the design's variants, or the entry page when omitted.
+ */
+export function requestCanvasPreview(projectName: string, slug: string, token?: string, entry?: string): Promise<DesignPreviewCapability> {
   return api.post<DesignPreviewCapability>("/api/design-preview", {
-    projectName, slug, purpose: "canvas", ...(token ? { token } : {}),
+    projectName, slug, purpose: "canvas", ...(token ? { token } : {}), ...(entry ? { entry } : {}),
   });
+}
+
+export interface DesignVariantPickResult {
+  design: DesignSummary;
+  snapshotId: string;
+}
+
+/** Keep `file` (loaded with `gen`) as the entry page and delete the other variants. */
+export function pickDesignVariant(projectName: string, slug: string, input: { file: string; gen: string }): Promise<DesignVariantPickResult> {
+  return api.post<DesignVariantPickResult>(`${one(projectName, slug)}/variants/pick`, input);
 }
 
 /** Providers that can host a design session: only they deliver the design instructions. */

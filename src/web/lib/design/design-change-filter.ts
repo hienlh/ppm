@@ -25,3 +25,15 @@ export function classifyDesignChange(path: string, slug: string): DesignChange {
   if (rest === "design.json") return "manifest";
   return "reload";
 }
+
+/**
+ * Whether a change may add or remove a variant: an HTML page at the top of the design folder
+ * other than the entry. The server lists only variants whose file exists, so an agent writing
+ * `design.json` before `variant-2.html` leaves the switcher one page short until the page
+ * itself lands — which is when the list has to be fetched again.
+ */
+export function mayChangeVariants(path: string, slug: string, entry: string): boolean {
+  if (classifyDesignChange(path, slug) !== "reload") return false;
+  const rest = path.replaceAll("\\", "/").replace(/^(\.\/|\/)+/, "").slice(`designs/${slug}/`.length);
+  return !rest.includes("/") && /\.html?$/i.test(rest) && rest.toLowerCase() !== entry.toLowerCase();
+}

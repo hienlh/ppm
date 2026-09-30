@@ -24,6 +24,7 @@ const REASON_LABEL: Record<DesignSnapshotReason, string> = {
   "pre-restore": "Before a restore",
   "before-edit": "Before a canvas edit",
   manual: "Saved",
+  "pre-variant-pick": "Before choosing a variant",
 };
 
 export function DesignHistoryPanel({ onClose, onRestored }: { onClose: () => void; onRestored: () => void }) {

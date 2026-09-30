@@ -91,9 +91,11 @@ export function saveBlobAsFile(blob: Blob, filename: string, doc: Document = doc
 
 export type DesignViewPurpose = "print" | "standalone";
 
-/** A 10-minute, non-refreshable token for the print view or the standalone tab. */
-export async function mintDesignView(projectName: string, slug: string, purpose: DesignViewPurpose): Promise<{ url: string; expiresAt: number }> {
-  const cap = await api.post<{ url: string; expiresAt: number }>("/api/design-preview", { projectName, slug, purpose });
+/** A 10-minute, non-refreshable token for the print view or the standalone tab, of page `entry`. */
+export async function mintDesignView(projectName: string, slug: string, purpose: DesignViewPurpose, entry?: string): Promise<{ url: string; expiresAt: number }> {
+  const cap = await api.post<{ url: string; expiresAt: number }>("/api/design-preview", {
+    projectName, slug, purpose, ...(entry ? { entry } : {}),
+  });
   if (typeof cap?.url !== "string" || !cap.url.startsWith("/api/design-preview/content/")) {
     throw new Error("The server returned no preview address");
   }

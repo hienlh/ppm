@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { classifyDesignChange } from "@/lib/design/design-change-filter";
+import { classifyDesignChange, mayChangeVariants } from "@/lib/design/design-change-filter";
 
 /**
  * Keep the canvas in step with the design's files.
@@ -20,7 +20,10 @@ export interface LiveReloadOptions {
   /** True while the design tab is the visible tab of its panel. */
   isActive: boolean;
   reload: (opts?: { remint?: boolean }) => void;
+  /** Also called when a page that may be a variant appears or goes (see `mayChangeVariants`). */
   onManifestChanged: () => void;
+  /** The design's entry page, which is never a variant that can come or go. */
+  entry: string;
   /** The URL the frame is showing now (for the gen check), or null while none is loaded. */
   currentUrl: () => string | null;
   /** The gen the frame last reported in `ready`, or null while none has. */
@@ -34,11 +37,20 @@ export function useDesignLiveReload(opts: LiveReloadOptions): void {
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Same debounce for re-reading the design: an agent writing three variants and the
+    // manifest is one refetch, not one per file.
+    let manifestTimer: ReturnType<typeof setTimeout> | null = null;
     const onChange = (e: Event) => {
       const detail = (e as CustomEvent<{ projectName?: string; path?: string }>).detail;
       if (!detail || detail.projectName !== projectName || typeof detail.path !== "string") return;
       const change = classifyDesignChange(detail.path, slug);
-      if (change === "manifest") optsRef.current.onManifestChanged();
+      if (change === "manifest" || mayChangeVariants(detail.path, slug, optsRef.current.entry)) {
+        if (manifestTimer) clearTimeout(manifestTimer);
+        manifestTimer = setTimeout(() => {
+          manifestTimer = null;
+          optsRef.current.onManifestChanged();
+        }, LIVE_RELOAD_DEBOUNCE_MS);
+      }
       if (change !== "reload") return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
@@ -50,6 +62,7 @@ export function useDesignLiveReload(opts: LiveReloadOptions): void {
     return () => {
       window.removeEventListener("file:changed", onChange);
       if (timer) clearTimeout(timer);
+      if (manifestTimer) clearTimeout(manifestTimer);
     };
   }, [projectName, slug]);
 
@@ -64,7 +77,14 @@ export function useDesignLiveReload(opts: LiveReloadOptions): void {
       try {
         const res = await fetch(url, { method: "HEAD", cache: "no-store", referrerPolicy: "no-referrer" });
         if (cancelled) return;
-        if (res.status === 404) { reload({ remint: true }); return; }
+        if (res.status === 404) {
+          // Gone while hidden: an expired token, or a variant another device's pick deleted.
+          // The design is re-read too, so a vanished variant falls back to the entry page
+          // instead of re-minting a URL for a file the server no longer lists.
+          optsRef.current.onManifestChanged();
+          reload({ remint: true });
+          return;
+        }
         const current = res.headers.get("X-PPM-Gen");
         if (res.ok && current && current !== gen) reload();
       } catch (e) {

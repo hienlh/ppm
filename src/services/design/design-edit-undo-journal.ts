@@ -119,6 +119,15 @@ export async function undoEdit(projectPath: string, slug: string, undoId: unknow
   });
 }
 
+/**
+ * Forget one design's journal. For an operation that replaces whole files (choosing a
+ * variant): a span recorded against the old page could otherwise still match text at the
+ * same offset of the new one and be "undone" into a page it never touched.
+ */
+export function forgetDesignEdits(projectPath: string, slug: string): void {
+  journals.delete(designLockKey(projectPath, slug));
+}
+
 /** Forget every journal; for tests. */
 export function resetDesignUndoJournals(): void {
   journals.clear();

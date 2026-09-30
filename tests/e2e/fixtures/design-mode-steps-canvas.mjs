@@ -9,7 +9,7 @@ import {
 
 /** Chat to files to live canvas, the canvas's security boundary, and snapshots with restore. */
 
-async function createDesign(ctx, title, kind = "slides") {
+export async function createDesign(ctx, title, kind = "slides") {
   const res = await apiJson(ctx, `/api/project/${encodeURIComponent(ctx.projectName)}/designs`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, kind }),
   });

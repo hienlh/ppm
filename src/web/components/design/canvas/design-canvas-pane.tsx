@@ -1,18 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Loader2, Minimize2, RefreshCw } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { cn } from "@/lib/utils";
-import {
-  designFrameKey, loadDesignViewPrefs, saveDesignViewPrefs, withFrame,
-} from "@/lib/design/design-view-prefs";
 import { useDesignTab } from "../design-tab-context";
 import { DesignToolbar, type DesignToolbarContext } from "../design-toolbar";
 import { DesignToolbarList } from "../design-toolbar-list";
 import { DesignHistoryPanel } from "../history/design-history-panel";
 import { useDesignCanvas } from "./use-design-canvas";
-import { defaultFrameFor, framePreset, type DeviceFrameId } from "./device-frame-presets";
-import { fitFrame, type Size } from "./canvas-geometry";
-import { DesignIssuesBadge } from "./design-issues-badge";
+import { useDesignFrame } from "./use-design-frame";
+import { framePreset } from "./device-frame-presets";
+import { DesignIssuesBadge, type CanvasIssue } from "./design-issues-badge";
+import { useDesignVariants, useShownVariant } from "../variants/use-design-variants";
+import { VariantPickDialog } from "../variants/design-variant-controls";
 import { useDesignCommentsFeature } from "../comments/use-design-comments-feature";
 import { DesignCommentsOverlay, DesignCommentsSidePanel } from "../comments/design-comments-layer";
 import { useDesignTweaks } from "../tweaks/use-design-tweaks";
@@ -28,8 +27,9 @@ import { useDesignAutoCheck } from "../use-design-auto-check";
 import { useExpandedCanvasEscape } from "./use-expanded-canvas-escape";
 
 /**
- * The live canvas: the design's entry page in a sandboxed iframe, sized to the chosen
- * device frame, with the toolbar above it (desktop) or behind the More sheet (phone).
+ * The live canvas: the variant on screen (the entry page unless another was chosen) in a
+ * sandboxed iframe, sized to the chosen device frame, with the toolbar above it (desktop) or
+ * behind the More sheet (phone).
  *
  * `sandbox="allow-scripts"` without `allow-same-origin` gives the page an opaque origin, so
  * it can read nothing of PPM's; `no-referrer` keeps its capability URL out of any request
@@ -37,30 +37,11 @@ import { useExpandedCanvasEscape } from "./use-expanded-canvas-escape";
  */
 export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?: boolean; onMoreClose?: () => void }) {
   const tab = useDesignTab();
-  const canvas = useDesignCanvas(tab);
+  const shownVariant = useShownVariant(tab);
+  const canvas = useDesignCanvas(tab, shownVariant.file);
+  const variants = useDesignVariants(tab, shownVariant, canvas.bridge);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const frameKey = designFrameKey(tab.projectName, tab.slug);
-  const [frame, setFrameState] = useState<DeviceFrameId>(
-    () => loadDesignViewPrefs().frames[frameKey] ?? defaultFrameFor(tab.design.kind),
-  );
-  const setFrame = useCallback((next: DeviceFrameId) => {
-    setFrameState(next);
-    saveDesignViewPrefs(withFrame(loadDesignViewPrefs(), frameKey, next));
-  }, [frameKey]);
-
-  const stageRef = useRef<HTMLDivElement>(null);
-  const [stage, setStage] = useState<Size>({ width: 0, height: 0 });
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setStage({ width: entry.contentRect.width, height: entry.contentRect.height });
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  const fit = fitFrame(framePreset(frame).size, stage);
-  const framed = frame !== "desktop";
+  const { frame, setFrame, stageRef, stage, fit, framed } = useDesignFrame(tab);
 
   // Comments, tweaks and the history share the side column, so opening one closes the others.
   const closeTweaksRef = useRef<() => void>(() => {});
@@ -85,19 +66,22 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
     setHistoryOpen(true);
   }, [closeComments, closeTweaks]);
   const undo = useDesignUndo(tab, { openHistory });
-  const exports = useDesignExport(tab, canvas.bridge);
+  const exports = useDesignExport(tab, canvas.bridge, variants.file);
   // The self-check: on demand for the agent's design_check tool, and by itself after a turn.
   const checkContext = () => ({ issues: canvas.issues, frame: framePreset(frame).label });
   useDesignCanvasCheckResponder({ projectName: tab.projectName, slug: tab.slug, bridge: canvas.bridge, context: checkContext });
   const layoutIssues = useDesignAutoCheck({ tab, bridge: canvas.bridge, context: checkContext });
-  const allIssues = useMemo(() => [...canvas.issues, ...layoutIssues], [canvas.issues, layoutIssues]);
+  const { variantWarnings } = tab.design;
+  const allIssues = useMemo<CanvasIssue[]>(() => [
+    ...canvas.issues, ...layoutIssues, ...(variantWarnings ?? []).map((message) => ({ kind: "manifest" as const, message })),
+  ], [canvas.issues, layoutIssues, variantWarnings]);
 
   const { expanded, setExpanded } = tab.layout;
   useExpandedCanvasEscape(expanded, () => setExpanded(false), () => comments.picker.on);
 
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
-    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports,
-  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports]);
+    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports, variants,
+  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports, variants]);
   const tweaksPanel = tweaks.panelOpen && <TweaksPanel feature={tweaks} tabId={tab.tabId} slug={tab.slug} />;
 
   const history = historyOpen && (
@@ -173,6 +157,7 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
           colours being tweaked, and the canvas has to stay in view while a slider moves. */}
       {tab.isMobile && tweaksPanel && <div className="h-[45%] shrink-0 border-t border-border">{tweaksPanel}</div>}
       <ExportWarningsSheet feature={exports} />
+      <VariantPickDialog feature={variants} />
       {tab.isMobile && (
         <>
           <ExportSheet feature={exports} />

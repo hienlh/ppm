@@ -7,6 +7,7 @@ import { stepCanvasSecurity, stepChatToCanvas, stepHistory, stepNoDotDesignEvent
 import { stepPicker } from "./fixtures/design-mode-steps-picker.mjs";
 import { stepMoveDesktop, stepMovePhone, stepTweaks } from "./fixtures/design-mode-steps-edit.mjs";
 import { stepExports, stepHandOff } from "./fixtures/design-mode-steps-export.mjs";
+import { stepVariants } from "./fixtures/design-mode-steps-variants.mjs";
 import {
   stepDesignModeHolds, stepMobilePanes, stepNewDesignDialog, stepNormalChat, stepSplitAndExpiry,
 } from "./fixtures/design-mode-steps-session.mjs";
@@ -42,8 +43,12 @@ const STEPS = [
   { name: "design mode holds", run: stepDesignModeHolds },
   { name: "split and expiry", run: stepSplitAndExpiry, when: desktop },
   { name: "new design dialog", run: stepNewDesignDialog },
+  { name: "variants", run: stepVariants },
   { name: "no .design events", run: stepNoDotDesignEvents },
 ];
+
+/** `PPM_DESIGN_E2E_ONLY="variants"`: run just the named steps (comma-separated), for a focused check. */
+const ONLY = (process.env.PPM_DESIGN_E2E_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
 const harness = await createHtmlPreviewHarness({ serverScript: "tests/e2e/fixtures/design-mode-server.ts" });
 const results = [], diagnostics = [];
@@ -79,6 +84,7 @@ try {
     };
     for (const step of STEPS) {
       if (step.when && !step.when(ctx)) continue;
+      if (ONLY.length && !ONLY.includes(step.name)) continue;
       try {
         await step.run(ctx);
       } catch (error) {

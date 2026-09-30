@@ -70,16 +70,34 @@ export async function lastReady(ctx) {
   return ctx.page.evaluate((n) => [...window.__e2e.bridge].reverse().find((m) => m.type === "ready" && m.nonce === n)?.data ?? null, nonce);
 }
 
-/** Shows the design chat (a phone switches panes) and returns its visible composer. */
+/**
+ * The desktop's Canvas | Chat toggle, shown when the design tab is too narrow for a split
+ * (after a panel split, say), or null while both panes are on screen.
+ */
+async function desktopPaneToggle(ctx, name) {
+  const radio = ctx.page.locator('[role="radiogroup"][aria-label="Design pane"]:visible').getByRole("radio", { name });
+  return (await radio.count()) ? radio.first() : null;
+}
+
+/**
+ * On a desktop, the design chat's own pane: an ordinary chat can be open in another panel,
+ * and its composer comes first in the page.
+ */
+const composerScope = (ctx) => (ctx.mobile ? "" : '[data-design-pane="chat"] ');
+
+/** Shows the design chat (a phone, or a narrow desktop tab, switches panes) and returns its visible composer. */
 export async function designComposer(ctx) {
   if (ctx.mobile) await ctx.page.getByRole("navigation", { name: "Design view" }).getByRole("button", { name: "Chat" }).click();
-  const box = ctx.page.locator('textarea[placeholder="Ask anything..."]:visible, textarea[placeholder="Follow-up..."]:visible').first();
+  else await (await desktopPaneToggle(ctx, "Chat"))?.click();
+  const scope = composerScope(ctx);
+  const box = ctx.page.locator(`${scope}textarea[placeholder="Ask anything..."]:visible, ${scope}textarea[placeholder="Follow-up..."]:visible`).first();
   await box.waitFor({ timeout: 15000 });
   return box;
 }
 
 export async function showCanvas(ctx) {
   if (ctx.mobile) await ctx.page.getByRole("navigation", { name: "Design view" }).getByRole("button", { name: "Canvas" }).click();
+  else await (await desktopPaneToggle(ctx, "Canvas"))?.click();
   await ctx.page.locator(`${canvasSelector(ctx)}:visible`).waitFor();
 }
 
@@ -93,8 +111,10 @@ export async function sendFromComposer(page, text) {
 /** Sends one design-chat message and waits for the scripted provider to finish the turn. */
 export async function sendDesignTurn(ctx, text) {
   const before = (await providerCalls(ctx)).length;
-  await designComposer(ctx);
-  await sendFromComposer(ctx.page, text);
+  const box = await designComposer(ctx);
+  await box.fill(text);
+  const scope = composerScope(ctx);
+  await ctx.page.locator(`${scope}button[aria-label="Send message"]:visible, ${scope}button[aria-label="Send"]:visible`).first().click();
   const call = await until(`the turn for "${text}" to end`, async () => {
     const c = (await providerCalls(ctx))[before];
     return c?.done && c;

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { projectScopedRouter } from "../../../src/server/routes/project-scoped.ts";
 import { authMiddleware } from "../../../src/server/middleware/auth.ts";
 import { configService } from "../../../src/services/config.service.ts";
+import { computeGen } from "../../../src/services/design/source/design-source-file.ts";
 
 describe("design routes", () => {
   let project: string;
@@ -39,6 +40,25 @@ describe("design routes", () => {
   it("requires authentication", async () => {
     expect((await call("", {}, false)).status).toBe(401);
     expect((await call("", { method: "POST", body: "{}" }, false)).status).toBe(401);
+  });
+
+  it("keeps one variant through POST /variants/pick, behind auth and the gen check", async () => {
+    await create("Landing");
+    const dir = join(project, "designs", "landing");
+    writeFileSync(join(dir, "variant-2.html"), "<h1>Two</h1>");
+    const manifest = JSON.parse(readFileSync(join(dir, "design.json"), "utf8"));
+    writeFileSync(join(dir, "design.json"), JSON.stringify({ ...manifest, variants: [{ file: "index.html" }, { file: "variant-2.html", label: "Two" }] }));
+    expect((await (await call("/landing")).json()).data.variants).toHaveLength(2);
+    const pick = (body: unknown, auth = true) => call("/landing/variants/pick", { method: "POST", body: JSON.stringify(body) }, auth);
+    const gen = computeGen("<h1>Two</h1>");
+    expect((await pick({ file: "variant-2.html", gen }, false)).status).toBe(401);
+    expect((await pick("nope")).status).toBe(400);
+    expect((await pick({ file: "variant-2.html", gen: computeGen("stale") })).status).toBe(409);
+    const res = await pick({ file: "variant-2.html", gen });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.design.variants).toEqual([{ file: "index.html", label: "Two" }]);
+    expect(readFileSync(join(dir, "index.html"), "utf8")).toBe("<h1>Two</h1>");
+    expect(existsSync(join(dir, "variant-2.html"))).toBe(false);
   });
 
   it("creates, lists, reads, renames and deletes in the standard envelope", async () => {

@@ -3,7 +3,12 @@
 ## [Unreleased]
 
 ### Added
-- Settings → Design: your own instructions for every design chat, with `/` to name installed skills (used by Claude and Codex) and an install suggestion when no design skill is present.
+- Settings → Design: your own instructions for every design chat, with `/` to name installed skills (used by Claude and Codex) and an install suggestion when no design skill is present. A gear in the sidebar's Designs header opens it.
+- Design mode: before the first build the AI asks a few short questions when the request leaves key things open, including how many variants to make.
+- Design variants: up to five alternative directions per design, a Variant switcher on the canvas, and "Use this variant" to keep one (the others stay in Version history).
+
+### Fixed
+- A new chat's first message no longer fails when choosing its account fails; the chat starts on the server's own pick.
 
 ## [0.23.5] - 2026-09-27
 

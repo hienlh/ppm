@@ -26,10 +26,11 @@ export function acceptsExpired(readyForCurrentLoad: boolean): boolean {
   return !readyForCurrentLoad;
 }
 
-export function useDesignCanvas(ctx: DesignTabContextValue) {
-  const { projectName, slug, design, isActive, refreshDesign } = ctx;
+/** `file` is the variant to show: the entry page, or one of the other variants. */
+export function useDesignCanvas(ctx: DesignTabContextValue, file: string) {
+  const { projectName, slug, isActive, refreshDesign } = ctx;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const preview = useDesignPreviewUrl(projectName, slug);
+  const preview = useDesignPreviewUrl(projectName, slug, file);
   const [load, setLoad] = useState<{ url: string; nonce: string } | null>(null);
   const [dead, setDead] = useState(false);
   const [issues, setIssues] = useState<CanvasIssue[]>([]);
@@ -61,13 +62,17 @@ export function useDesignCanvas(ctx: DesignTabContextValue) {
     if (preview.initialUrl) setLoad({ url: preview.initialUrl, nonce: newBridgeNonce() });
   }, [preview.initialUrl]);
 
-  // A manifest that names another entry page needs a URL for that page.
-  const entry = useRef(design.entry);
+  // Another variant, or a manifest naming another entry page, needs a URL for that page.
+  const shown = useRef(file);
   useEffect(() => {
-    if (entry.current === design.entry) return;
-    entry.current = design.entry;
-    void reload({ remint: true });
-  }, [design.entry, reload]);
+    if (shown.current === file) return;
+    shown.current = file;
+    void preview.retarget(file).then((url) => {
+      if (!url || shown.current !== file) return;
+      setIssues([]);
+      setLoad({ url, nonce: newBridgeNonce() });
+    });
+  }, [file, preview]);
 
   useEffect(() => {
     const offs = [
@@ -93,6 +98,7 @@ export function useDesignCanvas(ctx: DesignTabContextValue) {
     projectName, slug, isActive,
     reload: (opts) => { void reload(opts); },
     onManifestChanged: refreshDesign,
+    entry: ctx.design.entry,
     currentUrl: () => load?.url ?? null,
     readyGen: () => readyGen.current,
   });

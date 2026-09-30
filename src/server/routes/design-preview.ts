@@ -9,6 +9,7 @@ import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { BRIDGE_NONCE_RE } from "../../shared/design-bridge-protocol.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { getDesign } from "../../services/design/design-store.service.ts";
+import { designVariantsOf } from "../../shared/design-variants.ts";
 import { readDesignFileSafe } from "../../services/design/design-safe-walk.ts";
 import { decodeDesignText, MAX_DESIGN_SOURCE_BYTES } from "../../services/design/source/design-source-file.ts";
 import { buildDesignCsp } from "../../services/design/preview/design-csp.ts";
@@ -64,7 +65,8 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
     const body: unknown = await c.req.json().catch(() => null);
     const b = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
     if (!b || typeof b.projectName !== "string" || !b.projectName || !isValidDesignSlug(b.slug)
-      || !isDesignPreviewPurpose(b.purpose) || (b.token !== undefined && typeof b.token !== "string")) {
+      || !isDesignPreviewPurpose(b.purpose) || (b.token !== undefined && typeof b.token !== "string")
+      || (b.entry !== undefined && typeof b.entry !== "string")) {
       return c.json(err("projectName, a design slug and purpose (canvas, print or standalone) are required"), 400);
     }
     const slug = b.slug;
@@ -77,6 +79,10 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
     }
     try {
       const design = await getDesign(projectPath, slug);
+      // The token reads any file of the design anyway; naming only a listed variant keeps
+      // the address the canvas loads to pages the design actually offers.
+      const entry = b.entry === undefined ? design.entry : designVariantsOf(design).find((v) => v.file === b.entry)?.file;
+      if (!entry) return c.json(err("That page is not a variant of this design"), 404);
       let cap: DesignPreviewCapability;
       let rotated = false;
       if (typeof b.token === "string") {
@@ -92,7 +98,7 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
       } else {
         cap = store.mint({ projectPath, slug }, purpose);
       }
-      return c.json(ok({ url: urlFor(cap, design.entry), token: cap.token, expiresAt: cap.idleExpires, rotated }));
+      return c.json(ok({ url: urlFor(cap, entry), token: cap.token, expiresAt: cap.idleExpires, rotated }));
     } catch (e) {
       const info = mapFsError(e);
       if (info.status >= 500) console.error(`[design-preview] mint ${slug}: ${info.message}`);

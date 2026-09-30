@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { DESIGN_SLUG_RE, isValidDesignSlug, slugFromTitle } from "../../../src/services/design/design-slug.ts";
-import { buildDesignInstructions } from "../../../src/services/design/design-instructions.ts";
+import { buildDesignInstructions, MAX_CLARIFYING_QUESTIONS } from "../../../src/services/design/design-instructions.ts";
+import { MAX_DESIGN_VARIANTS, parseDesignVariants } from "../../../src/shared/design-variants.ts";
 import { DESIGN_CDN_HOSTS } from "../../../src/shared/design-cdn-hosts.ts";
 import { parseTweaks } from "../../../src/shared/design-tweaks.ts";
 
@@ -78,6 +79,35 @@ describe("buildDesignInstructions", () => {
     expect(errors).toEqual([]);
     expect(tweaks.map((t) => t.type).sort()).toEqual(["color", "range", "select"]);
     expect(text).toMatch(/Never put\s+tweak variables in `\.\.\/tokens\.css`/);
+  });
+
+  it("asks at most three questions before the first build, including how many variants, and never for edits", () => {
+    const section = text.slice(text.indexOf("## Before the first build"), text.indexOf("## Variants"));
+    expect(section).toContain("for the first time");
+    expect(section).toContain(`at most ${MAX_CLARIFYING_QUESTIONS} short questions`);
+    expect(MAX_CLARIFYING_QUESTIONS).toBe(3);
+    expect(section).toContain("how many variants they want (1 to 5, default 1)");
+    expect(section).toContain("`AskUserQuestion` tool when you have it");
+    expect(section).toContain("one plain chat message");
+    expect(section).toMatch(/Do not ask about edits or follow-ups/);
+    expect(section).toMatch(/just build it\. Then build straight\s+away and state the assumptions/);
+    for (const topic of ["purpose", "who it is", "main content", "visual style", "slide deck"]) expect(section).toContain(topic);
+  });
+
+  it("describes variants as up to five flat files listed in design.json, variant 1 being the entry", () => {
+    const section = text.slice(text.indexOf("## Variants"), text.indexOf("## Assets and network"));
+    expect(MAX_DESIGN_VARIANTS).toBe(5);
+    expect(section).toContain("up to 5 variants");
+    expect(section).toContain("never more than 5");
+    expect(section).toContain("Variant 1 is the entry page `designs/smoke/index.html`");
+    expect(section).toContain("`variant-2.html` to\n  `variant-N.html` in the same folder, never in a subfolder");
+    const example = /`"variants": (\[.*?\])`/.exec(section);
+    expect(example).not.toBeNull();
+    const parsed = parseDesignVariants(JSON.parse(example![1]!), "index.html");
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.variants.map((v) => v.file)).toEqual(["index.html", "variant-2.html"]);
+    expect(section).toContain("Keep `kind`");
+    expect(text).toContain("every check measures the one on the user's\n  screen");
   });
 
   it("refuses to build from an invalid slug rather than escaping it", () => {

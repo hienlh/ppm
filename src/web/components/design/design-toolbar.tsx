@@ -3,9 +3,7 @@ import {
   Code, Columns2, Download, History, Maximize2, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
   Presentation, RefreshCw, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { deliverToDesignChat } from "@/lib/design/deliver-to-design-chat";
 import { buildDesignSystemInitPrompt } from "../../../shared/design-system-init-prompt";
@@ -19,6 +17,9 @@ import type { DesignUndoFeature } from "./transform/design-undo-stack";
 import type { DesignExportFeature } from "./export/use-design-export";
 import { ExportMenuButton } from "./export/export-menu";
 import { DesignLayoutMenu, DesignPaneSwitch } from "./design-layout-controls";
+import type { DesignVariantsFeature } from "./variants/use-design-variants";
+import { DesignVariantMenu } from "./variants/design-variant-controls";
+import { ToolbarBadge } from "./design-toolbar-badge";
 
 /**
  * The canvas toolbar and its registry.
@@ -41,6 +42,7 @@ export interface DesignToolbarContext extends DesignTabContextValue {
   transform: CanvasTransformFeature;
   undo: DesignUndoFeature;
   exports: DesignExportFeature;
+  variants: DesignVariantsFeature;
 }
 
 export interface DesignToolbarItem {
@@ -133,15 +135,6 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
 
 export const visibleItems = (ctx: DesignToolbarContext) => DESIGN_TOOLBAR_ITEMS.filter((i) => !i.isHidden?.(ctx));
 
-export function ToolbarBadge({ count, className }: { count: number | null | undefined; className?: string }) {
-  if (!count) return null;
-  return (
-    <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground", className)}>
-      {count > 99 ? "99+" : count}
-    </span>
-  );
-}
-
 export const FRAME_ICONS: Record<DeviceFrameId, ElementType> = {
   desktop: Monitor, tablet: Tablet, phone: Smartphone, slide: Presentation,
 };
@@ -169,6 +162,7 @@ export function DesignToolbar({ ctx }: { ctx: DesignToolbarContext }) {
           );
         })}
       </div>
+      <DesignVariantMenu feature={ctx.variants} />
       <span className="mx-2 min-w-0 flex-1 truncate text-xs text-text-subtle" title={ctx.design.title}>{ctx.design.title}</span>
       {bar.map((item) => item.renderBar ? item.renderBar(ctx, iconBtn) : (
         <button key={item.id} type="button" title={item.label} aria-label={item.label}

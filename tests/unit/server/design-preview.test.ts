@@ -76,6 +76,26 @@ describe("design preview route", () => {
     expect(data.url).not.toContain("design-preview-test");
   });
 
+  it("points the URL at a listed variant, keeping the token on refresh, and refuses any other page", async () => {
+    const dir = join(project, "designs", "landing");
+    writeFileSync(join(dir, "variant-2.html"), "<h1>Two</h1>");
+    writeFileSync(join(dir, "stray.html"), "<h1>Not a variant</h1>");
+    writeFileSync(join(dir, "design.json"), JSON.stringify({
+      title: "Landing", kind: "page", variants: [{ file: "index.html", label: "A" }, { file: "variant-2.html", label: "B" }],
+    }));
+    const first = await mintData({ entry: "variant-2.html" });
+    expect(first.url).toBe(`/api/design-preview/content/${first.token}/landing/variant-2.html`);
+    const back = await mintData({ token: first.token, entry: "index.html" });
+    expect(back).toMatchObject({ token: first.token, url: `/api/design-preview/content/${first.token}/landing/index.html` });
+    expect((await request(`${first.url}?n=${NONCE}`)).status).toBe(200);
+    for (const entry of ["stray.html", "../other/index.html", ".design/comments.json"]) {
+      expect((await mint({ projectName: "demo", slug: "landing", purpose: "canvas", entry })).status).toBe(404);
+    }
+    expect((await mint({ projectName: "demo", slug: "landing", purpose: "canvas", entry: 7 })).status).toBe(400);
+    const print = await mintData({ purpose: "print", entry: "variant-2.html" });
+    expect(print.url.endsWith("/landing/variant-2.html")).toBe(true);
+  });
+
   it("serves instrumented HTML under the design CSP with the gen and ACAO null", async () => {
     const { url } = await mintData();
     const response = await request(`${url}?n=${NONCE}`, { headers: { Host: "localhost:5173" } });

@@ -4,16 +4,18 @@ import { cn } from "@/lib/utils";
 
 /**
  * What went wrong in the design document on screen: script errors, failed loads, CSP
- * blocks, links the canvas refused to follow, and layout problems the self-check found
- * after the last turn. Everything here was reported by the page, so it is untrusted and
- * rendered as plain text only.
+ * blocks, links the canvas refused to follow, layout problems the self-check found after the
+ * last turn, and entries of `design.json` the server skipped. Everything here was written by
+ * the page or the agent, so it is untrusted and rendered as plain text only.
  */
 
 export type CanvasIssue =
   | { kind: "error" | "rejection" | "resource" | "csp"; message: string; source?: string; line?: number }
   | { kind: "navigate-blocked"; message: string; source: string }
   /** Found by the canvas self-check after a turn; `source` names the element. */
-  | { kind: "layout"; message: string; source?: string };
+  | { kind: "layout"; message: string; source?: string }
+  /** Something in `design.json` the server skipped, such as a variant it could not use. */
+  | { kind: "manifest"; message: string; source?: undefined };
 
 const KIND_LABEL: Record<CanvasIssue["kind"], string> = {
   error: "Error",
@@ -22,6 +24,7 @@ const KIND_LABEL: Record<CanvasIssue["kind"], string> = {
   csp: "Blocked by policy",
   "navigate-blocked": "Link blocked",
   layout: "Layout",
+  manifest: "design.json",
 };
 
 /** Kept per document load; the bridge itself stops at 20, and so does this list. */

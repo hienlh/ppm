@@ -7,6 +7,8 @@
  * design sessions carry `designs/<slug>/` in their instructions.
  */
 
+import type { DesignVariant } from "./design-variants";
+
 /** `slides` is a deck of 1280x720 sections; `page` is a single page or prototype. */
 export const DESIGN_KINDS = ["page", "slides"] as const;
 export type DesignKind = (typeof DESIGN_KINDS)[number];
@@ -21,6 +23,13 @@ export interface DesignSummary {
   kind: DesignKind;
   /** Entry HTML file, relative to the design folder. */
   entry: string;
+  /**
+   * The variants the canvas can switch between, variant 1 (the entry) first, only files that
+   * exist. Absent from an older server, which means the entry alone (`designVariantsOf`).
+   */
+  variants?: DesignVariant[];
+  /** Why entries of `design.json`'s `variants` were skipped; absent when none were. */
+  variantWarnings?: string[];
   createdAt: string;
   /** Latest of the manifest's own timestamp and the entry file's mtime, ISO. */
   updatedAt: string;
@@ -29,8 +38,10 @@ export interface DesignSummary {
 /**
  * Why a snapshot exists. `before-edit` snapshots (taken ahead of a canvas write-back) have
  * their own, smaller retention pool so a burst of them can never push real history out.
+ * `pre-variant-pick` is kept with the real history: it is the only copy of the variants
+ * "Use this variant" deleted.
  */
-export const DESIGN_SNAPSHOT_REASONS = ["turn", "pre-restore", "before-edit", "manual"] as const;
+export const DESIGN_SNAPSHOT_REASONS = ["turn", "pre-restore", "before-edit", "manual", "pre-variant-pick"] as const;
 export type DesignSnapshotReason = (typeof DESIGN_SNAPSHOT_REASONS)[number];
 
 export interface DesignSnapshotInfo {

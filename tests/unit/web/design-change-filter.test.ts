@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { classifyDesignChange } from "../../../src/web/lib/design/design-change-filter";
+import { classifyDesignChange, mayChangeVariants } from "../../../src/web/lib/design/design-change-filter";
 
 describe("classifyDesignChange", () => {
   it("reloads for any rendered file of the design", () => {
@@ -39,5 +39,21 @@ describe("classifyDesignChange", () => {
 
   it("does nothing without a slug", () => {
     expect(classifyDesignChange("designs/landing/index.html", "")).toBeNull();
+  });
+});
+
+describe("mayChangeVariants", () => {
+  it("is true for a top-level page other than the entry", () => {
+    expect(mayChangeVariants("designs/landing/variant-2.html", "landing", "index.html")).toBe(true);
+    expect(mayChangeVariants("designs\\landing\\Variant-3.HTM", "landing", "index.html")).toBe(true);
+  });
+
+  it("is false for the entry, nested pages, other files and other designs", () => {
+    for (const path of [
+      "designs/landing/index.html", "designs/landing/INDEX.html", "designs/landing/pages/a.html", "designs/landing/styles.css",
+      "designs/landing/.design/history/x/variant-2.html", "designs/other/variant-2.html", "designs/tokens.css",
+    ]) {
+      expect(mayChangeVariants(path, "landing", "index.html")).toBe(false);
+    }
   });
 });

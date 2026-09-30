@@ -1,8 +1,10 @@
 import { cn } from "@/lib/utils";
 import { DEVICE_FRAMES } from "./canvas/device-frame-presets";
-import { FRAME_ICONS, ToolbarBadge, visibleItems, type DesignToolbarContext } from "./design-toolbar";
+import { FRAME_ICONS, visibleItems, type DesignToolbarContext } from "./design-toolbar";
+import { ToolbarBadge } from "./design-toolbar-badge";
+import { DesignVariantRows } from "./variants/design-variant-controls";
 
-/** The same frames and items as full-width rows, for the phone's More sheet. */
+/** The same frames, variants and items as full-width rows, for the phone's More sheet. */
 export function DesignToolbarList({ ctx, onDone }: { ctx: DesignToolbarContext; onDone: () => void }) {
   const row = "flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm hover:bg-surface-elevated disabled:opacity-40";
   return (
@@ -23,6 +25,7 @@ export function DesignToolbarList({ ctx, onDone }: { ctx: DesignToolbarContext; 
         })}
       </div>
       <div className="my-1 h-px bg-border" />
+      <DesignVariantRows feature={ctx.variants} onDone={onDone} />
       {visibleItems(ctx).map((item) => (
         <button key={item.id} type="button" className={row} disabled={item.isDisabled?.(ctx)}
           aria-pressed={item.isActive ? item.isActive(ctx) : undefined}

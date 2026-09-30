@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   DEFAULT_CHAT_PERCENT, MAX_CHAT_PERCENT, MAX_REMEMBERED_FRAMES, MIN_CHAT_PERCENT,
-  clampChatPercent, defaultDesignViewPrefs, designFrameKey, parseDesignViewPrefs, withChatPercent, withFrame,
+  clampChatPercent, defaultDesignViewPrefs, designFrameKey, parseDesignViewPrefs, withChatPercent, withFrame, withoutVariant, withVariant,
 } from "../../../src/web/lib/design/design-view-prefs";
 
 describe("design view prefs", () => {
@@ -23,6 +23,23 @@ describe("design view prefs", () => {
   it("keeps only valid frames from a stored blob", () => {
     const prefs = parseDesignViewPrefs(JSON.stringify({ frames: { "p/a": "phone", "p/b": "watch", "p/c": 3 } }));
     expect(prefs.frames).toEqual({ "p/a": "phone" });
+  });
+
+  it("remembers the variant on screen per design, dropping stored junk", () => {
+    const junk = parseDesignViewPrefs(JSON.stringify({ variants: { "p/a": "variant-2.html", "p/b": 4, "p/c": "x".repeat(500) } }));
+    expect(junk.variants).toEqual({ "p/a": "variant-2.html" });
+    let prefs = defaultDesignViewPrefs();
+    for (let i = 0; i < MAX_REMEMBERED_FRAMES + 3; i++) prefs = withVariant(prefs, designFrameKey("p", `d${i}`), "variant-2.html");
+    prefs = withVariant(prefs, designFrameKey("p", "d5"), "variant-3.html");
+    const keys = Object.keys(prefs.variants);
+    expect(keys).toHaveLength(MAX_REMEMBERED_FRAMES);
+    expect(keys[keys.length - 1]).toBe("p/d5");
+    expect(prefs.variants["p/d5"]).toBe("variant-3.html");
+    const forgotten = withoutVariant(prefs, "p/d5");
+    expect(forgotten.variants["p/d5"]).toBeUndefined();
+    expect(Object.keys(forgotten.variants)).toHaveLength(MAX_REMEMBERED_FRAMES - 1);
+    expect(withoutVariant(forgotten, "p/none")).toBe(forgotten);
+    expect(parseDesignViewPrefs(JSON.stringify(prefs))).toEqual(prefs);
   });
 
   it("round-trips and remembers the newest frames only", () => {
