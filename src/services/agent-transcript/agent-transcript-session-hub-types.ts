@@ -59,6 +59,13 @@ export function transcriptSubCount(hub: SessionHub): number {
   return n;
 }
 
+/** Total activity subscriptions across every client on this hub. */
+export function activitySubCount(hub: SessionHub): number {
+  let n = 0;
+  for (const subs of hub.activitySubs.values()) n += subs.size;
+  return n;
+}
+
 export function hubIsEmpty(hub: SessionHub): boolean {
   return hub.subscriptions.size === 0 && hub.activitySubs.size === 0;
 }

@@ -8,7 +8,9 @@
 import { configService } from "../config.service.ts";
 import type { OwnedSession } from "./session-ownership.ts";
 import type { AgentTranscriptWsLike } from "./agent-transcript-ws-like.ts";
-import { createSessionHub, hubIsEmpty, transcriptSubCount, type SessionHub } from "./agent-transcript-session-hub-types.ts";
+import {
+  activitySubCount, createSessionHub, hubIsEmpty, transcriptSubCount, type SessionHub,
+} from "./agent-transcript-session-hub-types.ts";
 import { dropAllTranscriptForWs, removeTranscriptSubscription } from "./agent-transcript-session-hub.ts";
 import { dropAllActivityForWs, removeActivitySubscription } from "./agent-transcript-session-hub-activity.ts";
 
@@ -31,6 +33,12 @@ export function tokenStillValid(ws: AgentTranscriptWsLike): boolean {
 export function totalTranscriptSubs(): number {
   let n = 0;
   for (const hub of sessionHubs.values()) n += transcriptSubCount(hub);
+  return n;
+}
+
+export function totalActivitySubs(): number {
+  let n = 0;
+  for (const hub of sessionHubs.values()) n += activitySubCount(hub);
   return n;
 }
 
@@ -79,6 +87,10 @@ export function registerActivitySub(ws: AgentTranscriptWsLike, subId: string, ke
 
 export function transcriptSubCountForClient(ws: AgentTranscriptWsLike): number {
   return clientTranscriptSubs.get(ws)?.size ?? 0;
+}
+
+export function activitySubCountForClient(ws: AgentTranscriptWsLike): number {
+  return clientActivitySubs.get(ws)?.size ?? 0;
 }
 
 export function unregisterTranscriptSub(ws: AgentTranscriptWsLike, subId: string): void {

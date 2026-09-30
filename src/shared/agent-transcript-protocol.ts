@@ -27,12 +27,15 @@ export interface AgentTranscriptCursor {
 }
 
 /**
- * One step on the wire. `k` is a stable de-dupe key — `"<fileKey>:<byteOffset>:<i>"`
- * where `byteOffset` is the file position before the read that produced it, so
- * a page re-sent after a dropped connection carries the same keys as before.
- * `replace: true` (Codex only) means the client should update the step already
- * shown for this `ev`'s `toolUseId` in place, not append a new one — the usual
- * case is a tool_result answering an earlier tool_use.
+ * One step on the wire. `k` is a stable de-dupe key, normally
+ * `"<fileKey>:<byteOffset>:<i>"` where `byteOffset` is a file position before
+ * the read that produced it, so a page re-sent after a dropped connection
+ * carries the same keys as before. `replace: true` (Codex only) means the
+ * client should update the step already shown for this `ev`'s `toolUseId` in
+ * place, not append a new one — the usual case is a tool_result answering an
+ * earlier tool_use. A `replace` envelope's `k` is the ORIGINAL key issued for
+ * that `toolUseId`, reused rather than freshly minted, precisely so a
+ * same-`k` upsert on the client has something to match.
  */
 export interface AgentTranscriptEnvelope {
   ev: ChatEvent;

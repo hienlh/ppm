@@ -6,9 +6,8 @@
  * same way as one still streaming live.
  */
 import { join } from "node:path";
-import { getCachedSubagentGroups } from "./agent-transcript-index-cache.ts";
+import { getCachedSubagentGroups, getCachedTranscriptsByMember } from "./agent-transcript-index-cache.ts";
 import { scanCodexDescendants } from "./agent-transcript-codex-activity.ts";
-import { indexTranscriptsByMember } from "../team-member-activity/subagent-transcript-index.ts";
 import { summarizeTranscriptTail } from "../team-member-activity/transcript-tail-summary.ts";
 import { subagentCardId } from "../../providers/codex-app-server/codex-subagent-thread.ts";
 import type { OwnedSession } from "./session-ownership.ts";
@@ -33,7 +32,7 @@ async function claudeActivity(owned: OwnedSession, now: number): Promise<AgentTr
 
   // A team is itself a session: its members carry no toolUseId (they are not
   // card-spawned), so they never appear in `groups` above and need their own pass.
-  for (const [memberName, entry] of indexTranscriptsByMember(subagentsDir)) {
+  for (const [memberName, entry] of getCachedTranscriptsByMember(subagentsDir)) {
     if (!entry.sizeBytes || now - entry.modifiedAt > ACTIVITY_WINDOW_MS) continue;
     const tail = await summarizeTranscriptTail(entry.transcriptPath);
     out.push({ memberName, lastWriteAt: entry.modifiedAt, lastStep: lastStepLabel(tail) });
@@ -47,12 +46,27 @@ function codexActivity(owned: OwnedSession, now: number): AgentTranscriptRunning
   const descendants = scanCodexDescendants(path, dirs, owned.projectPath);
   const out: AgentTranscriptRunningEntry[] = [];
   for (const d of descendants) {
-    if (d.done && now - d.lastWriteAt > ACTIVITY_WINDOW_MS) continue;
+    // Age out on staleness alone, not "done AND stale": a child that crashed
+    // before ever writing its own completed record would otherwise show as
+    // running forever, since `done` would never become true for it.
+    if (now - d.lastWriteAt > ACTIVITY_WINDOW_MS) continue;
     out.push({ cardId: subagentCardId(d.threadId), lastWriteAt: d.lastWriteAt, lastStep: d.lastStep });
   }
   return out;
 }
 
+/** Test-only: counts calls to `computeRunningAgents`, so a test can prove the
+ *  hub computes this once per tick and fans the SAME result out to every
+ *  subscriber, rather than recomputing it once per subscriber. */
+let callCountForTest = 0;
+export function _resetComputeRunningAgentsCallCountForTest(): void {
+  callCountForTest = 0;
+}
+export function _computeRunningAgentsCallCountForTest(): number {
+  return callCountForTest;
+}
+
 export async function computeRunningAgents(owned: OwnedSession, now: number): Promise<AgentTranscriptRunningEntry[]> {
+  callCountForTest++;
   return owned.providerId === "claude" ? claudeActivity(owned, now) : codexActivity(owned, now);
 }

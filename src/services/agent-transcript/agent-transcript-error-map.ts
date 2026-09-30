@@ -1,7 +1,7 @@
 /**
- * Collapse the internal ownership/source error codes (phase 2) down to the
- * four fixed codes the wire protocol allows — nothing past this point ever
- * carries an internal enum name, a path, or an exception message.
+ * Collapse the internal ownership/source error codes down to the four fixed
+ * codes the wire protocol allows — nothing past this point ever carries an
+ * internal enum name, a path, or an exception message.
  */
 import type { OwnershipErrorCode } from "./session-ownership.ts";
 import type { SourceErrorCode } from "./agent-transcript-sources.ts";

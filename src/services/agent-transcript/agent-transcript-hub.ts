@@ -10,8 +10,8 @@ import { sendWsMessage, type AgentTranscriptWsLike } from "./agent-transcript-ws
 import { addTranscriptSubscription } from "./agent-transcript-session-hub.ts";
 import { addActivitySubscription } from "./agent-transcript-session-hub-activity.ts";
 import {
-  dropClientEverywhere, getOrCreateHub, maybeDropHub, projectPathFor,
-  registerActivitySub, registerTranscriptSub, totalTranscriptSubs, transcriptSubCountForClient,
+  activitySubCountForClient, dropClientEverywhere, getOrCreateHub, maybeDropHub, projectPathFor,
+  registerActivitySub, registerTranscriptSub, totalActivitySubs, totalTranscriptSubs, transcriptSubCountForClient,
   unregisterActivitySub, unregisterTranscriptSub,
 } from "./agent-transcript-hub-registry.ts";
 import {
@@ -71,7 +71,11 @@ export function handleAgentActivitySubscribe(ws: AgentTranscriptWsLike, msg: Age
   const projectPath = projectPathFor(projectName);
   if (!projectPath) return sendError(ws, subId, "not_found");
 
+  // Replacing an existing subId costs nothing against the cap — drop it first.
   unregisterActivitySub(ws, subId);
+
+  if (activitySubCountForClient(ws) >= MAX_TRANSCRIPT_SUBS_PER_CLIENT) return sendError(ws, subId, "limit");
+  if (totalActivitySubs() >= MAX_TRANSCRIPT_SUBS_PER_SERVER) return sendError(ws, subId, "limit");
 
   const owned = assertSessionInProject({ providerId, sessionId, projectPath });
   if (!owned.ok) return sendError(ws, subId, mapOwnershipErrorCode(owned.code));

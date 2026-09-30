@@ -929,7 +929,7 @@ if (process.argv.includes("__serve__")) {
         // they no longer depend on a chat tab being mounted. The token is
         // snapshotted here — not re-read from config on every push — so the
         // agent-transcript hub can tell a long-lived socket apart from one
-        // whose password/token has since been rotated (plan.md red-team #24).
+        // whose password/token has since been rotated.
         const authConfig = configService.get("auth");
         const token = authConfig.enabled ? (url.searchParams.get("token") ?? null) : null;
         const upgraded = server.upgrade(req, { data: { type: "global", token } });

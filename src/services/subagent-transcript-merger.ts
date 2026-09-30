@@ -71,16 +71,23 @@ export interface TimedChatEvent {
  * a session hub mid-file (e.g. a SendMessage resume prompt lands well after the
  * spawn prompt) must see every user record it is fed, not just the ones after
  * the file's first — there is no "first" from where it joined.
+ *
+ * `maxEvents` overrides the default history-payload guard (`MAX_CHILDREN_PER_AGENT`).
+ * A live session-window subscription reads one file per subscriber rather than
+ * one payload for a whole reload, and the client already bounds its own render
+ * buffer — so the hub passes `Infinity` here rather than silently freezing a
+ * long-running teammate's stream once the reload guard's count is reached.
  */
-export function createAgentTranscriptLineParser(opts?: { midFile?: boolean }) {
+export function createAgentTranscriptLineParser(opts?: { midFile?: boolean; maxEvents?: number }) {
   let isFirstUser = !opts?.midFile;
+  const maxEvents = opts?.maxEvents ?? MAX_CHILDREN_PER_AGENT;
   let emitted = 0;
   let lastTs = 0;
   return {
     feed(line: string): TimedChatEvent[] {
       const out: TimedChatEvent[] = [];
       const trimmed = line.trim();
-      if (!trimmed || emitted >= MAX_CHILDREN_PER_AGENT) return out;
+      if (!trimmed || emitted >= maxEvents) return out;
       let entry: any;
       try {
         entry = JSON.parse(trimmed);
@@ -102,7 +109,7 @@ export function createAgentTranscriptLineParser(opts?: { midFile?: boolean }) {
       if (!Number.isNaN(parsedTs)) lastTs = parsedTs;
       const parsed = parseSessionMessage(entry);
       for (const ev of parsed.events ?? []) {
-        if (emitted >= MAX_CHILDREN_PER_AGENT) break;
+        if (emitted >= maxEvents) break;
         // Keep single events from ballooning the history payload (agent files
         // can carry multi-MB tool outputs the live stream also showed in full,
         // but 24 agents × full outputs breaks mobile reloads).

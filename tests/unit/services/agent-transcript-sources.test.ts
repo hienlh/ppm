@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/claude-projects-root.ts";
 import { assertSessionInProject, type OwnedSession } from "../../../src/services/agent-transcript/session-ownership.ts";
-import { resolveSources, _resetSourcesCache } from "../../../src/services/agent-transcript/agent-transcript-sources.ts";
+import {
+  resolveSources, resolveCodexDescendantFile, _resetSourcesCache, _sourcesCacheSizeForTest,
+} from "../../../src/services/agent-transcript/agent-transcript-sources.ts";
 
 const PROJECT_A = "/workspace/project-a";
 const PROJECT_B = "/workspace/project-b";
@@ -184,5 +186,32 @@ describe("resolveSources", () => {
     _resetSourcesCache();
     const afterReset = resolveSources(owned, { kind: "card", cardId: "toolu_late" });
     expect(Array.isArray(afterReset)).toBe(true);
+  });
+
+  // M7 — the cache must not grow without bound when a client cycles through
+  // many distinct (never-reused) card ids.
+  it("bounds its own cache size when many distinct card ids are resolved", () => {
+    const owned = ownClaudeSession();
+    for (let i = 0; i < 700; i++) {
+      resolveSources(owned, { kind: "card", cardId: `toolu_${i.toString().padStart(4, "0")}` });
+    }
+    expect(_sourcesCacheSizeForTest()).toBeLessThanOrEqual(500);
+  });
+
+  // H2 — `resolveCodexDescendantFile` is the exact helper the hub reuses to
+  // validate a grandchild surfaced through the tail parser's own `links`,
+  // never a separately (and possibly more loosely) written check.
+  it("resolveCodexDescendantFile accepts a real descendant and rejects a non-descendant", () => {
+    const owned = ownCodexSession(SESSION_ID);
+    const childId = "66666666-2222-4333-8444-555555555555";
+    writeCodexRollout(childId, PROJECT_A, { parent_thread_id: SESSION_ID });
+    const ref = resolveCodexDescendantFile(owned, childId);
+    expect(ref).toMatchObject({ key: childId, provider: "codex" });
+
+    const unrelatedId = "77777777-2222-4333-8444-555555555555";
+    writeCodexRollout(unrelatedId, PROJECT_A); // no parent_thread_id at all
+    expect(resolveCodexDescendantFile(owned, unrelatedId)).toBeNull();
+
+    expect(resolveCodexDescendantFile(owned, "not-a-real-thread-id")).toBeNull();
   });
 });

@@ -11,17 +11,60 @@
  * runaway spawn loop cannot make this unbounded work.
  */
 import { statSync } from "node:fs";
+import { dirname } from "node:path";
 import { agentTranscriptFsIo, statSizeSafe } from "./agent-transcript-fs-io.ts";
+import { agentTranscriptClock } from "./agent-transcript-hub-clock.ts";
 import { completeLines, parseLine } from "../../providers/codex-app-server/codex-rollout-header.ts";
 import { parseSubagentActivity } from "../../providers/codex-app-server/codex-subagent-thread.ts";
 import { mapRolloutItem } from "../../providers/codex-app-server/codex-rollout-items.ts";
 import { findRolloutByThreadId, isCodexRolloutPath } from "../../providers/codex-app-server/codex-history.ts";
+import { INDEX_REFRESH_MS } from "../../shared/agent-transcript-protocol.ts";
 
 const TAIL_BYTES = 256 * 1024;
 /** How many spawn levels deep the descendant scan follows before giving up. */
 const MAX_DESCENDANT_DEPTH = 8;
 /** Hard cap so a runaway spawn loop cannot make this scan unbounded. */
 const MAX_DESCENDANTS = 64;
+
+/**
+ * `findRolloutByThreadId` walks every rollout under a dir with a recursive
+ * `readdirSync` — fine for a one-off lookup, not for one per descendant on a
+ * 3s activity tick with a thousand-rollout `~/.codex/sessions`. Cached by
+ * (dir, threadId) for the same window the index cache uses elsewhere, and a
+ * miss is cached too so a thread that never resolves doesn't re-scan forever.
+ */
+const FILE_LOOKUP_TTL_MS = INDEX_REFRESH_MS;
+const MAX_LOOKUP_CACHE_ENTRIES = 1000;
+interface LookupEntry { expiresAt: number; file: string | null; }
+const lookupCache = new Map<string, LookupEntry>();
+
+function evictLookupCacheIfOverCapacity(now: number): void {
+  if (lookupCache.size < MAX_LOOKUP_CACHE_ENTRIES) return;
+  for (const [key, entry] of lookupCache) {
+    if (entry.expiresAt <= now) lookupCache.delete(key);
+  }
+  while (lookupCache.size >= MAX_LOOKUP_CACHE_ENTRIES) {
+    const oldest = lookupCache.keys().next().value;
+    if (oldest === undefined) break;
+    lookupCache.delete(oldest);
+  }
+}
+
+function cachedFindRolloutByThreadId(dir: string, threadId: string, projectPath: string): string | null {
+  const now = agentTranscriptClock.now();
+  const key = `${dir}\0${threadId}`;
+  const hit = lookupCache.get(key);
+  if (hit && hit.expiresAt > now) return hit.file;
+  evictLookupCacheIfOverCapacity(now);
+  const file = findRolloutByThreadId(dir, threadId, projectPath);
+  lookupCache.set(key, { expiresAt: now + FILE_LOOKUP_TTL_MS, file });
+  return file;
+}
+
+/** Test-only: forget every cached lookup. */
+export function _resetCodexDescendantLookupCache(): void {
+  lookupCache.clear();
+}
 
 export interface CodexDescendant {
   threadId: string;
@@ -87,10 +130,15 @@ function directDescendants(rolloutPath: string, dirs: string[], projectPath: str
   const lines = completeLines(tail.text);
   const activity = subagentActivityFromLines(lines);
   const out: CodexDescendant[] = [];
+  // A child almost always lands in the same spawn-day folder as the rollout
+  // that spawned it — trying that folder first turns the common case into a
+  // readdir of a few dozen files instead of the whole sessions tree, with the
+  // full dir list (each itself cached) still there as a fallback.
+  const searchDirs = [dirname(rolloutPath), ...dirs];
   for (const [threadId, done] of activity) {
     let file: string | null = null;
-    for (const dir of dirs) {
-      const found = findRolloutByThreadId(dir, threadId, projectPath);
+    for (const dir of searchDirs) {
+      const found = cachedFindRolloutByThreadId(dir, threadId, projectPath);
       if (found && isCodexRolloutPath(found)) { file = found; break; }
     }
     if (!file) continue;

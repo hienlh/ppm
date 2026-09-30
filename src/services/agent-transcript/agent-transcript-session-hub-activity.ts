@@ -31,7 +31,11 @@ export function addActivitySubscription(hub: SessionHub, ws: AgentTranscriptWsLi
   }
   subIds.add(subId);
   ensureActivityTicker(hub);
-  void tickActivityForClient(hub, ws, [subId]);
+  void (async () => {
+    const now = agentTranscriptClock.now();
+    const running = await computeRunningAgents(hub.owned, now);
+    if (!hub.tokenStillValid(ws) || !pushActivity(ws, [subId], running)) hub.onSendFailure(ws);
+  })();
 }
 
 export function removeActivitySubscription(hub: SessionHub, ws: AgentTranscriptWsLike, subId: string): boolean {
@@ -54,25 +58,25 @@ export function activitySubIdsForWs(hub: SessionHub, ws: AgentTranscriptWsLike):
   return [...(hub.activitySubs.get(ws)?.values() ?? [])];
 }
 
-/** Push the current running list to one client's given activity subscriptions. */
-async function tickActivityForClient(hub: SessionHub, ws: AgentTranscriptWsLike, subIds: string[]): Promise<void> {
-  if (!hub.tokenStillValid(ws)) {
-    hub.onSendFailure(ws);
-    return;
-  }
-  const now = agentTranscriptClock.now();
-  const running = await computeRunningAgents(hub.owned, now);
+/** Push an already-computed running list to one client's given subscriptions. */
+function pushActivity(ws: AgentTranscriptWsLike, subIds: string[], running: AgentActivityMsg["running"]): boolean {
   for (const subId of subIds) {
     const msg: AgentActivityMsg = { type: "agent-activity", subId, running };
-    if (!sendWsMessage(ws, msg)) {
-      hub.onSendFailure(ws);
-      return;
-    }
+    if (!sendWsMessage(ws, msg)) return false;
   }
+  return true;
 }
 
-/** One 3s wake: push every activity subscriber on this hub. */
+/** One 3s wake: compute the running list once for the whole hub and fan it out
+ *  to every subscriber — a per-session scan (Codex especially) is not cheap
+ *  enough to repeat once per client watching the same session. */
 export async function tickActivity(hub: SessionHub): Promise<void> {
-  const clients = [...hub.activitySubs.entries()];
-  await Promise.all(clients.map(([ws, subIds]) => tickActivityForClient(hub, ws, [...subIds])));
+  if (hub.activitySubs.size === 0) return;
+  const now = agentTranscriptClock.now();
+  const running = await computeRunningAgents(hub.owned, now);
+  const failed: AgentTranscriptWsLike[] = [];
+  for (const [ws, subIds] of hub.activitySubs) {
+    if (!hub.tokenStillValid(ws) || !pushActivity(ws, [...subIds], running)) failed.push(ws);
+  }
+  for (const ws of failed) hub.onSendFailure(ws);
 }

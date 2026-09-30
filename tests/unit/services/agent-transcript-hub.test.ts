@@ -27,8 +27,11 @@ import {
 import { tickTranscripts } from "../../../src/services/agent-transcript/agent-transcript-session-hub.ts";
 import { tickActivity } from "../../../src/services/agent-transcript/agent-transcript-session-hub-activity.ts";
 import {
+  _computeRunningAgentsCallCountForTest, _resetComputeRunningAgentsCallCountForTest,
+} from "../../../src/services/agent-transcript/agent-transcript-activity.ts";
+import {
   _debugHubSnapshotForTest, _getSessionHubForTest, _resetAgentTranscriptHubForTest,
-  handleAgentActivitySubscribe, handleAgentTranscriptClientClosed,
+  handleAgentActivitySubscribe, handleAgentActivityUnsubscribe, handleAgentTranscriptClientClosed,
   handleAgentTranscriptSubscribe, handleAgentTranscriptUnsubscribe,
 } from "../../../src/services/agent-transcript/agent-transcript-hub.ts";
 import type { AgentTranscriptWsLike } from "../../../src/services/agent-transcript/agent-transcript-ws-like.ts";
@@ -74,6 +77,7 @@ describe("agent transcript hub", () => {
     _resetSourcesCache();
     _resetAgentTranscriptIndexCache();
     _resetAgentTranscriptHubForTest();
+    _resetComputeRunningAgentsCallCountForTest();
     resetAgentTranscriptClockForTest();
     resetAgentTranscriptFsIoForTest();
     noOpTimers();
@@ -146,6 +150,19 @@ describe("agent transcript hub", () => {
     writeFileSync(join(subagentsDir, `agent-${agentId}.meta.json`), JSON.stringify({ toolUseId: cardId }));
     const file = join(subagentsDir, `agent-${agentId}.jsonl`);
     writeFileSync(file, assistantLine("", { name: "Bash", id: "tu1", input: { command: "ls" } }));
+    return file;
+  }
+
+  /** A card with `count` tool_use lines in its root agent transcript — for
+   *  pagination (H1) and reload-cap (H3) tests where one line is not enough. */
+  function writeBigCard(sessionDir: string, cardId: string, agentId: string, count: number): string {
+    const subagentsDir = join(sessionDir, "subagents");
+    mkdirSync(subagentsDir, { recursive: true });
+    writeFileSync(join(subagentsDir, `agent-${agentId}.meta.json`), JSON.stringify({ toolUseId: cardId }));
+    const file = join(subagentsDir, `agent-${agentId}.jsonl`);
+    const lines: string[] = [];
+    for (let i = 0; i < count; i++) lines.push(assistantLine("", { name: "Bash", id: `tu${i}`, input: {} }));
+    writeFileSync(file, lines.join(""));
     return file;
   }
 
@@ -290,6 +307,29 @@ describe("agent transcript hub", () => {
     }) + "\n";
     writeFileSync(file, header + codexItemCompleted("call1", "first output", "2026-10-01T00:00:01Z"));
     return file;
+  }
+
+  /** A rollout with just its header (optionally chained to a parent), no items yet. */
+  function writeCodexHeaderOnly(threadId: string, projectPath: string, parentThreadId?: string): string {
+    const day = join(codexRoot, "2026", "10", "01");
+    mkdirSync(day, { recursive: true });
+    const file = join(day, `rollout-${threadId}.jsonl`);
+    const header = JSON.stringify({
+      timestamp: "2026-10-01T00:00:00Z", type: "session_meta",
+      payload: {
+        id: threadId, cwd: projectPath, cli_version: "0.159.2",
+        ...(parentThreadId ? { parent_thread_id: parentThreadId } : {}),
+      },
+    }) + "\n";
+    writeFileSync(file, header);
+    return file;
+  }
+
+  function subagentActivityLine(threadId: string, kind: "started" | "completed", ts: string): string {
+    return JSON.stringify({
+      timestamp: ts, type: "event_msg",
+      payload: { type: "item_completed", item: { type: "SubAgentActivity", agent_thread_id: threadId, agent_path: "/child", kind } },
+    }) + "\n";
   }
 
   it("a Codex child thread's compaction record resets its card subscription", () => {
@@ -480,5 +520,224 @@ describe("agent transcript hub", () => {
 
     expect(statCalls).toBe(8); // one per distinct file, nothing changed since subscribe
     expect(readCalls).toBe(0); // size === offset for every file: no read issued
+  });
+
+  // ── C1: cursor validation, never throws, never orphans ──
+
+  it("C1: a fractional/NaN/negative/huge cursor offset neither throws nor orphans the subscription", () => {
+    const sessionDir = ownClaude();
+    writeCard(sessionDir, "toolu_card1");
+
+    for (const bad of [1.5, Number.NaN, -100, 1e21]) {
+      const ws = makeWs();
+      expect(() => subscribe(ws, "s1", "toolu_card1", { cursor: { agent1: bad } })).not.toThrow();
+      expect(errorMessages(ws)).toHaveLength(0);
+      // Fully registered, not orphaned: removable through the normal path,
+      // and the hub goes away once that was the only subscription.
+      expect(_debugHubSnapshotForTest("claude", SESSION_ID).transcriptSubs).toBe(1);
+      handleAgentTranscriptUnsubscribe(ws, { type: "agent-transcript:unsubscribe", subId: "s1" });
+      expect(_debugHubSnapshotForTest("claude", SESSION_ID).exists).toBe(false);
+    }
+  });
+
+  it("C1: a throwing read during a live tick degrades instead of crashing the tick", () => {
+    const sessionDir = ownClaude();
+    const file = writeCard(sessionDir, "toolu_card1");
+    const ws = makeWs();
+    subscribe(ws, "s1", "toolu_card1");
+    expect(eventsMessages(ws)).toHaveLength(1);
+
+    appendFileSync(file, toolResultLine("tu1", "boom"));
+    agentTranscriptFsIo.readRange = () => {
+      throw new Error("simulated EIO");
+    };
+    agentTranscriptClock.now = () => Date.now() + 1000;
+    const hub = _getSessionHubForTest("claude", SESSION_ID)!;
+    expect(() => tickTranscripts(hub)).not.toThrow();
+    // A locked/erroring read degrades to "nothing new this tick" — the
+    // subscription itself is not dropped over it.
+    expect(_debugHubSnapshotForTest("claude", SESSION_ID).transcriptSubs).toBe(1);
+  });
+
+  // ── H1: exact per-page cursor ──
+
+  it("H1: a reconnect after only the first of several pages resumes at the next page, with no gap", () => {
+    const sessionDir = ownClaude();
+    writeBigCard(sessionDir, "toolu_big", "agentbig", 1200); // > 2 pages at 500/page
+    const ws = makeWs();
+    subscribe(ws, "s1", "toolu_big");
+
+    const pages = eventsMessages(ws);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages[0]!.more).toBe(true);
+    const totalDelivered = pages.reduce((n, p) => n + p.events.length, 0);
+    expect(totalDelivered).toBe(1200);
+    // The whole point of H1: not every page carries the SAME (final) cursor.
+    expect(pages[0]!.cursor).not.toEqual(pages.at(-1)!.cursor);
+
+    // Identify a step by its toolUseId rather than its de-dupe key `k` — a
+    // resume starting from a non-zero offset legitimately mints fresh `k`s
+    // for the very same lines (the key only has to be stable for repeated
+    // reads from the SAME offset, not across two different ones).
+    const idOf = (e: { ev: { toolUseId?: string } }) => e.ev.toolUseId!;
+    const allIds = new Set(pages.flatMap((p) => p.events.map(idOf)));
+    const page1Ids = new Set(pages[0]!.events.map(idOf));
+    expect(page1Ids.size).toBeLessThan(allIds.size); // page 1 really is only part of the backlog
+
+    // Simulate a drop right after page 1 landed: resubscribe with exactly
+    // the cursor page 1 itself carried.
+    const ws2 = makeWs();
+    subscribe(ws2, "s2", "toolu_big", { cursor: pages[0]!.cursor });
+    const resumedIds = new Set(eventsMessages(ws2).flatMap((p) => p.events.map(idOf)));
+
+    // No gap: everything page 1 did not deliver shows up in the resumed stream.
+    for (const id of allIds) {
+      if (!page1Ids.has(id)) expect(resumedIds.has(id)).toBe(true);
+    }
+    // No duplicate: the resume cursor lands exactly where page 1 left off.
+    for (const id of page1Ids) expect(resumedIds.has(id)).toBe(false);
+  });
+
+  // ── H2: dynamic file set ──
+
+  it("H2 Claude: a nested agent transcript that appears after subscribe is streamed live", () => {
+    const sessionDir = ownClaude();
+    writeCard(sessionDir, "toolu_parent", "agent1");
+    const ws = makeWs();
+    subscribe(ws, "s1", "toolu_parent");
+    expect(eventsMessages(ws)).toHaveLength(1);
+
+    // A grandchild's transcript appears later, chaining back to agent1.
+    _resetSourcesCache(); // bypass resolveSources' own wall-clock cache for the test
+    const subagentsDir = join(sessionDir, "subagents");
+    writeFileSync(join(subagentsDir, "agent-nested1.meta.json"), JSON.stringify({ parentAgentId: "agent1" }));
+    writeFileSync(join(subagentsDir, "agent-nested1.jsonl"), assistantLine("", { name: "Read", id: "tuN" }));
+
+    agentTranscriptClock.now = () => Date.now() + 1000;
+    const hub = _getSessionHubForTest("claude", SESSION_ID)!;
+    tickTranscripts(hub);
+
+    const allEvents = eventsMessages(ws).flatMap((m) => m.events);
+    expect(allEvents.some((e) => e.ev.type === "tool_use" && (e.ev as any).tool === "Read")).toBe(true);
+  });
+
+  it("H2 Codex: a grandchild thread linked after subscribe is streamed live, re-validated as a real descendant", () => {
+    const ROOT = "77777777-1111-2222-3333-444444444444";
+    const CHILD_A = "88888888-1111-2222-3333-444444444444";
+    const GRANDCHILD_B = "99999999-1111-2222-3333-444444444444";
+    writeCodexSession(ROOT, PROJECT_A_PATH);
+    const childFile = writeCodexHeaderOnly(CHILD_A, PROJECT_A_PATH, ROOT);
+    writeCodexHeaderOnly(GRANDCHILD_B, PROJECT_A_PATH, CHILD_A);
+    const grandchildFile = join(codexRoot, "2026", "10", "01", `rollout-${GRANDCHILD_B}.jsonl`);
+    appendFileSync(grandchildFile, codexItemCompleted("gc-call1", "grandchild output", "2026-10-01T00:00:01Z"));
+
+    const ws = makeWs();
+    handleAgentTranscriptSubscribe(ws, {
+      type: "agent-transcript:subscribe", subId: "s1", projectName: PROJECT_A,
+      providerId: "codex", sessionId: ROOT, source: { kind: "card", cardId: `subagent-${CHILD_A}` },
+    });
+    expect(errorMessages(ws)).toHaveLength(0);
+    expect(eventsMessages(ws)[0]!.events).toHaveLength(0); // the child has no items of its own yet
+
+    // The child's own rollout gains a link to the grandchild it spawned.
+    appendFileSync(childFile, subagentActivityLine(GRANDCHILD_B, "started", "2026-10-01T00:00:02Z"));
+    agentTranscriptClock.now = () => Date.now() + 1000;
+    const hub = _getSessionHubForTest("codex", ROOT)!;
+    tickTranscripts(hub);
+
+    const allEvents = eventsMessages(ws).flatMap((m) => m.events);
+    expect(allEvents.some((e) => e.ev.type === "tool_result" && (e.ev as any).output === "grandchild output")).toBe(true);
+  });
+
+  // ── H3: hub bypasses the merger's reload-payload event cap ──
+
+  it("H3: a subscription streams more than 2000 events from a single agent file", () => {
+    const sessionDir = ownClaude();
+    writeBigCard(sessionDir, "toolu_huge", "agenthuge", 2500);
+    const ws = makeWs();
+    subscribe(ws, "s1", "toolu_huge");
+    const totalDelivered = eventsMessages(ws).reduce((n, m) => n + m.events.length, 0);
+    expect(totalDelivered).toBe(2500); // MAX_CHILDREN_PER_AGENT (2000) does not apply to the hub
+  });
+
+  // ── H5: activity subscription caps + compute-once-per-tick ──
+
+  it("H5: caps a client at 8 activity subscriptions and rejects the 9th", () => {
+    ownClaude();
+    const ws = makeWs();
+    for (let i = 0; i < 8; i++) {
+      handleAgentActivitySubscribe(ws, {
+        type: "agent-activity:subscribe", subId: `a${i}`, projectName: PROJECT_A, providerId: "claude", sessionId: SESSION_ID,
+      });
+    }
+    expect(ws.sent.filter((m) => m.type === "agent-transcript:error")).toHaveLength(0);
+
+    handleAgentActivitySubscribe(ws, {
+      type: "agent-activity:subscribe", subId: "a8", projectName: PROJECT_A, providerId: "claude", sessionId: SESSION_ID,
+    });
+    expect(ws.sent.filter((m) => m.type === "agent-transcript:error")).toEqual([
+      { type: "agent-transcript:error", subId: "a8", code: "limit" },
+    ]);
+    for (let i = 0; i < 8; i++) handleAgentActivityUnsubscribe(ws, { type: "agent-activity:unsubscribe", subId: `a${i}` });
+  });
+
+  it("H5: one tick computes the running list once and fans it out to every subscriber", async () => {
+    const sessionDir = ownClaude();
+    writeCard(sessionDir, "toolu_card1");
+    const ws1 = makeWs();
+    const ws2 = makeWs();
+    handleAgentActivitySubscribe(ws1, {
+      type: "agent-activity:subscribe", subId: "a1", projectName: PROJECT_A, providerId: "claude", sessionId: SESSION_ID,
+    });
+    handleAgentActivitySubscribe(ws2, {
+      type: "agent-activity:subscribe", subId: "a2", projectName: PROJECT_A, providerId: "claude", sessionId: SESSION_ID,
+    });
+    _resetComputeRunningAgentsCallCountForTest();
+
+    const hub = _getSessionHubForTest("claude", SESSION_ID)!;
+    await tickActivity(hub);
+
+    expect(_computeRunningAgentsCallCountForTest()).toBe(1); // not once per subscriber
+    const last1 = ws1.sent.filter((m) => m.type === "agent-activity").at(-1) as AgentActivityMsg;
+    const last2 = ws2.sent.filter((m) => m.type === "agent-activity").at(-1) as AgentActivityMsg;
+    expect(last1.running).toEqual(last2.running);
+  });
+
+  // ── M2: Codex running detection ages out an unfinished child too ──
+
+  it("M2: an unfinished Codex child with no recent write ages out of the running list", async () => {
+    const ROOT = "77777777-1111-2222-3333-444444444444";
+    const CHILD = "88888888-1111-2222-3333-444444444444";
+    const rootFile = writeCodexHeaderOnly(ROOT, PROJECT_A_PATH);
+    appendFileSync(rootFile, subagentActivityLine(CHILD, "started", "2026-10-01T00:00:01Z"));
+    writeCodexHeaderOnly(CHILD, PROJECT_A_PATH, ROOT); // never completes — no "completed" record ever written
+
+    const ws = makeWs();
+    handleAgentActivitySubscribe(ws, {
+      type: "agent-activity:subscribe", subId: "a1", projectName: PROJECT_A, providerId: "codex", sessionId: ROOT,
+    });
+    const hub = _getSessionHubForTest("codex", ROOT)!;
+
+    await tickActivity(hub);
+    const fresh = ws.sent.filter((m) => m.type === "agent-activity").at(-1) as AgentActivityMsg;
+    expect(fresh.running.some((r) => r.cardId === `subagent-${CHILD}`)).toBe(true);
+
+    // Past the 90s activity window with no further writes — still not "done".
+    agentTranscriptClock.now = () => Date.now() + 200_000;
+    await tickActivity(hub);
+    const stale = ws.sent.filter((m) => m.type === "agent-activity").at(-1) as AgentActivityMsg;
+    expect(stale.running.some((r) => r.cardId === `subagent-${CHILD}`)).toBe(false);
+  });
+
+  // ── M4: liveness seeded from file mtime, not subscribe time ──
+
+  it("M4: a card whose file was last written long ago shows not-running immediately on subscribe", () => {
+    const sessionDir = ownClaude();
+    writeCard(sessionDir, "toolu_old");
+    agentTranscriptFsIo.statMtimeMs = () => Date.now() - 5 * 60_000;
+
+    const ws = makeWs();
+    subscribe(ws, "s1", "toolu_old");
+    expect(eventsMessages(ws)[0]!.running).toBe(false);
   });
 });
