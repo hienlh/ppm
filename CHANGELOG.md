@@ -6,8 +6,9 @@
 - Settings → Design: your own instructions for every design chat, with `/` to name installed skills (used by Claude and Codex) and an install suggestion when no design skill is present. A gear in the sidebar's Designs header opens it.
 - Design mode: before the first build the AI asks a few short questions when the request leaves key things open, including how many variants to make.
 - Design variants: up to five alternative directions per design, and a Variant switcher on the canvas; keep or drop one by asking in the design chat (the dropped ones stay in Version history).
-- Design mode: "Set up design system" can also build a UI kit (`designs/kit/`) from the project's own compiled CSS, fonts and icons, so designs reproduce the real app instead of just its palette.
+- Design mode: "Set up design system" builds a UI kit (`../systems/<app>/kit/`) from the app's own compiled CSS, fonts and icons — or, for a CSS-in-JS stack, from its theme sources — so designs reproduce the real app instead of just its palette.
 - Design mode: "Build in new chat" replaces "Hand off to code" — one click opens a new chat with the brief and a screenshot of the design already attached.
+- Design systems per app: Settings → Design's "Apps in this project" declares one design system per app (a monorepo's separate frontends, or a mobile app) — each with its own showcase page, shown in the sidebar's "Design systems" group with a stale reminder once its real source moves on. The New Design dialog offers to set an app's system up first, the first time you design for it.
 
 ### Fixed
 - A new chat's first message no longer fails when choosing its account fails; the chat starts on the server's own pick.
