@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **The System Monitor opens on a phone.** Its only way in was the CPU/MEM chip in the status bar, which a phone does not show. The command palette, which is what the mobile "+" opens, now has a System Monitor command: a tab on a phone, the floating window on a desktop, and opening it again goes back to the one already open instead of adding another tab.
+
 ## [0.23.11] - 2026-10-01
 
 ### Added
