@@ -12,7 +12,7 @@
  * Pure and React-free; relative imports only.
  */
 import type { ProcessInfo } from "../../../../types/system-metrics";
-import type { ServiceInfo } from "../../../../types/system-services";
+import type { ServiceInfo, ServiceManager } from "../../../../types/system-services";
 
 export interface UnitResources {
   /** Processes in the unit's cgroup, which is not the same as its `MainPID`:
@@ -91,15 +91,22 @@ const PROCESS_OWNING_SUFFIXES = [".service", ".scope"] as const;
  * `running`: `systemctl show -p SubState docker.socket` answers `running` beside
  * an empty `MainPID` and `TasksCurrent=0`. That accounted for 14 of the 15 rows
  * still dashed after the `SubState` fix, so the unit's own type has to agree.
+ *
+ * launchd needs none of that: a job owns processes exactly while it has a pid,
+ * and its rows are that pid and what it started. So a running job with no rows is
+ * unmeasured — the tick ran before the listing told it which pids are the job's —
+ * and a job with no pid is a real zero.
  */
 export function resourcesFor(
   service: ServiceInfo,
   byUnit: ReadonlyMap<string, UnitResources> | null,
+  manager: ServiceManager = "systemd",
 ): UnitResources | undefined {
   if (!byUnit) return undefined;
   const found = byUnit.get(unitKeyOf(service));
   if (found) return found;
-  const couldHaveProcesses = service.subState === "running"
-    && PROCESS_OWNING_SUFFIXES.some((suffix) => service.unit.endsWith(suffix));
+  const couldHaveProcesses = manager === "launchd"
+    ? service.running
+    : service.subState === "running" && PROCESS_OWNING_SUFFIXES.some((suffix) => service.unit.endsWith(suffix));
   return couldHaveProcesses ? undefined : IDLE_UNIT;
 }

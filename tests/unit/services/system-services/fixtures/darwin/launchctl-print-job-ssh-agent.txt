@@ -1,0 +1,74 @@
+gui/501/com.openssh.ssh-agent = {
+	active count = 1
+	path = /System/Library/LaunchAgents/com.openssh.ssh-agent.plist
+	type = LaunchAgent
+	state = running
+
+	program = /usr/bin/ssh-agent
+	arguments = {
+		/usr/bin/ssh-agent
+		-l
+	}
+
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.AAAAAAAAAA/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		MallocSpaceEfficient => 1
+		XPC_SERVICE_NAME => com.openssh.ssh-agent
+	}
+
+	domain = gui/501 [100003]
+	asid = 100003
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	pid = 6739
+	immediate reason = ipc (socket)
+	forks = 0
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	last exit code = (never exited)
+
+	sockets = {
+		"Listeners" = {
+			type = stream
+			path = /private/tmp/com.apple.launchd.AAAAAAAAAA/Listeners
+			secure key = SSH_AUTH_SOCK
+			owner uid = 501
+			group id = 0
+
+			sockets = {
+				16 (bytes to read)
+			}
+
+			active = 1
+			passive = 1
+			bonjour = 0
+			ipv4v6 = 0
+			receive_packet_info = 0
+		}
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 180
+	jetsam memory limit (active, soft) = 15 MB
+	jetsam memory limit (inactive, soft) = 15 MB
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	probabilistic guard malloc policy = {
+		activation rate = 1/1000
+		sample rate = 1/0
+	}
+
+	properties = supports transactions | inferred program | system service | tle system
+}

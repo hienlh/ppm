@@ -119,11 +119,70 @@ describe("collectMemory", () => {
     expect(m.percent).toBeLessThanOrEqual(100);
   });
 
-  test("falls back to os.freemem() when meminfo is unavailable", () => {
-    const m = collectMemory(() => null);
+  test("falls back to os.freemem() when neither meminfo nor the darwin page counts answer", () => {
+    // Windows, and a Mac whose libSystem could not be opened.
+    const m = collectMemory(() => null, undefined, () => null, () => undefined);
     expect(m.totalMB).toBeGreaterThan(0);
     expect(m.availableMB).toBeGreaterThan(0);
     expect(m.availableMB).toBeLessThanOrEqual(m.totalMB);
+    expect(m.inUseBytes).toBeUndefined();
+  });
+
+  const PAGE = 16384;
+  const darwinSample = {
+    pageSize: PAGE,
+    vm: {
+      free: 1000, active: 0, inactive: 0, wire: 2000, purgeable: 500, speculative: 0,
+      compressor: 3000, throttled: 0, external: 4000, internal: 10000, uncompressedInCompressor: 7000,
+    },
+    swap: { totalBytes: 2 * 2 ** 30, usedBytes: 2 ** 30 },
+  };
+
+  test("a Mac's page counts are used when there is no /proc/meminfo", () => {
+    const m = collectMemory(() => null, undefined, () => null, () => darwinSample);
+    expect(m.inUseBytes).toBe(14500 * PAGE);
+    expect(m.standbyBytes).toBe(4500 * PAGE);
+    expect(m.totalMB).toBeCloseTo(os.totalmem() / 2 ** 20, 0);
+    expect(m.swapTotalMB).toBe(2048);
+    expect(m.swapUsedMB).toBe(1024);
+  });
+
+  test("/proc/meminfo wins: Linux never takes the darwin path", () => {
+    const meminfo = "MemTotal:       16000000 kB\nMemFree:         1000000 kB\nMemAvailable:    8000000 kB\n";
+    let asked = false;
+    const m = collectMemory(() => meminfo, () => undefined, () => null, () => {
+      asked = true;
+      return darwinSample;
+    });
+    expect(asked).toBe(false);
+    expect(m.availableMB).toBeCloseTo(8000000 / 1024, 0);
+  });
+
+  test("swap falls back to the sysctl text when the page counts came without it", () => {
+    const { swap: _swap, ...noSwap } = darwinSample;
+    const m = collectMemory(() => null, undefined, () => "total = 1024.00M  used = 256.00M  free = 768.00M", () => noSwap);
+    expect(m.inUseBytes).toBe(14500 * PAGE);
+    expect(m.swapTotalMB).toBe(1024);
+    expect(m.swapUsedMB).toBe(256);
+  });
+
+  test("the sysctl is not spawned when the page counts already carried swap", () => {
+    let spawned = false;
+    collectMemory(() => null, undefined, () => {
+      spawned = true;
+      return null;
+    }, () => darwinSample);
+    expect(spawned).toBe(false);
+  });
+
+  test.if(process.platform === "darwin")("on this Mac the default path reads the kernel, not freemem()", () => {
+    // freemem() on darwin is free pages only; the percentage it produced was
+    // ~99 % on any Mac that had been up a while.
+    const m = collectMemory();
+    expect(m.inUseBytes).toBeDefined();
+    expect(m.zramCompressedMB).toBeDefined();
+    expect(m.swapTotalMB).toBeDefined();
+    expect(m.usedMB + m.availableMB).toBeLessThanOrEqual(m.totalMB);
   });
 
   test("parseMemAvailableBytes handles a missing key", () => {

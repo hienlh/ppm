@@ -1,0 +1,70 @@
+system/com.apple.wifiFirmwareLoader = {
+	active count = 0
+	path = /System/Library/LaunchDaemons/com.apple.wifiFirmwareLoader.plist
+	type = LaunchDaemon
+	state = not running
+
+	program = /usr/libexec/wifiFirmwareLoader
+	arguments = {
+		/usr/libexec/wifiFirmwareLoader
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		MallocSpaceEfficient => 1
+		XPC_SERVICE_NAME => com.apple.wifiFirmwareLoader
+	}
+
+	domain = system
+	umask = 22
+	minimum runtime = 10
+	base minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 1
+
+	semaphores = {
+		after crash => 1
+	}
+
+	event triggers = {
+		com.apple.wifiFirmwareLoader => {
+			keepalive = 0
+			service = com.apple.wifiFirmwareLoader
+			stream = com.apple.iokit.matching
+			monitor = com.apple.UserEventAgent-System
+			descriptor = {
+				"IOProviderClass" => "AppleBCMWLANCoreFirmwareLoader"
+			}
+		}
+	}
+
+	event channels = {
+		"com.apple.iokit.matching" = {
+			port = 0x2f03
+			active = 0
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 1
+		}
+	}
+
+	spawn type = interactive (4)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	exponential throttling grace limit = 10
+	probabilistic guard malloc policy = {
+		activation rate = 1/1000
+		sample rate = 1/0
+	}
+
+	properties = runatload | inferred program | system service | exponential throttling | tle system
+}

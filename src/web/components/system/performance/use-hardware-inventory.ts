@@ -11,11 +11,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import type { HardwareInventory } from "../../../../types/system-hardware";
 
+/** How long to wait before asking again about ids the last answer still could
+ *  not name. */
+export const INVENTORY_RETRY_MS = 30_000;
+
 /** `deviceIds` is a JOINED string, not an array: an array literal is a fresh
  *  identity every render, which would turn the refetch effect into a loop. */
 export function useHardwareInventory(deviceIds: string): HardwareInventory | null {
   const [inventory, setInventory] = useState<HardwareInventory | null>(null);
   const inFlight = useRef(false);
+  const askedFor = useRef("");
 
   const load = useCallback(async () => {
     if (inFlight.current) return;
@@ -41,7 +46,22 @@ export function useHardwareInventory(deviceIds: string): HardwareInventory | nul
       ...inventory.nics.map((n) => n.id),
       ...inventory.gpus.map((g) => g.id),
     ]);
-    if (deviceIds.split(",").filter(Boolean).some((id) => !known.has(id))) void load();
+    const unknown = deviceIds.split(",").filter((id) => id && !known.has(id)).join(",");
+    if (!unknown) {
+      askedFor.current = "";
+      return;
+    }
+    if (unknown !== askedFor.current) {
+      askedFor.current = unknown;
+      void load();
+      return;
+    }
+    // Asked already, and the answer still cannot name them. On a Mac the tick and
+    // the inventory run their tools separately, so one can fail where the other
+    // did not; asking again straight away would refetch after every answer, back
+    // to back, for as long as that lasts.
+    const retry = setTimeout(() => void load(), INVENTORY_RETRY_MS);
+    return () => clearTimeout(retry);
   }, [inventory, deviceIds, load]);
 
   return inventory;

@@ -18,11 +18,11 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDiskCell } from "../process-row-format";
 import { formatRam } from "@/lib/format-bytes";
-import { serviceStatusText, serviceTone, type ServiceTone } from "./service-rows";
+import { enablementBadge, serviceStatusText, serviceTone, type ServiceTone } from "./service-rows";
 import { SERVICE_COLUMNS, SERVICE_ROW_GRID_CLASS, columnVisibilityClass } from "./service-columns";
 import type { UnitResources } from "./service-resources";
 import type { ServiceColumnKey } from "./service-columns";
-import type { ServiceAction, ServiceInfo } from "../../../../types/system-services";
+import type { ServiceAction, ServiceInfo, ServiceManager } from "../../../../types/system-services";
 import { SERVICE_ACTIONS } from "../../../../types/system-services";
 
 const TONE_CLASS: Record<ServiceTone, string> = {
@@ -39,6 +39,12 @@ const ACTION_LABELS: Record<ServiceAction, string> = {
   enable: "Enable at boot",
   disable: "Disable at boot",
 };
+
+/** A user's launchd jobs load when the user logs in, not when the Mac boots. */
+function actionLabel(action: ServiceAction, service: ServiceInfo, manager: ServiceManager): string {
+  const label = ACTION_LABELS[action];
+  return manager === "launchd" && service.scope === "user" ? label.replace(" at boot", " at login") : label;
+}
 
 /** Stopping something is destructive in the menu's sense; starting it is not. */
 const DESTRUCTIVE: readonly ServiceAction[] = ["stop", "disable"];
@@ -65,6 +71,7 @@ function Cell({ column, children }: { column: ServiceColumnKey; children: React.
 
 export interface ServiceRowProps {
   service: ServiceInfo;
+  manager: ServiceManager;
   /** Live roll-up over the unit's cgroup. Undefined = not measured this tick,
    *  which renders as em dashes rather than as an idle unit. */
   resources?: UnitResources;
@@ -72,8 +79,9 @@ export interface ServiceRowProps {
   onAction: (service: ServiceInfo, action: ServiceAction) => void;
 }
 
-export function ServiceRow({ service, resources, onOpen, onAction }: ServiceRowProps) {
+export function ServiceRow({ service, manager, resources, onOpen, onAction }: ServiceRowProps) {
   const tone = serviceTone(service);
+  const badge = enablementBadge(service, manager);
   const allowed = SERVICE_ACTIONS.filter((a) => service.refused?.[a] === undefined);
   // Every reason is the same sentence when a unit is refused wholesale, so the
   // footer shows it once rather than repeating it per hidden item.
@@ -104,9 +112,9 @@ export function ServiceRow({ service, resources, onOpen, onAction }: ServiceRowP
                   {/* Beside the name rather than in a column of its own: it is a
                       property of the unit file, not a measurement, and a ninth
                       track would cost the name column 60px on every row. */}
-                  {service.enabled && (
+                  {badge && (
                     <span className="shrink-0 text-[10px] px-1 py-px rounded bg-surface-hover text-text-subtle">
-                      enabled
+                      {badge}
                     </span>
                   )}
                 </span>
@@ -132,7 +140,7 @@ export function ServiceRow({ service, resources, onOpen, onAction }: ServiceRowP
             variant={DESTRUCTIVE.includes(action) ? "destructive" : undefined}
             onSelect={() => onAction(service, action)}
           >
-            {ACTION_LABELS[action]}
+            {actionLabel(action, service, manager)}
           </ContextMenuItem>
         ))}
         {allowed.length > 0 && <ContextMenuSeparator />}

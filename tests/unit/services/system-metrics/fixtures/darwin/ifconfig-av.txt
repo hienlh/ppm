@@ -1,0 +1,645 @@
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384 index 1
+	eflags=12000000<ECN_DISABLE,SENDLIST>
+	xflags=4<NOAUTONX>
+	options=1203<RXCSUM,TXCSUM,TXSTATUS,SW_TIMESTAMP>
+	hwassist=29000ff<CSUM_IP,CSUM_TCP,CSUM_UDP,CSUM_IP_FRAGS,CSUM_FRAGMENT,CSUM_TCPIPV6,CSUM_UDPIPV6,CSUM_FRAGMENT_IPV6,MULTIPAGES,TXSTATUS,SW_TIMESTAMP>
+	inet 127.0.0.1 netmask 0xff000000
+	inet6 ::1 prefixlen 128 
+	inet6 fe80::1%lo0 prefixlen 64 scopeid 0x1 
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 1
+	link quality: 100 (good)
+	state availability: 0 (true)
+	timestamp: disabled
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+gif0: flags=8010<POINTOPOINT,MULTICAST> mtu 1280 index 2
+	eflags=1000000<ECN_ENABLE>
+	generation id: 2
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+stf0: flags=0<> mtu 1280 index 3
+	eflags=1000000<ECN_ENABLE>
+	generation id: 3
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+anpi0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 4
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	xflags=2000<NOSHAPING>
+	options=400<CHANNEL_IO>
+	ether 00:00:5e:00:53:01
+	netif: 00000000-0000-4000-8000-000000000001
+	media: none
+	status: inactive
+	generation id: 4
+	type: USB Ethernet
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+anpi1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 5
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	xflags=2000<NOSHAPING>
+	options=400<CHANNEL_IO>
+	ether 00:00:5e:00:53:02
+	netif: 00000000-0000-4000-8000-000000000002
+	media: none
+	status: inactive
+	generation id: 5
+	type: USB Ethernet
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+anpi2: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 6
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	xflags=2000<NOSHAPING>
+	options=400<CHANNEL_IO>
+	ether 00:00:5e:00:53:03
+	netif: 00000000-0000-4000-8000-000000000003
+	media: none
+	status: inactive
+	generation id: 6
+	type: USB Ethernet
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en4: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 7
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	options=400<CHANNEL_IO>
+	ether 00:00:5e:00:53:04
+	netif: 00000000-0000-4000-8000-000000000004
+	flowswitch: 00000000-0000-4000-8000-000000000005
+	nd6 options=201<PERFORMNUD,DAD>
+	media: none
+	status: inactive
+	generation id: 7
+	type: USB Ethernet
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 8
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	options=400<CHANNEL_IO>
+	ether 00:00:5e:00:53:05
+	netif: 00000000-0000-4000-8000-000000000006
+	flowswitch: 00000000-0000-4000-8000-000000000007
+	nd6 options=201<PERFORMNUD,DAD>
+	media: none
+	status: inactive
+	generation id: 8
+	type: USB Ethernet
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en6: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 9
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	options=400<CHANNEL_IO>
+	ether 00:00:5e:00:53:06
+	netif: 00000000-0000-4000-8000-000000000008
+	flowswitch: 00000000-0000-4000-8000-000000000009
+	nd6 options=201<PERFORMNUD,DAD>
+	media: none
+	status: inactive
+	generation id: 9
+	type: USB Ethernet
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en1: flags=8963<UP,BROADCAST,SMART,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1500 index 10
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	hwassist=700000<MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:07
+	netif: 00000000-0000-4000-8000-00000000000A
+	media: autoselect <full-duplex>
+	status: inactive
+	generation id: 10
+	type: IP over Thunderbolt
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en2: flags=8963<UP,BROADCAST,SMART,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1500 index 11
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	hwassist=700000<MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:08
+	netif: 00000000-0000-4000-8000-00000000000B
+	media: autoselect <full-duplex>
+	status: inactive
+	generation id: 11
+	type: IP over Thunderbolt
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en3: flags=8963<UP,BROADCAST,SMART,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1500 index 12
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	options=460<TSO4,TSO6,CHANNEL_IO>
+	hwassist=700000<MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:09
+	netif: 00000000-0000-4000-8000-00000000000C
+	media: autoselect <full-duplex>
+	status: inactive
+	generation id: 12
+	type: IP over Thunderbolt
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+ap1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 14
+	eflags=45200080<TXSTART,NOACKPRI,ECN_ENABLE,CHANNEL_DRV,FASTLN_ON>
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	hwassist=703000<CSUM_PARTIAL,CSUM_ZERO_INVERT,MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:0a
+	netif: 00000000-0000-4000-8000-00000000000D
+	flowswitch: 00000000-0000-4000-8000-00000000000E
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+	status: inactive
+	generation id: 14
+	type: Wi-Fi
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL (driver managed)
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 15
+	eflags=45200890<ADV_REPORT,TXSTART,ARPLL,NOACKPRI,ECN_ENABLE,CHANNEL_DRV,FASTLN_ON>
+	xflags=1<WOL>
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	hwassist=703000<CSUM_PARTIAL,CSUM_ZERO_INVERT,MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:0b
+	inet 192.0.2.10 netmask 0xffffff00 broadcast 192.0.2.255
+	netif: 00000000-0000-4000-8000-00000000000F
+	flowswitch: 00000000-0000-4000-8000-000000000010
+	media: autoselect
+	status: active
+	generation id: 15
+	type: Wi-Fi
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	agent domain:WiFiManager type:CallInProgress flags:0x3d desc:"WiFi"
+	link quality: 100 (good)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL (driver managed)
+	uplink rate: 29.15 Mbps [eff] / 97.11 Mbps
+	downlink rate: 29.15 Mbps [eff] / 97.11 Mbps [max]
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+bridge0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 16
+	eflags=41010000<CLONE,ECN_ENABLE,FASTLN_ON>
+	options=63<RXCSUM,TXCSUM,TSO4,TSO6>
+	hwassist=700067<CSUM_IP,CSUM_TCP,CSUM_UDP,CSUM_TCPIPV6,CSUM_UDPIPV6,MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:07
+	Configuration:
+		id 0:0:0:0:0:0 priority 0 hellotime 0 fwddelay 0
+		maxage 0 holdcnt 0 proto stp maxaddr 100 timeout 1200
+		root id 0:0:0:0:0:0 priority 0 ifcost 0 port 0
+		ipfilter disabled flags 0x0
+	member: en1 flags=3<LEARNING,DISCOVER>
+	        ifmaxaddr 0 port 10 priority 0 path cost 0
+	        hostfilter 0 hw: 0:0:0:0:0:0 ip: 0.0.0.0
+	member: en2 flags=3<LEARNING,DISCOVER>
+	        ifmaxaddr 0 port 11 priority 0 path cost 0
+	        hostfilter 0 hw: 0:0:0:0:0:0 ip: 0.0.0.0
+	member: en3 flags=3<LEARNING,DISCOVER>
+	        ifmaxaddr 0 port 12 priority 0 path cost 0
+	        hostfilter 0 hw: 0:0:0:0:0:0 ip: 0.0.0.0
+	nd6 options=201<PERFORMNUD,DAD>
+	media: <unknown type>
+	status: inactive
+	generation id: 16
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+awdl0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 17
+	eflags=453e0080<TXSTART,LOCALNET_PRIVATE,ND6ALT,RESTRICTED_RECV,AWDL,NOACKPRI,ECN_ENABLE,CHANNEL_DRV,FASTLN_ON>
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	hwassist=703000<CSUM_PARTIAL,CSUM_ZERO_INVERT,MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:0c
+	inet6 fe80::1%awdl0 prefixlen 64 scopeid 0x11 
+	netif: 00000000-0000-4000-8000-000000000011
+	flowswitch: 00000000-0000-4000-8000-000000000012
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+	generation id: 17
+	type: Wi-Fi
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	agent domain:com.apple.wifip2pd type:AWDL flags:0x203 desc:"com.apple.wifip2pd AWDL"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	link quality: 100 (good)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL (driver managed)
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+llw0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 18
+	eflags=45200090<ADV_REPORT,TXSTART,NOACKPRI,ECN_ENABLE,CHANNEL_DRV,FASTLN_ON>
+	xflags=400<LOWLAT>
+	options=400<CHANNEL_IO>
+	ether 00:00:5e:00:53:0c
+	inet6 fe80::1%llw0 prefixlen 64 scopeid 0x12 
+	netif: 00000000-0000-4000-8000-000000000013
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+	generation id: 18
+	type: Wi-Fi
+	agent domain:Skywalk type:NetIf flags:0x4c3 desc:"Userspace Networking"
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500 index 19
+	eflags=1002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE>
+	xflags=4<NOAUTONX>
+	inet6 fe80::1%utun0 prefixlen 64 scopeid 0x13 
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 19
+	agent domain:com.apple.rapport type:RapportNetworkAgent flags:0x7c3 desc:"Rapport Network Agent"
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun1: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380 index 20
+	eflags=1002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE>
+	xflags=4<NOAUTONX>
+	inet6 fe80::1%utun1 prefixlen 64 scopeid 0x14 
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 20
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun2: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 2000 index 21
+	eflags=1002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE>
+	xflags=4<NOAUTONX>
+	inet6 fe80::1%utun2 prefixlen 64 scopeid 0x15 
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 21
+	agent domain:ids501 type:clientchannel flags:0xc3 desc:"IDSNexusAgent ids501 : clientchannel"
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1000 index 22
+	eflags=1002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE>
+	xflags=4<NOAUTONX>
+	inet6 fe80::1%utun3 prefixlen 64 scopeid 0x16 
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 22
+	agent domain:ids501 type:transport flags:0x4c3 desc:"IDSTransportAgent ids501 : transport"
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280 index 23
+	eflags=5002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE,CHANNEL_DRV>
+	xflags=10004<NOAUTONX,IS_VPN>
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	hwassist=703000<CSUM_PARTIAL,CSUM_ZERO_INVERT,MULTIPAGES,TSO_V4,TSO_V6>
+	inet6 fe80::1%utun4 prefixlen 64 scopeid 0x17 
+	inet 198.51.100.101 --> 198.51.100.101 netmask 0xffffffff
+	inet6 2001:db8:7a::1 prefixlen 48 
+	netif: 00000000-0000-4000-8000-000000000014
+	flowswitch: 00000000-0000-4000-8000-000000000015
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 23
+	agent domain:Skywalk type:NetIf flags:0x8443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	agent domain:NetworkExtension type:VPN flags:0xf desc:"VPN: Example Mesh"
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	effective interface: en0
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun5: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1300 index 24
+	eflags=5002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE,CHANNEL_DRV>
+	xflags=10004<NOAUTONX,IS_VPN>
+	options=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+	hwassist=703000<CSUM_PARTIAL,CSUM_ZERO_INVERT,MULTIPAGES,TSO_V4,TSO_V6>
+	inet 203.0.113.31 --> 203.0.113.31 netmask 0xffffffff
+	netif: 00000000-0000-4000-8000-000000000016
+	flowswitch: 00000000-0000-4000-8000-000000000017
+	generation id: 30
+	agent domain:Skywalk type:NetIf flags:0x8443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	agent domain:NetworkExtension type:VPN flags:0x3 desc:"VPN: Example WireGuard"
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	effective interface: en0
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun6: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380 index 26
+	eflags=1002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE>
+	xflags=4<NOAUTONX>
+	inet6 fe80::1%utun6 prefixlen 64 scopeid 0x1a 
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 34
+	link quality: -1 (unknown)
+	state availability: 1 (false)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+utun7: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380 index 27
+	eflags=1002080<TXSTART,NOAUTOIPV6LL,ECN_ENABLE>
+	xflags=4<NOAUTONX>
+	inet6 fe80::1%utun7 prefixlen 64 scopeid 0x1b 
+	nd6 options=201<PERFORMNUD,DAD>
+	generation id: 35
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: no mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+vmenet0: flags=8963<UP,BROADCAST,SMART,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1500 index 28
+	eflags=51008080<TXSTART,ROUTER4,ECN_ENABLE,SENDLIST,FASTLN_ON>
+	options=60<TSO4,TSO6>
+	hwassist=700000<MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:0d
+	media: autoselect
+	status: active
+	generation id: 37
+	type: Ethernet
+	link quality: 100 (good)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	link rate: 100.00 Mbps
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: enabled
+	routermode6: disabled
+bridge100: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 29
+	eflags=41010000<CLONE,ECN_ENABLE,FASTLN_ON>
+	options=63<RXCSUM,TXCSUM,TSO4,TSO6>
+	hwassist=700067<CSUM_IP,CSUM_TCP,CSUM_UDP,CSUM_TCPIPV6,CSUM_UDPIPV6,MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:0e
+	inet 198.18.139.3 netmask 0xfffffe00 broadcast 198.18.139.255
+	inet6 fe80::1%bridge100 prefixlen 64 scopeid 0x1d 
+	inet6 2001:db8:7b::1 prefixlen 64 
+	Configuration:
+		id 0:0:0:0:0:0 priority 0 hellotime 0 fwddelay 0
+		maxage 0 holdcnt 0 proto stp maxaddr 100 timeout 1200
+		root id 0:0:0:0:0:0 priority 0 ifcost 0 port 0
+		ipfilter disabled flags 0x0
+	member: vmenet0 flags=10003<LEARNING,DISCOVER,CSUM>
+	        ifmaxaddr 0 port 28 priority 0 path cost 0
+	        hostfilter 0 hw: 0:0:0:0:0:0 ip: 0.0.0.0
+		checksum stats:
+		in: IPv4=3 IPv6=88 UDP=0 TCP=0
+			checksum offloaded: IPv4=3 UDP=0 TCP=0
+		out: IPv4=0 IPv6=0 UDP=0 TCP=0
+			checksum good sw: IPv4=0 UDP=0 TCP=0 hw: IPv4=0 UDP=0 TCP=0
+			checksum bad sw: IPv4=0 UDP=0 TCP=0 hw: IPv4=0 UDP=0 TCP=0
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+	generation id: 38
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	desc: com.apple.NetworkSharing
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+vmenet1: flags=8963<UP,BROADCAST,SMART,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1500 index 30
+	eflags=51008080<TXSTART,ROUTER4,ECN_ENABLE,SENDLIST,FASTLN_ON>
+	options=60<TSO4,TSO6>
+	hwassist=700000<MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:0f
+	media: autoselect
+	status: active
+	generation id: 39
+	type: Ethernet
+	link quality: 100 (good)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	link rate: 100.00 Mbps
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: enabled
+	routermode6: disabled
+bridge101: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 31
+	eflags=41010000<CLONE,ECN_ENABLE,FASTLN_ON>
+	options=63<RXCSUM,TXCSUM,TSO4,TSO6>
+	hwassist=700067<CSUM_IP,CSUM_TCP,CSUM_UDP,CSUM_TCPIPV6,CSUM_UDPIPV6,MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:10
+	inet 198.18.215.0 netmask 0xffffff00 broadcast 198.18.215.255
+	inet6 fe80::1%bridge101 prefixlen 64 scopeid 0x1f 
+	Configuration:
+		id 0:0:0:0:0:0 priority 0 hellotime 0 fwddelay 0
+		maxage 0 holdcnt 0 proto stp maxaddr 100 timeout 1200
+		root id 0:0:0:0:0:0 priority 0 ifcost 0 port 0
+		ipfilter disabled flags 0x0
+	member: vmenet1 flags=10003<LEARNING,DISCOVER,CSUM>
+	        ifmaxaddr 0 port 30 priority 0 path cost 0
+	        hostfilter 0 hw: 0:0:0:0:0:0 ip: 0.0.0.0
+		checksum stats:
+		in: IPv4=0 IPv6=2 UDP=0 TCP=0
+			checksum offloaded: IPv4=0 UDP=0 TCP=0
+		out: IPv4=0 IPv6=0 UDP=0 TCP=0
+			checksum good sw: IPv4=0 UDP=0 TCP=0 hw: IPv4=0 UDP=0 TCP=0
+			checksum bad sw: IPv4=0 UDP=0 TCP=0 hw: IPv4=0 UDP=0 TCP=0
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+	generation id: 40
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	desc: com.apple.NetworkSharing
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+vmenet2: flags=8963<UP,BROADCAST,SMART,RUNNING,PROMISC,SIMPLEX,MULTICAST> mtu 1500 index 32
+	eflags=51008080<TXSTART,ROUTER4,ECN_ENABLE,SENDLIST,FASTLN_ON>
+	options=60<TSO4,TSO6>
+	hwassist=700000<MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:11
+	media: autoselect
+	status: active
+	generation id: 41
+	type: Ethernet
+	link quality: 100 (good)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	link rate: 100.00 Mbps
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: enabled
+	routermode6: disabled
+bridge102: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 33
+	eflags=41010000<CLONE,ECN_ENABLE,FASTLN_ON>
+	options=63<RXCSUM,TXCSUM,TSO4,TSO6>
+	hwassist=700067<CSUM_IP,CSUM_TCP,CSUM_UDP,CSUM_TCPIPV6,CSUM_UDPIPV6,MULTIPAGES,TSO_V4,TSO_V6>
+	ether 00:00:5e:00:53:12
+	inet 198.18.97.0 netmask 0xffffff00 broadcast 198.18.97.255
+	inet6 fe80::1%bridge102 prefixlen 64 scopeid 0x21 
+	Configuration:
+		id 0:0:0:0:0:0 priority 0 hellotime 0 fwddelay 0
+		maxage 0 holdcnt 0 proto stp maxaddr 100 timeout 1200
+		root id 0:0:0:0:0:0 priority 0 ifcost 0 port 0
+		ipfilter disabled flags 0x0
+	member: vmenet2 flags=10003<LEARNING,DISCOVER,CSUM>
+	        ifmaxaddr 0 port 32 priority 0 path cost 0
+	        hostfilter 0 hw: 0:0:0:0:0:0 ip: 0.0.0.0
+		checksum stats:
+		in: IPv4=0 IPv6=1 UDP=0 TCP=0
+			checksum offloaded: IPv4=0 UDP=0 TCP=0
+		out: IPv4=0 IPv6=0 UDP=0 TCP=0
+			checksum good sw: IPv4=0 UDP=0 TCP=0 hw: IPv4=0 UDP=0 TCP=0
+			checksum bad sw: IPv4=0 UDP=0 TCP=0 hw: IPv4=0 UDP=0 TCP=0
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect
+	status: active
+	generation id: 42
+	link quality: -1 (unknown)
+	state availability: 0 (true)
+	desc: com.apple.NetworkSharing
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled
+en7: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500 index 13
+	eflags=41000080<TXSTART,ECN_ENABLE,FASTLN_ON>
+	options=404<VLAN_MTU,CHANNEL_IO>
+	hwassist=20000<VLAN_MTU>
+	ether 00:00:5e:00:53:13
+	netif: 00000000-0000-4000-8000-000000000018
+	flowswitch: 00000000-0000-4000-8000-000000000019
+	nd6 options=201<PERFORMNUD,DAD>
+	media: autoselect (none)
+	status: inactive
+	generation id: 48
+	type: USB Ethernet
+	agent domain:Skywalk type:NetIf flags:0xa443 desc:"Userspace Networking"
+	agent domain:Skywalk type:FlowSwitch flags:0x4403 desc:"Userspace Networking"
+	link quality: -2 (off)
+	state availability: 0 (true)
+	scheduler: FQ_CODEL 
+	qosmarking enabled: yes mode: none
+	low power mode: disabled
+	multi layer packet logging (mpklog): disabled
+	routermode4: disabled
+	routermode6: disabled

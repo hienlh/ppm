@@ -533,12 +533,29 @@ models and serials, link speeds, driver and API versions. On Linux all of it com
 daemon; a field the host cannot measure is omitted rather than sent as `0`, and the UI renders an
 omitted field as an em dash.
 
+On macOS the same rows come from the kernel over `bun:ffi` (`host_statistics64`,
+`proc_pid_rusage`, the SMC, IOReport, CoreWLAN) plus one `ioreg`/`netstat`/`ifconfig` read a tick
+that every collector shares — again no root and no helper binary. The sensor reads are synchronous
+and hold the event loop while they run, so they are budgeted to about 10 ms a tick (SMC ≤ 4.7 ms,
+IOReport ~4 ms, the SSD's NAND sensor once every 10 s); `/api/health` measured p99 18 ms beside a
+full tier every 2 s.
+
 `/api/system/services*` is the Services page: `systemctl list-units` + one bulk `systemctl show`
 per scope (two spawns, not one per unit), with `journalctl -o json` behind the per-unit log. Unit
 actions (start/stop/restart/enable/disable) are separate authenticated routes and are confirmed in
 the UI before they run. `/api/system/app-icon/:id` serves an application's own desktop-entry icon;
 it accepts `?token=` because an `<img>` cannot send an `Authorization` header, and it is safe to
 widen to because it takes an app id, never a path.
+
+On macOS the same routes talk to launchd instead: `launchctl print system`, `gui/<uid>` and
+`user/<uid>` (one spawn per domain — the user's jobs live in two, the GUI session's and the
+background one's), with the job's own stdout/stderr files — or, for a job that has none, the
+unified log since its process started (since boot when it is not running) — behind the per-job
+log. PPM's own job, every `com.apple.*` job and the whole system domain (which needs root) refuse
+the actions that would hurt, through the same function that greys out the buttons, and an app's
+own per-launch `application.*` job refuses every action. An app there is an application
+bundle, and its icon is the bundle's `.icns` converted by `sips` into a 64 px PNG under
+`<ppm dir>/app-icons/` — once per icon file, since the PNG is named after the icon's mtime.
 
 Each Linux process row also carries its swapped memory (`VmSwap` from `/proc/<pid>/status`) and a
 `unitKey` of `"<scope>:<unit>"` read from `/proc/<pid>/cgroup` — about 4.5 ms per full tick for 560

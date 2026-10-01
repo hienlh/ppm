@@ -7,7 +7,7 @@
  * are different units with very different consequences, and a flat list gives no
  * way to tell them apart.
  */
-import type { ServiceInfo, ServiceScope } from "../../../../types/system-services";
+import type { ServiceInfo, ServiceManager, ServiceScope } from "../../../../types/system-services";
 
 export type ServiceFilter = "all" | "running" | "failed" | "enabled";
 
@@ -80,10 +80,22 @@ export function serviceTone(service: ServiceInfo): ServiceTone {
   return "idle";
 }
 
-/** What the row says under the unit name when there is no description. */
+/** What the row says under the unit name when there is no description. launchd
+ *  leaves `subState` empty while a job runs, which is no reason to print "()". */
 export function serviceStatusText(service: ServiceInfo): string {
-  const state = `${service.activeState} (${service.subState})`;
+  const state = service.subState ? `${service.activeState} (${service.subState})` : service.activeState;
   return service.unitFileState ? `${state} · ${service.unitFileState}` : state;
+}
+
+/**
+ * The badge beside the name marks the state that is the exception. Most systemd
+ * units are static and only some are enabled, so "enabled" is worth saying. Every
+ * launchd job is enabled until something disables it — 414 of the 415 this Mac
+ * lists for its user — so there it is "disabled" that stands out.
+ */
+export function enablementBadge(service: ServiceInfo, manager: ServiceManager): "enabled" | "disabled" | null {
+  if (manager === "launchd") return service.enabled ? null : "disabled";
+  return service.enabled ? "enabled" : null;
 }
 
 /** True when every action is refused, so the row's menu is offered at all. */

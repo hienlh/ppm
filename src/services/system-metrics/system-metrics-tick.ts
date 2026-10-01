@@ -111,7 +111,7 @@ export async function assembleTick(
       nextState.net = counters.net;
     }
     system.gpus = await deps.gpus.collect();
-    collectDevices(system, nextState, deps, warnings);
+    await collectDevices(system, nextState, deps, warnings);
 
     if (collection) {
       const built = buildProcessRows({
@@ -186,18 +186,19 @@ export function projectLight(full: MetricsSnapshot): MetricsSnapshot {
   };
 }
 
-/** Per-device figures are best-effort: a `/sys` read failing must cost the drive
- *  and interface lists, never the whole snapshot. The baseline is only advanced
- *  when the call returned, so a failed tick re-measures from the last good one. */
-function collectDevices(
+/** Per-device figures are best-effort: a `/sys` read or a tool failing must cost
+ *  the drive and interface lists, never the whole snapshot. The baseline is only
+ *  advanced when the call returned, so a failed tick re-measures from the last
+ *  good one. */
+async function collectDevices(
   system: SystemMetrics,
   nextState: TickDeltaState,
   deps: TickDeps,
   warnings: string[],
-): void {
+): Promise<void> {
   if (!deps.devices) return;
   try {
-    const collected = deps.devices(nextState.devices);
+    const collected = await deps.devices(nextState.devices);
     system.disks = collected.disks;
     system.nics = collected.nics;
     if (collected.fans.length > 0) system.fans = collected.fans;

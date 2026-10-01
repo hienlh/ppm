@@ -40,12 +40,17 @@ export interface MemoryMetrics {
   availableMB: number;
   /** usedMB / totalMB × 100. */
   percent: number;
-  /** Mission Center's composition bar, in BYTES. The four add up to the total, so
-   *  the bar needs no normalisation. Absent on a host with no /proc/meminfo. */
+  /** Mission Center's composition bar, in BYTES. On Linux the four add up to the
+   *  total. On darwin there is no `modifiedBytes` and the other three add up to
+   *  about the USABLE memory — the few hundred MB the firmware reserves are in
+   *  no page state — so the bar draws them against their own sum. Absent on a
+   *  host that publishes no page counts (Windows). */
   inUseBytes?: number;
-  /** Written-to pages not yet on disk (Dirty + Writeback). */
+  /** Written-to pages not yet on disk (Dirty + Writeback). Linux only: macOS
+   *  publishes no dirty-page count, and 0 would be a claim. */
   modifiedBytes?: number;
-  /** Reclaimable: page cache, buffers and reclaimable slab. */
+  /** Reclaimable: page cache, buffers and reclaimable slab. On darwin, Activity
+   *  Monitor's "Cached Files" (file-backed + purgeable pages). */
   standbyBytes?: number;
   freeBytes?: number;
   cachedMB?: number;
@@ -54,7 +59,8 @@ export interface MemoryMetrics {
   commitLimitMB?: number;
   swapTotalMB?: number;
   swapUsedMB?: number;
-  /** zram, summed across every device. `compressedMB` is what the compressed
+  /** zram, summed across every device — or on darwin the memory compressor, which
+   *  is the same idea built into the kernel. `compressedMB` is what the compressed
    *  pages occupy; `savingsMB` is what they would have occupied uncompressed
    *  minus that, i.e. the RAM the compression bought back. Both absent on a host
    *  with no zram — which is not the same as a host whose zram is empty. */
@@ -65,7 +71,8 @@ export interface MemoryMetrics {
 /** One fan, plus the temperature its chip reports beside it — Mission Center's
  *  Fan page. Small and few, so the labels ride the tick rather than the inventory. */
 export interface FanMetrics {
-  /** Stable across ticks: "<hwmon name>/fan<N>", e.g. "it8689/fan1". */
+  /** Stable across ticks: "<hwmon name>/fan<N>", e.g. "it8689/fan1", or
+   *  "smc/fan<N>" on a Mac. */
   id: string;
   /** The chip's own label when it has one, else "Fan N". */
   label: string;
@@ -75,6 +82,9 @@ export interface FanMetrics {
   /** The chip's temperature sensor with the same index, °C. */
   tempC?: number;
   tempName?: string;
+  /** The speeds the fan controller keeps it between (a Mac's SMC). */
+  minRpm?: number;
+  maxRpm?: number;
 }
 
 /** Whole-machine throughput, bytes/second over the last tick. */
@@ -138,6 +148,10 @@ export interface GpuInfo {
   pcieMaxLanes?: number;
   /** One combined video engine (Intel VCS): the UI shows "Video encode/decode". */
   encodeDecodeShared?: boolean;
+  /** GPU cores, as the driver counts them (Apple GPUs: 32 on an M1 Max). */
+  coreCount?: number;
+  /** Highest Metal the GPU supports, "Metal 3". macOS only. */
+  metalVersion?: string;
 }
 
 export interface SystemMetrics {
@@ -226,8 +240,10 @@ export interface ProcessInfo {
   swapMB?: number;
   /** `"<scope>:<unit>"` — the Services row this pid belongs to, read from its
    *  cgroup ("system:sshd.service"). The scope is part of the key because
-   *  `dbus-broker.service` exists in BOTH on an ordinary desktop. Absent on a
-   *  host with no systemd, for a pid in no unit, and for another user's units.
+   *  `dbus-broker.service` exists in BOTH on an ordinary desktop. On macOS the
+   *  launchd job whose process this is or descends from ("user:com.example.agent"),
+   *  known only while the Services page is polling. Absent on a host with neither
+   *  manager, for a pid in no unit or job, and for another user's units.
    *  The Services page's live figures are summed over it. */
   unitKey?: string;
   /** Epoch ms UTC; 0 when unknown. Identity guard for CPU deltas, grouping and kill. */
@@ -289,6 +305,10 @@ export interface ProcessGroup {
 export interface ProcessColumnAvailability {
   disk: boolean;
   gpu: boolean;
+  /** False where the GPU column has no per-process memory to pair with its
+   *  percentage — macOS, whose GPU shares RAM and reports nobody's share of it —
+   *  so the cell shows the percentage alone. Absent = it has one. */
+  gpuMemory?: boolean;
   net: boolean;
   /** Linux only so far: `VmSwap` in `/proc/<pid>/status`. */
   swap: boolean;
@@ -396,15 +416,19 @@ export interface ProcessDetails {
   cgroup: string | null;
 }
 
-/** A running desktop application — Mission Center's "Apps" section. Linux only:
- *  identified from the user's app cgroups and `.desktop` Exec matching. */
+/** A running desktop application — Mission Center's "Apps" section. On Linux it is
+ *  found from the user's app cgroups and `.desktop` Exec matching; on macOS it is
+ *  the application bundle a process runs from. */
 export interface AppInfo {
-  /** Desktop file id without `.desktop`: "org.kde.konsole". Stable across ticks. */
+  /** Stable across ticks. Linux: the desktop file id without `.desktop`
+   *  ("org.kde.konsole"). macOS: CFBundleIdentifier ("com.google.Chrome"). */
   id: string;
-  /** The entry's unlocalised `Name=`. */
+  /** Linux: the entry's unlocalised `Name=`. macOS: CFBundleDisplayName, else
+   *  CFBundleName, else the bundle's folder name. */
   name: string;
-  /** The entry's `Icon=`: a theme icon name or an absolute path; resolved to an
-   *  image by `/api/system/app-icon`. Null when the entry has none. */
+  /** Linux: the entry's `Icon=`, a theme icon name or an absolute path. macOS: the
+   *  bundle's icon file name ("AppIcon.icns"). Either way `/api/system/app-icon`
+   *  resolves it to an image; null when the app declares none. */
   icon: string | null;
   /** Primary pids: app pids whose parent is not also one of this app's pids. Each
    *  stands for its whole subtree, which is what an app row's figures sum over. */

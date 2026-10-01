@@ -3,7 +3,7 @@ import { formatBps, formatBytes } from "@/lib/format-bytes";
 import { CHART_COLORS, DetailChart, DetailHeader, Stat, StatGrid, useSeries } from "./detail-parts";
 import { NIC_KIND_LABELS } from "./device-list";
 import type { NicInfo } from "../../../../types/system-hardware";
-import type { MetricsHistoryPoint, NicMetrics, NicState } from "../../../../types/system-metrics";
+import type { MetricsHistoryPoint, MetricsPlatform, NicMetrics, NicState } from "../../../../types/system-metrics";
 
 const STATE_LABELS: Record<NicState, string> = {
   connected: "Connected",
@@ -14,8 +14,8 @@ const STATE_LABELS: Record<NicState, string> = {
 };
 
 export function NicDetail({
-  nic, info, history,
-}: { nic: NicMetrics; info?: NicInfo; history: readonly MetricsHistoryPoint[] }) {
+  nic, info, history, platform,
+}: { nic: NicMetrics; info?: NicInfo; history: readonly MetricsHistoryPoint[]; platform?: MetricsPlatform }) {
   const pick = (p: MetricsHistoryPoint) => p.system.nics?.find((n) => n.id === nic.id);
   const rx = useSeries(history, (p) => pick(p)?.rxBps);
   const tx = useSeries(history, (p) => pick(p)?.txBps);
@@ -45,7 +45,9 @@ export function NicDetail({
         <Stat label="Signal" value={nic.signalPercent === undefined ? undefined : `${nic.signalPercent}%`} />
         <Stat label="Frequency" value={nic.frequencyMHz === undefined ? undefined
           : `${(nic.frequencyMHz / 1000).toFixed(1)} GHz`} />
-        <Stat label="Driver" value={info?.driver} />
+        {/* A Mac's network drivers are IOKit classes nobody would recognise, so
+            none is reported — and a permanent dash would claim a failed read. */}
+        {platform !== "darwin" && <Stat label="Driver" value={info?.driver} />}
         <Stat label="Hardware address" value={info?.mac} />
         <Stat label="IPv4" value={info?.ipv4.join(", ")} title={info?.ipv4.join("\n")} />
         <Stat label="IPv6" value={info?.ipv6.join(", ")} title={info?.ipv6.join("\n")} />

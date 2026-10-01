@@ -1,0 +1,136 @@
+gui/501 = {
+	type = login
+	handle = 100003
+	active count = 445
+	service count = 444
+	active service count = 166
+	creator = loginwindow[169]
+	creator euid = 0
+	session = Aqua
+	endpoint destination = com.apple.xpc.launchd.domain.user.501
+	auxiliary bootstrapper = com.apple.xpc.otherbsd (complete)
+	security context = {
+		uid = 501
+		asid = 100003
+	}
+
+	bringup time = 74 ms
+	death port = 0x11823
+
+	environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.AAAAAAAAAA/Listeners
+	}
+
+	services = {
+		   52063   (pe) 	com.apple.syncdefaultsd
+		   60006   (pe) 	com.apple.assistantd
+		       0      - 	com.apple.DataDetectorsLocalSources
+		       0      - 	com.apple.unmountassistant.useragent
+		   30847   (pe) 	com.apple.mlhostd
+		       0      - 	com.apple.SafariHistoryServiceAgent
+		       0      - 	com.apple.preference.displays.MirrorDisplays
+		       0      - 	com.apple.sidecar-display-agent
+		     470      - 	com.apple.chronod
+		       0   (pe) 	com.apple.contacts.donation-agent
+		     593      - 	com.apple.accessibility.heard
+		     495      - 	com.apple.siriinferenced
+		     594      - 	com.apple.corespeechd
+		       0      - 	com.apple.AutoFillPanel
+		   80195   (jt) 	com.apple.peopled
+		       0      - 	com.apple.ServicesUIAgent
+		       0   (pe) 	com.apple.progressd
+		       0      - 	com.apple.IOUIAgent
+		       0   (pe) 	com.apple.geoanalyticsd
+		       0      - 	com.apple.webkit.webpushd
+		       0   (pe) 	com.apple.weatherd
+		   84887   (pe) 	com.apple.synapse.contentlinkingd
+		       0   (pe) 	com.apple.XprotectFramework.PluginService
+		     444      - 	com.apple.neagent.00000000-0000-4000-8000-00000000002C
+		       0   (pe) 	com.apple.cloudphotod
+		       0      - 	com.apple.ctkbind
+		       0   (pe) 	com.apple.studentd
+		       0   (pe) 	com.apple.replicatord
+		       0      - 	com.apple.mediastream.mstreamd
+		       0      - 	com.apple.AMPSystemPlayerAgent
+		       0      - 	com.apple.FollowUpUI
+		     656      - 	com.apple.videoconference.camera
+		       0   (pe) 	com.apple.itunescloudd
+		       0      - 	com.apple.previewshellapp
+		   25253   (pe) 	com.apple.keyboardservicesd
+		   84448   (pe) 	com.apple.cache_delete
+		       0      - 	com.apple.scrod
+		    8704   (pe) 	com.apple.MENotificationService
+		   60779   (pe) 	com.apple.accountsd
+		       0   (pe) 	com.apple.cdpd
+		       0      0 	com.example.updater.agent
+		    1812      - 	com.example.sync-helper
+		       0     -9 	com.example.crashy-agent
+		       0     78 	org.example.failing-job
+		    2201      - 	application.com.example.editor.12345678.12345684
+		    2388      - 	application.com.example.browser.23456789.23456795
+		   98871      - 	com.hienlh.ppm
+	}
+
+	unmanaged processes = {
+		com.apple.xpc.launchd.unmanaged.com.apple.appki.37529 = {
+			active count = 4
+			dynamic endpoints = {
+			}
+			pid-local endpoints = {
+				"com.apple.coredrag" = {
+					port = 0xb1107
+					active = 1
+					managed = 0
+					reset = 0
+					hide = 0
+					watching = 0
+				}
+				"com.apple.tsm.portname" = {
+					port = 0xf9863
+					active = 1
+					managed = 0
+					reset = 0
+					hide = 0
+					watching = 0
+				}
+				"com.apple.axserver" = {
+					port = 0xbf20f
+					active = 1
+					managed = 0
+					reset = 0
+					hide = 0
+					watching = 0
+				}
+			}
+		}
+	}
+
+	endpoints = {
+	}
+
+	externally-hosted endpoints = {
+		 0xe1903    M   D   com.apple.BKAgentService
+		       0    M   D   com.apple.SpeechRecognitionCore.brokerd
+		 0x7ed03    M   A   com.apple.siri.location
+		 0x56603    M   A   com.apple.assistant.flow_service
+		 0x815c3    M   A   com.apple.private.alloy.willow.stream-idswake
+		 0xa1103    M   A   com.apple.coreservices.lsuseractivityadministration.xpc
+	}
+
+	task-special ports = {
+			 0x1cc03 4       bootstrap  com.apple.xpc.launchd.user.domain.501.100003.Aqua
+			  0x2603 9          access  (unknown)
+	}
+
+	disabled services = {
+		"com.example.updater.agent" => disabled
+		"com.example.sync-helper" => enabled
+		"com.apple.ManagedClientAgent.enrollagent" => disabled
+		"com.apple.Siri.agent" => disabled
+		"com.apple.FolderActionsDispatcher" => disabled
+		"com.apple.appleseed.seedusaged.postinstall" => disabled
+		"com.apple.ScriptMenuApp" => disabled
+	}
+
+	properties = gui | gui login
+}

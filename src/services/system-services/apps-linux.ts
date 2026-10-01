@@ -62,6 +62,9 @@ export interface AppProcess {
   pid: number;
   ppid: number;
   name: string;
+  /** The executable's absolute path, where the process collector has it. macOS finds
+   *  a process's app bundle from it (apps-darwin.ts); Linux reads cgroups instead. */
+  exePath?: string;
 }
 
 export interface CollectAppsInput {

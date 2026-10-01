@@ -1,0 +1,62 @@
+{
+  "SPDisplaysDataType": [
+    {
+      "_name": "Apple M1 Max",
+      "spdisplays_mtlgpufamilysupport": "spdisplays_metal3",
+      "spdisplays_ndrvs": [
+        {
+          "_name": "Color LCD",
+          "_spdisplays_display-product-id": "a050",
+          "_spdisplays_display-vendor-id": "610",
+          "_spdisplays_display-week": "0",
+          "_spdisplays_display-year": "0",
+          "_spdisplays_displayID": "1",
+          "_spdisplays_pixels": "3456 x 2234",
+          "_spdisplays_resolution": "1728 x 1117 @ 120.00Hz",
+          "spdisplays_ambient_brightness": "spdisplays_no",
+          "spdisplays_connection_type": "spdisplays_internal",
+          "spdisplays_display_type": "spdisplays_built-in-liquid-retina-xdr",
+          "spdisplays_main": "spdisplays_yes",
+          "spdisplays_mirror": "spdisplays_off",
+          "spdisplays_online": "spdisplays_yes",
+          "spdisplays_pixelresolution": "spdisplays_3456x2234Retina"
+        },
+        {
+          "_name": "Example Monitor 1",
+          "_spdisplays_display-product-id": "c212",
+          "_spdisplays_display-vendor-id": "410c",
+          "_spdisplays_display-week": "16",
+          "_spdisplays_display-year": "2022",
+          "_spdisplays_displayID": "2",
+          "_spdisplays_pixels": "1920 x 1080",
+          "_spdisplays_resolution": "1920 x 1080 @ 75.00Hz",
+          "spdisplays_mirror": "spdisplays_off",
+          "spdisplays_online": "spdisplays_yes",
+          "spdisplays_pixelresolution": "spdisplays_1080p",
+          "spdisplays_resolution": "1920 x 1080 @ 75.00Hz",
+          "spdisplays_rotation": "spdisplays_supported"
+        },
+        {
+          "_name": "Example Monitor 2",
+          "_spdisplays_display-product-id": "c212",
+          "_spdisplays_display-vendor-id": "410c",
+          "_spdisplays_display-week": "16",
+          "_spdisplays_display-year": "2022",
+          "_spdisplays_displayID": "5",
+          "_spdisplays_pixels": "1920 x 1080",
+          "_spdisplays_resolution": "1920 x 1080 @ 75.00Hz",
+          "spdisplays_mirror": "spdisplays_off",
+          "spdisplays_online": "spdisplays_yes",
+          "spdisplays_pixelresolution": "spdisplays_1080p",
+          "spdisplays_resolution": "1920 x 1080 @ 75.00Hz",
+          "spdisplays_rotation": "spdisplays_supported"
+        }
+      ],
+      "spdisplays_vendor": "sppci_vendor_Apple",
+      "sppci_bus": "spdisplays_builtin",
+      "sppci_cores": "32",
+      "sppci_device_type": "spdisplays_gpu",
+      "sppci_model": "Apple M1 Max"
+    }
+  ]
+}

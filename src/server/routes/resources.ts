@@ -43,9 +43,9 @@ export function createResourceRoutes(
   routes.get("/hardware", async (c) => c.json(ok(await hardware())));
 
   // The request names an APP, never a path: the only file this can serve is one
-  // this host's own desktop entry pointed at, resolved server-side.
+  // that app's own metadata pointed at, resolved server-side.
   routes.get("/app-icon/:id", async (c) => {
-    const iconPath = appIcons.path(c.req.param("id") ?? "");
+    const iconPath = await appIcons.path(c.req.param("id") ?? "");
     if (!iconPath) return c.json(err("No icon for that app"), 404);
     const file = Bun.file(iconPath);
     if (!(await file.exists())) return c.json(err("No icon for that app"), 404);

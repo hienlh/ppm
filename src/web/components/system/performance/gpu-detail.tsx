@@ -8,7 +8,7 @@ import { formatTemp } from "@/lib/temperature";
 import { useSettingsStore } from "@/stores/settings-store";
 import { CHART_COLORS, DetailChart, DetailHeader, Stat, StatGrid, useSeries } from "./detail-parts";
 import type { GpuInfo } from "../../../../types/system-metrics";
-import type { GpuMetrics, MetricsHistoryPoint } from "../../../../types/system-metrics";
+import type { GpuMetrics, MetricsHistoryPoint, MetricsPlatform } from "../../../../types/system-metrics";
 
 function pcie(gen: number | undefined, lanes: number | undefined): string | undefined {
   if (gen === undefined && lanes === undefined) return undefined;
@@ -16,9 +16,16 @@ function pcie(gen: number | undefined, lanes: number | undefined): string | unde
 }
 
 export function GpuDetail({
-  gpu, info, index, history,
-}: { gpu: GpuMetrics; info?: GpuInfo; index: number; history: readonly MetricsHistoryPoint[] }) {
+  gpu, info, index, history, platform,
+}: {
+  gpu: GpuMetrics; info?: GpuInfo; index: number; history: readonly MetricsHistoryPoint[]; platform?: MetricsPlatform;
+}) {
   const tempUnit = useSettingsStore((s) => s.sysmonTempUnit);
+  // A Mac's GPU has no media-engine counters, no memory clock of its own, no PCI
+  // address on Apple Silicon, and no OpenGL or Vulkan version worth stating (OpenGL
+  // is frozen at 4.1, Vulkan is not native): those rows are left out, and the two
+  // facts macOS does state — core count and Metal — take their place.
+  const mac = platform === "darwin";
   const pick = (p: MetricsHistoryPoint) =>
     p.system.gpus.find((g) => (gpu.id ? g.id === gpu.id : g.name === gpu.name));
   const util = useSeries(history, (p) => pick(p)?.utilPercent);
@@ -83,33 +90,45 @@ export function GpuDetail({
       )}
 
       <StatGrid>
-        <Stat label="Video memory" value={hasVram
-          ? `${formatRam(gpu.vramUsedMB)} / ${formatRam(gpu.vramTotalMB)}` : undefined} />
+        {(!mac || hasVram) && (
+          <Stat label="Video memory" value={hasVram
+            ? `${formatRam(gpu.vramUsedMB)} / ${formatRam(gpu.vramTotalMB)}` : undefined} />
+        )}
         <Stat label={hasVram ? "Shared memory" : "Memory usage"} value={gpu.sharedTotalMB === undefined ? undefined
           : `${formatRam(gpu.sharedUsedMB ?? 0)} / ${formatRam(gpu.sharedTotalMB)}`} />
-        <Stat
-          label={videoShared ? "Video encode/decode" : "Video encode"}
-          value={gpu.encodePercent === undefined ? undefined : `${gpu.encodePercent.toFixed(0)}%`}
-        />
-        {!videoShared && (
+        {!mac && (
+          <Stat
+            label={videoShared ? "Video encode/decode" : "Video encode"}
+            value={gpu.encodePercent === undefined ? undefined : `${gpu.encodePercent.toFixed(0)}%`}
+          />
+        )}
+        {!mac && !videoShared && (
           <Stat label="Video decode" value={gpu.decodePercent === undefined ? undefined
             : `${gpu.decodePercent.toFixed(0)}%`} />
         )}
         <Stat label="Clock" value={gpu.clockMHz === undefined ? undefined
           : `${gpu.clockMHz} MHz${gpu.clockMaxMHz ? ` / ${gpu.clockMaxMHz}` : ""}`} />
-        <Stat label="Memory clock" value={gpu.memClockMHz === undefined ? undefined
-          : `${gpu.memClockMHz} MHz${gpu.memClockMaxMHz ? ` / ${gpu.memClockMaxMHz}` : ""}`} />
+        {!mac && (
+          <Stat label="Memory clock" value={gpu.memClockMHz === undefined ? undefined
+            : `${gpu.memClockMHz} MHz${gpu.memClockMaxMHz ? ` / ${gpu.memClockMaxMHz}` : ""}`} />
+        )}
         <Stat label="Power" value={gpu.powerW === undefined ? undefined
           : `${gpu.powerW.toFixed(1)} W${gpu.powerMaxW ? ` / ${gpu.powerMaxW}` : ""}`} />
         <Stat label="Temperature" value={formatTemp(gpu.tempC, tempUnit)} />
+        {mac && <Stat label="GPU cores" value={info?.coreCount?.toString()} />}
         <Stat label="Vendor" value={info?.vendor} />
         <Stat label="Driver" value={info?.driver === undefined ? undefined
           : [info.driver, info.driverVersion].filter(Boolean).join(" ")} />
-        <Stat label="OpenGL" value={info?.openglVersion} />
-        <Stat label="Vulkan" value={info?.vulkanVersion} />
-        <Stat label="PCI bus address" value={gpu.id} />
-        <Stat label="PCIe link" value={pcie(info?.pcieGen, info?.pcieLanes)} />
-        <Stat label="PCIe maximum" value={pcie(info?.pcieMaxGen, info?.pcieMaxLanes)} />
+        {mac && <Stat label="Metal" value={info?.metalVersion} />}
+        {!mac && (
+          <>
+            <Stat label="OpenGL" value={info?.openglVersion} />
+            <Stat label="Vulkan" value={info?.vulkanVersion} />
+            <Stat label="PCI bus address" value={gpu.id} />
+            <Stat label="PCIe link" value={pcie(info?.pcieGen, info?.pcieLanes)} />
+            <Stat label="PCIe maximum" value={pcie(info?.pcieMaxGen, info?.pcieMaxLanes)} />
+          </>
+        )}
       </StatGrid>
     </div>
   );

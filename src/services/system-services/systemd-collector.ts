@@ -107,6 +107,7 @@ export async function collectServices(deps: SystemdDeps): Promise<ServicesSnapsh
     // Either manager answering is enough: a container commonly has the system
     // one and no user session, and a headless server the other way round.
     supported: listings.some((l) => l.ok),
+    manager: "systemd",
     services: listings.flatMap((l) => l.services),
     warnings: listings.flatMap((l) => l.warnings),
   };

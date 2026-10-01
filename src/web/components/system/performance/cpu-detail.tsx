@@ -22,7 +22,7 @@ import {
 import { CpuCoreGrid } from "./cpu-core-grid";
 import { CHART_COLORS, DetailChart, DetailHeader, Stat, StatGrid, useSeries } from "./detail-parts";
 import type { CpuInfo } from "../../../../types/system-hardware";
-import type { CpuMetrics, MetricsHistoryPoint } from "../../../../types/system-metrics";
+import type { CpuMetrics, MetricsHistoryPoint, MetricsPlatform } from "../../../../types/system-metrics";
 
 function uptime(seconds: number | undefined): string | undefined {
   if (seconds === undefined) return undefined;
@@ -34,13 +34,21 @@ function uptime(seconds: number | undefined): string | undefined {
 
 const GHZ = (mhz: number | undefined) => (mhz === undefined ? undefined : `${(mhz / 1000).toFixed(2)} GHz`);
 
+/** "10 (8P + 2E)" on a part with two kinds of core, the plain count otherwise. */
+function cores(info: CpuInfo | undefined): string | undefined {
+  if (info === undefined) return undefined;
+  const { physicalCores, performanceCores: p, efficiencyCores: e } = info;
+  return p !== undefined && e !== undefined ? `${physicalCores} (${p}P + ${e}E)` : String(physicalCores);
+}
+
 export function CpuDetail({
-  cpu, info, history, processCount,
+  cpu, info, history, processCount, platform,
 }: {
   cpu: CpuMetrics;
   info?: CpuInfo;
   history: readonly MetricsHistoryPoint[];
   processCount?: number;
+  platform?: MetricsPlatform;
 }) {
   const tempUnit = useSettingsStore((s) => s.sysmonTempUnit);
   const kernelTimes = useSettingsStore((s) => s.sysmonKernelTimes);
@@ -62,6 +70,13 @@ export function CpuDetail({
   const hasKernel = kernelTimes && cpu.kernelPercent !== undefined;
   const span = historySpanLabel(history.map((p) => p.ts));
   const caption = (what: string) => (span ? `${what} ${span}` : what);
+
+  // macOS has no cpufreq driver, governor or energy-performance preference, and
+  // Apple Silicon has no base clock and no L3 the kernel reports, while an Intel
+  // Mac reports both — so there an absent value means the part has none. An em
+  // dash would claim "could not be measured" about something that is not there.
+  const mac = platform === "darwin";
+  const shown = (value: unknown) => !mac || value !== undefined;
 
   // One pass over the window for every thread at once, shared by the overlaid and
   // the stacked mode. Stacked divides by the thread count so the stack's top edge
@@ -196,7 +211,7 @@ export function CpuDetail({
 
       <StatGrid>
         <Stat label="Speed" value={GHZ(cpu.currentMHz)} />
-        <Stat label="Base speed" value={GHZ(info?.baseMHz)} />
+        {shown(info?.baseMHz) && <Stat label="Base speed" value={GHZ(info?.baseMHz)} />}
         <Stat label="Max speed" value={GHZ(info?.maxMHz)} />
         <Stat label="Temperature" value={formatTemp(cpu.tempC, tempUnit)} />
         <Stat label="Power" value={cpu.powerW === undefined ? undefined : `${cpu.powerW.toFixed(1)} W`} />
@@ -205,15 +220,21 @@ export function CpuDetail({
         <Stat label="Open handles" value={cpu.handleCount} />
         <Stat label="Up time" value={uptime(cpu.uptimeSec)} />
         <Stat label="Sockets" value={info?.sockets} />
-        <Stat label="Cores" value={info?.physicalCores} />
+        <Stat label="Cores" value={cores(info)} />
         <Stat label="Logical processors" value={info?.logicalCores ?? cpu.cores.length} />
         <Stat label="Virtualisation" value={info?.isVirtualMachine ? "Running in a VM" : info?.virtualization} />
         <Stat label="L1 cache" value={info?.l1CacheBytes === undefined ? undefined : formatBytes(info.l1CacheBytes)} />
         <Stat label="L2 cache" value={info?.l2CacheBytes === undefined ? undefined : formatBytes(info.l2CacheBytes)} />
-        <Stat label="L3 cache" value={info?.l3CacheBytes === undefined ? undefined : formatBytes(info.l3CacheBytes)} />
-        <Stat label="Cpufreq driver" value={info?.freqDriver} />
-        <Stat label="Governor" value={info?.freqGovernor} />
-        <Stat label="Power preference" value={info?.powerPreference} />
+        {shown(info?.l3CacheBytes) && (
+          <Stat label="L3 cache" value={info?.l3CacheBytes === undefined ? undefined : formatBytes(info.l3CacheBytes)} />
+        )}
+        {!mac && (
+          <>
+            <Stat label="Cpufreq driver" value={info?.freqDriver} />
+            <Stat label="Governor" value={info?.freqGovernor} />
+            <Stat label="Power preference" value={info?.powerPreference} />
+          </>
+        )}
       </StatGrid>
     </div>
   );

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   shapeServices, compareServices, matchesFilter, matchesQuery, serviceCounts,
-  serviceTone, serviceStatusText, hasAnyAction,
+  serviceTone, serviceStatusText, hasAnyAction, enablementBadge,
 } from "../../../src/web/components/system/services/service-rows";
 import type { ServiceInfo } from "../../../src/types/system-services";
 import { SERVICE_ACTIONS } from "../../../src/types/system-services";
@@ -89,6 +89,20 @@ describe("row presentation", () => {
   test("the status line names both systemd states and the unit-file one", () => {
     expect(serviceStatusText(svc("a.service", RUNNING))).toBe("active (running) · disabled");
     expect(serviceStatusText(svc("a.service", { unitFileState: null }))).toBe("inactive (dead)");
+  });
+
+  test("a launchd job's line: no empty brackets while it runs, and its last exit when it does not", () => {
+    expect(serviceStatusText(svc("com.example.agent", { activeState: "running", subState: "", unitFileState: null })))
+      .toBe("running");
+    expect(serviceStatusText(svc("com.example.agent", { activeState: "not running", subState: "exit code 78" })))
+      .toBe("not running (exit code 78) · disabled");
+  });
+
+  test("the badge marks whichever state is the exception for the manager", () => {
+    const on = svc("a", { enabled: true });
+    const off = svc("a", { enabled: false });
+    expect([enablementBadge(on, "systemd"), enablementBadge(off, "systemd")]).toEqual(["enabled", null]);
+    expect([enablementBadge(on, "launchd"), enablementBadge(off, "launchd")]).toEqual([null, "disabled"]);
   });
 
   test("a unit with every action refused offers no menu at all", () => {

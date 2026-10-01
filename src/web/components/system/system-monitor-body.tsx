@@ -191,6 +191,7 @@ export const SystemMonitorBody = memo(function SystemMonitorBody({
               history={history}
               device={device}
               onDeviceChange={setDevice}
+              platform={latest.platform}
             />
           ) : tab === "apps" ? (
             <AppsPanel snapshot={latest} />
