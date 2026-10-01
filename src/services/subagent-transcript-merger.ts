@@ -15,11 +15,11 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ChatEvent } from "../types/chat.ts";
 import { parseSessionMessage } from "./jsonl-transcript-parser.ts";
 import { groupSubagentsByCard } from "./team-member-activity/subagent-transcript-index.ts";
+import { claudeProjectsRoot } from "./agent-transcript/claude-projects-root.ts";
 
 /**
  * Locate the per-session directory (…/projects/<slug>/<sessionId>) that holds
@@ -29,8 +29,7 @@ import { groupSubagentsByCard } from "./team-member-activity/subagent-transcript
  * the session's main JSONL.
  */
 export function resolveSessionDir(sessionId: string, projectPath: string | null | undefined): string | null {
-  const home = homedir();
-  const projectsRoot = join(home, ".claude", "projects");
+  const projectsRoot = claudeProjectsRoot();
   if (projectPath) {
     const encoded = projectPath.replace(/[/\\:.]/g, "-");
     const dir = join(projectsRoot, encoded);
@@ -67,16 +66,28 @@ export interface TimedChatEvent {
  * Incremental parser for one agent transcript. Feed it JSONL lines in file
  * order (whole file at once, or a live tail's new lines) and it returns the
  * child events those lines carry, keeping the skip/limit state across calls.
+ *
+ * `midFile: true` disables the first-user-record skip: a subscriber resuming
+ * a session hub mid-file (e.g. a SendMessage resume prompt lands well after the
+ * spawn prompt) must see every user record it is fed, not just the ones after
+ * the file's first — there is no "first" from where it joined.
+ *
+ * `maxEvents` overrides the default history-payload guard (`MAX_CHILDREN_PER_AGENT`).
+ * A live session-window subscription reads one file per subscriber rather than
+ * one payload for a whole reload, and the client already bounds its own render
+ * buffer — so the hub passes `Infinity` here rather than silently freezing a
+ * long-running teammate's stream once the reload guard's count is reached.
  */
-export function createAgentTranscriptLineParser() {
-  let isFirstUser = true;
+export function createAgentTranscriptLineParser(opts?: { midFile?: boolean; maxEvents?: number }) {
+  let isFirstUser = !opts?.midFile;
+  const maxEvents = opts?.maxEvents ?? MAX_CHILDREN_PER_AGENT;
   let emitted = 0;
   let lastTs = 0;
   return {
     feed(line: string): TimedChatEvent[] {
       const out: TimedChatEvent[] = [];
       const trimmed = line.trim();
-      if (!trimmed || emitted >= MAX_CHILDREN_PER_AGENT) return out;
+      if (!trimmed || emitted >= maxEvents) return out;
       let entry: any;
       try {
         entry = JSON.parse(trimmed);
@@ -98,7 +109,7 @@ export function createAgentTranscriptLineParser() {
       if (!Number.isNaN(parsedTs)) lastTs = parsedTs;
       const parsed = parseSessionMessage(entry);
       for (const ev of parsed.events ?? []) {
-        if (emitted >= MAX_CHILDREN_PER_AGENT) break;
+        if (emitted >= maxEvents) break;
         // Keep single events from ballooning the history payload (agent files
         // can carry multi-MB tool outputs the live stream also showed in full,
         // but 24 agents × full outputs breaks mobile reloads).
@@ -151,6 +162,9 @@ export function mergeSubagentChildren(sessionDir: string, messages: MessageLike[
       if (ev.type !== "tool_use" || (ev.tool !== "Agent" && ev.tool !== "Task") || !ev.toolUseId) continue;
       const group = groups.get(ev.toolUseId);
       if (!group) continue;
+      // A group was found on disk regardless of what it parsed to — the client can slim this
+      // card's children because a session window can always stream the rest from here.
+      (ev as { transcriptAvailable?: boolean }).transcriptAvailable = true;
       const timed: TimedChatEvent[] = [];
       for (const agent of group) timed.push(...parseAgentTranscriptTimed(agent.transcriptPath));
       // Stable sort: same-timestamp events keep transcript order.

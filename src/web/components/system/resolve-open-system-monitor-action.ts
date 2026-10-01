@@ -9,7 +9,7 @@ export type OpenSystemMonitorAction =
   | { kind: "focus"; id: string };
 
 /**
- * There is exactly one machine, so unlike `"explorer"`/`"team-member"` (legitimately
+ * There is exactly one machine, so unlike `"explorer"`/`"agent-session"` (legitimately
  * multi-instance — different payload, different folder/teammate), a second
  * `"system-monitor"` window is never a distinct instance, only a duplicate. When one
  * is already open, focus it instead of spawning another.

@@ -1,26 +1,27 @@
-import { useState, useEffect, useCallback } from "react";
-import { api, projectUrl } from "@/lib/api-client";
+import { useCallback, useEffect } from "react";
+import { projectCacheId } from "@/lib/browser-cache/cache-keys";
+import { useSessionListStore } from "@/stores/session-list-store";
+import { useProjectRef } from "@/stores/session-list-sync-triggers";
 import type { ProjectTag } from "../../../types/chat";
 
-/** Fetch project tags + counts; returns state for filter chips */
+/** Project tags + counts from the shared session-list store — every reader
+ * (welcome panel, tab bar, mobile nav) shares the one synced copy instead of
+ * fetching its own. */
 export function useProjectTags(projectName: string | undefined) {
-  const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
-  const [tagCounts, setTagCounts] = useState<Record<number, number>>({});
+  const project = useProjectRef(projectName);
+  const id = project ? projectCacheId(project) : null;
 
-  const loadTags = useCallback(async () => {
-    if (!projectName) return;
-    try {
-      const data = await api.get<{ tags: ProjectTag[]; counts: Record<number, number> }>(
-        `${projectUrl(projectName)}/tags`,
-      );
-      setProjectTags(data.tags);
-      setTagCounts(data.counts);
-    } catch { /* silent */ }
-  }, [projectName]);
+  useEffect(() => {
+    if (project) void useSessionListStore.getState().ensure(project);
+  }, [project]);
 
-  useEffect(() => { loadTags(); }, [loadTags]);
+  const tagsState = useSessionListStore((s) => (id ? s.byProject[id]?.tags : null) ?? null);
 
-  return { projectTags, tagCounts, loadTags };
+  const loadTags = useCallback(() => {
+    if (project) void useSessionListStore.getState().refreshTags(project);
+  }, [project]);
+
+  return { projectTags: tagsState?.tags ?? [], tagCounts: tagsState?.counts ?? {}, loadTags };
 }
 
 /** Horizontal chip bar for filtering sessions by tag */

@@ -231,6 +231,8 @@ export interface ResetCredits {
   nextExpiresAt?: string;
   /** What the soonest one resets, as Codex words it ("Full reset (Weekly + 5 hr)"). */
   title?: string;
+  /** Codex's opaque id of that soonest-expiring credit — the one "Use reset" spends. */
+  nextCreditId?: string;
 }
 
 /** Result subtype from SDK ResultMessage */
@@ -242,15 +244,39 @@ export type ResultSubtype =
   | "error_auth";
 
 export type ChatEvent =
-  | { type: "text"; content: string; parentToolUseId?: string }
-  | { type: "thinking"; content: string; parentToolUseId?: string }
+  | { type: "text"; content: string; parentToolUseId?: string; arrivalSeq?: number }
+  | { type: "thinking"; content: string; parentToolUseId?: string; arrivalSeq?: number }
   | {
       type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string; children?: ChatEvent[];
       /** Terminal state of a backgrounded Agent/Task, once its `<task-notification>` arrives.
        *  Absent on a launched-but-unfinished agent — the card renders that as still running. */
       bgStatus?: import("../shared/background-agent-status").BackgroundAgentStatus;
+      /** Agent/Task only: distinct child tool_use ids counted as "steps" so far — a Set-like
+       *  array kept stable under a WS replay redelivering the same id. */
+      stepIds?: string[];
+      /** stepIds.length, cached alongside it so the one-line card need not measure the array. */
+      stepCount?: number;
+      /** Plain-text description of the most recent step, for the one-line card. */
+      lastStep?: string;
+      /** Set by a provider when an on-disk transcript was found for this card — its `children`
+       *  are safe to reduce to the slimmed set because a session window can stream the rest
+       *  from disk instead. Never set by the live stream itself. */
+      transcriptAvailable?: boolean;
+      /** Bounded ring buffer (last 200, or ~256KB serialized) of child events slimming would
+       *  otherwise drop — the fallback shown in a window when no on-disk transcript exists at
+       *  all, merged back with `children` in original arrival order via each entry's
+       *  `arrivalSeq`. */
+      recentChildren?: ChatEvent[];
+      /** Monotonic counter this Agent/Task card's own `applyChildToParent` routing bumps once
+       *  per incoming child — the source of `arrivalSeq` stamped onto each routed child. */
+      childSeq?: number;
+      /** Position among this child's siblings in the order they actually arrived — set when a
+       *  child is routed by `applyChildToParent`/`pushRecentChild` with a parent's `childSeq`,
+       *  so `children` and `recentChildren` (split apart by kept-vs-ring-buffer routing) can be
+       *  merged back into arrival order instead of concatenated. */
+      arrivalSeq?: number;
     }
-  | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string }
+  | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string; arrivalSeq?: number }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }
@@ -281,4 +307,31 @@ export interface ChatMessage {
   sdkUuid?: string;
   /** Token split for the turn that produced this message; drives the cost warning. */
   usage?: import("../shared/turn-usage").TurnUsage;
+  /**
+   * Set only on the compact-summary message that opens a post-compaction segment,
+   * so the divider above it can say what the compaction cost and saved.
+   */
+  compaction?: CompactionInfo;
+}
+
+/**
+ * What one compaction did, read back from the `compact_boundary` record Claude Code
+ * writes into the transcript.
+ *
+ * Taken from the file rather than from the live `compact_boundary` event because the
+ * figure has to survive a reload: the turn that compacts ends by refetching history,
+ * so a notice that existed only in WebSocket state would vanish seconds after it
+ * appeared. The event carries the same numbers and is deliberately not plumbed.
+ */
+export interface CompactionInfo {
+  /** `auto` when the context window forced it, `manual` when the user ran /compact. */
+  trigger: "manual" | "auto";
+  /** Transcript size going in. */
+  preTokens: number;
+  /** Size of the summary that replaced it. */
+  postTokens: number;
+  /** `preTokens - postTokens` — this compaction alone, not the session's running total. */
+  savedTokens: number;
+  /** How long the compaction took, when the record says. */
+  durationMs?: number;
 }

@@ -12,7 +12,7 @@
  * all — so the quota rows follow what the account actually reports.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Loader2 } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { AccountCard } from "@/components/settings/accounts/account-card";
@@ -27,6 +27,7 @@ import { UsagePanelShell } from "./usage-panel-shell";
 
 import { CODEX_SIGNED_OUT_HINT, type CodexAccount } from "@/components/settings/accounts/use-codex-accounts";
 import { CodexSignInAgainDialog } from "@/components/settings/accounts/codex-sign-in-again-dialog";
+import { CodexResetCreditButton } from "@/components/settings/accounts/codex-reset-credit-button";
 type Usage = Pick<UsageInfo, "fiveHour" | "sevenDay" | "session" | "weekly" | "resetCredits">;
 
 /** Matches the whole-percent figure the bars show, so a refusal agrees with the card. */
@@ -67,29 +68,47 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
   const [selectingId, setSelectingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
+  const requestRef = useRef(0);
+  const refreshingRef = useRef(false);
   /** The signed-out account whose "Sign in again" chip was pressed. */
   const [signInAgain, setSignInAgain] = useState<CodexAccount | null>(null);
 
   const load = useCallback(async () => {
+    if (refreshingRef.current) return;
+    const request = ++requestRef.current;
     setLoading(true);
     try {
       const d = await api.get<{ accounts: CodexAccount[] }>("/api/codex-accounts");
+      if (request !== requestRef.current) return;
       setAccounts(d.accounts);
       const u = await api.get<Record<string, Usage>>("/api/codex-accounts/usage");
-      setUsages(u);
-    } catch { /* ignore */ } finally { setLoading(false); }
+      if (request === requestRef.current) setUsages(u);
+    } catch { /* ignore */ } finally {
+      if (request === requestRef.current) setLoading(false);
+    }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+    // The server refreshes quota every five minutes. Keep open cards in sync
+    // by re-reading its cache on the same cadence as the chat header.
+    const timer = setInterval(() => { void load(); }, 120_000);
+    return () => { clearInterval(timer); ++requestRef.current; };
+  }, [load]);
 
   const reload = useCallback(async () => {
+    const request = ++requestRef.current;
+    refreshingRef.current = true;
     setLoading(true);
     try {
-      // Unlike the account-list endpoint, the chat refresh carries refresh=1
-      // and invalidates Codex's five-minute provider-usage cache first.
+      // The chat refresh carries refresh=1 and fetches every Codex account
+      // live before this cached account-list read.
       await onReload?.();
       const u = await api.get<Record<string, Usage>>("/api/codex-accounts/usage");
-      setUsages(u);
-    } catch { /* retain the last successful reading */ } finally { setLoading(false); }
+      if (request === requestRef.current) setUsages(u);
+    } catch { /* retain the last successful reading */ } finally {
+      refreshingRef.current = false;
+      if (request === requestRef.current) setLoading(false);
+    }
   }, [onReload]);
 
   /**
@@ -212,6 +231,9 @@ export function CodexUsagePanel({ onClose, usage, onReload, onSelectAccount, sel
             dailyGuardToggling={togglingId === a.id}
             reauthHint={a.signedOut ? CODEX_SIGNED_OUT_HINT : undefined}
             resetCredits={u.resetCredits}
+            resetCreditAction={
+              <CodexResetCreditButton account={a} usage={u} onDone={(m) => { setPanelError(m); void reload(); }} />
+            }
             // Only a ChatGPT sign-in can be renewed in place; a dead API key is replaced.
             onReauth={a.type === "chatgpt" ? () => setSignInAgain(a) : undefined}
           />

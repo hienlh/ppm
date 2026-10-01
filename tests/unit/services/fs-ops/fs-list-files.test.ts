@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { list } from "../../../../src/services/fs-ops/fs-list-files.service.ts";
+import { isAllowedPath } from "../../../../src/services/fs-path-guard.service.ts";
 
 let dir: string;
 
@@ -44,7 +45,19 @@ describe("list", () => {
     expect(files.some((f) => f.includes("node_modules"))).toBe(false);
   });
 
-  it("refuses a path outside the allowlist", async () => {
+  it("refuses a UNC share, which is the shape the guard exists to keep out", () => {
+    // Asserted on the guard rather than through `list`, because `list` resolves first and the
+    // allowlist is deliberately platform-shaped: on POSIX every absolute path is allowed, and
+    // `\\server\share` is a perfectly ordinary relative filename there, so there is nothing for
+    // `list` to refuse. Going through `list` made this a Windows-only assertion that simply
+    // passed the promise through on Linux.
+    // The backslash spelling only. `//server/share` is refused on Windows and allowed on
+    // POSIX, where it is an ordinary directory called `server` — the guard is right about
+    // both, so asserting one answer for it would be asserting the wrong thing somewhere.
+    expect(isAllowedPath("\\\\server\\share")).toBe(false);
+  });
+
+  it.skipIf(process.platform !== "win32")("refuses it through the listing too, where the shape survives resolution", async () => {
     await expect(list("\\\\server\\share")).rejects.toThrow("Access denied");
   });
 

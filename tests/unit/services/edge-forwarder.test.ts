@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +76,15 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }
+});
+
+// `PPM_HOME` is process-wide and the suite shares one process, so leaving it pointed at a temp
+// home hands that home — by then deleted — to every file after this one.
+const originalPpmHome = process.env.PPM_HOME;
+afterAll(() => {
+  if (originalPpmHome === undefined) delete process.env.PPM_HOME;
+  else process.env.PPM_HOME = originalPpmHome;
+  _resetPpmDir();
 });
 
 describe("resolveTargetPort", () => {

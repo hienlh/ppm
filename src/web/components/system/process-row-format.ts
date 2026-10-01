@@ -32,6 +32,12 @@ export function formatDiskCell(readBps?: number, writeBps?: number): string {
   return `↓ ${formatBps(readBps ?? 0)} ↑ ${formatBps(writeBps ?? 0)}`;
 }
 
+/** Swap has no second half, so it is the one optional cell where `undefined`
+ *  and 0 are the only two cases — a kernel thread really does swap nothing. */
+export function formatSwapCell(swapMB?: number): string {
+  return swapMB === undefined ? "—" : formatRam(swapMB);
+}
+
 export function formatNetCell(inBps?: number, outBps?: number): string {
   if (inBps === undefined && outBps === undefined) return "—";
   return `↓ ${formatBps(inBps ?? 0)} ↑ ${formatBps(outBps ?? 0)}`;
@@ -39,10 +45,13 @@ export function formatNetCell(inBps?: number, outBps?: number): string {
 
 /** GPU % and VRAM are measured independently on some platforms (e.g. NVIDIA
  *  consumer drivers on Linux only expose per-process memory, not per-process
- *  utilization) — each half renders its own dash when unmeasured. */
-export function formatGpuCell(pct?: number, memMB?: number): string {
-  if (pct === undefined && memMB === undefined) return "—";
+ *  utilization) — each half renders its own dash when unmeasured. A host with no
+ *  per-process GPU memory at all (`ProcessColumnAvailability.gpuMemory: false`,
+ *  macOS) shows the percentage alone, since a dash there would claim a failed read. */
+export function formatGpuCell(pct?: number, memMB?: number, withMemory = true): string {
   const pctText = pct === undefined ? "—" : `${pct.toFixed(0)}%`;
+  if (!withMemory) return pctText;
+  if (pct === undefined && memMB === undefined) return "—";
   const memText = memMB === undefined ? "—" : formatRam(memMB);
   return `${pctText} · ${memText}`;
 }

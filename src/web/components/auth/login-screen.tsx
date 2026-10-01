@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { setAuthToken } from "@/lib/api-client";
+import { setAuthToken, clearAuthToken } from "@/lib/api-client";
 import {
   AlertCircle,
   Eye,
@@ -86,8 +86,8 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
-      // Clear invalid token
-      localStorage.removeItem("ppm-auth-token");
+      // Clear the invalid token and any cache built on top of it.
+      clearAuthToken();
     } finally {
       setLoading(false);
     }

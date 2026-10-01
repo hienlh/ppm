@@ -42,6 +42,9 @@ export const Z_BASE = 30;
 
 const PREFERRED = { w: 880, h: 560 } as const;
 const SPAWN_MARGIN = 48;
+/** Cap on a portrait window's height — a 9:16 window this tall already shows a full step
+ *  list; taller than that just wastes space on an ultrawide monitor. */
+const PORTRAIT_MAX_H = 780;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -111,6 +114,21 @@ export function cascadeSpawnRect(existing: Rect[], bounds: Bounds): Rect {
   const step = existing.length % MAX_WINDOWS;
   return clampRect(
     { x: SPAWN_MARGIN + step * CASCADE_STEP, y: SPAWN_MARGIN + step * CASCADE_STEP, w, h },
+    bounds,
+  );
+}
+
+/**
+ * Where an agent/teammate session window spawns: a portrait 9:16 rect pinned to the
+ * top-right, tall enough to read a step list without scrolling every other line, cascading
+ * like any other spawn once more than one is open.
+ */
+export function portraitSpawnRect(existing: Rect[], bounds: Bounds): Rect {
+  const h = Math.min(bounds.h - SPAWN_MARGIN * 2, PORTRAIT_MAX_H);
+  const w = Math.max(MIN_SIZE.w, Math.round((h * 9) / 16));
+  const step = existing.length % MAX_WINDOWS;
+  return clampRect(
+    { x: bounds.w - SPAWN_MARGIN - w - step * CASCADE_STEP, y: SPAWN_MARGIN + step * CASCADE_STEP, w, h },
     bounds,
   );
 }

@@ -25,9 +25,13 @@ describe("windowTitle", () => {
     expect(windowTitle("tab-host", { title: 42 })).toBe("Tab");
   });
 
-  it("names a team-member window after the member", () => {
-    expect(windowTitle("team-member", { memberName: "fixer" })).toBe("Session — fixer");
-    expect(windowTitle("team-member", {})).toBe("Team member");
+  it("uses the opener's explicit title for an agent-session window", () => {
+    expect(windowTitle("agent-session", { title: "Session — fixer" })).toBe("Session — fixer");
+  });
+
+  it("falls back to a generic name for an agent-session window with no title", () => {
+    expect(windowTitle("agent-session", {})).toBe("Agent session");
+    expect(windowTitle("agent-session", undefined)).toBe("Agent session");
   });
 
   it("names an explorer window after the last path segment", () => {

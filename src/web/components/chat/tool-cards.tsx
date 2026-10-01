@@ -101,6 +101,10 @@ import { isImageExtension } from "../../../shared/image-extensions";
 import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
 import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
+import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
+import { useOpenAgentSession } from "./use-open-agent-session";
+import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
+import { agentStepInfo, formatStepCount, mergeFallbackEvents } from "@/lib/agent-step-summary";
 
 /** Extract tool name and input from a ChatEvent */
 function extractToolInfo(tool: ChatEvent): { toolName: string; input: Record<string, unknown> } {
@@ -145,12 +149,18 @@ export function ToolCard({
   completed,
   projectName,
   bashPartialOutput,
+  variant = "chat",
 }: {
   tool: ChatEvent;
   result?: ChatEvent;
   completed?: boolean;
   projectName?: string;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
+  /** "window" inside an agent-session window: a nested Agent/Task card must keep expanding
+   *  inline there (the window already *is* the live view of that work) rather than opening
+   *  a second window — the chat's own one-line summary branch below only fires for the
+   *  default `"chat"` variant. */
+  variant?: "chat" | "window";
 }) {
   const [expanded, setExpanded] = useState(() => {
     // Edit/MultiEdit cards open by default so the inline diff is visible without
@@ -162,6 +172,11 @@ export function ToolCard({
     // so show it without requiring a click.
     return !!imageReadPath(tool);
   });
+  // Called unconditionally (Rules of Hooks) even for tool types that never reach the
+  // subagent-summary branch below — cheap, and `variant`/tool type are stable for the
+  // life of one ToolCard instance, same as the `tool.type === "error"` early return above.
+  const openAgentSession = useOpenAgentSession();
+  const agentSessionIdentity = useAgentSessionContext();
 
   if (tool.type === "error") {
     return (
@@ -209,6 +224,45 @@ export function ToolCard({
 
   // Read partial output for streaming Bash/PowerShell tools
   const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
+
+  // In chat, every Agent/Task card — named teammates included — is one line that opens the
+  // live session window/sheet rather than expanding inline; `variant="window"` (the window's
+  // own nested-card rendering) keeps today's inline expansion below instead.
+  if (isSubagent && variant === "chat" && tool.type === "tool_use") {
+    const handle = addressableAgentName(toolName, input);
+    const description = handle ? "" : truncate(String((input as any).description ?? (input as any).prompt ?? ""), 60);
+    const { stepCount, lastStep } = agentStepInfo(tool);
+    const status: AgentCardStatus = (isError || bgFailed) ? "error" : isDone ? "done" : "running";
+    const cardId = toolUseId ?? "";
+    // No provider gave this card a real session identity (the group-chat transcript viewer
+    // has none) — a synthetic id the hub can never resolve still lets the card open, just
+    // straight into memory-only mode via the fallback events below.
+    const identity = agentSessionIdentity ?? {
+      projectName: projectName ?? "",
+      providerId: normalizeProviderId(undefined),
+      sessionId: `local:${cardId || "card"}`,
+    };
+    const fallbackEvents = mergeFallbackEvents(tool.children ?? [], tool.recentChildren ?? []);
+    return (
+      <AgentCardSummary
+        handle={handle}
+        description={description}
+        stepCount={stepCount}
+        lastStep={lastStep}
+        status={status}
+        bgRunning={bgRunning}
+        onOpen={() => openAgentSession({
+          projectName: identity.projectName,
+          providerId: identity.providerId,
+          sessionId: identity.sessionId,
+          source: { kind: "card", cardId },
+          title: handle ? `Session — ${handle}` : (description || "Agent session"),
+          prompt: String((input as any).prompt ?? (input as any).description ?? ""),
+        }, fallbackEvents)}
+      />
+    );
+  }
+
   const partial = (toolName === "Bash" || toolName === "PowerShell") && !hasResult && toolUseId
     ? bashPartialOutput?.current?.get(toolUseId)
     : undefined;
@@ -256,7 +310,7 @@ export function ToolCard({
             <span className="text-[10px] text-warning">{partial!.lineCount} line{partial!.lineCount !== 1 ? "s" : ""} streaming…</span>
           )}
           {hasChildren && !isStreamingBash && (
-            <span className="text-[10px] text-text-3 font-mono">{children!.length} steps</span>
+            <span className="text-[10px] text-text-3 font-mono">{formatStepCount(children!.length)}</span>
           )}
           {bgRunning && (
             <span className="text-[10px] text-primary">running…</span>
@@ -283,7 +337,7 @@ export function ToolCard({
           {partial && <StreamingBashOutput content={partial.content} lineCount={partial.lineCount} />}
           {/* Subagent children: render nested tool events */}
           {hasChildren && (
-            <SubagentChildren events={children!} projectName={projectName} />
+            <SubagentChildren events={children!} projectName={projectName} variant={variant} />
           )}
           {imagePath && (
             <ToolImagePreview filePath={imagePath} projectName={projectName ?? ""} />
@@ -753,7 +807,13 @@ function CollapsibleOutput({ output }: { output: string }) {
  *  session with the same step rendering the inline Agent card uses.
  *  `className` overrides the container so a full-height surface can drop the
  *  card's fixed max-height. */
-export function SubagentChildren({ events, projectName, className }: { events: ChatEvent[]; projectName?: string; className?: string }) {
+export function SubagentChildren({ events, projectName, className, variant = "chat" }: {
+  events: ChatEvent[];
+  projectName?: string;
+  className?: string;
+  /** Forwarded to every child `ToolCard` — see its own doc comment. */
+  variant?: "chat" | "window";
+}) {
   // Group children similar to InterleavedEvents: pair tool_use + tool_result, merge text
   type ChildGroup =
     | { kind: "text"; content: string }
@@ -806,7 +866,16 @@ export function SubagentChildren({ events, projectName, className }: { events: C
             </div>
           );
         }
-        return <ToolCard key={`sc-${i}`} tool={g.tool} result={g.result} completed={!!(g.result)} projectName={projectName} />;
+        return (
+          <ToolCard
+            key={`sc-${i}`}
+            tool={g.tool}
+            result={g.result}
+            completed={!!(g.result)}
+            projectName={projectName}
+            variant={variant}
+          />
+        );
       })}
     </div>
   );

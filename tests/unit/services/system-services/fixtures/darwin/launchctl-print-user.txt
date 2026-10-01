@@ -1,0 +1,43 @@
+user/501 = {
+	type = user
+	handle = 501
+	active count = 6
+	service count = 5
+	active service count = 3
+	creator = mds[122]
+	creator euid = 0
+	session = Background
+	gui asid = 100003
+	security context = {
+		uid = 501
+		asid = 100024
+	}
+
+	bringup time = 79 ms
+	death port = 0x0
+	subdomains = {
+		gui/501
+	}
+
+	services = {
+		     513      - 	com.apple.trustd.agent
+		       0      - 	com.apple.DistributionKit.DistributionHelper
+		   68328   (pe) 	com.apple.accessibility.mediaaccessibilityd
+		       0      0 	com.apple.iCloudHelper
+		    3101      - 	com.example.background-agent
+	}
+
+	unmanaged processes = {
+	}
+
+	endpoints = {
+		 0xe1903    M   D   com.apple.BKAgentService
+	}
+
+	disabled services = {
+		"com.example.background-agent" => enabled
+		"com.apple.FolderActionsDispatcher" => disabled
+	}
+
+	properties = 
+}

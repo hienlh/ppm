@@ -26,7 +26,14 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY packages/ext-git-graph/package.json packages/ext-git-graph/
 COPY packages/vscode-compat/package.json packages/vscode-compat/
-RUN bun install --frozen-lockfile
+# `--network-concurrency 4`, because at the default the extraction step fails outright
+# perhaps one build in two — and it names a different package each time (`mermaid`,
+# `@esbuild/linux-x64`), which is what says it is contention rather than a bad tarball:
+# measured here, the same lockfile installs cleanly on its own and at concurrency 4, and
+# `bun install` without `--frozen-lockfile` also survives the default. The cost is about
+# fifteen seconds on a layer that is cached anyway; a build that fails half the time is
+# worse than a slow one, and it fails with a message that sends you after the wrong package.
+RUN bun install --frozen-lockfile --network-concurrency 4
 
 # Run as the image's non-root user so permission-sensitive tests behave correctly
 # (e.g. inaccessible /root/.ssh must yield 403/500, not a readable listing).

@@ -84,7 +84,26 @@ export function parseCodexResetCredits(raw: unknown): ResetCredits | undefined {
     available: available.length,
     ...(typeof next?.expiresAt === "number" ? { nextExpiresAt: new Date(next.expiresAt * 1000).toISOString() } : {}),
     ...(typeof next?.title === "string" ? { title: next.title } : {}),
+    ...(typeof next?.id === "string" ? { nextCreditId: next.id } : {}),
   };
+}
+
+/**
+ * Whether a limit has actually been reached — at 100% of a window, as the card rounds it.
+ *
+ * The one rule both the "Use reset" button and the server's refusal follow, so the button can
+ * never offer what the server would turn down. Reached, not approaching: spending a reset at
+ * 90% throws away the 10% left *and* moves the weekly reset date (OpenAI: the next weekly reset
+ * is counted from when you continue, and the original one is not also granted).
+ */
+export function usageLimitReached(u: { session?: { utilization: number }; weekly?: { utilization: number } }): boolean {
+  const atCap = (util?: number) => Math.round((util ?? 0) * 100) >= 100;
+  return atCap(u.session?.utilization) || atCap(u.weekly?.utilization);
+}
+
+/** A reset may be offered: a limit is reached and a credit is left to spend on it. */
+export function canUseResetCredit(u: { session?: { utilization: number }; weekly?: { utilization: number }; resetCredits?: ResetCredits }): boolean {
+  return usageLimitReached(u) && (u.resetCredits?.available ?? 0) > 0;
 }
 
 /** The extra fields of a `UsageInfo`, as the JSON column holds them — null when there are none. */

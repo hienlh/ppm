@@ -2,6 +2,7 @@ import type { AIProvider } from "./provider.interface.ts";
 import { MockProvider } from "./mock-provider.ts";
 import { ClaudeAgentSdkProvider } from "./claude-agent-sdk.ts";
 import { configService } from "../services/config.service.ts";
+import { nextProbeDelayMs, type ProviderProbeStatus } from "./provider-probe.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 
 export interface ProviderInfo {
@@ -56,6 +57,10 @@ providerRegistry.register(new MockProvider()); // testing only
  * Bootstrap CLI providers asynchronously.
  * Checks isAvailable() before registering — call at server startup.
  *
+ * Cursor's probe is a local `which`, so it answers the same at every restart.
+ * Codex's reaches the network, so its failure is retried rather than final —
+ * see probeCodexProvider() below.
+ *
  * Persists provider entries with set() only, never save(): set() writes just the
  * "ai" row, while save() rewrites every config key and re-syncs the projects
  * table from this process's in-memory config. A caller that bootstraps without
@@ -87,36 +92,111 @@ export async function bootstrapProviders(): Promise<void> {
     console.warn("[registry] Failed to load Cursor provider:", (e as Error).message);
   }
 
-  try {
-    const { CodexAppServerProvider } = await import("./codex-app-server/codex-provider.ts");
-    const codex = new CodexAppServerProvider();
-    if (await codex.isAvailable()) {
-      providerRegistry.register(codex);
-      const ai = configService.get("ai");
-      // Only when codex has never been configured. An absent `model` is a real
-      // choice here — the settings picker writes it for "Auto (default)", which
-      // hands model selection back to codex — so filling one in on every startup
-      // would undo that choice each restart. Existing installs are given the
-      // default once, by migration.
-      if (!ai.providers["codex"]) {
-        configService.set("ai", {
-          ...ai,
-          providers: {
-            ...ai.providers,
-            codex: {
-              type: "cli",
-              cli_command: "codex",
-              permission_mode: "bypassPermissions",
-              model: CODEX_DEFAULT_MODEL,
-            },
-          },
-        });
+  await probeCodexProvider();
+}
+
+// ── Codex availability: probed, remembered, and retried ──────────────────
+
+const probeStatuses = new Map<string, ProviderProbeStatus>();
+let codexRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let codexProbeInFlight: Promise<ProviderProbeStatus> | null = null;
+
+/** What the last probe of each CLI provider concluded. Empty before bootstrap. */
+export function providerProbeStatuses(): ProviderProbeStatus[] {
+  return Array.from(probeStatuses.values());
+}
+
+/** Probe again now, ahead of whatever the backoff had scheduled (Settings' Retry). */
+export function retryProviderProbe(id: string): Promise<ProviderProbeStatus> {
+  if (id !== "codex") throw new Error(`Provider "${id}" has no retryable probe`);
+  return probeCodexProvider();
+}
+
+/**
+ * Give codex a config entry, but only when it has never had one. An absent
+ * `model` is a real choice — the settings picker writes it for "Auto (default)",
+ * which hands model selection back to codex — so filling one in on every probe
+ * would undo that choice. Existing installs are given the default once, by
+ * migration.
+ */
+function ensureCodexConfigEntry(): void {
+  const ai = configService.get("ai");
+  if (ai.providers["codex"]) return;
+  configService.set("ai", {
+    ...ai,
+    providers: {
+      ...ai.providers,
+      codex: {
+        type: "cli",
+        cli_command: "codex",
+        permission_mode: "bypassPermissions",
+        model: CODEX_DEFAULT_MODEL,
+      },
+    },
+  });
+}
+
+/** Arm the next probe. The timer is unref'd so it never holds the process open. */
+function scheduleCodexRetry(failedAttempts: number): string {
+  const delay = nextProbeDelayMs(failedAttempts);
+  codexRetryTimer = setTimeout(() => {
+    codexRetryTimer = null;
+    void probeCodexProvider();
+  }, delay);
+  codexRetryTimer.unref?.();
+  return new Date(Date.now() + delay).toISOString();
+}
+
+/**
+ * Probe codex and register it if it answers. On a retryable failure — which is
+ * nearly every failure, see `provider-probe.ts` — arm the next attempt instead
+ * of leaving the provider missing until someone restarts PPM.
+ */
+async function probeCodexProvider(): Promise<ProviderProbeStatus> {
+  // Probing again once it serves would put a fresh instance in the registry and
+  // orphan the live app-server clients the old one holds — every open codex
+  // session, and the cleanup handle the server shuts down through.
+  const current = probeStatuses.get("codex");
+  if (current?.registered) return current;
+  if (codexProbeInFlight) return codexProbeInFlight;
+  if (codexRetryTimer) {
+    clearTimeout(codexRetryTimer);
+    codexRetryTimer = null;
+  }
+  codexProbeInFlight = (async (): Promise<ProviderProbeStatus> => {
+    const attempts = (probeStatuses.get("codex")?.attempts ?? 0) + 1;
+    const lastProbeAt = new Date().toISOString();
+    let status: ProviderProbeStatus;
+    try {
+      const { CodexAppServerProvider } = await import("./codex-app-server/codex-provider.ts");
+      const codex = new CodexAppServerProvider();
+      const result = await codex.probe();
+      if (result.ok) {
+        providerRegistry.register(codex);
+        ensureCodexConfigEntry();
+        console.log("[registry] Codex provider registered (@openai/codex found)");
+        status = { id: "codex", registered: true, attempts, lastProbeAt };
+      } else {
+        status = { id: "codex", registered: false, attempts, lastProbeAt, reason: result.reason };
+        if (result.retryable) status.nextProbeAt = scheduleCodexRetry(attempts);
+        console.log(
+          `[registry] Codex provider unavailable: ${result.reason}` +
+          (status.nextProbeAt ? ` — retrying at ${status.nextProbeAt}` : ""),
+        );
       }
-      console.log("[registry] Codex provider registered (@openai/codex found)");
-    } else {
-      console.log("[registry] Codex provider skipped (@openai/codex not found)");
+    } catch (e) {
+      // A broken import is a bug, not a flat host — but it is still worth
+      // retrying, since the alternative is silence until the next restart.
+      status = { id: "codex", registered: false, attempts, lastProbeAt, reason: (e as Error).message };
+      status.nextProbeAt = scheduleCodexRetry(attempts);
+      console.warn("[registry] Failed to load Codex provider:", (e as Error).message);
     }
-  } catch (e) {
-    console.warn("[registry] Failed to load Codex provider:", (e as Error).message);
+    probeStatuses.set("codex", status);
+    return status;
+  })();
+  try {
+    return await codexProbeInFlight;
+  } finally {
+    codexProbeInFlight = null;
   }
 }

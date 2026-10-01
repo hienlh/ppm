@@ -218,7 +218,9 @@ app.route("/api/fs/sqlite", fsSqliteRoutes);
 
 // System resource monitoring (SSE + JSON)
 import { resourceRoutes } from "./routes/resources.ts";
+import { systemServiceRoutes } from "./routes/system-services.ts";
 app.route("/api/system", resourceRoutes);
+app.route("/api/system", systemServiceRoutes);
 
 // Host OS facts for the file explorer (platform, drives, known + pinned folders)
 import { hostInfoRoutes } from "./routes/host-info.ts";
@@ -291,6 +293,13 @@ app.route("/api/upgrade", upgradeRoutes);
 // Cloud device registry
 import { cloudRoutes } from "./routes/cloud.ts";
 app.route("/api/cloud", cloudRoutes);
+
+// Speech-to-text (Whisper on the host) for the chat mic
+import { speechRoutes } from "./routes/speech.ts";
+app.route("/api/speech", speechRoutes);
+// Language servers, machine-wide (the Settings pane). The per-project half is project-scoped.
+import { lspGlobalRoutes } from "./routes/lsp.ts";
+app.route("/api/lsp", lspGlobalRoutes);
 
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);
@@ -919,8 +928,13 @@ if (process.argv.includes("__serve__")) {
 
       if (url.pathname === "/ws/global") {
         // App-wide event bus: owns file watching + cross-cutting broadcasts, so
-        // they no longer depend on a chat tab being mounted.
-        const upgraded = server.upgrade(req, { data: { type: "global" } });
+        // they no longer depend on a chat tab being mounted. The token is
+        // snapshotted here — not re-read from config on every push — so the
+        // agent-transcript hub can tell a long-lived socket apart from one
+        // whose password/token has since been rotated.
+        const authConfig = configService.get("auth");
+        const token = authConfig.enabled ? (url.searchParams.get("token") ?? null) : null;
+        const upgraded = server.upgrade(req, { data: { type: "global", token } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });
       }

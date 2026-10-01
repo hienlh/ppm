@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { ExternalLink, RefreshCw, Trash2 } from "@/lib/icons";
+import { AlertTriangle, ExternalLink, RefreshCw, Trash2 } from "@/lib/icons";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -17,6 +18,7 @@ import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
 import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
 import type { ModelOption } from "../../../types/chat";
+import type { ProviderProbeStatus } from "../../../providers/provider-probe";
 
 const EFFORT_OPTIONS = [
   { value: "low", label: "Low" },
@@ -48,6 +50,8 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [probeStatuses, setProbeStatuses] = useState<ProviderProbeStatus[]>([]);
+  const [probing, setProbing] = useState(false);
 
   useEffect(() => {
     getAISettings().then((s) => {
@@ -56,7 +60,25 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
     }).catch((e) => setError(e.message));
   }, []);
 
-  // Fetch models when active tab changes — uses global settings endpoint
+  // A provider keeps its config entry — and so its tab — once it has ever been
+  // configured, which says nothing about whether chat can reach it now. Keyed on
+  // the tab rather than on mount so switching back picks up a retry that has
+  // since succeeded on its own; `activeRegistered` is deliberately NOT a
+  // dependency, since it is derived from what this sets.
+  useEffect(() => {
+    if (!activeTab) return;
+    api.get<ProviderProbeStatus[]>("/api/settings/ai/providers/status")
+      .then(setProbeStatuses)
+      .catch(() => setProbeStatuses([]));
+  }, [activeTab]);
+
+  const unavailable = probeStatuses.find((s) => s.id === activeTab && !s.registered);
+  // A provider nothing probed (claude) is available by construction.
+  const activeRegistered = !unavailable;
+
+  // Fetch models when active tab changes — uses global settings endpoint.
+  // `activeRegistered` is in the deps so a successful retry refetches the list
+  // that came back empty while the provider was missing from the registry.
   useEffect(() => {
     if (!activeTab) return;
     setModelsLoading(true);
@@ -64,7 +86,19 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       .then(setModels)
       .catch(() => setModels([]))
       .finally(() => setModelsLoading(false));
-  }, [activeTab]);
+  }, [activeTab, activeRegistered]);
+
+  const retryProbe = async () => {
+    setProbing(true);
+    try {
+      const updated = await api.post<ProviderProbeStatus>(`/api/settings/ai/providers/${activeTab}/probe`);
+      setProbeStatuses((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setProbing(false);
+    }
+  };
 
   const providerTabs = settings
     ? Object.keys(settings.providers)
@@ -197,6 +231,36 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       )}
 
       <div className={innerGap}>
+        {/* Why chat is not offering this provider. Without it the only record is a
+            log line at startup, and the composer's provider chip is hidden while
+            one provider is registered — so the option does not even render. */}
+        {unavailable && (
+          <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2">
+            <AlertTriangle className="size-3.5 text-warning shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <p className={`${labelSize} text-text-secondary`}>
+                {PROVIDER_NAMES[activeTab] ?? activeTab} is not available in chat — PPM could not start it.
+              </p>
+              <p className="text-[11px] text-muted-foreground break-words">{unavailable.reason}</p>
+              {unavailable.nextProbeAt && (
+                <p className="text-[11px] text-text-subtle">
+                  Checking again at {new Date(unavailable.nextProbeAt).toLocaleTimeString()}
+                </p>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={retryProbe}
+                disabled={probing}
+                className="gap-1.5 cursor-pointer min-h-11 md:min-h-8"
+              >
+                <RefreshCw className={`size-3.5 ${probing ? "animate-spin" : ""}`} />
+                {probing ? "Checking..." : "Check again"}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Codex sign-ins moved to the Accounts pane, next to the Claude ones — this tab is
             about how the provider runs, not which accounts it has. */}
         {activeTab === "codex" && (

@@ -6,10 +6,11 @@ afterAll(uninstallDom);
 const { act, useState } = await import("react");
 const { api } = await import("../../../src/web/lib/api-client");
 const { useUsage } = await import("../../../src/web/hooks/use-usage");
+const { startPrepare, __clearPrepareForTest } = await import("../../../src/web/lib/new-chat-prepare-client");
 const { ModelThinkingSelector } = await import("../../../src/web/components/chat/model-thinking-selector");
 let view: Mounted | undefined;
 let restore: (() => void) | undefined;
-afterEach(async () => { await view?.unmount(); restore?.(); });
+afterEach(async () => { await view?.unmount(); restore?.(); __clearPrepareForTest(); localStorage.clear(); });
 const settleDelay = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 550)); });
 
 it("shows the configured model without discovery until the picker opens", async () => {
@@ -54,6 +55,49 @@ it("waits for enabled and the initial delay, reuses only the exact account snaps
   expect(spy).toHaveBeenCalledTimes(2);
 });
 
+it("defers the initial usage read until the tab's own prepare settles, then fetches when it carried no usage", async () => {
+  const spy = spyOn(api, "get").mockResolvedValue({ activeAccountId: "fetched" });
+  restore = () => spy.mockRestore();
+  const post = spyOn(api, "post").mockResolvedValue({
+    resolvedProviderId: "claude", providerId: "claude",
+    settings: { default_provider: "claude", providers: {} }, providers: [],
+    pickedAccount: null, usage: null, draft: null, tags: null, slash: { items: [], recentNames: [] },
+  });
+  startPrepare("usage-tab", { name: "usage-defer", path: "usage-defer" }, { providerId: "claude" });
+  function Harness() {
+    const usage = useUsage("usage-defer", "claude", undefined, undefined, true, "usage-tab");
+    return <div>{usage.usageInfo.activeAccountId ?? "empty"}</div>;
+  }
+  view = await mount(<Harness />);
+  expect(spy).not.toHaveBeenCalled();
+  await settleDelay();
+  expect(spy).toHaveBeenCalledTimes(1);
+  expect(view.container.textContent).toBe("fetched");
+  post.mockRestore();
+});
+
+it("skips its own fetch when the tab's own prepare already seeded a fresh usage snapshot", async () => {
+  const spy = spyOn(api, "get");
+  restore = () => spy.mockRestore();
+  const post = spyOn(api, "post").mockResolvedValue({
+    resolvedProviderId: "claude", providerId: "claude",
+    settings: { default_provider: "claude", providers: {} }, providers: [],
+    pickedAccount: { id: "picked", label: null },
+    usage: { activeAccountId: "picked", sevenDay: 0.5 },
+    draft: null, tags: null, slash: { items: [], recentNames: [] },
+  });
+  startPrepare("usage-tab-2", { name: "usage-seeded", path: "usage-seeded" }, { providerId: "claude" });
+  function Harness() {
+    const usage = useUsage("usage-seeded", "claude", undefined, "picked", true, "usage-tab-2");
+    return <div>{usage.usageInfo.activeAccountId ?? "empty"}</div>;
+  }
+  view = await mount(<Harness />);
+  await settleDelay();
+  expect(spy).not.toHaveBeenCalled();
+  expect(view.container.textContent).toBe("picked");
+  post.mockRestore();
+});
+
 it("cancels the delayed usage read on unmount", async () => {
   const spy = spyOn(api, "get").mockResolvedValue({});
   restore = () => spy.mockRestore();
@@ -88,24 +132,32 @@ it("keeps the provider picker accessible before discovering its list", async () 
   expect(view.container.textContent).toContain("Codex");
 });
 
-it("shows cached recent history immediately while deferring its refresh and tags", async () => {
+it("shows cached recent history immediately, syncing once through the shared store (no artificial delay)", async () => {
   const { SessionListPanel } = await import("../../../src/web/components/chat/session-list-panel");
-  const spy = spyOn(api, "get").mockImplementation((async (url: string) => url.endsWith("/tags")
-    ? { tags: [], counts: {} }
-    : { sessions: [{ id: "recent", title: "Remembered chat", providerId: "claude" }], hasMore: false }) as typeof api.get);
+  const { useSessionListStore } = await import("../../../src/web/stores/session-list-store");
+  useSessionListStore.setState({ byProject: {} });
+  const spy = spyOn(api, "get").mockImplementation((async (url: string) => {
+    if (url.endsWith("/tags")) return { tags: [], counts: {}, defaultTagId: null };
+    // Distinguish the two projects by URL, so the final assertion proves
+    // per-project cache isolation rather than depending on fetch timing.
+    if (!url.includes("session-panel-cache-demo-other") && url.includes("session-panel-cache-demo")) {
+      return { sessions: [{ id: "recent", title: "Remembered chat", providerId: "claude", createdAt: "2026-01-01T00:00:00.000Z" }], hasMore: false };
+    }
+    return { sessions: [], hasMore: false };
+  }) as typeof api.get);
   restore = () => spy.mockRestore();
-  view = await mount(<SessionListPanel projectName="lazy-history" onSelectSession={() => {}} />);
-  expect(spy).not.toHaveBeenCalled();
+  view = await mount(<SessionListPanel projectName="session-panel-cache-demo" onSelectSession={() => {}} />);
   await settleDelay();
   expect(view.container.textContent).toContain("Remembered chat");
+  // One shared sync for the whole project — not one fetch per reader.
   expect(spy.mock.calls.filter(([url]) => String(url).includes("/chat/sessions"))).toHaveLength(1);
   await view.unmount();
   spy.mockClear();
-  view = await mount(<SessionListPanel projectName="lazy-history" onSelectSession={() => {}} />);
+  // Synced under 15s ago — remounting the same project reads the store, no refetch.
+  view = await mount(<SessionListPanel projectName="session-panel-cache-demo" onSelectSession={() => {}} />);
   expect(view.container.textContent).toContain("Remembered chat");
   expect(spy).not.toHaveBeenCalled();
   await view.unmount();
-  view = await mount(<SessionListPanel projectName="different-history" onSelectSession={() => {}} />);
+  view = await mount(<SessionListPanel projectName="session-panel-cache-demo-other" onSelectSession={() => {}} />);
   expect(view.container.textContent).not.toContain("Remembered chat");
-  expect(spy).not.toHaveBeenCalled();
 });

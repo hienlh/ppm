@@ -1,9 +1,9 @@
-import { resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { getPpmDir } from "./ppm-dir.ts";
 import { getUploadsDir } from "./chat-upload-storage.service.ts";
 import { getBackupsDir } from "./db-backup/db-backup-paths.ts";
-import { realPathOrSelf } from "./fs-ops/fs-real-path.ts";
+import { realPathOrSelf, realPathOrSelfSync } from "./fs-ops/fs-real-path.ts";
 
 /**
  * Every path a generic filesystem route (read, write, copy, move, upload,
@@ -25,9 +25,44 @@ function isInside(child: string, parent: string): boolean {
   return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
 }
 
+/** Each root's real path, keyed by the root as configured. */
+const realRoots = new Map<string, string>();
+
+/**
+ * The spellings a root is reached by: as configured, and as the filesystem has it.
+ * Every door checks a path *and* its real path, and a real path never spells a
+ * root through a symlink — on macOS `/tmp` and `/var` are links into `/private`,
+ * so a PPM directory under either matched only the first check, and a symlink
+ * to `ppm.db` read as an ordinary file. Resolved once per root, because the
+ * design walk asks per entry: the real spelling only adds refusals, so one that
+ * goes stale refuses no less than the configured spelling alone did.
+ */
+function rootSpellings(root: string): string[] {
+  let real = realRoots.get(root);
+  if (real === undefined) {
+    real = realPathOrSelfSync(root);
+    realRoots.set(root, real);
+  }
+  return real === root ? [root] : [root, real];
+}
+
+const isUnderRoot = (child: string, root: string) => rootSpellings(root).some((spelling) => isInside(child, spelling));
+
+/**
+ * A directory inside the PPM directory, spelled under each of the PPM directory's
+ * own spellings and never at its own real path. The two exceptions below are holes
+ * in the PPM-dir refusal: were `uploads` itself a link, its real path would carry
+ * the hole to wherever the link points — the snapshot directory, or the PPM
+ * directory itself.
+ */
+function ppmSubdirSpellings(dir: string): string[] {
+  const rel = relative(getPpmDir(), dir);
+  return rootSpellings(getPpmDir()).map((spelling) => join(spelling, rel));
+}
+
 /** True when the path is the PPM directory or anything inside it. */
 export function isPpmDirPath(resolved: string): boolean {
-  return isInside(resolved, getPpmDir());
+  return isUnderRoot(resolved, getPpmDir());
 }
 
 /**
@@ -37,7 +72,7 @@ export function isPpmDirPath(resolved: string): boolean {
  * the very image the assistant just read back from that directory.
  */
 export function isChatUploadPath(resolved: string): boolean {
-  return isInside(resolved, getUploadsDir());
+  return ppmSubdirSpellings(getUploadsDir()).some((spelling) => isInside(resolved, spelling));
 }
 
 /**
@@ -55,11 +90,12 @@ export function isChatUploadPath(resolved: string): boolean {
  * pass an already-resolved path, so `..` cannot walk back out of the subtree.
  */
 export function isCodexGeneratedImagePath(resolved: string): boolean {
-  const root = resolve(getPpmDir(), "codex-accounts");
-  if (!isInside(resolved, root) || resolved === root) return false;
-  const rel = resolved.slice(root.length + 1).split(sep);
-  // [accountId, "generated_images", …at least one file segment]
-  return rel.length >= 3 && rel[1] === "generated_images";
+  return ppmSubdirSpellings(resolve(getPpmDir(), "codex-accounts")).some((root) => {
+    if (!isInside(resolved, root) || resolved === root) return false;
+    const rel = resolved.slice(root.length + 1).split(sep);
+    // [accountId, "generated_images", …at least one file segment]
+    return rel.length >= 3 && rel[1] === "generated_images";
+  });
 }
 
 /**
@@ -73,7 +109,7 @@ export function isCodexGeneratedImagePath(resolved: string): boolean {
  * elsewhere does not match.
  */
 export function isCloudflaredDirPath(resolved: string): boolean {
-  return isInside(resolved, resolve(homedir(), ".cloudflared"));
+  return isUnderRoot(resolved, resolve(homedir(), ".cloudflared"));
 }
 
 /**
@@ -87,7 +123,7 @@ export function isCloudflaredDirPath(resolved: string): boolean {
  * a credential-read hole through the generic file routes.
  */
 export function isDbBackupsDirPath(resolved: string): boolean {
-  return isInside(resolved, getBackupsDir());
+  return isUnderRoot(resolved, getBackupsDir());
 }
 
 /** True when the path holds credential material a generic file route must never serve or relocate. */
@@ -101,21 +137,22 @@ export function isCredentialPath(resolved: string): boolean {
  * tokens; the latter stores the Cloudflare login cert. Neither may be
  * downloadable through a generic file route.
  *
- * Chat uploads and codex-generated images are the exceptions, and only for the
- * PPM-dir branch — both always live under `getPpmDir()`, never under
- * `~/.cloudflared`, so the exceptions are a no-op for the cloudflared branch.
- * Every caller applies this to the requested path *and* to its real path, so a
- * symlink parked in the uploads directory still fails on the second call and
- * cannot reach the rest of the PPM dir through the exception, and a symlink
- * pointing at `~/.cloudflared/cert.pem` fails the same way.
+ * Chat uploads and codex-generated images are the exceptions, and they lift only
+ * the PPM-dir refusal: `~/.cloudflared` and the snapshot directory are refused
+ * whatever path reaches them. Every caller applies this to the requested path
+ * *and* to its real path, so a symlink parked in the uploads directory still
+ * fails on the second call and cannot reach the rest of the PPM dir through the
+ * exception, and a symlink pointing at `~/.cloudflared/cert.pem` fails the same
+ * way — as does a link put in place of the uploads directory itself, since the
+ * exceptions are spelled from the PPM directory's own spellings.
  *
  * Both exceptions are read-only on purpose: they are absent from
  * `assertNotPpmSubtree`, so nothing can be copied, moved, or written INTO
  * those directories through a generic file route.
  */
 export function assertNotPpmDir(resolved: string): void {
-  const allowed = isChatUploadPath(resolved) || isCodexGeneratedImagePath(resolved);
-  if (isCredentialPath(resolved) && !allowed) {
+  const excepted = isChatUploadPath(resolved) || isCodexGeneratedImagePath(resolved);
+  if (isCloudflaredDirPath(resolved) || isDbBackupsDirPath(resolved) || (isPpmDirPath(resolved) && !excepted)) {
     throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
 }

@@ -4,17 +4,20 @@
 // header: under default auth (enabled), every ping 401s, the server reaps the lease at
 // 30s, and the client reconnects forever. The kill request already carried the bearer;
 // this covers the lease requests the same way.
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, afterEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // api-client (and this hook, transitively) touches localStorage at call time — stub
-// before importing, same pattern as tests/unit/web/api-client-get-dedup.test.ts.
+// before importing, same pattern as tests/unit/web/api-client-get-dedup.test.ts, and
+// through `installGlobal` for the same reason: one DOM is shared by the whole process.
 const TOKEN_KEY = "ppm-auth-token";
 const store = new Map<string, string>();
-(globalThis as any).localStorage = {
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
-};
+});
+afterAll(uninstallDom);
 
 const { pingLease, deleteLease, authHeaders, withGroupsRetention } = await import(
   "../../../src/web/hooks/use-resource-monitor.ts"

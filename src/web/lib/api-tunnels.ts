@@ -19,3 +19,22 @@ export const tunnelsApi = {
   start: (port: number) => api.post<{ port: number; url: string }>("/api/tunnels", { port }),
   stop: (pid: number) => api.del(`/api/tunnels/${pid}`),
 };
+
+/**
+ * PPM's own public tunnel (`/api/tunnel`) — distinct from the registry above,
+ * which lists every cloudflared on the machine.
+ */
+export interface PublicTunnelStatus {
+  /** A tunnel is actually serving right now. */
+  active: boolean;
+  url: string | null;
+  localUrl: string | null;
+  /** The master switch. Absent on a server older than it, where it was always on. */
+  enabled?: boolean;
+}
+
+export const publicTunnelApi = {
+  status: () => api.get<PublicTunnelStatus>("/api/tunnel"),
+  setEnabled: (enabled: boolean) =>
+    api.post<{ enabled: boolean; reload: string }>("/api/tunnel/enabled", { enabled }),
+};

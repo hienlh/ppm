@@ -1,0 +1,13 @@
+{
+  "CFBundleDisplayName": "Finder",
+  "CFBundleExecutable": "Finder",
+  "CFBundleIconFile": "Finder",
+  "CFBundleIconName": "Finder",
+  "CFBundleIdentifier": "com.apple.finder",
+  "CFBundleName": "Finder",
+  "CFBundlePackageType": "FNDR",
+  "CFBundleShortVersionString": "15.5",
+  "CFBundleVersion": "1732.6.4.2",
+  "LSMinimumSystemVersion": "15.8",
+  "NSPrincipalClass": "TApplication"
+}

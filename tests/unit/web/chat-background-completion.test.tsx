@@ -54,7 +54,11 @@ it("keeps reloaded history visible when a background agent finishes after the ro
   const afterError = JSON.parse(view!.container.textContent!);
   expect(afterError[1].content).toBe("Finished answer");
   expect(afterError[1].events).toHaveLength(2);
-  expect(afterError[1].events[0].children[0].message).toBe("Child failed");
+  // An "error" child is neither a nested Agent/Task stub nor a file mutation, so slimming
+  // routes it into the card's ring-buffer fallback instead of the kept `children` — the
+  // change tray and nested routing never needed it, only a human reading the card does.
+  expect(afterError[1].events[0].children ?? []).toHaveLength(0);
+  expect(afterError[1].events[0].recentChildren[0].message).toBe("Child failed");
 });
 
 it("does not finalize root text when a nested done arrives", async () => {

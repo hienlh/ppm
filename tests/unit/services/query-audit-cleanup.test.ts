@@ -8,6 +8,7 @@ import { cleanupQueryAudit, clearQueryAudit } from "../../../src/services/query-
 import { insertQueryLog, countQueryLogs } from "../../../src/services/query-audit/query-audit.service.ts";
 
 const tempDirs: string[] = [];
+const originalPpmHome = process.env.PPM_HOME;
 
 beforeEach(() => {
   const home = mkdtempSync(join(tmpdir(), "ppm-audit-cleanup-"));
@@ -20,6 +21,11 @@ beforeEach(() => {
 
 afterAll(() => {
   closeAuditDb();
+  // `PPM_HOME` is process-wide and the suite shares one process, so leaving it pointed at a
+  // temp home hands that home to every file after this one.
+  if (originalPpmHome === undefined) delete process.env.PPM_HOME;
+  else process.env.PPM_HOME = originalPpmHome;
+  _resetPpmDir();
   for (const dir of tempDirs) {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* sqlite handles linger on windows */ }
   }

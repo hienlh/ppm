@@ -27,7 +27,11 @@ describe("CodexAppServerProvider skeleton", () => {
     expect(r.id).toBe(s.id);
   });
 
-  it("isAvailable resolves to a boolean", async () => {
+  // Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1): the probe shells out to
+  // `bun x @openai/codex --version`, which fetches the npm manifest. With no network that call
+  // does not fail, it waits — past the 20s this test allows, and for longer when something
+  // earlier in the process has already left a connection to time out.
+  it.skipIf(process.env.PPM_SKIP_LIVE === "1")("isAvailable resolves to a boolean", async () => {
     const v = await p.isAvailable();
     expect(typeof v).toBe("boolean");
   }, 20_000);

@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AccountCardShell } from "./accounts-pane-header";
 import { formatExpiry, formatLastUpdated, tokenStatus } from "./account-usage-format";
 import type { DailyGuardState } from "../../../../shared/codex-daily-guard.ts";
+import type { ReactNode } from "react";
 import type { ResetCredits } from "../../../../types/chat";
 import { ResetCreditsChip, ScopedBucketRows } from "./account-usage-extras";
 
@@ -73,6 +74,8 @@ export interface AccountCardProps {
   onReauth?: (id: string) => void;
   /** Codex's free rate-limit resets for this account, shown in the footer. */
   resetCredits?: ResetCredits;
+  /** Control beside the reset count — Codex's "Use reset", which renders only at a limit. */
+  resetCreditAction?: ReactNode;
 }
 
 // Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
@@ -83,7 +86,7 @@ const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } 
 export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
   onSelect, unselectableReason, selecting, planLabel, dailyGuard, onDailyGuardToggle, dailyGuardToggling,
-  reauthHint, onReauth, resetCredits, layout = "list",
+  reauthHint, onReauth, resetCredits, resetCreditAction, layout = "list",
 }: AccountCardProps) {
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet || usage.weeklyScoped?.length;
@@ -241,12 +244,16 @@ export function AccountCard({
             </Tooltip>
           )}
           {!isExpired && onToggle && (
+            // The track is 36x20, under the 44px minimum, and padding a wrapper around it
+            // changes nothing — only the button itself takes the tap. The pseudo-element is
+            // the target: 44px tall, and 40px wide rather than 44 because the extra would
+            // reach past the 2px gap into the delete button beside it.
             <Switch
               checked={status !== "disabled"}
               onCheckedChange={() => onToggle(entry.accountId, status)}
               disabled={toggling || status === "cooldown"}
               aria-label={status === "disabled" ? "Enable account" : "Disable account"}
-              className="cursor-pointer"
+              className="cursor-pointer relative before:absolute before:content-[''] before:-inset-y-3 before:-inset-x-0.5"
             />
           )}
           {onDelete && (
@@ -318,6 +325,7 @@ export function AccountCard({
 
       <div className="flex items-center gap-2 text-[10px] text-text-subtle flex-wrap">
         <ResetCreditsChip credits={resetCredits} />
+        {resetCreditAction}
         {usage.lastFetchedAt && (
           <AccountHint
             className="inline-flex items-center gap-1"

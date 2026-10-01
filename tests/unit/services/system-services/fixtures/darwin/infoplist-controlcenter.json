@@ -1,0 +1,14 @@
+{
+  "CFBundleDisplayName": "ControlCenter",
+  "CFBundleExecutable": "ControlCenter",
+  "CFBundleIconFile": "AppIcon",
+  "CFBundleIconName": "AppIcon",
+  "CFBundleIdentifier": "com.apple.controlcenter",
+  "CFBundleName": "ControlCenter",
+  "CFBundlePackageType": "APPL",
+  "CFBundleShortVersionString": "1.0",
+  "CFBundleVersion": "1",
+  "LSMinimumSystemVersion": "15.8",
+  "LSUIElement": true,
+  "NSPrincipalClass": "Application"
+}

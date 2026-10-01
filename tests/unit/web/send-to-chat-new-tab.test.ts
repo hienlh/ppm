@@ -3,16 +3,19 @@
  * never deliver into the chat the user last selected (or a design session), only ever open a
  * fresh chat with the text as an editable draft.
  */
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
-const eventBus = new EventTarget();
-(globalThis as { window?: unknown }).window = eventBus;
+// The DOM's own `window` is the bus: the process shares one DOM, so `CustomEvent` is
+// happy-dom's and Bun's `EventTarget` refuses to dispatch an event from another realm.
+const eventBus = window;
 const store = new Map<string, string>();
-(globalThis as { localStorage?: unknown }).localStorage = {
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
-};
+});
+afterAll(uninstallDom);
 
 const { sendToChat, SEND_TO_CHAT_EVENT } = await import("../../../src/web/lib/send-to-chat");
 const { usePanelStore } = await import("../../../src/web/stores/panel-store");

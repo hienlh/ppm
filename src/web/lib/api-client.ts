@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { wipeBrowserCaches } from "./browser-cache/wipe-browser-caches";
 
 const TOKEN_KEY = "ppm-auth-token";
 const RELOAD_GUARD_KEY = "ppm-auth-reload-ts";
@@ -27,6 +28,20 @@ const pendingGets = new Map<string, { promise: Promise<unknown>; startedAt: numb
  * for endpoints that spawn a CLI or hit a registry before answering.
  */
 const RESPONSE_TIMEOUT_MS = 30_000;
+
+/**
+ * A request the server answered with a failure. The message is exactly what callers
+ * have always matched on; `status` is there for the ones that must tell "this resource
+ * is gone" (404) from any other failure whose wording happens to say "not found".
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 /** `reason` is only guaranteed on newer engines; never propagate `undefined`. */
 function abortReason(signal: AbortSignal): unknown {
@@ -168,7 +183,7 @@ export class ApiClient {
     warnOnAuditFailure(res);
 
     if (res.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
+      clearAuthToken();
       // Guard against infinite reload loops: skip reload if we already reloaded within 3s
       const lastReload = Number(sessionStorage.getItem(RELOAD_GUARD_KEY) || "0");
       if (Date.now() - lastReload > 3000) {
@@ -182,11 +197,11 @@ export class ApiClient {
     try {
       json = await res.json();
     } catch {
-      throw new Error(res.ok ? "Empty response from server" : `Server error (HTTP ${res.status})`);
+      throw new ApiError(res.ok ? "Empty response from server" : `Server error (HTTP ${res.status})`, res.status);
     }
 
     if (json.ok === false) {
-      throw new Error(json.error ?? `HTTP ${res.status}`);
+      throw new ApiError(json.error ?? `HTTP ${res.status}`, res.status);
     }
 
     return json.data as T;
@@ -204,8 +219,16 @@ export function setAuthToken(token: string) {
   localStorage.setItem(TOKEN_KEY, token);
 }
 
+/**
+ * Drops the auth token and wipes every browser cache built on top of it — the
+ * one path both the 401 handler above and a failed login (`login-screen.tsx`)
+ * go through, so neither leaves stale project data behind for the next user
+ * of this browser. The wipe itself is fire-and-forget: it never throws, and
+ * nothing here needs to wait on it (a 401 reloads the page moments later).
+ */
 export function clearAuthToken() {
   localStorage.removeItem(TOKEN_KEY);
+  void wipeBrowserCaches();
 }
 
 export function getAuthToken(): string | null {

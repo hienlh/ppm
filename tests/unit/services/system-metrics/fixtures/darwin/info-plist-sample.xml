@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Example App</string>
+	<key>CFBundleExecutable</key>
+	<string>Example App</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+	<key>CFBundleName</key>
+	<string>Example</string>
+	<key>ExampleData</key>
+	<data>AAECAwQFBgcICQ==</data>
+	<key>ExampleDate</key>
+	<date>2026-09-30T12:00:00Z</date>
+	<key>ExampleIntegers</key>
+	<array>
+		<integer>0</integer>
+		<integer>200</integer>
+		<integer>40000</integer>
+		<integer>3000000000</integer>
+		<integer>-5</integer>
+		<integer>9007199254740991</integer>
+		<integer>18446744073709551615</integer>
+	</array>
+	<key>ExampleLongText</key>
+	<string>A description longer than fifteen characters, so its length is written as an integer object after the marker.</string>
+	<key>ExampleNested</key>
+	<dict>
+		<key>Deep</key>
+		<array>
+			<dict>
+				<key>a</key>
+				<string>b</string>
+			</dict>
+		</array>
+		<key>Empty</key>
+		<dict/>
+		<key>EmptyArray</key>
+		<array/>
+	</dict>
+	<key>ExampleReal</key>
+	<real>3.25</real>
+	<key>ExampleUnicode</key>
+	<string>Ứng dụng mẫu 日本 🎉</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<false/>
+</dict>
+</plist>

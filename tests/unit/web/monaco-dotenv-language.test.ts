@@ -280,7 +280,15 @@ describe("every editor resolves the language the same way", () => {
     it(`${file.split("/").pop()} registers before mount, not on mount`, () => {
       // A model is created with its language id before `onMount` runs, and one
       // created against an unregistered id stays plaintext.
-      expect(src).toMatch(/beforeMount=\{registerDotenvLanguage\}/);
+      //
+      // The call has to be inside the `beforeMount` handler, wherever that handler ends. All
+      // three editors have since wrapped it in an arrow that does other setup too, so pinning
+      // the prop's exact spelling failed a test whose point is only *when* it runs.
+      const at = src.indexOf("beforeMount=");
+      expect(at).toBeGreaterThan(-1);
+      const onMount = src.indexOf("onMount=", at);
+      const handler = src.slice(at, onMount === -1 ? undefined : onMount);
+      expect(handler).toContain("registerDotenvLanguage");
     });
   }
 

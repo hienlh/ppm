@@ -12,7 +12,17 @@ import {
   _resetCodexCooldownsForTesting,
 } from "../../../src/services/codex-account-cooldown.ts";
 
-const mk = (label: string) => createCodexAccount({ label, type: "apiKey", creds: { type: "apiKey", apiKey: "k-" + label } });
+/**
+ * An account with the daily guard off, because nothing in this file is about the guard.
+ *
+ * `createCodexAccount` turns it on by default, and a guarded account makes
+ * `resolveCodexAccountForSession` fetch usage over the network before it answers — so these
+ * selection tests were reaching for a real endpoint and timing out after five seconds,
+ * depending on what else had run in the same process.
+ */
+const mk = (label: string) => createCodexAccount({
+  label, type: "apiKey", creds: { type: "apiKey", apiKey: "k-" + label }, dailyGuardEnabled: false,
+});
 function clearAll() { for (const a of listCodexAccounts()) removeCodexAccount(a.id); }
 
 describe("codex account selection", () => {

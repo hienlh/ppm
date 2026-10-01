@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Trash2, Pencil, Check, X, RotateCcw } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
+import { useSessionListStore, commitOptimistic } from "@/stores/session-list-store";
+import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import type { ProjectTag } from "../../../types/chat";
 
 interface TagSettingsSectionProps {
@@ -32,6 +34,13 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
 
   useEffect(() => { loadTags(); }, [loadTags]);
 
+  // The shared session-list store keeps its own copy of the project's tags
+  // (read by the sidebar, welcome screen, tab bar and mobile nav), so every
+  // CRUD action here re-syncs it in addition to this panel's own `loadTags`.
+  const refreshStoreTags = useCallback(() => {
+    void useSessionListStore.getState().refreshTags(projectRefForName(projectName));
+  }, [projectName]);
+
   const handleCreate = async () => {
     if (!newName.trim()) return;
     try {
@@ -39,6 +48,7 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
       setNewName("");
       setShowAdd(false);
       loadTags();
+      refreshStoreTags();
       onTagsChanged?.();
     } catch { /* silent */ }
   };
@@ -48,17 +58,21 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
       await api.patch(`${baseUrl}/${id}`, { name: editName.trim() || undefined, color: editColor || undefined });
       setEditingId(null);
       loadTags();
+      refreshStoreTags();
       onTagsChanged?.();
     } catch { /* silent */ }
   };
 
   const handleDelete = async (id: number, name: string) => {
     if (!window.confirm(`Delete tag "${name}"? Sessions with this tag will become untagged.`)) return;
-    try {
-      await api.del(`${baseUrl}/${id}`);
-      loadTags();
-      onTagsChanged?.();
-    } catch { /* silent */ }
+    const ref = projectRefForName(projectName);
+    // Optimistic: the rows lose the tag's chip now. A refused delete re-syncs the store
+    // (`commitOptimistic`), and the tag list below is re-read either way.
+    useSessionListStore.getState().onTagDeleted(ref, id);
+    await commitOptimistic(ref, () => api.del(`${baseUrl}/${id}`));
+    loadTags();
+    refreshStoreTags();
+    onTagsChanged?.();
   };
 
   const handleSetDefault = async (tagId: number) => {
@@ -66,6 +80,7 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
     try {
       await api.patch(`${baseUrl}/default-tag`, { tagId: newId });
       setDefaultTagId(newId);
+      refreshStoreTags();
     } catch { /* silent */ }
   };
 
@@ -73,6 +88,7 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
     try {
       await api.post(`${baseUrl}/reset`, {});
       loadTags();
+      refreshStoreTags();
       onTagsChanged?.();
     } catch { /* silent */ }
   };

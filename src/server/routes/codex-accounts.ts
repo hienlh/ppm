@@ -1,9 +1,11 @@
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
-import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, selectCodexAccount, setCodexAccountStatus, setCodexDailyGuard, codexUsageLevel, type CodexStrategy } from "../../services/codex-account.service.ts";
+import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, setCodexAccountStatus, setCodexDailyGuard, type CodexStrategy } from "../../services/codex-account.service.ts";
+import { pickCodexAccount } from "../../services/account-pick.service.ts";
 import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin, startBrowserLogin, submitBrowserCallback, getBrowserLoginStatus, cancelBrowserLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 import { isCodexAccountAuthFailed } from "../../services/codex-account-auth-state.ts";
+import { ResetCreditRefusedError, spendCodexResetCredit } from "../../services/codex-reset-credit.service.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
 export const codexAccountsRoutes = new Hono();
@@ -33,15 +35,7 @@ codexAccountsRoutes.get("/usage", async (c) => c.json(ok(await getAllCodexUsages
  * Null when no account is managed: chats then run on the ambient ~/.codex login, which has
  * no id to bind and nothing to choose between.
  */
-codexAccountsRoutes.post("/pick", async (c) => {
-  if (listCodexAccounts().length === 0) return c.json(ok(null));
-  const usages = await getAllCodexUsages();
-  // A failed usage fetch yields {} → +Infinity, which the selector reads as "unknown", not
-  // as "capped": an account we could not measure stays a candidate.
-  const picked = selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
-  if (!picked) return c.json(ok(null));
-  return c.json(ok({ id: picked.id, label: picked.label }));
-});
+codexAccountsRoutes.post("/pick", async (c) => c.json(ok(await pickCodexAccount())));
 
 /**
  * PATCH /api/codex-accounts/:id — switch an account on or off.
@@ -63,6 +57,19 @@ codexAccountsRoutes.patch("/:id", async (c) => {
   const updated = setCodexDailyGuard(c.req.param("id"), body.dailyGuardEnabled);
   if (!updated) return c.json(err("Account not found"), 404);
   return c.json(ok(updated));
+});
+
+/**
+ * POST /api/codex-accounts/:id/reset-credit — spend one free rate-limit reset.
+ * Refused with 409 unless a limit is reached right now (checked live) and a credit is left.
+ */
+codexAccountsRoutes.post("/:id/reset-credit", async (c) => {
+  try {
+    return c.json(ok(await spendCodexResetCredit(c.req.param("id"))));
+  } catch (e) {
+    if (e instanceof ResetCreditRefusedError) return c.json(err(e.message), e.status);
+    return c.json(err((e as Error).message), 502);
+  }
 });
 
 /** Set the selection strategy. */

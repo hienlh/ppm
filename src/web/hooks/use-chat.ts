@@ -10,8 +10,19 @@ import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
+import type { PromptCacheState } from "../../shared/prompt-cache-idle";
+import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
+import { useSessionListStore } from "@/stores/session-list-store";
+import { projectRefForName } from "@/stores/session-list-sync-triggers";
+import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
+
+/** Slim every Agent/Task card a provider stamped `transcriptAvailable` on, walking
+ *  in from the REST history response before it ever reaches React state. */
+function slimHistoryMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => (m.events ? { ...m, events: slimHistoryEvents(m.events) } : m));
+}
 
 interface ApprovalRequest {
   requestId: string;
@@ -66,6 +77,8 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   compactStatus: "compacting" | null;
+  /** Prompt-cache clock for this session; drives the idle re-cache notice. */
+  promptCache: PromptCacheState | null;
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   mcpNeedsAuth: string[];
   statusMessage: string | null;
@@ -153,6 +166,7 @@ export function useChat(
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [compactStatus, setCompactStatus] = useState<"compacting" | null>(null);
+  const [promptCache, setPromptCache] = useState<PromptCacheState | null>(null);
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
@@ -309,12 +323,8 @@ export function useChat(
         const event = events[i]!;
         if (event.type !== "tool_use") continue;
         if ((event.tool === "Agent" || event.tool === "Task") && (event as any).toolUseId === parentToolUseId) {
-          const children = [...(event.children ?? [])];
-          const id = (childEvent as any).toolUseId as string | undefined;
-          const duplicate = id ? children.findIndex((c) => c.type === childEvent.type && (c as any).toolUseId === id) : -1;
-          if (duplicate === -1) children.push(childEvent);
-          else children[duplicate] = childEvent;
-          return [[...events.slice(0, i), { ...event, children }, ...events.slice(i + 1)], true];
+          const updated = applyChildToParent(event, childEvent);
+          return [[...events.slice(0, i), updated, ...events.slice(i + 1)], true];
         }
         if (event.children?.length) {
           const [children, found] = append(event.children);
@@ -353,16 +363,7 @@ export function useChat(
       }
       if (idx === -1) return prev;
       const msg = prev[idx]!;
-      const events = msg.events!.map((e) => {
-        if (!isParent(e) || e.type !== "tool_use") return e;
-        const children = [...(e.children ?? [])];
-        // Replays can redeliver id-bearing children — upsert instead of duplicating
-        const cid = (childEvent as any).toolUseId as string | undefined;
-        const dup = cid ? children.findIndex((c) => c.type === childEvent.type && (c as any).toolUseId === cid) : -1;
-        if (dup !== -1) children[dup] = childEvent;
-        else children.push(childEvent);
-        return { ...e, children };
-      });
+      const events = msg.events!.map((e) => (isParent(e) ? applyChildToParent(e, childEvent) : e));
       return [...prev.slice(0, idx), { ...msg, events }, ...prev.slice(idx + 1)];
     });
     return true;
@@ -791,6 +792,25 @@ export function useChat(
           }
           return prev;
         });
+        // This turn just rewrote the cache, so the idle clock restarts here. Done locally
+        // rather than waiting for the next `session_state`: a tab left open for hours may
+        // never reconnect, and that is exactly the case the notice exists for.
+        if (doneUsage) {
+          setPromptCache((prev) => prev && {
+            ...prev,
+            lastTurnEndedAt: Date.now(),
+            billedPrefixTokens: prefixTokens(doneUsage),
+            // Left at its previous value when this turn measured none, rather than cleared:
+            // a context does not shrink, so the older figure is still the better answer.
+            ...(doneUsage.contextTokens != null && { contextTokens: doneUsage.contextTokens }),
+            // Same reason: a turn that only read the cache reports no window, and the one
+            // already in hand is still the window this session's cache lives in.
+            ...(doneUsage.cacheTtlMs != null && { ttlMs: doneUsage.cacheTtlMs }),
+            // Unconditional, unlike the two above: `undefined` here is the turn reporting
+            // that it re-cached after a compaction, which has to clear the flag.
+            compactedAt: doneUsage.compactedAt,
+          });
+        }
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
         streamingAccountRef.current = null;
@@ -985,6 +1005,9 @@ export function useChat(
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
+      // The server is the only holder of when the cache was last written and how big the
+      // replayed prefix was — neither is in the transcript, so a reload has to be told.
+      setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
       setMcpNeedsAuth(Array.isArray(state.mcpNeedsAuth) ? state.mcpNeedsAuth : []);
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
@@ -1208,7 +1231,7 @@ export function useChat(
           // cached bundle from before the upgrade would otherwise render an empty
           // history with no error.
           const payload = Array.isArray(data) ? { messages: data, versionMap: {} } : data;
-          let history: ChatMessage[] = Array.isArray(payload?.messages) ? payload.messages : [];
+          let history: ChatMessage[] = slimHistoryMessages(Array.isArray(payload?.messages) ? payload.messages : []);
           if (payload?.versionMap) setVersionMap(payload.versionMap);
           // The server served this transcript from a different id than the one
           // asked for: the provider had renamed the session and this tab kept the
@@ -1235,9 +1258,18 @@ export function useChat(
           });
           historyLoadedAtRef.current = Date.now();
         })
-        .catch(() => {
+        .catch((err) => {
           if (!cancelled && historyReconciledRef.current === historyReconciled) {
             setMessages((prev) => prev.filter((m) => !staleIds.has(m.id)));
+            // Another device deleted this session between opening the tab and
+            // this fetch resolving — drop the now-stale row from every shared
+            // history list instead of leaving it clickable to a 404. Only a real
+            // 404 counts: a message that merely says "not found" ("Provider …
+            // not found") is some other failure, and must not drop a live row.
+            // (Read by shape, not `instanceof ApiError`: the status is all that matters.)
+            if ((err as { status?: unknown } | null)?.status === 404 && projectName) {
+              useSessionListStore.getState().removeSession(projectRefForName(projectName), sessionId);
+            }
           }
         })
         .finally(() => {
@@ -1491,7 +1523,7 @@ export function useChat(
         if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
           historyReconciledRef.current++;
           if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
-          setMessages(payload.messages);
+          setMessages(slimHistoryMessages(payload.messages));
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
         }
@@ -1558,6 +1590,7 @@ export function useChat(
     pendingApproval,
     contextWindowPct,
     compactStatus,
+    promptCache,
     mcpNeedsAuth,
     statusMessage,
     sessionTitle,

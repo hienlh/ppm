@@ -11,10 +11,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type * as MonacoType from "monaco-editor";
 
-// The module dispatches a DOM event, and bun's test environment has no window.
-// Stubbed before the import, which is how the other web tests here do it.
-const eventBus = new EventTarget();
-(globalThis as unknown as { window: EventTarget }).window = eventBus;
+// The module dispatches a DOM event, and the test preload installs a DOM for the whole
+// process — so the real `window` is the bus. A bare `EventTarget` cannot stand in for it:
+// `CustomEvent` is happy-dom's here, and Bun's `EventTarget` refuses an event from another
+// realm.
+const eventBus = window;
 
 const { _resetBlameHoverCommands, registerBlameHoverCommands } = await import(
   "../../../src/web/lib/blame-hover-commands.ts"

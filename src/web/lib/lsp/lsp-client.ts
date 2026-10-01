@@ -28,6 +28,10 @@ export interface LspMissingServer {
   id: string;
   displayName: string;
   installHint: string;
+  /** Whether PPM can install this one on *this host* — a toolchain-based install needs that toolchain. */
+  installable?: boolean;
+  /** What the install would use, so the dialog can say what pressing the button does. */
+  installWith?: "bun" | "go" | "rustup";
 }
 
 export type LspDocumentStatus =
@@ -130,6 +134,22 @@ export class LspConnection {
 
   statusOf(path: string): LspDocumentStatus | undefined {
     return this.docs.get(path)?.status;
+  }
+
+  /**
+   * Ask again for every document that had no server.
+   *
+   * What an install leaves to do: the file is already open, and closing and reopening the tab
+   * to pick up a server that has just appeared is exactly the step the button exists to remove.
+   * Only the documents with nothing serving them, so a tab that already has a server is never
+   * taken away from it.
+   */
+  retryUnavailable(): void {
+    for (const [path, entry] of this.docs) {
+      if (entry.status.state !== "unavailable") continue;
+      this.setStatus(path, { state: "opening" });
+      this.sendOpen(path);
+    }
   }
 
   // ── Requests ────────────────────────────────────────────────────────────
@@ -307,6 +327,18 @@ export function acquireLspConnection(projectName: string): LspConnection {
   const connection = new LspConnection(projectName);
   connections.set(projectName, { connection, holders: 1 });
   return connection;
+}
+
+/**
+ * `retryUnavailable` on every open connection.
+ *
+ * One install serves every project at once — one `bun add` puts the server where every session
+ * looks — and the editors of other projects are still mounted behind the tab pool, so asking
+ * only the project whose dialog was open would leave the others claiming a server is missing
+ * that is now installed.
+ */
+export function retryUnavailableLspDocuments(): void {
+  for (const entry of connections.values()) entry.connection.retryUnavailable();
 }
 
 /** True when that was the last holder, so the project has no editor open any more. */

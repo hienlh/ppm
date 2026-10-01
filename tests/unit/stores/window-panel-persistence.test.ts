@@ -6,7 +6,8 @@
  * floating window — so an unknown tab type, a non-window panel id, or a tab type that can
  * never be detached must all be dropped rather than trusted.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 const memStore: Record<string, string> = {};
 let failWrites = false;
@@ -19,7 +20,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 import {
   loadWindowPanels,

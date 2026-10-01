@@ -56,6 +56,12 @@ export function peekChatProviders(projectName: string): ChatProviderInfo[] | und
   return entry && entry.expires > Date.now() ? entry.value : undefined;
 }
 
+/** Seeds this in-memory cache from a `/chat/prepare` response, so `peekChatProviders`
+ * (the provider chip's instant-open path) sees a fresh list without its own fetch. */
+export function seedChatProviders(projectName: string, list: ChatProviderInfo[]): void {
+  providers.set(projectName, { value: list, expires: Date.now() + TTL_MS });
+}
+
 export function clearChatPreparationCache(): void {
   ++generation;
   settings.clear();

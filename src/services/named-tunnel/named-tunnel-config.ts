@@ -9,6 +9,8 @@
 export type TunnelMode = "quick" | "named";
 
 export interface ResolvedTunnelConfig {
+  /** Master switch — `false` means spawn no tunnel at all, whatever `mode` says. */
+  enabled: boolean;
   mode: TunnelMode;
   hostname: string | null;
   tunnelName: string | null;
@@ -18,7 +20,7 @@ export interface ResolvedTunnelConfig {
   dismissed: boolean;
 }
 
-const QUICK: Omit<ResolvedTunnelConfig, "dismissed"> = {
+const QUICK: Omit<ResolvedTunnelConfig, "dismissed" | "enabled"> = {
   mode: "quick", hostname: null, tunnelName: null, token: null, zoneID: null, accountID: null,
 };
 
@@ -35,6 +37,9 @@ export function resolveTunnelConfig(raw: unknown): ResolvedTunnelConfig {
   }
 
   const dismissed = obj != null && typeof obj.dismissed === "boolean" ? obj.dismissed : false;
+  // Absent means a row older than the master switch, back when the tunnel was
+  // unconditional — absent is therefore on, never off.
+  const enabled = obj != null && typeof obj.enabled === "boolean" ? obj.enabled : true;
 
   // Named mode requires BOTH the stored mode flag AND all four identity fields —
   // checking fields alone would resurrect a tunnel the user explicitly disabled,
@@ -46,10 +51,11 @@ export function resolveTunnelConfig(raw: unknown): ResolvedTunnelConfig {
     nonEmptyString(obj.accountID);
 
   if (!named || obj == null) {
-    return { ...QUICK, dismissed };
+    return { ...QUICK, enabled, dismissed };
   }
 
   return {
+    enabled,
     mode: "named",
     hostname: obj.namedTunnelHostname as string,
     tunnelName: nonEmptyString(obj.namedTunnelName) ? obj.namedTunnelName : null,

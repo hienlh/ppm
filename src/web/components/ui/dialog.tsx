@@ -68,7 +68,20 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background text-foreground p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          // `grid-cols-[minmax(0,1fr)]` rather than the implicit `auto` column: an
+          // auto track's base size is its items' MIN-CONTENT contribution, so one
+          // unbreakable string anywhere inside — a systemd unit name, a log line,
+          // a path — widens the column past the dialog and every child with it,
+          // drawing outside the panel. `overflow-wrap: break-word` does not help,
+          // because by specification it does not affect min-content size.
+          "fixed top-[50%] left-[50%] z-50 grid grid-cols-[minmax(0,1fr)] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background text-foreground p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          // The close button is absolutely positioned over the top-right corner,
+          // which is the header's first line — so a title long enough to reach it
+          // renders underneath it. Reserve the corner, but only when the button is
+          // actually there.
+          // A descendant selector, not a child one: several dialogs put the header
+          // inside a flex/scroll wrapper.
+          showCloseButton && "[&_[data-slot=dialog-header]]:pr-8",
           className
         )}
         {...props}

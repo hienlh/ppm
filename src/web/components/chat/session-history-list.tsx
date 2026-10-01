@@ -10,6 +10,8 @@ import { ProviderBadge } from "./provider-selector";
 import { SearchSnippet } from "./search-snippet";
 import { useSessionHistory } from "@/hooks/use-session-history";
 import { useChatSearch } from "@/hooks/use-chat-search";
+import { SessionListSyncIndicator } from "./session-list-sync-indicator";
+import { useProjectRef } from "@/stores/session-list-sync-triggers";
 import type { SessionInfo, ChatSearchResult } from "../../../types/chat";
 
 /** Sidebar search-results list (unified title + content matches with snippets). */
@@ -74,6 +76,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
   });
   const notifications = useNotificationStore((s) => s.notifications);
 
+  const project = useProjectRef(projectName);
   const isSidebar = variant === "sidebar";
   // Content-aware unified search is a sidebar affordance; the bar keeps its
   // lightweight title-only filter.
@@ -96,7 +99,11 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
   return (
     <div className={cn(isSidebar ? "flex flex-col h-full min-h-0" : "border-t border-border/30 bg-surface", className)}>
       {/* Header (sidebar only — the bar variant already sits under its own toolbar) */}
-      {isSidebar && <SidebarHeader icon={BotMessageSquare} title="Chat History" />}
+      {isSidebar && (
+        <SidebarHeader icon={BotMessageSquare} title="Chat History">
+          {project && <SessionListSyncIndicator project={project} />}
+        </SidebarHeader>
+      )}
 
       {/* Search + bulk delete + refresh */}
       <div className="flex items-center gap-1 px-2 py-2 shrink-0">

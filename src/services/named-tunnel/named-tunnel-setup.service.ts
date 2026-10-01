@@ -159,6 +159,10 @@ async function runSetupInner(hostname: string): Promise<SetupOutcome> {
 
   broadcastGlobalEvent({ type: "tunnel:setup_step", step: "apply", message: "applying configuration" });
   configService.set("tunnel", {
+    // Carry the master switch across rather than defaulting it: configuring a
+    // domain is not consent to start sharing, and this write would otherwise
+    // silently turn a deliberately-off tunnel back on.
+    enabled: configService.get("tunnel").enabled,
     mode: "named",
     namedTunnelName: tunnelName,
     namedTunnelHostname: hostname,

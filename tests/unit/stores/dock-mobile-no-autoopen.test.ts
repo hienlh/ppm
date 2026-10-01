@@ -5,7 +5,8 @@
  *
  * Desktop keeps restoring the dock: there it is a docked panel, not an overlay.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 const memStore: Record<string, string> = {};
 const localStorageStub = {
@@ -14,8 +15,12 @@ const localStorageStub = {
   removeItem: (k: string) => { delete memStore[k]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
-(globalThis as unknown as { fetch: () => Promise<Response> }).fetch = () => Promise.resolve(new Response("{}"));
+// Through `installGlobal` so the real ones come back: the test process shares one DOM, and a
+// plain object standing in for web storage — or a deleted `window` — is what every file after
+// this one would then be testing against.
+installGlobal("localStorage", localStorageStub);
+installGlobal("fetch", () => Promise.resolve(new Response("{}")));
+afterAll(uninstallDom);
 
 import { usePanelStore } from "../../../src/web/stores/panel-store";
 import { collapseRestoredDockOnMobile } from "../../../src/web/stores/dock-actions";
@@ -47,7 +52,7 @@ function seedPersistedLayoutWithVisibleDock() {
 }
 
 function setViewportWidth(width: number) {
-  (globalThis as unknown as { window: { innerWidth: number } }).window = { innerWidth: width };
+  installGlobal("window", { innerWidth: width });
 }
 
 describe("collapseRestoredDockOnMobile", () => {
@@ -73,9 +78,9 @@ describe("switchProject — restoring a persisted visible dock", () => {
     usePanelStore.setState({ currentProject: null, projectGrids: {}, projectFocused: {}, projectDock: {} });
   });
 
-  afterEach(() => {
-    delete (globalThis as unknown as { window?: unknown }).window;
-  });
+  // No per-test teardown of `window`: both cases set the viewport they need, and the shared
+  // DOM is restored once by the file's `afterAll`. Deleting it between tests took it away
+  // from every later file in the process.
 
   it("mobile: dock stays hidden, height and dock tabs are kept", () => {
     setViewportWidth(400);

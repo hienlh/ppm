@@ -7,6 +7,8 @@ import {
 } from "@/components/ui/context-menu";
 import { api, projectUrl } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
+import { commitOptimistic } from "@/stores/session-list-store";
+import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import type { SessionInfo, ProjectTag } from "../../../types/chat";
 
 interface SessionContextMenuProps {
@@ -26,18 +28,19 @@ export function SessionContextMenu({
 }: SessionContextMenuProps) {
   const markUnread = useNotificationStore((s) => s.markUnread);
   const isUnread = useNotificationStore((s) => s.notifications.has(session.id));
+  // Optimistic: the row shows the new tag before the request goes out. A refused change
+  // puts the previous tag back in the lists this menu was opened from, and
+  // `commitOptimistic` re-syncs the shared store from the server.
   const assignTag = useCallback(async (tagId: number | null) => {
-    try {
-      if (tagId) {
-        await api.patch(`${projectUrl(projectName)}/chat/sessions/${session.id}/tag`, { tagId });
-        const tag = projectTags.find((t) => t.id === tagId);
-        if (tag) onTagChanged(session.id, { id: tag.id, name: tag.name, color: tag.color });
-      } else {
-        await api.del(`${projectUrl(projectName)}/chat/sessions/${session.id}/tag`);
-        onTagChanged(session.id, null);
-      }
-    } catch { /* silent */ }
-  }, [session.id, projectName, projectTags, onTagChanged]);
+    const found = tagId ? projectTags.find((t) => t.id === tagId) : undefined;
+    if (tagId && !found) return;
+    const previous = session.tag ?? null;
+    onTagChanged(session.id, found ? { id: found.id, name: found.name, color: found.color } : null);
+    const url = `${projectUrl(projectName)}/chat/sessions/${session.id}/tag`;
+    const ok = await commitOptimistic(projectRefForName(projectName),
+      () => (tagId ? api.patch(url, { tagId }) : api.del(url)));
+    if (!ok) onTagChanged(session.id, previous);
+  }, [session.id, session.tag, projectName, projectTags, onTagChanged]);
 
   return (
     <ContextMenu>

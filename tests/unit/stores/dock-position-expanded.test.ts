@@ -10,7 +10,8 @@
  * These invariants keep the existing per-project dock persistence (visible/height)
  * untouched — see dock-state.test.ts and panel-persist-dock-migration.test.ts.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // ---------------------------------------------------------------------------
 // In-memory localStorage stub — must be set before store import
@@ -22,7 +23,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 // fetch stub — settings-store pushes UI prefs to the server (debounced); swallow it.
 (globalThis as unknown as { fetch: () => Promise<Response> }).fetch = () =>

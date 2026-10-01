@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { trashPath, type TrashRunner } from "../../../../src/services/fs-ops/fs-ops-trash.service.ts";
+import { trashPath, type TrashLookup, type TrashRunner } from "../../../../src/services/fs-ops/fs-ops-trash.service.ts";
 import { getPpmDir } from "../../../../src/services/ppm-dir.ts";
 import { assertIsolatedPpmHome } from "../../../helpers/assert-isolated-ppm-home.ts";
 
@@ -17,6 +17,15 @@ afterEach(() => {
 
 const okRunner: TrashRunner = async () => ({ exitCode: 0, stderr: "" });
 
+/**
+ * Every backend this could pick, present.
+ *
+ * Which tool a host has is not what these tests are about, and the container the suite runs in
+ * has none of them — without this the service refused while building the command, before the
+ * stub runner below was ever reached.
+ */
+const foundLookup: TrashLookup = (name) => `/usr/bin/${name}`;
+
 describe("trashPath", () => {
   it("hands an absolute path to the platform backend", async () => {
     const file = join(dir, "gone.txt");
@@ -26,7 +35,7 @@ describe("trashPath", () => {
       seen = cmd;
       return { exitCode: 0, stderr: "" };
     };
-    const result = await trashPath(file, { run: spy });
+    const result = await trashPath(file, { run: spy, which: foundLookup });
     expect(result.trashed).toBe(true);
     expect(seen.length).toBeGreaterThan(1);
     expect(seen.join(" ")).toContain("gone.txt");
@@ -39,7 +48,10 @@ describe("trashPath", () => {
     const file = join(dir, "a.txt");
     writeFileSync(file, "x");
     const failing: TrashRunner = async () => ({ exitCode: 1, stderr: "no recycle bin here" });
-    await expect(trashPath(file, { run: failing })).rejects.toMatchObject({
+    // With the lookup faked too, or this passes without the runner ever being called: a host
+    // with no backend refuses while building the command, and that refusal is `NO_TRASH` as
+    // well — the right code for the wrong reason.
+    await expect(trashPath(file, { run: failing, which: foundLookup })).rejects.toMatchObject({
       code: "NO_TRASH",
       status: 409,
     });
@@ -51,14 +63,14 @@ describe("trashPath", () => {
     const throwing: TrashRunner = async () => {
       throw new Error("spawn ENOENT");
     };
-    await expect(trashPath(file, { run: throwing })).rejects.toMatchObject({ code: "NO_TRASH" });
+    await expect(trashPath(file, { run: throwing, which: foundLookup })).rejects.toMatchObject({ code: "NO_TRASH" });
   });
 
   it("never deletes permanently as a fallback", async () => {
     const file = join(dir, "keep.txt");
     writeFileSync(file, "x");
     const failing: TrashRunner = async () => ({ exitCode: 2, stderr: "" });
-    await expect(trashPath(file, { run: failing })).rejects.toThrow();
+    await expect(trashPath(file, { run: failing, which: foundLookup })).rejects.toThrow();
     expect(existsSync(file)).toBe(true);
   });
 

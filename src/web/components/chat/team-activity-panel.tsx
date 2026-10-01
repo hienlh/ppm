@@ -11,7 +11,8 @@ import { RefreshCw } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
-import { useOpenTeamMember } from "./use-open-team-member";
+import { useOpenAgentSession } from "./use-open-agent-session";
+import { normalizeProviderId } from "./agent-session-context";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
 import { TeamMemberList } from "./team-member-list";
 import { TeamMessageList } from "./team-message-list";
@@ -25,6 +26,9 @@ interface TeamActivityPanelProps {
   sessionId?: string | null;
   /** Passed to a member window so its steps resolve project-relative paths. */
   projectName?: string;
+  /** Which provider's hub to subscribe the session window on — forwarded by
+   *  `chat-history-bar.tsx` from the chat's own `providerId`; defaults to Claude when absent. */
+  providerId?: string;
 }
 
 /** Implicit teams are named after the session, which is an unreadable uuid. */
@@ -32,10 +36,10 @@ function teamLabel(name: string, sessionId?: string | null): string {
   return name === sessionId ? "Team (current session)" : name;
 }
 
-export function TeamActivityPanel({ teamNames, messages, sessionId, projectName }: TeamActivityPanelProps) {
+export function TeamActivityPanel({ teamNames, messages, sessionId, projectName, providerId }: TeamActivityPanelProps) {
   const [selectedTeam, setSelectedTeam] = useState(teamNames[0] ?? "");
   const [tab, setTab] = useState<TeamTab>("members");
-  const openMember = useOpenTeamMember();
+  const openAgentSession = useOpenAgentSession();
   // Touch needs the 44px minimum even at desktop width; a mouse does not.
   const coarse = usePrefersCoarsePointer();
 
@@ -51,9 +55,19 @@ export function TeamActivityPanel({ teamNames, messages, sessionId, projectName 
 
   const openMemberSession = useCallback(
     (memberName: string) => {
-      openMember({ teamName: selectedTeam, memberName, projectName });
+      // A team name is not a session id — the hub's per-session subscription would name a
+      // session that never exists and fail ownership. Without the real id there is nothing
+      // to open (no worse than the old handle lookup, which had the same gap).
+      if (!sessionId) return;
+      openAgentSession({
+        projectName: projectName ?? "",
+        providerId: normalizeProviderId(providerId),
+        sessionId,
+        source: { kind: "member", teamName: selectedTeam, memberName },
+        title: `Session — ${memberName}`,
+      });
     },
-    [openMember, selectedTeam, projectName],
+    [openAgentSession, selectedTeam, projectName, providerId, sessionId],
   );
 
   /**

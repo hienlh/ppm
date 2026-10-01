@@ -136,6 +136,35 @@ export const useGitStatusStore = create<GitStatusStore>()((set) => ({
 }));
 
 /**
+ * One status fetch pushed into the store: the badge count, the tree decorations
+ * and the status bar's branch, all from the same answer.
+ *
+ * A function rather than only the poller's body because a checkout has to land
+ * at once — leaving the branch name in the status bar naming the branch the
+ * user just left, for up to ten seconds, reads as a checkout that did not work.
+ */
+export async function refreshGitStatus(
+  projectName: string,
+  gitUrl: (suffix: string) => string,
+  rebaseStatus: (status: GitStatus) => GitStatus,
+): Promise<void> {
+  const { setCount, setFileStatuses, setMeta } = useGitStatusStore.getState();
+  try {
+    const data = await api.get<GitStatus>(gitUrl("/status"));
+    setCount(
+      projectName,
+      data.staged.length + data.unstaged.length + data.untracked.length,
+    );
+    // The tree decorates nodes by project-relative path, and git answered in
+    // the repository's terms — which for a subfolder is one directory short.
+    setFileStatuses(projectName, rebaseStatus(data));
+    setMeta(projectName, data);
+  } catch {
+    // Silently ignore — badge just keeps last-known value
+  }
+}
+
+/**
  * Polls git status in the background so sidebar badge + file decorations stay fresh.
  * Skips polling when GitStatusPanel is mounted (it has its own 5s poll).
  */
@@ -143,28 +172,13 @@ export function useGitChangesPoller(
   projectName: string | undefined,
   skip?: boolean,
 ) {
-  const setCount = useGitStatusStore((s) => s.setCount);
-  const setFileStatuses = useGitStatusStore((s) => s.setFileStatuses);
-  const setMeta = useGitStatusStore((s) => s.setMeta);
   // The project folder is not always the repository — see `use-git-repo`.
   const { repo, gitUrl, rebaseStatus } = useGitRepo(projectName);
 
   const poll = useCallback(async () => {
     if (!projectName || !repo) return;
-    try {
-      const data = await api.get<GitStatus>(gitUrl("/status"));
-      setCount(
-        projectName,
-        data.staged.length + data.unstaged.length + data.untracked.length,
-      );
-      // The tree decorates nodes by project-relative path, and git answered in
-      // the repository's terms — which for a subfolder is one directory short.
-      setFileStatuses(projectName, rebaseStatus(data));
-      setMeta(projectName, data);
-    } catch {
-      // Silently ignore — badge just keeps last-known value
-    }
-  }, [projectName, repo, gitUrl, rebaseStatus, setCount, setFileStatuses, setMeta]);
+    await refreshGitStatus(projectName, gitUrl, rebaseStatus);
+  }, [projectName, repo, gitUrl, rebaseStatus]);
 
   useEffect(() => {
     if (skip) return;

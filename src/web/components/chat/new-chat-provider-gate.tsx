@@ -1,8 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { AISettings } from "@/lib/api-settings";
 import { chatPreparationGeneration, clearChatPreparationCache, getChatPreparationSettings, getChatProviders, type ChatProviderInfo } from "@/lib/chat-preparation-cache";
 import { resolveNewChatProvider } from "@/lib/new-chat-provider";
+import { readChatPreparationSettings, readChatProviders } from "@/lib/chat-preference-local-cache";
+import { projectCacheId } from "@/lib/browser-cache/cache-keys";
+import { getPrepare } from "@/lib/new-chat-prepare-client";
 import { usePanelStore } from "@/stores/panel-store";
+import { projectRefForName } from "@/stores/session-list-sync-triggers";
 
 interface PreparedChat { providerId: string; permissionMode?: string }
 interface NewChatPreparation {
@@ -43,9 +47,12 @@ export function NewChatProviderGate({ tabId, metadata, children }: {
     if (!current.providerPending && typeof current.providerId === "string") {
       return { providerId: current.providerId, permissionMode: current.permissionMode as string | undefined };
     }
-    const result = { providerId, permissionMode: (current.permissionMode as string | undefined)
-      ?? settings.providers[providerId]?.permission_mode ?? "bypassPermissions" };
-    const next = { ...current, ...result, providerPending: undefined, focusedProviderOnOpen: undefined };
+    const carried = current.permissionMode as string | undefined;
+    const result = { providerId, permissionMode: carried ?? settings.providers[providerId]?.permission_mode ?? "bypassPermissions" };
+    // A mode taken from settings here is a default the tab's prepare may still refresh;
+    // one the tab already carried keeps whatever source it came with.
+    const next = { ...current, ...result, providerPending: undefined, focusedProviderOnOpen: undefined,
+      ...(carried ? {} : { permissionModeSource: "cache" }) };
     latest.current = next;
     usePanelStore.getState().updateTab(tabId, { metadata: next });
     return result;
@@ -63,17 +70,28 @@ export function NewChatProviderGate({ tabId, metadata, children }: {
     setUnavailable(null);
     const projectName = current.projectName as string | undefined;
     const generation = chatPreparationGeneration();
-    const request = Promise.all([
+    const focusedProvider = current.focusedProviderOnOpen as string | undefined;
+    const legacyFetch = () => Promise.all([
       getChatPreparationSettings(projectName),
       projectName ? getChatProviders(projectName) : Promise.resolve(null),
-    ]).then(([settings, providers]) => {
+    ]).then(([settings, providers]) => ({ settings, providers, providerId: resolveNewChatProvider(settings, focusedProvider) }));
+    // The tab's own mount already started `/chat/prepare` (see chat-tab.tsx) — join it
+    // instead of the settings + providers pair this gate used to fetch itself. A failed
+    // prepare request (not merely an unavailable provider, handled below) falls back to
+    // that original pair rather than leaving the tab stuck.
+    const tabPrepare = getPrepare(tabId);
+    const settled = tabPrepare
+      ? tabPrepare.then((prepared) => ({
+          settings: prepared.settings, providers: prepared.providers, providerId: prepared.resolvedProviderId,
+        })).catch(legacyFetch)
+      : legacyFetch();
+    const request = settled.then(({ settings, providers, providerId }) => {
       if (!active.current) throw new Error("Chat was closed.");
       if (generation !== chatPreparationGeneration()) throw new Error("Chat settings changed. Please retry.");
       const now = currentMetadata();
       if (!now.providerPending && typeof now.providerId === "string") {
         return { providerId: now.providerId, permissionMode: now.permissionMode as string | undefined };
       }
-      const providerId = resolveNewChatProvider(settings, current.focusedProviderOnOpen as string | undefined);
       if (providers && !providers.some((provider) => provider.id === providerId)) {
         setUnavailable({ provider: providerId, settings, alternatives: providers });
         throw new Error(`${providerId} is not available. Choose a provider for this chat.`);
@@ -85,10 +103,30 @@ export function NewChatProviderGate({ tabId, metadata, children }: {
     }).finally(() => { if (inFlight.current === request) inFlight.current = null; });
     inFlight.current = request;
     return request;
-  }, [currentMetadata, selectProvider]);
+  }, [currentMetadata, selectProvider, tabId]);
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => { if (pending) void prepare().catch(() => {}); }, [pending, prepare]);
+
+  // A tab restored from a reload never passes through `panel-store.openTab`'s warm
+  // resolution, so it can still be `providerPending` even with a warm local cache. This
+  // resolves synchronously before paint, so the first frame is never "Preparing chat…"
+  // for a cache that already has the answer — `prepare()` above still runs, but its
+  // `selectProvider` call becomes a no-op once metadata is already resolved.
+  useLayoutEffect(() => {
+    const current = currentMetadata();
+    if (!current.providerPending) return;
+    const projectName = current.projectName as string | undefined;
+    if (!projectName) return;
+    const settings = readChatPreparationSettings();
+    if (!settings) return;
+    const cachedProviders = readChatProviders(projectCacheId(projectRefForName(projectName)));
+    const resolvedProviderId = resolveNewChatProvider(settings, current.focusedProviderOnOpen as string | undefined);
+    if (!cachedProviders?.some((provider) => provider.id === resolvedProviderId)) return;
+    selectProvider(resolvedProviderId, settings);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const retry = () => { clearChatPreparationCache(); void prepare().catch(() => {}); };
 
   return <PreparationContext.Provider value={{ pending, providerId: metadata.providerId as string | undefined,

@@ -100,7 +100,7 @@ describe("createWindowsProcessCollector", () => {
     // A pid with no engine instance is measured-and-idle, not unmeasurable.
     expect(first.rows.find((r) => r.pid === 100)!.gpuPct).toBe(0);
     expect(first.rows.find((r) => r.pid === 100)!.gpuMemMB).toBe(0);
-    expect(first.columns).toEqual({ disk: true, gpu: true, net: false });
+    expect(first.columns).toEqual({ disk: true, gpu: true, net: false, swap: false });
 
     // Second tick, +0.2 s of engine busy over a 1 s counter interval → 20 %.
     now += 2000;
@@ -121,7 +121,7 @@ describe("createWindowsProcessCollector", () => {
     expect(r.rows[0]!.gpuPct).toBeUndefined();
     expect(r.rows[0]!.gpuMemMB).toBeUndefined();
     // The UI must not lose (and re-add) a whole column because of one bad tick.
-    expect(r.columns).toEqual({ disk: true, gpu: true, net: false });
+    expect(r.columns).toEqual({ disk: true, gpu: true, net: false, swap: false });
     c.stop();
   });
 

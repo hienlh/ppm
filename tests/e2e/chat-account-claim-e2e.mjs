@@ -27,6 +27,9 @@
 //
 // Run:
 //   bun tests/e2e/chat-account-claim-e2e.mjs
+// or, against a workspace this test owns (isolated PPM_HOME, two seeded placeholder
+// accounts, mock providers) — the setup the note above asks for:
+//   node tests/e2e/fixtures/isolated-chat-stack.mjs -- bun tests/e2e/chat-account-claim-e2e.mjs
 //
 // Env:
 //   PPM_E2E_WEB=http://localhost:5173   dev web origin
@@ -114,7 +117,7 @@ async function newPage() {
   await send("Network.enable");
 
   const consoleLines = [];
-  const pickCalls = [];
+  const prepareCalls = [];
   const origOnMessage = ws.onmessage;
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
@@ -124,15 +127,16 @@ async function newPage() {
     if (msg.method === "Runtime.exceptionThrown") {
       consoleLines.push(`exception: ${msg.params.exceptionDetails?.text} ${msg.params.exceptionDetails?.exception?.description ?? ""}`);
     }
-    if (msg.method === "Network.responseReceived" && /\/pick$/.test(msg.params.response.url)) {
-      pickCalls.push(`${msg.params.response.status} ${msg.params.response.url}`);
+    // The claim is made inside the tab's `POST /chat/prepare` now, not by a separate `/pick`.
+    if (msg.method === "Network.responseReceived" && /\/chat\/prepare$/.test(msg.params.response.url)) {
+      prepareCalls.push(`${msg.params.response.status} ${msg.params.response.url}`);
     }
     origOnMessage(e);
   };
 
   const page = {
     consoleLines,
-    pickCalls,
+    prepareCalls,
     close: () => ws.close(),
     async eval(expression) {
       const r = await send("Runtime.evaluate", {
@@ -257,6 +261,15 @@ async function main() {
   await page.goto(WEB_PROJECT);
   const appReady = await page.waitFor(`document.querySelectorAll('button').length > 10`);
   check("app loads", appReady === true);
+  // The claim is made by the tab's project-scoped `POST /chat/prepare`, so the tab has to be
+  // opened inside the project: pressing Ctrl+L before the project is active puts it in the
+  // project-less workspace, where there is nothing to prepare against. (Dev-server only:
+  // the store is reached through Vite's module URL.)
+  const projectActive = await page.waitFor(`(async () => {
+    const { useProjectStore } = await import("/stores/project-store.ts");
+    return useProjectStore.getState().activeProject?.name === ${JSON.stringify(PROJECT)};
+  })()`);
+  check("the project is active before the tab is opened", projectActive === true);
 
   // --- a new tab claims an account -----------------------------------------------------
   const openResult = await page.eval(OPEN_CHAT_TAB);
@@ -283,7 +296,7 @@ async function main() {
     log(`  diag  chatKeys=${diag.chatKeys.join(", ") || "(none)"}`);
     log(`  diag  tabs=${JSON.stringify(diag.allTabs)}`);
     log(`  diag  body=${JSON.stringify(diag.body)}`);
-    log(`  diag  pick calls=${page.pickCalls.join(" | ") || "(none — the claim never reached the server)"}`);
+    log(`  diag  prepare calls=${page.prepareCalls.join(" | ") || "(none — the claim never reached the server)"}`);
     log(`  diag  console=${page.consoleLines.slice(-6).join(" || ") || "(clean)"}`);
   }
 
@@ -359,11 +372,15 @@ async function main() {
       // The serving account is marked by its "Active" badge, not by a button: a disabled
       // button saying the same thing underneath was the same fact twice, so it is gone.
       const buttons = [...document.querySelectorAll('button')]
-        .filter((b) => b.textContent.trim() === 'Use' && /Use this account/.test(b.getAttribute('title') || ''));
-      const active = [...document.querySelectorAll('[data-testid="account-card"], .rounded-md')]
-        .filter((el) => /Active/.test(el.textContent || ''));
+        // "Use this account" is a tooltip now, not a title attribute.
+        .filter((b) => b.textContent.trim() === 'Use');
+      // The badge is a leaf element reading exactly "Active"; card class names have moved on.
+      const active = [...document.querySelectorAll('*')].filter((el) => el.children.length === 0)
+        .filter((el) => (el.textContent || '').trim() === 'Active');
+      const usageHeading = [...document.querySelectorAll('*')].find((el) => el.children.length === 0 && el.textContent.trim() === 'Usage');
       return {
         opened: true,
+        panelText: usageHeading ? usageHeading.parentElement.parentElement.parentElement.innerText.replace(/\\s+/g, ' ').slice(0, 300) : null,
         offered: buttons.length,
         activeMarks: active.length,
         selectable: buttons.filter((b) => !b.disabled).length,
@@ -371,6 +388,7 @@ async function main() {
     })()
   `);
   check("the usage panel opens", panel.opened === true);
+  log(`  info  panel: ${panel.panelText}`);
   check(
     "exactly one account is marked Active",
     panel.activeMarks === 1,

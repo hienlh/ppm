@@ -234,7 +234,9 @@ describe("what the editor gates it on", () => {
     // `lspServable` — would let a scratch buffer no server can serve switch the built-in
     // worker back on underneath the project file in the next tab.
     expect(editor).toContain("const lspWanted = lspEnabled && !isTouchOnly;");
-    expect(editor).toContain("const lspOn = lspWanted && lspServable;");
+    // Not the whole line: `lspOn` has since gained `&& !htmlPreviewVisible`, and what matters
+    // here is only that it is the one carrying `lspServable` while `lspWanted` is not.
+    expect(editor).toMatch(/const lspOn = lspWanted && lspServable\b/);
     expect(editor).toMatch(/applyBuiltinTypeScript\(\s*lspWanted,/);
   });
 

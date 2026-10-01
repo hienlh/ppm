@@ -12,11 +12,13 @@
  * skips, the bridge asks for the whole document back rather than applying a
  * delta to a copy that is already wrong.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type * as MonacoType from "monaco-editor";
+import { api, projectUrl } from "@/lib/api-client";
 import {
   acquireLspConnection,
   releaseLspConnection,
+  retryUnavailableLspDocuments,
   type LspConnection,
   type LspDocumentStatus,
 } from "@/lib/lsp/lsp-client";
@@ -40,6 +42,8 @@ export interface LspState {
   status: LspDocumentStatus | null;
   /** Diagnostics for this file, for a Problems view to list. */
   diagnostics: LspDiagnostic[];
+  /** Install the missing server on the host, then take the open files off "not installed". */
+  install: (serverId: string) => Promise<void>;
 }
 
 export interface LspDiagnostic {
@@ -166,7 +170,24 @@ export function useLsp({ editor, monaco, projectName, filePath, enabled }: UseLs
     };
   }, [active, editor, monaco, projectName, filePath]);
 
-  return { status, diagnostics };
+  /**
+   * The Install button's half in the browser.
+   *
+   * The retry runs even when the request failed, and deliberately: a long install behind a
+   * proxy can time out the fetch while `bun add` finishes anyway, and asking again is how the
+   * editor finds out. A real failure costs one extra round trip and the status comes straight
+   * back to "not installed", with the error the host gave for it.
+   */
+  const install = useCallback(async (serverId: string) => {
+    if (!projectName) return;
+    try {
+      await api.post(`${projectUrl(projectName)}/lsp/install`, { serverId });
+    } finally {
+      retryUnavailableLspDocuments();
+    }
+  }, [projectName]);
+
+  return { status, diagnostics, install };
 }
 
 /** Tell the server a save happened, so servers that only analyse on save catch up. */

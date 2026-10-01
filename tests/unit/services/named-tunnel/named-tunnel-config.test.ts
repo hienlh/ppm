@@ -31,6 +31,7 @@ describe("resolveTunnelConfig", () => {
   test("fully-populated named row resolves to named with all fields", () => {
     const resolved = resolveTunnelConfig(FULL_NAMED);
     expect(resolved).toEqual({
+      enabled: true,
       mode: "named",
       hostname: "ppm.hienle.tech",
       tunnelName: "ppm-host",
@@ -65,5 +66,34 @@ describe("maskToken", () => {
 
   test("masks to 6 chars + ellipsis", () => {
     expect(maskToken("abcdefghijklmnop")).toBe("abcdef...");
+  });
+});
+
+describe("resolveTunnelConfig — master switch", () => {
+  // Rows written before the switch existed have no `enabled`, and back then the
+  // tunnel was unconditional — so absent has to read as on. Reading it as off
+  // would silently take the public URL away from every existing install.
+  test("absent `enabled` resolves to on", () => {
+    expect(resolveTunnelConfig({}).enabled).toBe(true);
+    expect(resolveTunnelConfig({ mode: "quick" }).enabled).toBe(true);
+    expect(resolveTunnelConfig(FULL_NAMED).enabled).toBe(true);
+  });
+
+  test("explicit `enabled: false` resolves to off in both modes", () => {
+    expect(resolveTunnelConfig({ mode: "quick", enabled: false }).enabled).toBe(false);
+    expect(resolveTunnelConfig({ ...FULL_NAMED, enabled: false }).enabled).toBe(false);
+  });
+
+  // The switch is orthogonal to the mode: turning the tunnel off must not also
+  // discard a configured hostname, or turning it back on would need a re-setup.
+  test("off does not degrade a named row to quick", () => {
+    const resolved = resolveTunnelConfig({ ...FULL_NAMED, enabled: false });
+    expect(resolved.mode).toBe("named");
+    expect(resolved.hostname).toBe("ppm.hienle.tech");
+  });
+
+  test("a non-boolean `enabled` is ignored rather than coerced", () => {
+    expect(resolveTunnelConfig({ mode: "quick", enabled: "false" }).enabled).toBe(true);
+    expect(resolveTunnelConfig({ mode: "quick", enabled: 0 }).enabled).toBe(true);
   });
 });

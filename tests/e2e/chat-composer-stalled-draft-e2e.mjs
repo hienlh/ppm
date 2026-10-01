@@ -1,17 +1,21 @@
 // Chat composer must appear even when the draft request never settles.
 //
-// Repro this guards against: a `GET /chat/drafts/:id` that stalls leaves
-// `draftLoading` stuck true, and chat-tab gates MessageInput on it — so a new
-// chat tab renders the transcript with NO input box until a page reload.
+// Repro this guards against: a draft load that stalls leaves `draftLoading`
+// stuck true, and chat-tab gates MessageInput on it — so a new chat tab renders
+// the transcript with NO input box until a page reload.
 //
-// The stub here returns a promise that never settles AND ignores abort, so it
+// A sessionless tab no longer GETs `/chat/drafts/__new__`: its `__new__` draft
+// arrives inside `POST /chat/prepare`, and useDraft waits on that. So the stub
+// holds the prepare request instead — it never settles AND ignores abort, which
 // also defeats the api-client request timeout. Only the draft-gate release can
-// make this pass.
+// make [1] pass; [2] and [3] seed a real server draft and deliver it late.
 //
-// Run:
-//   bun tests/e2e/chat-composer-stalled-draft-e2e.mjs
+// The loaded layout must hold a sessionless chat tab (the one whose composer is
+// probed). Against a disposable stack that seeds one:
+//   node tests/e2e/fixtures/isolated-chat-stack.mjs --seed-new-chat-tab -- bun tests/e2e/chat-composer-stalled-draft-e2e.mjs
 //
 // Env:
+//   PPM_E2E_API / PPM_E2E_WEB / PPM_E2E_PROJECT  origins and project (default dev 8081/5173, "ppm")
 //   PPM_E2E_NO_SERVERS=1  assume dev servers already running; don't spawn/kill
 //   CHROME_PATH=...       override Chrome executable path
 
@@ -23,9 +27,10 @@ import { mkdir } from "node:fs/promises";
 const REPO = process.cwd();
 const AUTH_TOKEN = "123123";
 const TOKEN_KEY = "ppm-auth-token";
-const API = "http://localhost:8081";
-const WEB = "http://localhost:5173";
-const WEB_PROJECT = `${WEB}/project/${encodeURIComponent("ppm")}`;
+const API = process.env.PPM_E2E_API || "http://localhost:8081";
+const WEB = process.env.PPM_E2E_WEB || "http://localhost:5173";
+const PROJECT = process.env.PPM_E2E_PROJECT || "ppm";
+const WEB_PROJECT = `${WEB}/project/${encodeURIComponent(PROJECT)}`;
 const CDP_PORT = 9223;
 const CHROME =
   process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
@@ -162,7 +167,8 @@ class Cdp {
 
 /**
  * Runs before any app code on every navigation: seeds auth, then either stalls
- * the draft load forever or delays it by `delayMs`.
+ * the prepare request (which carries the `__new__` draft) forever or delays its
+ * answer by `delayMs`.
  */
 const initScript = (delayMs) => `
   localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(AUTH_TOKEN)});
@@ -172,7 +178,9 @@ const initScript = (delayMs) => `
   const delayMs = ${delayMs === null ? "null" : delayMs};
   window.fetch = function (input, init) {
     const url = typeof input === "string" ? input : (input && input.url) || "";
-    if (url.includes("/chat/drafts/") && (!init || init.method === undefined || init.method === "GET")) {
+    // No regex here: this is inside a template literal, where "\\/" collapses to "/" and the
+    // pattern would turn into a line comment in the injected script.
+    if (url.includes("/chat/prepare") && init && init.method === "POST") {
       window.__stalledDrafts++;
       window.__draftUrls.push(url);
       // Never settles and deliberately ignores init.signal — the worst case.
@@ -215,8 +223,8 @@ async function pollComposer(cdp, done, budgetMs) {
   return { ...last, elapsed: Date.now() - t0 };
 }
 
-/** Set from scenario 1 — the draft path the app actually requests. */
-let draftUrl = `${API}/api/project/ppm/chat/drafts/__new__`;
+/** The shared new-tab draft that `/chat/prepare` reads. */
+const draftUrl = `${API}/api/project/${encodeURIComponent(PROJECT)}/chat/drafts/__new__`;
 const authHeaders = {
   "Content-Type": "application/json",
   Authorization: `Bearer ${AUTH_TOKEN}`,
@@ -243,30 +251,23 @@ async function openApp(cdp, delayMs) {
 
 /** The reported bug: a draft load that never answers must not hide the input. */
 async function scenarioStalled(cdp) {
-  log("\n[1] draft request stalls forever");
+  log("\n[1] prepare (and with it the draft) stalls forever");
   await fetch(draftUrl, { method: "DELETE", headers: authHeaders }).catch(() => {});
   await openApp(cdp, null);
 
   const r = await pollComposer(cdp, (p) => p.visible, COMPOSER_BUDGET_MS);
   log(`  intercepted=${r.intercepted} visible=${r.visible} after ${r.elapsed}ms`);
 
-  if (r.intercepted === 0) throw new Error("FAIL [1] — repro did not arm; no draft GET intercepted");
+  if (r.intercepted === 0) throw new Error("FAIL [1] — repro did not arm; no POST /chat/prepare intercepted");
   if (!r.visible) {
     throw new Error(`FAIL [1] — composer never rendered within ${COMPOSER_BUDGET_MS}ms`);
   }
-  log(`  PASS [1] — composer rendered in ${r.elapsed}ms despite a permanently stalled draft load`);
-
-  // Scenario 2 must seed the draft the app really asks for, not an assumed id.
-  const observed = r.urls[0];
-  if (observed) {
-    draftUrl = observed.startsWith("http") ? observed : `${API}${observed}`;
-    log(`  observed draft URL: ${draftUrl}`);
-  }
+  log(`  PASS [1] — composer rendered in ${r.elapsed}ms despite a permanently stalled prepare/draft load`);
 }
 
 /** Releasing the gate early must not cost the user their saved draft. */
 async function scenarioLateDraft(cdp) {
-  log("\n[2] draft answers late (5s), after the gate already released");
+  log("\n[2] prepare carrying the draft answers late (5s), after the gate already released");
   const content = `restored-draft-${Date.now()}`;
   const seed = await fetch(draftUrl, {
     method: "PUT",
@@ -316,7 +317,7 @@ async function scenarioTypedWins(cdp) {
     return true;
   })()`);
   await cdp.send("Input.insertText", { text: typed });
-  log(`  typed at ${shown.elapsed}ms; waiting for the 8s draft response`);
+  log(`  typed at ${shown.elapsed}ms; waiting for the 8s prepare/draft response`);
 
   await Bun.sleep(9_000);
   const after = await pollComposer(cdp, () => true, 1_000);

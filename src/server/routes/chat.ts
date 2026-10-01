@@ -9,12 +9,14 @@ import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
-import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
-import type { SlashItem } from "../../services/slash-discovery/types.ts";
-import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
+import { searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
+import { invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
+import { listSlashItemsForProvider } from "../../services/slash-items-for-provider.ts";
+import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts";
+import { chatPrepareRoutes } from "./chat-prepare.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
-import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
+import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
@@ -22,6 +24,8 @@ import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
 import { listCodexAccounts } from "../../services/codex-account.service.ts";
+import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-source.ts";
+import { invalidateUsage, refreshUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
@@ -38,6 +42,8 @@ import { ok, err } from "../../types/api.ts";
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const chatRoutes = new Hono<Env>();
+
+chatRoutes.route("/prepare", chatPrepareRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {
@@ -59,41 +65,6 @@ chatRoutes.get("/slash-items", async (c) => {
     return c.json(err((e as Error).message), 500);
   }
 });
-
-/**
- * Slash items a session can actually run.
- *
- * A provider that owns its own skill runtime answers for itself, and the
- * disk-discovered Claude-side list is not merged in: a codex turn cannot
- * execute a Claude skill, and a Claude turn cannot execute a codex one, so a
- * combined list would offer entries that quietly do nothing when picked.
- *
- * PPM's host-level built-ins ARE kept, because they are intercepted before any
- * provider runs and therefore work in every tab. Dropping them would have cost
- * a codex tab `/clear`, `/skills`, and `/version` — commands that do work —
- * which is a different thing from hiding ones that don't.
- *
- * When such a provider reports no skills — app-server failed to spawn, account
- * not logged in — only the built-ins remain, rather than falling back to the
- * Claude list; showing runnable-looking Claude entries in a codex tab is the
- * very confusion this split exists to remove.
- */
-async function listSlashItemsForProvider(
-  projectPath: string,
-  providerId: string | undefined,
-  sessionId: string | undefined,
-): Promise<SlashItem[]> {
-  const provider = providerId ? providerRegistry.get(providerId) : null;
-  if (provider?.listSkills) {
-    const { codexSkillsToSlashItems } = await import("../../services/slash-discovery/codex-skill-items.ts");
-    const { getHostBuiltinSlashItems } = await import("../../services/slash-discovery/builtin-commands.ts");
-    return [...codexSkillsToSlashItems(await provider.listSkills(sessionId)), ...getHostBuiltinSlashItems()];
-  }
-  // Claude's own built-ins need a live SDK session to enumerate; cached 30 min,
-  // so only the first request per project pays for the CLI spawn.
-  await ensureSdkCommands(projectPath);
-  return listSlashItems(projectPath);
-}
 
 /** DELETE /chat/slash-items/cache — invalidate cached slash items for this project */
 chatRoutes.delete("/slash-items/cache", (c) => {
@@ -122,47 +93,38 @@ chatRoutes.post("/slash-recents", async (c) => {
   }
 });
 
-/** GET /chat/usage — return cached usage. ?refresh=1 forces fresh fetch first. */
+/**
+ * GET /chat/usage — return cached usage. ?refresh=1 forces fresh fetch first.
+ *
+ * `?accountId=` is honoured for Claude only when `?session=` is absent: a session's binding
+ * is authoritative once it exists, but a brand-new tab that has already claimed an account
+ * (via `/chat/prepare` or `/api/accounts/pick`) has no session to bind it to yet, and its
+ * usage chip must show the account it will actually run on.
+ */
 chatRoutes.get("/usage", async (c) => {
-  // Non-Claude providers expose their own quota via provider.getUsage().
   const providerId = c.req.query("providerId");
-  if (providerId && providerId !== "claude") {
-    const provider = providerRegistry.get(providerId);
-    if (provider?.getUsage) {
-      // `?refresh=1` is the user pressing refresh, so drop the cached value
-      // first — otherwise getUsage answers from cache and the button does
-      // nothing visible. Claude's branch below does the same via a sweep.
-      if (c.req.query("refresh")) {
-        const { invalidateUsage } = await import("../../services/provider-usage/usage-registry.ts");
-        invalidateUsage(providerId);
-      }
-      try { return c.json(ok(await provider.getUsage(c.req.query("session"), c.req.query("accountId")))); } catch { return c.json(ok({})); }
-    }
-    return c.json(ok({}));
-  }
-  if (c.req.query("refresh")) {
-    try { await refreshUsageNow(); } catch { /* use stale cache */ }
-  }
-  // Accounts are bound per session, so the header must report the account serving THIS
-  // session rather than whichever one ran most recently across all of them.
   const sessionId = c.req.query("session");
-  const boundAccountId = sessionId ? getSessionAccount(sessionId) : null;
-  const usage = getCachedUsage(boundAccountId ?? undefined);
-  return c.json(ok({
-    lastFetchedAt: usage.lastFetchedAt,
-    fiveHour: usage.session?.utilization,
-    sevenDay: usage.weekly?.utilization,
-    fiveHourResetsAt: usage.session?.resetsAt,
-    sevenDayResetsAt: usage.weekly?.resetsAt,
-    session: usage.session,
-    weekly: usage.weekly,
-    weeklyOpus: usage.weeklyOpus,
-    weeklySonnet: usage.weeklySonnet,
-    weeklyScoped: usage.weeklyScoped,
-    totalCostUsd: usage.totalCostUsd,
-    activeAccountId: usage.activeAccountId,
-    activeAccountLabel: usage.activeAccountLabel,
-  }));
+  const accountId = c.req.query("accountId");
+  if (c.req.query("refresh")) {
+    if (providerId && providerId !== "claude") {
+      const provider = providerRegistry.get(providerId);
+      if (provider?.getUsage) {
+        if (providerId === "codex") {
+          // A memory-only invalidation promotes an old database snapshot on the next read.
+          // Fetch every account live; parallel reads stay within the client's 30s timeout.
+          registerUsageSource(codexUsageSource);
+          const accounts = codexUsageSource.listAccountIds();
+          const ids = accounts.length > 0 ? accounts : [""];
+          await Promise.all(ids.map((id) => refreshUsage("codex", id)));
+        } else {
+          invalidateUsage(providerId);
+        }
+      }
+    } else {
+      try { await refreshUsageNow(); } catch { /* use stale cache */ }
+    }
+  }
+  return c.json(ok(await readUsageSnapshot(providerId, { sessionId, accountId })));
 });
 
 /** GET /chat/providers — list available AI providers */

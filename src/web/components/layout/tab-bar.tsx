@@ -29,6 +29,8 @@ import { useTouchTabDrag, wasTouchDragRecent } from "@/hooks/use-touch-tab-drag"
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl } from "@/lib/api-client";
 import { useProjectTags } from "@/components/chat/tag-filter-chips";
+import { projectCacheId } from "@/lib/browser-cache/cache-keys";
+import { useSessionListStore, EMPTY_SESSIONS, commitOptimistic } from "@/stores/session-list-store";
 import {
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
   ContextMenuItem, ContextMenuSeparator,
@@ -81,35 +83,25 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
     useTouchTabDrag(effectivePanelId);
 
   const { projectTags, loadTags } = useProjectTags(activeProject?.name);
-  const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
-
-  // Fetch session tags for open chat tabs
-  const chatSessionIds = tabs.map(tabSessionId).filter((id): id is string => !!id);
-  useEffect(() => {
-    if (!activeProject?.name || chatSessionIds.length === 0) return;
-    api.get<{ sessions: { id: string; tag?: { id: number; name: string; color: string } | null }[] }>(
-      `${projectUrl(activeProject.name)}/chat/sessions?limit=50`,
-    ).then((data) => {
-      const map: Record<string, { id: number; name: string; color: string }> = {};
-      for (const s of data.sessions) { if (s.tag) map[s.id] = s.tag; }
-      setSessionTagMap(map);
-    }).catch(() => {});
-  }, [activeProject?.name, chatSessionIds.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Session→tag map is derived straight from the shared store — the same
+  // sessions the sidebar and welcome screen already synced, so opening chat
+  // tabs no longer costs the tab bar its own `/chat/sessions` request.
+  const sessionListId = activeProject ? projectCacheId(activeProject) : null;
+  const storeSessions = useSessionListStore((s) => (sessionListId ? s.byProject[sessionListId]?.sessions : undefined) ?? EMPTY_SESSIONS);
+  const sessionTagMap: Record<string, { id: number; name: string; color: string }> = {};
+  for (const s of storeSessions) { if (s.tag) sessionTagMap[s.id] = s.tag; }
 
   const assignTagToSession = useCallback(async (sessionId: string, tagId: number | null) => {
     if (!activeProject?.name) return;
-    try {
-      if (tagId !== null) {
-        await api.patch(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`, { tagId });
-        const tag = projectTags.find((t) => t.id === tagId);
-        if (tag) setSessionTagMap((prev) => ({ ...prev, [sessionId]: { id: tag.id, name: tag.name, color: tag.color } }));
-      } else {
-        await api.del(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`);
-        setSessionTagMap((prev) => { const n = { ...prev }; delete n[sessionId]; return n; });
-      }
-      loadTags();
-    } catch { /* silent */ }
-  }, [activeProject?.name, projectTags, loadTags]);
+    const ref = { name: activeProject.name, path: activeProject.path };
+    const tag = tagId !== null ? projectTags.find((t) => t.id === tagId) : undefined;
+    if (tagId !== null && !tag) return;
+    // Optimistic; a refused change re-syncs the store (`commitOptimistic`).
+    useSessionListStore.getState().setSessionTag(ref, sessionId, tag ? { id: tag.id, name: tag.name, color: tag.color } : null);
+    const url = `${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`;
+    await commitOptimistic(ref, () => (tagId !== null ? api.patch(url, { tagId }) : api.del(url)));
+    loadTags();
+  }, [activeProject, projectTags, loadTags]);
 
   const notifications = useNotificationStore((s) => s.notifications);
   const streamingSessions = useStreamingStore((s) => s.sessions);

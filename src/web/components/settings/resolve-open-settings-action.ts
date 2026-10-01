@@ -10,7 +10,7 @@ export type OpenSettingsAction =
   | { kind: "focus"; id: string; category?: SettingsCategoryId };
 
 /**
- * There is exactly one set of settings, so unlike `"explorer"`/`"team-member"` (legitimately
+ * There is exactly one set of settings, so unlike `"explorer"`/`"agent-session"` (legitimately
  * multi-instance — different payload, different folder/teammate), a second `"settings"`
  * window is never a distinct instance, only a duplicate. When one is already open, focus it
  * instead of spawning another.

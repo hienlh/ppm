@@ -6,16 +6,20 @@
  * two properties that prevent that: the target is the chat the user last selected
  * (project-scoped when possible), and the event carries that target's id.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
-const eventBus = new EventTarget();
-(globalThis as any).window = eventBus;
+// The DOM's own `window` is the bus, rather than a bare `EventTarget` standing in for it. The
+// process shares one DOM, so `CustomEvent` is happy-dom's — and Bun's `EventTarget` refuses to
+// dispatch an event built in another realm, which is what a stub bus produced here.
+const eventBus = window;
 const store = new Map<string, string>();
-(globalThis as any).localStorage = {
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
-};
+});
+afterAll(uninstallDom);
 
 const { resolveSelectedChatTabId, sendToChat, SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT } =
   await import("../../../src/web/lib/send-to-chat");

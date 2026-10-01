@@ -15,6 +15,72 @@ results/errors and ignores nested `done` events.
 This prevents a completed answer from disappearing after reload when a
 background agent finishes after the root response.
 
+The live Agent-session window (below) reads a child's rollout through its own
+streaming tail parser instead of this buffered nested-event path — it has no
+notion of whether the root turn is active, since a background agent keeps
+writing long after the root turn finishes. A child rollout carries its own
+`session_meta` header first and its parent's (forked context) second; only the
+first describes the file, and that tail parser ignores every one after it.
+
+## Agent session transcripts
+
+Tapping an Agent/Task card, or a named teammate row, opens a floating window
+(a bottom sheet on mobile) that streams that agent's own transcript live and
+independently of the chat turn that spawned it. This runs as its own protocol
+over `/ws/global` (`src/shared/agent-transcript-protocol.ts`), not the chat
+WebSocket, so it keeps following a background agent after the root turn ends
+and works whether or not a chat tab is even mounted.
+
+**Ownership before any file is named.** `src/services/agent-transcript/session-ownership.ts`
+proves a requested `(providerId, sessionId)` belongs to the caller's project
+before anything downstream picks a path: a Claude session's JSONL must sit
+under that project's own slug directory (a DB-recorded path is accepted only
+when it independently names the same project), and a Codex session must be
+found through the existing fail-closed `cwd`-checked rollout search. Every file
+this flow reads afterward is realpath-contained under the provider's root. A
+client names only a project, a session id and a `source` (a card id or
+teammate handle) — never a path or byte range.
+
+**Sources per provider.** `agent-transcript-sources.ts` turns an owned session
+plus a `source` into the file(s) the hub may read: a Claude card's own
+transcript and its recorded nested descendants; a Codex card's rollout,
+accepted only when its `session_meta.parent_thread_id` chain reaches the
+owning session; a teammate's newest transcript, pinned to the project the same
+way a session id is (a team is itself a session). Resolutions are cached
+briefly per (session, card/member) and re-derived on that cadence, so a
+descendant spawned after the window opened is picked up without reopening it.
+
+**The hub.** One hub per `(providerId, sessionId)` (`agent-transcript-hub.ts`,
+`agent-transcript-session-hub.ts`) owns every transcript and activity
+subscription for that session. A tick reads each subscribed file from its
+last-consumed byte offset, decodes only whole lines, and pages a large backlog
+rather than reading or parsing it all at once; a subscription's own pace slows
+once its files stop growing, and a hub with nothing subscribed tears itself
+down.
+
+**Protocol.** `agent-transcript:subscribe`/`unsubscribe` carry one card's or
+teammate's steps; `agent-activity:subscribe`/`unsubscribe` carry the
+running-agents bar's "who is working right now" feed, independent of any
+window being open. A cursor is a byte offset per file the server itself
+derived on an earlier response — never a client-named range — and
+reconnecting resumes from the client's last cursor with no gap and no
+duplicate, across however many backlog pages that takes. A `reset` flag tells
+the client to discard everything for that subscription instead of appending,
+for the rare case where the file itself rewrote its own history (a
+truncated/rotated Claude transcript, a Codex compaction or rollback). Every
+error the client can see is one of four fixed codes — never a path or
+exception text.
+
+**Fallback.** A window opens with whatever steps chat already holds in memory
+(`agent-session-fallback-store.ts`) and shows them immediately; they are
+replaced the moment the hub's first real response names a readable file, and
+stay as the shown view — marked offline — when the source never resolves to
+one at all (an old session, or a transcript that never existed).
+
+**Liveness.** "Running" is derived only from whether the underlying file(s)
+are still growing, never from in-memory chat state: a replayed old session
+reads as finished even though its cards are still visible in the transcript.
+
 ## Codex daily guard for weekly-only accounts
 
 Daily guard spreads a seven-day quota window across five weekdays: each weekday
@@ -44,7 +110,11 @@ never gate typing or first-send preparation.
 
 The initial history request also covers an idle WebSocket greeting while it is
 pending; completed turns and truncated replays still trigger recovery reads.
-Slash commands load when the user opens the `/` picker. The `@` picker loads a
+Slash commands preload when the composer is ready. Browser-memory catalogs are
+shared across sessions by provider, with project-specific overrides and recents
+kept per project. Cached items remain available during refresh; catalogs refresh
+every 30 minutes or through the picker's reload button. A cold browser still
+needs its first catalog request. The `@` picker loads a
 file index on demand, scoped to its project; stale responses cannot overwrite
 the index for a different project.
 
@@ -57,6 +127,41 @@ ordinary Markdown rendering.
 The mobile desktop sidebar is not mounted, and the closed mobile explorer does
 not mount its file tree. App-level file-index invalidation keeps cached paths
 fresh while the drawer is closed, without fetching an unused index.
+
+## New chat preparation
+
+`openTab()` resolves a new chat tab's provider and permission synchronously from the
+local cache (`chat-preference-local-cache.ts`): when AI settings and the project's
+cached provider list both exist and the resolved provider is still in that list, the
+tab opens "warm" with `permissionModeSource: "cache"`. Otherwise it opens with
+`providerPending: true` and the composer's own prepare resolves it.
+
+Every sessionless chat tab (new, `/clear`, a design's chat, a reload mid-resolution)
+fires exactly one `POST /api/project/:name/chat/prepare` on mount
+(`new-chat-prepare-client.ts`), deduped per tab id so a re-render or remount inside the
+post-settle join window does not POST again. Body: `{providerId?, focusedProvider?,
+skipPick?}` — `skipPick` is set once the tab already holds an account claim for the
+provider it is about to prepare, so one tab never consumes two accounts. Response
+(`src/services/chat-prepare/chat-prepare.service.ts`): `{resolvedProviderId,
+providerId, settings, providers, pickedAccount, usage, draft, tags, slash}`, where
+`pickedAccount` is `{id, label} | null | "timeout" | "skipped"`.
+
+Draft, tags and slash items each run under their own budget via `settleWithinBudget`
+(`src/services/chat-prepare/settle-within-budget.ts`) and fall back to `null` instead
+of delaying the response: slash 400ms, everything else 1000ms as a defensive cap on
+otherwise-instant reads. The account pick and its usage run as one sequential part
+beside those — Codex's pick is itself budgeted at 1500ms, and a picked account's usage
+gets its own 800ms budget. A timed-out Codex pick skips selection outright rather than
+risk advancing the round-robin or double-claiming an account.
+
+The response seeds every cache a consumer would otherwise fetch separately (settings,
+provider list, slash items, tags, usage, the account claim). On first send, the tab
+awaits its own prepare and applies the fresh permission only when its
+`permissionModeSource` is still `"cache"` — a mode the user picked, or one a
+resumed/inherited session carries, is never overwritten by a stale prepare.
+
+`GET /chat/usage` honours `?accountId=` for the Claude provider only when `?session=`
+is absent — a session's own binding always wins once one exists.
 
 ## Model discovery cache
 
@@ -407,9 +512,24 @@ if (entry.phase !== "idle" && entry.abort) {
 - Second message (while streaming): abort current, wait, start new runStreamLoop
 - Priority modes (future): could queue messages for intelligent interleaving
 
+### Draft recovery
+
+Chat drafts are saved synchronously to browser `sessionStorage`, scoped by
+project, chat tab and session, alongside the debounced server save. A page
+reload during session creation or connection restores the local text to the
+composer without automatically sending it. Creating or editing into a new
+session moves the local draft to that session; handing the message to the
+socket clears it. This protects reloads in the same browser tab, not delivery
+after the socket accepts a message or recovery after browser storage is cleared.
+
 ### WebSocket Reconnection Sync
 
-Chat sockets receive a server heartbeat every 15 seconds. The client reconnects
+Codex history loaded from disk uses asynchronous file reads and yields between
+parser batches so usage, health and other requests can run during a long read.
+Subagent lookups share a directory index within that history request. The
+synchronous reader remains available for provider operations that require it.
+
+Chat sockets receive a server heartbeat every 5 seconds. The client reconnects
 after 45 seconds without any incoming frame, including sockets that still report
 OPEN, and checks for a stale connection when the tab becomes visible. Replay
 finishes before queued live frames are applied. If a turn becomes idle without a

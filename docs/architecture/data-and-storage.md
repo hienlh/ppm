@@ -19,7 +19,7 @@ the loop seeded from the bus (windowed + rolling summary).
 | **TagService** | Session tagging CRUD, bulk operations, tag-session enrichment | seedDefaultTags, getTagsByProject, createTag, updateTag, deleteTag, setSessionTag, bulkSetSessionTag, getSessionTags, getTagSessionCounts |
 | **DraftService** | Chat draft auto-save per session, 50KB cap | get, upsert, delete, deleteOrphaned |
 | **FileFilterService** | Glob pattern matching + precedence-enforced filtering (hardcoded ⊂ global ⊂ project) | mergeFilters, isPathIgnored, matchesPattern |
-| **SystemMetricsService** (`src/services/system-metrics/`) | Whole-machine Task Manager backend: CPU per core + RAM via `node:os`, disk/net/GPU + all processes via per-OS collectors (Linux `/proc`, macOS `ps`, Windows one long-lived PowerShell REPL child, `Win32_Process` + `PerfRawData` per 2 s tick), delta-based CPU%, grouping by app root, aggregate-only 30-min history. Two SSE tiers on `/api/system/resources/stream`: `light` (status bar, no children spawned) and `full` (`?processes=1`, demand-gated collectors, 60 s teardown). Subscriber lease (sid + 10 s ping, 30 s expiry) because Cloudflare tunnel never propagates client disconnects. Guarded `POST /resources/kill`: protected set (PPM server/supervisor/edge/cloudflared, OS-critical names), ancestor/tree-intersection rule, `startedAt` identity re-query → 409, JSON + `X-PPM-Request` header. | subscribe, unsubscribe, ping, getLatest, kill, reapExpired |
+| **SystemMetricsService** (`src/services/system-metrics/`) | Whole-machine Task Manager backend: CPU per core + RAM (`/proc` on Linux, `host_statistics64` on macOS, `node:os` elsewhere), disk/net/GPU + all processes via per-OS collectors (Linux `/proc`/`/sys`; macOS the kernel over `bun:ffi` — `host_statistics64`, `proc_pid_rusage`, SMC, IOReport, CoreWLAN — plus `ps` and one memoised `ioreg`/`netstat`/`ifconfig` read per tick; Windows one long-lived PowerShell REPL child, `Win32_Process` + `PerfRawData` per 2 s tick), delta-based CPU%, grouping by app root, aggregate-only 30-min history. Two SSE tiers on `/api/system/resources/stream`: `light` (status bar, no children spawned) and `full` (`?processes=1`, demand-gated collectors, 60 s teardown). Subscriber lease (sid + 10 s ping, 30 s expiry) because Cloudflare tunnel never propagates client disconnects. Guarded `POST /resources/kill`: protected set (PPM server/supervisor/edge/cloudflared, OS-critical names), ancestor/tree-intersection rule, `startedAt` identity re-query → 409, JSON + `X-PPM-Request` header. | subscribe, unsubscribe, ping, getLatest, kill, reapExpired |
 
 **Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/services/system-metrics/system-metrics.service.ts`, `src/services/system-metrics/kill-guard.ts`, `src/services/system-metrics/powershell-session.ts`, `src/services/redact-secrets.ts`, `src/services/file-filter.service.ts`, `src/cli/commands/bot-cmd.ts`
 
@@ -233,6 +233,45 @@ ppm db data <name> <table>   # Show table data (paginated)
 - Table formatting for terminal output
 
 ---
+
+## Browser cache layer
+
+The chat startup path (see [New chat preparation](ai-chat-and-providers.md#new-chat-preparation))
+is backed by two browser-side stores, both wiped together and both project-scoped by a
+`projectCacheId` — an FNV-1a hash of a project's name **and** path
+(`src/web/lib/browser-cache/cache-keys.ts`), so a rename orphans the old key instead of
+colliding and a reused name does not inherit a predecessor's cache.
+
+**localStorage**: a global `ppm-chat-pref` key (`chat-preference-local-cache.ts`) holds
+only the default provider, the new-chat provider mode, and each provider's permission
+mode — never account ids, labels or credentials. A per-project `ppm-chat-providers:<projectCacheId>`
+key holds that project's cached provider list. Both are shape-validated on read, so a
+stale or hand-edited value is dropped rather than trusted.
+
+**IndexedDB**: one database (`ppm-cache`), one store (`kv`), a fixed schema version
+(`src/web/lib/browser-cache/idb-keyval-cache.ts`). Every value is wrapped in an envelope
+`{v, at, data}`; a version mismatch reads as a miss rather than a mis-parse, so the
+database itself never needs a migration. Falls back to an in-memory `Map` whenever
+IndexedDB is unavailable (module scope under `bun:test`, private browsing, a blocked
+open) or a call to it fails — every export is async and never throws. It holds, per
+project: cached slash-command items per provider, the session list's first page (50
+sessions) and tags.
+
+**Hydration**: a registry of per-project hydrators
+(`src/web/lib/browser-cache/project-cache-hydration.ts`) runs once per `projectCacheId`,
+deduped so switching back to an already-warm project is a no-op read. App boot hydrates
+the last-active project (`ppm-last-project-ref`, a small pointer written on every real
+hydration) before `fetchProjects()` even resolves, so the UI can paint from cache before
+the network answers; `switchProject` hydrates every project it activates.
+
+**Wipe**: every token drop — a 401 response or a failed login — wipes the whole layer
+(`wipe-browser-caches.ts`): the localStorage keys above, every registered in-memory
+cache, then IndexedDB, in that order so synchronous parts are gone before the async
+`idbClearAll()` finishes. A password change does not wipe anything, since the current
+session's token stays valid. A project rename or delete evicts only that project's
+entries (`evictProjectCache` in `project-store.ts`): its IndexedDB prefix, its
+localStorage provider list, and its hydration dedupe entry — nothing else addresses that
+`name + path` combination again.
 
 ## MCP Server Management
 

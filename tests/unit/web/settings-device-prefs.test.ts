@@ -1,22 +1,27 @@
 /**
- * The two prefs that answer "what can this screen afford" are device-local.
+ * The prefs that answer "what can this screen afford" are device-local.
  *
  * Every other UI pref is mirrored to the server so it survives an origin
  * change, which also means the last device to write wins everywhere. For these
- * two that is the wrong answer: a desktop turning the language server on would
- * start an 854 MB server process for a phone, and unwrapping lines on a 27-inch
- * monitor would unwrap them on a 6-inch one. So they are written to
- * localStorage only, and read back from localStorage only.
+ * that is the wrong answer: a desktop turning the language server on would
+ * start an 854 MB server process for a phone, unwrapping lines on a 27-inch
+ * monitor would unwrap them on a 6-inch one, and the voice engine a browser
+ * can do is not the one the next browser can — Firefox has no Web Speech API
+ * at all. So they are written to localStorage only, and read back from
+ * localStorage only.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 interface StoreShape {
   wordWrap: boolean;
   mobileWordWrap: boolean;
   lspEnabled: boolean;
+  voiceEngine: "browser" | "whisper";
   toggleWordWrap: () => void;
   toggleMobileWordWrap: () => void;
   setLspEnabled: (enabled: boolean) => void;
+  setVoiceEngine: (engine: "browser" | "whisper") => void;
   fetchServerInfo: () => Promise<void>;
 }
 
@@ -27,14 +32,16 @@ let requests: { url: string; method: string; body: unknown }[] = [];
 /** What `/api/settings/ui-prefs` answers with. */
 let serverPrefs: Record<string, unknown> = {};
 
+// Through the harness so the real `localStorage` and `fetch` come back: the test process
+// shares one DOM, and this file replaces both on every test.
 function installGlobals() {
-  (globalThis as unknown as { localStorage: unknown }).localStorage = {
+  installGlobal("localStorage", {
     getItem: (k: string) => store[k] ?? null,
     setItem: (k: string, v: string) => { store[k] = v; },
     removeItem: (k: string) => { delete store[k]; },
     clear: () => { store = {}; },
-  };
-  (globalThis as unknown as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
+  });
+  installGlobal("fetch", async (url: string, init?: RequestInit) => {
     requests.push({
       url: String(url),
       method: init?.method ?? "GET",
@@ -46,8 +53,9 @@ function installGlobals() {
       : String(url).includes("/api/settings/ui-prefs") ? { ok: true, data: serverPrefs }
       : { ok: true, data: null };
     return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
-  };
+  });
 }
+afterAll(uninstallDom);
 
 /** A fresh module instance, so the initial state is read from `store` as set up. */
 async function loadStore(persisted?: Record<string, unknown>): Promise<() => StoreShape> {
@@ -74,25 +82,30 @@ describe("device-local settings", () => {
     const get = await loadStore();
     expect(get().lspEnabled).toBe(false);
     expect(get().mobileWordWrap).toBe(true);
+    expect(get().voiceEngine).toBe("browser");
     // The shared pref keeps its own default, which is off.
     expect(get().wordWrap).toBe(false);
   });
 
-  it("reads both back from localStorage", async () => {
-    const get = await loadStore({ lspEnabled: true, mobileWordWrap: false });
+  it("reads them back from localStorage", async () => {
+    const get = await loadStore({ lspEnabled: true, mobileWordWrap: false, voiceEngine: "whisper" });
     expect(get().lspEnabled).toBe(true);
     expect(get().mobileWordWrap).toBe(false);
+    expect(get().voiceEngine).toBe("whisper");
   });
 
   it("persists them locally and sends nothing to the server", async () => {
     const get = await loadStore();
     get().setLspEnabled(true);
     get().toggleMobileWordWrap();
+    get().setVoiceEngine("whisper");
 
     expect(get().lspEnabled).toBe(true);
     expect(get().mobileWordWrap).toBe(false);
+    expect(get().voiceEngine).toBe("whisper");
     expect(persisted().lspEnabled).toBe(true);
     expect(persisted().mobileWordWrap).toBe(false);
+    expect(persisted().voiceEngine).toBe("whisper");
 
     // The server push is debounced, so wait past it before concluding.
     await new Promise((r) => setTimeout(r, 500));
@@ -106,17 +119,19 @@ describe("device-local settings", () => {
     expect(uiPrefPuts().map((r) => r.body)).toEqual([{ wordWrap: true }]);
   });
 
-  it("ignores both when the server sends them back", async () => {
-    serverPrefs = { wordWrap: true, lspEnabled: true, mobileWordWrap: false };
+  it("ignores them when the server sends them back", async () => {
+    serverPrefs = { wordWrap: true, lspEnabled: true, mobileWordWrap: false, voiceEngine: "whisper" };
     const get = await loadStore();
     await get().fetchServerInfo();
 
     // The shared pref is applied…
     expect(get().wordWrap).toBe(true);
-    // …and the two device-local ones are not, whatever the server says.
+    // …and the device-local ones are not, whatever the server says.
     expect(get().lspEnabled).toBe(false);
     expect(get().mobileWordWrap).toBe(true);
+    expect(get().voiceEngine).toBe("browser");
     expect(persisted().lspEnabled).toBeUndefined();
     expect(persisted().mobileWordWrap).toBeUndefined();
+    expect(persisted().voiceEngine).toBeUndefined();
   });
 });

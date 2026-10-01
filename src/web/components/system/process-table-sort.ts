@@ -11,6 +11,7 @@ export interface SortableFields {
   cpu: number;
   ramMB: number;
   name: string;
+  swapMB?: number;
   diskReadBps?: number;
   diskWriteBps?: number;
   gpuPct?: number;
@@ -25,6 +26,7 @@ export interface SortableFields {
 export function sortFields(m: {
   cpu: number;
   ramMB: number;
+  swapMB?: number;
   diskReadBps?: number;
   diskWriteBps?: number;
   gpuPct?: number;
@@ -36,6 +38,7 @@ export function sortFields(m: {
     cpu: m.cpu,
     ramMB: m.ramMB,
     name,
+    swapMB: m.swapMB,
     diskReadBps: m.diskReadBps,
     diskWriteBps: m.diskWriteBps,
     gpuPct: m.gpuPct,
@@ -52,15 +55,16 @@ function sumPair(a?: number, b?: number): number | undefined {
   return (a ?? 0) + (b ?? 0);
 }
 
-function optionalValueFor(key: "disk" | "gpu" | "gpuMem" | "net", f: SortableFields): number | undefined {
+function optionalValueFor(key: "swap" | "disk" | "gpu" | "gpuMem" | "net", f: SortableFields): number | undefined {
+  if (key === "swap") return f.swapMB;
   if (key === "disk") return sumPair(f.diskReadBps, f.diskWriteBps);
   if (key === "net") return sumPair(f.netInBps, f.netOutBps);
   if (key === "gpu") return f.gpuPct;
   return f.gpuMemMB;
 }
 
-function isOptionalSortKey(key: SortKey): key is "disk" | "gpu" | "gpuMem" | "net" {
-  return key === "disk" || key === "gpu" || key === "gpuMem" || key === "net";
+function isOptionalSortKey(key: SortKey): key is "swap" | "disk" | "gpu" | "gpuMem" | "net" {
+  return key === "swap" || key === "disk" || key === "gpu" || key === "gpuMem" || key === "net";
 }
 
 export function sortByKey<T>(items: T[], key: SortKey, dir: SortDir, get: (item: T) => SortableFields): T[] {
@@ -75,7 +79,7 @@ export function sortByKey<T>(items: T[], key: SortKey, dir: SortDir, get: (item:
     if (key === "cpu") return dir === "asc" ? av.cpu - bv.cpu : bv.cpu - av.cpu;
     if (key === "ram") return dir === "asc" ? av.ramMB - bv.ramMB : bv.ramMB - av.ramMB;
 
-    // disk/gpu/gpuMem/net: optional metrics. Undefined always sorts last, in
+    // swap/disk/gpu/gpuMem/net: optional metrics. Undefined always sorts last, in
     // EITHER direction — it means "unmeasurable", not "smallest value".
     if (isOptionalSortKey(key)) {
       const aVal = optionalValueFor(key, av);

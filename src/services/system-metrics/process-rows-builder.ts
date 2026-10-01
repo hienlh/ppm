@@ -93,6 +93,8 @@ export function buildProcessRows(input: BuildRowsInput): BuiltRows {
       command: sanitizeCommand(r.command, r.name),
       cpu: percentByKey.get(key) ?? 0,
       ramMB: Math.round(r.ramMB * 10) / 10,
+      ...(r.swapMB === undefined ? {} : { swapMB: Math.round(r.swapMB * 10) / 10 }),
+      ...(r.unitKey === undefined ? {} : { unitKey: r.unitKey }),
       startedAt: r.startedAt,
       ppm: ppmPids.has(r.pid),
       protected: !checkKillAllowed({ pid: r.pid, name: r.name }, false, guardCtx).allowed,

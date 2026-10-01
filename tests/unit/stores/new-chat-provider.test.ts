@@ -1,15 +1,17 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 import { usePanelStore } from "../../../src/web/stores/panel-store";
 import { resolveNewChatProvider } from "../../../src/web/lib/new-chat-provider";
 import type { AISettings } from "../../../src/web/lib/api-settings";
 import type { Panel } from "../../../src/web/stores/panel-utils";
 
 const values = new Map<string, string>();
-Object.assign(globalThis, { localStorage: {
+installGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
   setItem: (key: string, value: string) => { values.set(key, value); },
   removeItem: (key: string) => { values.delete(key); },
-} });
+});
+afterAll(uninstallDom);
 
 const settings: AISettings = { default_provider: "codex", new_chat_provider_mode: "follow-focus", providers: {} };
 function panel(id: string, provider: string, projectId = "project-a"): Panel {

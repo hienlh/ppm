@@ -43,6 +43,12 @@ describe("formatGpuCell", () => {
     expect(formatGpuCell(undefined, 512)).toBe("— · 512 MB");
     expect(formatGpuCell(50, undefined)).toBe("50% · —");
   });
+
+  it("is the percentage alone where no GPU memory is per-process (a Mac's is system RAM)", () => {
+    expect(formatGpuCell(50, undefined, false)).toBe("50%");
+    expect(formatGpuCell(0, undefined, false)).toBe("0%");
+    expect(formatGpuCell(undefined, undefined, false)).toBe("—");
+  });
 });
 
 describe("sumOptionalBps", () => {

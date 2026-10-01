@@ -11,7 +11,8 @@
  * The defensive type filter prevents a crafted persisted blob from opening arbitrary
  * tab types in a privileged-looking dock.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // ---------------------------------------------------------------------------
 // In-memory localStorage stub — must be set before store/utils import
@@ -23,7 +24,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 // Import AFTER stubbing localStorage
 import {

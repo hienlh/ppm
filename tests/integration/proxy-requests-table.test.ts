@@ -1,13 +1,24 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
+import { _resetPpmDir } from "../../src/services/ppm-dir.ts";
 
 // Create isolated test directory
+const originalPpmHome = process.env.PPM_HOME;
 const testPpmHome = mkdtempSync(resolve(tmpdir(), "ppm-test-proxy-"));
 process.env.PPM_HOME = testPpmHome;
 mkdirSync(resolve(testPpmHome, "bin"), { recursive: true });
+
+// `PPM_HOME` is process-wide and the whole suite shares one process, so a file that points it
+// at a temp directory and walks away hands that directory to every file after it — which is
+// how a migration test two directories along starts reading a database nobody seeded.
+afterAll(() => {
+  if (originalPpmHome === undefined) delete process.env.PPM_HOME;
+  else process.env.PPM_HOME = originalPpmHome;
+  _resetPpmDir();
+});
 
 describe("Proxy Request Logging — Database Schema (Migration v28)", () => {
   let db: Database;

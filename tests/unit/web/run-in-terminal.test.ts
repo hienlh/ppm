@@ -8,18 +8,22 @@
  *  - A terminal already on screen claims the command; only when nobody claims it
  *    does a new terminal get opened to carry it via `pendingCommand`.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
-// runInTerminal only needs an event bus on `window`; the panel store reads
-// localStorage at import time. Stub both before importing either module.
-const eventBus = new EventTarget();
-(globalThis as any).window = eventBus;
+// runInTerminal only needs an event bus on `window`, and the DOM's own window is one — a bare
+// `EventTarget` is not interchangeable here, because the process shares one DOM, so
+// `CustomEvent` is happy-dom's and Bun's `EventTarget` refuses an event from another realm.
+// The panel store reads localStorage at import time, so that one is still stubbed, and through
+// `installGlobal` so the real storage comes back.
+const eventBus = window;
 const store = new Map<string, string>();
-(globalThis as any).localStorage = {
+installGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
-};
+});
+afterAll(uninstallDom);
 
 const {
   normalizeTerminalCommand,

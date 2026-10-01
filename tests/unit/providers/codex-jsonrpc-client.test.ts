@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { EventEmitter } from "node:events";
-import { CodexJsonRpcClient, buildSpawnEnv } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
+import { CodexJsonRpcClient, buildSpawnEnv, codexCommand } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
+import { resolveBunPath } from "../../../src/services/autostart-generator.ts";
 
 function feed(stream: EventEmitter, s: string) {
   stream.emit("data", Buffer.from(s));
@@ -105,5 +106,40 @@ describe("buildSpawnEnv allowlist", () => {
     const env = buildSpawnEnv();
     expect(env.CODEX_HOME).toBe("/x/.codex");
     delete process.env.CODEX_HOME;
+  });
+});
+
+describe("codex runs through bun when PPM is a compiled binary", () => {
+  // A compiled PPM is its own executable, so spawning `process.execPath x @openai/codex …`
+  // reached PPM's CLI: `app-server` died on "unknown command 'x'" and `--version` was
+  // answered by PPM itself with exit 0. Under `bun test` execPath is always bun, so the
+  // compiled branch has to be forced or the broken path is never reached.
+  const COMPILED_PPM = "/opt/ppm/ppm";
+  function asCompiled<T>(fn: () => T): T {
+    const real = process.execPath;
+    Object.defineProperty(process, "execPath", { value: COMPILED_PPM, configurable: true });
+    try {
+      return fn();
+    } finally {
+      Object.defineProperty(process, "execPath", { value: real, configurable: true });
+    }
+  }
+
+  it("start() spawns bun, not the PPM binary", () => {
+    const c = new CodexJsonRpcClient();
+    const spawned = asCompiled(() => {
+      c.start({ codexHome: "/nonexistent/codex-home" });
+      const proc = (c as unknown as { proc: { spawnfile: string; spawnargs: string[] } }).proc;
+      return { file: proc.spawnfile, args: proc.spawnargs.slice(1), bun: resolveBunPath() };
+    });
+    c.close();
+    expect(spawned.file).not.toBe(COMPILED_PPM);
+    expect(spawned.file).toBe(spawned.bun);
+    expect(spawned.args).toEqual(["x", "@openai/codex", "app-server"]);
+  });
+
+  it("the availability probe asks bun too, so PPM's own --version cannot answer it", () => {
+    const { cmd, bun } = asCompiled(() => ({ cmd: codexCommand("--version"), bun: resolveBunPath() }));
+    expect(cmd).toEqual([bun, "x", "@openai/codex", "--version"]);
   });
 });

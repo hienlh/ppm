@@ -7,7 +7,8 @@
  *    panel lands in the grid and not inside the floating window
  *  - a rejected request (system-monitor, window cap) mutates nothing at all
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
+import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory localStorage stub — must be set before store import
@@ -19,7 +20,8 @@ const localStorageStub = {
   removeItem: (key: string) => { delete memStore[key]; },
   clear: () => { for (const k of Object.keys(memStore)) delete memStore[k]; },
 };
-(globalThis as unknown as { localStorage: typeof localStorageStub }).localStorage = localStorageStub;
+installGlobal("localStorage", localStorageStub);
+afterAll(uninstallDom);
 
 // Import AFTER stubbing localStorage
 import { usePanelStore } from "../../../src/web/stores/panel-store";

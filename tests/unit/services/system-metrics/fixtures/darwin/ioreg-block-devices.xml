@@ -1,0 +1,570 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>CFBundleIdentifier</key>
+		<string>com.apple.driver.AppleSDXC</string>
+		<key>CFBundleIdentifierKernel</key>
+		<string>com.apple.driver.AppleSDXC</string>
+		<key>Device Characteristics</key>
+		<dict>
+			<key>Product Name</key>
+			<string>Built In SDXC Reader</string>
+			<key>Vendor Name</key>
+			<string>Apple</string>
+		</dict>
+		<key>IOClass</key>
+		<string>AppleSDXCBlockStorageDevice</string>
+		<key>IOCommandPoolSize</key>
+		<integer>64</integer>
+		<key>IOMatchCategory</key>
+		<string>IODefaultMatchCategory</string>
+		<key>IOMatchedAtBoot</key>
+		<true/>
+		<key>IOMaximumBlockCountRead</key>
+		<integer>65535</integer>
+		<key>IOMaximumBlockCountWrite</key>
+		<integer>65535</integer>
+		<key>IOMediaIcon</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.apple.iokit.IOSCSIArchitectureModelFamily</string>
+			<key>IOBundleResourceFile</key>
+			<string>SD.icns</string>
+		</dict>
+		<key>IOObjectClass</key>
+		<string>AppleSDXCBlockStorageDevice</string>
+		<key>IOObjectRetainCount</key>
+		<integer>10</integer>
+		<key>IOPMResetPowerStateOnWake</key>
+		<true/>
+		<key>IOPersonalityPublisher</key>
+		<string>com.apple.driver.AppleSDXC</string>
+		<key>IOPowerManagement</key>
+		<dict>
+			<key>ActivityTickles</key>
+			<integer>0</integer>
+			<key>CapabilityFlags</key>
+			<integer>0</integer>
+			<key>CurrentPowerState</key>
+			<integer>0</integer>
+			<key>DevicePowerState</key>
+			<integer>0</integer>
+			<key>DriverPowerState</key>
+			<integer>0</integer>
+			<key>IdleTimerPeriod</key>
+			<integer>15000</integer>
+			<key>MaxPowerState</key>
+			<integer>4</integer>
+		</dict>
+		<key>IOProbeScore</key>
+		<integer>0</integer>
+		<key>IOProviderClass</key>
+		<string>AppleSDXCSlot</string>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>CFBundleIdentifier</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>CFBundleIdentifierKernel</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>IOClass</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOMatchCategory</key>
+				<string>IODefaultMatchCategory</string>
+				<key>IOMatchedAtBoot</key>
+				<true/>
+				<key>IOObjectClass</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOObjectRetainCount</key>
+				<integer>6</integer>
+				<key>IOPersonalityPublisher</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>IOPowerManagement</key>
+				<dict>
+					<key>CapabilityFlags</key>
+					<integer>0</integer>
+					<key>CurrentPowerState</key>
+					<integer>0</integer>
+				</dict>
+				<key>IOProbeScore</key>
+				<integer>0</integer>
+				<key>IOPropertyMatch</key>
+				<dict>
+					<key>device-type</key>
+					<string>Generic</string>
+				</dict>
+				<key>IOProviderClass</key>
+				<string>IOBlockStorageDevice</string>
+				<key>IORegistryEntryID</key>
+				<integer>4294970267</integer>
+				<key>IORegistryEntryName</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOServiceBusyState</key>
+				<integer>0</integer>
+				<key>IOServiceBusyTime</key>
+				<integer>117250</integer>
+				<key>IOServiceState</key>
+				<integer>30</integer>
+				<key>Statistics</key>
+				<dict>
+					<key>Bytes (Read)</key>
+					<integer>0</integer>
+					<key>Bytes (Write)</key>
+					<integer>0</integer>
+					<key>Errors (Read)</key>
+					<integer>0</integer>
+					<key>Errors (Write)</key>
+					<integer>0</integer>
+					<key>Latency Time (Read)</key>
+					<integer>0</integer>
+					<key>Latency Time (Write)</key>
+					<integer>0</integer>
+					<key>Operations (Read)</key>
+					<integer>0</integer>
+					<key>Operations (Write)</key>
+					<integer>0</integer>
+					<key>Retries (Read)</key>
+					<integer>0</integer>
+					<key>Retries (Write)</key>
+					<integer>0</integer>
+					<key>Total Time (Read)</key>
+					<integer>0</integer>
+					<key>Total Time (Write)</key>
+					<integer>0</integer>
+				</dict>
+			</dict>
+		</array>
+		<key>IORegistryEntryID</key>
+		<integer>4294970265</integer>
+		<key>IORegistryEntryName</key>
+		<string>AppleSDXCBlockStorageDevice</string>
+		<key>IOReportLegend</key>
+		<array/>
+		<key>IOReportLegendPublic</key>
+		<true/>
+		<key>IOServiceBusyState</key>
+		<integer>0</integer>
+		<key>IOServiceBusyTime</key>
+		<integer>295833</integer>
+		<key>IOServiceState</key>
+		<integer>30</integer>
+		<key>Protocol Characteristics</key>
+		<dict>
+			<key>Physical Interconnect</key>
+			<string>Secure Digital</string>
+			<key>Physical Interconnect Location</key>
+			<string>Internal</string>
+		</dict>
+		<key>device-type</key>
+		<string>Generic</string>
+	</dict>
+	<dict>
+		<key>Device Characteristics</key>
+		<dict>
+			<key>Medium Type</key>
+			<string>Solid State</string>
+			<key>Product Name</key>
+			<string>APPLE SSD AP1024R</string>
+			<key>Product Revision Level</key>
+			<string>591</string>
+			<key>Serial Number</key>
+			<string>0000000000000000</string>
+			<key>Vendor Name</key>
+			<string></string>
+		</dict>
+		<key>EmbeddedDeviceTypeRoot</key>
+		<true/>
+		<key>Encryption</key>
+		<true/>
+		<key>IOCFPlugInTypes</key>
+		<dict>
+			<key>AA0FA6F9-C2D6-457F-B10B-59A13253292F</key>
+			<string>NVMeSMARTLib.plugin</string>
+		</dict>
+		<key>IOMaximumBlockCountRead</key>
+		<integer>256</integer>
+		<key>IOMaximumBlockCountWrite</key>
+		<integer>256</integer>
+		<key>IOMaximumByteCountRead</key>
+		<integer>1048576</integer>
+		<key>IOMaximumByteCountWrite</key>
+		<integer>1048576</integer>
+		<key>IOMaximumSegmentByteCountRead</key>
+		<integer>1048576</integer>
+		<key>IOMaximumSegmentByteCountWrite</key>
+		<integer>1048576</integer>
+		<key>IOMaximumSegmentCountRead</key>
+		<integer>256</integer>
+		<key>IOMaximumSegmentCountWrite</key>
+		<integer>256</integer>
+		<key>IOMinimumSegmentAlignmentByteCount</key>
+		<integer>4096</integer>
+		<key>IOObjectClass</key>
+		<string>IOEmbeddedNVMeBlockDevice</string>
+		<key>IOObjectRetainCount</key>
+		<integer>7</integer>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>CFBundleIdentifier</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>CFBundleIdentifierKernel</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>IOClass</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOGeneralInterest</key>
+				<string>IOCommand is not serializable</string>
+				<key>IOMatchCategory</key>
+				<string>IODefaultMatchCategory</string>
+				<key>IOMatchedAtBoot</key>
+				<true/>
+				<key>IOObjectClass</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOObjectRetainCount</key>
+				<integer>8</integer>
+				<key>IOPersonalityPublisher</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>IOPowerManagement</key>
+				<dict>
+					<key>CapabilityFlags</key>
+					<integer>0</integer>
+					<key>CurrentPowerState</key>
+					<integer>0</integer>
+				</dict>
+				<key>IOProbeScore</key>
+				<integer>0</integer>
+				<key>IOPropertyMatch</key>
+				<dict>
+					<key>device-type</key>
+					<string>Generic</string>
+				</dict>
+				<key>IOProviderClass</key>
+				<string>IOBlockStorageDevice</string>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>BSD Major</key>
+						<integer>1</integer>
+						<key>BSD Minor</key>
+						<integer>0</integer>
+						<key>BSD Name</key>
+						<string>disk0</string>
+						<key>BSD Unit</key>
+						<integer>0</integer>
+						<key>Content</key>
+						<string>GUID_partition_scheme</string>
+						<key>Content Hint</key>
+						<string></string>
+						<key>Ejectable</key>
+						<false/>
+						<key>IOBusyInterest</key>
+						<string>IOCommand is not serializable</string>
+						<key>IOGeneralInterest</key>
+						<string>IOCommand is not serializable</string>
+						<key>IOMediaIcon</key>
+						<dict>
+							<key>CFBundleIdentifier</key>
+							<string>com.apple.iokit.IOStorageFamily</string>
+							<key>IOBundleResourceFile</key>
+							<string>Internal.icns</string>
+						</dict>
+						<key>IOObjectClass</key>
+						<string>IOMedia</string>
+						<key>IOObjectRetainCount</key>
+						<integer>12</integer>
+						<key>IORegistryEntryID</key>
+						<integer>4294970075</integer>
+						<key>IORegistryEntryName</key>
+						<string>APPLE SSD AP1024R Media</string>
+						<key>IOServiceBusyState</key>
+						<integer>0</integer>
+						<key>IOServiceBusyTime</key>
+						<integer>197355833</integer>
+						<key>IOServiceState</key>
+						<integer>30</integer>
+						<key>Leaf</key>
+						<false/>
+						<key>Open</key>
+						<true/>
+						<key>Preferred Block Size</key>
+						<integer>4096</integer>
+						<key>Removable</key>
+						<false/>
+						<key>Size</key>
+						<integer>1000555581440</integer>
+						<key>Whole</key>
+						<true/>
+						<key>Writable</key>
+						<true/>
+					</dict>
+				</array>
+				<key>IORegistryEntryID</key>
+				<integer>4294970074</integer>
+				<key>IORegistryEntryName</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOServiceBusyState</key>
+				<integer>0</integer>
+				<key>IOServiceBusyTime</key>
+				<integer>197602791</integer>
+				<key>IOServiceState</key>
+				<integer>30</integer>
+				<key>Statistics</key>
+				<dict>
+					<key>Bytes (Read)</key>
+					<integer>669290475520</integer>
+					<key>Bytes (Write)</key>
+					<integer>236940701696</integer>
+					<key>Errors (Read)</key>
+					<integer>0</integer>
+					<key>Errors (Write)</key>
+					<integer>0</integer>
+					<key>Latency Time (Read)</key>
+					<integer>0</integer>
+					<key>Latency Time (Write)</key>
+					<integer>0</integer>
+					<key>Operations (Read)</key>
+					<integer>58638888</integer>
+					<key>Operations (Write)</key>
+					<integer>19930034</integer>
+					<key>Retries (Read)</key>
+					<integer>0</integer>
+					<key>Retries (Write)</key>
+					<integer>0</integer>
+					<key>Total Time (Read)</key>
+					<integer>13318483212534</integer>
+					<key>Total Time (Write)</key>
+					<integer>1126681813915</integer>
+				</dict>
+			</dict>
+		</array>
+		<key>IORegistryEntryID</key>
+		<integer>4294970072</integer>
+		<key>IORegistryEntryLocation</key>
+		<string>1</string>
+		<key>IORegistryEntryName</key>
+		<string>NS_01</string>
+		<key>IOReportLegend</key>
+		<array/>
+		<key>IOReportLegendPublic</key>
+		<true/>
+		<key>IOServiceBusyState</key>
+		<integer>0</integer>
+		<key>IOServiceBusyTime</key>
+		<integer>198575625</integer>
+		<key>IOServiceState</key>
+		<integer>30</integer>
+		<key>IOStorageFeatures</key>
+		<dict>
+			<key>Barrier</key>
+			<true/>
+			<key>Priority</key>
+			<true/>
+			<key>Unmap</key>
+			<true/>
+		</dict>
+		<key>IOUnit</key>
+		<integer>1</integer>
+		<key>Logical Block Size</key>
+		<integer>4096</integer>
+		<key>NVMe SMART Capable</key>
+		<true/>
+		<key>NamespaceID</key>
+		<integer>1</integer>
+		<key>NamespaceUUID</key>
+		<integer>0</integer>
+		<key>Physical Block Size</key>
+		<integer>4096</integer>
+		<key>Protocol Characteristics</key>
+		<dict>
+			<key>Physical Interconnect</key>
+			<string>Apple Fabric</string>
+			<key>Physical Interconnect Location</key>
+			<string>Internal</string>
+		</dict>
+		<key>ThermalThrottlingSupported</key>
+		<true/>
+		<key>device-type</key>
+		<string>Generic</string>
+	</dict>
+	<dict>
+		<key>Device Characteristics</key>
+		<dict>
+			<key>Product Name</key>
+			<string>Disk Image</string>
+			<key>Product Revision Level</key>
+			<string>671.140.2.702.5</string>
+			<key>Vendor Name</key>
+			<string>Apple</string>
+		</dict>
+		<key>IOMinimumSegmentAlignmentByteCount</key>
+		<integer>4</integer>
+		<key>IOObjectClass</key>
+		<string>IODiskImageBlockStorageDeviceOutKernel</string>
+		<key>IOObjectRetainCount</key>
+		<integer>6</integer>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>CFBundleIdentifier</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>CFBundleIdentifierKernel</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>IOClass</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOGeneralInterest</key>
+				<string>IOCommand is not serializable</string>
+				<key>IOMatchCategory</key>
+				<string>IODefaultMatchCategory</string>
+				<key>IOMatchedAtBoot</key>
+				<true/>
+				<key>IOObjectClass</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOObjectRetainCount</key>
+				<integer>8</integer>
+				<key>IOPersonalityPublisher</key>
+				<string>com.apple.iokit.IOStorageFamily</string>
+				<key>IOPowerManagement</key>
+				<dict>
+					<key>CapabilityFlags</key>
+					<integer>0</integer>
+					<key>CurrentPowerState</key>
+					<integer>0</integer>
+				</dict>
+				<key>IOProbeScore</key>
+				<integer>0</integer>
+				<key>IOPropertyMatch</key>
+				<dict>
+					<key>device-type</key>
+					<string>Generic</string>
+				</dict>
+				<key>IOProviderClass</key>
+				<string>IOBlockStorageDevice</string>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>BSD Major</key>
+						<integer>1</integer>
+						<key>BSD Minor</key>
+						<integer>20</integer>
+						<key>BSD Name</key>
+						<string>disk4</string>
+						<key>BSD Unit</key>
+						<integer>4</integer>
+						<key>Content</key>
+						<string>GUID_partition_scheme</string>
+						<key>Content Hint</key>
+						<string></string>
+						<key>Ejectable</key>
+						<true/>
+						<key>IOBusyInterest</key>
+						<string>IOCommand is not serializable</string>
+						<key>IOGeneralInterest</key>
+						<string>IOCommand is not serializable</string>
+						<key>IOMediaIcon</key>
+						<dict>
+							<key>CFBundleIdentifier</key>
+							<string>com.apple.iokit.IOStorageFamily</string>
+							<key>IOBundleResourceFile</key>
+							<string>Removable.icns</string>
+						</dict>
+						<key>IOObjectClass</key>
+						<string>IOMedia</string>
+						<key>IOObjectRetainCount</key>
+						<integer>11</integer>
+						<key>IORegistryEntryID</key>
+						<integer>4295264808</integer>
+						<key>IORegistryEntryName</key>
+						<string>Apple read/write Media</string>
+						<key>IOServiceBusyState</key>
+						<integer>0</integer>
+						<key>IOServiceBusyTime</key>
+						<integer>22911750</integer>
+						<key>IOServiceState</key>
+						<integer>30</integer>
+						<key>Leaf</key>
+						<false/>
+						<key>Open</key>
+						<true/>
+						<key>Preferred Block Size</key>
+						<integer>512</integer>
+						<key>Removable</key>
+						<true/>
+						<key>Size</key>
+						<integer>20971520</integer>
+						<key>Whole</key>
+						<true/>
+						<key>Writable</key>
+						<true/>
+					</dict>
+				</array>
+				<key>IORegistryEntryID</key>
+				<integer>4295264807</integer>
+				<key>IORegistryEntryName</key>
+				<string>IOBlockStorageDriver</string>
+				<key>IOServiceBusyState</key>
+				<integer>0</integer>
+				<key>IOServiceBusyTime</key>
+				<integer>22912750</integer>
+				<key>IOServiceState</key>
+				<integer>30</integer>
+				<key>Statistics</key>
+				<dict>
+					<key>Bytes (Read)</key>
+					<integer>502784</integer>
+					<key>Bytes (Write)</key>
+					<integer>0</integer>
+					<key>Errors (Read)</key>
+					<integer>0</integer>
+					<key>Errors (Write)</key>
+					<integer>0</integer>
+					<key>Latency Time (Read)</key>
+					<integer>0</integer>
+					<key>Latency Time (Write)</key>
+					<integer>0</integer>
+					<key>Operations (Read)</key>
+					<integer>80</integer>
+					<key>Operations (Write)</key>
+					<integer>0</integer>
+					<key>Retries (Read)</key>
+					<integer>0</integer>
+					<key>Retries (Write)</key>
+					<integer>0</integer>
+					<key>Total Time (Read)</key>
+					<integer>24711182</integer>
+					<key>Total Time (Write)</key>
+					<integer>0</integer>
+				</dict>
+			</dict>
+		</array>
+		<key>IORegistryEntryID</key>
+		<integer>4295264806</integer>
+		<key>IORegistryEntryName</key>
+		<string>IODiskImageBlockStorageDeviceOutKernel</string>
+		<key>IOServiceBusyState</key>
+		<integer>0</integer>
+		<key>IOServiceBusyTime</key>
+		<integer>23842458</integer>
+		<key>IOServiceState</key>
+		<integer>30</integer>
+		<key>Protocol Characteristics</key>
+		<dict>
+			<key>Physical Interconnect</key>
+			<string>Virtual Interface</string>
+			<key>Physical Interconnect Location</key>
+			<string>File</string>
+			<key>Virtual Interface Location Path</key>
+			<data>
+			L1VzZXJzL3VzZXIvRG93bmxvYWRzL0V4YW1wbGUuZG1n
+			</data>
+		</dict>
+		<key>autodiskmount</key>
+		<true/>
+		<key>device-type</key>
+		<string>Generic</string>
+		<key>throttle-unit</key>
+		<integer>3</integer>
+	</dict>
+</array>
+</plist>

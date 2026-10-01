@@ -20,9 +20,14 @@
 // Run:
 //   bun tests/e2e/chat-first-send-lost-e2e.mjs
 //
+// Against a disposable stack instead of the dev servers (the loaded layout needs one chat
+// composer to exist before Ctrl+L opens the tab under test):
+//   node tests/e2e/fixtures/isolated-chat-stack.mjs --seed-new-chat-tab -- bun tests/e2e/chat-first-send-lost-e2e.mjs
+//
 // Env:
 //   PPM_E2E_NO_SERVERS=1  assume dev servers already running; don't spawn/kill
 //   PPM_E2E_API_PORT=8082 dev server on an alternative port (default 8081)
+//   PPM_E2E_API / PPM_E2E_WEB / PPM_E2E_PROJECT  full origins and project (default dev, "ppm")
 //   CHROME_PATH=...       override Chrome executable path
 
 import { spawn } from "node:child_process";
@@ -36,9 +41,10 @@ const TOKEN_KEY = "ppm-auth-token";
 // Alt-port dev stack (see memory: 8081 zombie) — the app's dev WS URL is hard-coded to
 // 8081, so the init script rewrites socket URLs to this port as well.
 const API_PORT = process.env.PPM_E2E_API_PORT || "8081";
-const API = `http://localhost:${API_PORT}`;
-const WEB = "http://localhost:5173";
-const WEB_PROJECT = `${WEB}/project/${encodeURIComponent("ppm")}`;
+const API = process.env.PPM_E2E_API || `http://localhost:${API_PORT}`;
+const WEB = process.env.PPM_E2E_WEB || "http://localhost:5173";
+const PROJECT = process.env.PPM_E2E_PROJECT || "ppm";
+const WEB_PROJECT = `${WEB}/project/${encodeURIComponent(PROJECT)}`;
 const CDP_PORT = 9224;
 const CHROME =
   process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
@@ -257,7 +263,9 @@ const probeExpr = (marker) => `(() => {
   return {
     composerVisible: !!(composer && composer.offsetParent !== null),
     composerValue: composer ? composer.value : null,
-    bubbleRendered: document.body.innerText.includes(${JSON.stringify(marker)}),
+    // A user bubble, not the page text: once a session exists its title is the message, and
+    // it shows in the tab strip and the chat history list without anything having been sent.
+    bubbleRendered: Array.from(document.querySelectorAll('[data-user-message="true"]')).some((el) => el.textContent.includes(${JSON.stringify(marker)})),
     toasts,
     e2e: window.__e2e,
   };
@@ -374,7 +382,8 @@ async function newPage() {
   return { cdp, close };
 }
 
-const NEW_DRAFT_URL = `${API}/api/project/ppm/chat/drafts/__new__`;
+// The shared new-tab draft; a new tab now receives it inside `POST /chat/prepare`.
+const NEW_DRAFT_URL = `${API}/api/project/${encodeURIComponent(PROJECT)}/chat/drafts/__new__`;
 const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${AUTH_TOKEN}` };
 
 /**
@@ -435,7 +444,10 @@ async function runScenario(cdp, mode, name, marker, prefill) {
   const reacted = await poll(
     cdp,
     probeExpr(marker),
-    (p) => p.e2e.sessionPosts > 0 && (p.bubbleRendered || p.toasts.length > 0 || p.composerValue === marker),
+    // A bubble is only an outcome for the control run: since the first send shows a pending
+    // preview bubble at once, in a failure shape it appears long before the create timeout
+    // or the socket watchdog has had its say, and ending the wait on it measured nothing.
+    (p) => p.e2e.sessionPosts > 0 && ((mode === "happy" && p.bubbleRendered) || p.toasts.length > 0 || p.composerValue === marker),
     REACTION_BUDGET_MS,
   );
   // Let the composer's 1 s draft debounce settle so stray or missing saves are visible.

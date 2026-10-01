@@ -12,7 +12,8 @@
  * `api.get` cannot save this either: it dedupes concurrent GETs of one URL, but
  * only for callers that pass no `AbortSignal`, and every one of these passes one.
  */
-import { describe, it, expect, mock, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll, spyOn } from "bun:test";
+import { api } from "../../../src/web/lib/api-client.ts";
 
 /** One controllable response per URL, so a test can hold a request open. */
 const pending: {
@@ -24,34 +25,35 @@ const pending: {
 }[] = [];
 let getCalls: string[] = [];
 
-// Relative, like every other `mock.module` in the suite. An absolute path is
-// one machine's checkout: in any other clone — or in a second worktree of this
-// one — it names a file outside the run, the real `api-client` is loaded
-// instead, and these two tests fail on a network call nobody made.
-mock.module("../../../src/web/lib/api-client.ts", () => ({
-  projectUrl: (name: string) => `/api/projects/${name}`,
-  api: {
-    get: (url: string, opts?: { signal?: AbortSignal }) => {
-      getCalls.push(url);
-      return new Promise((resolve, reject) => {
-        const entry = {
-          url,
-          resolve: resolve as (v: unknown) => void,
-          reject: reject as (e: unknown) => void,
-          aborted: false,
-        };
-        opts?.signal?.addEventListener("abort", () => {
-          entry.aborted = true;
-          const e = new Error("Aborted");
-          e.name = "AbortError";
-          reject(e);
-        });
-        pending.push(entry);
-      });
-    },
-    post: () => Promise.resolve([]),
-  },
-}));
+// Spied on the shared `api` instance rather than replaced with `mock.module`, which is
+// process-wide and cannot be undone: every file loaded after this one bound the fake, so its
+// `projectUrl` — spelled `/api/projects/`, where the real one is `/api/project/` — became the
+// answer for the whole run. Three unrelated suites were asserting against a URL this file
+// invented. A spy on the singleton reaches the same call site and comes back off in `afterAll`.
+const getSpy = spyOn(api, "get").mockImplementation(((url: string, opts?: { signal?: AbortSignal }) => {
+  getCalls.push(url);
+  return new Promise((resolve, reject) => {
+    const entry = {
+      url,
+      resolve: resolve as (v: unknown) => void,
+      reject: reject as (e: unknown) => void,
+      aborted: false,
+    };
+    opts?.signal?.addEventListener("abort", () => {
+      entry.aborted = true;
+      const e = new Error("Aborted");
+      e.name = "AbortError";
+      reject(e);
+    });
+    pending.push(entry);
+  });
+}) as typeof api.get);
+const postSpy = spyOn(api, "post").mockImplementation((() => Promise.resolve([])) as typeof api.post);
+
+afterAll(() => {
+  getSpy.mockRestore();
+  postSpy.mockRestore();
+});
 
 const { useFileStore } = await import("../../../src/web/stores/file-store.ts");
 

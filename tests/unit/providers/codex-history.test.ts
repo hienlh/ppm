@@ -209,18 +209,20 @@ describe("the compact card on a twice-compacted thread", () => {
 });
 
 /**
- * The "load more" walk, which had no test at all.
+ * The "load more" walk.
  *
- * `isCodexRolloutPath` jails to `~/.codex/sessions` via `homedir()`, and `homedir()` reads
- * `USERPROFILE`/`HOME` — so the home is pointed at a temp directory for the duration rather
- * than the real one being written to, and both variables are put back afterwards.
+ * Isolated through `CODEX_HOME`, which `isCodexRolloutPath` accepts as a session root
+ * alongside `~/.codex`. An earlier version of this block pointed `HOME`/`USERPROFILE` at a
+ * temp directory instead, which works on Windows and does not on Linux: `os.homedir()` reads
+ * `USERPROFILE` there but the passwd entry here, so every case below passed on one platform
+ * and failed on the other — on the one the feature is mostly used from.
  */
 describe("getCodexPreCompactMessages", () => {
   const THREAD = "019eded7-aaaa-bbbb-cccc-ddddeeeeffff";
   const CWD = "/tmp/ppm-codex-walk";
-  let home: string;
+  let codexHome: string;
   let file: string;
-  const saved = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+  const savedCodexHome = process.env.CODEX_HOME;
 
   const turn = (u: string) =>
     `{"type":"event_msg","payload":{"type":"user_message","message":${JSON.stringify(u)}}}\n`;
@@ -229,8 +231,8 @@ describe("getCodexPreCompactMessages", () => {
     `{"type":"message","role":"user","content":[{"type":"input_text","text":"rh"}]}]}}\n`;
 
   beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), "ppm-codex-home-"));
-    const sessions = join(home, ".codex", "sessions");
+    codexHome = mkdtempSync(join(tmpdir(), "ppm-codex-home-"));
+    const sessions = join(codexHome, "sessions");
     mkdirSync(sessions, { recursive: true });
     file = join(sessions, `rollout-2026-09-16T10-00-00-${THREAD}.jsonl`);
     writeFileSync(
@@ -239,16 +241,13 @@ describe("getCodexPreCompactMessages", () => {
         turn("q1") + compact("summary-1") + turn("q2") + compact("summary-2") + turn("q3"),
       "utf-8",
     );
-    process.env.USERPROFILE = home;
-    process.env.HOME = home;
+    process.env.CODEX_HOME = codexHome;
   });
 
   afterEach(() => {
-    if (saved.USERPROFILE === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = saved.USERPROFILE;
-    if (saved.HOME === undefined) delete process.env.HOME;
-    else process.env.HOME = saved.HOME;
-    rmSync(home, { recursive: true, force: true });
+    if (savedCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = savedCodexHome;
+    rmSync(codexHome, { recursive: true, force: true });
   });
 
   const texts = (msgs: { content: string }[]) => msgs.map((m) => m.content).join("\n");
@@ -291,13 +290,13 @@ describe("getCodexPreCompactMessages", () => {
   });
 
   it("refuses a path outside the sessions directory", () => {
-    const outside = join(home, "not-a-session.jsonl");
+    const outside = join(codexHome, "not-a-session.jsonl");
     writeFileSync(outside, "{}\n", "utf-8");
     expect(() => getCodexPreCompactMessages(outside, CWD)).toThrow(/Access denied/);
   });
 
   it("answers nothing when the thread was never compacted", () => {
-    const plain = join(home, ".codex", "sessions", `rollout-2026-09-16T11-00-00-${THREAD}.jsonl`);
+    const plain = join(codexHome, "sessions", `rollout-2026-09-16T11-00-00-${THREAD}.jsonl`);
     writeFileSync(plain, `{"type":"session_meta","payload":{"id":"x","cwd":"${CWD}"}}\n` + turn("only"), "utf-8");
     expect(getCodexPreCompactMessages(plain, CWD)).toEqual([]);
   });
@@ -381,6 +380,9 @@ describe("subagent threads (spawned agents are steps, not sessions)", () => {
     const childEvents = cards[0].children as any[];
     expect(childEvents.some((e) => e.type === "tool_use" && e.tool === "Bash")).toBe(true);
     expect(childEvents.some((e) => e.type === "text" && e.content.includes("simplify pass"))).toBe(true);
+    // The child's rollout was found and parsed — the chat can slim this card's children,
+    // since a session window can stream the rest straight back from that same file.
+    expect(cards[0].transcriptAvailable).toBe(true);
 
     // The completion answers that card, carrying the agent's closing report.
     const result = events.find((e) => e.type === "tool_result" && (e as any).toolUseId === cards[0].toolUseId) as any;
@@ -395,6 +397,9 @@ describe("subagent threads (spawned agents are steps, not sessions)", () => {
     expect(dead.children[0].content).toBe(
       "The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account.",
     ); // unwrapped from the API error codex nests as JSON
+    // Its rollout was still found and read (that is where the error text came from),
+    // so this card is stamped too even though the agent never produced a real report.
+    expect(dead.transcriptAvailable).toBe(true);
   });
 
   it("still resolves the subagent rollout by id (the parent has to read it)", () => {

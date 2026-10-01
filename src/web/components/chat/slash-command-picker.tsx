@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
 import { Sparkles, Terminal, Zap, Bot, RefreshCw, Clock } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
+import { clearSlashItemsCache } from "@/lib/slash-items-cache";
+import { idbDelete } from "@/lib/browser-cache/idb-keyval-cache";
+import { projectCacheId, slash as slashKey } from "@/lib/browser-cache/cache-keys";
+import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import { searchFuzzy } from "../../../shared/fuzzy-search";
 
 export interface SlashItem {
@@ -136,6 +140,10 @@ export function SlashCommandPicker({
     api.del(`${projectUrl(projectName)}/chat/slash-items/cache`)
       .then(() => {
         // Trigger re-fetch by dispatching custom event (MessageInput listens on projectName)
+        clearSlashItemsCache(projectName);
+        // The default provider's IndexedDB entry (what a project hydrates on the next
+        // load) would otherwise keep serving the stale list until its TTL admits a fetch.
+        void idbDelete(slashKey(projectCacheId(projectRefForName(projectName)), "claude"));
         window.dispatchEvent(new CustomEvent("ppm:slash-items-refresh"));
       })
       .finally(() => setRefreshing(false));

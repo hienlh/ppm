@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { api } from "../../../src/web/lib/api-client";
-import { clearChatPreparationCache, getChatPreparationSettings, getChatProviders, peekChatProviders } from "../../../src/web/lib/chat-preparation-cache";
+import { clearChatPreparationCache, getChatPreparationSettings, getChatProviders, peekChatProviders, seedChatProviders } from "../../../src/web/lib/chat-preparation-cache";
 
 let get: ReturnType<typeof spyOn>;
 beforeEach(() => { clearChatPreparationCache(); get = spyOn(api, "get"); });
@@ -80,4 +80,16 @@ it("bounds hanging requests and permits retry after timeout", async () => {
     get.mockResolvedValueOnce([{ id: "codex", name: "Codex" }]);
     await expect(getChatProviders("one")).resolves.toHaveLength(1);
   } finally { timeout.mockRestore(); }
+});
+
+it("seedChatProviders makes peekChatProviders answer without a fetch, honouring the same TTL", async () => {
+  const now = spyOn(Date, "now");
+  try {
+    now.mockReturnValue(1000);
+    seedChatProviders("seeded-project", [{ id: "codex", name: "Codex" }]);
+    expect(peekChatProviders("seeded-project")).toEqual([{ id: "codex", name: "Codex" }]);
+    expect(get).not.toHaveBeenCalled();
+    now.mockReturnValue(1000 + 60_001);
+    expect(peekChatProviders("seeded-project")).toBeUndefined();
+  } finally { now.mockRestore(); }
 });

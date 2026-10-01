@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,15 @@ import { _resetTargetCache } from "../../../src/services/edge-target-resolver.ts
 const tempDirs: string[] = [];
 const openServers: net.Server[] = [];
 let home: string;
+
+// `PPM_HOME` is process-wide and the suite shares one process, so leaving it pointed at a temp
+// home hands that home — by then deleted — to every file after this one.
+const originalPpmHome = process.env.PPM_HOME;
+afterAll(() => {
+  if (originalPpmHome === undefined) delete process.env.PPM_HOME;
+  else process.env.PPM_HOME = originalPpmHome;
+  _resetPpmDir();
+});
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "ppm-stopped-"));

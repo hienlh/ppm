@@ -72,6 +72,35 @@ settings before mounting chat or claiming an account. An unavailable provider pr
 for an available choice. Existing tabs, resumed sessions and explicit fork/clear
 providers are preserved; changing the setting only affects new tabs.
 
+## Shared session-list store
+
+`src/web/stores/session-list-store.ts` holds one recent-session list per project — its
+first page (50 sessions), tags, `isSyncing` and `lastSyncError` — so every surface that
+shows recent chats reads the same state instead of fetching its own copy: the sidebar
+history panel (including the mobile drawer), the welcome `SessionListPanel` (in
+`chat-welcome` and `editor-panel`), the tab bar / mobile nav's tag map, and
+`chat-history-bar`'s first page. It is hydrated from IndexedDB (see [Browser cache
+layer](data-and-storage.md#browser-cache-layer)) and kept fresh by one deduplicated sync
+per project (`GET /chat/sessions` + `/tags`, in-flight promises keyed outside the store
+so the dedupe check itself never triggers a re-render).
+
+Sync triggers (`session-list-sync-triggers.ts`): a consumer's first `ensure()` call, the
+tab going visible while its data is stale (`STALE_MS` = 15s), and a `/ws/global`
+reconnect (which re-syncs every project this browser already knows about, not just the
+active one — a background tab's tag map still reads the store). There is no polling.
+
+Local mutations (rename, pin, tag, delete, bulk-delete-older-than) patch the store
+optimistically before the request is sent, via `commitOptimistic`: on failure the
+project is re-synced, which replaces the optimistic rows with whatever the server still
+has — the rollback, without each call site keeping its own undo. A create or fork is
+upserted only after the server has answered, since only then is there a real session id
+to show. Search, load-more pagination, and design/onboarding session scans stay on their
+own direct requests — this store only ever holds the first page.
+
+A syncing indicator (`session-list-sync-indicator.tsx`, `role="status"`,
+`text-text-dim`) sits in the sidebar's header row and inline after "Recent chats" on the
+welcome panel — no tap target, outside the thumb zone.
+
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
 **Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints
@@ -456,7 +485,7 @@ pointer-up that still arrives after a mid-gesture window close (e.g. dragging by
 that closes the frame).
 
 **One chrome, every kind.** `WindowSkinChrome` (`window-skin-chrome.tsx`) is the titlebar every
-window kind — explorer, team-member session, system monitor, detached tab — renders: it resolves
+window kind — explorer, agent-session, system monitor, detached tab — renders: it resolves
 the active OS skin via `useExplorerSkin()` (Settings override, else host platform; Linux → macOS)
 and delegates to that skin's `WindowsWindowChrome` / `MacosWindowChrome`
 (`src/web/components/os-explorer/skins/`), scoped entirely through `[data-skin="windows"|"macos"]`
@@ -476,6 +505,18 @@ frame while it plays in PiP, with a ≥44px "Bring back" control. The mechanics 
 style mirroring, key forwarding, resize signalling) apply to whichever window kind currently owns
 the slot — a tab-host window is only the one kind whose body is itself a portal target for another
 component (`TabPool`).
+
+**Agent session windows.** `agent-session` (renamed from `team-member` — it now also covers a
+card with no teammate handle at all) streams one agent's or teammate's transcript live; see
+[Agent session transcripts](ai-chat-and-providers.md#agent-session-transcripts) for the hub behind
+it. It spawns a portrait 9:16 rect pinned to the top-right (`portraitSpawnRect`,
+`window-geometry.ts`) instead of the landscape cascade every other kind uses — a step list reads
+top-to-bottom, so portrait wastes less of the window on line wrapping — and cascades the same way
+once more than one is open. Opening a session already showing in a window focuses that window
+instead of spawning a duplicate; at the window cap, the oldest `agent-session` window is closed to
+make room instead of leaving the request refused or evicting some unrelated window still in use,
+and the open is refused only when no `agent-session` window exists to close. Its body is never
+restored on reload (see Persistence below).
 
 #### Tab-host windows (detaching a tab into its own window)
 
@@ -508,8 +549,8 @@ component (`TabPool`).
   key (`stores/window-panel-persistence.ts`), separate from the per-project `ppm-panels-*` blob and
   not synced to the server — the same limitation window geometry (`ppm-windows`) already has.
   `WINDOW_KINDS` (`window-store-types.ts`) is the single list both the window store and
-  `window-persistence.ts` filter against; `team-member` is excluded from restore because its body
-  streams a live subagent session that cannot survive a reload.
+  `window-persistence.ts` filter against; `agent-session` is excluded from restore because its
+  body streams a live subagent session that cannot survive a reload.
 - **Reconcile.** The two halves persist separately, so a reload can restore one without the other.
   `reconcileTabHostWindows` (`stores/window-panel-reconcile.ts`), run once per project via
   `useWindowPanelReconcile()` after the window layer restores, and unconditionally below `md` (the
