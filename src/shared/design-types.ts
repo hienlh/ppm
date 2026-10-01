@@ -88,8 +88,6 @@ export interface DesignSystemSummary {
   /** True when `designs/systems/<id>/system.json` exists; false for the unreleased implicit default. */
   declared: boolean;
   builtFrom?: DesignSystemBuiltFrom;
-  /** The New Design dialog's "Skip" was chosen for this app and must not ask again. */
-  setupSkipped?: boolean;
   hasDesignMd: boolean;
   hasTokensCss: boolean;
 }

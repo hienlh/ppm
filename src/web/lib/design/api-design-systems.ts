@@ -5,7 +5,7 @@ import type {
 
 /**
  * The declared-apps REST surface (`/api/project/:name/designs/systems`): list, declare, edit,
- * remove, its stale check, the "skip setup" memory, and getting-or-creating its showcase.
+ * remove, its stale check, and getting-or-creating its showcase.
  */
 
 const base = (projectName: string) => `${projectUrl(projectName)}/designs/systems`;
@@ -42,10 +42,6 @@ export function deleteDesignSystem(projectName: string, id: string, deleteFiles:
 
 export function designSystemStaleness(projectName: string, id: string): Promise<DesignSystemStaleInfo> {
   return api.get<DesignSystemStaleInfo>(`${one(projectName, id)}/stale`);
-}
-
-export function skipDesignSystemSetup(projectName: string, id: string): Promise<void> {
-  return api.post(`${one(projectName, id)}/skip-setup`, {});
 }
 
 export function ensureShowcaseDesign(projectName: string, id: string): Promise<DesignSummary> {

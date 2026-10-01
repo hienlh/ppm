@@ -12,10 +12,11 @@ import type { DesignSystemStaleInfo, DesignSystemSummary } from "../../../shared
 import { useDesignTab } from "./design-tab-context";
 
 /**
- * The prominent way into "Set up design system": a strip across the top of the design tab,
- * above both the chat and the canvas, while the design's app has no design system yet (or
- * it may be outdated). The canvas More menu keeps its entry; this is what a first-time user
- * actually sees. "Later" hides it for that app on this device only.
+ * A strip across the top of the design tab, above both the chat and the canvas, shown once
+ * an app's design system may be outdated. Setting a system up in the first place is no
+ * longer offered here or anywhere a user is asked: a design's own first turn does it itself
+ * (`design-instructions.ts`). The canvas More menu keeps its "Set up design system" entry for
+ * a manual re-run. "Later" hides this banner for that app on this device only.
  */
 
 function readDismissed(key: string): DesignSystemBannerKind[] {
@@ -93,12 +94,7 @@ export function DesignSystemSetupBanner() {
     setDismissed(next);
   };
 
-  const isShowcase = design.showcaseFor === systemId;
-  const message = kind === "refresh"
-    ? `${system.label}'s design system may be outdated (${stale?.changedFiles ?? "several"} UI files changed since it was made).`
-    : isShowcase
-      ? `This page shows ${system.label}'s design system once it is set up. The AI reads the app's code and copies its real styles, components and icons.`
-      : `Set up ${system.label}'s design system first, so designs reuse the app's real styles, components and icons instead of guessing them.`;
+  const message = `${system.label}'s design system may be outdated (${stale?.changedFiles ?? "several"} UI files changed since it was made).`;
 
   return (
     <div role="region" aria-label="Design system"
@@ -108,7 +104,7 @@ export function DesignSystemSetupBanner() {
       <div className="flex items-center gap-1">
         <Button onClick={start} disabled={starting} className="min-h-11 md:min-h-9">
           {starting && <Loader2 className="size-4 animate-spin" />}
-          {kind === "refresh" ? "Refresh design system" : "Set up design system"}
+          Refresh design system
         </Button>
         <button type="button" onClick={later} aria-label="Later" title="Later"
           className="flex size-11 items-center justify-center rounded-md text-text-subtle hover:bg-surface-elevated hover:text-foreground md:size-9">

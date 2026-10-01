@@ -16,8 +16,8 @@ import {
 /**
  * Declared apps ("design systems") of a project: CRUD over `designs/systems/<id>/system.json`,
  * plus the `default` app, which is never declared on disk under normal use but can hold its
- * own `system.json` (label/platform/builtFrom/setupSkipped only — its `root` always stays
- * `.` and its design-system files always stay at the legacy `designs/` root).
+ * own `system.json` (label/platform/builtFrom only — its `root` always stays `.` and its
+ * design-system files always stay at the legacy `designs/` root).
  *
  * Every mutation runs under the design-file lock keyed `system:<id>`, the same mutex used for
  * a design's own files, so a concurrent edit and a concurrent `builtFrom` record never race.
@@ -67,7 +67,6 @@ async function summarizeSystem(projectRoot: string, designsRootAbs: string | nul
     platform: file.platform,
     declared: raw !== null,
     ...(file.builtFrom ? { builtFrom: file.builtFrom } : {}),
-    ...(file.setupSkipped ? { setupSkipped: true as const } : {}),
     hasDesignMd: !!designMd,
     hasTokensCss: !!tokensCss,
   };
@@ -212,21 +211,6 @@ export async function deleteDesignSystem(projectPath: string, id: string, opts: 
     } else {
       await rm(join(dir, SYSTEM_FILE), { force: true });
     }
-  });
-}
-
-/** The New Design dialog's "Skip" was chosen for this app: remember it, ask once. */
-export async function recordSetupSkipped(projectPath: string, id: string): Promise<void> {
-  if (!isValidSystemId(id)) return;
-  const project = resolve(projectPath);
-  const designsRootAbs = await resolveDesignsRoot(project, { create: true });
-  if (!designsRootAbs) return;
-  const dir = systemDeclDir(designsRootAbs, id);
-  await withDesignLock(systemLockKey(project, id), async () => {
-    const current = parseSystemFile(await readSystemFileRaw(dir), { id, projectRoot: project });
-    if (current.setupSkipped) return;
-    await ensureSystemDeclDir(designsRootAbs, id);
-    await writeFileAtomic(join(dir, SYSTEM_FILE), serializeSystemFile({ ...current, setupSkipped: true }));
   });
 }
 

@@ -5,15 +5,13 @@ import { cn } from "@/lib/utils";
 import { getAISettings } from "@/lib/api-settings";
 import { resolveNewChatProvider } from "@/lib/new-chat-provider";
 import { createDesign, listDesignProviders, type DesignProvider } from "@/lib/design/api-designs";
-import { listDesignSystems, skipDesignSystemSetup } from "@/lib/design/api-design-systems";
+import { listDesignSystems } from "@/lib/design/api-design-systems";
 import { openDesignTab } from "@/lib/design/open-design-tab";
 import { announceDesignsChanged } from "@/lib/design/design-ui-events";
 import { getDesignSettings, readSkillLists } from "@/lib/design/api-design-settings";
 import { getLastUsedDesignSystem, setLastUsedDesignSystem } from "@/lib/design/last-used-design-system";
-import { runDesignSystemSetup } from "@/lib/design/run-design-system-setup";
 import { openSettings } from "@/components/settings/open-settings";
 import { DesignResponsiveDialog } from "./design-responsive-dialog";
-import { DesignSystemSetupStep } from "./design-system-setup-step";
 import { DesignSkillSuggestionHint } from "../design-skill-suggestion";
 import type { DesignKind, DesignSystemSummary } from "../../../../shared/design-types";
 import { needsDesignSkillSuggestion } from "../../../../shared/design-skill-suggestion";
@@ -41,9 +39,6 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
   const [systemId, setSystemId] = useState("default");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  // Shown after "Create" when the chosen app's design system is not set up yet (option B:
-  // offered at the first design, never run on its own).
-  const [confirmingSetup, setConfirmingSetup] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,9 +76,11 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
 
   const trimmed = title.trim();
   const canCreate = !!trimmed && !!providerId && !!systems && !creating;
-  const chosenSystem = systems?.find((s) => s.id === systemId) ?? null;
 
-  const finishCreate = async (setupFirst: boolean) => {
+  // No "set up the design system first" question: a design's first turn sets its app's
+  // system up itself, in its own chat, if it is not already there (see design-instructions.ts).
+  const create = async () => {
+    if (!canCreate) return;
     setCreating(true);
     setError(null);
     try {
@@ -91,39 +88,12 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
       setLastUsedDesignSystem(projectName, systemId);
       announceDesignsChanged(projectName);
       openDesignTab({ projectName, slug: design.slug, title: design.title, providerId, fresh: true });
-      if (setupFirst) await runDesignSystemSetup(projectName, systemId);
-      else if (chosenSystem && !chosenSystem.hasDesignMd) await skipDesignSystemSetup(projectName, systemId).catch(() => undefined);
       onClose();
     } catch (e) {
       setError((e as Error).message || "Could not create the design");
       setCreating(false);
-      setConfirmingSetup(false);
     }
   };
-
-  const create = () => {
-    if (!canCreate) return;
-    // Every app (including the implicit default) gets the offer once, the first time a
-    // design is created for it and it has no design system yet.
-    if (chosenSystem && !chosenSystem.hasDesignMd && !chosenSystem.setupSkipped) {
-      setConfirmingSetup(true);
-      return;
-    }
-    void finishCreate(false);
-  };
-
-  if (confirmingSetup && chosenSystem) {
-    return (
-      <DesignResponsiveDialog open onClose={() => { if (!creating) onClose(); }} title="New design">
-        <DesignSystemSetupStep
-          system={chosenSystem}
-          busy={creating}
-          onSetupFirst={() => void finishCreate(true)}
-          onSkip={() => void finishCreate(false)}
-        />
-      </DesignResponsiveDialog>
-    );
-  }
 
   return (
     <DesignResponsiveDialog
@@ -133,12 +103,12 @@ export function NewDesignDialog({ projectName, onClose }: { projectName: string;
       description="The AI builds it in designs/ in this project, with a live preview beside the chat."
       footer={<>
         <Button variant="outline" onClick={onClose} disabled={creating}>Cancel</Button>
-        <Button onClick={create} disabled={!canCreate}>
+        <Button onClick={() => void create()} disabled={!canCreate}>
           {creating && <Loader2 className="size-4 animate-spin" />} Create
         </Button>
       </>}
     >
-      <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); create(); }}>
+      <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void create(); }}>
         <label className="flex flex-col gap-1 text-xs font-medium text-text-secondary">
           Title
           <input autoFocus value={title} maxLength={MAX_TITLE_LENGTH} onChange={(e) => setTitle(e.target.value)}

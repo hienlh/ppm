@@ -44,7 +44,6 @@ export interface ParsedSystemFile {
   root: string;
   platform: DesignPlatform;
   builtFrom?: DesignSystemBuiltFrom;
-  setupSkipped?: boolean;
 }
 
 function normalizeLabel(value: unknown, fallback: string): string {
@@ -111,11 +110,10 @@ export function parseSystemFile(raw: string | null, fallback: { id: string; proj
     root,
     platform: isDesignPlatform(obj.platform) ? obj.platform : "web",
     builtFrom: normalizeBuiltFrom(obj.builtFrom),
-    setupSkipped: obj.setupSkipped === true ? true : undefined,
   };
 }
 
 export function serializeSystemFile(file: ParsedSystemFile): string {
-  const { label, root, platform, builtFrom, setupSkipped } = file;
-  return `${JSON.stringify({ label, root, platform, ...(builtFrom ? { builtFrom } : {}), ...(setupSkipped ? { setupSkipped } : {}) }, null, 2)}\n`;
+  const { label, root, platform, builtFrom } = file;
+  return `${JSON.stringify({ label, root, platform, ...(builtFrom ? { builtFrom } : {}) }, null, 2)}\n`;
 }

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
 import { designFail as fail, designJsonBody as jsonBody, type DesignRouteEnv } from "./design-route-helpers.ts";
 import {
-  createDesignSystem, deleteDesignSystem, getDesignSystem, listDesignSystems, recordSetupSkipped, updateDesignSystem,
+  createDesignSystem, deleteDesignSystem, getDesignSystem, listDesignSystems, updateDesignSystem,
 } from "../../services/design/design-systems.service.ts";
 import { designSystemStaleness } from "../../services/design/design-systems-stale.ts";
 import { ensureShowcaseDesign } from "../../services/design/design-systems-showcase.ts";
@@ -66,16 +66,6 @@ designSystemRoutes.get("/:id/stale", async (c) => {
     const projectPath = c.get("projectPath");
     const system = await getDesignSystem(projectPath, c.req.param("id"));
     return c.json(ok(await designSystemStaleness(projectPath, system)));
-  } catch (e) {
-    return fail(c, e);
-  }
-});
-
-/** The New Design dialog's "Skip" step: remember it so the app is not asked about again. */
-designSystemRoutes.post("/:id/skip-setup", async (c) => {
-  try {
-    await recordSetupSkipped(c.get("projectPath"), c.req.param("id"));
-    return c.json(ok({ skipped: true }));
   } catch (e) {
     return fail(c, e);
   }
