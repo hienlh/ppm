@@ -1,6 +1,11 @@
 /**
  * Lists and switches the *host's* real display mode — RustDesk's `_ResolutionsMenu`.
  *
+ * This file is the X11 half and the platform entry point; macOS lives in
+ * `remote-desktop-resolution-darwin.ts` (CoreGraphics) because it shares none of the X11
+ * machinery below — no root-window container, so no ordering plan — and has one trap of its own
+ * that the X11 side does not: the mode a Retina display is on is not in its own mode list.
+ *
  * Over FFI rather than by shelling out to `xrandr`, for the reason already documented for the
  * monitor list: `xrandr` the binary and `libXrandr` the library are different packages, and
  * this dev host has the library and not the binary. A version that shells out reports "no
@@ -31,6 +36,7 @@
  * i.e. a desktop with a dead strip down one side, which no error reports.
  */
 import { detectLinuxSession } from "./remote-desktop-linux-session.ts";
+import { listDarwinResolutions, setDarwinResolution } from "./remote-desktop-resolution-darwin.ts";
 import { asPointer, getX11, type X11Connection } from "./remote-desktop-x11.ts";
 
 /** `RR_Connected` from `randr.h`. */
@@ -140,8 +146,9 @@ function outputName(x: X11Connection, info: number): string {
 export async function listHostResolutions(
   platform: NodeJS.Platform = process.platform,
 ): Promise<HostResolutions> {
+  if (platform === "darwin") return listDarwinResolutions();
   if (platform !== "linux") {
-    return { output: null, modes: [], reason: "Only implemented on Linux (X11) so far." };
+    return { output: null, modes: [], reason: "Only implemented on Linux (X11) and macOS so far." };
   }
   const session = detectLinuxSession();
   if (session?.kind !== "x11") {
@@ -241,7 +248,8 @@ export async function setHostResolution(
   modeId: string, platform: NodeJS.Platform = process.platform,
 ): Promise<SetResolutionResult> {
   const fail = (error: string): SetResolutionResult => ({ ok: false, width: 0, height: 0, error });
-  if (platform !== "linux") return fail("Only implemented on Linux (X11) so far.");
+  if (platform === "darwin") return setDarwinResolution(modeId);
+  if (platform !== "linux") return fail("Only implemented on Linux (X11) and macOS so far.");
   const session = detectLinuxSession();
   if (session?.kind !== "x11") return fail("Needs an X11 session.");
   const x = await getX11(session);

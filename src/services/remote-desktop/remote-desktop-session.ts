@@ -4,7 +4,7 @@
  * host" — a new connection evicts (and awaits) any previous one before starting its own
  * capture so two `gdigrab` processes never contend for the same display.
  */
-import { startCapture, type CaptureHandle } from "./remote-desktop-capture.ts";
+import { captureSourceSize, startCapture, type CaptureHandle } from "./remote-desktop-capture.ts";
 import { workingEncoders } from "../media-transcode/ffmpeg-capabilities.ts";
 import { startAudioCapture, type AudioHandle } from "./remote-desktop-audio.ts";
 import { engagePrivacy, type PrivacyHandle } from "./remote-desktop-privacy.ts";
@@ -16,6 +16,9 @@ import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
 import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable, releaseRemoteInput } from "./remote-desktop-input.ts";
 import { resolveDisplay, type RemoteDisplay } from "./remote-desktop-displays.ts";
+import {
+  captureBound, captureScaleFilter, parseViewportSize, type ViewportSize,
+} from "../../shared/remote-desktop-viewport-scale.ts";
 import { startRelay, type RelayHandle } from "./mediamtx-process.ts";
 import { findMediamtxBinary } from "./mediamtx-paths.ts";
 import { registerWhepTarget, releaseWhepTicket } from "./remote-desktop-whep-registry.ts";
@@ -50,6 +53,10 @@ const HEARTBEAT_TIMEOUT_MS = 30_000;
  *  enough to be real" rule live in `remote-desktop-quality.ts` (`congestionState`). */
 /** Longest `text` message injected in one go — a paste, not a file; anything bigger is dropped. */
 const MAX_TEXT_CHARS = 1024;
+/** How long a viewport change waits before trying again, when a respawn was already in flight
+ *  and refused it. One retry, sized for the ~400 ms an ordinary respawn takes: missing it
+ *  leaves the picture scaled for the previous window size, never broken. */
+const VIEWPORT_RETRY_MS = 700;
 /** Binary frame kinds. Video keeps 0/1 (delta/key) so the existing client framing is unchanged;
  *  audio is a third value rather than a second socket, which would need its own auth. */
 const FRAME_VIDEO_DELTA = 0;
@@ -118,6 +125,15 @@ export class RemoteDesktopSession {
   /** The mode that was live when this session first changed it, so teardown can put it back.
    *  Set once and never overwritten: after two switches the *first* value is the user's own. */
   private originalModeId: string | null = null;
+  /** How large a frame the viewer can decode and draw, in device pixels, or null while it has
+   *  not said. ffmpeg takes the scale at startup like everything else here, so a change is a
+   *  respawn — which is why `applyViewport` compares the *filter* rather than the pixels. */
+  private viewport: ViewportSize | null = null;
+  /** The scale step the *running* ffmpeg was spawned with. A viewport change is measured
+   *  against this rather than against the previous viewport, so a window nudged inside its
+   *  bucket — or resized at all on a host small enough that nothing is ever scaled — costs
+   *  nothing. */
+  private liveScaleFilter = "";
 
   constructor(
     private readonly ws: RemoteDesktopSocket,
@@ -127,9 +143,11 @@ export class RemoteDesktopSession {
     /** Stream over WebRTC through the local relay instead of framing access units onto this
      *  socket. Only honoured when the relay is actually installed; see `beginCapture`. */
     private readonly preferWebrtc = false,
+    viewport: ViewportSize | null = null,
   ) {
     this.drawMouse = drawMouse;
     this.encoder = encoder;
+    this.viewport = viewport;
   }
 
   /** Resolves once the underlying ffmpeg process has actually exited (not merely asked to). */
@@ -174,10 +192,12 @@ export class RemoteDesktopSession {
     this.sentConfig = false;
     this.droppingUntilKey = false;
     const publishUrl = await this.ensureRelay();
+    this.liveScaleFilter = this.scaleFilterFor(this.viewport);
     this.capture = await startCapture({
       display: this.display,
       preset: this.effectivePreset(),
       drawMouse: this.drawMouse,
+      viewport: this.viewport,
       ...(this.encoder ? { encoder: this.encoder } : {}),
       // Exactly one of these. With a relay the encoded stream leaves over RTSP and this socket
       // carries only control, so there are no access units to frame.
@@ -294,6 +314,28 @@ export class RemoteDesktopSession {
       this.adaptive = initialAdaptiveState(Date.now());
     });
     if (restarted) this.sendQuality();
+  }
+
+  /** The `-vf` scale step a spawn with this viewport would use — `""` for none. */
+  private scaleFilterFor(viewport: ViewportSize | null): string {
+    const source = captureSourceSize(this.display);
+    return captureScaleFilter(
+      captureBound(viewport), source?.width ?? null, source?.height ?? null,
+    );
+  }
+
+  /** The viewer has told us how large a frame it can decode and draw. Stored unconditionally —
+   *  the next spawn for any reason should use the newest value — but only respawned for when it
+   *  changes what ffmpeg would actually be told. */
+  private async applyViewport(next: ViewportSize): Promise<void> {
+    this.viewport = next;
+    if (this.scaleFilterFor(next) === this.liveScaleFilter) return;
+    // A restart already in flight refuses this one. If it has not reached `beginCapture` yet it
+    // picks up the value just stored for free; the one retry is for when it already has.
+    if (await this.restartCapture(() => { /* `beginCapture` reads `viewport` */ })) return;
+    await Bun.sleep(VIEWPORT_RETRY_MS);
+    if (this.closed || this.scaleFilterFor(this.viewport) === this.liveScaleFilter) return;
+    await this.restartCapture(() => { /* as above */ });
   }
 
   /** Apply what congestion has decided, keeping the rung the user chose. This is the whole
@@ -527,6 +569,14 @@ export class RemoteDesktopSession {
       await this.applyResolution(modeId);
       return;
     }
+    if (msg.type === "viewport") {
+      // Device pixels, already debounced by the client — this only has to survive garbage off
+      // the wire, which `parseViewportSize` is what does.
+      const next = parseViewportSize(msg);
+      if (!next) return;
+      await this.applyViewport(next);
+      return;
+    }
     if (msg.type === "cursor") {
       // The pointer is burned into the frames by the grabber, so this is a respawn rather than
       // an overlay the client could draw or hide by itself. Not echoed back: unlike `quality`
@@ -741,13 +791,18 @@ export interface CreateRemoteDesktopSessionOptions {
   /** Ask for the WebRTC transport. Honoured only when the relay is installed and starts; the
    *  session otherwise streams over this WebSocket exactly as before, with no error. */
   webrtc?: boolean;
+  /** The viewer's frame size in device pixels, for the same reason as `showCursor`: the scale
+   *  is an ffmpeg startup argument, so arriving with it costs no respawn. */
+  viewport?: ViewportSize | null;
 }
 
 /** Evict any previous session (awaiting its ffmpeg exit, capped so a wedged process can't
  *  hang a reconnect) before starting the new one. */
 export async function createRemoteDesktopSession(
   ws: RemoteDesktopSocket,
-  { displayId, showCursor = true, encoder, webrtc = false }: CreateRemoteDesktopSessionOptions = {},
+  {
+    displayId, showCursor = true, encoder, webrtc = false, viewport = null,
+  }: CreateRemoteDesktopSessionOptions = {},
 ): Promise<RemoteDesktopSession> {
   for (const existing of [...activeSessions]) {
     existing.close();
@@ -755,7 +810,7 @@ export async function createRemoteDesktopSession(
   }
   const usable = encoder && (await workingEncoders()).includes(encoder) ? encoder : null;
   const session = new RemoteDesktopSession(
-    ws, await resolveDisplay(displayId), showCursor, usable, webrtc,
+    ws, await resolveDisplay(displayId), showCursor, usable, webrtc, viewport,
   );
   await session.start();
   activeSessions.add(session);

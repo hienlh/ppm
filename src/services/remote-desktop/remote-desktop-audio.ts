@@ -15,8 +15,12 @@
  *   loopback DirectShow device is something the host must already have — "Stereo Mix", which
  *   most drivers ship disabled, or a virtual cable. So this reports unavailable with the
  *   device name to enable rather than spawning an ffmpeg that exits instantly.
- * - **macOS**: avfoundation can only capture real inputs; there is no system-audio device at
- *   all without a loopback driver (BlackHole). Same treatment.
+ * - **macOS**: avfoundation can only capture real inputs, and a stock Mac has no system-audio
+ *   device — but a great many Macs have a loopback driver installed already, and this used to
+ *   report "unavailable" for all of them without ever looking. It now asks ffmpeg what inputs
+ *   exist and captures the loopback by name; `remote-desktop-audio-darwin.ts` holds the
+ *   detection, the names it accepts, and the routing check — a Mac can have the driver and still
+ *   play through its speakers, which captures silence and is the one case Linux cannot have.
  *
  * `-application lowdelay` + `-frame_duration 20` keeps the encoder's own delay at one frame,
  * and `-page_duration 20000` is load-bearing: the Ogg muxer's default is **one second**, which
@@ -25,6 +29,9 @@
  */
 import { existsSync } from "node:fs";
 import { getFfmpegCapabilities } from "../media-transcode/ffmpeg-capabilities.ts";
+import {
+  darwinLoopbackDevice, defaultAudioOutput, LOOPBACK_INSTALL_HINT, routingRefusal,
+} from "./remote-desktop-audio-darwin.ts";
 import { detectLinuxSession, linuxSessionEnv } from "./remote-desktop-linux-session.ts";
 import { OggOpusDemuxer } from "./remote-desktop-ogg-opus.ts";
 
@@ -40,13 +47,33 @@ export interface AudioSupport {
   reason: string | null;
 }
 
-/** The ffmpeg input for this host's own output, or null when it has none. */
+/** The ffmpeg input for a Linux host's own output, or null when it has no sound server. */
 export function audioInputArgs(
   platform: NodeJS.Platform = process.platform,
   hasPulse = pulseAvailable(),
 ): string[] | null {
   if (platform !== "linux" || !hasPulse) return null;
   return ["-f", "pulse", "-i", "@DEFAULT_MONITOR@"];
+}
+
+/** ffmpeg input for one avfoundation audio device, addressed by name (never by index — the
+ *  list reorders at runtime). The leading colon is required: avfoundation's input spec is
+ *  `<video>:<audio>`, so without it ffmpeg looks for a *video* device of that name. */
+export function darwinAudioInputArgs(deviceName: string): string[] {
+  return ["-f", "avfoundation", "-i", `:${deviceName}`];
+}
+
+/** The ffmpeg input for this host's own output, or null when it has none. Async because macOS
+ *  has to ask ffmpeg which devices exist, where Linux's answer is one `stat`. */
+export async function resolveAudioInput(
+  ffmpeg: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string[] | null> {
+  if (platform === "darwin") {
+    const device = await darwinLoopbackDevice(ffmpeg);
+    return device ? darwinAudioInputArgs(device.name) : null;
+  }
+  return audioInputArgs(platform);
 }
 
 /** Is there a PulseAudio/PipeWire server to talk to? The socket, not `pactl`: the binary is a
@@ -85,10 +112,15 @@ export async function audioSupport(platform: NodeJS.Platform = process.platform)
     };
   }
   if (platform === "darwin") {
-    return {
-      available: false,
-      reason: "macOS has no system-audio input — install a loopback driver such as BlackHole.",
-    };
+    const { ffmpeg } = await getFfmpegCapabilities();
+    if (!ffmpeg) return { available: false, reason: "ffmpeg is not installed." };
+    const device = await darwinLoopbackDevice(ffmpeg);
+    if (!device) return { available: false, reason: LOOPBACK_INSTALL_HINT };
+    // Having the driver is not having the audio: it carries sound only while the host actually
+    // plays through it. Refused only when that is certain — see the header of the darwin module.
+    const refusal = routingRefusal(device.name, await defaultAudioOutput());
+    if (refusal) return { available: false, reason: refusal };
+    return { available: true, reason: null };
   }
   if (platform !== "linux") return { available: false, reason: "Not supported on this platform." };
   if (!pulseAvailable()) {
@@ -137,7 +169,7 @@ export async function startAudioCapture(opts: StartAudioOptions): Promise<AudioH
   if (!ffmpeg) return null;
   const support = await audioSupport();
   if (!support.available) return null;
-  const input = audioInputArgs();
+  const input = await resolveAudioInput(ffmpeg);
   if (!input) return null;
 
   const session = process.platform === "linux" ? detectLinuxSession() : null;

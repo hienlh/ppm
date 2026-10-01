@@ -6,12 +6,13 @@
  * token already travels as `?token=` on every WS URL (`isWsUpgradeAuthorized`,
  * `src/server/index.ts`) and proves nothing beyond "holds the one reusable app token", so a
  * single-use short-TTL nonce (`POST /api/remote-desktop/session`) must be presented as the
- * client's *first* message — `{type:"auth", nonce, displayId?, cursor?, codec?}` — before
+ * client's *first* message — `{type:"auth", nonce, displayId?, cursor?, codec?, viewport?}` — before
  * capture or input starts. `displayId` picks one of `/capabilities`' `displays`; absent/unknown = primary.
  * `cursor` and `codec` carry the client's saved cursor and encoder prefs, because ffmpeg takes
  * both at startup and applying them afterwards would respawn it on every connect. `webrtc`
  * asks for the relay transport; when it is not installed the session answers on this socket
- * as before rather than failing. Kept out of
+ * as before rather than failing. `viewport` is the frame size the viewer can decode and draw,
+ * which also bounds the capture at startup — sending it later costs a respawn. Kept out of
  * the query string (unlike the coarse token) so they never land in proxy/tunnel access logs.
  *
  * Both the feature flag and `auth.enabled` are re-checked here even though
@@ -28,6 +29,7 @@ import {
   type RemoteDesktopSession,
   type RemoteDesktopSocket,
 } from "../../services/remote-desktop/remote-desktop-session.ts";
+import { parseViewportSize } from "../../shared/remote-desktop-viewport-scale.ts";
 
 registerRemoteDesktopExitSweep();
 
@@ -71,6 +73,9 @@ async function authenticateFirstMessage(ws: RemoteDesktopWs, text: string): Prom
       // Opt-in, and only honoured when the relay is installed: an older client sends no flag
       // and keeps the WebSocket path it has always used.
       webrtc: parsed.webrtc === true,
+      // Garbage off the wire is the normal case here (an older client sends nothing at all),
+      // so this parses rather than casts and null means "use the decoder's own maximum".
+      viewport: parseViewportSize(parsed.viewport),
     });
   } catch (e) {
     console.error(`[remote-desktop] failed to start capture: ${(e as Error).message}`);

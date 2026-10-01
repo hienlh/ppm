@@ -25,10 +25,17 @@ import {
 } from "../../../shared/remote-desktop-quality";
 import { CLIPBOARD_READ_DELAY_MS, writeClientClipboard } from "./remote-desktop-clipboard-client";
 import { useOpusAudioPlayer } from "./use-opus-audio-player";
+import {
+  quantiseViewport, type ViewportSize,
+} from "../../../shared/remote-desktop-viewport-scale";
 
 export type RemoteDesktopConnState = "connecting" | "streaming" | "error" | "closed";
 
 const PING_INTERVAL_MS = 5_000;
+/** How long the viewport must hold still before the host is told. Every change the host accepts
+ *  respawns ffmpeg (~400 ms with no picture), and dragging a window edge fires a resize per
+ *  frame — so this is a real debounce, not a courtesy one. */
+const VIEWPORT_DEBOUNCE_MS = 400;
 /** First byte of every binary message. 0/1 are the video's delta/key flags, unchanged; audio is
  *  a third kind on the same socket rather than a second connection, which would need its own
  *  nonce and its own eviction rules. */
@@ -114,6 +121,10 @@ export interface UseRemoteDesktopConnectionResult {
   /** Ask the host for its clipboard, after `CLIPBOARD_READ_DELAY_MS` so a just-forwarded copy
    *  combo has actually landed on the host clipboard first. */
   requestHostClipboard: () => void;
+  /** Tell the host how magnified the picture currently is, so the capture is not bounded below
+   *  what a zoomed-in crop needs. 1 = unzoomed, which is what the desktop viewer stays on.
+   *  Debounced and bucketed like the size itself; calling it with an unchanged value is free. */
+  setViewportZoom: (zoom: number) => void;
 }
 
 export interface UseRemoteDesktopConnectionOptions {
@@ -165,6 +176,14 @@ export function useRemoteDesktopConnection(
   const codecRef = useRef(useSettingsStore.getState().remoteDesktopCodec);
   const [codec, setCodecState] = useState<string | null>(codecRef.current);
 
+  /** The last size sent to (or sent *with*) the host, so a resize that lands in the same bucket
+   *  sends nothing at all. Null until the canvas has been laid out once. */
+  const viewportRef = useRef<ViewportSize | null>(null);
+  /** How magnified the picture currently is; 1 on the desktop viewer, the pinch scale on the
+   *  mobile one. Separate from the box because the two change from different places. */
+  const viewportZoomRef = useRef(1);
+  const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const decoder = useH264CanvasDecoder(canvasRef);
   const webrtc = useWebrtcCanvasVideo(canvasRef);
   /** Which transport is actually carrying the picture. The server decides: it answers with a
@@ -183,6 +202,74 @@ export function useRemoteDesktopConnection(
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
+
+  /**
+   * The device-pixel size the viewer can actually use, measured from the box the picture is
+   * drawn in. Null before layout.
+   *
+   * Measure the canvas's *parent*, never the canvas. The canvas carries `max-h-full max-w-full`
+   * in the adaptive scale mode, so its laid-out size is partly a function of the frame's own
+   * intrinsic size — measuring it would close a loop (smaller capture → smaller canvas →
+   * smaller bound → smaller capture) that shrinks the picture to nothing. The parent is sized
+   * by layout alone.
+   *
+   * `offsetWidth`, not `getBoundingClientRect()`: the mobile stage carries the pinch-zoom
+   * `scale()` transform, which the rect includes and the offset size does not — so the zoom is
+   * counted exactly once, here, where it belongs.
+   *
+   * `devicePixelRatio` is the whole reason this is not just the CSS box: a 1200-CSS-pixel canvas
+   * on a Retina screen draws 2400 real pixels, and bounding the capture at 1200 would hand a
+   * HiDPI viewer a visibly soft picture. The zoom multiplies for the same reason — pinched to
+   * 3x, the phone shows a third of the picture across its whole screen, so it needs three times
+   * the source detail to stay as sharp as it was.
+   */
+  const measureViewport = useCallback((): ViewportSize | null => {
+    const box = canvasRef.current?.parentElement;
+    if (!box || box.offsetWidth < 1 || box.offsetHeight < 1) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const zoom = Math.max(1, viewportZoomRef.current);
+    return quantiseViewport({
+      width: Math.round(box.offsetWidth * dpr * zoom),
+      height: Math.round(box.offsetHeight * dpr * zoom),
+    });
+  }, [canvasRef]);
+
+  /** Tell the host, unless it is already on this bucket. */
+  const pushViewport = useCallback(() => {
+    const next = measureViewport();
+    if (!next) return;
+    const current = viewportRef.current;
+    if (current && current.width === next.width && current.height === next.height) return;
+    viewportRef.current = next;
+    sendMessage({ type: "viewport", width: next.width, height: next.height });
+  }, [measureViewport, sendMessage]);
+
+  const scheduleViewport = useCallback(() => {
+    if (viewportTimer.current) clearTimeout(viewportTimer.current);
+    viewportTimer.current = setTimeout(() => {
+      viewportTimer.current = null;
+      pushViewport();
+    }, VIEWPORT_DEBOUNCE_MS);
+  }, [pushViewport]);
+
+  const setViewportZoom = useCallback((zoom: number) => {
+    if (!Number.isFinite(zoom) || zoom <= 0) return;
+    viewportZoomRef.current = zoom;
+    scheduleViewport();
+  }, [scheduleViewport]);
+
+  /** Re-measure whenever the box changes size. Only a trigger — `measureViewport` is what reads
+   *  it, so the observer's own transform-free box size is never the thing relied upon. */
+  useEffect(() => {
+    const box = canvasRef.current?.parentElement;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => scheduleViewport());
+    observer.observe(box);
+    return () => {
+      observer.disconnect();
+      if (viewportTimer.current) { clearTimeout(viewportTimer.current); viewportTimer.current = null; }
+    };
+  }, [canvasRef, scheduleViewport]);
 
   /** Adopt whatever rung the server reports, from either `config` or `quality`. */
   const applyQualityMessage = useCallback((msg: Record<string, unknown>) => {
@@ -310,10 +397,17 @@ export function useRemoteDesktopConnection(
       wsRef.current = ws;
 
       ws.onopen = () => {
+        // Measured synchronously rather than waiting for the ResizeObserver's first callback:
+        // that lands a frame later, and a `viewport` message arriving after `auth` is a respawn
+        // ~400 ms into every single connect.
+        viewportRef.current = measureViewport();
         // The cursor pref rides along with `auth`: the grabber takes it at startup, so sending
         // it as its own message would respawn ffmpeg immediately after every connect.
         ws.send(JSON.stringify({
           type: "auth", nonce, ...(displayId ? { displayId } : {}), cursor: showCursorRef.current,
+          // Rides along for the same reason as the cursor: the scale is an ffmpeg startup
+          // argument, so sending it a moment later would respawn the capture on every connect.
+          ...(viewportRef.current ? { viewport: viewportRef.current } : {}),
           ...(codecRef.current ? { codec: codecRef.current } : {}),
           // Always asked for; the host grants it only when its relay is installed. There is no
           // setting for this because there is nothing to choose between: WebRTC measured
@@ -465,5 +559,6 @@ export function useRemoteDesktopConnection(
     clearHostClipboard,
     sendClipboard,
     requestHostClipboard,
+    setViewportZoom,
   };
 }

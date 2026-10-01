@@ -3,6 +3,11 @@
  * while the remote session keeps working. RustDesk's `toolbarPrivacyMode` plus its separate
  * "block user input", which on Linux are the same two mechanisms and so are one switch here.
  *
+ * This file is the X11 half and the platform entry point; macOS is in
+ * `remote-desktop-privacy-darwin.ts` and shares none of the reasoning below — it has no grab to
+ * take, because an event tap would need a `CFRunLoop` PPM cannot run, and holds the host's input
+ * with CoreGraphics' event-suppression interval instead.
+ *
  * **Blocking local input is an X grab, not `EVIOCGRAB`.** The evdev route reads like the right
  * layer — grab the device and the kernel stops delivering its events to X at all — and it is
  * the one that does not work on a real desktop: an evdev grab is *exclusive*, and keyboard
@@ -32,6 +37,7 @@
  * otherwise come back on the first remote keystroke.
  */
 import { detectLinuxSession } from "./remote-desktop-linux-session.ts";
+import { darwinPrivacySupport, engageDarwinPrivacy } from "./remote-desktop-privacy-darwin.ts";
 import { getX11, type X11Connection } from "./remote-desktop-x11.ts";
 
 /** `XGrabKeyboard`/`XGrabPointer` return codes we care about. */
@@ -60,8 +66,9 @@ export interface PrivacySupport {
 }
 
 export async function privacySupport(platform: NodeJS.Platform = process.platform): Promise<PrivacySupport> {
+  if (platform === "darwin") return darwinPrivacySupport();
   if (platform !== "linux") {
-    return { available: false, reason: "Only implemented on Linux (X11) so far.", canBlank: false };
+    return { available: false, reason: "Only implemented on Linux (X11) and macOS so far.", canBlank: false };
   }
   const session = detectLinuxSession();
   if (session?.kind !== "x11") {
@@ -119,6 +126,7 @@ function grabInput(x11: X11Connection): boolean {
  * Never throws: a session must not die because privacy mode failed.
  */
 export async function engagePrivacy(): Promise<PrivacyHandle | null> {
+  if (process.platform === "darwin") return engageDarwinPrivacy();
   if (process.platform !== "linux") return null;
   const session = detectLinuxSession();
   if (session?.kind !== "x11") return null;

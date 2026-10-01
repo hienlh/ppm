@@ -33,6 +33,7 @@
 import { DEFAULT_FPS, type QualityPreset } from "./remote-desktop-quality.ts";
 import { VAAPI_UPLOAD_FILTER } from "../media-transcode/ffmpeg-capabilities.ts";
 import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-session.ts";
+import { captureScaleFilter, type ViewportSize } from "../../shared/remote-desktop-viewport-scale.ts";
 
 /** The region to grab, in the OS's global coordinate space. null = the backend's whole surface. */
 export interface CaptureRect { x: number; y: number; width: number; height: number }
@@ -85,13 +86,17 @@ export function captureInputArgs(
  *  to GPU memory that its encoder requires. One `-vf` only: a second occurrence would silently
  *  replace the first rather than combining.
  *
- *  There is **no scale step**. A quality rung sets a bitrate ratio and nothing else — RustDesk's
- *  image quality never touches the resolution, and measured on a 3440x1440 host the downscale
- *  this used to do bought almost nothing: 720p used 1.17 Mbit/s against 1.26 Mbit/s for native
- *  at the same cap, because a desktop is mostly static and H.264 spends bits on *change* rather
- *  than on area. It cost 4.8x the pixels for 7% of the bandwidth. Dropping the filter also
- *  removes the upscale hazard it existed to guard against: with no scaling at all, a rung cannot
- *  ask for more pixels than the host has.
+ *  A quality rung contributes **no scale step**. RustDesk's image quality never touches the
+ *  resolution, and measured on a 3440x1440 host the downscale this used to do bought almost
+ *  nothing: 720p used 1.17 Mbit/s against 1.26 Mbit/s for native at the same cap, because a
+ *  desktop is mostly static and H.264 spends bits on *change* rather than on area. It cost 4.8x
+ *  the pixels for 7% of the bandwidth.
+ *
+ *  `bound` is a different thing wearing the same clothes and is **not** part of the ladder: it
+ *  is the frame size the viewer can decode and draw at all (`remote-desktop-viewport-scale.ts`),
+ *  and omitting it cost a HiDPI-ultrawide Mac its entire picture. It bounds rather than resizes
+ *  — `min(iw, …)` — so the upscale hazard the old rung-scaling had cannot come back through it.
+ *  Passing null emits nothing, which is what every test asserting the old argv still expects.
  *
  *  Returns an empty string when there is nothing to filter, which the caller must treat as
  *  "omit `-vf` entirely" — ffmpeg rejects an empty filtergraph argument. */
@@ -99,11 +104,20 @@ export function captureVideoFilter(
   input: CaptureInput,
   encoder = "libx264",
   preset: QualityPreset = { fps: DEFAULT_FPS, bitrate: "1M" },
+  bound: ViewportSize | null = null,
+  source: ViewportSize | null = null,
 ): string {
   const parts: string[] = [];
   // avfoundation ignores `-framerate` and delivers at display refresh with a stuck pts, so the
   // cadence has to be imposed here; the other grabbers take it at the input.
   if (input.kind === "avfoundation") parts.push(`fps=${preset.fps}`);
+  // Before the VAAPI upload, never after: `hwupload` puts the frames in GPU memory and a
+  // software scale cannot read them back — the whole point of that filter is that nothing
+  // downloads them again.
+  if (bound) {
+    const scale = captureScaleFilter(bound, source?.width ?? null, source?.height ?? null);
+    if (scale) parts.push(scale);
+  }
   if (encoder === "h264_vaapi") parts.push(VAAPI_UPLOAD_FILTER);
   return parts.join(",");
 }

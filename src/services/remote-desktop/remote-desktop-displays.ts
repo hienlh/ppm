@@ -38,6 +38,18 @@ export interface RemoteDisplay {
   height: number;
   /** Position in the capture backend's own numbering (avfoundation `Capture screen N`). */
   captureIndex: number;
+  /**
+   * The frame size the grabber actually produces, in real pixels — `0` when it cannot be known.
+   *
+   * This is NOT `width`/`height` on macOS and the difference is not cosmetic: measured on this
+   * host, `CGDisplayPixelsWide` answers **2580x1080** for a display whose current mode has
+   * `CGDisplayModeGetPixelWidth` **5160x2160**, and avfoundation captures the latter. Reading
+   * the logical size as the capture size is what hid a frame too wide for any browser decoder.
+   * X11 has no such split (the root window is in device pixels); gdigrab grabs the union of
+   * every monitor, whose size PPM does not ask Windows for, hence `0`.
+   */
+  captureWidth: number;
+  captureHeight: number;
 }
 
 const CACHE_MS = 5000;
@@ -61,6 +73,8 @@ async function listX11Displays(session: LinuxSession): Promise<RemoteDisplay[]> 
     id: "screen", label: "Whole screen", primary: true, x: 0, y: 0,
     width: x11.XDisplayWidth(dpy, conn.screen), height: x11.XDisplayHeight(dpy, conn.screen),
     captureIndex: 0,
+    captureWidth: x11.XDisplayWidth(dpy, conn.screen),
+    captureHeight: x11.XDisplayHeight(dpy, conn.screen),
   }];
   if (!xrandr) return wholeScreen();
 
@@ -87,6 +101,9 @@ async function listX11Displays(session: LinuxSession): Promise<RemoteDisplay[]> 
       width: ffi.read.i32(base, MONITOR_OFF.width),
       height: ffi.read.i32(base, MONITOR_OFF.height),
       captureIndex: i,
+      // X11 reports device pixels throughout, so the crop ffmpeg is given IS the frame size.
+      captureWidth: ffi.read.i32(base, MONITOR_OFF.width),
+      captureHeight: ffi.read.i32(base, MONITOR_OFF.height),
     });
   }
   xrandr.XRRFreeMonitors(monitors);
@@ -100,7 +117,26 @@ async function listDarwinDisplays(): Promise<RemoteDisplay[]> {
     CGDisplayPixelsWide: { args: [T.u32], returns: T.u64 },
     CGDisplayPixelsHigh: { args: [T.u32], returns: T.u64 },
     CGDisplayIsMain: { args: [T.u32], returns: T.bool },
+    // The live mode, for the pixel size behind the point size. Refs cross as u64, never ptr —
+    // a CoreFoundation pointer is tagged and `FFIType.ptr` mangles it.
+    CGDisplayCopyDisplayMode: { args: [T.u32], returns: T.u64 },
+    CGDisplayModeGetPixelWidth: { args: [T.u64], returns: T.u64 },
+    CGDisplayModeGetPixelHeight: { args: [T.u64], returns: T.u64 },
+    CGDisplayModeRelease: { args: [T.u64], returns: T.void },
   }).symbols;
+
+  /** What avfoundation will actually hand ffmpeg: the current mode's backing-store size, which
+   *  on every Retina/HiDPI display is 2x the points `CGDisplayPixelsWide` reports. Measured on
+   *  this host: 2580x1080 points over 5160x2160 pixels. Falls back to `0` (= unknown) rather
+   *  than to the point size, because a wrong answer here reads as "small enough, no bound". */
+  const capturePixels = (id: number): { w: number; h: number } => {
+    const mode = cg.CGDisplayCopyDisplayMode(id);
+    if (!mode) return { w: 0, h: 0 };
+    const w = Number(cg.CGDisplayModeGetPixelWidth(mode));
+    const h = Number(cg.CGDisplayModeGetPixelHeight(mode));
+    cg.CGDisplayModeRelease(mode);
+    return { w, h };
+  };
   const ids = new Uint32Array(16), count = new Uint32Array(1);
   if (cg.CGGetActiveDisplayList(16, ptr(ids), ptr(count)) !== 0) return [];
 
@@ -120,6 +156,7 @@ async function listDarwinDisplays(): Promise<RemoteDisplay[]> {
   for (let i = 0; i < n; i++) {
     const id = ids[i] ?? 0;
     const m = meta.find((x) => x.id === id);
+    const px = capturePixels(id);
     displays.push({
       id: String(id),
       label: m?.name ?? `Display ${i + 1}`,
@@ -129,6 +166,8 @@ async function listDarwinDisplays(): Promise<RemoteDisplay[]> {
       width: Number(cg.CGDisplayPixelsWide(id)),
       height: Number(cg.CGDisplayPixelsHigh(id)),
       captureIndex: i,
+      captureWidth: px.w,
+      captureHeight: px.h,
     });
   }
   return displays;
@@ -141,7 +180,10 @@ export async function listDisplays(
   linuxSession = platform === "linux" ? detectLinuxSession() : null,
 ): Promise<RemoteDisplay[]> {
   if (platform === "win32") {
-    return [{ id: "desktop", label: "All displays", primary: true, x: 0, y: 0, width: 0, height: 0, captureIndex: 0 }];
+    return [{
+      id: "desktop", label: "All displays", primary: true, x: 0, y: 0,
+      width: 0, height: 0, captureIndex: 0, captureWidth: 0, captureHeight: 0,
+    }];
   }
   if (platform === "linux") {
     // Wayland: the portal dialog picks the screen, so there is nothing to list here.

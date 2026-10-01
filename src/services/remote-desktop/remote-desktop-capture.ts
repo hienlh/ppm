@@ -18,6 +18,7 @@ import {
 } from "./remote-desktop-capture-input.ts";
 import { detectLinuxSession, linuxSessionEnv } from "./remote-desktop-linux-session.ts";
 import { DEFAULT_FPS, type QualityPreset } from "./remote-desktop-quality.ts";
+import { captureBound, type ViewportSize } from "../../shared/remote-desktop-viewport-scale.ts";
 import { AccessUnitAssembler, type AccessUnit } from "./access-unit-assembler.ts";
 import type { RemoteDisplay } from "./remote-desktop-displays.ts";
 
@@ -32,7 +33,11 @@ export class CaptureUnavailableError extends Error {
  *  `-fflags nobuffer -flags low_delay` + `-flush_packets 1` stop ffmpeg from holding frames in
  *  its demux/mux buffers before emitting — on a fast/LAN transport that buffering is a big slice
  *  of the felt lag. `encoder` selects the H.264 encoder args (hardware NVENC/QSV/AMF/VideoToolbox
- *  when the capability probe found one, else libx264); `input` selects the platform grabber. */
+ *  when the capability probe found one, else libx264); `input` selects the platform grabber.
+ *
+ *  `bound`/`source` are the viewer-adaptive frame cap (`remote-desktop-viewport-scale.ts`).
+ *  Both null — the default — emits no `-vf` scale step at all, which is what every existing
+ *  assertion on this argv expects. */
 export function buildCaptureArgs(
   ffmpeg: string,
   encoder: string = "libx264",
@@ -40,6 +45,8 @@ export function buildCaptureArgs(
   preset: QualityPreset = { fps: DEFAULT_FPS, bitrate: "1M" },
   drawMouse = true,
   publishUrl: string | null = null,
+  bound: ViewportSize | null = null,
+  source: ViewportSize | null = null,
 ): string[] {
   return [
     ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
@@ -49,7 +56,7 @@ export function buildCaptureArgs(
     ...captureInputArgs(input, preset, drawMouse),
     // Spread rather than a fixed pair: with no scale step a software encoder on x11grab/gdigrab
     // has nothing left to filter, and ffmpeg rejects `-vf ""` outright rather than ignoring it.
-    ...withVideoFilter(captureVideoFilter(input, encoder, preset)),
+    ...withVideoFilter(captureVideoFilter(input, encoder, preset, bound, source)),
     ...captureEncoderArgs(encoder, preset),
     "-flush_packets", "1",
     ...captureOutputArgs(publishUrl),
@@ -75,6 +82,20 @@ function captureOutputArgs(publishUrl: string | null): string[] {
 
 function withVideoFilter(filter: string): string[] {
   return filter ? ["-vf", filter] : [];
+}
+
+/**
+ * The frame size this display's grabber will produce, or null when the host cannot say.
+ *
+ * Null is not a formality: it is what makes the bound apply *unconditionally*, and the case it
+ * exists for is gdigrab, which grabs the union of every monitor — two 4K screens side by side
+ * are a 7680-pixel-wide frame that no browser decoder takes. A display that reports its size
+ * and is already inside the bound gets no filter at all, which is what keeps the argv on the
+ * hosts that already worked byte-identical to before.
+ */
+export function captureSourceSize(d: RemoteDisplay | null): ViewportSize | null {
+  if (!d || d.captureWidth <= 0 || d.captureHeight <= 0) return null;
+  return { width: d.captureWidth, height: d.captureHeight };
 }
 
 export interface CaptureHandle {
@@ -106,6 +127,13 @@ export interface StartCaptureOptions {
    * relay answers with, not from PPM's own SPS parse.
    */
   publishUrl?: string | null;
+  /**
+   * The size, in device pixels, that the viewer can actually decode and draw. The capture is
+   * bounded by it — never stretched to it — and when it is absent the decoder's own maximum
+   * still applies, because a frame wider than that is a black picture rather than a slow one.
+   * See `remote-desktop-viewport-scale.ts`.
+   */
+  viewport?: ViewportSize | null;
   /** Required for the WebSocket path; ignored when `publishUrl` is set. */
   onAccessUnit?: (au: AccessUnit) => void;
   /** Called once the process exits, whether via `stop()` or on its own (crash/killed
@@ -149,6 +177,7 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
   const argv = buildCaptureArgs(
     caps.ffmpeg, opts.encoder ?? caps.encoder ?? "libx264", input, opts.preset,
     opts.drawMouse ?? true, publishUrl,
+    captureBound(opts.viewport ?? null), captureSourceSize(d ?? null),
   );
   const proc = Bun.spawn(argv, {
     // Always a pipe, in both modes. Making it conditional widens Bun's spawn type so that

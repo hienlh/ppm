@@ -6,7 +6,7 @@
  * (`use-remote-desktop-connection`), so this is presentation + input wiring only, not a
  * parallel connection implementation.
  */
-import { useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { RotateCw, MonitorX } from "@/lib/icons";
 import { useVisualViewport } from "@/hooks/use-visual-viewport";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -45,6 +45,7 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
     audioOn, setAudioOn, getAudioTracks, privacyOn, privacyError, setPrivacyOn,
     hostModeId, hostOriginalModeId, resolutionError, setHostMode,
     pendingHostClipboard, clearHostClipboard, sendClipboard, requestHostClipboard,
+    setViewportZoom,
   } = useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
   const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
   const toggleStats = useSettingsStore((s) => s.toggleRemoteDesktopStatsVisible);
@@ -99,6 +100,12 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
           : null;
 
   const stageStyle = { transform: `translate(${transform.panX}px, ${transform.panY}px) scale(${transform.scale})` };
+
+  // Zoomed in, the phone shows a slice of the picture across its whole screen, so it needs that
+  // much more source detail to stay sharp — without this a pinch would only magnify the pixels
+  // the capture was already bounded to. The hook debounces and buckets it, so a pinch gesture
+  // does not respawn the host's ffmpeg on the way through.
+  useEffect(() => { setViewportZoom(transform.scale); }, [transform.scale, setViewportZoom]);
 
   // Positions the virtual-cursor marker (mouse mode) at the video's actual displayed pixel,
   // not a raw percentage of the stage — the canvas is letterboxed (object-contain) inside the
