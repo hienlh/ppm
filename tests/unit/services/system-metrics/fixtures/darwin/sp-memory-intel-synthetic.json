@@ -1,0 +1,41 @@
+{
+  "SPMemoryDataType" : [
+    {
+      "_items" : [
+        {
+          "_name" : "BANK 0/ChannelA-DIMM0",
+          "dimm_manufacturer" : "0x80AD",
+          "dimm_part_number" : "0x0000000000000000000000000000000000",
+          "dimm_serial_number" : "0x00000000",
+          "dimm_size" : "16 GB",
+          "dimm_speed" : "2667 MHz",
+          "dimm_status" : "ok",
+          "dimm_type" : "DDR4"
+        },
+        {
+          "_name" : "BANK 1/ChannelA-DIMM1",
+          "dimm_size" : "empty",
+          "dimm_status" : "empty"
+        },
+        {
+          "_name" : "BANK 2/ChannelB-DIMM0",
+          "dimm_manufacturer" : "Micron",
+          "dimm_part_number" : "0x0000000000000000000000000000000000",
+          "dimm_serial_number" : "0x00000000",
+          "dimm_size" : "16 GB",
+          "dimm_speed" : "2667 MHz",
+          "dimm_status" : "ok",
+          "dimm_type" : "DDR4"
+        },
+        {
+          "_name" : "BANK 3/ChannelB-DIMM1",
+          "dimm_size" : "empty",
+          "dimm_status" : "empty"
+        }
+      ],
+      "_name" : "Memory Slots",
+      "global_ecc_state" : "ecc_disabled",
+      "is_memory_upgradeable" : "Yes"
+    }
+  ]
+}

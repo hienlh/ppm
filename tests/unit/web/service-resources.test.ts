@@ -136,3 +136,24 @@ describe("resourcesFor", () => {
     expect(unitKeyOf(unit({ scope: "user", unit: "pipewire.socket" }))).toBe("user:pipewire.socket");
   });
 });
+
+describe("resourcesFor on launchd", () => {
+  const job = (over: Partial<ServiceInfo> = {}) =>
+    unit({ unit: "com.example.agent", scope: "user", activeState: "running", subState: "", unitFileState: null, ...over });
+
+  it("a job owns processes exactly while it has one, whatever its label looks like", () => {
+    // Neither suffix rule applies: a label is not a unit name.
+    expect(resourcesFor(job(), new Map(), "launchd")).toBeUndefined();
+    expect(resourcesFor(job({ unit: "com.example.agent.socket" }), new Map(), "launchd")).toBeUndefined();
+  });
+
+  it("a job with no process is a real zero, however it last exited", () => {
+    const stopped = job({ running: false, activeState: "not running", subState: "exit code 78", mainPid: null });
+    expect(resourcesFor(stopped, new Map(), "launchd")).toEqual(IDLE_UNIT);
+  });
+
+  it("a job's rows are found under the key the metrics tick files them by", () => {
+    const byUnit = rollUpByUnit([proc(1812, { unitKey: "user:com.example.agent", cpu: 3, ramMB: 40 })]);
+    expect(resourcesFor(job(), byUnit, "launchd")).toMatchObject({ count: 1, cpu: 3, ramMB: 40 });
+  });
+});

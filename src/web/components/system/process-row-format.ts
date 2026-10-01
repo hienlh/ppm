@@ -45,10 +45,13 @@ export function formatNetCell(inBps?: number, outBps?: number): string {
 
 /** GPU % and VRAM are measured independently on some platforms (e.g. NVIDIA
  *  consumer drivers on Linux only expose per-process memory, not per-process
- *  utilization) — each half renders its own dash when unmeasured. */
-export function formatGpuCell(pct?: number, memMB?: number): string {
-  if (pct === undefined && memMB === undefined) return "—";
+ *  utilization) — each half renders its own dash when unmeasured. A host with no
+ *  per-process GPU memory at all (`ProcessColumnAvailability.gpuMemory: false`,
+ *  macOS) shows the percentage alone, since a dash there would claim a failed read. */
+export function formatGpuCell(pct?: number, memMB?: number, withMemory = true): string {
   const pctText = pct === undefined ? "—" : `${pct.toFixed(0)}%`;
+  if (!withMemory) return pctText;
+  if (pct === undefined && memMB === undefined) return "—";
   const memText = memMB === undefined ? "—" : formatRam(memMB);
   return `${pctText} · ${memText}`;
 }

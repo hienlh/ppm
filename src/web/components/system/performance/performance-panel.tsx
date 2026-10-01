@@ -19,7 +19,7 @@ import { NicDetail } from "./nic-detail";
 import { GpuDetail } from "./gpu-detail";
 import { FansDetail } from "./fans-detail";
 import type { HardwareInventory } from "../../../../types/system-hardware";
-import type { MetricsHistoryPoint, SystemMetrics } from "../../../../types/system-metrics";
+import type { MetricsHistoryPoint, MetricsPlatform, SystemMetrics } from "../../../../types/system-metrics";
 
 const KIND_ICONS: Record<DeviceKind, ComponentType<{ className?: string }>> = {
   cpu: Cpu, memory: Layers, disk: HardDrive, nic: Wifi, gpu: Monitor, fans: Activity,
@@ -71,18 +71,27 @@ function DeviceRow({
 }
 
 function DeviceDetail({
-  entry, system, inventory, history,
+  entry, system, inventory, history, platform,
 }: {
   entry: DeviceEntry;
   system: SystemMetrics;
   inventory: HardwareInventory | null;
   history: readonly MetricsHistoryPoint[];
+  platform?: MetricsPlatform;
 }) {
   switch (entry.kind) {
     case "cpu":
-      return <CpuDetail cpu={system.cpu} info={inventory?.cpu} history={history} processCount={system.processCount} />;
+      return (
+        <CpuDetail
+          cpu={system.cpu}
+          info={inventory?.cpu}
+          history={history}
+          processCount={system.processCount}
+          platform={platform}
+        />
+      );
     case "memory":
-      return <MemoryDetail mem={system.mem} info={inventory?.memory} history={history} />;
+      return <MemoryDetail mem={system.mem} info={inventory?.memory} history={history} platform={platform} />;
     case "disk": {
       const index = (system.disks ?? []).findIndex((d) => d.id === entry.id);
       const disk = index >= 0 ? system.disks?.[index] : undefined;
@@ -99,7 +108,9 @@ function DeviceDetail({
     case "nic": {
       const nic = (system.nics ?? []).find((n) => n.id === entry.id);
       if (!nic) return null;
-      return <NicDetail nic={nic} info={inventory?.nics.find((n) => n.id === nic.id)} history={history} />;
+      return (
+        <NicDetail nic={nic} info={inventory?.nics.find((n) => n.id === nic.id)} history={history} platform={platform} />
+      );
     }
     case "gpu": {
       const index = system.gpus.findIndex((g) => (entry.id ? g.id === entry.id : true));
@@ -111,11 +122,12 @@ function DeviceDetail({
           index={index}
           info={inventory?.gpus.find((g) => g.id === gpu.id)}
           history={history}
+          platform={platform}
         />
       );
     }
     case "fans":
-      return <FansDetail fans={system.fans ?? []} />;
+      return <FansDetail fans={system.fans ?? []} platform={platform} />;
     default:
       return null;
   }
@@ -129,10 +141,14 @@ export interface PerformancePanelProps {
    *  falls back to the first entry and the phone shows the device list. */
   device: string | null;
   onDeviceChange: (key: string | null) => void;
+  /** The snapshot's host OS, which decides which rows exist at all — macOS has no
+   *  cpufreq governor and no commit charge. Taken from the tick rather than the
+   *  inventory so it is known on the first frame. Omitted shows every row. */
+  platform?: MetricsPlatform;
 }
 
 export function PerformancePanel({
-  system, history, device, onDeviceChange,
+  system, history, device, onDeviceChange, platform,
 }: PerformancePanelProps) {
   const isMobile = useIsMobile();
 
@@ -187,7 +203,7 @@ export function PerformancePanel({
           Devices
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto p-4 @container">
-          <DeviceDetail entry={selected} system={system} inventory={inventory} history={history} />
+          <DeviceDetail entry={selected} system={system} inventory={inventory} history={history} platform={platform} />
         </div>
       </div>
     );
@@ -198,7 +214,7 @@ export function PerformancePanel({
       <div className="w-56 shrink-0 border-r border-border overflow-y-auto">{list}</div>
       <div className="flex-1 min-w-0 overflow-y-auto p-4 @container">
         {selected && (
-          <DeviceDetail entry={selected} system={system} inventory={inventory} history={history} />
+          <DeviceDetail entry={selected} system={system} inventory={inventory} history={history} platform={platform} />
         )}
       </div>
     </div>

@@ -1,0 +1,11 @@
+{
+  "CFBundleExecutable": "SystemUIServer",
+  "CFBundleIdentifier": "com.apple.systemuiserver",
+  "CFBundleName": "SystemUIServer",
+  "CFBundlePackageType": "APPL",
+  "CFBundleShortVersionString": "1.7",
+  "CFBundleVersion": "528.1.3",
+  "LSMinimumSystemVersion": "15.8",
+  "LSUIElement": "1",
+  "NSPrincipalClass": "NSApplication"
+}

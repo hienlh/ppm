@@ -1,12 +1,17 @@
 /** Fans — Mission Center's Fan page. One row per tachometer, with the duty cycle
- *  and the temperature the same chip reports beside it. */
+ *  and the temperature the same chip reports beside it. A Mac's SMC reports
+ *  neither — only the speeds its controller keeps each fan between — so there the
+ *  row shows those instead. */
 import { formatTemp } from "@/lib/temperature";
 import { useSettingsStore } from "@/stores/settings-store";
 import { DetailHeader, Stat, StatGrid } from "./detail-parts";
-import type { FanMetrics } from "../../../../types/system-metrics";
+import type { FanMetrics, MetricsPlatform } from "../../../../types/system-metrics";
 
-export function FansDetail({ fans }: { fans: readonly FanMetrics[] }) {
+const rpm = (value: number | undefined) => (value === undefined ? undefined : `${value} RPM`);
+
+export function FansDetail({ fans, platform }: { fans: readonly FanMetrics[]; platform?: MetricsPlatform }) {
   const tempUnit = useSettingsStore((s) => s.sysmonTempUnit);
+  const mac = platform === "darwin";
   const fastest = fans.length > 0 ? Math.max(...fans.map((f) => f.rpm)) : 0;
   return (
     <div className="space-y-4" data-testid="sysmon-detail-fans" data-fan-count={fans.length}>
@@ -23,9 +28,18 @@ export function FansDetail({ fans }: { fans: readonly FanMetrics[] }) {
               <span className="text-sm tabular-nums shrink-0">{fan.rpm} RPM</span>
             </div>
             <StatGrid>
-              <Stat label="Duty cycle" value={fan.pwmPercent === undefined ? undefined
-                : `${fan.pwmPercent.toFixed(0)}%`} />
-              <Stat label={fan.tempName ?? "Temperature"} value={formatTemp(fan.tempC, tempUnit)} />
+              {mac ? (
+                <>
+                  <Stat label="Minimum" value={rpm(fan.minRpm)} />
+                  <Stat label="Maximum" value={rpm(fan.maxRpm)} />
+                </>
+              ) : (
+                <>
+                  <Stat label="Duty cycle" value={fan.pwmPercent === undefined ? undefined
+                    : `${fan.pwmPercent.toFixed(0)}%`} />
+                  <Stat label={fan.tempName ?? "Temperature"} value={formatTemp(fan.tempC, tempUnit)} />
+                </>
+              )}
             </StatGrid>
           </div>
         ))}

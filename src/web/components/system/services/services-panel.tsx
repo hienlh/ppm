@@ -31,11 +31,15 @@ const FILTER_LABELS: Record<ServiceFilter, string> = {
 };
 
 /** `metrics` is the live 2 s stream the Processes tab is already receiving. The
- *  unit list itself comes from `systemctl` on a separate 3 s poll, so the two
- *  arrive independently and a row simply shows dashes until the first full tick
- *  carrying process rows lands. */
+ *  unit list itself comes from `systemctl` (`launchctl` on a Mac) on a separate
+ *  3 s poll, so the two arrive independently and a row simply shows dashes until
+ *  the first full tick carrying process rows lands. */
 export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: MetricsSnapshot | null }) {
   const { snapshot, error, loading, refresh } = useServices(active);
+  // Before the first listing, the metrics stream already says which OS this is.
+  const manager = snapshot?.manager ?? (metrics?.platform === "darwin" ? "launchd" : "systemd");
+  // launchd's word for one: a job, run by label.
+  const noun = manager === "launchd" ? "jobs" : "units";
   const [scope, setScope] = useState<ServiceScope>("system");
   const [filter, setFilter] = useState<ServiceFilter>("all");
   const [query, setQuery] = useState("");
@@ -59,11 +63,11 @@ export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: 
   // row is showing, and those live in the metrics stream rather than on the unit.
   const rows = useMemo(
     () => sortServiceRows(
-      shaped.map((service) => ({ service, resources: resourcesFor(service, byUnit) })),
+      shaped.map((service) => ({ service, resources: resourcesFor(service, byUnit, manager) })),
       sortKey,
       sortDir,
     ),
-    [shaped, byUnit, sortKey, sortDir],
+    [shaped, byUnit, manager, sortKey, sortDir],
   );
 
   const onSort = useCallback((key: ServiceSortKey) => {
@@ -75,9 +79,11 @@ export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: 
   const perform = useCallback(async ({ service, action }: PendingServiceAction) => {
     setPending(null);
     try {
-      await runServiceAction(service.scope, service.unit, action);
-      toast.success(`${service.unit}: ${action} done`);
-      // systemd settles asynchronously, so the next poll is what shows the new
+      const result = await runServiceAction(service.scope, service.unit, action);
+      // A note is how it landed when that is not what was asked: launchd starts
+      // a job it keeps alive again by itself.
+      toast.success(`${service.unit}: ${action} done`, result.note ? { description: result.note } : undefined);
+      // The manager settles asynchronously, so the next poll is what shows the new
       // state; refreshing now just shortens the wait.
       await refresh();
     } catch (e) {
@@ -165,7 +171,7 @@ export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: 
           ))}
         </div>
         <p className="px-3 pb-2 text-[11px] text-text-subtle">
-          {counts.total} units · {counts.running} running
+          {counts.total} {noun} · {counts.running} running
           {counts.failed > 0 && <span className="text-error"> · {counts.failed} failed</span>}
         </p>
       </div>
@@ -179,15 +185,16 @@ export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <ServicesHeader sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
         <div className="divide-y divide-border">
-          {loading && <p className="p-4 text-sm text-text-subtle">Listing units…</p>}
+          {loading && <p className="p-4 text-sm text-text-subtle">Listing {noun}…</p>}
           {error && <p className="p-4 text-sm text-error">{error}</p>}
           {!loading && !error && rows.length === 0 && (
-            <p className="p-4 text-sm text-text-subtle">No units match.</p>
+            <p className="p-4 text-sm text-text-subtle">No {noun} match.</p>
           )}
           {rows.map(({ service, resources }) => (
             <ServiceRow
               key={`${service.scope}:${service.unit}`}
               service={service}
+              manager={manager}
               resources={resources}
               onOpen={setDetails}
               onAction={onAction}
@@ -196,9 +203,10 @@ export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: 
         </div>
       </div>
 
-      <ServiceDetailsSheet target={details} onClose={() => setDetails(null)} />
+      <ServiceDetailsSheet target={details} manager={manager} onClose={() => setDetails(null)} />
       <ServiceActionConfirm
         pending={pending}
+        manager={manager}
         onConfirm={(p) => void perform(p)}
         onCancel={() => setPending(null)}
       />

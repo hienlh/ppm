@@ -1,6 +1,7 @@
-import { describe, it, expect } from "bun:test";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   isAllowedPath,
   isPpmDirPath,
@@ -8,10 +9,12 @@ import {
   assertNotProtected,
   assertNotPpmDir,
   isChatUploadPath,
+  isCodexGeneratedImagePath,
+  isCredentialPath,
   mapFsError,
   resolvePath,
 } from "../../../src/services/fs-path-guard.service.ts";
-import { getPpmDir } from "../../../src/services/ppm-dir.ts";
+import { _resetPpmDir, getPpmDir } from "../../../src/services/ppm-dir.ts";
 
 const isWin = process.platform === "win32";
 const abs = (posix: string, win: string) => (isWin ? win : posix);
@@ -104,6 +107,43 @@ describe("PPM directory shield", () => {
     expect(() => assertNotPpmDir(resolve(getPpmDir(), "uploads-secret", "ppm.db"))).toThrow(
       "Access denied",
     );
+  });
+});
+
+describe.if(!isWin)("a PPM directory reached through a symlink", () => {
+  // How PPM_HOME under /tmp or /var looks on a Mac: both are links into /private.
+  const prevPpmHome = process.env.PPM_HOME;
+  let base = "";
+  let real = "";
+  beforeAll(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), "ppm-guard-link-")));
+    real = join(base, "real-home");
+    mkdirSync(real);
+    symlinkSync(real, join(base, "linked-home"));
+    process.env.PPM_HOME = join(base, "linked-home");
+    _resetPpmDir();
+  });
+  afterAll(() => {
+    if (prevPpmHome === undefined) delete process.env.PPM_HOME; else process.env.PPM_HOME = prevPpmHome;
+    _resetPpmDir();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("is refused by its real path, which is what every door checks second", () => {
+    expect(isCredentialPath(join(real, "ppm.db"))).toBe(true);
+    expect(() => assertNotPpmDir(join(real, "ppm.db"))).toThrow("Access denied");
+    // And as configured, as before.
+    expect(isPpmDirPath(join(base, "linked-home", "ppm.db"))).toBe(true);
+  });
+
+  it("keeps its two read-only exceptions under the real path too", () => {
+    expect(() => assertNotPpmDir(join(real, "uploads", "abc123-image.png"))).not.toThrow();
+    expect(isCodexGeneratedImagePath(join(real, "codex-accounts", "acc", "generated_images", "a.png"))).toBe(true);
+    expect(() => assertNotPpmDir(join(real, "codex-accounts", "acc", "auth.json"))).toThrow("Access denied");
+  });
+
+  it("does not reach past the directory it names", () => {
+    expect(isCredentialPath(join(base, "real-home-2", "ppm.db"))).toBe(false);
   });
 });
 

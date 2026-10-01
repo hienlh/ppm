@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { getPpmDir } from "./ppm-dir.ts";
 import { getUploadsDir } from "./chat-upload-storage.service.ts";
 import { getBackupsDir } from "./db-backup/db-backup-paths.ts";
-import { realPathOrSelf } from "./fs-ops/fs-real-path.ts";
+import { realPathOrSelf, realPathOrSelfSync } from "./fs-ops/fs-real-path.ts";
 
 /**
  * Every path a generic filesystem route (read, write, copy, move, upload,
@@ -25,9 +25,32 @@ function isInside(child: string, parent: string): boolean {
   return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
 }
 
+/** Each root's real path, keyed by the root as configured. */
+const realRoots = new Map<string, string>();
+
+/**
+ * The spellings a root is reached by: as configured, and as the filesystem has it.
+ * Every door checks a path *and* its real path, and a real path never spells a
+ * root through a symlink — on macOS `/tmp` and `/var` are links into `/private`,
+ * so a PPM directory under either matched only the first check, and a symlink
+ * to `ppm.db` read as an ordinary file. Resolved once per root, because the
+ * design walk asks per entry: the real spelling only adds refusals, so one that
+ * goes stale refuses no less than the configured spelling alone did.
+ */
+function rootSpellings(root: string): string[] {
+  let real = realRoots.get(root);
+  if (real === undefined) {
+    real = realPathOrSelfSync(root);
+    realRoots.set(root, real);
+  }
+  return real === root ? [root] : [root, real];
+}
+
+const isUnderRoot = (child: string, root: string) => rootSpellings(root).some((spelling) => isInside(child, spelling));
+
 /** True when the path is the PPM directory or anything inside it. */
 export function isPpmDirPath(resolved: string): boolean {
-  return isInside(resolved, getPpmDir());
+  return isUnderRoot(resolved, getPpmDir());
 }
 
 /**
@@ -37,7 +60,7 @@ export function isPpmDirPath(resolved: string): boolean {
  * the very image the assistant just read back from that directory.
  */
 export function isChatUploadPath(resolved: string): boolean {
-  return isInside(resolved, getUploadsDir());
+  return isUnderRoot(resolved, getUploadsDir());
 }
 
 /**
@@ -55,11 +78,12 @@ export function isChatUploadPath(resolved: string): boolean {
  * pass an already-resolved path, so `..` cannot walk back out of the subtree.
  */
 export function isCodexGeneratedImagePath(resolved: string): boolean {
-  const root = resolve(getPpmDir(), "codex-accounts");
-  if (!isInside(resolved, root) || resolved === root) return false;
-  const rel = resolved.slice(root.length + 1).split(sep);
-  // [accountId, "generated_images", …at least one file segment]
-  return rel.length >= 3 && rel[1] === "generated_images";
+  return rootSpellings(resolve(getPpmDir(), "codex-accounts")).some((root) => {
+    if (!isInside(resolved, root) || resolved === root) return false;
+    const rel = resolved.slice(root.length + 1).split(sep);
+    // [accountId, "generated_images", …at least one file segment]
+    return rel.length >= 3 && rel[1] === "generated_images";
+  });
 }
 
 /**
@@ -73,7 +97,7 @@ export function isCodexGeneratedImagePath(resolved: string): boolean {
  * elsewhere does not match.
  */
 export function isCloudflaredDirPath(resolved: string): boolean {
-  return isInside(resolved, resolve(homedir(), ".cloudflared"));
+  return isUnderRoot(resolved, resolve(homedir(), ".cloudflared"));
 }
 
 /**
@@ -87,7 +111,7 @@ export function isCloudflaredDirPath(resolved: string): boolean {
  * a credential-read hole through the generic file routes.
  */
 export function isDbBackupsDirPath(resolved: string): boolean {
-  return isInside(resolved, getBackupsDir());
+  return isUnderRoot(resolved, getBackupsDir());
 }
 
 /** True when the path holds credential material a generic file route must never serve or relocate. */

@@ -62,7 +62,7 @@ export function ProcessGroupRow({ group, expanded, grid, killProtected, onToggle
       )}
       {grid.columns.gpu && (
         <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "gpu"))}>
-          {formatGpuCell(group.gpuPct, group.gpuMemMB)}
+          {formatGpuCell(group.gpuPct, group.gpuMemMB, grid.columns.gpuMemory !== false)}
         </span>
       )}
       {grid.columns.net && (

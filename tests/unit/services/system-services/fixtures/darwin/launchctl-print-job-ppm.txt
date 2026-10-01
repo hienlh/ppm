@@ -1,0 +1,63 @@
+gui/501/com.hienlh.ppm = {
+	active count = 1
+	path = /Users/user/Library/LaunchAgents/com.hienlh.ppm.plist
+	type = LaunchAgent
+	state = running
+
+	program = /Users/user/.bun/bin/bun
+	arguments = {
+		/Users/user/.bun/bin/bun
+		run
+		/Users/user/.bun/install/global/node_modules/@hienlh/ppm/src/services/supervisor.ts
+		__supervise__
+		3210
+		0.0.0.0
+		--share
+	}
+
+	working directory = /Users/user/.ppm
+
+	stdout path = /Users/user/.ppm/ppm-launchd.log
+	stderr path = /Users/user/.ppm/ppm-launchd.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.AAAAAAAAAA/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		PATH => /Users/user/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+		XPC_SERVICE_NAME => com.hienlh.ppm
+	}
+
+	domain = gui/501 [100003]
+	asid = 100003
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	pid = 98871
+	immediate reason = speculative
+	forks = 4
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	last exit code = (never exited)
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	probabilistic guard malloc policy = {
+		activation rate = 1/1000
+		sample rate = 1/0
+	}
+
+	properties = keepalive | runatload | inferred program
+}

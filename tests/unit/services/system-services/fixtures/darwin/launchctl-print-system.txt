@@ -1,0 +1,116 @@
+system = {
+	type = system
+	handle = 0
+	active count = 887
+	service count = 420
+	active service count = 146
+	maximum allowed shutdown time = 65 s
+	service stats = {
+		com.apple.launchd.service-stats-default (4096 records)
+	}
+	trial factor reloads = 2
+	trial factors = {
+	}
+	creator = launchd[1]
+	creator euid = 0
+	auxiliary bootstrapper = com.apple.xpc.smd (complete)
+	security context = {
+		uid unset
+		asid = 0
+	}
+
+	bringup time = 410 ms
+	death port = 0x1b03
+	subdomains = {
+		pid/36835
+		pid/36371
+		pid/35240
+		pid/32376
+		pid/27037
+	}
+
+	services = {
+		       0      - 	com.apple.lskdd
+		       0   (pe) 	com.apple.kernelmanager_helper
+		     170      - 	com.apple.runningboardd
+		       0      - 	com.apple.installcoordination_proxy
+		       0      1 	com.apple.wifiFirmwareLoader
+		       0      - 	com.apple.uninstalld
+		       0      - 	com.apple.diagnosticextensions.osx.spotlight.helper
+		       0      - 	com.apple.tzlinkd
+		       0      0 	com.apple.tmp_cleaner
+		       0   (pe) 	com.apple.ReportSystemMemory
+		       0      - 	com.apple.diagnosticextensions.osx.timemachine.helper
+		       0      - 	com.apple.kcproxy
+		      98      - 	com.apple.fseventsd
+		       0      - 	com.apple.mobile.obliteration
+		       0   (pe) 	com.apple.security.cryptexd
+		       0      - 	com.apple.devicemanagementclient.managedeventsd
+		     364      - 	com.apple.CoreAuthentication.daemon
+		       0      0 	com.apple.Kerberos.digest-service
+		       0      - 	com.apple.systempreferences.cacheAssistant
+		       0   (pe) 	com.apple.XprotectFramework.PluginService
+		       0   (pe) 	com.apple.XProtect.daemon.scan
+		       0      0 	com.apple.filesystems.fskitd
+		       0      - 	com.apple.ftp-proxy
+		   96177   (pe) 	com.apple.logd_helper
+		     502      - 	com.apple.automountd
+		       0      - 	com.apple.TrustEvaluationAgent.system
+		     172      - 	com.apple.coreservicesd
+		       0      0 	com.apple.newsyslog
+		      99      - 	com.apple.mediaremoted
+		     410      - 	com.apple.wifianalyticsd
+		   74335   (pe) 	com.apple.adid
+		     458      0 	com.apple.AmbientDisplayAgent
+		       0      0 	com.apple.MRTd
+		       0   (pe) 	com.apple.modelcatalogd
+		       0      - 	com.apple.touchbarserver
+		       0      - 	com.apple.mbusertrampoline
+		       0      - 	com.apple.thermald
+		     500      - 	com.apple.FileCoordination
+		       0   (pe) 	com.apple.deleted_helper
+		       0      - 	com.apple.taskgated
+		       0      0 	com.example.updater.agent
+		    1812      - 	com.example.sync-helper
+		       0     -9 	com.example.crashy-agent
+		       0     78 	org.example.failing-job
+		    2201      - 	application.com.example.editor.12345678.12345684
+		    2388      - 	application.com.example.browser.23456789.23456795
+		   98871      - 	com.hienlh.ppm
+	}
+
+	unmanaged processes = {
+	}
+
+	endpoints = {
+		       0    M   D   com.apple.fpsd.arcadeservice
+		 0x67213    M   D   com.apple.dt.RemotePairingDataVaultHelper
+		 0x21a37    M   D   com.apple.backgroundtaskmanagement.sfl
+		 0x11003    M   A   com.apple.CARenderServer
+		  0xd423    M   A   com.apple.VirtualDisplay
+		 0x16c03    M   A   com.apple.nehelper
+	}
+
+	task-special ports = {
+			  0x1c03 4       bootstrap  com.apple.xpc.launchd.domain.system
+			  0x2603 9          access  com.apple.taskgated
+	}
+	attractive services = {
+		com.apple.MessagesBlastDoorService
+		com.apple.IDSBlastDoorService
+	}
+
+	disabled services = {
+		"com.example.updater.agent" => disabled
+		"com.example.sync-helper" => enabled
+		"com.apple.CSCSupportd" => disabled
+		"com.apple.ftpd" => disabled
+		"com.apple.mdmclient.daemon.runatboot" => disabled
+		"com.apple.smbd" => enabled
+		"com.apple.dhcp6d" => disabled
+		"com.apple.bootpd" => disabled
+		"com.apple.ftp-proxy" => enabled
+	}
+
+	properties = uncorked | audit check done | bootcache hack
+}

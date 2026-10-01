@@ -153,7 +153,7 @@ export function ProcessTableFooter({ totals, grid, gpuUtilPercent }: ProcessTabl
       )}
       {grid.columns.gpu && (
         <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "gpu"))}>
-          {formatGpuCell(gpuUtilPercent, totals.gpuMemMB)}
+          {formatGpuCell(gpuUtilPercent, totals.gpuMemMB, grid.columns.gpuMemory !== false)}
         </span>
       )}
       {grid.columns.net && (

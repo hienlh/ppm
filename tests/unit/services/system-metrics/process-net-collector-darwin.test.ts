@@ -61,7 +61,8 @@ describe("createDarwinProcessNetCollector", () => {
     expect((await c.collect())!.get(7)).toEqual({ inBytes: 1, outBytes: 2 });
     await c.collect();
     expect(calls[0]).toEqual(NETTOP_ARGV);
-    expect(NETTOP_ARGV).toEqual(["nettop", "-P", "-x", "-L", "1", "-J", "bytes_in,bytes_out"]);
+    // -n: without it each sample sends a DNS query for every remote address.
+    expect(NETTOP_ARGV).toEqual(["nettop", "-n", "-P", "-x", "-L", "1", "-J", "bytes_in,bytes_out"]);
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain("nettop sample");
   });

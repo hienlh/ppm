@@ -80,10 +80,16 @@ export interface CpuInfo {
    *  (Intel P+E) the physical count is what the kernel reports per socket. */
   physicalCores: number;
   logicalCores: number;
+  /** How the physical cores split on a part with two kinds — Apple Silicon's
+   *  performance and efficiency clusters. Both absent on a uniform CPU, and
+   *  where the host does not say. */
+  performanceCores?: number;
+  efficiencyCores?: number;
   /** Nominal clock and the highest the driver will ask for, MHz. */
   baseMHz?: number;
   maxMHz?: number;
-  /** "Intel VT-x" / "AMD-V", absent when the flag is missing (or hidden in a VM). */
+  /** "Intel VT-x" / "AMD-V" / "Apple Hypervisor", absent when the flag is missing
+   *  (or hidden in a VM). */
   virtualization?: string;
   /** True when this kernel is itself running virtualised. */
   isVirtualMachine: boolean;
@@ -118,6 +124,9 @@ export interface MemoryInfo {
   /** Populated slots. Empty when the firmware table is unreadable — the UI then
    *  shows the totals only, as Mission Center does inside a VM. */
   devices: MemoryDeviceInfo[];
+  /** Apple Silicon: the memory is inside the chip package. `devices` then holds
+   *  one entry for all of it, and there are no slots to count or fill. */
+  unified?: boolean;
   /** Slots the board has in total, when the firmware says. */
   slotsTotal?: number;
   /** Largest configuration the board accepts, bytes. */

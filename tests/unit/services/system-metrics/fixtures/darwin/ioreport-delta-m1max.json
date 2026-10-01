@@ -1,0 +1,768 @@
+{
+ "tables": {
+  "ecpuMHz": [
+   600,
+   972,
+   1332,
+   1704,
+   2064
+  ],
+  "pcpuMHz": [
+   600,
+   828,
+   1056,
+   1296,
+   1524,
+   1752,
+   1980,
+   2208,
+   2448,
+   2676,
+   2904,
+   3036,
+   3132,
+   3168,
+   3228
+  ],
+  "gpuMHz": [
+   0,
+   389,
+   486,
+   648,
+   778,
+   972,
+   1296
+  ]
+ },
+ "delta": {
+  "channels": [
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "ECPU000",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 21741532
+     },
+     {
+      "name": "V0P4",
+      "residency": 0
+     },
+     {
+      "name": "V1P3",
+      "residency": 5352278
+     },
+     {
+      "name": "V2P2",
+      "residency": 2632771
+     },
+     {
+      "name": "V3P1",
+      "residency": 4196727
+     },
+     {
+      "name": "V4P0",
+      "residency": 14201657
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "ECPU010",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 22290729
+     },
+     {
+      "name": "V0P4",
+      "residency": 0
+     },
+     {
+      "name": "V1P3",
+      "residency": 5370503
+     },
+     {
+      "name": "V2P2",
+      "residency": 2567621
+     },
+     {
+      "name": "V3P1",
+      "residency": 4141716
+     },
+     {
+      "name": "V4P0",
+      "residency": 13754396
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU000",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 31267227
+     },
+     {
+      "name": "V0P14",
+      "residency": 4819
+     },
+     {
+      "name": "V1P13",
+      "residency": 3302
+     },
+     {
+      "name": "V2P12",
+      "residency": 65299
+     },
+     {
+      "name": "V3P11",
+      "residency": 212131
+     },
+     {
+      "name": "V4P10",
+      "residency": 194082
+     },
+     {
+      "name": "V5P9",
+      "residency": 70325
+     },
+     {
+      "name": "V6P8",
+      "residency": 93502
+     },
+     {
+      "name": "V7P7",
+      "residency": 108602
+     },
+     {
+      "name": "V8P6",
+      "residency": 138232
+     },
+     {
+      "name": "V9P5",
+      "residency": 56465
+     },
+     {
+      "name": "V10P4",
+      "residency": 12245440
+     },
+     {
+      "name": "V11P3",
+      "residency": 249914
+     },
+     {
+      "name": "V12P2",
+      "residency": 128146
+     },
+     {
+      "name": "V13P1",
+      "residency": 94281
+     },
+     {
+      "name": "V14P0",
+      "residency": 3192121
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU010",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 27864028
+     },
+     {
+      "name": "V0P14",
+      "residency": 0
+     },
+     {
+      "name": "V1P13",
+      "residency": 0
+     },
+     {
+      "name": "V2P12",
+      "residency": 33461
+     },
+     {
+      "name": "V3P11",
+      "residency": 157563
+     },
+     {
+      "name": "V4P10",
+      "residency": 145746
+     },
+     {
+      "name": "V5P9",
+      "residency": 36411
+     },
+     {
+      "name": "V6P8",
+      "residency": 89502
+     },
+     {
+      "name": "V7P7",
+      "residency": 83154
+     },
+     {
+      "name": "V8P6",
+      "residency": 89171
+     },
+     {
+      "name": "V9P5",
+      "residency": 47208
+     },
+     {
+      "name": "V10P4",
+      "residency": 15218986
+     },
+     {
+      "name": "V11P3",
+      "residency": 241366
+     },
+     {
+      "name": "V12P2",
+      "residency": 180444
+     },
+     {
+      "name": "V13P1",
+      "residency": 105058
+     },
+     {
+      "name": "V14P0",
+      "residency": 3831790
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU020",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 34861239
+     },
+     {
+      "name": "V0P14",
+      "residency": 0
+     },
+     {
+      "name": "V1P13",
+      "residency": 0
+     },
+     {
+      "name": "V2P12",
+      "residency": 14437
+     },
+     {
+      "name": "V3P11",
+      "residency": 92073
+     },
+     {
+      "name": "V4P10",
+      "residency": 27915
+     },
+     {
+      "name": "V5P9",
+      "residency": 38699
+     },
+     {
+      "name": "V6P8",
+      "residency": 50731
+     },
+     {
+      "name": "V7P7",
+      "residency": 56073
+     },
+     {
+      "name": "V8P6",
+      "residency": 82678
+     },
+     {
+      "name": "V9P5",
+      "residency": 29936
+     },
+     {
+      "name": "V10P4",
+      "residency": 9094579
+     },
+     {
+      "name": "V11P3",
+      "residency": 293718
+     },
+     {
+      "name": "V12P2",
+      "residency": 257838
+     },
+     {
+      "name": "V13P1",
+      "residency": 165543
+     },
+     {
+      "name": "V14P0",
+      "residency": 3058429
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU030",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 39975075
+     },
+     {
+      "name": "V0P14",
+      "residency": 787
+     },
+     {
+      "name": "V1P13",
+      "residency": 0
+     },
+     {
+      "name": "V2P12",
+      "residency": 6182
+     },
+     {
+      "name": "V3P11",
+      "residency": 17919
+     },
+     {
+      "name": "V4P10",
+      "residency": 49004
+     },
+     {
+      "name": "V5P9",
+      "residency": 14460
+     },
+     {
+      "name": "V6P8",
+      "residency": 17384
+     },
+     {
+      "name": "V7P7",
+      "residency": 9309
+     },
+     {
+      "name": "V8P6",
+      "residency": 31731
+     },
+     {
+      "name": "V9P5",
+      "residency": 18705
+     },
+     {
+      "name": "V10P4",
+      "residency": 5025655
+     },
+     {
+      "name": "V11P3",
+      "residency": 141185
+     },
+     {
+      "name": "V12P2",
+      "residency": 135696
+     },
+     {
+      "name": "V13P1",
+      "residency": 121649
+     },
+     {
+      "name": "V14P0",
+      "residency": 2559147
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU100",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 42892686
+     },
+     {
+      "name": "V0P14",
+      "residency": 100595
+     },
+     {
+      "name": "V1P13",
+      "residency": 2912
+     },
+     {
+      "name": "V2P12",
+      "residency": 372002
+     },
+     {
+      "name": "V3P11",
+      "residency": 354475
+     },
+     {
+      "name": "V4P10",
+      "residency": 155432
+     },
+     {
+      "name": "V5P9",
+      "residency": 146499
+     },
+     {
+      "name": "V6P8",
+      "residency": 79327
+     },
+     {
+      "name": "V7P7",
+      "residency": 578525
+     },
+     {
+      "name": "V8P6",
+      "residency": 1054452
+     },
+     {
+      "name": "V9P5",
+      "residency": 425363
+     },
+     {
+      "name": "V10P4",
+      "residency": 210905
+     },
+     {
+      "name": "V11P3",
+      "residency": 114932
+     },
+     {
+      "name": "V12P2",
+      "residency": 45394
+     },
+     {
+      "name": "V13P1",
+      "residency": 64405
+     },
+     {
+      "name": "V14P0",
+      "residency": 1524492
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU110",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 45368456
+     },
+     {
+      "name": "V0P14",
+      "residency": 39864
+     },
+     {
+      "name": "V1P13",
+      "residency": 1975
+     },
+     {
+      "name": "V2P12",
+      "residency": 120556
+     },
+     {
+      "name": "V3P11",
+      "residency": 84449
+     },
+     {
+      "name": "V4P10",
+      "residency": 53765
+     },
+     {
+      "name": "V5P9",
+      "residency": 33618
+     },
+     {
+      "name": "V6P8",
+      "residency": 79512
+     },
+     {
+      "name": "V7P7",
+      "residency": 422497
+     },
+     {
+      "name": "V8P6",
+      "residency": 622773
+     },
+     {
+      "name": "V9P5",
+      "residency": 208749
+     },
+     {
+      "name": "V10P4",
+      "residency": 230973
+     },
+     {
+      "name": "V11P3",
+      "residency": 32998
+     },
+     {
+      "name": "V12P2",
+      "residency": 8602
+     },
+     {
+      "name": "V13P1",
+      "residency": 8496
+     },
+     {
+      "name": "V14P0",
+      "residency": 805113
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU120",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 46287735
+     },
+     {
+      "name": "V0P14",
+      "residency": 11810
+     },
+     {
+      "name": "V1P13",
+      "residency": 642
+     },
+     {
+      "name": "V2P12",
+      "residency": 196160
+     },
+     {
+      "name": "V3P11",
+      "residency": 36667
+     },
+     {
+      "name": "V4P10",
+      "residency": 9730
+     },
+     {
+      "name": "V5P9",
+      "residency": 14183
+     },
+     {
+      "name": "V6P8",
+      "residency": 18462
+     },
+     {
+      "name": "V7P7",
+      "residency": 179617
+     },
+     {
+      "name": "V8P6",
+      "residency": 492582
+     },
+     {
+      "name": "V9P5",
+      "residency": 82724
+     },
+     {
+      "name": "V10P4",
+      "residency": 18051
+     },
+     {
+      "name": "V11P3",
+      "residency": 6035
+     },
+     {
+      "name": "V12P2",
+      "residency": 2184
+     },
+     {
+      "name": "V13P1",
+      "residency": 9934
+     },
+     {
+      "name": "V14P0",
+      "residency": 755880
+     }
+    ]
+   },
+   {
+    "group": "CPU Stats",
+    "subgroup": "CPU Core Performance States",
+    "name": "PCPU130",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "IDLE",
+      "residency": 47424834
+     },
+     {
+      "name": "V0P14",
+      "residency": 1914
+     },
+     {
+      "name": "V1P13",
+      "residency": 0
+     },
+     {
+      "name": "V2P12",
+      "residency": 26433
+     },
+     {
+      "name": "V3P11",
+      "residency": 3751
+     },
+     {
+      "name": "V4P10",
+      "residency": 3933
+     },
+     {
+      "name": "V5P9",
+      "residency": 5812
+     },
+     {
+      "name": "V6P8",
+      "residency": 19355
+     },
+     {
+      "name": "V7P7",
+      "residency": 48070
+     },
+     {
+      "name": "V8P6",
+      "residency": 274787
+     },
+     {
+      "name": "V9P5",
+      "residency": 25028
+     },
+     {
+      "name": "V10P4",
+      "residency": 11464
+     },
+     {
+      "name": "V11P3",
+      "residency": 905
+     },
+     {
+      "name": "V12P2",
+      "residency": 1811
+     },
+     {
+      "name": "V13P1",
+      "residency": 31080
+     },
+     {
+      "name": "V14P0",
+      "residency": 243219
+     }
+    ]
+   },
+   {
+    "group": "Energy Model",
+    "subgroup": "",
+    "name": "CPU Energy",
+    "unit": "mJ",
+    "value": 7162
+   },
+   {
+    "group": "Energy Model",
+    "subgroup": "",
+    "name": "GPU Energy",
+    "unit": "nJ",
+    "value": 804670360
+   },
+   {
+    "group": "GPU Stats",
+    "subgroup": "GPU Performance States",
+    "name": "GPUPH",
+    "unit": "24Mticks",
+    "states": [
+     {
+      "name": "OFF",
+      "residency": 32297147
+     },
+     {
+      "name": "P1",
+      "residency": 14927087
+     },
+     {
+      "name": "P2",
+      "residency": 229745
+     },
+     {
+      "name": "P3",
+      "residency": 68006
+     },
+     {
+      "name": "P4",
+      "residency": 511658
+     },
+     {
+      "name": "P5",
+      "residency": 77617
+     },
+     {
+      "name": "P6",
+      "residency": 0
+     },
+     {
+      "name": "P7",
+      "residency": 0
+     },
+     {
+      "name": "P8",
+      "residency": 0
+     },
+     {
+      "name": "P9",
+      "residency": 0
+     },
+     {
+      "name": "P10",
+      "residency": 0
+     },
+     {
+      "name": "P11",
+      "residency": 0
+     },
+     {
+      "name": "P12",
+      "residency": 0
+     },
+     {
+      "name": "P13",
+      "residency": 0
+     },
+     {
+      "name": "P14",
+      "residency": 0
+     },
+     {
+      "name": "P15",
+      "residency": 0
+     }
+    ]
+   }
+  ],
+  "elapsedSec": 2.004729834
+ }
+}

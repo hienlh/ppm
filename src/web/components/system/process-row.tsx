@@ -52,7 +52,7 @@ export function ProcessRow({ proc, indent, grid, onKillClick }: ProcessRowProps)
       )}
       {grid.columns.gpu && (
         <span className={cn("text-right text-text-secondary tabular-nums truncate", optionalCellClassName(grid, "gpu"))}>
-          {formatGpuCell(proc.gpuPct, proc.gpuMemMB)}
+          {formatGpuCell(proc.gpuPct, proc.gpuMemMB, grid.columns.gpuMemory !== false)}
         </span>
       )}
       {grid.columns.net && (

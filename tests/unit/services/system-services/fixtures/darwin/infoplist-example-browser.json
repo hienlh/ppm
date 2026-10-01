@@ -1,0 +1,13 @@
+{
+  "CFBundleDisplayName": "Example Browser",
+  "CFBundleExecutable": "Example Browser",
+  "CFBundleIconFile": "app.icns",
+  "CFBundleIconName": "AppIcon",
+  "CFBundleIdentifier": "com.example.browser",
+  "CFBundleName": "Browser",
+  "CFBundlePackageType": "APPL",
+  "CFBundleShortVersionString": "154.0.8037.92",
+  "CFBundleVersion": "8037.92",
+  "LSMinimumSystemVersion": "13.0",
+  "NSPrincipalClass": "BrowserCrApplication"
+}

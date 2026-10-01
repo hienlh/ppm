@@ -321,7 +321,23 @@ describe("assembleTick — per-device figures", () => {
     expect(nextState.devices.disks.size).toBe(0);
   });
 
-  test("a host with no device source (win32, macOS) simply omits both", async () => {
+  test("a collector answering with a promise is awaited — a Mac's sources are tools, not sysfs", async () => {
+    const { d } = deps({ devices: async () => collection(4) });
+    const { snapshot, nextState } = await assembleTick("full", EMPTY_DELTA_STATE, d);
+    expect(snapshot.system.disks?.[0]?.busyPercent).toBe(4);
+    expect(snapshot.system.cpu).toMatchObject({ currentMHz: 804 });
+    expect(nextState.devices.disks.get("nvme0n1")?.atSec).toBe(4);
+  });
+
+  test("a rejected promise costs the two lists like a throw does, never the snapshot", async () => {
+    const { d } = deps({ devices: async () => { throw new Error("ioreg timed out"); } });
+    const { snapshot, nextState } = await assembleTick("full", EMPTY_DELTA_STATE, d);
+    expect(snapshot.system.disks).toBeUndefined();
+    expect(snapshot.warnings.some((w) => w.includes("ioreg timed out"))).toBe(true);
+    expect(nextState.devices.disks.size).toBe(0);
+  });
+
+  test("a host with no device source (win32) simply omits both", async () => {
     const { d } = deps({ devices: null });
     const { snapshot } = await assembleTick("full", EMPTY_DELTA_STATE, d);
     expect("disks" in snapshot.system).toBe(false);
@@ -330,7 +346,7 @@ describe("assembleTick — per-device figures", () => {
 
   test("uptime survives a host with no device source, because os.uptime() answers everywhere", async () => {
     // The Performance page drew "Up time —" on macOS and Windows for exactly
-    // this reason: the ONLY writer was the Linux device collector, which is null
+    // this reason: the ONLY writer was the Linux device collector, which was null
     // on both. An em dash there claims the host cannot be asked how long it has
     // been up, which is never true.
     const { d } = deps({ devices: null });

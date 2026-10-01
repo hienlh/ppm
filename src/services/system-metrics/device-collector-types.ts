@@ -35,6 +35,7 @@ export interface DeviceCollection {
   next: DeviceSampleState;
 }
 
-/** Synchronous by design: every source is a small sysfs read, so there is no
- *  subprocess to await and no reason for the tick to yield. */
-export type DeviceCollector = (prev: DeviceSampleState) => DeviceCollection;
+/** Synchronous on Linux, where every source is a small sysfs read. A Mac has no
+ *  sysfs — its per-device figures come from tools like `ioreg` and `netstat` —
+ *  so a collector may also answer with a promise, which the tick awaits. */
+export type DeviceCollector = (prev: DeviceSampleState) => DeviceCollection | Promise<DeviceCollection>;

@@ -1,0 +1,34 @@
+An asterisk (*) denotes that a network service is disabled.
+(1) USB Ethernet Adapter
+(Hardware Port: USB Ethernet Adapter, Device: en7)
+
+(2) USB 10/100/1G/2.5G LAN
+(Hardware Port: USB 10/100/1G/2.5G LAN, Device: en8)
+
+(3) Wi-Fi
+(Hardware Port: Wi-Fi, Device: en0)
+
+(4) Thunderbolt Bridge
+(Hardware Port: Thunderbolt Bridge, Device: bridge0)
+
+(5) iPhone USB
+(Hardware Port: iPhone USB, Device: en11)
+
+(6) Example Proxy
+(Hardware Port: com.example.proxy, Device: )
+
+(7) Example Mesh
+(Hardware Port: com.example.mesh, Device: )
+
+(8) Example VPN
+(Hardware Port: com.example.vpn, Device: )
+
+(9) Example VPN 2
+(Hardware Port: com.example.vpn, Device: )
+
+(10) Example WireGuard
+(Hardware Port: com.example.wireguard, Device: )
+
+(11) Example WireGuard 2
+(Hardware Port: com.example.wireguard, Device: )
+

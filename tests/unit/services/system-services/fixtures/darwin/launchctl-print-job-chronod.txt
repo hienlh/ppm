@@ -1,0 +1,369 @@
+gui/501/com.apple.chronod = {
+	active count = 12
+	path = /System/Library/LaunchAgents/com.apple.chronod.plist
+	type = LaunchAgent
+	state = running
+
+	program = /System/Library/PrivateFrameworks/ChronoCore.framework/Support/chronod
+	arguments = {
+		/System/Library/PrivateFrameworks/ChronoCore.framework/Support/chronod
+	}
+
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.AAAAAAAAAA/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		MallocSpaceEfficient => 1
+		MallocStackLoggingDirectory => /private/var/tmp/com.apple.chrono
+		LS_NO_IN_PROCESS_DATABASE_BUILD => 1
+		XPC_SERVICE_NAME => com.apple.chronod
+	}
+
+	domain = gui/501 [100003]
+	asid = 100003
+	minimum runtime = 3
+	base minimum runtime = 3
+	exit timeout = 5
+	runs = 1
+	pid = 470
+	immediate reason = xpc event
+	forks = 0
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	last exit code = (never exited)
+
+	semaphores = {
+		after crash => 1
+	}
+
+	event triggers = {
+		com.apple.chronod.nextScheduledTimelineRefresh => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.xpc.activity
+			monitor = com.apple.UserEventAgent-Aqua
+			descriptor = {
+				"Repeating" => false
+				"_SequenceNumber" => 1
+				"GracePeriod" => 10
+				"Interval" => 300
+				"Delay" => 290
+				"Priority" => "Utility"
+			}
+		}
+		com.apple.chronod => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.donotdisturbd.focus_configuration_events
+			monitor = com.apple.donotdisturbd
+			descriptor = {
+			}
+		}
+		com.apple.chronod => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.tccd.events
+			monitor = com.apple.tccd
+			descriptor = {
+				"kTCCServiceAll" => true
+			}
+		}
+		per_app_language_changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.IntlPreferences.events
+			monitor = com.apple.localizationswitcherd
+			descriptor = {
+			}
+		}
+		application-installed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.distnoted.matching
+			monitor = com.apple.UserEventAgent-Aqua
+			descriptor = {
+				"Name" => "com.apple.LaunchServices.applicationRegistered"
+			}
+		}
+		application-restriction-changes => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.distnoted.matching
+			monitor = com.apple.UserEventAgent-Aqua
+			descriptor = {
+				"Name" => "com.apple.LaunchServices.applicationStateChanged"
+			}
+		}
+		application-uninstalled => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.distnoted.matching
+			monitor = com.apple.UserEventAgent-Aqua
+			descriptor = {
+				"Name" => "com.apple.LaunchServices.applicationUnregistered"
+			}
+		}
+		com.apple.chronod.replicator.message => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.chronod.replicator.message"
+			}
+		}
+		environment-locale-region-time-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "AppleTimePreferencesChangedNotification"
+			}
+		}
+		environment-accessibility-preferred-content-size-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "ApplePreferredContentSizeCategoryChangedNotification"
+			}
+		}
+		environment-locale-region-date-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "AppleDatePreferencesChangedNotification"
+			}
+		}
+		environment-accessibility-reduce-transparency-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.accessibility.cache.enhance.background.contrast"
+			}
+		}
+		environment-locale-language-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "AppleLanguagePreferencesChangedNotification"
+			}
+		}
+		significant-time-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "SignificantTimeChangeNotification"
+			}
+		}
+		environment-accessibility-reduce-motion-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.accessibility.cache.reduce.motion"
+			}
+		}
+		environment-locale-region-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "AppleNumberPreferencesChangedNotification"
+			}
+		}
+		environment-accessibility-bold-text-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.accessibility.cache.enhance.text.legibility"
+			}
+		}
+		environment-accessibility-invert-colors-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.accessibility.cache.invert.colors"
+			}
+		}
+		com.apple.replicatord.devicesChanged => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.replicatord.devicesChanged"
+			}
+		}
+		keybag-status-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.mobile.keybagd.lock_status"
+			}
+		}
+		environment-accessibility-differentiate-without-color-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.accessibility.cache.differentiate.without.color"
+			}
+		}
+		environment-accessibility-increased-contrast-changed => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.accessibility.cache.darken.system.colors.enabled"
+			}
+		}
+		com.apple.chronod.replicator.record => {
+			keepalive = 0
+			service = com.apple.chronod
+			stream = com.apple.notifyd.matching
+			monitor = com.apple.notifyd
+			descriptor = {
+				"Notification" => "com.apple.chronod.replicator.record"
+			}
+		}
+	}
+
+	endpoints = {
+		"com.apple.chronoservices" = {
+			port = 0x4420f
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.chrono.widgetcenterconnection" = {
+			port = 0x4411b
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.chronod.replicator" = {
+			port = 0x5120f
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.chrono.controlcenter" = {
+			port = 0x4440b
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+	}
+
+	event channels = {
+		"com.apple.xpc.activity" = {
+			port = 0xa4627
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.donotdisturbd.focus_configuration_events" = {
+			port = 0x79433
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.tccd.events" = {
+			port = 0x62e03
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.locationd-events" = {
+			port = 0x4a53b
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.IntlPreferences.events" = {
+			port = 0x55807
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.distnoted.matching" = {
+			port = 0x5110b
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+		"com.apple.notifyd.matching" = {
+			port = 0x44503
+			active = 1
+			managed = 1
+			reset = 0
+			hide = 0
+			watching = 0
+		}
+	}
+
+	spawn type = interactive (4)
+	jetsam priority = 150
+	jetsam memory limit (active, soft) = 398 MB
+	jetsam memory limit (inactive, hard) = 45 MB
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	exponential throttling grace limit = 10
+	job state = running
+	probabilistic guard malloc policy = {
+		activation rate = 1/1000
+		sample rate = 1/0
+	}
+
+	properties = supports transactions | supports pressured exit | inferred program | system service | exponential throttling | tle system
+}
