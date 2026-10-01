@@ -1,3 +1,4 @@
+import { encodeReply, validateReply } from "../../shared/chat-reply.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
@@ -1279,6 +1280,27 @@ export const chatWebSocket = {
       return;
     }
 
+    // Reject invalid references before creating entries, changing model or resolving approval.
+    if (parsed.type === "message" && parsed.replyTo != null) {
+      const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
+      const reply = validateReply(parsed.replyTo);
+      const expectedProvider = activeSessions.get(sessionId)?.providerId
+        ?? chatService.getSession(sessionId)?.providerId ?? getSessionProvider(sessionId) ?? providerRegistry.getDefault().id;
+      if (!reply || reply.sessionId !== sessionId || reply.providerId !== expectedProvider) {
+        ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: reply, message: "Invalid reply reference for this session" }));
+        return;
+      }
+      const slash = typeof parsed.content === "string" ? parsed.content.trimStart().match(/^\/(\S+)/) : null;
+      if (slash) {
+        const { isPpmHandled } = await import("../../services/slash-discovery/index.ts");
+        if (isPpmHandled(slash[1]!)) {
+          ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: reply, message: "Cancel reply before running a built-in command" }));
+          return;
+        }
+      }
+      parsed.replyTo = reply;
+    }
+
     let entry = activeSessions.get(sessionId);
 
     // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
@@ -1408,6 +1430,7 @@ export const chatWebSocket = {
       // run. Rewritten before the echo for the same reason as the alias above:
       // other devices and the stored transcript must show what actually ran.
       await rewriteProviderSkillSigil(parsed, providerId, sessionId);
+      parsed.content = encodeReply(parsed.content, parsed.replyTo);
 
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected

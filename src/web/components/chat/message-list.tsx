@@ -1,3 +1,5 @@
+import type { ReplyReference } from "../../../shared/chat-reply";
+import { createReplyReference, resolveReplyMessage } from "./message-reply-reference";
 import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect, memo } from "react";
 import { userMessageOrdinals } from "@/lib/message-ordinals";
 import { useStickToBottom } from "use-stick-to-bottom";
@@ -40,6 +42,7 @@ import type { Question } from "./question-card";
 import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 
 interface MessageListProps {
+  onReply?: (reply: ReplyReference) => void;
   messages: ChatMessage[];
   messagesLoading?: boolean;
   /** Keep the current (stale) transcript on screen while loading instead of the
@@ -161,6 +164,7 @@ export function MessageList({
   historyPredecessorId = null,
   onDismissMessage,
   onClearErrors,
+  onReply,
 }: MessageListProps) {
   // Non-virtualized transcript: every message lives in the real DOM. Content that
   // grows BELOW the viewport (streaming) no longer shifts the user's scroll — that's
@@ -291,6 +295,29 @@ export function MessageList({
     ro.observe(el);
     return () => ro.disconnect();
   }, [scrollEl, stopScroll]);
+
+  const handleReply = useCallback((message: ChatMessage) => {
+    if (!sessionId || !providerId) return;
+    const reply = createReplyReference(message, sessionId, providerId);
+    if (reply) onReply?.(reply);
+  }, [sessionId, providerId, onReply]);
+  const replyAvailable = useCallback((reply: ReplyReference) => !!resolveReplyMessage(filtered, reply, sessionId, providerId), [filtered, sessionId, providerId]);
+  const replyFlashCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => replyFlashCleanup.current?.(), []);
+  const handleJumpToReply = useCallback((reply: ReplyReference) => {
+    const message = resolveReplyMessage(filtered, reply, sessionId, providerId);
+    if (!message || !scrollEl) return;
+    const index = filtered.indexOf(message);
+    const target = scrollEl.querySelector<HTMLElement>(`[data-msg-index="${index}"]`);
+    if (!target) return;
+    stopScroll();
+    replyFlashCleanup.current?.();
+    scrollEl.scrollTo({ top: scrollEl.scrollTop + target.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - 24, behavior: "smooth" });
+    target.classList.add("bg-primary/10", "ring-1", "ring-primary/40");
+    const clear = () => target.classList.remove("bg-primary/10", "ring-1", "ring-primary/40");
+    const timer = setTimeout(clear, 1400);
+    replyFlashCleanup.current = () => { clearTimeout(timer); clear(); };
+  }, [filtered, sessionId, providerId, scrollEl, stopScroll]);
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
@@ -471,11 +498,15 @@ export function MessageList({
             // Copy gathers the whole turn: walk back over consecutive assistant
             // messages and join their visible text (tool-only segments contribute nothing).
             let turnCopyText: string | undefined;
+            let turnReplyMessage: ChatMessage | undefined;
             if (isLastAssistantInTurn) {
               const parts: string[] = [];
               for (let j = globalIdx; j >= 0 && filtered[j]!.role === "assistant"; j--) {
                 const t = assistantMessageText(filtered[j]!);
-                if (t) parts.unshift(t);
+                if (t) {
+                  parts.unshift(t);
+                  turnReplyMessage ??= filtered[j]!;
+                }
               }
               turnCopyText = parts.join("\n\n");
             }
@@ -492,6 +523,13 @@ export function MessageList({
                 <RenderErrorBoundary fallbackContent={msg.content}>
                   <MessageBubble
                     message={msg}
+                    onReply={onReply && sessionId && providerId
+                      ? msg.role === "assistant"
+                        ? turnReplyMessage ? () => handleReply(turnReplyMessage!) : undefined
+                        : handleReply
+                      : undefined}
+                    onJumpToReply={handleJumpToReply}
+                    replyAvailable={replyAvailable}
                     isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                     isLastAssistantInTurn={isLastAssistantInTurn}
                     turnCopyText={turnCopyText}
@@ -544,7 +582,10 @@ function assistantMessageText(msg: ChatMessage): string {
     : msg.content;
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, turnChanges, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, turnChanges, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput, onReply, onJumpToReply, replyAvailable }: {
+  onReply?: (message: ChatMessage) => void;
+  onJumpToReply?: (reply: ReplyReference) => void;
+  replyAvailable?: (reply: ReplyReference) => boolean;
   message: ChatMessage; isStreaming: boolean; isLastAssistantInTurn?: boolean; turnCopyText?: string; projectName?: string;
   /** Files this turn changed — drives the action-bar change pill. */
   turnChanges?: TurnFileChange[];
@@ -570,6 +611,9 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
         messageId={message.id}
         timestamp={message.timestamp}
         projectName={projectName}
+        onReply={onReply && createReplyReference(message, sessionId ?? "", providerId ?? "") ? () => onReply(message) : undefined}
+        onJumpToReply={onJumpToReply}
+        replyAvailable={replyAvailable}
         onFork={handleFork}
         onEdit={handleEdit}
         isEditing={isEditing}
@@ -619,6 +663,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
       {/* Action bar: only on the last assistant message of the turn, after streaming ends */}
       {!isStreaming && isLastAssistantInTurn && (
         <TurnChangeRollup
+          onReply={onReply ? () => onReply(message) : undefined}
           timestamp={message.timestamp}
           content={turnCopyText ?? assistantMessageText(message)}
           changes={turnChanges}

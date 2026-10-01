@@ -8,12 +8,14 @@
 import { useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
-import { MessageActionBar } from "./message-action-bar";
+import { RotateCcw } from "@/lib/icons";
+import { ActionButton, MessageActionBar } from "./message-action-bar";
 import { TurnChangePill, changeTotals } from "./turn-change-pill";
 import { TurnChangeTray } from "./turn-change-tray";
 import { TurnChangeSheet } from "./turn-change-sheet";
 
-export function TurnChangeRollup({ timestamp, content, changes, onJumpToEdit }: {
+export function TurnChangeRollup({ timestamp, content, changes, onJumpToEdit, onReply }: {
+  onReply?: () => void;
   timestamp: string;
   content: string;
   changes?: TurnFileChange[];
@@ -36,6 +38,7 @@ export function TurnChangeRollup({ timestamp, content, changes, onJumpToEdit }: 
       content={content}
       className="-mt-1.5"
     >
+      {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
       {changes && changes.length > 0 && (
         <TurnChangePill
           ref={pillRef}

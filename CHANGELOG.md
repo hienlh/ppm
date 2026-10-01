@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Reply to a user or AI chat message.** Select Reply to quote a completed message while keeping your draft and attachments. Quotes reach the AI on normal and mid-turn sends, survive history reloads, and remain readable if their source is unavailable. Reply drafts recover after reload or rejected sends; quote cards jump to a uniquely identified original message.
+
 ## [0.23.12] - 2026-10-02
 
 ### Added

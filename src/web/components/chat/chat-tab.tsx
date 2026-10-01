@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Loader2, Upload, X } from "@/lib/icons";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
+import { decodeReply, encodeReply, type ReplyReference } from "../../../shared/chat-reply";
 import { selectInlineImages } from "@/lib/image-resize-limits";
 import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
 import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
@@ -101,6 +102,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
    * metadata through the effect below, which is what makes the fix survive a
    * reload rather than only lasting the turn.
    */
+  const migrateComposerRef = useRef<(oldSessionId: string, newSessionId: string) => void>(() => {});
   const handleSessionMigrated = useCallback((newSessionId: string) => {
     // Read from the metadata ref, not the `projectName` const below — this
     // callback is created before that binding exists in this function body.
@@ -108,6 +110,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     if (sessionIdRef.current && pn) {
       useSessionListStore.getState().replaceSessionId(projectRefForName(pn), sessionIdRef.current, newSessionId);
     }
+    if (sessionIdRef.current) migrateComposerRef.current(sessionIdRef.current, newSessionId);
     setSessionId(newSessionId);
   }, []);
   const [providerOverride, setProviderId] = useState<string>(
@@ -171,6 +174,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     permissionMode?: string;
     images?: Array<{ data: string; mediaType: string }>;
     imagePaths?: string[];
+    replyTo?: ReplyReference | null;
   } | null>(null);
   const pendingSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -252,6 +256,51 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Draft auto-save/restore
   const { draft, draftLoading, saveDraft, clearDraft, cancelPendingSave, moveDraft } = useDraft(projectName, sessionId, tabId);
+
+  const replyOwner = JSON.stringify([projectName, sessionId, providerId]);
+  // A fork opens with its message as stored. As with an edit, the body goes in the composer
+  // (`forkDraft`) and the quote becomes a reply in this conversation, which the fork copied the
+  // quoted message into.
+  const [replySelection, setReplySelection] = useState<{ owner: string; reply: ReplyReference | null } | null>(() => {
+    const forkedReply = decodeReply((metadata?.pendingMessage as string | undefined) ?? "").replyTo;
+    return forkedReply && sessionId ? { owner: replyOwner, reply: { ...forkedReply, sessionId } } : null;
+  });
+  const heldReply = replySelection?.owner === replyOwner ? replySelection.reply : draft?.replyTo ?? null;
+  // Only a reply into this conversation is one. The server refuses any other on every send,
+  // and each refusal hands it back to this composer, so a reply that reached a draft from
+  // another conversation would otherwise never let the text go out.
+  const replyTo = heldReply?.sessionId === sessionId && heldReply.providerId === providerId ? heldReply : null;
+  const replyToRef = useRef(replyTo);
+  replyToRef.current = replyTo;
+  const [replyChangeSignal, setReplyChangeSignal] = useState(0);
+  const composerDraftRef = useRef<{ owner: string; text: string; observed?: boolean; attachments?: DraftAttachment[] }>({ owner: replyOwner, text: "" });
+  const rejectedSendRef = useRef<(event: { content: string; replyTo?: ReplyReference | null; message: string }) => void>(() => {});
+  const replyTransportOptions = useMemo(() => ({
+    onMessageRejected: (event: { content: string; replyTo?: ReplyReference | null; message: string }) => rejectedSendRef.current(event),
+  }), []);
+  const selectReply = useCallback((reply: ReplyReference | null) => {
+    replyToRef.current = reply;
+    setReplySelection({ owner: replyOwner, reply });
+    setReplyChangeSignal((signal) => signal + 1);
+  }, [replyOwner]);
+  const handleReply = useCallback((reply: ReplyReference) => selectReply(reply), [selectReply]);
+  const handleCancelReply = useCallback(() => selectReply(null), [selectReply]);
+  migrateComposerRef.current = (oldSessionId, newSessionId) => {
+    if (oldSessionId === newSessionId) return;
+    const selected = replyToRef.current;
+    const migrated = selected?.sessionId === oldSessionId ? { ...selected, sessionId: newSessionId } : selected;
+    const nextOwner = JSON.stringify([projectName, newSessionId, providerId]);
+    const current = composerDraftRef.current;
+    if (current.owner === replyOwner && (current.text || current.attachments?.length || migrated)) {
+      saveDraft(current.observed ? current.text : draft?.content ?? current.text, current.attachments ?? draft?.attachments, migrated);
+      cancelPendingSave();
+    }
+    moveDraft(newSessionId);
+    replyToRef.current = migrated;
+    setReplySelection({ owner: nextOwner, reply: migrated });
+    composerDraftRef.current = { ...current, owner: nextOwner };
+  };
+
 
   // Persist sessionId, providerId, and permissionMode to tab metadata.
   //
@@ -419,7 +468,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     bashPartialOutput,
     backgroundShells,
     killBackgroundShell,
-  } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt);
+  } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
 
   // `model`/`effort`/`thinking` are what change when a pick does; the picks sent are read
   // through `turnSettings`, which leaves out whatever the user has not chosen.
@@ -513,7 +562,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, [sessionTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pending fork message — show in input for user to edit, not auto-send
-  const [forkDraft, setForkDraft] = useState<string | undefined>(metadata?.pendingMessage as string | undefined);
+  const [forkDraft, setForkDraft] = useState<string | undefined>(() => {
+    const pending = metadata?.pendingMessage as string | undefined;
+    return pending === undefined ? undefined : decodeReply(pending).content;
+  });
 
   // "Build in new chat" hands a design screenshot over as a data URL on the tab's own
   // metadata (never a live event: there is no mounted composer yet for a brand new tab). It
@@ -553,7 +605,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
    * rather than the bare string: the text is often identical to the draft the
    * composer was prefilled with, and a value that does not change applies nothing.
    */
-  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
+  const [restore, setRestore] = useState<{ text: string; nonce: number; replace?: boolean } | null>(null);
 
   /**
    * Give an unsent message back to the user.
@@ -576,9 +628,25 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     firstSendContent.current = null;
     setFirstSendPreview(null);
     setFirstSendPending(false);
-    setRestore({ text: content, nonce: Date.now() });
+    const decoded = decodeReply(content);
+    replyToRef.current = decoded.replyTo;
+    setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
+    saveDraft(decoded.content, undefined, decoded.replyTo);
+    setRestore({ text: decoded.content, nonce: Date.now() });
     toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
-  }, []);
+  }, [replyOwner, saveDraft]);
+
+  rejectedSendRef.current = (event) => {
+    const current = composerDraftRef.current;
+    const unsent = encodeReply(event.content, event.replyTo);
+    if ((current.owner !== replyOwner || (!current.text.trim() && !current.attachments?.length && !draft?.content.trim())) && !replyToRef.current) {
+      restoreUnsentMessage(unsent, event.message);
+    } else {
+      toast.error("Message not sent", { description: event.message, action: {
+        label: "Restore", onClick: () => restoreUnsentMessage(unsent, event.message),
+      } });
+    }
+  };
 
   /**
    * Drop a pending send that never got its socket; hand the text back.
@@ -602,7 +670,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     }
     pendingSendRef.current = null;
     clearDraft(pending.draftId);
-    restoreUnsentMessage(pending.content, reason);
+    restoreUnsentMessage(encodeReply(pending.content, pending.replyTo), reason);
   }, [restoreUnsentMessage, clearDraft]);
 
   /**
@@ -622,10 +690,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // Flush pending message once WS connects (replaces unreliable setTimeout)
   useEffect(() => {
     if (isConnected && pendingSendRef.current) {
-      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths } = pendingSendRef.current;
+      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths, replyTo: pendingReply } = pendingSendRef.current;
       pendingSendRef.current = null;
       if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
-      sendMessage(content, { permissionMode: pm, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
+      sendMessage(content, { permissionMode: pm, replyTo: pendingReply ?? undefined, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
       firstSendLocked.current = false;
       firstSendContent.current = null;
       setFirstSendPreview(null);
@@ -703,6 +771,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     // connect of the one picked here: `isConnected` is session-scoped, so the flush
     // would fire on the selected conversation and post it there.
     abandonPendingSend("You switched to another chat before it connected.");
+    setRestore(null);
+    setForkDraft(undefined);
+    setEditFork(null);
+    setClearInputSignal((signal) => signal + 1);
     setSessionId(session.id);
     setProviderId(session.providerId);
     if (tabId && !designSlug) updateTab(tabId, { title: session.title || "Chat" });
@@ -719,8 +791,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
         { messageId },
       );
+      // Titled by its body: the message as stored ends in its quote when it was a reply.
+      const body = decodeReply(userMessage).content;
       useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
-        id: forked.id, providerId, title: userMessage.slice(0, 50), createdAt: new Date().toISOString(),
+        id: forked.id, providerId, title: body.slice(0, 50), createdAt: new Date().toISOString(),
         // A fork keeps its design, so a design tab's history list still shows it.
         ...(designSlug && { designSlug }),
       });
@@ -732,7 +806,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       }
       useTabStore.getState().openTab({
         type: "chat",
-        title: `Fork: ${userMessage.slice(0, 30)}`,
+        title: `Fork: ${body.slice(0, 30)}`,
         metadata: { projectName, sessionId: forked.id, providerId, pendingMessage: userMessage },
         projectId: projectName || null,
         closable: true,
@@ -753,22 +827,31 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   /** Edit a user message: prefill input + arm same-tab fork on next send */
   const handleEdit = useCallback((userMessage: string, messageId?: string, ownMsgId?: string) => {
-    setForkDraft(userMessage);
+    const decoded = decodeReply(userMessage);
+    // The edited message is in this conversation, and so is what it quotes — including a
+    // message copied in when this conversation was forked, whose quote names the one it came from.
+    const reply = decoded.replyTo && sessionId ? { ...decoded.replyTo, sessionId } : decoded.replyTo;
+    setForkDraft(decoded.content);
+    setRestore({ text: decoded.content, nonce: Date.now(), replace: true });
+    replyToRef.current = reply;
+    setReplySelection({ owner: replyOwner, reply });
     setEditFork({ anchorMsgId: messageId, ownMsgId });
-  }, []);
+  }, [replyOwner, sessionId]);
 
   /** Abandon an armed edit: disarm the fork, drop the prefill, clear the input. */
   const handleCancelEdit = useCallback(() => {
     setEditFork(null);
     setForkDraft(undefined);
+    replyToRef.current = null;
+    setReplySelection({ owner: replyOwner, reply: null });
     setEditForking(false);
     clearDraft();
     setClearInputSignal((n) => n + 1);
-  }, [clearDraft]);
+  }, [clearDraft, replyOwner]);
 
   /** Fork at the edit anchor, swap THIS tab to the forked session, queue the edited message */
   const handleEditSend = useCallback(
-    async (fullContent: string, anchorMsgId?: string) => {
+    async (fullContent: string, anchorMsgId?: string, reply?: ReplyReference | null) => {
       if (!fullContent.trim() || !sessionId || !projectName) return;
       // Surface a working indicator immediately — the fork API and the forked
       // session's codex connect can take ~10s; don't await in silence.
@@ -782,7 +865,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) },
         );
         useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
-          id: forked.id, providerId, title: fullContent.slice(0, 50), createdAt: new Date().toISOString(),
+          id: forked.id, providerId, title: decodeReply(fullContent).content.slice(0, 50), createdAt: new Date().toISOString(),
           ...(designSlug && { designSlug }),
         });
         // The tree gained a sibling. Swapping sessionId below refetches
@@ -790,8 +873,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         // counts update without any cache to invalidate.
         // Queue the edited message — flushed by the connect effect once the WS
         // reconnects to the forked session. The draft was composed under the
-        // source session, so that is the one to clear when it goes.
-        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode });
+        // source session, so that is the one to clear when it goes. The edit continues in the
+        // fork, so its reply is the fork's — sent beside the text, where the server checks it,
+        // and handed back as the fork's if the queued message is dropped before it goes.
+        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode, replyTo: reply && { ...reply, sessionId: forked.id } });
         moveDraft(forked.id);
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
@@ -808,10 +893,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             : msg,
         });
         // The edited text was cleared from the composer on Enter — put it back.
-        setRestore({ text: fullContent, nonce: Date.now() });
+        restoreUnsentMessage(encodeReply(fullContent, reply), msg);
       }
     },
-    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft, designSlug],
+    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft, designSlug, restoreUnsentMessage],
   );
 
   /** Swap THIS tab to another version's session (version switcher prev/next) */
@@ -820,6 +905,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       if (!targetSessionId || targetSessionId === sessionId) return;
       // Same as handleSelectSession: a queued edit must not land in the version switched to.
       abandonPendingSend("You switched to another version before it connected.");
+      setRestore(null);
+      setForkDraft(undefined);
+      setEditFork(null);
+      setClearInputSignal((signal) => signal + 1);
       setStaleSwap(true);
       if (tabId) patchTabMetadata(tabId, { sessionId: targetSessionId });
       setSessionId(targetSessionId);
@@ -876,7 +965,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   );
 
   const handleSend = useCallback(
-    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority) => {
+    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null) => {
       const images = selectInlineImages(attachments);
       const fullContent = buildMessageWithAttachments(content, attachments, images);
       // Providers that take a file rather than a payload (codex) read these instead.
@@ -886,7 +975,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       if (!sessionId) {
         if (firstSendLocked.current) return;
         firstSendLocked.current = true;
-        firstSendContent.current = fullContent;
+        firstSendContent.current = encodeReply(fullContent, selectedReply);
         const attempt = ++firstSendAttempt.current;
         setFirstSendPending(true);
         setFirstSendPreview({ content: fullContent, timestamp: new Date().toISOString() });
@@ -944,7 +1033,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           setProviderId(session.providerId);
           // Queue message — will be sent by effect when WS reports isConnected. It was
           // composed under the new-tab draft, which is what to clear once it goes.
-          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode: selectedPermission, images, imagePaths });
+          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode: selectedPermission, images, imagePaths, replyTo: selectedReply });
           return;
         } catch (e) {
           if (attempt !== firstSendAttempt.current) return;
@@ -952,11 +1041,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           const msg = (e as Error)?.name === "TimeoutError"
             ? "The server did not answer in time."
             : `Could not start the chat: ${(e as Error)?.message || "unknown error"}.`;
-          restoreUnsentMessage(fullContent, msg);
+          restoreUnsentMessage(encodeReply(fullContent, selectedReply), msg);
           return;
         }
       }
-      sendMessage(fullContent, { permissionMode, priority, ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
+      sendMessage(fullContent, { permissionMode, priority, replyTo: selectedReply ?? undefined, ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
@@ -979,6 +1068,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
    */
   const handleInputSend = useCallback(
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
+      const selectedReply = replyToRef.current;
       // Client-handled built-ins act on the UI, so they must not reach the SDK.
       const slash = content.trim().match(/^\/(\S+)(?:\s+([\s\S]+))?$/);
       if (slash) {
@@ -987,6 +1077,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         );
         // This local action must also work before the lazily loaded picker
         // catalog arrives (for example, paste /clear and immediately submit).
+        if (selectedReply && (item || slash[1] === "clear" || slashItemsRef.current.some((i) => i.handler === "ppm" && i.name === slash[1]))) {
+          toast.error("Cancel reply before running this command");
+          return false;
+        }
         if (slash[1] === "clear" || item?.name === "clear") {
           clearDraft();
           handleNewSession(slash[2]?.trim(), sessionId ?? undefined);
@@ -997,17 +1091,20 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       setForkDraft(undefined);
       // Save synchronously in this browser tab before the composer clears. A
       // recovery reload can happen before either the POST or draft debounce ends.
-      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })), selectedReply);
       cancelPendingSave();
+      replyToRef.current = null;
+      setReplySelection({ owner: replyOwner, reply: null });
+      composerDraftRef.current = { owner: replyOwner, text: "", observed: true };
       if (editFork && sessionId && projectName) {
         const anchor = editFork.anchorMsgId;
         setEditFork(null);
-        void handleEditSend(buildMessageWithAttachments(content, attachments), anchor);
+        void handleEditSend(buildMessageWithAttachments(content, attachments), anchor, selectedReply);
         return;
       }
-      void handleSend(content, attachments, priority);
+      void handleSend(content, attachments, priority, selectedReply);
     },
-    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
+    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession, replyOwner],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -1026,10 +1123,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   /** Draft auto-save callback — called by MessageInput on content change */
   const handleContentChange = useCallback(
     (content: string, attachments?: DraftAttachment[]) => {
-      saveDraft(content, attachments);
+      composerDraftRef.current = { owner: replyOwner, text: content, observed: true, attachments };
+      saveDraft(content, attachments, replyToRef.current);
       touchPrewarm();
     },
-    [saveDraft, touchPrewarm],
+    [saveDraft, touchPrewarm, replyOwner],
   );
 
   /** Stable callback for slash items loaded — prevents MessageInput memo break */
@@ -1218,6 +1316,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
         onEdit={!isStreaming ? handleEdit : undefined}
+        onReply={sessionId && !draftLoading && !editForking ? handleReply : undefined}
         editingMsgId={editFork?.ownMsgId}
         sessionId={sessionId ?? undefined}
         providerId={providerId}
@@ -1320,11 +1419,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             configurationPending={preparation.pending}
             tabId={tabId}
             onSend={handleInputSend}
+            replyTo={replyTo}
+            onCancelReply={handleCancelReply}
+            replyChangeSignal={replyChangeSignal}
             disabled={firstSendPending}
             isStreaming={isStreaming}
             onCancel={cancelStreaming}
             autoFocus={!(metadata?.sessionId) || !!forkDraft}
-            initialValue={forkDraft ?? draft?.content}
+            initialValue={forkDraft ?? (!firstSendPending && !editForking ? draft?.content : undefined)}
+            initialAttachments={!firstSendPending && !editForking ? draft?.attachments : undefined}
             clearSignal={clearInputSignal}
             restore={restore}
             projectName={projectName}

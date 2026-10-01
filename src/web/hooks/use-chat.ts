@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
+import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
@@ -62,6 +63,10 @@ export interface TurnSettings {
   model?: string;
   effort?: string;
   thinking?: boolean;
+}
+
+export interface UseChatOptions {
+  onMessageRejected?: (rejected: { content: string; replyTo: ReplyReference | null; message: string }) => void;
 }
 
 interface UseChatReturn {
@@ -136,7 +141,7 @@ interface UseChatReturn {
   backgroundShells: BackgroundShell[];
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
-  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] }) => void;
+  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -170,7 +175,12 @@ export function useChat(
    */
   onSessionMigrated?: (newSessionId: string) => void,
   onAttempt?: (event: ChatAttemptEvent) => void,
+  options?: UseChatOptions,
 ): UseChatReturn {
+  const rejectionObserverRef = useRef(options?.onMessageRejected);
+  rejectionObserverRef.current = options?.onMessageRejected;
+  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; wasIdle: boolean; streamingContent: string; streamingEvents: ChatEvent[]; finalizedId?: string; originalAssistantId?: string; sentAt: number }>>([]);
+  const sendOrdinalRef = useRef(0);
   const attemptObserverRef = useRef(onAttempt);
   attemptObserverRef.current = onAttempt;
   const attemptRef = useRef<ChatAttemptLifecycle | null>(null);
@@ -911,6 +921,33 @@ export function useChat(
     // on the global bus (`use-global-events.ts`) instead of here — a chat socket is
     // not guaranteed to exist since chat tabs mount lazily.
 
+    if (data.type === "message_rejected") {
+      const rejected = data;
+      const index = typeof rejected.clientMessageId === "string"
+        ? pendingSendsRef.current.findIndex((pending) => pending.id === rejected.clientMessageId)
+        : pendingSendsRef.current.findLastIndex((pending) => pending.content === rejected.content
+          && JSON.stringify(pending.replyTo ?? null) === JSON.stringify(rejected.replyTo ?? null));
+      if (index !== -1) {
+        const [pending] = pendingSendsRef.current.splice(index, 1);
+        setMessages((prev) => prev.filter((m) => m.id !== pending!.id).map((m) =>
+          m.id === pending!.finalizedId && pending!.originalAssistantId ? { ...m, id: pending!.originalAssistantId } : m));
+        if (pending!.wasIdle && index === pendingSendsRef.current.length) {
+          attemptRef.current?.fail();
+          setPhase("idle");
+          phaseRef.current = "idle";
+        }
+        if (!pending!.wasIdle && phaseRef.current !== "idle" && !turnFinalizedRef.current) {
+          streamingContentRef.current = pending!.streamingContent + streamingContentRef.current;
+          streamingEventsRef.current = [...pending!.streamingEvents, ...streamingEventsRef.current];
+          if (streamingContentRef.current || streamingEventsRef.current.length) syncMessages();
+        }
+        const decoded = decodeReply(pending!.encoded);
+        rejectionObserverRef.current?.({ ...decoded, message: rejected.message });
+      }
+      if (!rejectionObserverRef.current) toast.error(rejected.message || "Message could not be sent");
+      return;
+    }
+
     // A user message sent from another device/tab of this session — render its
     // bubble. The sender never receives this echo (server excludes the sender),
     // so no dedupe against the optimistic append is needed.
@@ -1155,7 +1192,7 @@ export function useChat(
 
     // Route content events through processStreamEvent
     processStreamEvent(data);
-  }, [processStreamEvent]);
+  }, [processStreamEvent, syncMessages]);
   handleMessageRef.current = handleMessage;
 
   // The provider rides along because the server has no other way to learn it for a
@@ -1209,6 +1246,7 @@ export function useChat(
       setLiveAccount(null);
     }
     prevSessionIdRef.current = sessionId ?? null;
+    pendingSendsRef.current = [];
 
     setPhase("idle");
     phaseRef.current = "idle";
@@ -1355,16 +1393,19 @@ export function useChat(
   }), []);
 
   const sendMessage = useCallback(
-    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] }) => {
+    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => {
       // An attachment-only message is legitimate now that images travel with it: the
       // caller may have nothing to say beyond the picture.
       if (!content.trim() && !opts?.images?.length) return;
+      const encodedContent = encodeReply(content, opts?.replyTo);
       historyActivityRef.current++;
 
       const isFollowUp = phaseRef.current !== "idle";
       if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
       turnFinalizedRef.current = false;
 
+      const finalizedId = `final-${Date.now()}-${sendOrdinalRef.current + 1}`;
+      const originalAssistant = messagesRef.current.at(-1);
       if (isFollowUp) {
         // Cancel pending throttled sync before finalizing
         if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
@@ -1376,20 +1417,32 @@ export function useChat(
           if (last?.role === "assistant") {
             return [
               ...prev.slice(0, -1),
-              { ...last, id: `final-${Date.now()}`, content: finalContent || last.content, events: finalEvents.length > 0 ? finalEvents : last.events },
+              { ...last, id: finalizedId, content: finalContent || last.content, events: finalEvents.length > 0 ? finalEvents : last.events },
             ];
           }
           return prev;
         });
       }
 
+      const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}`;
+      pendingSendsRef.current = pendingSendsRef.current.filter((pending) => Date.now() - pending.sentAt < 60_000);
+      if (opts?.replyTo) pendingSendsRef.current.push({
+        id: optimisticId, content, encoded: encodedContent, replyTo: opts.replyTo, sentAt: Date.now(),
+        wasIdle: !isFollowUp, streamingContent: streamingContentRef.current,
+        streamingEvents: [...streamingEventsRef.current],
+        finalizedId: isFollowUp ? finalizedId : undefined,
+        originalAssistantId: originalAssistant?.role === "assistant" ? originalAssistant.id : undefined,
+      });
+      // Keep only recent unacknowledged sends; rejection is an immediate response.
+      if (pendingSendsRef.current.length > 20) pendingSendsRef.current.shift();
+
       // Add user message
       setMessages((prev) => [
         ...prev,
         {
-          id: `user-${Date.now()}`,
+          id: optimisticId,
           role: "user" as const,
-          content,
+          content: encodedContent,
           timestamp: new Date().toISOString(),
         },
       ]);
@@ -1410,11 +1463,13 @@ export function useChat(
 
       send(JSON.stringify({
         type: "message",
+        clientMessageId: optimisticId,
         content,
         permissionMode: opts?.permissionMode,
         priority: opts?.priority,
         images: opts?.images,
         imagePaths: opts?.imagePaths,
+        replyTo: opts?.replyTo,
         ...turnSettings(),
       }));
     },

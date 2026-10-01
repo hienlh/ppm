@@ -1,3 +1,4 @@
+import type { ReplyReference } from "../shared/chat-reply.ts";
 /** Standard API response envelope — backend wraps all responses in this */
 export interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -23,7 +24,7 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
+  | { type: "message"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
   /** Uploaded paths for the same images, for providers that take a file not a payload. */
   imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean }
   | { type: "cancel" }
@@ -75,6 +76,7 @@ export type ChatWsServerMessage =
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
   | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean }
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }
+  | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; message: string }
   | { type: "user_message"; content: string; imageCount?: number; timestamp?: string }
   | { type: "title_updated"; title: string }
   | { type: "compact_status"; status: "compacting" | "done" }

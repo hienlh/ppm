@@ -588,3 +588,42 @@ type ChatWsClientMessage =
 ```
 
 Images are passed to provider's message context and included in tool input/output.
+
+
+## Reply to a chat message
+
+Standard chat can reply to completed user or assistant text. The composer retains its
+text and attachments while showing a cancellable quote preview. Thinking, tool output
+and injected context are excluded. A quote has a 12,000 Unicode code-point limit with
+visible truncation. Group and teammate chat do not expose Reply.
+
+`src/shared/chat-reply.ts` defines `ReplyReference` and a versioned trailing prompt
+block. The WebSocket carries raw body plus `replyTo`; the server validates its shape
+and current session/provider, rewrites skills on the raw body, then encodes the quote
+before dispatch through either `sendMessage` or `pushMessage`. The quote is ordinary
+user-supplied historical data, never a system/developer instruction. A built-in PPM
+command with Reply selected is rejected until Reply is cancelled. Every reply the composer
+makes travels as `replyTo`, an edit's included; a block typed or pasted into the text is not
+one, and goes through unchecked. The composer ignores a reply naming another session or
+provider than the tab's, which the server would refuse on every send.
+
+Native provider transcripts preserve that block. The UI decodes it before parsing
+attachments and system tags; title and search use the new body. Drafts use the same
+codec in their existing content column and browser storage, without a schema migration.
+The draft body retains its existing 50K-character limit; its validated quote is preserved
+separately from that limit. Rejection events include a `clientMessageId` to recover the
+right optimistic send even when two inputs are identical.
+
+Navigation requires a matching provider/session and an unambiguous source: native SDK
+UUID with matching quote, or message ID/timestamp/quote, then unique timestamp/quote
+fallback. The snapshot stays visible when history has compacted, IDs changed or the
+source is not loaded. Editing into a fork, or forking into a new tab, carries the snapshot
+over as the fork's own reply; recalling a message with the arrow keys restores just the new
+body.
+
+Validation includes native transcript fixtures for Claude/Codex/Cursor, actual WS
+send/push/echo/replay, mounted composer tests, and `tests/e2e/chat-reply-e2e.mjs`.
+That browser test builds into a temporary output directory and serves the production
+bundle alongside a recording mock provider on an isolated `PPM_HOME` and port. Set
+`PPM_PLAYWRIGHT_MODULE` to an installed Playwright `index.mjs` when it is not a local
+dependency, and optionally `PPM_PLAYWRIGHT_EXECUTABLE` to a Chromium executable.
