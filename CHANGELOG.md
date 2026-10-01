@@ -1,14 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.11] - 2026-10-01
 
 ### Added
-- Settings → Design: your own instructions for every design chat, with `/` to name installed skills (used by Claude and Codex) and an install suggestion when no design skill is present. A gear in the sidebar's Designs header opens it.
-- Design mode: before the first build the AI asks a few short questions when the request leaves key things open, including how many variants to make.
-- Design variants: up to five alternative directions per design, and a Variant switcher on the canvas; keep or drop one by asking in the design chat (the dropped ones stay in Version history).
-- Design mode: "Set up design system" builds a UI kit (`../systems/<app>/kit/`) from the app's own compiled CSS, fonts and icons — or, for a CSS-in-JS stack, from its theme sources — so designs reproduce the real app instead of just its palette.
-- Design mode: "Build in new chat" replaces "Hand off to code" — one click opens a new chat with the brief and a screenshot of the design already attached.
-- Design systems per app: Settings → Design's "Apps in this project" declares one design system per app (a monorepo's separate frontends, or a mobile app) — each with its own showcase page, shown in the sidebar's "Design systems" group with a stale reminder once its real source moves on. The first design for an app with no system sets it up automatically, in the same chat, before building what you asked for — nothing to set up by hand first.
+- Settings → Design: your own instructions for every design chat, with `/` to name installed skills; a gear in the sidebar's Designs header opens it.
+- Design mode asks a few short questions before the first build when the request leaves key things open, including how many variants to make.
+- Design variants: up to five directions per design with a Variant switcher; keep or drop one by asking in the design chat.
+- Design systems per app: the first design for an app builds its design system automatically (real CSS, fonts, icons and a component map read from the app's code), with a showcase page and a reminder when it gets outdated.
+- Settings → Design → "Apps in this project" declares each app of a multi-app project (separate frontends, a mobile app).
+- "Build in new chat" replaces "Hand off to code": one click opens a new chat with the brief and a screenshot of the design attached.
 - **The System Monitor works on macOS.** On a Mac it had the Overview and the process table and little else: Services failed with `systemctl` not found, Apps said the host lists no desktop applications, Performance had a CPU and a Memory page and no drives, interfaces, GPU or fans, most CPU rows were em dashes, and memory read **99.7% used** while Activity Monitor said about 80%. Every page now has its Mac counterpart, read from the kernel over `bun:ffi` where it can be and from one shared tool read a tick where it cannot — no root, no helper binary, nothing installed.
   - **Memory is Activity Monitor's.** Used = App Memory + Wired + Compressed from `host_statistics64`, cached files shown apart, swap from `vm.swapusage` — 27.04 GiB against 27.01 from `vm_stat` run through Activity Monitor's own formula. The old figure agreed with `top`, which counts the file cache as used.
   - **CPU**: performance and efficiency cores, per-cluster caches, the top clock from the power manager's frequency tables, threads and open files from the kernel, and the **current clock and package power** from IOReport (no root, as `macmon` reads them), with the SMC's core temperature. The GPU page gets the same: clock against its top state, power, temperature, core count and Metal version.
