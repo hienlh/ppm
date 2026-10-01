@@ -1,11 +1,11 @@
 // Run in Docker if the host segfaults: docker run --rm -v "$PWD":/app -w /app oven/bun bun test tests/unit/web/tool-card-window-store-rerender.test.tsx
 //
-// H4: every ToolCard calls useOpenAgentSession() unconditionally (Bash/Read cards too, not
+// Every ToolCard calls useOpenAgentSession() unconditionally (Bash/Read cards too, not
 // just Agent/Task), and that hook used to subscribe to the floating-window store's `windows`/
 // `bounds` — so dragging any window re-rendered every mounted tool card, in every chat tab.
 // `Profiler.onRender` only fires for a subtree that actually committed, so it is the direct
 // way to prove a store mutation causes zero re-renders rather than reasoning about selectors.
-import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Profiler, createElement } from "react";
 import { installDom, uninstallDom, mount, type Mounted } from "../../helpers/react-dom";
 import type { ChatEvent } from "../../../src/types/chat";
@@ -19,12 +19,19 @@ const { useWindowStore } = await import("../../../src/web/components/floating-wi
 const READ_TOOL: ChatEvent = { type: "tool_use", tool: "Read", input: { file_path: "/a.ts" }, toolUseId: "t1" };
 
 let view: Mounted | null = null;
+// The DOM and the window store are shared by every file in the run, so a phone-width
+// viewport or a leftover window from an earlier file would decide what a tap opens here.
+beforeEach(() => {
+  Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+  useWindowStore.setState({ windows: {} });
+});
 afterEach(async () => {
   await view?.unmount();
   view = null;
+  useWindowStore.setState({ windows: {} });
 });
 
-describe("ToolCard — window store isolation (H4)", () => {
+describe("ToolCard — window store isolation", () => {
   it("does not re-render on a window-store mutation (a plain Bash/Read card)", async () => {
     let commits = 0;
     view = await mount(

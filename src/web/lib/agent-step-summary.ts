@@ -215,7 +215,7 @@ function capByBytes(buffer: ChatEvent[]): ChatEvent[] {
  * buffer, and anything past `MAX_RECENT_CHILDREN` (count) or `MAX_RECENT_BYTES`
  * (approximate serialized size) is dropped from the front.
  *
- * `seq` stamps the entry's `arrivalSeq` for `mergeFallbackEvents` (M6) to later
+ * `seq` stamps the entry's `arrivalSeq` for `mergeFallbackEvents` to later
  * interleave this buffer back together with the kept `children` list in the
  * order events actually arrived — omitted by direct/standalone callers that
  * have no parent-level counter to hand it a value.
@@ -239,7 +239,7 @@ export function pushRecentChild(buffer: ChatEvent[], ev: ChatEvent, seq?: number
 
 /**
  * Merge kept `children` with the bounded "other" ring buffer back into the order events
- * actually arrived in (M6): splitting live arrivals into a kept list and a ring buffer by
+ * actually arrived in: splitting live arrivals into a kept list and a ring buffer by
  * kind (nested-agent/file-mutation vs everything else) loses the interleaving between them —
  * a plain concatenation showed every edit before the reads that actually preceded it. Each
  * entry's `arrivalSeq` (stamped by `applyChildToParent`/`pushRecentChild`) says where it
@@ -263,7 +263,7 @@ export function mergeFallbackEvents(kept: ChatEvent[], recent: ChatEvent[]): Cha
  * Every routed child is stamped with the parent's monotonic `childSeq` (preserved rather
  * than reassigned when the upsert is an update-in-place, e.g. a tool_result arriving for an
  * already-kept tool_use) — the arrival order `mergeFallbackEvents` needs to interleave
- * `children` and `recentChildren` back together correctly (M6).
+ * `children` and `recentChildren` back together correctly.
  */
 export function applyChildToParent(parent: ChatEvent, childEvent: ChatEvent): ChatEvent {
   if (parent.type !== "tool_use") return parent;

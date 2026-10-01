@@ -1,5 +1,5 @@
 // Run in Docker if the host segfaults: docker run --rm -v "$PWD":/app -w /app oven/bun bun test tests/unit/web/running-agents-bar.test.tsx
-import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom";
 import { buildRunningRows, findCardLabel } from "../../../src/web/lib/running-agent-rows";
@@ -90,6 +90,12 @@ function pushActivity(subId: string, running: unknown[]): Promise<void> {
 }
 
 let view: Mounted | null = null;
+// The DOM and the window store are shared by every file in the run, so a phone-width
+// viewport or a leftover window from an earlier file would decide what a tap opens here.
+beforeEach(() => {
+  Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+  useWindowStore.setState({ windows: {} });
+});
 afterEach(async () => {
   await view?.unmount();
   view = null;

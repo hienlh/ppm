@@ -159,7 +159,7 @@ describe("agent transcript hub", () => {
   }
 
   /** A card with `count` tool_use lines in its root agent transcript — for
-   *  pagination (H1) and reload-cap (H3) tests where one line is not enough. */
+   *  pagination and reload-cap tests where one line is not enough. */
   function writeBigCard(sessionDir: string, cardId: string, agentId: string, count: number): string {
     const subagentsDir = join(sessionDir, "subagents");
     mkdirSync(subagentsDir, { recursive: true });
@@ -527,9 +527,9 @@ describe("agent transcript hub", () => {
     expect(readCalls).toBe(0); // size === offset for every file: no read issued
   });
 
-  // ── C1: cursor validation, never throws, never orphans ──
+  // ── cursor validation, never throws, never orphans ──
 
-  it("C1: a fractional/NaN/negative/huge cursor offset neither throws nor orphans the subscription", () => {
+  it("a fractional/NaN/negative/huge cursor offset neither throws nor orphans the subscription", () => {
     const sessionDir = ownClaude();
     writeCard(sessionDir, "toolu_card1");
 
@@ -545,7 +545,7 @@ describe("agent transcript hub", () => {
     }
   });
 
-  it("C1: a throwing read during a live tick degrades instead of crashing the tick", () => {
+  it("a throwing read during a live tick degrades instead of crashing the tick", () => {
     const sessionDir = ownClaude();
     const file = writeCard(sessionDir, "toolu_card1");
     const ws = makeWs();
@@ -564,9 +564,9 @@ describe("agent transcript hub", () => {
     expect(_debugHubSnapshotForTest("claude", SESSION_ID).transcriptSubs).toBe(1);
   });
 
-  // ── H1: exact per-page cursor ──
+  // ── exact per-page cursor ──
 
-  it("H1: a reconnect after only the first of several pages resumes at the next page, with no gap", () => {
+  it("a reconnect after only the first of several pages resumes at the next page, with no gap", () => {
     const sessionDir = ownClaude();
     writeBigCard(sessionDir, "toolu_big", "agentbig", 1200); // > 2 pages at 500/page
     const ws = makeWs();
@@ -577,7 +577,7 @@ describe("agent transcript hub", () => {
     expect(pages[0]!.more).toBe(true);
     const totalDelivered = pages.reduce((n, p) => n + p.events.length, 0);
     expect(totalDelivered).toBe(1200);
-    // The whole point of H1: not every page carries the SAME (final) cursor.
+    // The whole point: not every page carries the SAME (final) cursor.
     expect(pages[0]!.cursor).not.toEqual(pages.at(-1)!.cursor);
 
     // Identify a step by its toolUseId rather than its de-dupe key `k` — a
@@ -603,9 +603,9 @@ describe("agent transcript hub", () => {
     for (const id of page1Ids) expect(resumedIds.has(id)).toBe(false);
   });
 
-  // ── H2: dynamic file set ──
+  // ── dynamic file set ──
 
-  it("H2 Claude: a nested agent transcript that appears after subscribe is streamed live", () => {
+  it("Claude: a nested agent transcript that appears after subscribe is streamed live", () => {
     const sessionDir = ownClaude();
     writeCard(sessionDir, "toolu_parent", "agent1");
     const ws = makeWs();
@@ -626,7 +626,7 @@ describe("agent transcript hub", () => {
     expect(allEvents.some((e) => e.ev.type === "tool_use" && (e.ev as any).tool === "Read")).toBe(true);
   });
 
-  it("H2 Codex: a grandchild thread linked after subscribe is streamed live, re-validated as a real descendant", () => {
+  it("Codex: a grandchild thread linked after subscribe is streamed live, re-validated as a real descendant", () => {
     const ROOT = "77777777-1111-2222-3333-444444444444";
     const CHILD_A = "88888888-1111-2222-3333-444444444444";
     const GRANDCHILD_B = "99999999-1111-2222-3333-444444444444";
@@ -654,9 +654,9 @@ describe("agent transcript hub", () => {
     expect(allEvents.some((e) => e.ev.type === "tool_result" && (e.ev as any).output === "grandchild output")).toBe(true);
   });
 
-  // ── H3: hub bypasses the merger's reload-payload event cap ──
+  // ── hub bypasses the merger's reload-payload event cap ──
 
-  it("H3: a subscription streams more than 2000 events from a single agent file", () => {
+  it("a subscription streams more than 2000 events from a single agent file", () => {
     const sessionDir = ownClaude();
     writeBigCard(sessionDir, "toolu_huge", "agenthuge", 2500);
     const ws = makeWs();
@@ -665,9 +665,9 @@ describe("agent transcript hub", () => {
     expect(totalDelivered).toBe(2500); // MAX_CHILDREN_PER_AGENT (2000) does not apply to the hub
   });
 
-  // ── H5: activity subscription caps + compute-once-per-tick ──
+  // ── activity subscription caps + compute-once-per-tick ──
 
-  it("H5: caps a client at 8 activity subscriptions and rejects the 9th", () => {
+  it("caps a client at 8 activity subscriptions and rejects the 9th", () => {
     ownClaude();
     const ws = makeWs();
     for (let i = 0; i < 8; i++) {
@@ -686,7 +686,7 @@ describe("agent transcript hub", () => {
     for (let i = 0; i < 8; i++) handleAgentActivityUnsubscribe(ws, { type: "agent-activity:unsubscribe", subId: `a${i}` });
   });
 
-  it("H5: one tick computes the running list once and fans it out to every subscriber", async () => {
+  it("one tick computes the running list once and fans it out to every subscriber", async () => {
     const sessionDir = ownClaude();
     writeCard(sessionDir, "toolu_card1");
     const ws1 = makeWs();
@@ -708,9 +708,9 @@ describe("agent transcript hub", () => {
     expect(last1.running).toEqual(last2.running);
   });
 
-  // ── M2: Codex running detection ages out an unfinished child too ──
+  // ── Codex running detection ages out an unfinished child too ──
 
-  it("M2: an unfinished Codex child with no recent write ages out of the running list", async () => {
+  it("an unfinished Codex child with no recent write ages out of the running list", async () => {
     const ROOT = "77777777-1111-2222-3333-444444444444";
     const CHILD = "88888888-1111-2222-3333-444444444444";
     const rootFile = writeCodexHeaderOnly(ROOT, PROJECT_A_PATH);
@@ -734,9 +734,9 @@ describe("agent transcript hub", () => {
     expect(stale.running.some((r) => r.cardId === `subagent-${CHILD}`)).toBe(false);
   });
 
-  // ── M4: liveness seeded from file mtime, not subscribe time ──
+  // ── liveness seeded from file mtime, not subscribe time ──
 
-  it("M4: a card whose file was last written long ago shows not-running immediately on subscribe", () => {
+  it("a card whose file was last written long ago shows not-running immediately on subscribe", () => {
     const sessionDir = ownClaude();
     writeCard(sessionDir, "toolu_old");
     agentTranscriptFsIo.statMtimeMs = () => Date.now() - 5 * 60_000;
@@ -746,12 +746,12 @@ describe("agent transcript hub", () => {
     expect(eventsMessages(ws)[0]!.running).toBe(false);
   });
 
-  // ── Round 2 ──
+  // ── Resume, per-subscription failure, backlog drain ──
 
-  // N2 — a Codex descendant discovered via `links` (a nested grandchild) must
+  // A Codex descendant discovered via `links` (a nested grandchild) must
   // survive an unsubscribe/resubscribe cycle carrying the cursor the server
   // itself handed out for it, not just the direct card's own thread.
-  it("N2: a Codex descendant discovered via links survives a resubscribe with the old cursor", () => {
+  it("a Codex descendant discovered via links survives a resubscribe with the old cursor", () => {
     const ROOT = "77777777-1111-2222-3333-444444444444";
     const CHILD_A = "88888888-1111-2222-3333-444444444444";
     const GRANDCHILD_B = "99999999-1111-2222-3333-444444444444";
@@ -783,10 +783,10 @@ describe("agent transcript hub", () => {
     expect(allEvents.some((e) => e.ev.type === "tool_result" && (e.ev as any).output === "second output")).toBe(true);
   });
 
-  // N3 — a throw while processing one subscription must drop only that one:
+  // a throw while processing one subscription must drop only that one:
   // the client is told via a normal `agent-transcript:error`, and any other
   // subscription the same socket holds keeps streaming.
-  it("N3: a throw in one subscription's tick drops only that subscription, not the whole client", () => {
+  it("a throw in one subscription's tick drops only that subscription, not the whole client", () => {
     const sessionDir = ownClaude();
     writeCard(sessionDir, "toolu_a", "agenta");
     const fileB = writeCard(sessionDir, "toolu_b", "agentb");
@@ -814,9 +814,9 @@ describe("agent transcript hub", () => {
     expect(bMsgs.some((m) => m.events.some((e) => e.ev.type === "tool_result"))).toBe(true);
   });
 
-  // N4 — a throwing read on the activity ticker (an un-awaited `setInterval`
+  // a throwing read on the activity ticker (an un-awaited `setInterval`
   // callback) must never surface as an unhandled promise rejection.
-  it("N4: a throwing Codex descendant read does not produce an unhandled rejection", async () => {
+  it("a throwing Codex descendant read does not produce an unhandled rejection", async () => {
     const ROOT = "77777777-1111-2222-3333-444444444444";
     const rootFile = writeCodexHeaderOnly(ROOT, PROJECT_A_PATH);
     appendFileSync(rootFile, subagentActivityLine("88888888-1111-2222-3333-444444444444", "started", "2026-10-01T00:00:01Z"));
@@ -842,10 +842,10 @@ describe("agent transcript hub", () => {
     expect(unhandled).toBeNull();
   });
 
-  // N5 — a large, already-idle (by mtime) backlog must drain at the LIVE
+  // a large, already-idle (by mtime) backlog must drain at the LIVE
   // cadence until fully caught up (not the 2s idle cadence), and `more` must
   // stay true across the whole drain.
-  it("N5: a large old backlog drains at the fast cadence until caught up, then idle", () => {
+  it("a large old backlog drains at the fast cadence until caught up, then idle", () => {
     const sessionDir = ownClaude();
     writeBigCard(sessionDir, "toolu_oldbig", "agentoldbig", 8000); // comfortably over the 512KB budget
     agentTranscriptFsIo.statMtimeMs = () => Date.now() - 5 * 60_000;
@@ -853,8 +853,8 @@ describe("agent transcript hub", () => {
     const ws = makeWs();
     subscribe(ws, "s1", "toolu_oldbig");
     const first = eventsMessages(ws)[0]!;
-    expect(first.running).toBe(false); // idle by mtime (M4)
-    expect(first.more).toBe(true); // backlog remains past the read budget (H6)
+    expect(first.running).toBe(false); // idle by mtime
+    expect(first.more).toBe(true); // backlog remains past the read budget
 
     const hub = _getSessionHubForTest("claude", SESSION_ID)!;
     const sub = hub.subscriptions.get(ws)!.get("s1")!;
@@ -873,9 +873,9 @@ describe("agent transcript hub", () => {
     expect(sub.nextTickAt - fakeNow).toBeGreaterThanOrEqual(IDLE_TICK_MS); // caught up AND idle → slows down
   });
 
-  // H5 remainder — an unchanged Codex descendant's 256KB tail read is not
+  // An unchanged Codex descendant's 256KB tail read is not
   // repeated every 3s tick; only its cheap stat is.
-  it("H5 remainder: an unchanged Codex descendant's tail is read once, not every tick", async () => {
+  it("an unchanged Codex descendant's tail is read once, not every tick", async () => {
     const ROOT = "77777777-1111-2222-3333-444444444444";
     const CHILD = "88888888-1111-2222-3333-444444444444";
     const rootFile = writeCodexHeaderOnly(ROOT, PROJECT_A_PATH);

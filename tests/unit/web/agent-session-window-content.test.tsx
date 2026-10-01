@@ -14,6 +14,7 @@ const { default: AgentSessionWindowContent } = await import(
   "../../../src/web/components/chat/agent-session-window-content"
 );
 const { setGlobalWsClient } = await import("../../../src/web/lib/global-ws-channel");
+const { useWindowStore } = await import("../../../src/web/components/floating-window/window-store");
 const { setFallbackEvents, fallbackKey } = await import(
   "../../../src/web/components/chat/agent-session-fallback-store"
 );
@@ -42,13 +43,6 @@ async function pushEvents(sent: string[], patch: Record<string, unknown>) {
       detail: { type: "agent-transcript:events", subId, cursor: {}, available: true, running: true, events: [], ...patch },
     }));
   });
-}
-
-/** A plain-text step renders through `MiniMarkdown`, which lazy-loads the markdown bundle —
- *  one more flush is needed before its real content (rather than the loading pulse) is in the
- *  DOM. */
-async function flushLazyMarkdown() {
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
 describe("AgentSessionWindowContent", () => {
@@ -124,17 +118,20 @@ describe("AgentSessionWindowContent", () => {
   it("falls back to steps already held in memory when the server reports unavailable", async () => {
     const { client, sent } = fakeClient();
     setGlobalWsClient(client as never);
-    const key = fallbackKey("s5", { kind: "member", teamName: "s5", memberName: "fixer" });
-    setFallbackEvents(key, [{ type: "text", content: "remembered step" } as never]);
-    view = await mount(
-      <AgentSessionWindowContent
-        id="w5"
-        payload={{ projectName: "p", providerId: "claude", sessionId: "s5", source: { kind: "member", teamName: "s5", memberName: "fixer" }, title: "Session — fixer" }}
-      />,
-    );
+    const payload = { projectName: "p", providerId: "claude" as const, sessionId: "s5", source: { kind: "member" as const, teamName: "s5", memberName: "fixer" }, title: "Session — fixer" };
+    // Remembered steps are kept only while a window shows them, and any window-store change
+    // prunes the rest — so open the window first, the way the opener does.
+    useWindowStore.setState({ windows: {} });
+    const id = useWindowStore.getState().open("agent-session", payload as unknown as Record<string, unknown>);
+    // A tool step rather than text: text goes through the lazily loaded markdown renderer,
+    // whose chunk may not have resolved yet, while a tool card renders synchronously.
+    setFallbackEvents(fallbackKey("s5", payload.source), [
+      { type: "tool_use", tool: "Read", input: { file_path: "/src/remembered-step.ts" }, toolUseId: "r1" } as never,
+    ]);
+    view = await mount(<AgentSessionWindowContent id={id} payload={payload as never} />);
     await pushEvents(sent, { available: false, running: false });
-    await flushLazyMarkdown();
-    expect(view.container.textContent).toContain("remembered step");
+    expect(view.container.textContent).toContain("remembered-step.ts");
+    expect(view.container.textContent).toContain("1 step");
     expect(view.container.textContent).toContain("offline");
   });
 });

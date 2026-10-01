@@ -105,7 +105,7 @@ describe("agentStepInfo", () => {
   });
 });
 
-describe("recursiveStepCount — nested agent totals equal the window's flat count (M5)", () => {
+describe("recursiveStepCount — nested agent totals equal the window's flat count", () => {
   test("sums a nested Agent's own subtree on top of this card's direct steps", () => {
     // Top card: t1 (Read, direct), t2 (Edit, direct), t3 (nested Agent — counts once for the
     // spawn, its own gc1/gc2 counted on top). Flat on-disk total: t1,t2,t3,gc1,gc2 = 5.
@@ -166,7 +166,7 @@ describe("pushRecentChild", () => {
     expect((buf[buf.length - 1] as any).content).toBe(String(MAX_RECENT_CHILDREN + 9));
   });
 
-  test("also caps by approximate serialized size, dropping oldest before the count cap kicks in (L3)", () => {
+  test("also caps by approximate serialized size, dropping oldest before the count cap kicks in", () => {
     const big = "x".repeat(50_000); // ~50KB per entry once serialized
     let buf: ChatEvent[] = [];
     for (let i = 0; i < 10; i++) {
@@ -235,7 +235,7 @@ describe("applyChildToParent", () => {
   });
 });
 
-describe("mergeFallbackEvents (M6)", () => {
+describe("mergeFallbackEvents", () => {
   test("interleaves kept children and the ring buffer back into original arrival order", () => {
     let p = parent();
     p = applyChildToParent(p, toolUse("Bash", { command: "read something" }, "b1")); // not kept
@@ -246,7 +246,7 @@ describe("mergeFallbackEvents (M6)", () => {
     const merged = mergeFallbackEvents((p as any).children, (p as any).recentChildren);
     // Arrival order was b1, e1, e1-result, b2 — a plain concatenation of children (e1, e1
     // result) then recentChildren (b1, b2) would show the edit before the read that preceded
-    // it, which is exactly the bug M6 reports.
+    // it, which is exactly the bug this guards against.
     expect(merged.map((e: any) => e.toolUseId)).toEqual(["b1", "e1", "e1", "b2"]);
   });
 

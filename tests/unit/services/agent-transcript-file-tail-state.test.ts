@@ -1,7 +1,7 @@
 /**
  * Low-level tests for the per-file read/parse state shared by catch-up and
- * the live tick: the C1 crash (a non-integer/locked read reaching `readSync`
- * and throwing past the hub), the M1 replace-key reuse contract, and the H6
+ * the live tick: the crash (a non-integer/locked read reaching `readSync`
+ * and throwing past the hub), the replace-key reuse contract, and the
  * per-tick read budget. These exercise `processFileTail` directly against a
  * real file on disk — no hub, no WebSocket, no mocked fs seam — so each is a
  * minimal reproduction of exactly the bug it guards against.
@@ -14,7 +14,7 @@ import { createFileTailState } from "../../../src/services/agent-transcript/agen
 import { processFileTail } from "../../../src/services/agent-transcript/agent-transcript-file-tail-feed.ts";
 import type { TranscriptFileRef } from "../../../src/services/agent-transcript/agent-transcript-sources.ts";
 import type { AgentTranscriptEventsMsg } from "../../../src/shared/agent-transcript-protocol.ts";
-// Read-only import of the CLIENT's own merge reducer — N1's whole point is
+// Read-only import of the CLIENT's own merge reducer — the whole point is
 // that the server's `k`/`replace` choices must produce the right result once
 // they reach this exact function, not just look right in isolation.
 import { applyEnvelopeBatch } from "../../../src/web/lib/agent-session-stream-merge.ts";
@@ -50,11 +50,11 @@ describe("agent transcript file tail state", () => {
     }) + "\n";
   }
 
-  // C1 — probe: a fractional (or otherwise non-safe-integer) starting offset
+  // probe: a fractional (or otherwise non-safe-integer) starting offset
   // used to reach the real `fs.readSync` and throw `ERR_OUT_OF_RANGE`
   // ("position ... must be an integer"). `processFileTail` must never let
   // that (or any other read failure) escape.
-  it("C1 probe: a fractional fstate.offset does not throw through a real disk read", () => {
+  it("a fractional fstate.offset does not throw through a real disk read", () => {
     dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
     const file = join(dir, "agent-x.jsonl");
     writeFileSync(file, claudeAssistantLine("", { name: "Bash", id: "tu1" }));
@@ -69,7 +69,7 @@ describe("agent transcript file tail state", () => {
     expect(result.envelopes).toEqual([]);
   });
 
-  it("C1 probe: a read against a vanished file degrades instead of throwing", () => {
+  it("a read against a vanished file degrades instead of throwing", () => {
     dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
     const file = join(dir, "gone.jsonl");
     writeFileSync(file, claudeAssistantLine("", { name: "Bash", id: "tu1" }));
@@ -81,14 +81,14 @@ describe("agent transcript file tail state", () => {
     expect(processFileTail(fstate, Date.now()).envelopes).toEqual([]);
   });
 
-  // M1 / N1 — a `CommandExecution` item emits a `tool_use` AND a `tool_result`
+  // a `CommandExecution` item emits a `tool_use` AND a `tool_result`
   // SHARING the same toolUseId. The tail parser flags the second one
   // `replace` purely because it has seen that id before (it does not track
   // which TYPE saw it) — reusing the key by id alone made the tool_result
   // overwrite the tool_use in place and the step disappeared client-side
-  // (N1). The fix keys the replacement map by `${type}:${toolUseId}`, so a
+  //. The fix keys the replacement map by `${type}:${toolUseId}`, so a
   // tool_result never reuses a tool_use's key: each keeps its own, distinct.
-  it("N1: a CommandExecution's tool_use and tool_result get distinct keys, neither replacing the other", () => {
+  it("a CommandExecution's tool_use and tool_result get distinct keys, neither replacing the other", () => {
     dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
     const file = join(dir, "rollout-x.jsonl");
     writeFileSync(file, codexHeader() + codexItemCompleted("call1", "output", "2026-10-01T00:00:01Z"));
@@ -106,11 +106,11 @@ describe("agent transcript file tail state", () => {
     expect(toolResult!.replace).toBeUndefined();
   });
 
-  // N1 — a genuine re-emit (a second record naming the SAME tool call id)
+  // a genuine re-emit (a second record naming the SAME tool call id)
   // replaces only the entry of the SAME type: the second tool_use reuses the
   // first tool_use's key, the second tool_result reuses the first
   // tool_result's key, and the two families never cross.
-  it("N1: a replayed tool_use for the same id replaces only the tool_use, not the tool_result", () => {
+  it("a replayed tool_use for the same id replaces only the tool_use, not the tool_result", () => {
     dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
     const file = join(dir, "rollout-x.jsonl");
     writeFileSync(
@@ -132,10 +132,10 @@ describe("agent transcript file tail state", () => {
     expect(toolUse1!.k).not.toBe(toolResult1!.k); // the two families never cross
   });
 
-  // N1 end-to-end — the server's envelopes fed through the CLIENT's own
+  // End to end: the server's envelopes fed through the CLIENT's own
   // merge reducer must leave both a tool_use and a tool_result behind, not
   // one silently overwriting the other.
-  it("N1 end-to-end: applyEnvelopeBatch keeps both the tool_use and tool_result entries", () => {
+  it("end to end: applyEnvelopeBatch keeps both the tool_use and tool_result entries", () => {
     dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
     const file = join(dir, "rollout-x.jsonl");
     writeFileSync(file, codexHeader() + codexItemCompleted("call1", "output", "2026-10-01T00:00:01Z"));
@@ -151,10 +151,10 @@ describe("agent transcript file tail state", () => {
     expect(entries.map((e) => e.ev.type).sort()).toEqual(["tool_result", "tool_use"]);
   });
 
-  // H6 — a single tick must not read an unbounded amount of a file: a large
+  // a single tick must not read an unbounded amount of a file: a large
   // backlog is spread across more than one call, each a plain continuation
   // rather than a fresh read of everything still outstanding.
-  it("H6: one tick reads at most a bounded budget, the rest completes on the next", () => {
+  it("one tick reads at most a bounded budget, the rest completes on the next", () => {
     dir = mkdtempSync(join(tmpdir(), "ppm-tail-state-"));
     const file = join(dir, "agent-big.jsonl");
     // ~30 bytes/line x 40,000 lines ≈ 1.2MB, comfortably over the 512KB budget.

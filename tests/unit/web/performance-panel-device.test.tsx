@@ -11,12 +11,21 @@
  * no way to reach it by hand: the only caller of `useOpenSystemMonitor` is
  * `ResourceStatusBar`, which is `hidden md:flex`.
  */
-import { describe, it, expect, mock } from "bun:test";
+import { describe, it, expect, mock, afterAll } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { MetricsHistoryPoint, SystemMetrics } from "../../../src/types/system-metrics";
 
-let mobile = false;
-mock.module("@/hooks/use-is-mobile", () => ({ useIsMobile: () => mobile }));
+// `mock.module` replaces the module for the whole test process, not this file. Keep the real
+// hook to fall back to, and hand it back once this file is done, so a later file that mounts a
+// component reading `useIsMobile` gets the viewport rather than whatever this file set last.
+const realIsMobile = await import("../../../src/web/hooks/use-is-mobile");
+const { useIsMobile: realUseIsMobile, isMobileDevice: realIsMobileDevice } = realIsMobile;
+let mobile: boolean | null = false;
+mock.module("@/hooks/use-is-mobile", () => ({
+  useIsMobile: () => mobile ?? realUseIsMobile(),
+  isMobileDevice: () => mobile ?? realIsMobileDevice(),
+}));
+afterAll(() => { mobile = null; });
 mock.module("@/hooks/use-hardware-inventory", () => ({ useHardwareInventory: () => null }));
 
 const { PerformancePanel } = await import(

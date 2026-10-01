@@ -85,7 +85,7 @@ function pushActivity(ws: AgentTranscriptWsLike, subIds: string[], running: Agen
  * anywhere in `computeRunningAgents` — a descendant rollout that disappears
  * or locks up between the stat and the read that bounds it — would otherwise
  * surface as an unhandled promise rejection, counted the same way an
- * uncaught exception is, on a 3s timer instead of the 250ms one C1 fixed.
+ * uncaught exception is, on a 3s timer instead of the 250ms one the cursor fix covered.
  */
 export async function tickActivity(hub: SessionHub): Promise<void> {
   if (hub.activitySubs.size === 0) return;

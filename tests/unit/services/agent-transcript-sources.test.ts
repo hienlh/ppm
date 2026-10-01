@@ -188,7 +188,7 @@ describe("resolveSources", () => {
     expect(Array.isArray(afterReset)).toBe(true);
   });
 
-  // M7 — the cache must not grow without bound when a client cycles through
+  // the cache must not grow without bound when a client cycles through
   // many distinct (never-reused) card ids.
   it("bounds its own cache size when many distinct card ids are resolved", () => {
     const owned = ownClaudeSession();
@@ -198,7 +198,7 @@ describe("resolveSources", () => {
     expect(_sourcesCacheSizeForTest()).toBeLessThanOrEqual(500);
   });
 
-  // H2 — `resolveCodexDescendantFile` is the exact helper the hub reuses to
+  // `resolveCodexDescendantFile` is the exact helper the hub reuses to
   // validate a grandchild surfaced through the tail parser's own `links`,
   // never a separately (and possibly more loosely) written check.
   it("resolveCodexDescendantFile accepts a real descendant and rejects a non-descendant", () => {
