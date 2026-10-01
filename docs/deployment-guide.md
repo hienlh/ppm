@@ -547,12 +547,13 @@ the UI before they run. `/api/system/app-icon/:id` serves an application's own d
 it accepts `?token=` because an `<img>` cannot send an `Authorization` header, and it is safe to
 widen to because it takes an app id, never a path.
 
-On macOS the same routes talk to launchd instead: `launchctl print gui/<uid>` and
-`launchctl print system` (one spawn per scope), with the job's own stdout/stderr files — or, for a
-job that has none, the unified log since its process started (since boot when it is not running)
-— behind the per-job log. PPM's own job,
-every `com.apple.*` job and the whole system domain (which needs root) refuse the actions that
-would hurt, through the same function that greys out the buttons. An app there is an application
+On macOS the same routes talk to launchd instead: `launchctl print system`, `gui/<uid>` and
+`user/<uid>` (one spawn per domain — the user's jobs live in two, the GUI session's and the
+background one's), with the job's own stdout/stderr files — or, for a job that has none, the
+unified log since its process started (since boot when it is not running) — behind the per-job
+log. PPM's own job, every `com.apple.*` job and the whole system domain (which needs root) refuse
+the actions that would hurt, through the same function that greys out the buttons, and an app's
+own per-launch `application.*` job refuses every action. An app there is an application
 bundle, and its icon is the bundle's `.icns` converted by `sips` into a 64 px PNG under
 `<ppm dir>/app-icons/` — once per icon file, since the PNG is named after the icon's mtime.
 
