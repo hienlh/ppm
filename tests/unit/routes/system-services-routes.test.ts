@@ -13,6 +13,7 @@ import { systemdBackend } from "../../../src/services/system-services/service-ba
 import { createLaunchdBackend } from "../../../src/services/system-services/launchd-collector.ts";
 import { NOT_ROOT_REASON } from "../../../src/services/system-services/launchd-guard.ts";
 import type { RunResult } from "../../../src/services/host-info/spawn-runner.ts";
+import { SERVICE_ACTIONS } from "../../../src/types/system-services.ts";
 
 const okRun = (stdout: string): RunResult => ({ stdout, stderr: "", code: 0, timedOut: false });
 const LIST = "sshd.service loaded active running OpenSSH Daemon\nppm.service loaded active running PPM";
@@ -183,6 +184,16 @@ describe("on launchd", () => {
     const res = await post(app, "/api/system/services/user/com.hienlh.ppm/stop");
     expect(res.status).toBe(403);
     expect((await res.json()).error).toContain("PPM itself");
+    expect(changes()).toEqual([]);
+  });
+
+  test("an app's own launch is a 403 for every action, though no row offers one", async () => {
+    const { app, changes } = launchdApp();
+    for (const action of SERVICE_ACTIONS) {
+      const res = await post(app, `/api/system/services/user/application.com.apple.Terminal.497485692.497485698/${action}`);
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toContain("Apps page");
+    }
     expect(changes()).toEqual([]);
   });
 

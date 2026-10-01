@@ -3,10 +3,17 @@
  * with the same contract — one function produces both a row's `refused` map and the
  * action route's verdict, so a disabled button and a 403 cannot disagree.
  *
- * Three rules, in the order they are checked:
+ * Four rules, in the order they are checked:
  *
  *  - The system domain belongs to root. launchd refuses every change there from any
  *    other user, so PPM says so up front instead of offering five buttons that fail.
+ *  - An application's own instance (`application.*`), which Launch Services makes for
+ *    every launch of every app. The Apps page shows those and this one does not, so
+ *    only a request naming one directly gets here, and every action is refused:
+ *    stopping one quits its app — the terminal PPM was started from, say, which the
+ *    ancestor check below would not see, since the listing it reads leaves them out
+ *    — and launchd would keep an enable/disable override for a label that dies with
+ *    its launch.
  *  - PPM's own job. Stopping it ends the request that asked, and every session with
  *    it. It is found two ways, because each covers a start the other misses: the
  *    label launchd hands every process it spawns (`XPC_SERVICE_NAME`, which PPM's
@@ -20,6 +27,7 @@
 import type { ServiceAction, ServiceScope } from "../../types/system-services.ts";
 import { SERVICE_ACTIONS } from "../../types/system-services.ts";
 import type { ServiceActionVerdict } from "./service-guard.ts";
+import { isAppInstance } from "./launchd-parse.ts";
 
 /** Actions that take a running job away. `start` and `enable` never do. */
 const DISRUPTIVE: readonly ServiceAction[] = ["stop", "restart", "disable"];
@@ -33,6 +41,9 @@ export interface LaunchdGuardContext {
 
 export const NOT_ROOT_REASON = "System jobs can only be changed by root, and PPM is not running as root";
 
+export const appInstanceReason = (label: string) =>
+  `${label} is one launch of an app, not a service — end it from the Apps page`;
+
 /** Every action this job refuses, with the reason shown to the user. */
 export function launchdRefusals(
   label: string,
@@ -42,6 +53,10 @@ export function launchdRefusals(
   const refusals: Partial<Record<ServiceAction, string>> = {};
   if (scope === "system" && ctx.uid !== 0) {
     for (const action of SERVICE_ACTIONS) refusals[action] = NOT_ROOT_REASON;
+    return refusals;
+  }
+  if (isAppInstance(label)) {
+    for (const action of SERVICE_ACTIONS) refusals[action] = appInstanceReason(label);
     return refusals;
   }
   const reason = ctx.selfLabels.has(label)

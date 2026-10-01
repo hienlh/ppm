@@ -1,8 +1,8 @@
-/** Which launchd actions PPM refuses: the system domain, its own job, macOS's jobs. */
+/** Which launchd actions PPM refuses: the system domain, app instances, its own job, macOS's jobs. */
 import { describe, expect, test } from "bun:test";
 import {
-  ancestorsOf, checkLaunchdActionAllowed, isPlausibleLaunchdLabel, launchdRefusals, NOT_ROOT_REASON,
-  selfJobLabels, type LaunchdGuardContext,
+  ancestorsOf, appInstanceReason, checkLaunchdActionAllowed, isPlausibleLaunchdLabel, launchdRefusals,
+  NOT_ROOT_REASON, selfJobLabels, type LaunchdGuardContext,
 } from "../../../../src/services/system-services/launchd-guard.ts";
 import { SERVICE_ACTIONS } from "../../../../src/types/system-services.ts";
 
@@ -20,6 +20,14 @@ describe("launchdRefusals", () => {
     expect(launchdRefusals("com.example.daemon", "system", root)).toEqual({});
     expect(Object.keys(launchdRefusals("com.apple.mDNSResponder.reloaded", "system", root)).sort())
       .toEqual(["disable", "restart", "stop"]);
+  });
+
+  test("an app's own launch is refused whole, though its label is not under com.apple.", () => {
+    for (const label of ["application.com.apple.Terminal.497485692.497485698", "application.com.example.editor.1.2"]) {
+      const refused = launchdRefusals(label, "user", user);
+      expect(Object.keys(refused).sort()).toEqual([...SERVICE_ACTIONS].sort());
+      expect(new Set(Object.values(refused))).toEqual(new Set([appInstanceReason(label)]));
+    }
   });
 
   test("PPM's own job cannot be taken away, but starting it is harmless", () => {

@@ -301,6 +301,9 @@ describe("action", () => {
     ["com.hienlh.ppm", "user", "disable", "PPM itself"],
     ["com.apple.chronod", "user", "restart", "part of macOS"],
     ["com.apple.fseventsd", "system", "start", NOT_ROOT_REASON],
+    // Not a row on this page, so only a request naming it directly gets this far.
+    ["application.com.apple.Terminal.497485692.497485698", "user", "stop", "Apps page"],
+    ["application.com.example.editor.1.2", "user", "enable", "Apps page"],
   ] as const)("%s (%s) %s is refused before launchctl is asked", async (label, scope, action, reason) => {
     const { b, actions } = backend();
     const attempt = b.action(label, scope, action);
