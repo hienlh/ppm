@@ -28,6 +28,8 @@ export interface RecordedCall {
    * snapshot before it passes `done` on, so by now that snapshot is at least pending.
    */
   done: boolean;
+  /** The app id the auto-setup block (if any) named this turn, so the e2e can assert it ran. */
+  autoSetupId: string | null;
 }
 
 /** A 1x1 PNG, so the deck has a real local image for the HTML and PPTX exports. */
@@ -101,6 +103,11 @@ export function variantHtml(label: string): string {
 
 const STEP_RE = /\[\[design:([a-z-]+)\]\]/;
 const SLUG_RE = /`designs\/([a-z0-9][a-z0-9-]*)\/`/;
+// Anchored on the heading `design-instructions-auto-setup-block.ts` writes itself (never on
+// text `buildDesignSystemInitPrompt` also contributes), so this cannot be confused with the
+// "Where to work" line, which names the same `designs/system-<id>/` path for the showcase's
+// own session without asking for a setup at all.
+const AUTO_SETUP_RE = /This app has no design system yet[\s\S]*?designs\/system-([a-z0-9][a-z0-9-]*)\/index\.html/;
 
 export class DesignScriptProvider extends MockProvider {
   override id = "design-test";
@@ -120,8 +127,14 @@ export class DesignScriptProvider extends MockProvider {
     await this.resumeSession(sessionId);
     const step = STEP_RE.exec(message)?.[1] ?? null;
     const designSlug = opts?.designInstructions ? SLUG_RE.exec(opts.designInstructions)?.[1] ?? null : null;
+    const project = this.projects.get(sessionId);
+    // The per-turn instructions carry the new auto-setup block (design-instructions-auto-
+    // setup-block.ts) exactly while the design's app has no DESIGN.md yet: an ordinary
+    // design's very first turn is what runs the setup now, same as a showcase session's own
+    // turn always has, so this is checked before (and in addition to) any scripted step.
+    const autoSetupId = project ? AUTO_SETUP_RE.exec(opts?.designInstructions ?? "")?.[1] ?? null : null;
     const call: RecordedCall = {
-      sessionId, message, step, designSlug, at: Date.now(), done: false,
+      sessionId, message, step, designSlug, autoSetupId, at: Date.now(), done: false,
       permissionMode: typeof opts?.permissionMode === "string" ? opts.permissionMode : null,
       designSession: opts?.designSession === true,
     };
@@ -129,17 +142,22 @@ export class DesignScriptProvider extends MockProvider {
     const log = this.history.get(sessionId) ?? [];
     log.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: new Date().toISOString() });
     let answer = "Noted.";
-    const project = this.projects.get(sessionId);
+    if (autoSetupId && project) {
+      await this.runSystemSetup(autoSetupId, project, join(project, "designs", `system-${autoSetupId}`));
+      answer = "Set up the design system.";
+    }
     if (step) {
       if (!designSlug || !project) {
         yield { type: "error", message: "Scripted design step outside a design session" };
         return;
       }
-      answer = await this.runStep(step, join(project, "designs", designSlug));
-    } else if (project && designSlug?.startsWith("system-") && /^Set up the design system for/.test(message)) {
+      const stepAnswer = await this.runStep(step, join(project, "designs", designSlug));
+      answer = autoSetupId ? `Set up the design system, then: ${stepAnswer}` : stepAnswer;
+    } else if (!autoSetupId && project && designSlug?.startsWith("system-") && /^Set up the design system for/.test(message)) {
       // The real setup brief (buildDesignSystemInitPrompt), auto-sent to a showcase design's
-      // chat: writes the app's DESIGN.md/tokens.css/kit the way the real brief asks an agent
-      // to, plus the showcase page itself.
+      // chat (a manual re-run, since the instructions above would otherwise already have it):
+      // writes the app's DESIGN.md/tokens.css/kit the way the real brief asks an agent to,
+      // plus the showcase page itself.
       answer = await this.runSystemSetup(designSlug.slice("system-".length), project, join(project, "designs", designSlug));
     }
     yield { type: "text", content: answer };

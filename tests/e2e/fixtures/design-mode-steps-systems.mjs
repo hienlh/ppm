@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { apiJson, overlay, settleSnapshots, until } from "./design-mode-helpers.mjs";
-import { tabsOf } from "./design-mode-steps-export.mjs";
+import { apiJson, overlay, sendDesignTurn, settleSnapshots, until } from "./design-mode-helpers.mjs";
+import { focusTab, tabsOf } from "./design-mode-steps-export.mjs";
 
 /**
- * Per-app design systems (phase 15): declaring an app in Settings → Design, the New Design
- * dialog's app picker and "Set up first / Skip" step, the showcase tab and its auto-sent
- * brief, the sidebar's "Design systems" group, the stale reminder after a real git change,
- * and the skip path never asking twice.
+ * Per-app design systems: declaring an app in Settings → Design, the New Design dialog's app
+ * picker (with no "set up first?" step any more — the first design for an app with no system
+ * sets it up itself, in its own chat, on its first turn), the showcase page that turn leaves
+ * ready, the sidebar's "Design systems" group, and the stale reminder after a real git change.
  */
 
 function git(cwd, ...args) {
@@ -53,8 +53,13 @@ async function declareApp(ctx, { label, root, platform }) {
   if (!ctx.mobile) await closeSettingsWindow(ctx);
 }
 
-/** Opens the New Design dialog, picks `appLabel`, fills a title, and clicks Create. */
-async function openNewDesignFor(ctx, appLabel, title) {
+/**
+ * Opens the New Design dialog, picks `appLabel`, fills `title`, and clicks Create. No "set up
+ * the design system first?" step exists any more, so this also asserts the dialog never
+ * mentioned one before creating — the only thing it offers beyond the title/kind/provider is
+ * which app the design belongs to.
+ */
+async function createDesignFor(ctx, appLabel, title) {
   await ctx.page.evaluate(async (projectName) => (await import("/lib/design/design-ui-events.ts")).requestNewDesign(projectName), ctx.projectName);
   const dialog = overlay(ctx, "New design");
   await dialog.waitFor();
@@ -63,15 +68,14 @@ async function openNewDesignFor(ctx, appLabel, title) {
   // picker's fetch runs at the same time, so the very first paint may show just the latter.
   await until("the app picker to appear", async () => (await dialog.locator("select").count()) >= 2);
   await dialog.locator("select").first().selectOption({ label: appLabel });
+  assert.equal(await dialog.getByText(/design system/i).count(), 0, "no design-system step before Create");
+  const before = (await tabsOf(ctx)).length;
   await dialog.getByRole("button", { name: "Create" }).click();
-  return dialog;
-}
-
-async function activeTabId(ctx) {
-  return ctx.page.evaluate(async () => {
-    const { usePanelStore } = await import("/stores/panel-store.ts");
-    return Object.values(usePanelStore.getState().panels).map((p) => p.activeTabId);
-  });
+  await dialog.waitFor({ state: "detached", timeout: 10000 });
+  await until("a new design tab to open", async () => (await tabsOf(ctx)).length > before);
+  const tab = (await tabsOf(ctx)).find((t) => t.title === title && t.metadata?.designSlug);
+  assert.ok(tab, `a tab for "${title}" with a design slug`);
+  return { tabId: tab.id, slug: tab.metadata.designSlug };
 }
 
 export async function stepDesignSystemsPerApp(ctx) {
@@ -91,39 +95,45 @@ export async function stepDesignSystemsPerApp(ctx) {
   await declareApp(ctx, { label, root: folder, platform: "web" });
   ctx.record("declares a new app in Settings → Design");
 
-  const dialog = await openNewDesignFor(ctx, label, "App home");
-  const setupNote = dialog.getByText(new RegExp(`Set up "${label}"'s design system first\\?`));
-  await setupNote.waitFor({ timeout: 10000 });
-  await dialog.getByRole("button", { name: /Set up design system first/ }).click();
-  await dialog.waitFor({ state: "detached", timeout: 10000 });
-  ctx.record("New Design's app picker offers a declared app, and offers to set it up first");
+  const title = `App home ${ctx.width}`;
+  const { tabId, slug } = await createDesignFor(ctx, label, title);
+  ctx.record("New Design's app picker offers a declared app, with no setup step in the way");
 
-  const showcaseSlug = `system-${appId}`;
-  await until("the showcase tab to exist and be focused", async () => {
-    const tabs = await tabsOf(ctx);
-    const showcase = tabs.find((t) => t.metadata?.designSlug === showcaseSlug);
-    if (!showcase) return false;
-    return (await activeTabId(ctx)).includes(showcase.id);
-  });
-  ctx.record("Set up first opens and focuses the app's showcase tab");
+  // Reassigning the shared ctx fields is safe: this is the suite's last step, nothing after
+  // it depends on whichever design earlier steps left focused.
+  ctx.designTitle = title;
+  ctx.slug = slug;
+  ctx.designDir = join(ctx.harness.project, "designs", slug);
+  ctx.tabId = tabId;
+  await focusTab(ctx, tabId);
 
-  await until("the scripted provider to finish the setup turn", async () => {
-    const calls = (await apiJson(ctx, "/__design-test/calls")).body;
-    return calls.some((c) => c.designSlug === showcaseSlug && c.done);
-  });
+  const call = await sendDesignTurn(ctx, "Build the app's home page [[design:build]]");
+  assert.equal(call.step, "build");
+  assert.equal(call.autoSetupId, appId, "the first turn's instructions carried the auto-setup block for this app");
+  ctx.record("the design's own first turn carries the auto-setup block and builds the page in the same turn");
+
   const appApi = `/api/project/${encodeURIComponent(ctx.projectName)}/designs/systems/${appId}`;
-  await until("the app's files to land on disk", async () => {
+  await until("the app's design-system files to land on disk", async () => {
     const res = await apiJson(ctx, appApi);
     return res.body?.data?.hasDesignMd === true && res.body?.data?.hasTokensCss === true;
   });
+  const showcaseManifest = JSON.parse(await readFile(join(ctx.harness.project, "designs", `system-${appId}`, "design.json"), "utf8"));
+  assert.equal(showcaseManifest.showcaseFor, appId, "the showcase's folder and manifest were prepared server-side, not by the agent");
+  ctx.record("the agent's one turn sets up DESIGN.md/tokens.css/kit, writes the showcase page PPM already prepared, and builds the design");
+
   // builtFrom is recorded from the same debounced hook as the turn snapshot: force it now
   // rather than padding every check below with the debounce's own 2s.
   await settleSnapshots(ctx);
-  await until("builtFrom to be recorded for the showcase's app", async () => {
+  await until("builtFrom to be recorded for the app", async () => {
     const res = await apiJson(ctx, appApi);
     return !!res.body?.data?.builtFrom;
   });
-  ctx.record("set up first auto-sends the brief; the scripted provider writes the app's design system");
+  ctx.record("builtFrom is recorded once the design's first turn leaves DESIGN.md in place");
+
+  // A later, ordinary turn on the same design must never see the auto-setup block again.
+  const again = await sendDesignTurn(ctx, "Tweak the footer [[design:edit-footer]]");
+  assert.equal(again.autoSetupId, null, "a later turn on a design whose system already exists gets no auto-setup block");
+  ctx.record("a later turn on the same design never repeats the setup");
 
   if (!ctx.mobile) {
     await ctx.page.evaluate(async () => {
@@ -138,7 +148,7 @@ export async function stepDesignSystemsPerApp(ctx) {
     await ctx.page.locator('button[data-tabid="designs"]:visible').click();
   }
   await ctx.page.getByText("Design systems", { exact: true }).waitFor({ timeout: 10000 });
-  // Exact text: a substring match on the label would also catch the ordinary design "App home".
+  // Exact text: a substring match on the label would also catch the ordinary design's own title.
   const row = ctx.page.locator("button:visible").filter({ has: ctx.page.getByText(label, { exact: true }) }).first();
   await row.waitFor();
   // The file watcher (not this client) reports the agent's writes; it has its own latency,
@@ -160,8 +170,10 @@ export async function stepDesignSystemsPerApp(ctx) {
     ctx.record("20 changed UI files in the app's repo makes the stale check report may-be-outdated");
   }
 
-  // Skip path: a second, mobile app (its own folder and repo too) never asks again once skipped.
+  // A second, mobile app (its own folder and repo too): the same auto-setup runs for it, so
+  // the mobile platform is covered too, not only web.
   const mobileLabel = `Mobile app ${ctx.width}`;
+  const mobileId = `mobile-app-${ctx.width}`;
   const mobileFolder = `mobile-app-${ctx.width}`;
   const mobileRoot = join(ctx.harness.project, mobileFolder);
   await mkdir(mobileRoot, { recursive: true });
@@ -175,14 +187,19 @@ export async function stepDesignSystemsPerApp(ctx) {
   });
   assert.equal(created.status, 201);
 
-  const skipDialog = await openNewDesignFor(ctx, mobileLabel, "Onboarding screen");
-  await skipDialog.getByText(new RegExp(`Set up "${mobileLabel}"'s design system first\\?`)).waitFor({ timeout: 10000 });
-  await skipDialog.getByRole("button", { name: "Skip for now" }).click();
-  await skipDialog.waitFor({ state: "detached", timeout: 10000 });
-
-  const before = (await tabsOf(ctx)).length;
-  await openNewDesignFor(ctx, mobileLabel, "Second screen");
-  await until("the design to be created with no setup offer in the way", async () => (await tabsOf(ctx)).length > before);
-  assert.equal(await ctx.page.getByText(/design system first\?/).count(), 0, "skipping once is remembered; it is not asked again");
-  ctx.record("Skip is remembered per app and the offer is not repeated");
+  const mobileTitle = `Onboarding screen ${ctx.width}`;
+  const mobileDesign = await createDesignFor(ctx, mobileLabel, mobileTitle);
+  ctx.designTitle = mobileTitle;
+  ctx.slug = mobileDesign.slug;
+  ctx.designDir = join(ctx.harness.project, "designs", mobileDesign.slug);
+  ctx.tabId = mobileDesign.tabId;
+  await focusTab(ctx, mobileDesign.tabId);
+  const mobileCall = await sendDesignTurn(ctx, "Build the onboarding screen [[design:build]]");
+  assert.equal(mobileCall.autoSetupId, mobileId, "the mobile app's first design also auto-sets its system up");
+  const mobileApi = `/api/project/${encodeURIComponent(ctx.projectName)}/designs/systems/${mobileId}`;
+  await until("the mobile app's design-system files to land on disk", async () => {
+    const res = await apiJson(ctx, mobileApi);
+    return res.body?.data?.hasDesignMd === true;
+  });
+  ctx.record("a mobile app's first design sets its own design system up the same way");
 }
