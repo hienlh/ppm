@@ -10,6 +10,7 @@ import { DESIGNS_CHANGED_EVENT } from "@/lib/design/design-ui-events";
 import { DesignTabContext, type DesignTabContextValue } from "./design-tab-context";
 import { DesignChatPane } from "./design-chat-pane";
 import { DesignCanvasPane } from "./canvas/design-canvas-pane";
+import { DesignSystemSetupBanner } from "./design-system-setup-banner";
 import { DesignTabLayout } from "./design-split-layout";
 import { useDesignLayout } from "./use-design-layout";
 import { useDesignSummary } from "./use-design-summary";
@@ -84,12 +85,17 @@ function DesignTabBody({ tabId, metadata, design, refreshDesign }: {
   // so reload) the canvas and drop the chat's socket.
   return (
     <DesignTabContext.Provider value={ctx}>
-      <DesignTabLayout
-        rootRef={rootRef}
-        layout={layout}
-        chat={<DesignChatPane tabId={tabId} metadata={metadata} session={session} />}
-        canvas={(more) => <DesignCanvasPane moreOpen={more.open} onMoreClose={more.onClose} />}
-      />
+      <div className="flex h-full flex-col">
+        <DesignSystemSetupBanner />
+        <div className="min-h-0 flex-1">
+          <DesignTabLayout
+            rootRef={rootRef}
+            layout={layout}
+            chat={<DesignChatPane tabId={tabId} metadata={metadata} session={session} />}
+            canvas={(more) => <DesignCanvasPane moreOpen={more.open} onMoreClose={more.onClose} />}
+          />
+        </div>
+      </div>
     </DesignTabContext.Provider>
   );
 }
