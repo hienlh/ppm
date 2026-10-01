@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -15,6 +15,8 @@ import {
   resolvePath,
 } from "../../../src/services/fs-path-guard.service.ts";
 import { _resetPpmDir, getPpmDir } from "../../../src/services/ppm-dir.ts";
+import { getBackupsDir } from "../../../src/services/db-backup/db-backup-paths.ts";
+import { assertReadPermitted } from "../../../src/services/fs-ops/fs-ops-read-write.service.ts";
 
 const isWin = process.platform === "win32";
 const abs = (posix: string, win: string) => (isWin ? win : posix);
@@ -144,6 +146,63 @@ describe.if(!isWin)("a PPM directory reached through a symlink", () => {
 
   it("does not reach past the directory it names", () => {
     expect(isCredentialPath(join(base, "real-home-2", "ppm.db"))).toBe(false);
+  });
+});
+
+describe.if(!isWin)("an exception directory replaced by a symlink", () => {
+  // The two read-only exceptions are holes in the PPM-dir refusal. A link in place
+  // of either directory must not carry the hole to wherever it points.
+  const prevPpmHome = process.env.PPM_HOME;
+  let base = "";
+  const useHome = (name: string) => {
+    const home = join(base, name);
+    mkdirSync(home);
+    process.env.PPM_HOME = home;
+    _resetPpmDir();
+    return home;
+  };
+  // What every read door does: the requested path, then the path it resolves to.
+  const read = (requested: string) => () => assertReadPermitted(requested, realpathSync(requested));
+  beforeAll(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), "ppm-guard-redirect-")));
+  });
+  afterAll(() => {
+    if (prevPpmHome === undefined) delete process.env.PPM_HOME; else process.env.PPM_HOME = prevPpmHome;
+    _resetPpmDir();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("does not serve a snapshot through an uploads link to the backups directory", () => {
+    const home = useHome("uploads-to-backups");
+    mkdirSync(getBackupsDir());
+    writeFileSync(join(getBackupsDir(), "ppm-20261001T000000Z-hourly.db"), "snapshot");
+    symlinkSync(getBackupsDir(), join(home, "uploads"));
+    expect(read(join(home, "uploads", "ppm-20261001T000000Z-hourly.db"))).toThrow("Access denied");
+  });
+
+  it("does not serve ppm.db through an uploads link to the PPM directory", () => {
+    const home = useHome("uploads-to-home");
+    writeFileSync(join(home, "ppm.db"), "config");
+    symlinkSync(home, join(home, "uploads"));
+    expect(read(join(home, "uploads", "ppm.db"))).toThrow("Access denied");
+  });
+
+  it("does not move the generated-images exception with a codex-accounts link", () => {
+    const home = useHome("codex-accounts-to-home");
+    mkdirSync(join(home, "acct", "generated_images"), { recursive: true });
+    writeFileSync(join(home, "acct", "generated_images", "auth.json"), "{}");
+    symlinkSync(home, join(home, "codex-accounts"));
+    expect(read(join(home, "codex-accounts", "acct", "generated_images", "auth.json"))).toThrow("Access denied");
+  });
+
+  it("still serves a real upload and a real generated image", () => {
+    const home = useHome("plain");
+    mkdirSync(join(home, "uploads"));
+    writeFileSync(join(home, "uploads", "abc123-image.png"), "png");
+    mkdirSync(join(home, "codex-accounts", "acct", "generated_images"), { recursive: true });
+    writeFileSync(join(home, "codex-accounts", "acct", "generated_images", "a.png"), "png");
+    expect(read(join(home, "uploads", "abc123-image.png"))).not.toThrow();
+    expect(read(join(home, "codex-accounts", "acct", "generated_images", "a.png"))).not.toThrow();
   });
 });
 
