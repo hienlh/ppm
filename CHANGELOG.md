@@ -1,12 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.10] - 2026-10-01
 
 ### Added
 - Tap an Agent/Task card, or a teammate row, to open its own live step-by-step session window (desktop) or bottom sheet (mobile), instead of expanding inline in the chat.
 - A running-agents bar under the conversation lists every agent still writing — including a backgrounded agent and one resumed by a teammate message — and clears once it goes idle.
 
-### Improved
+### Changed
 - Agent/Task cards collapse to a one-line summary (description, step count, status) instead of an inline step list, so a long-running agent no longer fills the chat scroll.
 
 ## [0.23.9] - 2026-09-30
