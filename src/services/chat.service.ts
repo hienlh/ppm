@@ -14,6 +14,7 @@ import type {
 import { compareSessionsByActivity } from "../types/chat.ts";
 import { buildDesignInstructions } from "./design/design-instructions.ts";
 import { resolveSystemForDesign } from "./design/design-systems.service.ts";
+import { ensureShowcaseDesign } from "./design/design-systems-showcase.ts";
 import { userDesignSectionFor } from "./design/design-user-section.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
 import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
@@ -217,7 +218,19 @@ class ChatService {
     const projectPath = this.getSession(sessionId)?.projectPath ?? getSessionProjectPath(sessionId);
     const designMcp = designMcpAccessFor(sessionId, projectPath, slug);
     const userSection = await userDesignSectionFor({ providerId, sessionId, projectPath, slug });
-    const system = projectPath ? await resolveSystemForDesign(projectPath, slug) : { id: "default", label: "Default", root: ".", platform: "web" as const };
+    const system = projectPath
+      ? await resolveSystemForDesign(projectPath, slug)
+      : { id: "default", label: "Default", root: ".", platform: "web" as const, hasDesignMd: true };
+    if (projectPath && !system.hasDesignMd) {
+      // The instructions below are about to tell the agent it may write the showcase's
+      // index.html: make sure that design's folder and manifest exist first, server-side,
+      // so the agent only ever has to write the page itself.
+      try {
+        await ensureShowcaseDesign(projectPath, system.id);
+      } catch (e) {
+        console.warn(`[design] could not prepare the showcase for ${system.id}: ${(e as Error).message}`);
+      }
+    }
     return {
       ...rest,
       designInstructions: buildDesignInstructions(slug, system, { checkTool: !!designMcp, userSection }),

@@ -5,7 +5,7 @@ import { lstatOrNull, resolveDesignDir } from "./design-paths.ts";
 import { ensureDotDesign } from "./design-fs.ts";
 import { DEFAULT_ENTRY, MANIFEST_FILE, serializeManifest, type DesignManifest } from "./design-manifest.ts";
 import { getDesign, loadManifest, summarize } from "./design-store.service.ts";
-import { manifestShowcaseFor, showcaseSlugFor, systemManifestFields } from "./design-manifest-system.ts";
+import { manifestShowcaseFor, manifestSystemId, showcaseSlugFor, systemManifestFields } from "./design-manifest-system.ts";
 import { getDesignSystem, recordBuiltFrom } from "./design-systems.service.ts";
 import { showcaseStarterHtml } from "./design-systems-showcase-template.ts";
 
@@ -44,16 +44,32 @@ export async function ensureShowcaseDesign(projectPath: string, systemId: string
 }
 
 /**
- * Called after every turn snapshot: if `slug` is an app's showcase design, record the app
- * root's current commit as `builtFrom`. Best-effort — a design that is not a showcase, or an
- * app root with no git repository, is silently a no-op.
+ * Called after every turn snapshot, for every design of every system — not only showcase
+ * sessions, now that an ordinary design's own first turn can set its app's system up itself
+ * (`design-instructions.ts`).
+ *
+ * A showcase session's whole job is (re-)running setup, so its every finished turn refreshes
+ * `builtFrom` unconditionally — that unconditional refresh is also what the stale "Refresh"
+ * action (canvas More menu, the sidebar banner) relies on to clear itself. An ordinary
+ * design only ever stamps it the one time its turn leaves `DESIGN.md` in place while
+ * `builtFrom` was still absent — the moment the auto-setup block just ran inline — never on
+ * a later, unrelated edit turn, or the stale check could never trigger again.
+ *
+ * Best-effort throughout: a design that cannot be read, or an app root with no git
+ * repository, is silently a no-op.
  */
-export async function recordBuiltFromIfShowcase(projectPath: string, slug: string): Promise<void> {
+export async function recordBuiltFromAfterDesignTurn(projectPath: string, slug: string): Promise<void> {
   try {
     const dir = await resolveDesignDir(projectPath, slug);
     const { manifest } = await loadManifest(dir, slug);
-    const systemId = manifestShowcaseFor(manifest);
-    if (systemId) await recordBuiltFrom(projectPath, systemId);
+    const showcaseFor = manifestShowcaseFor(manifest);
+    if (showcaseFor) {
+      await recordBuiltFrom(projectPath, showcaseFor);
+      return;
+    }
+    const systemId = manifestSystemId(manifest);
+    const system = await getDesignSystem(projectPath, systemId);
+    if (system.hasDesignMd && !system.builtFrom) await recordBuiltFrom(projectPath, systemId);
   } catch (e) {
     console.warn(`[design] could not record builtFrom for ${slug}: ${(e as Error).message}`);
   }

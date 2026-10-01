@@ -3,6 +3,7 @@ import { TWEAK_SCHEMA_EXAMPLE } from "../../shared/design-tweaks.ts";
 import { MAX_DESIGN_VARIANTS } from "../../shared/design-variants.ts";
 import { isValidDesignSlug } from "./design-slug.ts";
 import { designSystemInstructionsBlock, type DesignInstructionsSystem } from "./design-instructions-system-block.ts";
+import { designAutoSetupBlock } from "./design-instructions-auto-setup-block.ts";
 
 /** How many questions the agent may ask before a first build. */
 export const MAX_CLARIFYING_QUESTIONS = 3;
@@ -80,7 +81,7 @@ ${TWEAK_EXAMPLE_JSON}
 - Do not ask about edits or follow-ups ("make the button bigger"), when the request already
   answers these points, or when the user tells you to just build it. Then build straight
   away and state the assumptions you made in one line.
-
+${system.hasDesignMd ? "" : `\n${designAutoSetupBlock(system)}\n`}
 ## Variants
 - A design can hold up to ${MAX_DESIGN_VARIANTS} variants: different directions for the same brief, which the
   user switches between on the canvas. Make as many as the user asked for, 1 when they did

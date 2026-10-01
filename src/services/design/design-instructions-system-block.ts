@@ -6,6 +6,8 @@ export interface DesignInstructionsSystem {
   label: string;
   root: string;
   platform: "web" | "mobile";
+  /** False is what makes this design's own first turn set the system up itself (see `design-instructions.ts`). */
+  hasDesignMd: boolean;
 }
 
 /**
