@@ -4,10 +4,15 @@
  * `disable` for the actions. The same three entry points as the systemd collector,
  * behind the same `ServiceBackend` the routes take.
  *
- * Two domains stand in for systemd's two managers: `system`, and for the user the
- * GUI session's `gui/<uid>`, which is where login items and ~/Library/LaunchAgents
- * load. A Mac nobody is logged into at the screen has no GUI domain, and the user's
- * background `user/<uid>` answers instead.
+ * Three domains stand in for systemd's two managers: `system`, and for the user both
+ * of the user's own. The GUI session's `gui/<uid>` is where login items and
+ * ~/Library/LaunchAgents load; the background session's `user/<uid>` is its parent
+ * and holds a set of its own — 84 jobs beside the GUI domain's 450 on the Mac this
+ * was written on, none in both, since an agent allowed in both sessions loads once,
+ * in the background one. A Mac nobody is logged into at the screen has no GUI domain
+ * at all. A label lives in one domain only, and launchd answers for it there alone
+ * ("Could not find service" from the other), so details and actions ask launchd
+ * which one holds the label instead of assuming the GUI's.
  *
  * Stop is `kill SIGTERM`, not `bootout`. A job that is booted out leaves launchd's
  * list — and this page — until the next login, and most third-party jobs on a Mac
@@ -83,10 +88,14 @@ interface ScopeListing {
   warnings: string[];
 }
 
-function scopeListing(scope: ServiceScope, result: RunResult): ScopeListing {
+function scopeListing(scope: ServiceScope, domain: string, result: RunResult): ScopeListing {
   const failed = (why: string): ScopeListing => ({
-    scope, ok: false, jobs: [], overrides: new Map(), warnings: [`${scope} jobs unavailable: ${why}`],
+    scope, ok: false, jobs: [], overrides: new Map(), warnings: [`${domain} jobs unavailable: ${why}`],
   });
+  // No GUI session, no GUI domain: there is nothing in it to list.
+  if (!result.timedOut && result.code !== 0 && NO_SUCH_DOMAIN.test(`${result.stdout}\n${result.stderr}`)) {
+    return { scope, ok: true, jobs: [], overrides: new Map(), warnings: [] };
+  }
   if (result.timedOut || result.code !== 0) return failed(launchctlFailureText(result));
   const listing = parseDomainPrint(result.stdout);
   if (!listing) return failed("launchctl printed no services block");
@@ -96,33 +105,37 @@ function scopeListing(scope: ServiceScope, result: RunResult): ScopeListing {
 }
 
 export function createLaunchdBackend(deps: LaunchdDeps = defaultLaunchdDeps()): ServiceBackend {
-  /** The user domain the last listing came from, for details and actions to target. */
-  let userDomain: string | null = null;
-  /** PPM's own job(s), resolved once from a listing that reached both domains. */
+  /** PPM's own job(s), resolved once from a listing that reached every domain. */
   let selfLabels: Set<string> | null = null;
+  const domains: readonly [ServiceScope, string][] = [
+    ["system", "system"], ["user", `gui/${deps.uid}`], ["user", `user/${deps.uid}`],
+  ];
 
   const print = (target: string) => deps.run(["launchctl", "print", target], LAUNCHCTL_TIMEOUT_MS);
 
-  /** The GUI session's domain when there is one, else the background one. Asked in
-   *  that order on every listing: someone can log in at the screen after PPM started. */
-  async function printUserDomain(): Promise<RunResult> {
-    const candidates = [`gui/${deps.uid}`, `user/${deps.uid}`];
-    let result!: RunResult;
-    for (const domain of candidates) {
-      result = await print(domain);
-      if (!result.timedOut && result.code === 0) {
-        userDomain = domain;
-        return result;
-      }
-      if (!NO_SUCH_DOMAIN.test(`${result.stdout}\n${result.stderr}`)) return result;
-    }
-    return result;
+  /** Every domain, printed side by side. All of them on every listing: someone can
+   *  log in at the screen after PPM started, and the GUI domain appears then. */
+  async function listDomains(): Promise<ScopeListing[]> {
+    const results = await Promise.all(domains.map(([, domain]) => print(domain)));
+    return domains.map(([scope, domain], i) => scopeListing(scope, domain, results[i]!));
   }
 
-  async function domainOf(scope: ServiceScope): Promise<string> {
-    if (scope === "system") return "system";
-    if (!userDomain) await printUserDomain();
-    return userDomain ?? `gui/${deps.uid}`;
+  /**
+   * The domain that holds `label` now, and the job's `print` from it: each of the
+   * scope's domains is asked in turn, so a job is looked at and acted on in the one
+   * it was listed from. A label none of them holds is aimed at the first — the GUI
+   * domain for a user job — and launchctl's own answer stands.
+   */
+  async function locate(label: string, scope: ServiceScope) {
+    let first: { domain: string; target: string; job: RunResult } | undefined;
+    for (const [s, domain] of domains) {
+      if (s !== scope) continue;
+      const target = launchdTarget(domain, label);
+      const job = await print(target);
+      if (!job.timedOut && job.code === 0) return { domain, target, job };
+      first ??= { domain, target, job };
+    }
+    return first!;
   }
 
   async function ancestors(): Promise<number[]> {
@@ -137,12 +150,9 @@ export function createLaunchdBackend(deps: LaunchdDeps = defaultLaunchdDeps()): 
 
   async function guardContext(listings?: readonly ScopeListing[]): Promise<LaunchdGuardContext> {
     if (!selfLabels) {
-      const scopes = listings ?? [
-        scopeListing("user", await printUserDomain()),
-        scopeListing("system", await print("system")),
-      ];
+      const scopes = listings ?? await listDomains();
       const labels = selfJobLabels(deps.serviceName, await ancestors(), scopes.flatMap((s) => s.jobs));
-      // Kept only once both domains answered: a job missing from a failed listing
+      // Kept only once every domain answered: a job missing from a failed listing
       // must not leave PPM's own job unprotected for the life of the server.
       if (scopes.every((s) => s.ok)) selfLabels = labels;
       return { uid: deps.uid, selfLabels: labels };
@@ -160,8 +170,7 @@ export function createLaunchdBackend(deps: LaunchdDeps = defaultLaunchdDeps()): 
     isName: isPlausibleLaunchdLabel,
 
     async collect(): Promise<ServicesSnapshot> {
-      const [system, user] = await Promise.all([print("system"), printUserDomain()]);
-      const listings = [scopeListing("system", system), scopeListing("user", user)];
+      const listings = await listDomains();
       const ctx = await guardContext(listings);
       const services: ServiceInfo[] = [];
       const mainPids: [number, string][] = [];
@@ -182,12 +191,9 @@ export function createLaunchdBackend(deps: LaunchdDeps = defaultLaunchdDeps()): 
     },
 
     async details(label: string, scope: ServiceScope): Promise<ServiceDetails | null> {
-      const domain = await domainOf(scope);
-      const [job, disabled] = await Promise.all([
-        print(launchdTarget(domain, label)),
-        deps.run(["launchctl", "print-disabled", domain], LAUNCHCTL_TIMEOUT_MS),
-      ]);
+      const { domain, job } = await locate(label, scope);
       if (job.timedOut || job.code !== 0) return null;
+      const disabled = await deps.run(["launchctl", "print-disabled", domain], LAUNCHCTL_TIMEOUT_MS);
       const parsed = parseJobPrint(job.stdout);
       if (!parsed) return null;
       const f = parsed.fields;
@@ -227,12 +233,11 @@ export function createLaunchdBackend(deps: LaunchdDeps = defaultLaunchdDeps()): 
       const verdict = checkLaunchdActionAllowed(label, scope, action, await guardContext());
       if (!verdict.allowed) throw new ServiceActionRefused(verdict.reason ?? "Refused");
 
-      const target = launchdTarget(await domainOf(scope), label);
+      const { target, job: before } = await locate(label, scope);
       const done: ServiceActionResult = { unit: label, scope, action };
       if (action === "stop") {
         // Looked up first: `kill` on a job with no process is an error, where a stop
         // of a stopped unit is not one on systemd either.
-        const before = await print(target);
         if (before.timedOut || before.code !== 0) throw new Error(launchctlFailureText(before));
         const job = parseJobPrint(before.stdout);
         if (!job || pidField(job.fields) === null) return { ...done, note: `${label} was not running` };

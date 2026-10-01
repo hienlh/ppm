@@ -14,6 +14,8 @@ import { SERVICE_ACTIONS, type ServiceInfo } from "../../../../src/types/system-
 
 const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", "darwin", name), "utf8");
 const GUI = fixture("launchctl-print-gui.txt");
+// The background session's domain: the GUI one's parent, with jobs of its own.
+const USER = fixture("launchctl-print-user.txt");
 // The system fixture also carries the gui one's third-party and app lines, which the
 // parser tests use; a real system domain holds Apple's daemons, so they go.
 const SYSTEM = fixture("launchctl-print-system.txt")
@@ -67,10 +69,12 @@ function backend(reply: Reply = () => undefined, deps: Partial<LaunchdDeps> = {}
     if (tool === "ps") return ok(PS);
     if (verb === "print" && target === "system") return ok(SYSTEM);
     if (verb === "print" && target === "gui/501") return ok(GUI);
+    if (verb === "print" && target === "user/501") return ok(USER);
     if (verb === "print-disabled") return ok(DISABLED);
     if (verb === "print" && target === "gui/501/com.hienlh.ppm") return ok(PPM_JOB);
     if (verb === "print" && target === "system/com.apple.mDNSResponder.reloaded") return ok(MDNS_JOB);
     if (verb === "print" && target?.startsWith("gui/501/com.example.sync-helper")) return ok(jobPrint(target, { pid: 1812 }));
+    if (verb === "print" && target === "user/501/com.example.background-agent") return ok(jobPrint(target, { pid: 3101 }));
     if (verb === "print" && target?.includes("/")) return noService(target.split("/").pop()!);
     return ok("");
   };
@@ -104,16 +108,34 @@ const row = (services: ServiceInfo[], scope: string, unit: string) => {
 };
 
 describe("collect", () => {
-  test("both domains in one snapshot, without Launch Services' per-app jobs", async () => {
+  test("every domain in one snapshot, without Launch Services' per-app jobs", async () => {
     const { b } = backend();
     const snap = await b.collect();
     expect(snap.manager).toBe("launchd");
     expect(snap.supported).toBe(true);
     expect(snap.warnings).toEqual([]);
-    // gui: 47 lines, 2 of them app instances. system: 47, 7 of them the gui's.
-    expect(snap.services.filter((s) => s.scope === "user")).toHaveLength(45);
+    // gui: 47 lines, 2 of them app instances; user: 5. system: 47, 7 of them the gui's.
+    expect(snap.services.filter((s) => s.scope === "user")).toHaveLength(50);
     expect(snap.services.filter((s) => s.scope === "system")).toHaveLength(40);
     expect(snap.services.some((s) => s.unit.startsWith("application."))).toBe(false);
+  });
+
+  test("the background domain's jobs are listed, and looked at and acted on where they live", async () => {
+    const { b, calls, actions } = backend();
+    const { services } = await b.collect();
+    expect(row(services, "user", "com.example.background-agent")).toMatchObject({
+      running: true, mainPid: 3101, unitFileState: "enabled",
+    });
+    expect(row(services, "user", "com.apple.trustd.agent").refused?.stop).toContain("part of macOS");
+
+    expect((await b.details("com.example.background-agent", "user"))?.mainPid).toBe(3101);
+    expect(calls).toContainEqual(["launchctl", "print-disabled", "user/501"]);
+    for (const action of ["stop", "start", "disable"] as const) await b.action("com.example.background-agent", "user", action);
+    expect(actions()).toEqual([
+      ["launchctl", "kill", "SIGTERM", "user/501/com.example.background-agent"],
+      ["launchctl", "kickstart", "user/501/com.example.background-agent"],
+      ["launchctl", "disable", "user/501/com.example.background-agent"],
+    ]);
   });
 
   test("each row reads as the Services page expects", async () => {
@@ -164,33 +186,33 @@ describe("collect", () => {
     expect(pids.get(470)).toBe("user:com.apple.chronod");
     expect(pids.get(98871)).toBe("user:com.hienlh.ppm");
     expect(pids.get(170)).toBe("system:com.apple.runningboardd");
+    expect(pids.get(3101)).toBe("user:com.example.background-agent");
     // App instances are the Apps page's: their pids are not a job's.
     expect(pids.has(2201)).toBe(false);
     expect(pids.has(0)).toBe(false);
   });
 
-  test("a Mac with nobody at the screen lists the user's background domain", async () => {
-    const { b, actions } = backend((argv) => {
-      if (argv[2] === "gui/501") return NO_GUI;
-      if (argv[2] === "user/501") return ok(GUI);
-      return undefined;
-    });
+  test("a Mac with nobody at the screen has no GUI domain, which is not a failure", async () => {
+    const { b, actions } = backend((argv) => (argv[2] === "gui/501" ? NO_GUI : undefined));
     const snap = await b.collect();
     expect(snap.supported).toBe(true);
-    expect(snap.services.filter((s) => s.scope === "user")).toHaveLength(45);
-    await b.action("org.example.failing-job", "user", "start");
-    expect(actions()).toEqual([["launchctl", "kickstart", "user/501/org.example.failing-job"]]);
+    expect(snap.warnings).toEqual([]);
+    expect(snap.services.filter((s) => s.scope === "user")).toHaveLength(5);
+    await b.action("com.example.background-agent", "user", "start");
+    expect(actions()).toEqual([["launchctl", "kickstart", "user/501/com.example.background-agent"]]);
   });
 
-  test("one domain failing is a warning, both failing is no service manager", async () => {
+  test("one domain failing is a warning naming it, every one failing is no service manager", async () => {
     const one = await backend((argv) => (argv[2] === "system" ? fail(1, "boom\nagain") : undefined)).b.collect();
     expect(one.supported).toBe(true);
     expect(one.warnings).toEqual(["system jobs unavailable: boom again"]);
+    const background = await backend((argv) => (argv[2] === "user/501" ? fail(5, "Input/output error") : undefined)).b.collect();
+    expect(background.warnings).toEqual(["user/501 jobs unavailable: Input/output error"]);
 
     const none = await backend((argv) => (argv[1] === "print" ? fail(1, "no launchd here") : undefined)).b.collect();
     expect(none.supported).toBe(false);
     expect(none.services).toEqual([]);
-    expect(none.warnings).toHaveLength(2);
+    expect(none.warnings).toHaveLength(3);
   });
 
   test("an answer with no services block is not an empty domain", async () => {
