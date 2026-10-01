@@ -12,8 +12,8 @@ const ready = system({ hasDesignMd: true, builtFrom: { commit: "abc", at: "2026-
 const base = { stale: null, dismissed: [], isStreaming: false };
 
 describe("design system banner", () => {
-  it("offers setup while the app has no design system", () => {
-    expect(designSystemBannerKind({ ...base, system: system() })).toBe("setup");
+  it("offers nothing while the app has no design system yet: the design's own first turn sets it up", () => {
+    expect(designSystemBannerKind({ ...base, system: system() })).toBeNull();
   });
 
   it("offers a refresh only for a known stale system", () => {
@@ -23,19 +23,15 @@ describe("design system banner", () => {
   });
 
   it("stays hidden while a turn runs, before the system loads, and once dismissed", () => {
-    expect(designSystemBannerKind({ ...base, system: system(), isStreaming: true })).toBeNull();
-    expect(designSystemBannerKind({ ...base, system: null })).toBeNull();
-    expect(designSystemBannerKind({ ...base, system: system(), dismissed: ["setup"] })).toBeNull();
+    const stale = { stale: true, changedFiles: 23, unknown: false };
+    expect(designSystemBannerKind({ ...base, system: ready, stale, isStreaming: true })).toBeNull();
+    expect(designSystemBannerKind({ ...base, system: null, stale })).toBeNull();
+    expect(designSystemBannerKind({ ...base, system: ready, stale, dismissed: ["refresh"] })).toBeNull();
   });
 
-  it("a dismissed setup does not hide a later refresh", () => {
-    const stale = { stale: true, changedFiles: 30, unknown: false };
-    expect(designSystemBannerKind({ ...base, system: ready, stale, dismissed: ["setup"] })).toBe("refresh");
-  });
-
-  it("keeps one key per project and app, and reads stored dismissals tolerantly", () => {
+  it("keeps one key per project and app, and reads stored dismissals tolerantly, dropping an unknown kind", () => {
     expect(designSystemBannerKey("nxsys", "payroll-fe")).not.toBe(designSystemBannerKey("nxsys", "umbrella-fe"));
-    expect(parseDismissed(JSON.stringify(["setup", "bogus", 3]))).toEqual(["setup"]);
+    expect(parseDismissed(JSON.stringify(["refresh", "setup", "bogus", 3]))).toEqual(["refresh"]);
     expect(parseDismissed("{not json")).toEqual([]);
     expect(parseDismissed(null)).toEqual([]);
   });

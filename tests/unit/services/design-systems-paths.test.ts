@@ -62,21 +62,19 @@ describe("system.json parse/serialize", () => {
     expect(escaping.root).toBe("."); // the escaping value is refused, not followed
   });
 
-  it("keeps a valid builtFrom and setupSkipped, and drops a malformed one", () => {
+  it("keeps a valid builtFrom, and drops a malformed one", () => {
     const withBuilt = parseSystemFile(JSON.stringify({
-      label: "X", root: ".", platform: "web", builtFrom: { commit: "abc1234", at: "2026-01-01T00:00:00.000Z" }, setupSkipped: true,
+      label: "X", root: ".", platform: "web", builtFrom: { commit: "abc1234", at: "2026-01-01T00:00:00.000Z" },
     }), fallback);
     expect(withBuilt.builtFrom).toEqual({ commit: "abc1234", at: "2026-01-01T00:00:00.000Z" });
-    expect(withBuilt.setupSkipped).toBe(true);
     const bad = parseSystemFile(JSON.stringify({ label: "X", root: ".", platform: "web", builtFrom: { commit: "zz", at: "no" } }), fallback);
     expect(bad.builtFrom).toBeUndefined();
   });
 
-  it("round-trips through serialize, omitting builtFrom/setupSkipped when absent", () => {
+  it("round-trips through serialize, omitting builtFrom when absent", () => {
     const file = { label: "Payroll", root: "payroll-fe", platform: "mobile" as const };
     const raw = serializeSystemFile(file);
     expect(raw).not.toContain("builtFrom");
-    expect(raw).not.toContain("setupSkipped");
     expect(parseSystemFile(raw, fallback)).toEqual(file);
   });
 });

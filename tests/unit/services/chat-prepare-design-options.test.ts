@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
@@ -9,7 +9,8 @@ import type { AIProvider, ChatEvent, SendMessageOpts } from "../../../src/types/
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { designMcpTokens } from "../../../src/services/design/mcp/design-mcp-tokens.ts";
 import { setDesignInstructions } from "../../../src/services/design/design-settings.service.ts";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createDesign } from "../../../src/services/design/design-store.service.ts";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -211,5 +212,46 @@ describe("chatService design resolution with the user's design instructions", ()
     const text = (await chatService.prepareSendOptions("stub-counted", "u5", "three")).designInstructions!;
     expect(calls).toBe(2);
     expect(text).toContain("keep it calm");
+  });
+});
+
+describe("chatService auto-setup of a first-time design system", () => {
+  let project: string;
+  beforeEach(() => {
+    getDb().run("DELETE FROM session_metadata");
+    setDesignInstructions("");
+    project = realpathSync(mkdtempSync(join(tmpdir(), "ppm-design-auto-setup-")));
+  });
+  afterEach(() => rmSync(project, { recursive: true, force: true }));
+
+  it("adds the one-time setup block and prepares the showcase's folder before the turn, while DESIGN.md is missing", async () => {
+    providerRegistry.register(stubProvider("stub-auto-setup"));
+    const design = await createDesign(project, { title: "App home", kind: "page" });
+    setSessionDesignSlug("a1", design.slug);
+    setSessionMetadata("a1", "demo", project);
+
+    const text = (await chatService.prepareSendOptions("stub-auto-setup", "a1", "hi")).designInstructions!;
+    expect(text).toContain("## This app has no design system yet");
+    expect(text).toContain("designs/system-default/index.html");
+    expect(text).toContain("Set up the design system for");
+    // The one exception to "Where to work": outside this design's own folder, for this turn only.
+    expect(text).toMatch(/one exception to "Where to work"/);
+
+    // The showcase's own folder and manifest exist already, server-side, before the agent's
+    // turn even starts — it only ever has to write index.html itself.
+    expect(existsSync(join(project, "designs", "system-default", "design.json"))).toBe(true);
+  });
+
+  it("stops offering the block, and stops touching the showcase, once DESIGN.md exists", async () => {
+    providerRegistry.register(stubProvider("stub-auto-setup-done"));
+    mkdirSync(join(project, "designs"), { recursive: true });
+    writeFileSync(join(project, "designs", "DESIGN.md"), "# Design system\n");
+    const design = await createDesign(project, { title: "App home", kind: "page" });
+    setSessionDesignSlug("a2", design.slug);
+    setSessionMetadata("a2", "demo", project);
+
+    const text = (await chatService.prepareSendOptions("stub-auto-setup-done", "a2", "hi")).designInstructions!;
+    expect(text).not.toContain("## This app has no design system yet");
+    expect(existsSync(join(project, "designs", "system-default"))).toBe(false);
   });
 });

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createDesign } from "../../../src/services/design/design-store.service.ts";
 import {
   createDesignSystem, deleteDesignSystem, getDesignSystem, listDesignSystems, recordBuiltFrom,
-  recordSetupSkipped, resolveSystemForDesign, updateDesignSystem,
+  resolveSystemForDesign, updateDesignSystem,
 } from "../../../src/services/design/design-systems.service.ts";
 
 function git(cwd: string, ...args: string[]) {
@@ -73,15 +73,6 @@ describe("design systems service", () => {
     await createDesignSystem(project, { id: app.id, label: "Payroll", root: "payroll-fe", platform: "web" });
     await deleteDesignSystem(project, app.id, { deleteFiles: true });
     expect(existsSync(dir)).toBe(false);
-  });
-
-  it("remembers a skipped setup once, and never asks twice", async () => {
-    const app = await createDesignSystem(project, { label: "Payroll", root: "payroll-fe", platform: "web" });
-    expect(app.setupSkipped).toBeUndefined();
-    await recordSetupSkipped(project, app.id);
-    expect((await getDesignSystem(project, app.id)).setupSkipped).toBe(true);
-    await recordSetupSkipped(project, app.id); // idempotent, does not throw
-    expect((await getDesignSystem(project, app.id)).setupSkipped).toBe(true);
   });
 
   it("records builtFrom from the app root's real HEAD, and is a no-op with no repo there", async () => {

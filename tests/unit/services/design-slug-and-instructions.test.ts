@@ -46,7 +46,7 @@ describe("slugFromTitle", () => {
   });
 });
 
-const DEFAULT_SYSTEM = { id: "default", label: "Default", root: ".", platform: "web" as const };
+const DEFAULT_SYSTEM = { id: "default", label: "Default", root: ".", platform: "web" as const, hasDesignMd: true };
 
 describe("buildDesignInstructions", () => {
   const text = buildDesignInstructions("smoke", DEFAULT_SYSTEM);
@@ -133,7 +133,7 @@ describe("buildDesignInstructions", () => {
   });
 
   it("points a non-default app at its own systems folder, root and platform", () => {
-    const mobile = buildDesignInstructions("smoke", { id: "payroll", label: "Payroll", root: "payroll-fe", platform: "mobile" });
+    const mobile = buildDesignInstructions("smoke", { id: "payroll", label: "Payroll", root: "payroll-fe", platform: "mobile", hasDesignMd: true });
     const section = mobile.slice(mobile.indexOf("## The design system"), mobile.indexOf("## The manifest"));
     expect(section).toContain("designs/systems/payroll/DESIGN.md");
     expect(section).toContain('href="../systems/payroll/tokens.css"');
@@ -162,5 +162,54 @@ describe("buildDesignInstructions", () => {
     expect(withTool).toContain("[Canvas check]");
     expect(text).not.toContain("`design_check` tool");
     expect(text).toContain("[Canvas check]");
+  });
+
+  describe("the auto-setup block (no design system yet)", () => {
+    const NO_SYSTEM = { id: "default", label: "Default", root: ".", platform: "web" as const, hasDesignMd: false };
+    const withSetup = buildDesignInstructions("smoke", NO_SYSTEM);
+
+    it("is absent once the system already has a DESIGN.md", () => {
+      expect(text).not.toContain("## This app has no design system yet");
+    });
+
+    it("appears only while DESIGN.md is missing, between the clarifying-questions guidance and Variants", () => {
+      expect(withSetup).toContain("## This app has no design system yet");
+      const beforeIdx = withSetup.indexOf("## Before the first build");
+      const setupIdx = withSetup.indexOf("## This app has no design system yet");
+      const variantsIdx = withSetup.indexOf("## Variants");
+      expect(beforeIdx).toBeGreaterThan(-1);
+      expect(setupIdx).toBeGreaterThan(beforeIdx);
+      expect(variantsIdx).toBeGreaterThan(setupIdx);
+    });
+
+    it("tells the agent to notify the user in one line, then set up, then build", () => {
+      expect(withSetup).toMatch(/do not ask the user whether\s+to do this/);
+      expect(withSetup).toContain("setting up \"Default\"'s design\n  system (a one-time step)");
+      expect(withSetup).toMatch(/then build what they actually asked for/);
+    });
+
+    it("names both paths outside the design's own folder as writable for this turn, with no need to ask", () => {
+      expect(withSetup).toMatch(/one exception to "Where to work" for this turn/);
+      expect(withSetup).toContain("`designs/` and");
+      expect(withSetup).toContain("`designs/system-default/index.html` are both writable");
+    });
+
+    it("writes a non-default app's files under designs/systems/<id>/, not the legacy root", () => {
+      const app = buildDesignInstructions("smoke", { id: "payroll", label: "Payroll", root: "payroll-fe", platform: "mobile", hasDesignMd: false });
+      expect(app).toContain("`designs/systems/payroll/` and");
+      expect(app).toContain("`designs/system-payroll/index.html` are both writable");
+    });
+
+    it("embeds buildDesignSystemInitPrompt's own text verbatim rather than a second copy of it", () => {
+      expect(withSetup).toContain('Set up the design system for "Default" (this project)');
+      expect(withSetup).toContain("Never read `.env*` file contents.");
+      expect(withSetup).toContain("## Screens and components");
+    });
+
+    it("never appears for a small edit once the system already exists", () => {
+      // `text` (DEFAULT_SYSTEM: hasDesignMd true) stands in for "a design whose system
+      // already exists" — any ordinary turn on it, build or edit alike, sees no such block.
+      expect(text).not.toMatch(/one exception to "Where to work"/);
+    });
   });
 });

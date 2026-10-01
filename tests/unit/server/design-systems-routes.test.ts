@@ -78,13 +78,6 @@ describe("design systems routes", () => {
     expect(second.data).toMatchObject({ slug: "system-payroll" });
   });
 
-  it("remembers a skipped setup through the route", async () => {
-    await call("", { method: "POST", body: JSON.stringify({ label: "Payroll", root: "payroll-fe", platform: "web" }) });
-    expect((await call("/payroll/skip-setup", { method: "POST" })).status).toBe(200);
-    const system = (await json(await call("/payroll"))).data as { setupSkipped?: boolean };
-    expect(system.setupSkipped).toBe(true);
-  });
-
   it("answers unknown with no builtFrom recorded yet", async () => {
     await call("", { method: "POST", body: JSON.stringify({ label: "Payroll", root: "payroll-fe", platform: "web" }) });
     const stale = (await json(await call("/payroll/stale"))).data;
