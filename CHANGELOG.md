@@ -8,7 +8,7 @@
 - Design variants: up to five alternative directions per design, and a Variant switcher on the canvas; keep or drop one by asking in the design chat (the dropped ones stay in Version history).
 - Design mode: "Set up design system" builds a UI kit (`../systems/<app>/kit/`) from the app's own compiled CSS, fonts and icons — or, for a CSS-in-JS stack, from its theme sources — so designs reproduce the real app instead of just its palette.
 - Design mode: "Build in new chat" replaces "Hand off to code" — one click opens a new chat with the brief and a screenshot of the design already attached.
-- Design systems per app: Settings → Design's "Apps in this project" declares one design system per app (a monorepo's separate frontends, or a mobile app) — each with its own showcase page, shown in the sidebar's "Design systems" group with a stale reminder once its real source moves on. The New Design dialog offers to set an app's system up first, the first time you design for it.
+- Design systems per app: Settings → Design's "Apps in this project" declares one design system per app (a monorepo's separate frontends, or a mobile app) — each with its own showcase page, shown in the sidebar's "Design systems" group with a stale reminder once its real source moves on. The first design for an app with no system sets it up automatically, in the same chat, before building what you asked for — nothing to set up by hand first.
 
 ### Fixed
 - A new chat's first message no longer fails when choosing its account fails; the chat starts on the server's own pick.
