@@ -42,6 +42,33 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/ai-resources/duplicate`
 - `DELETE /api/ai-resources`
 
+## /api/android
+
+- `GET    /api/android/android`
+- `GET    /api/android/auth`
+- `GET    /api/android/capabilities`
+- `GET    /api/android/auth`
+- `GET    /api/android/devices`
+- `POST   /api/android/avds/:avdId/start`
+- `GET    /api/android/operations/:id`
+- `POST   /api/android/devices/:deviceId/stop`
+- `GET    /api/android/devices/:deviceId/log`
+- `POST   /api/android/devices/:deviceId/sessions`
+- `GET    /api/android/devices/:deviceId/screenshot`
+- `GET    /api/android/devices/:deviceId/clipboard`
+- `POST   /api/android/devices/:deviceId/clipboard`
+- `POST   /api/android/operations/:id/cancel`
+- `POST   /api/android/devices/:deviceId/apk`
+- `POST   /api/android/devices/:deviceId/apk/project`
+- `GET    /api/android/projects`
+- `GET    /api/android/projects/:project/apks`
+- `GET    /api/android/projects`
+- `GET    /api/android/system-images`
+- `GET    /api/android/device-profiles`
+- `POST   /api/android/avds`
+- `POST   /api/android/avds/:avdId/wipe`
+- `DELETE /api/android/avds/:avdId`
+
 ## /api/chat
 
 - `GET    /api/chat/sessions/running`
@@ -229,6 +256,10 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/remote-desktop/auth`
 - `POST   /api/remote-desktop/requirements/:id/:action`
 - `POST   /api/remote-desktop/session`
+- `POST   /api/remote-desktop/whep/:ticket`
+- `GET    /api/remote-desktop/relay`
+- `POST   /api/remote-desktop/relay/install`
+- `POST   /api/remote-desktop/relay/uninstall`
 
 ## /api/schedules
 
@@ -341,6 +372,11 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/teams/:name/members/:member/transcript`
 - `DELETE /api/teams/:name`
 
+## /api/trace
+
+- `POST   /api/trace`
+- `GET    /api/trace/sessions/:sessionId`
+
 ## /api/tunnel
 
 - `GET    /api/tunnel`
@@ -394,4 +430,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.11 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.12 -->
