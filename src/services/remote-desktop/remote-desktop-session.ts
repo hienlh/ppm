@@ -143,8 +143,11 @@ export class RemoteDesktopSession {
    *  display times the ratio, exactly as RustDesk computes it. The resolution is never part of
    *  this: every rung streams the host's own size. */
   private effectivePreset(): QualityPreset {
-    const width = this.display?.width ?? 1920;
-    const height = this.display?.height ?? 1080;
+    // A size of 0 is "unknown", not a tiny screen: priced as 0×0 the bitrate floors at
+    // 1–2 kbit/s, which a hardware encoder refuses and a software one turns to mush.
+    const known = (this.display?.width ?? 0) > 0 && (this.display?.height ?? 0) > 0;
+    const width = known ? this.display!.width : 1920;
+    const height = known ? this.display!.height : 1080;
     if (this.custom) {
       return {
         fps: this.custom.fps,

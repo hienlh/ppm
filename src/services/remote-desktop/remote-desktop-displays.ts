@@ -10,7 +10,8 @@
  * capabilities route polls every 2 s while the checklist is up.
  *
  * Windows: gdigrab `desktop` grabs the whole virtual screen and SendInput maps 0..65535 onto
- * that same rectangle, so there is exactly one "display" and no offsets to apply.
+ * that same rectangle, so there is exactly one "display" and no offsets to apply. Its size
+ * comes from `GetSystemMetrics(SM_CX/CYVIRTUALSCREEN)`.
  *
  * X11: monitors come from RandR 1.5 `XRRGetMonitors` through FFI, NOT from parsing `xrandr`.
  * The binary is a separate package from the library and is genuinely absent on hosts that have
@@ -136,12 +137,45 @@ async function listDarwinDisplays(): Promise<RemoteDisplay[]> {
 
 /** `linuxSession` is passed explicitly by tests: it otherwise probes the host, and "is there
  *  an X server" is exactly what a headless runner answers differently from a desktop. */
+const SM_XVIRTUALSCREEN = 76;
+const SM_YVIRTUALSCREEN = 77;
+const SM_CXVIRTUALSCREEN = 78;
+const SM_CYVIRTUALSCREEN = 79;
+
+let getSystemMetrics: ((index: number) => number) | null | undefined;
+
+/**
+ * The virtual screen's rectangle: the area `gdigrab desktop` captures. Its size is what the
+ * bitrate is computed from (`base_bitrate(w, h) × ratio`), so it must be real — this entry
+ * once reported 0×0, which made every rung ask for 1–2 kbit/s: Quick Sync refuses that
+ * outright ("device failed") and x264 accepts it and sends mush. Zeros only when user32
+ * cannot be loaded, which the session treats as "size unknown".
+ */
+export function windowsVirtualScreen(): { x: number; y: number; width: number; height: number } {
+  if (getSystemMetrics === undefined) {
+    try {
+      const { dlopen, FFIType } = require("bun:ffi") as typeof import("bun:ffi");
+      const lib = dlopen("user32.dll", { GetSystemMetrics: { args: [FFIType.i32], returns: FFIType.i32 } });
+      getSystemMetrics = (i) => lib.symbols.GetSystemMetrics(i);
+    } catch {
+      getSystemMetrics = null;
+    }
+  }
+  if (!getSystemMetrics) return { x: 0, y: 0, width: 0, height: 0 };
+  return {
+    x: getSystemMetrics(SM_XVIRTUALSCREEN),
+    y: getSystemMetrics(SM_YVIRTUALSCREEN),
+    width: getSystemMetrics(SM_CXVIRTUALSCREEN),
+    height: getSystemMetrics(SM_CYVIRTUALSCREEN),
+  };
+}
+
 export async function listDisplays(
   platform: NodeJS.Platform = process.platform,
   linuxSession = platform === "linux" ? detectLinuxSession() : null,
 ): Promise<RemoteDisplay[]> {
   if (platform === "win32") {
-    return [{ id: "desktop", label: "All displays", primary: true, x: 0, y: 0, width: 0, height: 0, captureIndex: 0 }];
+    return [{ id: "desktop", label: "All displays", primary: true, ...windowsVirtualScreen(), captureIndex: 0 }];
   }
   if (platform === "linux") {
     // Wayland: the portal dialog picks the screen, so there is nothing to list here.
