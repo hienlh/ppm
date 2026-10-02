@@ -12,7 +12,7 @@ const FRAME = "C:\\Windows\\System32\\ApplicationFrameHost.exe";
 
 function sources(over: Partial<WindowsAppSources> & { paths: Record<number, string> }): WindowsAppSources {
   return {
-    windowOwners: over.windowOwners ?? (() => new Map()),
+    windowOwners: over.windowOwners ?? (() => []),
     imagePath: (pid) => over.paths[pid] ?? null,
     describe: over.describe ?? ((exe) => ({ [CHROME]: "Google Chrome", [CODE]: "Visual Studio Code" })[exe] ?? null),
   };
@@ -27,7 +27,7 @@ describe("collectWindowsApps", () => {
       { pid: 200, ppid: 4, name: "notepad.exe" }, // no window: not an app
     ];
     const { apps } = collectWindowsApps(processes, sources({
-      windowOwners: () => new Map([[100, "New Tab - Google Chrome"]]),
+      windowOwners: () => [{ pid: 100, title: "New Tab - Google Chrome" }],
       paths: { 100: CHROME, 101: CHROME, 102: CHROME, 200: "C:\\Windows\\notepad.exe" },
     }));
     expect(apps).toEqual([{ id: windowsAppId(CHROME.toLowerCase()), name: "Google Chrome", icon: "chrome.exe", pids: [100] }]);
@@ -39,7 +39,7 @@ describe("collectWindowsApps", () => {
       { pid: 300, ppid: 9, name: "Code.exe" },
     ];
     const { apps } = collectWindowsApps(processes, sources({
-      windowOwners: () => new Map([[100, "main.ts - ppm"]]),
+      windowOwners: () => [{ pid: 100, title: "main.ts - ppm" }],
       paths: { 100: CODE, 300: CODE },
     }));
     expect(apps[0]!.pids).toEqual([100, 300]);
@@ -51,7 +51,7 @@ describe("collectWindowsApps", () => {
       { pid: 101, ppid: 4, name: "chrome.exe" },
     ];
     const { apps } = collectWindowsApps(processes, sources({
-      windowOwners: () => new Map([[100, "Chrome"]]),
+      windowOwners: () => [{ pid: 100, title: "Chrome" }],
       paths: { 100: CHROME, 101: "D:\\portable\\chrome.exe" },
     }));
     expect(apps[0]!.pids).toEqual([100]);
@@ -59,9 +59,27 @@ describe("collectWindowsApps", () => {
 
   test("each Store app window is an app of its own, named by its title", () => {
     const processes = [{ pid: 50, ppid: 4, name: "ApplicationFrameHost.exe" }];
-    const owners = new Map([[50, "Calculator"]]);
+    const owners = [{ pid: 50, title: "Calculator" }];
     const { apps } = collectWindowsApps(processes, sources({ windowOwners: () => owners, paths: { 50: FRAME } }));
     expect(apps.map((a) => a.name)).toEqual(["Calculator"]);
+  });
+
+  test("two Store apps drawn by the same frame-host process are both listed", () => {
+    const processes = [{ pid: 50, ppid: 4, name: "ApplicationFrameHost.exe" }];
+    const { apps } = collectWindowsApps(processes, sources({
+      windowOwners: () => [{ pid: 50, title: "Calculator" }, { pid: 50, title: "Settings" }],
+      paths: { 50: FRAME },
+    }));
+    expect(apps.map((a) => a.name)).toEqual(["Calculator", "Settings"]);
+  });
+
+  test("two windows of one ordinary process are one app with one pid", () => {
+    const { apps } = collectWindowsApps([{ pid: 100, ppid: 4, name: "Code.exe" }], sources({
+      windowOwners: () => [{ pid: 100, title: "a.ts" }, { pid: 100, title: "b.ts" }],
+      paths: { 100: CODE },
+    }));
+    expect(apps).toHaveLength(1);
+    expect(apps[0]!.pids).toEqual([100]);
   });
 
   test("without a description the file name is the name; an unreadable owner is skipped", () => {
@@ -70,14 +88,14 @@ describe("collectWindowsApps", () => {
       { pid: 2, ppid: 0, name: "elevated.exe" },
     ];
     const { apps } = collectWindowsApps(processes, sources({
-      windowOwners: () => new Map([[1, "Tool"], [2, "Admin thing"]]),
+      windowOwners: () => [{ pid: 1, title: "Tool" }, { pid: 2, title: "Admin thing" }],
       paths: { 1: "C:\\bin\\tool.exe" },
     }));
     expect(apps.map((a) => a.name)).toEqual(["tool"]);
   });
 
   test("a window whose process the tick did not list is ignored", () => {
-    const { apps } = collectWindowsApps([], sources({ windowOwners: () => new Map([[7, "Gone"]]), paths: { 7: CHROME } }));
+    const { apps } = collectWindowsApps([], sources({ windowOwners: () => [{ pid: 7, title: "Gone" }], paths: { 7: CHROME } }));
     expect(apps).toEqual([]);
   });
 
@@ -90,7 +108,7 @@ describe("collectWindowsApps", () => {
 describe("createWindowsAppCollector", () => {
   test("the icon route can only reach executables the last tick listed", async () => {
     const collector = createWindowsAppCollector({
-      windowOwners: () => new Map([[100, "Chrome"]]),
+      windowOwners: () => [{ pid: 100, title: "Chrome" }],
       imagePath: (pid) => (pid === 100 ? CHROME : null),
       describe: () => "Google Chrome",
     });

@@ -94,10 +94,19 @@ const fromWide = (buf: Buffer, chars: number) => buf.toString("utf16le", 0, char
 let enumCallback: JSCallback | null = null;
 let collected: number[] = [];
 
-/** pid → title of its first window that counts as an app window. */
-export function appWindowOwners(): Map<number, string> {
+export interface AppWindow {
+  pid: number;
+  title: string;
+}
+
+/**
+ * Every window that counts as an app window, with its owner. All of them, not one per
+ * process: Store apps all draw through one ApplicationFrameHost process, and keeping only
+ * its first window would drop every Store app after the first.
+ */
+export function appWindowOwners(): AppWindow[] {
   const l = load();
-  const owners = new Map<number, string>();
+  const owners: AppWindow[] = [];
   if (!l) return owners;
   const { user32, dwmapi } = l;
 
@@ -131,10 +140,10 @@ export function appWindowOwners(): Map<number, string> {
 
     user32.GetWindowThreadProcessId(hwnd as never, ptr(pidBuf));
     const pid = pidBuf[0]!;
-    if (!pid || owners.has(pid)) continue;
+    if (!pid) continue;
     const title = Buffer.alloc((titleLen + 1) * 2);
     const got = user32.GetWindowTextW(hwnd as never, ptr(title), titleLen + 1);
-    owners.set(pid, fromWide(title, got));
+    owners.push({ pid, title: fromWide(title, got) });
   }
   return owners;
 }

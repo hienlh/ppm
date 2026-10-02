@@ -12,7 +12,8 @@
  *
  * - Store apps draw their window from `ApplicationFrameHost.exe`, one process for all of
  *   them. Grouped by executable they would be a single app called "Application Frame
- *   Host", so each of its windows is an app of its own, named by its title.
+ *   Host", so each of its windows is an app of its own, named by its title — which is why
+ *   the window list keeps every window rather than one per process.
  * - Only processes sharing a window owner's executable NAME are asked for their path.
  *   Opening a process to read its path is cheap but not free, and the alternative is
  *   asking it of all four hundred processes on every tick.
@@ -21,13 +22,13 @@ import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import type { AppInfo } from "../../types/system-metrics.ts";
 import { primaryPids, type AppProcess } from "./apps-linux.ts";
-import { appWindowOwners, fileDescription, processImagePath } from "./apps-windows-native.ts";
+import { appWindowOwners, fileDescription, processImagePath, type AppWindow } from "./apps-windows-native.ts";
 
 const FRAME_HOST = "applicationframehost.exe";
 
 export interface WindowsAppSources {
-  /** pid → title of a window that makes it an app. */
-  windowOwners: () => Map<number, string>;
+  /** Every window that makes its process an app; a process may own several. */
+  windowOwners: () => readonly AppWindow[];
   imagePath: (pid: number) => string | null;
   /** The executable's own name for itself, or null. */
   describe: (exePath: string) => string | null;
@@ -47,7 +48,8 @@ export function windowsAppId(key: string): string {
 }
 
 export function collectWindowsApps(processes: readonly AppProcess[], sources: WindowsAppSources): WindowsAppList {
-  const owners = sources.windowOwners();
+  const windows = sources.windowOwners();
+  const owners = new Set(windows.map((w) => w.pid));
   const live = new Set(processes.map((p) => p.pid));
   const found = new Map<string, { name: string; exe: string; pids: number[] }>();
   /** Executable name (lower-cased) → keys of the apps launched from a file of that name. */
@@ -58,7 +60,7 @@ export function collectWindowsApps(processes: readonly AppProcess[], sources: Wi
     return pathOf.get(pid)!;
   };
 
-  for (const [pid, title] of owners) {
+  for (const { pid, title } of windows) {
     if (!live.has(pid)) continue;
     const exe = imagePath(pid);
     if (!exe) continue;
@@ -67,7 +69,8 @@ export function collectWindowsApps(processes: readonly AppProcess[], sources: Wi
     const key = frameHost ? `${exe.toLowerCase()}\0${title}` : exe.toLowerCase();
     const entry = found.get(key);
     if (entry) {
-      entry.pids.push(pid);
+      // A second window of the same process is the same app, not another pid.
+      if (!entry.pids.includes(pid)) entry.pids.push(pid);
       continue;
     }
     const name = frameHost ? title : sources.describe(exe) ?? baseName(exe).replace(/\.exe$/i, "");
