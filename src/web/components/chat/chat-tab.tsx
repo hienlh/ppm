@@ -381,6 +381,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     clearErrors,
     messagesLoading,
     versionMap,
+    hasOlderHistory,
+    loadOlderHistory,
+    userOrdinalOffset,
     isStreaming,
     phase,
     isReconnecting,
@@ -1171,6 +1174,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
+        hasOlderHistory={hasOlderHistory}
+        onLoadOlderHistory={loadOlderHistory}
+        userOrdinalOffset={userOrdinalOffset}
         messagesLoading={messagesLoading}
         keepStaleWhileLoading={staleSwap}
         pendingApproval={pendingApproval}

@@ -84,6 +84,14 @@ interface MessageListProps {
   onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
   /** Whether a given compact message has already been expanded. */
   isCompactExpanded?: (compactMessageId: string) => boolean;
+  /** The server holds older messages of this segment that are not loaded yet. */
+  hasOlderHistory?: boolean;
+  /** Prepend the next older page. Comes before any pre-compact expansion: the
+   *  compact summary that expansion hangs off is the oldest message of the segment. */
+  onLoadOlderHistory?: () => Promise<void>;
+  /** Visible user messages before `messages[0]`, so edit-version ordinals of a
+   *  partial window match the ones the full list would give. */
+  userOrdinalOffset?: number;
 }
 
 /**
@@ -144,6 +152,9 @@ export function MessageList({
   bashPartialOutput,
   onExpandCompact,
   isCompactExpanded,
+  hasOlderHistory = false,
+  onLoadOlderHistory,
+  userOrdinalOffset = 0,
   onDismissMessage,
   onClearErrors,
 }: MessageListProps) {
@@ -325,7 +336,8 @@ export function MessageList({
   }, [filtered, onExpandCompact, isCompactExpanded]);
 
   const topUnexpandedCompact = findTopUnexpandedCompact();
-  const hasMore = !!topUnexpandedCompact;
+  const canLoadOlderPage = hasOlderHistory && !!onLoadOlderHistory;
+  const hasMore = canLoadOlderPage || !!topUnexpandedCompact;
 
   // Held as two strings rather than as the object. `findTopUnexpandedCompact`
   // runs on every render and answers with a fresh literal, so depending on that
@@ -337,8 +349,16 @@ export function MessageList({
   const topCompactPath = topUnexpandedCompact?.jsonlPath ?? null;
 
   // Fetch pre-compact history from the server (prepends older messages).
+  // Older pages of this segment first; only once they are all in does the top of the
+  // list reach the compact summary whose pre-compact history can be expanded.
   const loadMore = useCallback(async () => {
-    if (!topCompactId || !topCompactPath || !onExpandCompact || autoLoadingCompact) return;
+    if (autoLoadingCompact) return;
+    const load = canLoadOlderPage
+      ? onLoadOlderHistory!
+      : topCompactId && topCompactPath && onExpandCompact
+        ? () => onExpandCompact(topCompactId, topCompactPath)
+        : null;
+    if (!load) return;
     // Capture distance-from-bottom so the post-prepend layout effect can hold the
     // reading position steady while older messages are inserted above.
     const el = scrollEl;
@@ -346,13 +366,13 @@ export function MessageList({
     setAutoLoadingCompact(true);
     setCompactLoadError(null);
     try {
-      await onExpandCompact(topCompactId, topCompactPath);
+      await load();
     } catch (e) {
       setCompactLoadError(e instanceof Error ? e.message : "Could not load previous conversation");
     } finally {
       setAutoLoadingCompact(false);
     }
-  }, [topCompactId, topCompactPath, onExpandCompact, autoLoadingCompact, scrollEl]);
+  }, [canLoadOlderPage, onLoadOlderHistory, topCompactId, topCompactPath, onExpandCompact, autoLoadingCompact, scrollEl]);
 
   // Lazy-load older history when a sentinel at the top of the transcript comes
   // into range. This replaces a scroll listener that re-ran its check on every
@@ -433,7 +453,8 @@ export function MessageList({
           {filtered.map((msg, globalIdx) => {
             const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
             // User-message ordinal (1-based) — stable version-group anchor across forks.
-            const versionOrdinal = userOrdinals[globalIdx] ?? 0;
+            const localOrdinal = userOrdinals[globalIdx] ?? 0;
+            const versionOrdinal = localOrdinal ? localOrdinal + userOrdinalOffset : 0;
             // Resolved here rather than deeper down so the ordinal→group lookup
             // happens once per message instead of being threaded through bubbles.
             const versionGroup = versionOrdinal ? versionMap?.[versionOrdinal] : undefined;
