@@ -88,8 +88,5 @@ export function listWindowsDisplays(): RemoteDisplay[] {
   // Device names survive enumeration-order changes; HMONITOR handles and list indices don't.
   monitors.sort((a, b) => Number(b.primary) - Number(a.primary) || a.id.localeCompare(b.id, "en", { numeric: true }));
   monitors.forEach((display, index) => { display.captureIndex = index; });
-  return [...monitors, {
-    id: "desktop", label: "All displays", primary: monitors.length === 0,
-    ...windowsVirtualScreen(), captureIndex: 0,
-  }];
+  return monitors;
 }

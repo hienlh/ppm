@@ -10,7 +10,7 @@
  * capabilities route polls every 2 s while the checklist is up.
  *
  * Windows: EnumDisplayMonitors exposes individual physical monitor rectangles. gdigrab
- * crops `desktop` to the selected rectangle; "All displays" keeps whole-desktop capture.
+ * crops `desktop` to the selected monitor rectangle.
  * SendInput maps the selected region into the virtual desktop coordinate space.
  *
  * X11: monitors come from RandR 1.5 `XRRGetMonitors` through FFI, NOT from parsing `xrandr`.

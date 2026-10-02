@@ -23,7 +23,7 @@ try {
   const displays = await listDisplays();
   const ffmpeg = findFfmpegBinary("ffmpeg");
   if (!ffmpeg) throw new Error("FFmpeg missing");
-  if (displays.filter(d => d.id !== "desktop").length < 2) throw new Error("Expected at least two monitors for this e2e");
+  if (displays.length < 2) throw new Error("Expected at least two monitors for this e2e");
   for (const display of displays) {
     const input = captureInputForPlatform("win32", display.captureIndex, { rect: display })!;
     const args = buildCaptureArgs(ffmpeg, "libx264", input, { fps: 5, bitrate: "2M" });
@@ -33,18 +33,16 @@ try {
     const [output, error, code] = await Promise.all([new Response(child.stdout).arrayBuffer(), new Response(child.stderr).text(), child.exited]);
     clearTimeout(timer);
     if (code !== 0 || output.byteLength === 0) throw new Error(`${display.id} capture failed: ${code} ${error}`);
-    if (display.id !== "desktop") {
-      for (const [xf, yf] of [[0.25, 0.25], [0.5, 0.5], [0.75, 0.75]]) {
-        await injectPointer(xf!, yf!, null, null, display);
-        await Bun.sleep(100);
-        const actual = cursor();
-        const expected = { x: display.x + Math.round(xf! * (display.width - 1)), y: display.y + Math.round(yf! * (display.height - 1)) };
-        if (Math.abs(actual.x - expected.x) > 2 || Math.abs(actual.y - expected.y) > 2) {
-          throw new Error(`${display.id} cursor mismatch: ${JSON.stringify({actual, expected})}`);
-        }
+    for (const [xf, yf] of [[0.25, 0.25], [0.5, 0.5], [0.75, 0.75]]) {
+      await injectPointer(xf!, yf!, null, null, display);
+      await Bun.sleep(100);
+      const actual = cursor();
+      const expected = { x: display.x + Math.round(xf! * (display.width - 1)), y: display.y + Math.round(yf! * (display.height - 1)) };
+      if (Math.abs(actual.x - expected.x) > 2 || Math.abs(actual.y - expected.y) > 2) {
+        throw new Error(`${display.id} cursor mismatch: ${JSON.stringify({actual, expected})}`);
       }
     }
-    console.log(JSON.stringify({ id: display.id, width: display.width, height: display.height, x: display.x, y: display.y, encodedBytes: output.byteLength, pointer: display.id === "desktop" ? "not tested in gaps" : "passed" }));
+    console.log(JSON.stringify({ id: display.id, width: display.width, height: display.height, x: display.x, y: display.y, encodedBytes: output.byteLength, pointer: "passed" }));
   }
 } finally {
   user32.symbols.SetPhysicalCursorPos(saved.x, saved.y);

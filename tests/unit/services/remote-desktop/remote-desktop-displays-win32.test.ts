@@ -35,7 +35,7 @@ describe("Windows monitor rectangles", () => {
   it.skipIf(process.platform !== "win32")("native monitor rectangles match the virtual desktop bounds and retain IDs", () => {
     const first = listWindowsDisplays();
     const second = listWindowsDisplays();
-    const monitors = first.filter((display) => display.id !== "desktop");
+    const monitors = first;
     expect(monitors.length).toBeGreaterThan(0);
     expect(first.map((display) => display.id)).toEqual(second.map((display) => display.id));
     expect(first.filter((display) => display.primary)).toHaveLength(1);
@@ -45,6 +45,6 @@ describe("Windows monitor rectangles", () => {
     const right = Math.max(...monitors.map((display) => display.x + display.width));
     const bottom = Math.max(...monitors.map((display) => display.y + display.height));
     expect(windowsVirtualScreen()).toEqual({ x, y, width: right - x, height: bottom - y });
-    expect(first.find((display) => display.id === "desktop")).toMatchObject(windowsVirtualScreen());
+    expect(first.some((display) => display.id === "desktop")).toBe(false);
   });
 });

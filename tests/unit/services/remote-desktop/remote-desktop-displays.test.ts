@@ -3,13 +3,13 @@ import { listDisplays, resolveDisplay } from "../../../../src/services/remote-de
 import { captureInputForPlatform } from "../../../../src/services/remote-desktop/remote-desktop-capture-input.ts";
 
 describe("remote-desktop-displays", () => {
-  it("win32 preserves All displays and prefers an individual primary monitor", async () => {
+  it("win32 lists only individual monitors and prefers the primary", async () => {
     const d = await listDisplays("win32");
-    expect(d.find((display) => display.id === "desktop")).toMatchObject({ label: "All displays", captureIndex: 0 });
-    expect(d.filter((display) => display.primary)).toHaveLength(1);
-    if (process.platform !== "win32") expect(d).toHaveLength(1);
+    expect(d.some((display) => display.id === "desktop")).toBe(false);
+    if (process.platform !== "win32") expect(d).toHaveLength(0);
     else {
-      const monitors = d.filter((display) => display.id !== "desktop");
+      const monitors = d;
+      expect(d.filter((display) => display.primary)).toHaveLength(1);
       expect(monitors.length).toBeGreaterThan(0);
       expect(d[0]?.primary).toBe(true);
       for (const monitor of monitors) {

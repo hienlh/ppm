@@ -377,8 +377,7 @@ HTTP/1.1 200 OK
    `remote-desktop-input-darwin.ts` = CoreGraphics `CGEventPost`, both via `bun:ffi`, no helper binary).
    Coordinates are 0..1 fractions of the frame; keys are `KeyboardEvent.code` mapped per OS.
    Windows enumerates individual monitors using `EnumDisplayMonitors` / `GetMonitorInfoW`, in physical
-   pixels with scoped DPI awareness. The viewer defaults to the primary monitor and also offers All
-   displays. `gdigrab` receives the chosen rectangle through `-offset_x`, `-offset_y`, and `-video_size`;
+   pixels with scoped DPI awareness. The viewer offers individual monitors and defaults to the primary monitor. `gdigrab` receives the chosen rectangle through `-offset_x`, `-offset_y`, and `-video_size`;
    SendInput maps the same rectangle back into virtual-desktop coordinates, including negative origins.
 
 ---
