@@ -44,8 +44,13 @@ function openUser32() {
     GetClassNameW: { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
     GetWindowLongPtrW: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i64 },
     GetWindowThreadProcessId: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+    FindWindowExW: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
   }).symbols;
 }
+
+/** The frame ApplicationFrameHost draws around a Store app, and the app's own window inside. */
+const FRAME_CLASS = "ApplicationFrameWindow";
+const CORE_WINDOW_CLASS = Buffer.from("Windows.UI.Core.CoreWindow\0", "utf16le");
 
 function openKernel32() {
   return dlopen("kernel32.dll", {
@@ -97,12 +102,19 @@ let collected: number[] = [];
 export interface AppWindow {
   pid: number;
   title: string;
+  /** A Store app's window, attributed to the app's own process through its frame. */
+  framed?: boolean;
 }
 
 /**
- * Every window that counts as an app window, with its owner. All of them, not one per
- * process: Store apps all draw through one ApplicationFrameHost process, and keeping only
- * its first window would drop every Store app after the first.
+ * Every window that counts as an app window, with the process that owns its CONTENT.
+ *
+ * Store apps are drawn inside a frame that one shared ApplicationFrameHost process owns
+ * for all of them. Attributed to that process, two Store apps were two rows with the same
+ * pid: End on either killed both, and each row counted the other's CPU and memory. The
+ * app itself owns the `Windows.UI.Core.CoreWindow` inside the frame, so that is the pid
+ * reported. A frame with no CoreWindow in it — the app suspended or still starting — names
+ * no app process at all, and is left out rather than attributed to the shared host.
  */
 export function appWindowOwners(): AppWindow[] {
   const l = load();
@@ -136,14 +148,22 @@ export function appWindowOwners(): AppWindow[] {
       if (dwmapi.DwmGetWindowAttribute(hwnd as never, DWMWA_CLOAKED, ptr(cloakBuf), 4) === 0 && cloakBuf[0] !== 0) continue;
     }
     const classLen = user32.GetClassNameW(hwnd as never, ptr(classBuf), 256);
-    if (classLen > 0 && SHELL_CLASSES.has(fromWide(classBuf, classLen))) continue;
+    const className = classLen > 0 ? fromWide(classBuf, classLen) : "";
+    if (SHELL_CLASSES.has(className)) continue;
 
-    user32.GetWindowThreadProcessId(hwnd as never, ptr(pidBuf));
+    const framed = className === FRAME_CLASS;
+    let owner = hwnd as unknown;
+    if (framed) {
+      owner = user32.FindWindowExW(hwnd as never, null, ptr(CORE_WINDOW_CLASS), null);
+      if (!owner) continue;
+    }
+    pidBuf[0] = 0;
+    user32.GetWindowThreadProcessId(owner as never, ptr(pidBuf));
     const pid = pidBuf[0]!;
     if (!pid) continue;
     const title = Buffer.alloc((titleLen + 1) * 2);
     const got = user32.GetWindowTextW(hwnd as never, ptr(title), titleLen + 1);
-    owners.push({ pid, title: fromWide(title, got) });
+    owners.push({ pid, title: fromWide(title, got), ...(framed ? { framed: true } : {}) });
   }
   return owners;
 }

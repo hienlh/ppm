@@ -57,20 +57,33 @@ describe("collectWindowsApps", () => {
     expect(apps[0]!.pids).toEqual([100]);
   });
 
-  test("each Store app window is an app of its own, named by its title", () => {
-    const processes = [{ pid: 50, ppid: 4, name: "ApplicationFrameHost.exe" }];
-    const owners = [{ pid: 50, title: "Calculator" }];
-    const { apps } = collectWindowsApps(processes, sources({ windowOwners: () => owners, paths: { 50: FRAME } }));
-    expect(apps.map((a) => a.name)).toEqual(["Calculator"]);
+  // Store apps: the frame belongs to ApplicationFrameHost (pid 50) for all of them; the
+  // native layer reports each window under the app process that owns its content.
+  const CALC = "C:\\Program Files\\WindowsApps\\Microsoft.WindowsCalculator\\CalculatorApp.exe";
+  const SETTINGS = "C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe";
+  const storeProcesses = [
+    { pid: 50, ppid: 4, name: "ApplicationFrameHost.exe" },
+    { pid: 60, ppid: 4, name: "CalculatorApp.exe" },
+    { pid: 70, ppid: 4, name: "SystemSettings.exe" },
+  ];
+  const storePaths = { 50: FRAME, 60: CALC, 70: SETTINGS };
+
+  test("two Store apps are two rows with their own pids, never the shared frame host's", () => {
+    const { apps } = collectWindowsApps(storeProcesses, sources({
+      windowOwners: () => [{ pid: 60, title: "Calculator", framed: true }, { pid: 70, title: "Settings", framed: true }],
+      paths: storePaths,
+    }));
+    expect(apps.map((a) => [a.name, a.pids])).toEqual([["Calculator", [60]], ["Settings", [70]]]);
+    // No row may carry the frame host: ending it would close every Store app at once.
+    expect(apps.flatMap((a) => a.pids)).not.toContain(50);
   });
 
-  test("two Store apps drawn by the same frame-host process are both listed", () => {
-    const processes = [{ pid: 50, ppid: 4, name: "ApplicationFrameHost.exe" }];
-    const { apps } = collectWindowsApps(processes, sources({
-      windowOwners: () => [{ pid: 50, title: "Calculator" }, { pid: 50, title: "Settings" }],
-      paths: { 50: FRAME },
+  test("a window still attributed to the frame host is never listed as an app", () => {
+    const { apps } = collectWindowsApps(storeProcesses, sources({
+      windowOwners: () => [{ pid: 50, title: "Calculator" }],
+      paths: storePaths,
     }));
-    expect(apps.map((a) => a.name)).toEqual(["Calculator", "Settings"]);
+    expect(apps).toEqual([]);
   });
 
   test("two windows of one ordinary process are one app with one pid", () => {

@@ -10,10 +10,11 @@
  *
  * Two rules from real machines:
  *
- * - Store apps draw their window from `ApplicationFrameHost.exe`, one process for all of
- *   them. Grouped by executable they would be a single app called "Application Frame
- *   Host", so each of its windows is an app of its own, named by its title — which is why
- *   the window list keeps every window rather than one per process.
+ * - Store apps draw their window's frame from `ApplicationFrameHost.exe`, one process for
+ *   all of them, so a Store window is attributed to the app process that owns the content
+ *   inside the frame (`appWindowOwners`), named by its title, and the frame host itself
+ *   is never an app. Attributed to the frame host, two Store apps shared one pid: ending
+ *   either ended both, and each counted the other's figures.
  * - Only processes sharing a window owner's executable NAME are asked for their path.
  *   Opening a process to read its path is cheap but not free, and the alternative is
  *   asking it of all four hundred processes on every tick.
@@ -60,27 +61,28 @@ export function collectWindowsApps(processes: readonly AppProcess[], sources: Wi
     return pathOf.get(pid)!;
   };
 
-  for (const { pid, title } of windows) {
+  for (const { pid, title, framed } of windows) {
     if (!live.has(pid)) continue;
     const exe = imagePath(pid);
     if (!exe) continue;
     const exeName = baseName(exe).toLowerCase();
-    const frameHost = exeName === FRAME_HOST;
-    const key = frameHost ? `${exe.toLowerCase()}\0${title}` : exe.toLowerCase();
+    // The shared frame host is never an app: its pid is every Store app's at once, so a
+    // row for it would end all of them and count each one's figures in all.
+    if (exeName === FRAME_HOST) continue;
+    const key = exe.toLowerCase();
     const entry = found.get(key);
     if (entry) {
       // A second window of the same process is the same app, not another pid.
       if (!entry.pids.includes(pid)) entry.pids.push(pid);
       continue;
     }
-    const name = frameHost ? title : sources.describe(exe) ?? baseName(exe).replace(/\.exe$/i, "");
+    // A Store app's executable describes itself poorly ("CalculatorApp"); its window
+    // title is the name the Start menu and Task Manager show.
+    const name = (framed && title) || (sources.describe(exe) ?? baseName(exe).replace(/\.exe$/i, ""));
     found.set(key, { name, exe, pids: [pid] });
-    // A frame host's other processes are other apps' windows, never this one's helpers.
-    if (!frameHost) {
-      const keys = byName.get(exeName) ?? new Set<string>();
-      keys.add(key);
-      byName.set(exeName, keys);
-    }
+    const keys = byName.get(exeName) ?? new Set<string>();
+    keys.add(key);
+    byName.set(exeName, keys);
   }
 
   for (const proc of processes) {
