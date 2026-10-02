@@ -37,9 +37,10 @@ const FILTER_LABELS: Record<ServiceFilter, string> = {
 export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: MetricsSnapshot | null }) {
   const { snapshot, error, loading, refresh } = useServices(active);
   // Before the first listing, the metrics stream already says which OS this is.
-  const manager = snapshot?.manager ?? (metrics?.platform === "darwin" ? "launchd" : "systemd");
-  // launchd's word for one: a job, run by label.
-  const noun = manager === "launchd" ? "jobs" : "units";
+  const manager = snapshot?.manager
+    ?? (metrics?.platform === "darwin" ? "launchd" : metrics?.platform === "win32" ? "scm" : "systemd");
+  // launchd's word for one: a job, run by label. Windows calls them services.
+  const noun = manager === "launchd" ? "jobs" : manager === "scm" ? "services" : "units";
   const [scope, setScope] = useState<ServiceScope>("system");
   const [filter, setFilter] = useState<ServiceFilter>("all");
   const [query, setQuery] = useState("");
@@ -121,7 +122,8 @@ export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: 
       data-sort-dir={sortDir}
     >
       <div className="shrink-0 border-b border-border">
-        <div className="flex items-center" role="tablist">
+        {/* Windows has one service manager, so there is no user scope to switch to. */}
+        {manager !== "scm" && <div className="flex items-center" role="tablist">
           {SCOPES.map((s) => (
             <button
               key={s}
@@ -140,7 +142,7 @@ export function ServicesPanel({ active, metrics }: { active: boolean; metrics?: 
               {SCOPE_LABELS[s]}
             </button>
           ))}
-        </div>
+        </div>}
         <div className="flex flex-wrap items-center gap-2 p-2">
           <div className="relative flex-1 min-w-[140px]">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-text-subtle" />

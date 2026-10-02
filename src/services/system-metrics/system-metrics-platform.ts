@@ -4,6 +4,7 @@ import type { MetricsPlatform } from "../../types/system-metrics.ts";
 import type { AppCollector } from "../system-services/apps-linux.ts";
 import { createLinuxAppCollector } from "../system-services/apps-linux.ts";
 import { darwinAppCollector } from "../system-services/apps-darwin.ts";
+import { windowsAppCollector } from "../system-services/apps-windows.ts";
 import { launchdJobIndex } from "../system-services/launchd-job-index.ts";
 import type { ProcessCollector } from "./process-collector-types.ts";
 import { EMPTY_PROCESS_COLLECTOR } from "./process-collector-types.ts";
@@ -35,7 +36,7 @@ export interface PlatformCollectors {
    *  them, which the client reads as "this machine lists no devices". */
   devices: DeviceCollector | null;
   /** Desktop applications with a live process: app cgroups on Linux, app bundles
-   *  on macOS. Null on Windows, which lists none yet. */
+   *  on macOS, window-owning executables on Windows. */
   apps: AppCollector | null;
 }
 
@@ -47,7 +48,15 @@ export function createPlatformCollectors(platform: MetricsPlatform = toMetricsPl
   const gpus = createNvidiaGpuCollector();
   switch (platform) {
     case "win32":
-      return { platform, processes: createWindowsProcessCollector(), diskNet: null, gpus, devices: null, apps: null };
+      return {
+        platform,
+        processes: createWindowsProcessCollector(),
+        diskNet: null,
+        gpus,
+        devices: null,
+        // The collector the icon route asks, so it serves only what a tick listed.
+        apps: (processes) => windowsAppCollector().collect(processes),
+      };
     case "darwin":
       return {
         platform,

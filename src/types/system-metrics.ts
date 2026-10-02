@@ -418,17 +418,21 @@ export interface ProcessDetails {
 
 /** A running desktop application — Mission Center's "Apps" section. On Linux it is
  *  found from the user's app cgroups and `.desktop` Exec matching; on macOS it is
- *  the application bundle a process runs from. */
+ *  the application bundle a process runs from; on Windows, the executable of a
+ *  process that owns an app window. */
 export interface AppInfo {
   /** Stable across ticks. Linux: the desktop file id without `.desktop`
-   *  ("org.kde.konsole"). macOS: CFBundleIdentifier ("com.google.Chrome"). */
+   *  ("org.kde.konsole"). macOS: CFBundleIdentifier ("com.google.Chrome").
+   *  Windows: `win-` + a hash of the executable path. */
   id: string;
   /** Linux: the entry's unlocalised `Name=`. macOS: CFBundleDisplayName, else
-   *  CFBundleName, else the bundle's folder name. */
+   *  CFBundleName, else the bundle's folder name. Windows: the executable's
+   *  FileDescription, else its file name. */
   name: string;
   /** Linux: the entry's `Icon=`, a theme icon name or an absolute path. macOS: the
-   *  bundle's icon file name ("AppIcon.icns"). Either way `/api/system/app-icon`
-   *  resolves it to an image; null when the app declares none. */
+   *  bundle's icon file name ("AppIcon.icns"). Windows: the executable's file name.
+   *  Either way `/api/system/app-icon` resolves it to an image; null when the app
+   *  declares none. */
   icon: string | null;
   /** Primary pids: app pids whose parent is not also one of this app's pids. Each
    *  stands for its whole subtree, which is what an app row's figures sum over. */

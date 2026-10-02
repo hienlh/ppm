@@ -9,8 +9,9 @@
  * `NSScreen.localizedName` is Objective-C — both out of bun:ffi's reach. Cached briefly: the
  * capabilities route polls every 2 s while the checklist is up.
  *
- * Windows: gdigrab `desktop` grabs the whole virtual screen and SendInput maps 0..65535 onto
- * that same rectangle, so there is exactly one "display" and no offsets to apply.
+ * Windows: EnumDisplayMonitors exposes individual physical monitor rectangles. gdigrab
+ * crops `desktop` to the selected monitor rectangle.
+ * SendInput maps the selected region into the virtual desktop coordinate space.
  *
  * X11: monitors come from RandR 1.5 `XRRGetMonitors` through FFI, NOT from parsing `xrandr`.
  * The binary is a separate package from the library and is genuinely absent on hosts that have
@@ -25,13 +26,15 @@
 
 import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-session.ts";
 import { asPointer, getX11 } from "./remote-desktop-x11.ts";
+import { listWindowsDisplays } from "./remote-desktop-displays-win32.ts";
+export { windowsVirtualScreen } from "./remote-desktop-displays-win32.ts";
 
 export interface RemoteDisplay {
-  /** Stable per host session (`CGDirectDisplayID` on macOS, `"desktop"` on Windows). */
+  /** Stable per host session (`CGDirectDisplayID` on macOS, display device name on Windows). */
   id: string;
   label: string;
   primary: boolean;
-  /** Origin + size in the OS's global *logical* coordinate space (points on macOS). */
+  /** Origin + size in the OS's global coordinate space (points on macOS; physical pixels on Windows/X11). */
   x: number;
   y: number;
   width: number;
@@ -141,7 +144,7 @@ export async function listDisplays(
   linuxSession = platform === "linux" ? detectLinuxSession() : null,
 ): Promise<RemoteDisplay[]> {
   if (platform === "win32") {
-    return [{ id: "desktop", label: "All displays", primary: true, x: 0, y: 0, width: 0, height: 0, captureIndex: 0 }];
+    return listWindowsDisplays();
   }
   if (platform === "linux") {
     // Wayland: the portal dialog picks the screen, so there is nothing to list here.

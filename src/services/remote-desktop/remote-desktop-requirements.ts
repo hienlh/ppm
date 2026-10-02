@@ -29,6 +29,7 @@ export type HostAction = "request" | "open-settings";
 export type RequirementAction =
   /** Type `command` into a PPM terminal — that shell runs on the host, so this works from a phone. */
   | { kind: "terminal"; label: string; command: string }
+  | { kind: "install"; label: string }
   /** A web page the *client* opens in its own browser (docs, downloads). */
   | { kind: "link"; label: string; url: string }
   /** Something only the host can do — show an OS permission prompt, open its Settings pane.
@@ -80,7 +81,7 @@ export interface RemoteDesktopReadiness {
 
 const FFMPEG_INSTALL: Partial<Record<NodeJS.Platform, RequirementAction>> = {
   darwin: { kind: "terminal", label: "Install with Homebrew", command: "brew install ffmpeg" },
-  win32: { kind: "terminal", label: "Install with winget", command: "winget install --id Gyan.FFmpeg -e" },
+  win32: { kind: "install", label: "Install ffmpeg" },
 };
 
 /** Distro package managers, in the order a host is checked. `apt` last as the fallback label
@@ -107,7 +108,7 @@ function ffmpegRequirement(platform: NodeJS.Platform, present: boolean): RemoteD
     ok: present,
     gates: "video",
     title: "ffmpeg",
-    detail: "Captures and encodes the screen. Install it, then come back — PPM re-checks automatically.",
+    detail: "Captures and encodes the screen. PPM checks again automatically after installation.",
     actions: [
       ...(install ? [install] : []),
       { kind: "link", label: "Download page", url: "https://ffmpeg.org/download.html" },

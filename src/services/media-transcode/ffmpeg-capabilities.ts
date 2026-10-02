@@ -17,6 +17,7 @@
  * NVENC/QSV support, not that a compatible GPU/driver is present.
  */
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 export interface FfmpegCapabilities {
   ffmpeg: string | null;
@@ -101,6 +102,24 @@ async function encoderWorks(ffmpeg: string, encoder: string): Promise<boolean> {
   }
 }
 
+/** WinGet archive packages add their bin directory to the user's future PATH. Discover
+ * it directly so a running PPM process can use a fresh install without a restart. */
+export function wingetFfmpegBinDirs(local: string): string[] {
+  const root = join(local, "Microsoft", "WinGet", "Packages");
+  const dirs: string[] = [];
+  try {
+    for (const pkg of readdirSync(root, { withFileTypes: true })) {
+      if (!pkg.isDirectory() || !pkg.name.startsWith("Gyan.FFmpeg_")) continue;
+      const path = join(root, pkg.name);
+      dirs.push(join(path, "bin"));
+      for (const child of readdirSync(path, { withFileTypes: true })) {
+        if (child.isDirectory()) dirs.push(join(path, child.name, "bin"));
+      }
+    }
+  } catch { /* WinGet may not be installed yet. */ }
+  return dirs;
+}
+
 /** Where package managers put ffmpeg when it is not on the daemon's PATH. */
 function wellKnownBinDirs(): string[] {
   switch (process.platform) {
@@ -108,7 +127,7 @@ function wellKnownBinDirs(): string[] {
     case "win32": {
       const local = process.env.LOCALAPPDATA;
       return [
-        ...(local ? [`${local}\\Microsoft\\WinGet\\Links`] : []),
+        ...(local ? [`${local}\\Microsoft\\WinGet\\Links`, ...wingetFfmpegBinDirs(local)] : []),
         "C:\\ProgramData\\chocolatey\\bin", "C:\\ffmpeg\\bin",
       ];
     }

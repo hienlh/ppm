@@ -36,7 +36,8 @@ import {
   getIndexStatus as chatSearchGetIndexStatus,
   getKnownSessionCount as chatSearchKnownCount,
 } from "../../services/chat-search.service.ts";
-import { compareSessionsByActivity, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
+import { compareSessionsByActivity, type ChatMessage, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
+import { pageHistory, parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
@@ -315,6 +316,52 @@ chatRoutes.get("/sessions/:id/design", (c) => {
   return c.json(ok({ designSlug: getSessionDesignSlugs([id])[id] ?? null }));
 });
 
+/**
+ * The full parsed history of recently opened sessions, so the older pages a tab asks for
+ * as it scrolls up are sliced from the parse its first page already paid for. Parsing is
+ * the expensive part — minutes of CPU for a transcript in the hundreds of MB — and paying
+ * it again per page would make scrolling up slower than the old load-everything was.
+ *
+ * Only older-page requests (`before`) read from here; a first page or a refetch always
+ * parses afresh, since the transcript may have grown. Small and short-lived on purpose:
+ * each entry is a whole session's messages.
+ */
+const HISTORY_CACHE_TTL_MS = 5 * 60_000;
+const HISTORY_CACHE_MAX = 3;
+const historyCache = new Map<string, { messages: ChatMessage[]; at: number }>();
+
+function rememberHistory(key: string, messages: ChatMessage[]): void {
+  historyCache.delete(key);
+  historyCache.set(key, { messages, at: Date.now() });
+  while (historyCache.size > HISTORY_CACHE_MAX) historyCache.delete(historyCache.keys().next().value!);
+}
+
+function recentHistory(key: string): ChatMessage[] | null {
+  const hit = historyCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > HISTORY_CACHE_TTL_MS) { historyCache.delete(key); return null; }
+  return hit.messages;
+}
+
+async function loadFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
+  const messages = await chatService.getMessages(providerId, id);
+  // Forking re-timestamps the copied prefix (both the Claude SDK and codex
+  // stamp the fork moment), so a version's inherited history would render as
+  // "just now" and shift when switching versions. Overlay the branch root's
+  // real timestamps across the identical prefix, stopping at the divergent
+  // (edited) message beyond which the messages are genuinely new to this fork.
+  const rootId = getRootId(id);
+  if (rootId && rootId !== id) {
+    const rootMsgs = await chatService.getMessages(providerId, rootId).catch(() => [] as typeof messages);
+    for (let i = 0; i < messages.length && i < rootMsgs.length; i++) {
+      const r = rootMsgs[i], m = messages[i];
+      if (!r || !m || r.role !== m.role || r.content !== m.content) break;
+      m.timestamp = r.timestamp;
+    }
+  }
+  return messages;
+}
+
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
     const requestedId = c.req.param("id");
@@ -323,28 +370,25 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     // the old id reads the conversation instead of an empty list.
     const id = resolveMigratedSession(requestedId);
     const providerId = c.req.query("providerId") ?? "claude";
-    const messages = await chatService.getMessages(providerId, id);
-    // Forking re-timestamps the copied prefix (both the Claude SDK and codex
-    // stamp the fork moment), so a version's inherited history would render as
-    // "just now" and shift when switching versions. Overlay the branch root's
-    // real timestamps across the identical prefix, stopping at the divergent
-    // (edited) message beyond which the messages are genuinely new to this fork.
-    const rootId = getRootId(id);
-    if (rootId && rootId !== id) {
-      const rootMsgs = await chatService.getMessages(providerId, rootId).catch(() => [] as typeof messages);
-      for (let i = 0; i < messages.length && i < rootMsgs.length; i++) {
-        const r = rootMsgs[i], m = messages[i];
-        if (!r || !m || r.role !== m.role || r.content !== m.content) break;
-        m.timestamp = r.timestamp;
-      }
+    const query = parseHistoryPageQuery((name) => c.req.query(name));
+    const cacheKey = `${providerId}\0${id}`;
+    let all = query.before !== undefined ? recentHistory(cacheKey) : null;
+    if (!all) {
+      all = await loadFullHistory(providerId, id);
+      if (query.limit !== undefined || query.from !== undefined) rememberHistory(cacheKey, all);
     }
+    const page = pageHistory(all, query);
     // versionMap ships with the history so the `‹ n/m ›` switcher needs no
     // per-message request. Ordinals absent from the map have no edited versions.
     // Hand back the id that actually owns this transcript so the client can
     // adopt it — otherwise every future read, and the next turn, still targets
     // the abandoned one.
     return c.json(ok({
-      messages,
+      messages: page.messages,
+      start: page.start,
+      total: page.total,
+      userOrdinalOffset: page.userOrdinalOffset,
+      predecessorId: page.predecessorId,
       versionMap: resolveVersionMap(id),
       ...(id !== requestedId ? { canonicalSessionId: id } : {}),
     }));

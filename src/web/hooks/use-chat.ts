@@ -54,6 +54,9 @@ export interface BashPartialEntry {
   lineCount: number;
 }
 
+/** Messages per history page: what a tab loads on open, and per scroll-up fetch. */
+const HISTORY_PAGE_SIZE = 50;
+
 /** The per-session picks a message carries; a pick the user never made is left out. */
 export interface TurnSettings {
   model?: string;
@@ -77,6 +80,16 @@ interface UseChatReturn {
   /** Edited-version groups keyed by user-message ordinal. A missing ordinal means
    *  the message has no alternate versions, so the switcher stays hidden. */
   versionMap: Record<number, VersionGroup>;
+  /** Older messages exist on the server that this tab has not loaded yet. */
+  hasOlderHistory: boolean;
+  loadingOlderHistory: boolean;
+  /** Prepend the next page of older history. Rejects if the request fails. */
+  loadOlderHistory: () => Promise<void>;
+  /** Visible user messages before the loaded window — add to a local ordinal. */
+  userOrdinalOffset: number;
+  /** Fork/edit anchor for the first loaded message (the unloaded one before it); null
+   *  when everything is loaded or nothing precedes it. */
+  historyPredecessorId: string | null;
   isStreaming: boolean;
   phase: SessionPhase;
   isReconnecting: boolean;
@@ -169,6 +182,25 @@ export function useChat(
   // Edited-version groups for this session, keyed by user-message ordinal.
   // Ships with /messages so the switcher needs no per-message request.
   const [versionMap, setVersionMap] = useState<Record<number, VersionGroup>>({});
+  // History arrives a page at a time (newest first). `historyStart` is the server-side
+  // index of the oldest loaded message — 0 once everything is in — and the ordinal offset
+  // keeps the edit-version numbering of a partial window equal to the full list's.
+  const [historyStart, setHistoryStart] = useState(0);
+  const historyStartRef = useRef(0);
+  const [userOrdinalOffset, setUserOrdinalOffset] = useState(0);
+  // The fork/edit anchor of the first loaded message, which is itself not loaded.
+  const [historyPredecessorId, setHistoryPredecessorId] = useState<string | null>(null);
+  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
+  const loadingOlderRef = useRef(false);
+  /** A refetch that answered while an older page was loading, to be re-run after it. */
+  const refetchAfterOlderRef = useRef(false);
+  const applyHistoryWindow = useCallback((page?: { start?: number; userOrdinalOffset?: number; predecessorId?: string | null }) => {
+    const start = page?.start ?? 0;
+    historyStartRef.current = start;
+    setHistoryStart(start);
+    setUserOrdinalOffset(page?.userOrdinalOffset ?? 0);
+    setHistoryPredecessorId(start > 0 ? page?.predecessorId ?? null : null);
+  }, []);
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [connectingElapsed, setConnectingElapsed] = useState(0);
@@ -1126,8 +1158,15 @@ export function useChat(
   }, [processStreamEvent]);
   handleMessageRef.current = handleMessage;
 
+  // The provider rides along because the server has no other way to learn it for a
+  // session whose `session_metadata` row was written by something other than
+  // `createSession` (the account claim's upsert leaves `provider_id` NULL). Without
+  // it the WS falls back to the *global* default provider, and a claude session on a
+  // codex-default install is then resumed as codex — which answers "transcript not
+  // found" and drops every message with the composer already emptied. It is only a
+  // hint: the server adopts it when nothing is stored, never over a stored value.
   const wsUrl = sessionId && projectName
-    ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}`
+    ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}?providerId=${encodeURIComponent(providerId)}`
     : "";
 
   const { send, connect: wsReconnect } = useWebSocket({
@@ -1184,6 +1223,9 @@ export function useChat(
     // switcher navigate to a session in a different branch tree if the new
     // session's /messages fetch fails or the tab swaps to a draft.
     setVersionMap({});
+    applyHistoryWindow();
+    loadingOlderRef.current = false;
+    setLoadingOlderHistory(false);
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     replayTurnUserMsgRef.current = null;
@@ -1232,7 +1274,7 @@ export function useChat(
       // a page reload.
       api
         .get<any>(
-          `${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`,
+          `${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}&limit=${HISTORY_PAGE_SIZE}`,
         )
         .then((data: any) => {
           if (cancelled || historyReconciledRef.current !== historyReconciled) return;
@@ -1242,6 +1284,7 @@ export function useChat(
           const payload = Array.isArray(data) ? { messages: data, versionMap: {} } : data;
           let history: ChatMessage[] = slimHistoryMessages(Array.isArray(payload?.messages) ? payload.messages : []);
           if (payload?.versionMap) setVersionMap(payload.versionMap);
+          applyHistoryWindow(payload);
           // The server served this transcript from a different id than the one
           // asked for: the provider had renamed the session and this tab kept the
           // original. Adopt the real id, so the next turn continues the
@@ -1516,7 +1559,10 @@ export function useChat(
     // No setMessagesLoading(true) here — keep current messages visible while
     // fetching in the background (stale-while-revalidate). The initial load
     // in the session-change useEffect already handles the first-time loading screen.
-    api.get<any>(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, { signal: request.signal })
+    // `from` keeps every page already scrolled in: asking for the newest page only
+    // would silently drop them the moment a turn ends.
+    const from = historyStartRef.current;
+    api.get<any>(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}&from=${from}&limit=${HISTORY_PAGE_SIZE}`, { signal: request.signal })
       .then((data: any) => {
         // A turn may have started while this fetch was in flight (e.g. edit→fork
         // swaps the session, session_state arrives idle and triggers this refetch,
@@ -1533,9 +1579,22 @@ export function useChat(
         // edit changes the branch tree without necessarily changing history
         // length, and the `n/m` counts must not go stale.
         if (payload?.versionMap) setVersionMap(payload.versionMap);
+        // An older page landed while this was in flight: the window now starts before
+        // `from`, so replacing with this slice would throw away what was just scrolled in.
+        // Ask again from where the window starts now.
+        // One still loading re-runs this when it lands (see loadOlderHistory).
+        if (loadingOlderRef.current) {
+          refetchAfterOlderRef.current = true;
+          return;
+        }
+        if (historyStartRef.current !== from) {
+          queueMicrotask(() => refetchRef.current?.());
+          return;
+        }
         if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
           historyReconciledRef.current++;
           if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
+          applyHistoryWindow(payload);
           setMessages(slimHistoryMessages(payload.messages));
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
@@ -1543,7 +1602,36 @@ export function useChat(
         historyLoadedAtRef.current = Date.now();
       })
       .catch(() => {});
-  }, [sessionId, providerId, projectName]);
+  }, [sessionId, providerId, projectName, applyHistoryWindow]);
+
+  /** Fetch the page of history just older than what is loaded and prepend it. */
+  const loadOlderHistory = useCallback(async (): Promise<void> => {
+    const before = historyStartRef.current;
+    if (!sessionId || !projectName || before <= 0 || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlderHistory(true);
+    try {
+      const data = await api.get<any>(
+        `${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}&limit=${HISTORY_PAGE_SIZE}&before=${before}`,
+      );
+      // The tab moved to another session, or a refetch re-based the window, while
+      // this was in flight — prepending now would splice two different lists.
+      if (sessionIdRef.current !== sessionId || historyStartRef.current !== before) return;
+      const older = slimHistoryMessages(Array.isArray(data?.messages) ? data.messages : []);
+      setMessages((prev) => {
+        const have = new Set(prev.map((m) => m.id));
+        return [...older.filter((m) => !have.has(m.id)), ...prev];
+      });
+      applyHistoryWindow(data);
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlderHistory(false);
+      if (refetchAfterOlderRef.current) {
+        refetchAfterOlderRef.current = false;
+        refetchRef.current?.();
+      }
+    }
+  }, [sessionId, providerId, projectName, applyHistoryWindow]);
 
   // Keep refetchRef in sync
   refetchRef.current = refetchMessages;
@@ -1596,6 +1684,11 @@ export function useChat(
     clearErrors,
     messagesLoading,
     versionMap,
+    hasOlderHistory: historyStart > 0,
+    loadingOlderHistory,
+    loadOlderHistory,
+    userOrdinalOffset,
+    historyPredecessorId,
     isStreaming,
     phase,
     isReconnecting,

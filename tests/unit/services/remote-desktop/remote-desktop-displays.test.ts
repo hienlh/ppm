@@ -3,10 +3,20 @@ import { listDisplays, resolveDisplay } from "../../../../src/services/remote-de
 import { captureInputForPlatform } from "../../../../src/services/remote-desktop/remote-desktop-capture-input.ts";
 
 describe("remote-desktop-displays", () => {
-  it("win32 exposes exactly one 'All displays' surface (gdigrab desktop + VIRTUALDESK input)", async () => {
+  it("win32 lists only individual monitors and prefers the primary", async () => {
     const d = await listDisplays("win32");
-    expect(d).toHaveLength(1);
-    expect(d[0]).toMatchObject({ id: "desktop", primary: true, captureIndex: 0 });
+    expect(d.some((display) => display.id === "desktop")).toBe(false);
+    if (process.platform !== "win32") expect(d).toHaveLength(0);
+    else {
+      const monitors = d;
+      expect(d.filter((display) => display.primary)).toHaveLength(1);
+      expect(monitors.length).toBeGreaterThan(0);
+      expect(d[0]?.primary).toBe(true);
+      for (const monitor of monitors) {
+        expect(monitor.width).toBeGreaterThan(0);
+        expect(monitor.height).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("platforms without a grabber list nothing", async () => {

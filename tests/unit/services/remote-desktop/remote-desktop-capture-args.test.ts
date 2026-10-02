@@ -199,3 +199,21 @@ describe("where the encoded stream goes", () => {
     expect(args[args.indexOf("-rtsp_transport") + 1]).toBe("tcp");
   });
 });
+
+describe("buildCaptureArgs — Windows monitor selection", () => {
+  it("passes the selected monitor through the platform input into gdigrab before -i", () => {
+    const rect = { x: -1920, y: -240, width: 1920, height: 1080 };
+    const input = captureInputForPlatform("win32", 1, { rect })!;
+    const args = buildCaptureArgs("ffmpeg", "libx264", input);
+    const inputArgs = args.slice(0, args.indexOf("-i"));
+    expect(inputArgs.slice(inputArgs.indexOf("-offset_x"))).toEqual([
+      "-offset_x", "-1920", "-offset_y", "-240", "-video_size", "1920x1080",
+    ]);
+    expect(args[args.indexOf("-i") + 1]).toBe("desktop");
+  });
+  it("keeps whole-desktop capture without an explicit rectangle", () => {
+    const args = buildCaptureArgs("ffmpeg", "libx264", captureInputForPlatform("win32")!);
+    expect(args).not.toContain("-offset_x");
+    expect(args).not.toContain("-video_size");
+  });
+});

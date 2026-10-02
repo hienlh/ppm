@@ -12,6 +12,8 @@
  *
  * macOS: the id is a bundle the last tick listed, and the file is a PNG converted
  * from that bundle's own icon. An app no tick listed has no icon to ask for.
+ *
+ * Windows: the same, with the executable in place of the bundle.
  */
 import { join } from "node:path";
 import { realLinuxFs, type LinuxFs } from "../system-metrics/linux-fs.ts";
@@ -20,6 +22,8 @@ import { createLinuxAppCollector } from "./apps-linux.ts";
 import { darwinAppCollector, type DarwinAppCollector } from "./apps-darwin.ts";
 import { createIconResolver } from "./app-icons-linux.ts";
 import { createDarwinIconConverter, type DarwinIconConverter } from "./app-icons-darwin.ts";
+import { windowsAppCollector, type WindowsAppCollector } from "./apps-windows.ts";
+import { createWindowsIconConverter, type WindowsIconConverter } from "./app-icons-windows.ts";
 
 export interface AppIconService {
   /** Absolute path to the icon file, or null when the app or its icon is unknown. */
@@ -29,7 +33,21 @@ export interface AppIconService {
 const isAppId = (id: string) => id !== "" && !id.includes("/") && !id.includes("..");
 
 export function createAppIconService(platform: NodeJS.Platform = process.platform): AppIconService {
-  return platform === "darwin" ? createDarwinAppIconService() : createLinuxAppIconService();
+  if (platform === "darwin") return createDarwinAppIconService();
+  if (platform === "win32") return createWindowsAppIconService();
+  return createLinuxAppIconService();
+}
+
+export function createWindowsAppIconService(
+  apps: Pick<WindowsAppCollector, "iconSource"> = windowsAppCollector(),
+  icons: WindowsIconConverter = createWindowsIconConverter(join(getPpmDir(), "app-icons")),
+): AppIconService {
+  return {
+    async path(appId: string): Promise<string | null> {
+      const exe = isAppId(appId) ? apps.iconSource(appId) : null;
+      return exe ? icons.png(exe) : null;
+    },
+  };
 }
 
 export function createLinuxAppIconService(fs: LinuxFs = realLinuxFs): AppIconService {
