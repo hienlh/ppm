@@ -42,7 +42,9 @@ function groupForApp(app: AppRowData): ProcessGroup {
 
 export function AppsPanel({ snapshot }: { snapshot: MetricsSnapshot }) {
   const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState<AppSortKey>("cpu");
+  // Memory first: what an Apps page is opened to answer is usually "what is using my
+  // RAM", and a CPU order reshuffles every tick at the near-zero figures idle apps have.
+  const [sortKey, setSortKey] = useState<AppSortKey>("ram");
   const { pendingKill, requestKillGroup, confirmKill, cancelKill } = useProcessKill(snapshot);
 
   const byPid = useMemo(
