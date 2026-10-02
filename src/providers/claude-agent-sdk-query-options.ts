@@ -27,6 +27,34 @@ export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
  */
 export const THINKING_ADAPTIVE = -1;
 
+/**
+ * The tools the SDK runs without asking — it skips `canUseTool` for everything listed.
+ *
+ * In non-bypass modes only the read-only tools are listed, so write/execute tools go through
+ * the permission evaluation chain → the PreToolUse hook. The design policy lists nothing:
+ * the read-only list would let Read and Grep reach any path on disk and every MCP tool run
+ * unasked, which is exactly what a design session's agent (fed page content it did not
+ * write) must not do.
+ */
+export const READ_ONLY_TOOLS: readonly string[] = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
+
+export function allowedToolsFor(p: {
+  isBypass: boolean;
+  agentTeams?: boolean;
+  designPolicy?: boolean;
+  designCheckTool?: string | null;
+}): string[] {
+  if (p.designPolicy) return p.designCheckTool ? [p.designCheckTool] : [];
+  const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
+  const teamTools = p.agentTeams
+    ? ["TeamCreate", "TeamDelete", "SendMessage", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
+    : [];
+  const mcpTools = ["mcp__*"];
+  return p.isBypass
+    ? [...READ_ONLY_TOOLS, ...writeTools, ...teamTools, ...mcpTools]
+    : [...READ_ONLY_TOOLS, ...mcpTools];
+}
+
 export interface ModelQueryOverrides {
   model?: string;
   oneMContext?: boolean;

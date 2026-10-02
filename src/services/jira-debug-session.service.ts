@@ -184,7 +184,7 @@ class JiraDebugSessionService {
 
       // bypassPermissions: automated debug sessions run without user approval (same as PPMBot)
       const opts = { permissionMode: "bypassPermissions" as PermissionMode };
-      const events = chatService.sendMessage(session.providerId, session.id, prompt, opts);
+      const events = chatService.sendMessage(session.providerId, session.id, prompt, { ...opts, origin: "jira" });
 
       let lastAssistantText = "";
       for await (const event of events) {

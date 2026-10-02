@@ -16,6 +16,7 @@
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { isChunkLoadError, purgeAndReload } from "@/lib/chunk-recovery";
+import { reportTraceError } from "@/lib/trace-client";
 
 interface Props {
   children: ReactNode;
@@ -84,6 +85,10 @@ export class RootErrorBoundary extends Component<Props, State> {
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
+    // To the server too: this screen is usually seen on a device with no devtools open.
+    reportTraceError(isChunkLoadError(error) ? "chunk_error" : "render_error", error, {
+      componentStack: info.componentStack ?? undefined,
+    });
     console.error("[ppm] unhandled render error", error, info.componentStack);
   }
 

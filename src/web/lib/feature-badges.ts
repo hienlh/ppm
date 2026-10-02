@@ -16,6 +16,8 @@ export const FEATURE_BADGES = {
   "remote-desktop": "beta",
   /** Design mode (Designs sidebar tab): design chat beside a live canvas, shipped in 0.23.0. */
   designs: "new",
+  /** Android emulator — start an AVD and control its screen from the browser. */
+  android: "beta",
 } as const satisfies Record<string, FeatureBadgeKind>;
 
 export type FeatureBadgeId = keyof typeof FEATURE_BADGES;

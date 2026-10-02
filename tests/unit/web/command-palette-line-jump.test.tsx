@@ -20,7 +20,7 @@ const palette = await import("../../../src/web/hooks/use-global-keybindings");
 
 afterAll(uninstallDom);
 afterEach(() => {
-  useFileStore.setState({ fileIndex: [], indexStatus: "idle" });
+  useFileStore.setState({ fileIndex: [], indexStatus: "idle", indexProject: null });
   useProjectStore.setState({ activeProject: null });
 });
 
@@ -37,7 +37,7 @@ it("opens an indexed project file at the line the query names", async () => {
   useFileStore.setState({
     fileIndex: [{ name: "app.ts", path: "src/app.ts", type: "file" }] as never,
     indexStatus: "ready",
-    indexProjectName: "demo",
+    indexProject: "demo",
   });
   const open = spyOn(useTabStore.getState(), "openTab").mockReturnValue("tab-1");
   const update = spyOn(useTabStore.getState(), "updateTab").mockImplementation(() => {});

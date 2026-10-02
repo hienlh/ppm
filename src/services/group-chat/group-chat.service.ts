@@ -327,7 +327,7 @@ class GroupChatService {
       // consumer-side signal guard halts the turn, so only permissionMode is
       // forwarded here.
       sendMessage: (pid, sid, prompt, opts) =>
-        chatService.sendMessage(pid, sid, prompt, { permissionMode: opts?.permissionMode, model: opts?.model, oneMContext: opts?.oneMContext }),
+        chatService.sendMessage(pid, sid, prompt, { permissionMode: opts?.permissionMode, model: opts?.model, oneMContext: opts?.oneMContext, origin: "group-chat" }),
     };
     return this.backendCache;
   }

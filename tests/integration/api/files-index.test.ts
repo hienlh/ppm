@@ -120,6 +120,18 @@ describe("GET /files/index", () => {
     expect(paths).toContain("secret.env");
   });
 
+  it("lets a first walk outlast Bun's 10 s idle timeout", async () => {
+    // nxsys-workspace's first walk took 14 s on a busy scratch server, and Bun cut the request
+    // off at 10 s with the list nearly built. `app.fetch(req, server)` hands routes the server.
+    const timeouts: { request: Request; seconds: number }[] = [];
+    const server = { timeout: (request: Request, seconds: number) => { timeouts.push({ request, seconds }); } };
+    const res = await app.request(`/api/project/${projectName}/files/index`, undefined, server);
+
+    expect(res.status).toBe(200);
+    expect(timeouts.map((t) => t.seconds)).toEqual([30]);
+    expect(new URL(timeouts[0]!.request.url).pathname).toBe(`/api/project/${projectName}/files/index`);
+  });
+
   it("returns cached result on second call (faster)", async () => {
     const start1 = Date.now();
     const res1 = await req(`/api/project/${projectName}/files/index`);
@@ -139,6 +151,43 @@ describe("GET /files/index", () => {
     expect(time2).toBeLessThanOrEqual(time1 + 10);
   });
 
+  it("sends the list gzipped as the worker built it, to a client that accepts gzip", async () => {
+    const plain = await req(`/api/project/${projectName}/files/index`);
+    const zipped = await req(`/api/project/${projectName}/files/index`, { headers: { "Accept-Encoding": "gzip, deflate, br" } });
+
+    expect(plain.headers.get("Content-Encoding")).toBeNull();
+    expect(zipped.headers.get("Content-Encoding")).toBe("gzip");
+    expect(zipped.headers.get("Vary")).toBe("Accept-Encoding");
+    const body = new Uint8Array(await zipped.arrayBuffer());
+    // Compressed once: the JSON middleware leaves an encoded body alone.
+    expect(new TextDecoder().decode(Bun.gunzipSync(body))).toBe(await plain.text());
+  });
+
+  it("answers a list longer than `max` with its size instead", async () => {
+    const all = ((await (await req(`/api/project/${projectName}/files/index`)).json()) as any).data;
+    const over = (await (await req(`/api/project/${projectName}/files/index?max=${all.length - 1}`)).json()) as any;
+    expect(over.data).toEqual({ tooLarge: true, count: all.length });
+    const within = (await (await req(`/api/project/${projectName}/files/index?max=${all.length}`)).json()) as any;
+    expect(within.data).toEqual(all);
+  });
+
+  it("searches the list on the server, best first", async () => {
+    writeFileSync(resolve(projectPath, "src/util-extra.ts"), "");
+    invalidateIndexCache(projectPath);
+    const search = async (query: string) =>
+      ((await (await req(`/api/project/${projectName}/files/index/search?${query}`)).json()) as any).data.map((e: any) => e.path);
+
+    // The palette's order: the filename that has the query in one piece beats the one that only
+    // has its letters in order.
+    expect(await search("q=utils")).toEqual(["src/utils.ts", "src/util-extra.ts"]);
+    expect(await search("q=xtra")).toEqual(["src/util-extra.ts"]);
+    expect(await search("q=src&kind=all&limit=1")).toEqual(["src"]);
+    expect(await search("q=src&limit=1")).not.toEqual(["src"]);
+    // A blank query answers the first files, as a picker shows before anything is typed.
+    expect((await search("q=")).length).toBeGreaterThan(0);
+    expect(await search("q=u&limit=-3")).toHaveLength(1);
+  });
+
   it("rebuilds index after cache invalidation", async () => {
     // First call
     const res1 = await req(`/api/project/${projectName}/files/index`);
@@ -148,7 +197,8 @@ describe("GET /files/index", () => {
     // Add a new file
     writeFileSync(resolve(projectPath, "new-file.ts"), "export const y = 2");
 
-    // Invalidate cache directly (simulate file watcher)
+    // Hard invalidation (a filter change). The watcher only marks the index stale — see
+    // tests/unit/services/file-list-index-background.test.ts.
     invalidateIndexCache(projectPath);
 
     // Second call should see the new file

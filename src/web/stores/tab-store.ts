@@ -20,7 +20,8 @@ export type TabType =
   | "ai-resource"
   | "group"
   | "problems"
-  | "design";
+  | "design"
+  | "android";
 
 export interface Tab {
   id: string;

@@ -16,6 +16,7 @@ import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { providerRegistry } from "../providers/registry.ts";
 import { getPpmDir } from "./ppm-dir.ts";
+import { traceStream } from "./session-trace/trace-recorder.ts";
 import type { AIProvider, ChatEvent } from "../types/chat.ts";
 
 /**
@@ -190,14 +191,17 @@ export async function startAgentTurn(providerId: string, req: TurnRequest): Prom
       title: `[API] ${providerId}`,
     });
 
-    const events = provider.sendMessage(session.id, message, {
+    const opts = {
       permissionMode: PROXY_PERMISSION_MODE,
       ...(req.model ? { model: req.model } : {}),
       ...(req.imagePaths?.length ? { imagePaths: req.imagePaths } : {}),
-    });
+    };
+    const events = provider.sendMessage(session.id, message, opts);
 
     return {
-      events: withTimeout(events),
+      // Not through ChatService (no shared context, no design options), so it is traced here —
+      // outside the timeout, so a stalled turn is recorded as the failure it surfaces as.
+      events: traceStream({ sessionId: session.id, providerId: provider.id, origin: "proxy", message, opts }, withTimeout(events)),
       cleanup: async () => {
         try {
           // abortQuery is what kills the runtime; deleteSession alone may only drop

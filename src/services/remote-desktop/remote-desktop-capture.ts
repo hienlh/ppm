@@ -39,6 +39,7 @@ export function buildCaptureArgs(
   input: CaptureInput = { kind: "gdigrab" },
   preset: QualityPreset = { fps: DEFAULT_FPS, bitrate: "1M" },
   drawMouse = true,
+  publishUrl: string | null = null,
 ): string[] {
   return [
     ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
@@ -51,8 +52,25 @@ export function buildCaptureArgs(
     ...withVideoFilter(captureVideoFilter(input, encoder, preset)),
     ...captureEncoderArgs(encoder, preset),
     "-flush_packets", "1",
-    "-f", "h264", "pipe:1",
+    ...captureOutputArgs(publishUrl),
   ];
+}
+
+/**
+ * Where the encoded H.264 goes: PPM's own WebSocket path reads it from `pipe:1`, the WebRTC
+ * path pushes it into the local MediaMTX relay instead.
+ *
+ * Everything before this point is byte-identical between the two, which is the whole design:
+ * the relay repackages what ffmpeg already encoded and never re-encodes, so the quality ladder,
+ * the cursor flag, privacy mode and every per-platform grabber keep working unchanged.
+ *
+ * TCP, not the default UDP: the relay is on loopback where there is nothing to gain from UDP,
+ * and a UDP push silently drops packets at MTU boundaries under load where TCP simply blocks.
+ */
+function captureOutputArgs(publishUrl: string | null): string[] {
+  return publishUrl
+    ? ["-f", "rtsp", "-rtsp_transport", "tcp", publishUrl]
+    : ["-f", "h264", "pipe:1"];
 }
 
 function withVideoFilter(filter: string): string[] {
@@ -81,7 +99,15 @@ export interface StartCaptureOptions {
    *  `workingEncoders()` reported: an encoder this build/GPU cannot run makes ffmpeg exit at
    *  once, which the session then reports as "Capture failed". */
   encoder?: string;
-  onAccessUnit: (au: AccessUnit) => void;
+  /**
+   * Push the encoded stream into this RTSP URL (the local MediaMTX relay) instead of reading
+   * it back over `pipe:1`. When set there is no stdout to parse, so `onAccessUnit` is never
+   * called and `cachedSps()` answers null — the browser learns the codec from the SDP the
+   * relay answers with, not from PPM's own SPS parse.
+   */
+  publishUrl?: string | null;
+  /** Required for the WebSocket path; ignored when `publishUrl` is set. */
+  onAccessUnit?: (au: AccessUnit) => void;
   /** Called once the process exits, whether via `stop()` or on its own (crash/killed
    *  externally) — lets the session registry clean up without polling. `reason` is a short
    *  stderr tail, present only when ffmpeg died on its own (e.g. gdigrab access denied on a
@@ -98,17 +124,37 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
   // Linux only: the grabber is chosen by session type, and ffmpeg is handed the session's
   // DISPLAY/XAUTHORITY because the PPM process very often has neither of its own.
   const session = process.platform === "linux" ? detectLinuxSession() : null;
+
+  // Wayland has no ffmpeg grabber at all: the compositor only shares the screen through the
+  // desktop portal, and ffmpeg can read the PipeWire node it hands back only when built
+  // `--enable-libpipewire`, which distributions do not do. That backend is GStreamer-based and
+  // lives in its own module; it produces the same Annex-B stdout, so nothing downstream differs.
+  // The import is dynamic to keep the two files out of a require cycle — the Wayland module
+  // needs `CaptureUnavailableError` and the option types from here.
+  if (session?.kind === "wayland") {
+    const { startWaylandCapture } = await import("./remote-desktop-capture-wayland.ts");
+    return startWaylandCapture({ ...opts, session, ffmpeg: caps.ffmpeg ?? null });
+  }
+
   const d = opts.display;
   const rect: CaptureRect | null =
     d && d.width > 0 && d.height > 0 ? { x: d.x, y: d.y, width: d.width, height: d.height } : null;
   const input = captureInputForPlatform(process.platform, d?.captureIndex ?? 0, { session, rect });
   if (!input) throw new CaptureUnavailableError(`no screen capture input on ${process.platform}`);
 
+  const publishUrl = opts.publishUrl ?? null;
+  if (!publishUrl && !opts.onAccessUnit) {
+    throw new CaptureUnavailableError("startCapture needs either onAccessUnit or publishUrl");
+  }
   const argv = buildCaptureArgs(
     caps.ffmpeg, opts.encoder ?? caps.encoder ?? "libx264", input, opts.preset,
-    opts.drawMouse ?? true,
+    opts.drawMouse ?? true, publishUrl,
   );
   const proc = Bun.spawn(argv, {
+    // Always a pipe, in both modes. Making it conditional widens Bun's spawn type so that
+    // `proc.stdout` is possibly-undefined everywhere below, and the RTSP mode writes nothing
+    // to stdout anyway (ffmpeg logs to stderr) — it is drained rather than left unread so a
+    // future log line on stdout cannot block the encoder.
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -145,7 +191,17 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
     opts.onExit?.(code, reason);
   });
 
+  // The relay reads the stream over RTSP, so there is nothing to assemble here — just drain
+  // stdout with the same manual pull loop (never a cancel; see the file header).
+  if (publishUrl) {
+    const idle = proc.stdout.getReader();
+    (async () => { for (;;) { const { done } = await idle.read(); if (done) return; } })()
+      .catch(() => { /* the process is gone; stop() has already run or is about to */ });
+    return { cachedSps: () => null, stop, isStopped: () => stopped };
+  }
+
   const assembler = new AccessUnitAssembler();
+  const onAccessUnit = opts.onAccessUnit!;
 
   // Manual pull loop — the only safe way to drain this stdout (see file header). Runs
   // detached from the caller; it terminates itself once `proc.kill()` resolves the pending
@@ -156,7 +212,7 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
       const { done, value } = await reader.read();
       if (done) return;
       if (!value) continue;
-      for (const au of assembler.push(value)) opts.onAccessUnit(au);
+      for (const au of assembler.push(value)) onAccessUnit(au);
     }
   })().catch((e) => {
     console.error(`[remote-desktop] capture pump failed: ${(e as Error).message}`);

@@ -25,7 +25,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run build:web
-      - run: bun build src/index.ts --compile --target=${{ matrix.target }} --outfile=dist/${{ matrix.artifact }}
+      # The same entry points as the `build` script: a Worker is in the binary only if it is one.
+      - run: bun build src/index.ts src/services/extension-host-worker.ts src/services/file-index/file-index-worker.ts --compile --target=${{ matrix.target }} --outfile=dist/${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
