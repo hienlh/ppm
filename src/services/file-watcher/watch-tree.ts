@@ -1,6 +1,7 @@
-import { lstatSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { lstatSync, readdirSync, watch } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { hasIgnoredDirSegment, isIgnoredDirName, isIgnoredPath } from "./ignore-rules.ts";
+import { inotifyAvailable, onInotifyOverflow, watchDirectory } from "./linux-inotify.ts";
 import { RecreatedDirPoller } from "./recreated-dir-poller.ts";
 
 /**
@@ -35,6 +36,11 @@ import { RecreatedDirPoller } from "./recreated-dir-poller.ts";
  * scan deliberately skips — a pnpm workspace with a symlinked `node_modules` had its
  * whole store watched, one open descriptor per file, which exhausted the process at
  * ~724k descriptors.
+ *
+ * Linux no longer goes through `fs.watch` at all where glibc is present: each directory is
+ * one watch on a single inotify descriptor the whole process shares (`linux-inotify.ts`),
+ * because the per-file descriptors above still came to 76k on an ordinary set of projects.
+ * `fs.watch` remains the fallback there, and the recreated-directory poller with it.
  *
  * Either way the walk below is what prunes ~92% of the directories in a typical repo,
  * and an ignored branch is never handed to the runtime.
@@ -85,6 +91,11 @@ export interface WatchTreeOptions {
   maxDirs: number;
   /** Called with a root-relative POSIX path for every change worth reporting. */
   onChange: (relPath: string) => void;
+  /**
+   * Watch through raw inotify rather than `fs.watch`. Defaults to whether this host can, which
+   * only a Linux host with glibc can; tests pass false to keep the fallback covered.
+   */
+  inotify?: boolean;
 }
 
 interface ScanNode {
@@ -97,7 +108,7 @@ interface ScanNode {
 }
 
 interface AttachedWatcher {
-  watcher: FSWatcher;
+  watcher: { close(): void };
   /** Directories this watcher accounts for: the subtree when recursive, else itself. */
   covers: number;
   recursive: boolean;
@@ -106,7 +117,7 @@ interface AttachedWatcher {
 export interface WatchTreeStats {
   /** Directories covered ≈ inotify watches held on Linux. */
   dirs: number;
-  /** `fs.watch` handles held. */
+  /** Watch handles held: `fs.watch` watchers, or inotify watches on Linux. */
   watchers: number;
   /** Coverage was cut short by a budget, so part of the tree is unwatched. */
   truncated: boolean;
@@ -127,6 +138,8 @@ export class WatchTree {
    */
   private readonly everAttached = new Set<string>();
   private readonly poller: RecreatedDirPoller | null;
+  private readonly inotify: boolean;
+  private readonly stopOverflowListener: () => void;
   private covered = 0;
   private truncated = false;
   private closed = false;
@@ -142,14 +155,20 @@ export class WatchTree {
   private coverChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: WatchTreeOptions) {
-    // Only Bun on Linux has the stale-watch defect; elsewhere re-watching works
-    // and paying for polling would be pure waste.
+    this.inotify = !NATIVE_RECURSIVE && (options.inotify ?? inotifyAvailable());
+    // Only Bun's `fs.watch` on Linux has the stale-watch defect; elsewhere re-watching works
+    // and paying for polling would be pure waste — raw inotify included, since a recreated
+    // directory is a new inode it simply watches.
     // Tied to NATIVE_RECURSIVE rather than re-testing the platform: the poller stands in
     // for a defect of the same emulation, and `attach()` relies on exactly one of the two
     // being in play. Deriving it here keeps that from drifting apart.
-    this.poller = !NATIVE_RECURSIVE
+    this.poller = !NATIVE_RECURSIVE && !this.inotify
       ? new RecreatedDirPoller({ onChange: (abs) => this.reportAbs(abs) })
       : null;
+    // Events were lost, so what is covered may have moved on: cover it again from the root.
+    this.stopOverflowListener = this.inotify
+      ? onInotifyOverflow(() => this.scheduleRebuild(this.options.root))
+      : () => {};
   }
 
   async start(): Promise<void> {
@@ -159,6 +178,7 @@ export class WatchTree {
 
   close(): void {
     this.closed = true;
+    this.stopOverflowListener();
     for (const timer of this.rebuildTimers.values()) clearTimeout(timer);
     this.rebuildTimers.clear();
     for (const { watcher } of this.attached.values()) {
@@ -347,6 +367,17 @@ export class WatchTree {
     // `close()` has already emptied the map it would have been recorded in.
     if (this.closed) return false;
     if (this.attached.has(absDir)) return true;
+    if (this.inotify) {
+      const watcher = watchDirectory(absDir, (event, filename) => this.handleEvent(absDir, false, event, filename));
+      if (!watcher) {
+        this.truncated = true; // the same failures `fs.watch` throws for below
+        return false;
+      }
+      this.attached.set(absDir, { watcher, covers, recursive: false });
+      this.everAttached.add(absDir);
+      this.covered += covers;
+      return true;
+    }
     try {
       const watcher = watch(absDir, { recursive }, (event, filename) => {
         this.handleEvent(absDir, recursive, event, typeof filename === "string" ? filename : null);

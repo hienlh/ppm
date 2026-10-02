@@ -222,7 +222,7 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
   if (entry.clients.size > 0 || entry.isStreamingActive) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
-  provider.abortQuery?.(sessionId, reason);
+  chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
   console.log(`[chat] session=${sessionId} released subprocess (${reason})`);
   logSessionEvent(sessionId, "INFO", note);
 }
@@ -246,7 +246,7 @@ export function dropIdleSubprocess(sessionId: string, reason: string, note: stri
   if (!entry) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
-  provider.abortQuery?.(sessionId, reason);
+  chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
   if (entry.cacheReleaseTimer) {
     clearTimeout(entry.cacheReleaseTimer);
     entry.cacheReleaseTimer = undefined;
@@ -665,7 +665,7 @@ function startCleanupTimer(sessionId: string): void {
     // flight, so the session entry going away is the last chance to free the process.
     const provider = providerRegistry.get(entry.providerId);
     if (provider?.hasStreamingSession?.(sessionId)) {
-      provider.abortQuery?.(sessionId, "idle_timeout");
+      chatService.abortQuery(entry.providerId, sessionId, "idle_timeout", "ws");
     }
     if (entry.cacheReleaseTimer) {
       clearTimeout(entry.cacheReleaseTimer);
@@ -749,7 +749,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }) })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin: "ws" })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1449,9 +1449,7 @@ export const chatWebSocket = {
       // unblock it, then the follow-up message flows through normally.
       if (entry.pendingApprovalEvent) {
         const pendingReqId = entry.pendingApprovalEvent.requestId;
-        if (provider && typeof provider.resolveApproval === "function") {
-          provider.resolveApproval(pendingReqId, false);
-        }
+        chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
         entry.pendingApprovalEvent = undefined;
         broadcast(sessionId, {
           type: "approval_resolved",
@@ -1503,6 +1501,7 @@ export const chatWebSocket = {
           const effort = getSessionEffort(sessionId) ?? undefined;
           const thinkingBudget = getSessionThinking(sessionId);
           await chatService.pushMessage(providerId, sessionId, parsed.content, {
+            origin: "ws",
             priority: parsed.priority ?? 'next',
             images: parsed.images,
             imagePaths: parsed.imagePaths,
@@ -1533,7 +1532,7 @@ export const chatWebSocket = {
       // Aborting the idle-but-alive subprocess forces the next message to take
       // the resume path, recreating the query with the new model.
       if (hasLiveStream && entry.phase === "idle") {
-        provider?.abortQuery?.(sessionId, "set_model");
+        chatService.abortQuery(providerId, sessionId, "set_model", "ws");
       }
       logSessionEvent(sessionId, "INFO", `Model switched to ${parsed.model}`);
       ws.send(JSON.stringify({
@@ -1560,7 +1559,7 @@ export const chatWebSocket = {
       // Abort only when idle-but-alive so the next turn recreates the query with the new
       // effort (mirror set_model); never interrupt an active turn.
       if ((provider?.hasStreamingSession?.(sessionId) ?? false) && entry.phase === "idle") {
-        provider?.abortQuery?.(sessionId, "set_effort");
+        chatService.abortQuery(providerId, sessionId, "set_effort", "ws");
       }
       logSessionEvent(sessionId, "INFO", `Effort switched to ${parsed.effort}`);
       ws.send(JSON.stringify({
@@ -1581,7 +1580,7 @@ export const chatWebSocket = {
       setSessionThinking(sessionId, parsed.enabled ? THINKING_ADAPTIVE : 0);
       const provider = providerRegistry.get(providerId);
       if ((provider?.hasStreamingSession?.(sessionId) ?? false) && entry.phase === "idle") {
-        provider?.abortQuery?.(sessionId, "set_thinking");
+        chatService.abortQuery(providerId, sessionId, "set_thinking", "ws");
       }
       logSessionEvent(sessionId, "INFO", `Thinking ${parsed.enabled ? "on" : "off"}`);
       ws.send(JSON.stringify({
@@ -1598,11 +1597,10 @@ export const chatWebSocket = {
       }));
     } else if (parsed.type === "cancel") {
       // Fully teardown streaming session — user must resume to continue
-      const provider = providerRegistry.get(providerId);
       const phase = entry?.phase ?? "unknown";
       console.log(`[chat] session=${sessionId} WS cancel received from FE (phase=${phase})`);
       logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
-      provider?.abortQuery?.(sessionId, "ws_cancel");
+      chatService.abortQuery(providerId, sessionId, "ws_cancel", "ws");
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
       // Cross-platform and safe (no OS-PID guessing). Runs when the AI is idle
@@ -1633,17 +1631,14 @@ export const chatWebSocket = {
           }, 0);
         });
       } else if (provider && "pushMessage" in provider) {
-        await chatService.pushMessage(providerId, sessionId, instruction, { priority: "next" });
+        await chatService.pushMessage(providerId, sessionId, instruction, { priority: "next", origin: "ws" });
         entry.turnEvents = [];
         entry.pendingApprovalEvent = undefined;
         setPhase(sessionId, "thinking");
       }
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
-      const provider = providerRegistry.get(providerId);
-      if (provider && typeof provider.resolveApproval === "function") {
-        provider.resolveApproval(parsed.requestId, parsed.approved, (parsed as any).data);
-      }
+      chatService.resolveApproval(providerId, sessionId, parsed.requestId, parsed.approved, (parsed as any).data, { origin: "ws" });
       if (entry) {
         entry.pendingApprovalEvent = undefined;
         // Enrich the buffered approval_request with response data so replayed

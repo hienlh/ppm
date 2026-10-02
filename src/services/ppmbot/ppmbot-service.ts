@@ -423,7 +423,7 @@ I'll answer directly or delegate to your project's AI.`;
         session.providerId,
         session.sessionId,
         fullMessage,
-        opts,
+        { ...opts, origin: "ppmbot" },
       );
 
       const result = await streamToTelegram(

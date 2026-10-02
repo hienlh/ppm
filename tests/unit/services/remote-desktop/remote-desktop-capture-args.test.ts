@@ -168,3 +168,34 @@ describe("captureEncoderArgs", () => {
     expect(a.join(" ")).toContain("sliced-threads=0");
   });
 });
+
+describe("where the encoded stream goes", () => {
+  const input = { kind: "x11grab", display: ":0", rect: null } as const;
+  const preset = { fps: 30, bitrate: "1389k" };
+
+  // The WebSocket path is the default and must stay byte-identical: everything before the
+  // output is shared, so a regression here would silently change the existing transport too.
+  it("defaults to Annex-B on stdout, exactly as before", () => {
+    const args = buildCaptureArgs("ffmpeg", "libx264", input, preset, true);
+    expect(args.slice(-3)).toEqual(["-f", "h264", "pipe:1"]);
+  });
+
+  it("a publish URL swaps only the output, never the encode", () => {
+    const url = "rtsp://127.0.0.1:8554/sdeadbeef";
+    const pipe = buildCaptureArgs("ffmpeg", "libx264", input, preset, true);
+    const rtsp = buildCaptureArgs("ffmpeg", "libx264", input, preset, true, url);
+    // Everything up to the output is identical — that is what makes the relay a repackager
+    // rather than a second encoder.
+    expect(rtsp.slice(0, -5)).toEqual(pipe.slice(0, -3));
+    expect(rtsp.slice(-5, -1)).toEqual(["-f", "rtsp", "-rtsp_transport", "tcp"]);
+    expect(rtsp.at(-1)).toBe(url);
+  });
+
+  // UDP is the rtsp muxer's default and drops packets at MTU boundaries under load; the relay
+  // is on loopback, where TCP costs nothing.
+  it("the push is TCP", () => {
+    const args = buildCaptureArgs("ffmpeg", "libx264", input, preset, true, "rtsp://127.0.0.1:1/x");
+    expect(args).toContain("-rtsp_transport");
+    expect(args[args.indexOf("-rtsp_transport") + 1]).toBe("tcp");
+  });
+});

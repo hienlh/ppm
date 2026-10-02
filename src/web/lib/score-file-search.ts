@@ -60,20 +60,7 @@ export function scoreFileSearchFast(
 ): FileSearchScore | null {
   // Multi-word query: score each word independently, require all to match
   if (qLower.includes(" ")) {
-    const words = qLower.split(/\s+/).filter(Boolean);
-    if (words.length === 0) return null;
-    if (words.length === 1) {
-      return scoreFileSearchFast(words[0]!, filenameLower, pathLower, labelLen, depth);
-    }
-    let maxTier = 0;
-    let totalOffset = 0;
-    for (const word of words) {
-      const s = scoreFileSearchFast(word, filenameLower, pathLower, labelLen, depth);
-      if (!s) return null;
-      maxTier = Math.max(maxTier, s.tier);
-      totalOffset += s.offset;
-    }
-    return { tier: maxTier, offset: totalOffset, nameLen: labelLen, depth };
+    return scoreWordsFast(qLower.split(/\s+/).filter(Boolean), filenameLower, pathLower, labelLen, depth);
   }
 
   // Tier 0: exact filename match
@@ -99,6 +86,32 @@ export function scoreFileSearchFast(
   if (pathGap >= 0) return { tier: 5, offset: pathGap, nameLen: labelLen, depth };
 
   return null;
+}
+
+/**
+ * `scoreFileSearchFast` for a multi-word query already split into its words, so a loop scoring
+ * one query against many paths splits it once rather than once per path.
+ */
+export function scoreWordsFast(
+  words: string[],
+  filenameLower: string,
+  pathLower: string,
+  labelLen: number,
+  depth: number,
+): FileSearchScore | null {
+  if (words.length === 0) return null;
+  if (words.length === 1) {
+    return scoreFileSearchFast(words[0]!, filenameLower, pathLower, labelLen, depth);
+  }
+  let maxTier = 0;
+  let totalOffset = 0;
+  for (const word of words) {
+    const s = scoreFileSearchFast(word, filenameLower, pathLower, labelLen, depth);
+    if (!s) return null;
+    maxTier = Math.max(maxTier, s.tier);
+    totalOffset += s.offset;
+  }
+  return { tier: maxTier, offset: totalOffset, nameLen: labelLen, depth };
 }
 
 /** Convenience wrapper — lowers inputs on the fly. Use for ad-hoc calls. */

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.23.12] - 2026-10-02
+
+### Added
+- Open System Monitor from the command palette on phones and desktops.
+- Record session runs and browser console events in a retained trace that can be read back.
+- Stream Remote Desktop over HTTP through a WebRTC relay, with Wayland screen capture.
+- Run and control an opt-in Android emulator from the browser.
+
+### Improved
+- Start a new Claude chat faster by preparing its CLI while the composer is open.
+- Open tabs, floating windows, and Settings panes without a spinner once their code is loaded.
+
+### Fixed
+- File changes no longer freeze large projects or repeatedly download the file index.
+- Large file indexes walk, compress, and search off the server event loop; content search uses ripgrep when available.
+- Linux directory watching avoids per-directory descriptors and self-inflicted inotify queue overflows.
+- Release binaries include both the extension host and file index workers.
+
 ## [0.23.11] - 2026-10-01
 
 ### Added

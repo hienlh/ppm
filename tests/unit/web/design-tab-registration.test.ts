@@ -31,7 +31,7 @@ describe("design tab registration", () => {
   it("has an icon and a lazily loaded component", () => {
     expect(TAB_TYPE_ICONS.design).toBeDefined();
     const pool = readFileSync(resolve(SRC, "web/components/layout/tab-pool.tsx"), "utf8");
-    expect(pool).toMatch(/design: lazy\(\(\) => import\("@\/components\/design\/design-tab"\)/);
+    expect(pool).toMatch(/design: lazyWithPreload\(\(\) => import\("@\/components\/design\/design-tab"\)/);
   });
 
   it("round-trips through the URL and comes back with a pending, design-capable provider", () => {

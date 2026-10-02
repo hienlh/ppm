@@ -33,8 +33,10 @@ import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
 import { lspWebSocket } from "./ws/lsp.ts";
+import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
+import { isAndroidEmulatorEnabled } from "../services/android/android-flag.ts";
 import { ok, err } from "../types/api.ts";
 
 /** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
@@ -239,6 +241,12 @@ app.get("/api/system/event-loop", async (c) => {
 import { remoteDesktopRoutes } from "./routes/remote-desktop.ts";
 app.route("/api/remote-desktop", remoteDesktopRoutes);
 
+// Android emulator — OFF by default, opt-in via ANDROID_EMULATOR_ENABLED=1, see android-flag.ts.
+// Unlike remote desktop this spawns multi-gigabyte emulator processes, and most hosts have no
+// Android SDK at all, so it stays dark until somebody asks for it.
+import { androidRoutes } from "./routes/android.ts";
+app.route("/api/android", androidRoutes);
+
 // Finishes an OAuth loopback login started from another device
 import { loopbackRoutes } from "./routes/oauth-loopback.ts";
 app.route("/api/loopback", loopbackRoutes);
@@ -269,6 +277,10 @@ app.route("/api/jira", jiraRoutes);
 // Scheduled agents
 import { schedulesRoutes } from "./routes/schedules.ts";
 app.route("/api/schedules", schedulesRoutes);
+
+// Session trace — browser logs in, a session's timeline out
+import { traceRoutes } from "./routes/trace.ts";
+app.route("/api/trace", traceRoutes);
 
 // AI resources (skills / agents / commands) management
 import { aiResourcesRoutes } from "./routes/ai-resources.ts";
@@ -880,6 +892,30 @@ if (process.argv.includes("__serve__")) {
     setInterval(runCleanup, 24 * 60 * 60 * 1000);
   }
 
+  // Same again for the session trace: age, then size. Skipped until something has been traced.
+  {
+    const { existsSync } = await import("node:fs");
+    const { getTraceDbPath } = await import("../services/session-trace/session-trace-db.ts");
+    const { cleanupSessionTrace } = await import("../services/session-trace/session-trace-cleanup.ts");
+
+    const runTraceCleanup = () => {
+      if (!existsSync(getTraceDbPath())) return;
+      try {
+        const { retention_days, max_size_mb } = configService.get("session_trace");
+        const { deletedByAge, deletedBySize, freedBytes } = cleanupSessionTrace(retention_days, max_size_mb);
+        const removed = deletedByAge + deletedBySize;
+        if (removed > 0) {
+          console.log(`[session-trace] pruned ${removed} rows (${(freedBytes / 1024 / 1024).toFixed(1)} MB freed)`);
+        }
+      } catch (e) {
+        console.error(`[session-trace] cleanup failed: ${(e as Error).message}`);
+      }
+    };
+
+    runTraceCleanup();
+    setInterval(runTraceCleanup, 24 * 60 * 60 * 1000);
+  }
+
   // On Windows the supervisor reaps the previous server's whole process tree
   // before respawning, so the port is released cleanly. A lingering bind can
   // still appear for a moment during an upgrade handoff, so wait for it to
@@ -960,6 +996,20 @@ if (process.argv.includes("__serve__")) {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
+      if (url.pathname === "/ws/android") {
+        // Same shape and the same reasoning as the remote-desktop branch above: an explicit
+        // branch so this can never fall through to the terminal (shell) handler, with the flag
+        // and `auth.enabled` re-checked independently of `isWsUpgradeAuthorized`, which returns
+        // true unconditionally when PPM auth is disabled.
+        if (!isAndroidEmulatorEnabled()) return new Response("Not Found", { status: 404 });
+        if (!configService.get("auth").enabled) {
+          return new Response("Forbidden: android emulator control requires PPM authentication to be enabled", { status: 403 });
+        }
+        const upgraded = server.upgrade(req, { data: { type: "android" } });
+        if (upgraded) return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
       if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
         const projectName = decodeURIComponent(parts[3] ?? "");
@@ -1019,6 +1069,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.open(ws);
         else if (t === "global") globalWebSocket.open(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.open(ws);
+        else if (t === "android") androidWebSocket.open(ws);
         else if (t === "terminal") terminalWebSocket.open(ws);
         else if (t === "lsp") lspWebSocket.open(ws);
         else ws.close(1008, "unknown socket type");
@@ -1030,6 +1081,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.message(ws, msg);
         else if (t === "global") globalWebSocket.message(ws, msg);
         else if (t === "remote-desktop") remoteDesktopWebSocket.message(ws, msg);
+        else if (t === "android") androidWebSocket.message(ws, msg);
         else if (t === "terminal") terminalWebSocket.message(ws, msg);
         else if (t === "lsp") lspWebSocket.message(ws, msg);
       },
@@ -1040,6 +1092,7 @@ if (process.argv.includes("__serve__")) {
         else if (t === "extensions") extensionWebSocket.close(ws);
         else if (t === "global") globalWebSocket.close(ws);
         else if (t === "remote-desktop") remoteDesktopWebSocket.close(ws);
+        else if (t === "android") androidWebSocket.close(ws);
         else if (t === "terminal") terminalWebSocket.close(ws);
         else if (t === "lsp") lspWebSocket.close(ws);
       },

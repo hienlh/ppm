@@ -5,8 +5,19 @@
  * untouched. JSON compresses ~5-8x; a 542KB file index becomes ~80KB on the wire.
  */
 import type { MiddlewareHandler } from "hono";
+import { gzip } from "node:zlib";
+import { promisify } from "node:util";
 
 const MIN_SIZE_BYTES = 1024;
+
+/**
+ * From this size on, compress on zlib's thread pool instead of the event loop. `Bun.gzipSync`
+ * stopped the server for 93 ms on each download of nxsys-workspace's 22 MB file index, while the
+ * pool left it waiting 3 ms at most. Below it the synchronous call blocks for well under a
+ * millisecond (0.3 ms for 200 KB) and answers sooner than the pool does.
+ */
+const ASYNC_FROM_BYTES = 256 * 1024;
+const gzipAsync = promisify(gzip);
 
 export const gzipJson: MiddlewareHandler = async (c, next) => {
   await next();
@@ -27,7 +38,8 @@ export const gzipJson: MiddlewareHandler = async (c, next) => {
     return;
   }
 
-  const gzipped = Bun.gzipSync(new Uint8Array(body));
+  const bytes = new Uint8Array(body);
+  const gzipped = body.byteLength < ASYNC_FROM_BYTES ? Bun.gzipSync(bytes) : await gzipAsync(bytes);
   const headers = new Headers(res.headers);
   headers.set("Content-Encoding", "gzip");
   headers.set("Content-Length", String(gzipped.byteLength));

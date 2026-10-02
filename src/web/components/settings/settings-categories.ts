@@ -23,6 +23,7 @@ import {
   LayoutGrid,
   Mic,
   Zap,
+  Monitor,
 } from "@/lib/icons";
 
 /**
@@ -35,6 +36,7 @@ export type SettingsCategoryId =
   | "general"
   | "appearance"
   | "language-servers"
+  | "remote-desktop"
   | "ai-provider"
   | "accounts"
   | "design"
@@ -81,6 +83,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "general", group: "core", label: "General", subtitle: "Device name, password, version", icon: Settings2 },
   { id: "appearance", group: "core", label: "Appearance", subtitle: "Theme, tabs, explorer skin", icon: Palette },
   { id: "language-servers", group: "core", label: "Language Servers", subtitle: "Completions and go to definition, per language", icon: Zap },
+  { id: "remote-desktop", group: "core", label: "Remote Desktop", subtitle: "WebRTC relay for streaming this host's screen", icon: Monitor },
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },

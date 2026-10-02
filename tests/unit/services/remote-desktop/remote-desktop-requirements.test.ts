@@ -20,13 +20,14 @@ describe("remoteDesktopReadiness", () => {
     expect(r.inputReady).toBe(false);
   });
 
-  it("a Wayland host keeps the entry and explains itself instead of being hidden", async () => {
+  it("a Wayland host is capturable, through the portal rather than a login-screen change", async () => {
     const r = await remoteDesktopReadiness("linux", { kind: "wayland", display: "wayland-0", runtimeDir: "/run/user/1000" });
-    // Nothing about Linux is missing — one capture path is, and the user can pick X11 at login.
     expect(r.platformSupported).toBe(true);
-    expect(r.videoReady).toBe(false);
-    const session = r.requirements.find((x) => x.id === "linux-session")!;
-    expect(session).toMatchObject({ ok: false, gates: "video" });
+    // There used to be a `linux-session` row here gating video on switching to X11. Wayland is
+    // captured for real now (desktop portal -> PipeWire -> GStreamer), so the row is gone and
+    // what remains is the GStreamer side, which is an ordinary installable dependency.
+    expect(r.requirements.find((x) => x.id === "linux-session")).toBeUndefined();
+    expect(r.requirements.find((x) => x.id === "gst-pipewire")).toMatchObject({ gates: "video" });
     // Input still works there, through uinput rather than XTEST.
     expect(r.requirements.find((x) => x.id === "uinput")).toMatchObject({ gates: "input" });
     expect(r.requirements.find((x) => x.id === "xtest")).toBeUndefined();
@@ -35,7 +36,10 @@ describe("remoteDesktopReadiness", () => {
   it("an X11 host is video-capable and checks XTEST rather than uinput", async () => {
     const r = await remoteDesktopReadiness("linux", { kind: "x11", display: ":0", xauthority: null });
     expect(r.platformSupported).toBe(true);
-    expect(r.requirements.find((x) => x.id === "linux-session")).toMatchObject({ ok: true });
+    // X11 carries no session row at all any more — it never needed one, and Wayland's is now
+    // a GStreamer dependency rather than a statement about the session type.
+    expect(r.requirements.find((x) => x.id === "linux-session")).toBeUndefined();
+    expect(r.requirements.find((x) => x.id === "gst-pipewire")).toBeUndefined();
     // Which of the two X11 input rows appears depends on whether this runner can reach an X
     // server at all — `xtest` when Xlib answered, `xlib` when it did not, and that second case
     // is the one a Windows or headless runner takes. Never `uinput`, which is the Wayland path.

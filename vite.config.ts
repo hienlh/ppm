@@ -94,6 +94,9 @@ export default defineConfig({
     // a tunnel drops that socket each failed send is itself an unhandled rejection: a tab
     // was measured spinning at ~87k rejections/s and 150% CPU until reloaded.
     forwardConsole: false,
+    // trace-client.ts wraps console.*, so without this DevTools would name the wrapper as the
+    // source of every log line instead of the code that logged it.
+    sourcemapIgnoreList: (sourcePath) => sourcePath.includes("node_modules") || sourcePath.endsWith("lib/trace-client.ts"),
     proxy: {
       "/api": {
         target: process.env.PPM_DEV_API ?? "http://localhost:8081",

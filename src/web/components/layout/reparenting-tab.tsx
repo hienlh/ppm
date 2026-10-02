@@ -12,7 +12,7 @@
  * remount the tab and destroy exactly the state (xterm buffer, Monaco undo stack, chat
  * scroll) this component exists to preserve.
  */
-import { useLayoutEffect, useRef, Suspense, type LazyExoticComponent, type ComponentType } from "react";
+import { useLayoutEffect, useRef, Suspense, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import { Loader2 } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
@@ -24,7 +24,7 @@ import { slotRegistry } from "./tab-pool-registry";
 export interface ReparentingTabProps {
   tabId: string;
   panelId: string;
-  component: LazyExoticComponent<ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>;
+  component: ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>;
   metadata?: Record<string, unknown>;
   isActive: boolean;
   /** Off-screen parent the wrapper lives in whenever its panel has no slot mounted. */

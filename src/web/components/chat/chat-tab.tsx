@@ -6,12 +6,15 @@ import { selectInlineImages } from "@/lib/image-resize-limits";
 import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
 import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useChat } from "@/hooks/use-chat";
+import { useChatPrewarm } from "@/hooks/use-chat-prewarm";
 import { useUsage } from "@/hooks/use-usage";
 import { useDesignSessionRedirect } from "@/hooks/use-design-session-redirect";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
+import { useFileStore } from "@/stores/file-store";
+import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
@@ -403,6 +406,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     setEffort,
     thinking,
     setThinking,
+    turnSettings,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -416,6 +420,19 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     backgroundShells,
     killBackgroundShell,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt);
+
+  // `model`/`effort`/`thinking` are what change when a pick does; the picks sent are read
+  // through `turnSettings`, which leaves out whatever the user has not chosen.
+  const firstMessagePicks = useMemo(() => turnSettings(), [turnSettings, model, effort, thinking]);
+  const touchPrewarm = useChatPrewarm({
+    // Not while the provider is still being resolved: the process would start for a guess.
+    enabled: !sessionId && !designSlug && tourTabActive && !!projectName && !preparation.pending,
+    projectName,
+    providerId,
+    permissionMode,
+    accountId: claimMatchesProvider ? pickedAccountId : undefined,
+    picks: firstMessagePicks,
+  });
 
   useEffect(() => {
     if (!tabId || !tourTabActive || draftLoading || isStreaming) return;
@@ -1010,8 +1027,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   const handleContentChange = useCallback(
     (content: string, attachments?: DraftAttachment[]) => {
       saveDraft(content, attachments);
+      touchPrewarm();
     },
-    [saveDraft],
+    [saveDraft, touchPrewarm],
   );
 
   /** Stable callback for slash items loaded — prevents MessageInput memo break */
@@ -1061,6 +1079,14 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, []);
 
   // --- File picker handlers ---
+  // An open @-picker keeps the file index current, like the palette — see `openIndexReader`.
+  useEffect(() => {
+    if (showFilePicker && projectName) return useFileStore.getState().openIndexReader(projectName);
+  }, [showFilePicker, projectName]);
+  // A project too long to send is searched on the server as the @-query changes.
+  const indexRemote = useFileStore((s) => s.indexRemote);
+  const remoteFileItems = useRemoteFileSearch(projectName, fileFilter, { enabled: showFilePicker && indexRemote, kind: "all" });
+
   const handleFileStateChange = useCallback((visible: boolean, filter: string) => {
     setShowFilePicker(visible);
     setFileFilter(filter);
@@ -1255,7 +1281,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           projectName={projectName}
         />
         <FilePicker
-          items={fileItems}
+          items={indexRemote ? remoteFileItems : fileItems}
           filter={fileFilter}
           onSelect={handleFileSelect}
           onClose={handleFileClose}

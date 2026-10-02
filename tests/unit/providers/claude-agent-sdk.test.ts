@@ -5,6 +5,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { accountService } from "../../../src/services/account.service.ts";
+import { accountSelector } from "../../../src/services/account-selector.service.ts";
 import { setSessionAccount, getSessionTitle, setSessionTitle } from "../../../src/services/db.service.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
@@ -1028,6 +1029,199 @@ describe("ClaudeAgentSdkProvider", () => {
 
       getSpy.mockRestore();
       refreshSpy.mockRestore();
+    });
+  });
+
+  /**
+   * A new chat's first message no longer waits for the CLI to boot: `prewarm` starts one while
+   * the composer is open, `createSession` gives its id to the chat, and the first turn takes
+   * the process over — only when it would have spawned exactly that process.
+   */
+  describe("a warm CLI started for a new chat", () => {
+    const project = "/tmp/my-project";
+
+    beforeEach(() => {
+      (provider as any).minWarmSpareHostMemory = 0;
+    });
+    afterEach(() => (provider as any).warmSpares.closeAll());
+
+    /**
+     * Every CLI `query` starts: each reads one message, starts `during` and reports a status
+     * while it runs (the provider hands out queued approvals as messages arrive), then answers.
+     */
+    function cliFactory(during?: (options: any) => Promise<void>) {
+      const clis: Array<{ options: any; pushed: any[]; close: ReturnType<typeof mock> }> = [];
+      mockQueryFn.mockImplementation(({ prompt, options }: any) => {
+        const cli = { options, pushed: [] as any[], close: mock(() => {}) };
+        clis.push(cli);
+        const input = prompt[Symbol.asyncIterator]();
+        return {
+          close: cli.close,
+          initializationResult: () => Promise.resolve({}),
+          async *[Symbol.asyncIterator]() {
+            const first = await input.next();
+            if (first.done) return;
+            cli.pushed.push(first.value);
+            const running = during?.(options);
+            yield { type: "system", subtype: "status" };
+            await running;
+            yield { type: "result", subtype: "success" };
+          },
+        };
+      });
+      return clis;
+    }
+
+    async function drain(stream: AsyncIterable<ChatEvent>): Promise<ChatEvent[]> {
+      const events: ChatEvent[] = [];
+      for await (const event of stream) {
+        events.push(event);
+        if (event.type === "approval_request") provider.resolveApproval((event as any).requestId, true);
+      }
+      return events;
+    }
+
+    it("hands its process to the chat created next in the project, which sends its first message there", async () => {
+      const clis = cliFactory();
+      await provider.prewarm({ projectPath: project });
+      expect(clis).toHaveLength(1);
+
+      const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+      expect(session.id).toBe(clis[0]!.options.sessionId);
+      const events = await drain(provider.sendMessage(session.id, "hi"));
+
+      expect(clis).toHaveLength(1);
+      expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
+      expect(events.find((e) => e.type === "done")).toBeTruthy();
+    });
+
+    it("is spawned with the very options a cold first turn with the same picks uses", async () => {
+      const claude = (configService as any).config.ai.providers.claude;
+      const saved = claude.system_prompt;
+      claude.system_prompt = "Answer in French.";
+      try {
+        const picks = { model: "claude-opus-4-5", effort: "high", thinkingBudget: 0, permissionMode: "acceptEdits" };
+        const clis = cliFactory();
+        await provider.prewarm({ projectPath: project, opts: picks });
+        const cold = await provider.createSession({ projectPath: project });
+        await drain(provider.sendMessage(cold.id, "hi", picks));
+
+        expect(clis).toHaveLength(2);
+        const comparable = ({ sessionId: _id, stderr: _stderr, canUseTool: _ask, hooks, ...rest }: any) => ({ ...rest, hooks: !!hooks });
+        expect(comparable(clis[0]!.options)).toEqual(comparable(clis[1]!.options));
+        expect(clis[0]!.options.model).toBeTruthy();
+        expect(clis[0]!.options.permissionMode).toBe("acceptEdits");
+        expect(clis[0]!.options.systemPrompt.append).toBe("Answer in French.");
+      } finally {
+        claude.system_prompt = saved;
+      }
+    });
+
+    it("is closed, and the chat starts cold, when the first message picks something else", async () => {
+      const clis = cliFactory();
+      await provider.prewarm({ projectPath: project });
+      const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+      await drain(provider.sendMessage(session.id, "hi", { model: "claude-haiku-4-5" }));
+
+      expect(clis).toHaveLength(2);
+      expect(clis[0]!.close).toHaveBeenCalled();
+      expect(clis[1]!.options.sessionId).toBe(session.id);
+      expect(clis[1]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
+    });
+
+    it("goes only to a session the new-chat route creates, in the project it was started for", async () => {
+      const clis = cliFactory();
+      await provider.prewarm({ projectPath: project });
+      const spareId = clis[0]!.options.sessionId;
+
+      expect((await provider.createSession({ projectPath: project })).id).not.toBe(spareId);
+      expect((await provider.createSession({ projectPath: "/tmp", adoptWarmSpare: true })).id).not.toBe(spareId);
+      expect((await provider.createSession({ projectPath: project, adoptWarmSpare: true })).id).toBe(spareId);
+    });
+
+    it("asks the adopting turn for approval, in a mode that asks", async () => {
+      let verdict: unknown;
+      const clis = cliFactory(async (options) => {
+        verdict = await options.hooks.PreToolUse[0].hooks[0]({ tool_name: "Bash", tool_input: { command: "ls" } });
+      });
+      await provider.prewarm({ projectPath: project, opts: { permissionMode: "default" } });
+      const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+      const events = await drain(provider.sendMessage(session.id, "hi", { permissionMode: "default" }));
+
+      expect(clis).toHaveLength(1);
+      expect(events.some((e) => e.type === "approval_request")).toBe(true);
+      expect(verdict).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    });
+
+    it("starts nothing on a host too small to hold it, or for a project folder that is gone", async () => {
+      cliFactory();
+      (provider as any).minWarmSpareHostMemory = Number.POSITIVE_INFINITY;
+      await provider.prewarm({ projectPath: project });
+      (provider as any).minWarmSpareHostMemory = 0;
+      await provider.prewarm({ projectPath: "/tmp/ppm-warm-spare-no-such-project" });
+      expect(mockQueryFn).not.toHaveBeenCalled();
+    });
+
+    describe("with accounts", () => {
+      const account = {
+        id: "acc-warm", email: "warm@example.com", label: "Warm", accessToken: "sk-ant-oat01-warm",
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      } as any;
+      let spies: Array<{ mockRestore(): void }> = [];
+
+      beforeEach(() => {
+        spies = [
+          spyOn(accountSelector, "isEnabled").mockReturnValue(true),
+          spyOn(accountSelector, "canServe").mockReturnValue(true),
+          spyOn(accountSelector, "forSession").mockReturnValue(account),
+          spyOn(accountService, "ensureFreshToken").mockResolvedValue(account),
+          spyOn(accountService, "getWithTokens").mockReturnValue(account),
+        ];
+      });
+      afterEach(() => { for (const spy of spies) spy.mockRestore(); });
+
+      it("starts on the account the tab claimed, and the chat keeps that process", async () => {
+        // Refreshing hands back the token it checked; the store may hold a newer one by the
+        // time the CLI starts, and that one is what the turn itself will use.
+        (accountService.ensureFreshToken as any).mockResolvedValue({ ...account, accessToken: "sk-ant-oat01-checked" });
+        const clis = cliFactory();
+        await provider.prewarm({ projectPath: project, accountId: account.id });
+        expect(clis[0]!.options.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(account.accessToken);
+
+        const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+        await drain(provider.sendMessage(session.id, "hi"));
+        expect(clis).toHaveLength(1);
+      });
+
+      it("starts nothing without a claimed account, since the turn's own pick cannot be foreseen", async () => {
+        cliFactory();
+        await provider.prewarm({ projectPath: project });
+        expect(mockQueryFn).not.toHaveBeenCalled();
+      });
+
+      it("starts nothing on an account that cannot serve, or whose token cannot be refreshed", async () => {
+        cliFactory();
+        (accountSelector.canServe as any).mockReturnValue(false);
+        await provider.prewarm({ projectPath: project, accountId: account.id });
+        (accountSelector.canServe as any).mockReturnValue(true);
+        (accountService.ensureFreshToken as any).mockResolvedValue(null);
+        await provider.prewarm({ projectPath: project, accountId: account.id });
+        expect(mockQueryFn).not.toHaveBeenCalled();
+      });
+
+      it("starts the chat cold once its token has been rotated since", async () => {
+        const clis = cliFactory();
+        await provider.prewarm({ projectPath: project, accountId: account.id });
+        const rotated = { ...account, accessToken: "sk-ant-oat01-rotated" };
+        (accountSelector.forSession as any).mockReturnValue(rotated);
+        (accountService.ensureFreshToken as any).mockResolvedValue(rotated);
+        (accountService.getWithTokens as any).mockReturnValue(rotated);
+
+        const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+        await drain(provider.sendMessage(session.id, "hi"));
+        expect(clis).toHaveLength(2);
+        expect(clis[1]!.options.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("sk-ant-oat01-rotated");
+      });
     });
   });
 });

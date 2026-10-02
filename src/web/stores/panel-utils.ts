@@ -234,6 +234,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // One list of every problem, so a second open focuses the first.
     case "problems":
       return "problems";
+    // One machine to watch: on a phone a second open focuses the first, as the desktop window does.
+    case "system-monitor":
+      return "system-monitor";
     case "group":
       return `group:${metadata?.groupId ?? "unknown"}`;
     // One tab per design: the chat, the canvas and its history all belong to the design.

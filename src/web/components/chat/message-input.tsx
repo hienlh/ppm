@@ -470,7 +470,7 @@ export const MessageInput = memo(function MessageInput({
         void files.loadIndex(projectName);
         return;
       }
-      const nodes: FileNode[] = files.indexProjectName === projectName ? files.fileIndex : [];
+      const nodes: FileNode[] = files.indexProject === projectName ? files.fileIndex : [];
       fileItemsRef.current = nodes;
       onFileItemsLoaded?.(nodes);
     };
@@ -826,10 +826,8 @@ export const MessageInput = memo(function MessageInput({
       if (hasAt) {
         const atMatch = textBefore.match(/@(\S*)$/);
         if (atMatch) {
-          const files = useFileStore.getState();
-          if (projectName && (files.indexProjectName !== projectName || files.indexStatus === "idle" || files.indexStatus === "error")) {
-            void files.loadIndex(projectName);
-          }
+          // The index is refreshed only when something opens to read it — see `indexStale`.
+          if (!filePickerOpenRef.current && projectName) useFileStore.getState().ensureIndex(projectName);
           onFileStateChange?.(true, atMatch[1] ?? "");
           filePickerOpenRef.current = true;
           if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
