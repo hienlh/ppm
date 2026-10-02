@@ -23,6 +23,13 @@ export interface HistoryPage {
    * numbering identical to what the full list would give.
    */
   userOrdinalOffset: number;
+  /**
+   * The fork/edit anchor of `messages[0]`: the id of the nearest earlier message the
+   * client would render, or null when there is none. The client anchors an edit or fork on
+   * the PREVIOUS rendered message, which for the first message of a window is not loaded —
+   * without this an edit there posted no anchor and the fork came out as an empty session.
+   */
+  predecessorId: string | null;
 }
 
 export interface HistoryPageQuery {
@@ -38,6 +45,21 @@ export interface HistoryPageQuery {
 /** A user bubble the client renders — the same test `MessageList` filters on. */
 function isVisibleUser(m: ChatMessage): boolean {
   return m.role === "user" && !!m.content && m.content.trim().length > 0;
+}
+
+/** Any message `MessageList` renders: user bubbles need text, the rest text or events. */
+function isRendered(m: ChatMessage): boolean {
+  if (m.role === "user") return isVisibleUser(m);
+  return (!!m.content && m.content.trim().length > 0) || (m.events?.length ?? 0) > 0;
+}
+
+function predecessorOf(all: ChatMessage[], start: number): string | null {
+  for (let i = start - 1; i >= 0; i--) {
+    const m = all[i]!;
+    // The same id the list hands to onFork/onEdit: the SDK's uuid where there is one.
+    if (isRendered(m)) return m.sdkUuid ?? m.id ?? null;
+  }
+  return null;
 }
 
 /**
@@ -79,7 +101,7 @@ export function pageHistory(all: ChatMessage[], query: HistoryPageQuery): Histor
   let userOrdinalOffset = 0;
   for (let i = 0; i < start; i++) if (isVisibleUser(all[i]!)) userOrdinalOffset++;
 
-  return { messages: all.slice(start, end), start, total, userOrdinalOffset };
+  return { messages: all.slice(start, end), start, total, userOrdinalOffset, predecessorId: predecessorOf(all, start) };
 }
 
 /** Parse the paging query string; anything malformed is treated as absent. */

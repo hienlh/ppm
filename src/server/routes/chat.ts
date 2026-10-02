@@ -386,6 +386,7 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
       start: page.start,
       total: page.total,
       userOrdinalOffset: page.userOrdinalOffset,
+      predecessorId: page.predecessorId,
       versionMap: resolveVersionMap(id),
       ...(id !== requestedId ? { canonicalSessionId: id } : {}),
     }));

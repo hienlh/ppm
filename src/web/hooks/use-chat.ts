@@ -80,6 +80,9 @@ interface UseChatReturn {
   loadOlderHistory: () => Promise<void>;
   /** Visible user messages before the loaded window — add to a local ordinal. */
   userOrdinalOffset: number;
+  /** Fork/edit anchor for the first loaded message (the unloaded one before it); null
+   *  when everything is loaded or nothing precedes it. */
+  historyPredecessorId: string | null;
   isStreaming: boolean;
   phase: SessionPhase;
   isReconnecting: boolean;
@@ -176,12 +179,18 @@ export function useChat(
   const [historyStart, setHistoryStart] = useState(0);
   const historyStartRef = useRef(0);
   const [userOrdinalOffset, setUserOrdinalOffset] = useState(0);
+  // The fork/edit anchor of the first loaded message, which is itself not loaded.
+  const [historyPredecessorId, setHistoryPredecessorId] = useState<string | null>(null);
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
   const loadingOlderRef = useRef(false);
-  const applyHistoryWindow = useCallback((start: number, ordinalOffset: number) => {
+  /** A refetch that answered while an older page was loading, to be re-run after it. */
+  const refetchAfterOlderRef = useRef(false);
+  const applyHistoryWindow = useCallback((page?: { start?: number; userOrdinalOffset?: number; predecessorId?: string | null }) => {
+    const start = page?.start ?? 0;
     historyStartRef.current = start;
     setHistoryStart(start);
-    setUserOrdinalOffset(ordinalOffset);
+    setUserOrdinalOffset(page?.userOrdinalOffset ?? 0);
+    setHistoryPredecessorId(start > 0 ? page?.predecessorId ?? null : null);
   }, []);
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -1205,7 +1214,7 @@ export function useChat(
     // switcher navigate to a session in a different branch tree if the new
     // session's /messages fetch fails or the tab swaps to a draft.
     setVersionMap({});
-    applyHistoryWindow(0, 0);
+    applyHistoryWindow();
     loadingOlderRef.current = false;
     setLoadingOlderHistory(false);
     streamingContentRef.current = "";
@@ -1266,7 +1275,7 @@ export function useChat(
           const payload = Array.isArray(data) ? { messages: data, versionMap: {} } : data;
           let history: ChatMessage[] = slimHistoryMessages(Array.isArray(payload?.messages) ? payload.messages : []);
           if (payload?.versionMap) setVersionMap(payload.versionMap);
-          applyHistoryWindow(payload?.start ?? 0, payload?.userOrdinalOffset ?? 0);
+          applyHistoryWindow(payload);
           // The server served this transcript from a different id than the one
           // asked for: the provider had renamed the session and this tab kept the
           // original. Adopt the real id, so the next turn continues the
@@ -1557,10 +1566,22 @@ export function useChat(
         // edit changes the branch tree without necessarily changing history
         // length, and the `n/m` counts must not go stale.
         if (payload?.versionMap) setVersionMap(payload.versionMap);
+        // An older page landed while this was in flight: the window now starts before
+        // `from`, so replacing with this slice would throw away what was just scrolled in.
+        // Ask again from where the window starts now.
+        // One still loading re-runs this when it lands (see loadOlderHistory).
+        if (loadingOlderRef.current) {
+          refetchAfterOlderRef.current = true;
+          return;
+        }
+        if (historyStartRef.current !== from) {
+          queueMicrotask(() => refetchRef.current?.());
+          return;
+        }
         if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
           historyReconciledRef.current++;
           if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
-          applyHistoryWindow(payload.start ?? 0, payload.userOrdinalOffset ?? 0);
+          applyHistoryWindow(payload);
           setMessages(slimHistoryMessages(payload.messages));
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
@@ -1588,10 +1609,14 @@ export function useChat(
         const have = new Set(prev.map((m) => m.id));
         return [...older.filter((m) => !have.has(m.id)), ...prev];
       });
-      applyHistoryWindow(data?.start ?? 0, data?.userOrdinalOffset ?? 0);
+      applyHistoryWindow(data);
     } finally {
       loadingOlderRef.current = false;
       setLoadingOlderHistory(false);
+      if (refetchAfterOlderRef.current) {
+        refetchAfterOlderRef.current = false;
+        refetchRef.current?.();
+      }
     }
   }, [sessionId, providerId, projectName, applyHistoryWindow]);
 
@@ -1650,6 +1675,7 @@ export function useChat(
     loadingOlderHistory,
     loadOlderHistory,
     userOrdinalOffset,
+    historyPredecessorId,
     isStreaming,
     phase,
     isReconnecting,

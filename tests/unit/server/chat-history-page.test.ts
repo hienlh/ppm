@@ -72,6 +72,27 @@ describe("pageHistory", () => {
   });
 });
 
+describe("predecessorId", () => {
+  test("names the rendered message before the window, preferring the SDK uuid", () => {
+    const all = transcript(100);
+    all.forEach((m, i) => { (m as { sdkUuid?: string }).sdkUuid = `uuid-${i}`; });
+    const page = pageHistory(all, { limit: 50 });
+    expect(page.predecessorId).toBe(`uuid-${page.start - 1}`);
+  });
+
+  test("skips messages the list would not render", () => {
+    const all = transcript(10);
+    // The message right before the window is an empty tool-result user turn.
+    const page0 = pageHistory(all, { limit: 4 });
+    all[page0.start - 1] = { ...all[page0.start - 1]!, role: "user", content: "", events: [] } as ChatMessage;
+    expect(pageHistory(all, { limit: 4 }).predecessorId).toBe(all[page0.start - 2]!.id);
+  });
+
+  test("is null when the window starts at the beginning", () => {
+    expect(pageHistory(transcript(3), { limit: 50 }).predecessorId).toBeNull();
+  });
+});
+
 describe("parseHistoryPageQuery", () => {
   test("ignores malformed numbers", () => {
     const q: Record<string, string> = { limit: "50", before: "abc", from: "" };

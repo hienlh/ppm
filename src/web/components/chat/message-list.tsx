@@ -92,6 +92,9 @@ interface MessageListProps {
   /** Visible user messages before `messages[0]`, so edit-version ordinals of a
    *  partial window match the ones the full list would give. */
   userOrdinalOffset?: number;
+  /** The fork/edit anchor of `messages[0]` while older history is not loaded: the id of
+   *  the message before it, which this list cannot see. */
+  historyPredecessorId?: string | null;
 }
 
 /**
@@ -155,6 +158,7 @@ export function MessageList({
   hasOlderHistory = false,
   onLoadOlderHistory,
   userOrdinalOffset = 0,
+  historyPredecessorId = null,
   onDismissMessage,
   onClearErrors,
 }: MessageListProps) {
@@ -498,7 +502,7 @@ export function MessageList({
                     onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
                     isEditing={isEditing}
                     onDismiss={msg.role === "system" && onDismissMessage ? handleDismiss : undefined}
-                    prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
+                    prevMsgId={prevMsg ? prevMsg.sdkUuid ?? prevMsg.id : historyPredecessorId ?? undefined}
                     sessionId={sessionId}
                     providerId={providerId}
                     versionGroup={versionGroup}

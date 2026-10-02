@@ -384,6 +384,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     hasOlderHistory,
     loadOlderHistory,
     userOrdinalOffset,
+    historyPredecessorId,
     isStreaming,
     phase,
     isReconnecting,
@@ -1177,6 +1178,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         hasOlderHistory={hasOlderHistory}
         onLoadOlderHistory={loadOlderHistory}
         userOrdinalOffset={userOrdinalOffset}
+        historyPredecessorId={historyPredecessorId}
         messagesLoading={messagesLoading}
         keepStaleWhileLoading={staleSwap}
         pendingApproval={pendingApproval}
