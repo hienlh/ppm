@@ -15,7 +15,7 @@
 
 import { accountSelector } from "./account-selector.service.ts";
 import { getCodexAccount } from "./codex-account.service.ts";
-import { setSessionAccount, setSessionCodexAccount } from "./db.service.ts";
+import { setSessionAccount, setSessionCodexAccount, getSessionProvider, setSessionProvider } from "./db.service.ts";
 
 /** Whether this provider/account pair is one the server would route to on its own. */
 export function canBindAccount(providerId: string, accountId: string): boolean {
@@ -53,5 +53,11 @@ export function bindPickedAccount(sessionId: string, providerId: string, account
   if (!canBindAccount(providerId, accountId)) return false;
   if (providerId === "codex") setSessionCodexAccount(sessionId, accountId);
   else setSessionAccount(sessionId, accountId);
+  // Both writes are `INSERT ... ON CONFLICT` upserts that name one column, so binding an
+  // account to a session nothing else has recorded creates a row with `provider_id` NULL.
+  // Every later reader then falls back to the install's DEFAULT provider, which resumes a
+  // claude session as codex (and answers "transcript was not found" to every message).
+  // The provider is known right here, so it is written while it is.
+  if (!getSessionProvider(sessionId)) setSessionProvider(sessionId, providerId);
   return true;
 }

@@ -977,8 +977,12 @@ if (process.argv.includes("__serve__")) {
 
         if (wsType === "chat") {
           const sessionId = id;
+          // A hint only — the handler adopts it when the session has no stored
+          // provider, so a tab that knows it is a claude chat cannot be resumed
+          // as whatever the install's default provider happens to be.
+          const providerHint = url.searchParams.get("providerId") ?? undefined;
           const upgraded = server.upgrade(req, {
-            data: { type: "chat", sessionId, projectName },
+            data: { type: "chat", sessionId, projectName, providerHint },
           });
           if (upgraded) return undefined;
           return new Response("WebSocket upgrade failed", { status: 400 });

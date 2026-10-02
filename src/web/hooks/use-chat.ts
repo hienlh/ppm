@@ -1140,6 +1140,13 @@ export function useChat(
   sendRef.current = send;
 
   // Load history and reset state when session changes
+  // The provider rides along because the server has no other way to learn it for a
+  // session whose `session_metadata` row was written by something other than
+  // `createSession` (the account claim's upsert leaves `provider_id` NULL). Without
+  // it the WS falls back to the *global* default provider, and a claude session on a
+  // codex-default install is then resumed as codex — which answers "transcript not
+  // found" and drops every message with the composer already emptied. It is only a
+  // hint: the server adopts it when nothing is stored, never over a stored value.
   useEffect(() => {
     let cancelled = false;
     attemptRef.current?.select(sessionId);
