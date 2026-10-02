@@ -16,6 +16,9 @@ import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
 import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable, releaseRemoteInput } from "./remote-desktop-input.ts";
 import { resolveDisplay, type RemoteDisplay } from "./remote-desktop-displays.ts";
+import { startRelay, type RelayHandle } from "./mediamtx-process.ts";
+import { findMediamtxBinary } from "./mediamtx-paths.ts";
+import { registerWhepTarget, releaseWhepTicket } from "./remote-desktop-whep-registry.ts";
 import {
   MAX_CLIPBOARD_CHARS, pasteComboCodes, readHostClipboard, writeHostClipboard,
 } from "./remote-desktop-clipboard.ts";
@@ -55,6 +58,11 @@ const FRAME_AUDIO = 2;
 
 export class RemoteDesktopSession {
   private capture: CaptureHandle | null = null;
+  /** The MediaMTX relay, when this session streams over WebRTC. Outlives individual ffmpeg
+   *  respawns (a quality change restarts the publisher, not the relay). */
+  private relay: RelayHandle | null = null;
+  /** What the client presents to `POST /api/remote-desktop/whep/:ticket`. */
+  private whepTicket: string | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastPingAt = Date.now();
   private droppingUntilKey = false;
@@ -116,6 +124,9 @@ export class RemoteDesktopSession {
     private readonly display: RemoteDisplay | null,
     drawMouse = true,
     encoder: string | null = null,
+    /** Stream over WebRTC through the local relay instead of framing access units onto this
+     *  socket. Only honoured when the relay is actually installed; see `beginCapture`. */
+    private readonly preferWebrtc = false,
   ) {
     this.drawMouse = drawMouse;
     this.encoder = encoder;
@@ -162,12 +173,17 @@ export class RemoteDesktopSession {
     this.captureExited = new Promise<void>((resolve) => { resolveExit = resolve; });
     this.sentConfig = false;
     this.droppingUntilKey = false;
+    const publishUrl = await this.ensureRelay();
     this.capture = await startCapture({
       display: this.display,
       preset: this.effectivePreset(),
       drawMouse: this.drawMouse,
       ...(this.encoder ? { encoder: this.encoder } : {}),
-      onAccessUnit: (au) => this.handleAccessUnit(au, generation),
+      // Exactly one of these. With a relay the encoded stream leaves over RTSP and this socket
+      // carries only control, so there are no access units to frame.
+      ...(publishUrl
+        ? { publishUrl }
+        : { onAccessUnit: (au: AccessUnit) => this.handleAccessUnit(au, generation) }),
       // `reason` is only set when ffmpeg died on its own (crash, access denied, etc) — tell
       // the client *why* before closing instead of leaving it to guess from a bare
       // disconnect (this is exactly what happens today for e.g. gdigrab failing against a
@@ -184,6 +200,57 @@ export class RemoteDesktopSession {
         }
       },
     });
+    // Announced after the publisher is spawned, but the client still has to retry: MediaMTX
+    // answers 404 until ffmpeg's first packet arrives, and a quality change respawns the
+    // publisher under the same path, which drops the browser's reader and needs a fresh
+    // handshake. One message covers both, because the path never changes.
+    if (publishUrl) this.announceWebrtc();
+  }
+
+  /**
+   * Bring up this session's relay, or answer null to stay on the WebSocket path.
+   *
+   * Not installed is not an error: the relay is an optional download, and a host without it
+   * must keep working exactly as before rather than failing to connect. A relay that fails to
+   * *start* is logged and also falls back, for the same reason — a viewer that shows the
+   * desktop over WebSocket beats one that shows an error.
+   */
+  private async ensureRelay(): Promise<string | null> {
+    if (!this.preferWebrtc) return null;
+    if (this.relay && !this.relay.isStopped()) return this.relay.publishUrl;
+    if (!findMediamtxBinary()) return null;
+    try {
+      this.relay = await startRelay();
+      this.whepTicket = registerWhepTarget(this.relay.whepUrl);
+      return this.relay.publishUrl;
+    } catch (e) {
+      console.warn(`[remote-desktop] WebRTC relay unavailable, using the WebSocket path: ${(e as Error).message}`);
+      this.relay = null;
+      return null;
+    }
+  }
+
+  /**
+   * Tell the client where to run the WHEP handshake. Only ever a PPM path — never the relay's
+   * own loopback URL, which the browser could not reach and must not learn.
+   *
+   * This carries `preset` and `encoder` too, because it replaces the `config` message on this
+   * transport: `config` is sent from `handleAccessUnit`, which never runs when the stream
+   * leaves over RTSP — so without them the quality and codec menus would show their defaults
+   * rather than what this host is actually running. The codec *string* is deliberately absent:
+   * WebRTC learns it from the SDP answer, and PPM has no SPS to derive one from here.
+   */
+  private announceWebrtc(): void {
+    if (!this.whepTicket || this.closed) return;
+    try {
+      this.ws.send(JSON.stringify({
+        type: "webrtc",
+        whepPath: `/api/remote-desktop/whep/${this.whepTicket}`,
+        preset: this.presetId,
+        held: this.ratioScale,
+        encoder: this.encoder,
+      }));
+    } catch { /* socket closing; the session is going away anyway */ }
   }
 
   /** Apply a change that ffmpeg can only take at startup: stop the old process, wait for it to
@@ -566,6 +633,10 @@ export class RemoteDesktopSession {
     this.closed = true;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.capture?.stop();
+    // Relay after capture: the publisher should go first so MediaMTX sees a clean disconnect.
+    this.relay?.stop();
+    this.relay = null;
+    if (this.whepTicket) { releaseWhepTicket(this.whepTicket); this.whepTicket = null; }
     this.audio?.stop();
     this.audio = null;
     // Before anything that could throw: a held grab is the only piece of state here that
@@ -667,13 +738,16 @@ export interface CreateRemoteDesktopSessionOptions {
    *  first host's GPU encoder — and an encoder ffmpeg cannot open makes it exit at once, i.e. a
    *  viewer that never shows a frame and blames "Capture failed". */
   encoder?: string;
+  /** Ask for the WebRTC transport. Honoured only when the relay is installed and starts; the
+   *  session otherwise streams over this WebSocket exactly as before, with no error. */
+  webrtc?: boolean;
 }
 
 /** Evict any previous session (awaiting its ffmpeg exit, capped so a wedged process can't
  *  hang a reconnect) before starting the new one. */
 export async function createRemoteDesktopSession(
   ws: RemoteDesktopSocket,
-  { displayId, showCursor = true, encoder }: CreateRemoteDesktopSessionOptions = {},
+  { displayId, showCursor = true, encoder, webrtc = false }: CreateRemoteDesktopSessionOptions = {},
 ): Promise<RemoteDesktopSession> {
   for (const existing of [...activeSessions]) {
     existing.close();
@@ -681,7 +755,7 @@ export async function createRemoteDesktopSession(
   }
   const usable = encoder && (await workingEncoders()).includes(encoder) ? encoder : null;
   const session = new RemoteDesktopSession(
-    ws, await resolveDisplay(displayId), showCursor, usable,
+    ws, await resolveDisplay(displayId), showCursor, usable, webrtc,
   );
   await session.start();
   activeSessions.add(session);

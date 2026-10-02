@@ -115,7 +115,9 @@ TARGETS=(
 for entry in "${TARGETS[@]}"; do
   target="${entry%%:*}"; artifact="${entry##*:}"
   echo "  -> $artifact ($target)"
-  bun build src/index.ts --compile --target="$target" --outfile="dist/$artifact" \
+  # The same entry points as the `build` script: a Worker is in the binary only if it is one.
+  bun build src/index.ts src/services/extension-host-worker.ts src/services/file-index/file-index-worker.ts \
+    --compile --target="$target" --outfile="dist/$artifact" \
     || fail "compile failed for $target."
 done
 

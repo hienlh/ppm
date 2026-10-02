@@ -7,7 +7,7 @@
  */
 import {
   Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Puzzle, Sparkles, Users, CircleX,
-  GitCommitHorizontal, Palette,
+  GitCommitHorizontal, Palette, Smartphone,
   type LucideIcon,
 } from "@/lib/icons";
 import type { ElementType } from "react";
@@ -36,6 +36,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   group: Users,
   problems: CircleX,
   design: Palette,
+  android: Smartphone,
 };
 
 /** Resolve the icon for a tab type, falling back to a generic glyph. */

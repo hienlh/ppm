@@ -4,8 +4,9 @@ Two rules adopted on 2026-09-11, borrowed from DeepSeek Harness: **Everything is
 run is traceable.** PPM is a platform that embeds things around an AI agent — the IDE is one of
 those things, not the product.
 
-**Status: design only. Nothing in this document is built.** Current priority is finishing the
-features already in flight; this exists so the work starts from a decision instead of a guess.
+**Status (2026-09-25): Rule 1's trace is built** — `src/services/session-trace/` and
+`src/web/lib/trace-client.ts`; where the build departs from the design is listed under *As built*.
+**Rule 2 is still design only**; it exists so that work starts from a decision instead of a guess.
 
 Rewriting the backend in Go was considered and rejected on the same day — see `docs/lessons-learned.md`.
 
@@ -160,11 +161,12 @@ real question too, and it keeps one `seq` space per key.
 "All of the browser's logs" is read as: `console.error` and `console.warn` are sent; `console.log`
 and `info` go into a **50-entry ring buffer** that rides along as breadcrumbs on the next error. That
 is what a failure needs — the lines just before it — without paying for logging while nothing is
-wrong.
+wrong. (Reversed when built: every level is sent — see *As built*.)
 
 Ingest is one route — `POST /api/trace` — taking a small batch. It sits behind `authMiddleware` like
-the rest of `/api/*` (`index.ts:177`), so an error raised while logged out is lost; accepted. Three
-things it needs, none optional:
+the rest of `/api/*` (`index.ts:177`), so an error raised while logged out is lost; accepted. (As
+built, the client holds such rows until a sign-in — see *As built*.) Three things it needs, none
+optional:
 
 - **A cap and a schema check.** Batch ≤ 50, payload ≤ 16 KB each; treat the body as hostile and drop
   what does not fit.
@@ -178,8 +180,9 @@ Client side, `root-error-boundary.tsx:87` and `chunk-recovery.ts` already know s
 `main.tsx`** so it lives in the boot shell — in a lazy chunk it could not report the one failure that
 matters most, a missing chunk. The case where the entry never runs at all (`__ppmEntryRan` false)
 gets a bundle-free beacon in `index.html`'s inline watchdog, reading the Bearer token from
-`localStorage["ppm-auth-token"]`. Buffer locally and flush with `sendBeacon`/`keepalive` on
-`pagehide`, because the common case for a fatal client error is that the network is also what broke.
+`localStorage["ppm-auth-token"]`. Buffer locally and flush with `keepalive` on `pagehide`, because
+the common case for a fatal client error is that the network is also what broke. (Not `sendBeacon`:
+it cannot carry the `Authorization` header.)
 
 ### Retention
 
@@ -193,6 +196,44 @@ distort the reading. That module already solved this; do not solve it twice.
 sessions that predate the log or were created outside PPM. That is the point where the borrowed-log
 tax gets repaid: cross-provider history stops depending on `getFullMessages` being implemented
 (only Claude implements it today, so the search index is better for one provider than the others).
+
+### As built (2026-09-25)
+
+What differs from the design above, and why:
+
+- **Every console level is sent**, at the user's request: batched (errors within 1 s, the rest
+  within 5 s), capped at 300 entries a minute per tab, then one `console_dropped{count}`. Each
+  error-level entry still carries the 50 lines before it as breadcrumbs.
+- **Logged out is held, not lost.** A 401 leaves the queue in place and nothing is sent again until
+  the stored token changes — a storage read every 5 s, no request — so a fresh device's login screen
+  is not the one page that cannot be debugged. Rows still only reach the server authenticated. The
+  watchdog beacon cannot do this: when the entry never ran there is no code left to retry with.
+- **`trace_aliases`** maps an id a provider migrated to (`session_migrated`) back to the trace the
+  run started under, so a follow-up, an abort or a browser row filed under the new id joins it.
+- **`context_added`** records the shared provider context PPM prefixes to a message (or hands to a
+  provider that places it), in full — at most 12 000 characters, and only when it changed. Found in
+  verification: a mock asked approval for `rm -rf` because the word "remove" was in
+  `~/.claude/CLAUDE.md`, text the trace had not recorded. Design instructions are not recorded; they
+  are rebuilt from the stored slug.
+- **A bare system signal is counted on the block it arrives in.** The Claude SDK sends a data-less
+  `system/thinking_tokens` between every two thinking deltas; treated as events, they split each
+  thinking block into a row per delta — 84 of one real turn's 92 rows. Inside a text or thinking
+  block such a signal now becomes `signals: {thinking_tokens: N}` on the block's row; outside one it
+  is still a row of its own.
+- **`run_closed` only for an unanswered turn.** Every caller but the WebSocket stops reading at
+  `done`, so that is how a run normally ends and it gets no row. `consumer_closed` and `no_done` are
+  written only when a turn, or a follow-up queued behind it, never got its `done`.
+- **The API proxy** (`proxy-agent-turn.ts`) does not go through `ChatService`, so its stream is
+  wrapped in `traceStream` with origin `proxy`.
+- **Reading without sqlite:** `GET /api/trace/sessions/:id` returns a session's merged timeline —
+  its rows plus every browser row whose `ref_id` is one of its ids.
+- **Measured:** 50 mock turns against a clean HEAD and the traced build, alternating: `/api/health`
+  p50 0.85–0.94 ms and p99 4.4–5.0 ms on both, no event-loop stall on either. A synthetic heavy
+  stream (76 010 events → 6 040 rows) cost 49.7 ms in all, 0.57 µs per event; the worst single call
+  was the end-of-turn write at 3.75 ms.
+- **Not in the trace yet:** events of nested subagents (never streamed — see `CLAUDE.md`) and
+  background `bash_output`. The older `session_logs` / `logSessionEvent` still exists and could be
+  retired in favour of this log.
 
 ---
 

@@ -1,6 +1,11 @@
+// First, so browser logging is running before anything below evaluates — see trace-boot.ts.
+import "./lib/trace-boot.ts";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app.tsx";
+import { setTraceRefResolver } from "./lib/trace-client.ts";
+import { tabSessionId } from "./lib/tab-session-id.ts";
+import { useTabStore } from "./stores/tab-store.ts";
 import { RootErrorBoundary } from "./components/root-error-boundary.tsx";
 import { installChunkErrorRecovery } from "./lib/chunk-recovery.ts";
 // Self-hosted, because a font stack is only a wish list: -apple-system and
@@ -47,6 +52,13 @@ if (typeof Node !== "undefined") {
 // Before the first render, so a chunk that fails while the tree is still
 // mounting is caught too.
 installChunkErrorRecovery();
+
+// Browser log rows carry the chat session the focused tab shows, which is what joins
+// them to that session's trace on the server.
+setTraceRefResolver(() => {
+  const { tabs, activeTabId } = useTabStore.getState();
+  return tabSessionId(tabs.find((t) => t.id === activeTabId)) ?? null;
+});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

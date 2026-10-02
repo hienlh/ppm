@@ -3,6 +3,7 @@ import { Columns2, FileCode, X } from "@/lib/icons";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTabStore } from "@/stores/tab-store";
 import { useFileStore } from "@/stores/file-store";
+import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
 import { useProjectStore } from "@/stores/project-store";
 import { useCompareStore, type CompareSelection } from "@/stores/compare-store";
 import { openCompareTab } from "@/lib/open-compare-tab";
@@ -64,6 +65,15 @@ export function ComparePicker({ open: openProp, onOpenChange, initialA }: Compar
   const tabs = useTabStore((s) => s.tabs);
   const fileIndex = useFileStore((s) => s.fileIndex);
   const activeProject = useProjectStore((s) => s.activeProject);
+  // A project too long to send is searched on the server, and ranked below like the list itself.
+  const indexRemote = useFileStore((s) => s.indexRemote);
+  const remoteFiles = useRemoteFileSearch(activeProject?.name, query, { enabled: open && indexRemote });
+
+  // The index is refreshed only when something opens to read it — see `indexStale` — and kept
+  // current while that stays open.
+  useEffect(() => {
+    if (open && activeProject) return useFileStore.getState().openIndexReader(activeProject.name);
+  }, [open, activeProject]);
 
   useEffect(() => {
     if (!open) return;
@@ -88,7 +98,7 @@ export function ComparePicker({ open: openProp, onOpenChange, initialA }: Compar
         dirtyContent: t.metadata!.unsavedContent as string | undefined,
       }));
     const seenPaths = new Set(tabCands.map((c) => c.path));
-    const fileCands: Candidate[] = fileIndex
+    const fileCands: Candidate[] = (indexRemote ? remoteFiles : fileIndex)
       .filter((f) => f.type === "file" && !seenPaths.has(f.path))
       .map((f) => ({
         id: `file:${f.path}`,
@@ -97,7 +107,7 @@ export function ComparePicker({ open: openProp, onOpenChange, initialA }: Compar
         source: "file",
       }));
     return [...tabCands, ...fileCands];
-  }, [tabs, fileIndex]);
+  }, [tabs, fileIndex, indexRemote, remoteFiles]);
 
   const filtered = useMemo<Candidate[]>(() => {
     if (!query.trim()) return candidates.slice(0, MAX_RESULTS);

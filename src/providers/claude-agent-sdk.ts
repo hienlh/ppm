@@ -1,17 +1,20 @@
 import type { StripMode } from "../services/transcript-images.ts";
 import {
   query,
+  type Query,
   listSessions as sdkListSessions,
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { buildModelQueryOptions, buildSystemPromptOption, designMcpServers, preToolUseDecision } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, designMcpServers, preToolUseDecision, READ_ONLY_TOOLS } from "./claude-agent-sdk-query-options.ts";
+import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
   AIProvider,
+  PrewarmInput,
   Session,
   SessionConfig,
   SessionInfo,
@@ -38,7 +41,7 @@ import { isCompiledBinary } from "../services/autostart-generator.ts";
 import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
 import { resolve, dirname } from "node:path";
 import { existsSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, totalmem } from "node:os";
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
 
@@ -238,6 +241,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * and this is the only place that knows what made it do so.
    */
   private teardownReasons = new Map<string, string>();
+  /** CLIs started for chats that do not exist yet — see `prewarm`. */
+  private readonly warmSpares = new WarmSpares<Query>();
+  /** Hosts with less RAM keep no warm CLI: each one holds ~500 MB while it waits. */
+  private minWarmSpareHostMemory = 8 * 1024 ** 3;
 
   /** Auth-related env keys for diagnostic logging */
   private readonly AUTH_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
@@ -510,7 +517,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   async createSession(config: SessionConfig): Promise<Session> {
-    const id = crypto.randomUUID();
+    const id = (config.adoptWarmSpare && config.projectPath && this.warmSpares.claim(config.projectPath)) || crypto.randomUUID();
     const meta: Session = {
       id,
       providerId: this.id,
@@ -811,6 +818,131 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return process.env.CLAUDE_CODE_OAUTH_TOKEN ? SUBSCRIPTION_PROMPT_CACHE_TTL_MS : API_KEY_PROMPT_CACHE_TTL_MS;
   }
 
+  /**
+   * What a turn spawns the CLI with. `sendMessage` and `prewarm` both build it here, so a
+   * warm spare is only ever taken over by a turn that would have started that same process
+   * (`spawnFingerprint` compares the two).
+   */
+  private buildQueryOptions(p: {
+    sessionId?: string;
+    resume?: string;
+    forkSession?: boolean;
+    cwd: string;
+    systemPrompt: ReturnType<typeof buildSystemPromptOption>;
+    env: Record<string, string | undefined>;
+    allowedTools: string[];
+    mcpServers: Record<string, unknown>;
+    permissionMode: string;
+    opts?: Pick<import("./provider.interface.ts").SendMessageOpts, "model" | "oneMContext" | "effort" | "thinkingBudget" | "maxTurns">;
+    providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
+    stderr: (chunk: string) => void;
+  }): Record<string, any> {
+    // 1M context (GA): the CLI enables a 1M window when the model name carries a
+    // [1m] suffix. The suffix is stripped before the API call. Requires an entitled
+    // account (Max/Team/Enterprise) and a supported model; otherwise the API errors.
+    // Per-call overrides win over provider config (lightweight calls can opt out of 1M;
+    // the chat input picker sets per-session model/effort/thinking). Effort enum is
+    // guarded inside the helper — "extra" would crash the CLI subprocess.
+    const mqo = buildModelQueryOptions(
+      {
+        model: p.opts?.model,
+        oneMContext: p.opts?.oneMContext,
+        effort: p.opts?.effort,
+        thinkingBudget: p.opts?.thinkingBudget,
+      },
+      p.providerConfig,
+    );
+
+    // Compiled binaries have no node_modules → resolve a Claude CLI explicitly
+    // (system claude or the one shipped in cli/). Source installs → undefined
+    // (SDK self-resolves from node_modules, unchanged).
+    const cliExecutablePath = resolveCliExecutablePath(
+      (p.providerConfig as { cli_command?: string }).cli_command,
+    );
+
+    return {
+      // Run the CLI under node only for a .js entry (or the win32 source-mode
+      // default). A native claude(.exe) must be spawned directly.
+      ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),
+      ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
+      sessionId: p.sessionId,
+      resume: p.resume,
+      ...(p.forkSession && { forkSession: true }),
+      cwd: p.cwd,
+      systemPrompt: p.systemPrompt,
+      settingSources: ["user", "project"],
+      env: p.env,
+      settings: { permissions: { allow: [], deny: [] } },
+      allowedTools: p.allowedTools,
+      ...(Object.keys(p.mcpServers).length > 0 && { mcpServers: p.mcpServers }),
+      permissionMode: p.permissionMode,
+      allowDangerouslySkipPermissions: p.permissionMode === "bypassPermissions",
+      ...(mqo.model && { model: mqo.model }),
+      ...(mqo.effort && { effort: mqo.effort }),
+      maxTurns: p.opts?.maxTurns ?? p.providerConfig.max_turns ?? 1000,
+      ...(p.providerConfig.max_budget_usd && { maxBudgetUsd: p.providerConfig.max_budget_usd }),
+      ...(mqo.thinking && { thinking: mqo.thinking }),
+      // Beta headers are honored only for API-key auth; OAuth/subscription sessions
+      // reject them ("Custom betas are only available for API key users") and crash the
+      // subprocess. Entitled OAuth accounts still get 1M context via the [1m] model suffix.
+      ...(mqo.use1m && !!p.env.ANTHROPIC_API_KEY && { betas: ["context-1m-2025-08-07"] }),
+      includePartialMessages: true,
+      stderr: p.stderr,
+    };
+  }
+
+  /**
+   * Start the CLI the next chat created in `projectPath` will run on, so that chat's first
+   * message does not wait ~1.4 s for it to boot (`claude-warm-spare.ts` has the numbers).
+   * Given the settings the message will carry, the options are built exactly as
+   * `sendMessage` builds them; anything this cannot foresee only makes that turn start cold.
+   */
+  async prewarm(input: PrewarmInput): Promise<void> {
+    const { projectPath, accountId, opts } = input;
+    if (!existsSync(projectPath) || totalmem() < this.minWarmSpareHostMemory) return;
+    const providerConfig = this.getProviderConfig();
+    const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
+    const isBypass = permissionMode === "bypassPermissions";
+
+    let account: AccountWithTokens | null = null;
+    if (accountSelector.isEnabled()) {
+      // The session will be bound to the account its tab claimed, and its turn runs on that
+      // one. Without a claim the turn's own pick cannot be foreseen, so nothing is started.
+      if (!accountId || !accountSelector.canServe(accountId)) return;
+      account = await accountService.ensureFreshToken(accountId);
+      if (!account) return;
+      // What `sendMessage` does too: a background refresh may have rotated the token.
+      account = accountService.getWithTokens(accountId) ?? account;
+    }
+
+    const options = this.buildQueryOptions({
+      cwd: projectPath,
+      systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
+      env: this.buildQueryEnv(projectPath, account),
+      allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
+      mcpServers: this.resolveMcpServers(projectPath),
+      permissionMode,
+      opts,
+      providerConfig,
+      stderr: () => {},
+    });
+    this.warmSpares.offer(projectPath, spawnFingerprint(options), (sessionId, callbacks) => {
+      const { generator, controller } = createMessageChannel();
+      const q = query({
+        prompt: generator,
+        options: {
+          ...options,
+          sessionId,
+          stderr: callbacks.stderr,
+          ...(!isBypass && { hooks: { PreToolUse: [{ matcher: ".*", hooks: [callbacks.preToolUse] }] } }),
+          canUseTool: callbacks.canUseTool,
+        } as any,
+      });
+      console.log(`[sdk] session=${sessionId} warm CLI started for ${projectPath}`);
+      return { query: q, controller };
+    });
+  }
+
   async *sendMessage(
     _sessionId: string,
     message: string,
@@ -899,26 +1031,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // No project root means nothing can be proven inside it, so every file tool asks.
     const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
 
-    // Build allowedTools based on permission mode.
-    // SDK auto-approves everything in allowedTools (skips canUseTool callback).
-    // In non-bypass modes, only pre-approve read-only tools so write/execute tools
-    // go through the permission evaluation chain → canUseTool callback.
-    // The design policy pre-approves nothing: the read-only list would let Read and Grep
-    // reach any path on disk and every MCP tool run unasked, which is exactly what a
-    // design session's agent (fed page content it did not write) must not do.
-    const readOnlyTools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
-    const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
-    const teamTools = providerConfig.agent_teams
-      ? ["TeamCreate", "TeamDelete", "SendMessage", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
-      : [];
-    const mcpTools = ["mcp__*"];
     // `design_check` only reads the canvas, so a design session never asks before it runs.
     const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
-    const allowedTools = designPolicy
-      ? (designCheckTool ? [designCheckTool] : [])
-      : isBypass
-        ? [...readOnlyTools, ...writeTools, ...teamTools, ...mcpTools]
-        : [...readOnlyTools, ...mcpTools];
+    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
 
     /**
      * Approval events to yield from the generator.
@@ -991,7 +1106,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         if (designToolDecision(toolName, hookInput?.tool_input, designRoot) === "allow") {
           return preToolUseDecision("allow");
         }
-      } else if (readOnlyTools.includes(toolName)) {
+      } else if (READ_ONLY_TOOLS.includes(toolName)) {
         // Read-only tools: always allow
         return {};
       }
@@ -1148,61 +1263,21 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         console.log(`[sdk] session=${sessionId} mcpServers: ${Object.keys(mcpServers).join(", ")}`);
       }
 
-      // 1M context (GA): the CLI enables a 1M window when the model name carries a
-      // [1m] suffix. The suffix is stripped before the API call. Requires an entitled
-      // account (Max/Team/Enterprise) and a supported model; otherwise the API errors.
-      // Per-call overrides win over provider config (lightweight calls can opt out of 1M;
-      // the chat input picker sets per-session model/effort/thinking). Effort enum is
-      // guarded inside the helper — "extra" would crash the CLI subprocess.
-      const mqo = buildModelQueryOptions(
-        {
-          model: opts?.model,
-          oneMContext: opts?.oneMContext,
-          effort: opts?.effort,
-          thinkingBudget: opts?.thinkingBudget,
-        },
-        providerConfig,
-      );
-      const resolvedModel = mqo.model;
-      const use1m = mqo.use1m;
-
-      // Compiled binaries have no node_modules → resolve a Claude CLI explicitly
-      // (system claude or the one shipped in cli/). Source installs → undefined
-      // (SDK self-resolves from node_modules, unchanged).
-      const cliExecutablePath = resolveCliExecutablePath(
-        (providerConfig as { cli_command?: string }).cli_command,
-      );
-
-      const queryOptions: Record<string, any> = {
-        // Run the CLI under node only for a .js entry (or the win32 source-mode
-        // default). A native claude(.exe) must be spawned directly.
-        ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),
-        ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
+      const queryOptions = this.buildQueryOptions({
         // First message: create session with this ID. Subsequent: resume by same ID.
         sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
         resume: (isFirstMessage && !shouldFork) ? undefined : (shouldFork ? forkSourceId : sessionId),
-        ...(shouldFork && { forkSession: true }),
+        forkSession: shouldFork,
         cwd: effectiveCwd,
         systemPrompt: systemPromptOpt,
-        settingSources: ["user", "project"],
         env: queryEnv,
-        settings: { permissions: { allow: [], deny: [] } },
         allowedTools,
-        ...(hasMcp && { mcpServers }),
+        mcpServers,
         permissionMode,
-        allowDangerouslySkipPermissions: isBypass,
-        ...(resolvedModel && { model: resolvedModel }),
-        ...(mqo.effort && { effort: mqo.effort }),
-        maxTurns: opts?.maxTurns ?? providerConfig.max_turns ?? 1000,
-        ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-        ...(mqo.thinking && { thinking: mqo.thinking }),
-        // Beta headers are honored only for API-key auth; OAuth/subscription sessions
-        // reject them ("Custom betas are only available for API key users") and crash the
-        // subprocess. Entitled OAuth accounts still get 1M context via the [1m] model suffix.
-        ...(use1m && !!queryEnv.ANTHROPIC_API_KEY && { betas: ["context-1m-2025-08-07"] }),
-        includePartialMessages: true,
+        opts,
+        providerConfig,
         stderr: stderrCallback,
-      };
+      });
 
       // Crash retry: if subprocess exits with non-zero code before producing events,
       // clean up and retry once with a fresh query before surfacing the error.
@@ -1252,21 +1327,28 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         };
       };
 
-      const { generator: streamGen, controller: initialCtrl } = createMessageChannel();
+      // A new session's first attempt takes over the CLI `prewarm` started for it, if that
+      // is exactly the process it would have spawned; otherwise it spawns one as always.
+      const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork
+        ? this.warmSpares.adopt(sessionId, spawnFingerprint(queryOptions), { canUseTool, preToolUse: preToolUseHook, stderr: stderrCallback })
+        : undefined;
+      const channel = spare ? undefined : createMessageChannel();
+      const initialCtrl = spare?.controller ?? channel!.controller;
       // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg)
       const initRetry = crashRetryCount > 0 ? buildRetryMsg() : null;
       initialCtrl.push(initRetry?.msg ?? firstMsg);
       const initContent = initRetry?.lastUserContent ?? modelInput;
       const initImages = initRetry?.lastUserImages ?? opts?.images;
 
-      const initialQuery = query({
-        prompt: streamGen,
+      const initialQuery = spare?.query ?? query({
+        prompt: channel!.generator,
         options: {
           ...queryOptions,
           ...(permissionHooks && { hooks: permissionHooks }),
           canUseTool,
         } as any,
       });
+      if (spare) console.log(`[sdk] session=${sessionId} took over the warm CLI started ${spare.ageMs} ms ago`);
       this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages });
       this.activeQueries.set(sessionId, initialQuery);
       let eventSource: AsyncIterable<any> = initialQuery;

@@ -38,6 +38,8 @@ import {
 } from "../../services/chat-search.service.ts";
 import { compareSessionsByActivity, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
 import { ok, err } from "../../types/api.ts";
+import { VALID_PERMISSION_MODES } from "../../types/config.ts";
+import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -351,6 +353,33 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
   }
 });
 
+/**
+ * POST /chat/prewarm — a new-chat tab is open here: start the process its first message
+ * will run on, taking the picks that message will carry. The body is read the way the chat
+ * socket reads that message, since a spare is only used when the two agree. Answered at once;
+ * a request nothing can be started for (another provider, a small host, no claimed account)
+ * just starts nothing.
+ */
+chatRoutes.post("/prewarm", async (c) => {
+  const projectPath = c.get("projectPath");
+  const body = await c.req.json<Record<string, unknown>>().catch((): Record<string, unknown> => ({}));
+  const { providerId, accountId, permissionMode, model, effort, thinking } = body;
+  const opts = {
+    ...(VALID_PERMISSION_MODES.includes(permissionMode as never) && { permissionMode: permissionMode as string }),
+    ...(typeof model === "string" && model && { model }),
+    ...(VALID_EFFORT_VALUES.includes(effort as never) && { effort: effort as string }),
+    ...(typeof thinking === "boolean" && { thinkingBudget: thinking ? THINKING_ADAPTIVE : 0 }),
+  };
+  void chatService
+    .prewarm(typeof providerId === "string" ? providerId : undefined, {
+      projectPath,
+      accountId: typeof accountId === "string" ? accountId : undefined,
+      opts,
+    })
+    .catch((e) => console.warn(`[chat] prewarm failed: ${(e as Error).message}`));
+  return c.json(ok({ accepted: true }), 202);
+});
+
 /** POST /chat/sessions — create a new session for the project in context */
 chatRoutes.post("/sessions", async (c) => {
   try {
@@ -372,6 +401,8 @@ chatRoutes.post("/sessions", async (c) => {
       projectName,
       projectPath,
       title: body.title,
+      // A design session spawns with its own instructions, so a spare would not fit it.
+      adoptWarmSpare: !isValidDesignSlug(designSlug),
     });
     if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
     if (isValidDesignSlug(designSlug)) setSessionDesignSlug(session.id, designSlug);

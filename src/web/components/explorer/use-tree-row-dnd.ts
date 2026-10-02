@@ -178,8 +178,6 @@ export function useTreeRowDnd(options: TreeRowDndOptions): TreeRowDnd {
     api.post(`${projectUrl(projectName)}/files/move`, { source: sourcePath, destination })
       .then(() => {
         const store = useFileStore.getState();
-        store.invalidateIndex();
-        store.loadIndex(projectName);
         store.invalidateFolder(projectName, sourceParent);
         store.invalidateFolder(projectName, dropTargetDir);
         // An explorer window showing either folder must refresh too.

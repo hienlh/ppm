@@ -15,6 +15,7 @@ import { audioSupport, type AudioSupport } from "./remote-desktop-audio.ts";
 import { privacySupport, type PrivacySupport } from "./remote-desktop-privacy.ts";
 import { listHostResolutions, type HostResolutions } from "./remote-desktop-resolution.ts";
 import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-session.ts";
+import { gstElements, type GstElements } from "./remote-desktop-capture-wayland.ts";
 import { getX11 } from "./remote-desktop-x11.ts";
 import {
   MAC_PERMISSION_SETTINGS_URL,
@@ -131,22 +132,60 @@ function macPermissionRequirement(id: MacPermissionId, granted: boolean): Remote
   };
 }
 
-/** The session-type row. A Wayland host is *not* reported as an unsupported platform: nothing
- *  about Linux is missing, one specific capture path is — and the user can satisfy it in place
- *  by choosing X11 at the login screen, which is exactly what a requirement is for. Hiding the
- *  entry instead would leave them with no explanation at all. */
-function linuxSessionRequirement(session: LinuxSession): RemoteDesktopRequirement {
-  const x11 = session.kind === "x11";
-  return {
-    id: "linux-session",
-    ok: x11,
+/**
+ * What a Wayland host still needs for capture.
+ *
+ * Wayland used to be reported here as a hard blocker telling the user to log out and pick X11.
+ * It is not one any more: the desktop portal hands out a PipeWire node and GStreamer reads it
+ * (`remote-desktop-capture-wayland.ts`). What *can* be missing is the GStreamer side, and it is
+ * split into two rows because they are two different packages with two different install
+ * commands — a single "GStreamer" row would name a package that is already installed on a host
+ * missing only the other one.
+ *
+ * `pipewiresrc` is the one that decides whether capture is possible at all; the encoder row is
+ * separate because a host can have the source and no H.264 encoder, which fails later and for a
+ * reason the first row's install command cannot fix.
+ */
+function waylandCaptureRequirements(els: GstElements): RemoteDesktopRequirement[] {
+  const rows: RemoteDesktopRequirement[] = [];
+  const haveSource = !!els.launch && els.pipewiresrc;
+  rows.push({
+    id: "gst-pipewire",
+    ok: haveSource,
     gates: "video",
-    title: "X11 session",
-    detail: "Screen capture currently needs an X11 session. This host is on Wayland, which only "
-      + "shares the screen through the desktop portal — not supported yet. Log out and pick "
-      + "\"Plasma (X11)\" / \"GNOME on Xorg\" at the login screen; mouse and keyboard already work here.",
-    actions: [],
-  };
+    title: "GStreamer PipeWire capture",
+    detail: "A Wayland compositor only shares the screen through the desktop portal, which hands "
+      + "back a PipeWire stream. PPM reads it with GStreamer — the same way RustDesk does. "
+      + "Install the tools and the PipeWire plugin, then come back; PPM re-checks automatically.",
+    actions: [linuxInstallAction(gstPipewirePackages())].filter((a): a is RequirementAction => a !== undefined),
+  });
+  if (haveSource && !els.vah264enc && !els.x264enc) {
+    rows.push({
+      id: "gst-h264",
+      ok: false,
+      gates: "video",
+      title: "A GStreamer H.264 encoder",
+      detail: "The screen is captured but nothing can encode it. `vah264enc` uses the GPU and is "
+        + "much cheaper; `x264enc` is the software fallback. Installing either is enough.",
+      actions: [linuxInstallAction(gstEncoderPackages())].filter((a): a is RequirementAction => a !== undefined),
+    });
+  }
+  return rows;
+}
+
+/** `gst-launch-1.0` plus the PipeWire plugin. Arch splits the tools out of the core package;
+ *  Debian/Ubuntu call the plugin `gstreamer1.0-pipewire`; Fedora ships it as part of pipewire. */
+function gstPipewirePackages(): string {
+  if (existsSync("/usr/bin/pacman")) return "gstreamer gst-plugin-pipewire";
+  if (existsSync("/usr/bin/apt")) return "gstreamer1.0-tools gstreamer1.0-pipewire";
+  return "gstreamer1 pipewire-gstreamer";
+}
+
+/** `vah264enc` lives in the bad set, `x264enc` in the ugly one; either satisfies the row. */
+function gstEncoderPackages(): string {
+  if (existsSync("/usr/bin/pacman")) return "gst-plugins-bad gst-plugins-ugly";
+  if (existsSync("/usr/bin/apt")) return "gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly";
+  return "gstreamer1-plugins-bad-free gstreamer1-plugins-ugly-free";
 }
 
 /** uinput is how a Wayland session receives input, and the device is root-owned by default. */
@@ -220,14 +259,11 @@ function clipboardSupport(platform: NodeJS.Platform, session: LinuxSession | nul
 }
 
 async function linuxRequirements(session: LinuxSession): Promise<RemoteDesktopRequirement[]> {
-  const rows: RemoteDesktopRequirement[] = [linuxSessionRequirement(session)];
   if (session.kind === "x11") {
     const conn = await getX11(session);
-    rows.push(conn ? xtestRequirement(conn.hasXTest) : xlibRequirement(session.display));
-  } else {
-    rows.push(uinputRequirement());
+    return [conn ? xtestRequirement(conn.hasXTest) : xlibRequirement(session.display)];
   }
-  return rows;
+  return [...waylandCaptureRequirements(await gstElements()), uinputRequirement()];
 }
 
 export async function remoteDesktopReadiness(

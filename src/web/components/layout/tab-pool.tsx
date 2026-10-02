@@ -12,7 +12,7 @@
  * ever swaps a wrapper. In exchange React binds its listeners to the wrapper itself, so
  * they travel with the node — including into another document.
  */
-import { useState, useEffect, useSyncExternalStore, lazy } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useMountedTabsStore } from "@/stores/mounted-tabs-store";
 import type { TabType } from "@/stores/tab-store";
@@ -20,32 +20,43 @@ import { collectTabEntries, filterMountableEntries } from "./tab-pool-collect";
 import { slotRegistry } from "./tab-pool-registry";
 import { ReparentingTab } from "./reparenting-tab";
 import { useWindowPanelReconcile } from "./use-window-panel-reconcile";
+import { lazyWithPreload, type PreloadableComponent } from "@/lib/lazy-with-preload";
 
 export { registerPanelSlot } from "./tab-pool-registry";
 
 // ---------------------------------------------------------------------------
 // Lazy tab components (single source of truth for all tab types)
 // ---------------------------------------------------------------------------
-const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
-  terminal: lazy(() => import("@/components/terminal/terminal-tab").then((m) => ({ default: m.TerminalTab }))),
-  chat: lazy(() => import("@/components/chat/chat-tab").then((m) => ({ default: m.ChatTab }))),
-  editor: lazy(() => import("@/components/editor/code-editor").then((m) => ({ default: m.CodeEditor }))),
-  database: lazy(() => import("@/components/database/database-viewer").then((m) => ({ default: m.DatabaseViewer }))),
-  sqlite: lazy(() => import("@/components/sqlite/sqlite-viewer").then((m) => ({ default: m.SqliteViewer }))),
-  postgres: lazy(() => import("@/components/postgres/postgres-viewer").then((m) => ({ default: m.PostgresViewer }))),
-  "git-diff": lazy(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
-  "branch-review": lazy(() => import("@/components/branch-review/branch-review-tab").then((m) => ({ default: m.BranchReviewTab }))),
-  settings: lazy(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
-  extension: lazy(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
-  "extension-webview": lazy(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
-  "conflict-editor": lazy(() => import("@/components/editor/conflict-editor").then((m) => ({ default: m.ConflictEditor }))),
-  "system-monitor": lazy(() => import("@/components/system/system-monitor-tab").then((m) => ({ default: m.SystemMonitorTab }))),
-  "git-log": lazy(() => import("@/components/git/git-log-panel").then((m) => ({ default: m.GitLogPanel }))),
-  "ai-resource": lazy(() => import("@/components/ai-resources/ai-resource-editor").then((m) => ({ default: m.AiResourceEditor }))),
-  group: lazy(() => import("@/components/group-chat/group-chat-tab").then((m) => ({ default: m.GroupChatTab }))),
-  problems: lazy(() => import("@/components/problems/problems-panel").then((m) => ({ default: m.ProblemsPanel }))),
-  design: lazy(() => import("@/components/design/design-tab").then((m) => ({ default: m.DesignTab }))),
+export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: Record<string, unknown>; tabId?: string }>> = {
+  terminal: lazyWithPreload(() => import("@/components/terminal/terminal-tab").then((m) => ({ default: m.TerminalTab }))),
+  chat: lazyWithPreload(() => import("@/components/chat/chat-tab").then((m) => ({ default: m.ChatTab }))),
+  editor: lazyWithPreload(() => import("@/components/editor/code-editor").then((m) => ({ default: m.CodeEditor }))),
+  database: lazyWithPreload(() => import("@/components/database/database-viewer").then((m) => ({ default: m.DatabaseViewer }))),
+  sqlite: lazyWithPreload(() => import("@/components/sqlite/sqlite-viewer").then((m) => ({ default: m.SqliteViewer }))),
+  postgres: lazyWithPreload(() => import("@/components/postgres/postgres-viewer").then((m) => ({ default: m.PostgresViewer }))),
+  "git-diff": lazyWithPreload(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
+  "branch-review": lazyWithPreload(() => import("@/components/branch-review/branch-review-tab").then((m) => ({ default: m.BranchReviewTab }))),
+  settings: lazyWithPreload(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
+  extension: lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
+  "extension-webview": lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
+  "conflict-editor": lazyWithPreload(() => import("@/components/editor/conflict-editor").then((m) => ({ default: m.ConflictEditor }))),
+  android: lazyWithPreload(() => import("@/components/android/android-tab").then((m) => ({ default: m.AndroidTab }))),
+  "system-monitor": lazyWithPreload(() => import("@/components/system/system-monitor-tab").then((m) => ({ default: m.SystemMonitorTab }))),
+  "git-log": lazyWithPreload(() => import("@/components/git/git-log-panel").then((m) => ({ default: m.GitLogPanel }))),
+  "ai-resource": lazyWithPreload(() => import("@/components/ai-resources/ai-resource-editor").then((m) => ({ default: m.AiResourceEditor }))),
+  group: lazyWithPreload(() => import("@/components/group-chat/group-chat-tab").then((m) => ({ default: m.GroupChatTab }))),
+  problems: lazyWithPreload(() => import("@/components/problems/problems-panel").then((m) => ({ default: m.ProblemsPanel }))),
+  design: lazyWithPreload(() => import("@/components/design/design-tab").then((m) => ({ default: m.DesignTab }))),
 };
+
+/** The tabs opened most, loaded first by `preloadWhenIdle`. */
+const PRELOAD_FIRST: TabType[] = ["editor", "terminal", "chat", "git-diff", "settings"];
+
+/** Every kind of tab's `preload`, the ones opened most first. */
+export function tabPreloads(): Array<() => Promise<void>> {
+  const rest = (Object.keys(TAB_COMPONENTS) as TabType[]).filter((type) => !PRELOAD_FIRST.includes(type));
+  return [...PRELOAD_FIRST, ...rest].map((type) => TAB_COMPONENTS[type].preload);
+}
 
 const HIDDEN_CONTAINER_STYLE: React.CSSProperties = {
   position: "fixed",

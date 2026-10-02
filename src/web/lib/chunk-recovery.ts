@@ -24,6 +24,8 @@
  * one that says what happened.
  */
 
+import { reportTraceError } from "./trace-client";
+
 const RELOAD_KEY = "ppm:chunk-reload";
 
 /**
@@ -107,7 +109,9 @@ export function installChunkErrorRecovery(): void {
   // rethrow, and `React.lazy` then fails reading `.default` of undefined — an
   // error that says nothing about what actually happened. The reload normally
   // wins the race; when it does not, the boundary catches the real throw.
-  window.addEventListener("vite:preloadError", () => {
+  window.addEventListener("vite:preloadError", (event) => {
+    // Recorded before the reload; the page-hide flush carries it out as the page goes.
+    reportTraceError("chunk_error", (event as (Event & { payload?: unknown }) | undefined)?.payload ?? "vite:preloadError");
     reloadOnceForChunkError();
   });
 }

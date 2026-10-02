@@ -7,28 +7,35 @@
  * does not pull every pane's dependencies (charts, editors, cron pickers) into the bundle.
  */
 
-import { Suspense, lazy, type ComponentType, type LazyExoticComponent } from "react";
+import { Suspense } from "react";
+import { lazyWithPreload, type PreloadableComponent } from "@/lib/lazy-with-preload";
 import { Loader2 } from "@/lib/icons";
 import type { SettingsCategoryId } from "./settings-categories";
 
-const SECTIONS: Record<SettingsCategoryId, LazyExoticComponent<ComponentType>> = {
-  general: lazy(() => import("./general-settings-section").then((m) => ({ default: m.GeneralSettingsSection }))),
-  appearance: lazy(() => import("./appearance-settings-section").then((m) => ({ default: m.AppearanceSettingsSection }))),
-  "language-servers": lazy(() => import("./language-servers-section").then((m) => ({ default: m.LanguageServersSection }))),
-  "ai-provider": lazy(() => import("./ai-settings-section").then((m) => ({ default: m.AISettingsSection }))),
-  accounts: lazy(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
-  design: lazy(() => import("./design-settings-section").then((m) => ({ default: m.DesignSettingsSection }))),
-  voice: lazy(() => import("./voice-settings-section").then((m) => ({ default: m.VoiceSettingsSection }))),
-  ppmbot: lazy(() => import("./ppmbot-settings-section").then((m) => ({ default: m.PPMBotSettingsSection }))),
-  notifications: lazy(() => import("./notifications-settings-section").then((m) => ({ default: m.NotificationsSettingsSection }))),
-  jira: lazy(() => import("./jira-watcher-section").then((m) => ({ default: m.JiraWatcherSection }))),
-  extensions: lazy(() => import("./extension-manager-section").then((m) => ({ default: m.ExtensionManagerSection }))),
-  proxy: lazy(() => import("./proxy-settings-section").then((m) => ({ default: m.ProxySettingsSection }))),
-  schedules: lazy(() => import("./schedules/schedules-settings-section").then((m) => ({ default: m.SchedulesSettingsSection }))),
-  shortcuts: lazy(() => import("./keyboard-shortcuts-section").then((m) => ({ default: m.KeyboardShortcutsSection }))),
-  files: lazy(() => import("./files-settings-section").then((m) => ({ default: m.FilesSettingsSection }))),
-  "query-audit": lazy(() => import("./query-audit-section").then((m) => ({ default: m.QueryAuditSection }))),
+export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> = {
+  general: lazyWithPreload(() => import("./general-settings-section").then((m) => ({ default: m.GeneralSettingsSection }))),
+  appearance: lazyWithPreload(() => import("./appearance-settings-section").then((m) => ({ default: m.AppearanceSettingsSection }))),
+  "language-servers": lazyWithPreload(() => import("./language-servers-section").then((m) => ({ default: m.LanguageServersSection }))),
+  "remote-desktop": lazyWithPreload(() => import("./remote-desktop-settings-section").then((m) => ({ default: m.RemoteDesktopSettingsSection }))),
+  "ai-provider": lazyWithPreload(() => import("./ai-settings-section").then((m) => ({ default: m.AISettingsSection }))),
+  accounts: lazyWithPreload(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
+  design: lazyWithPreload(() => import("./design-settings-section").then((m) => ({ default: m.DesignSettingsSection }))),
+  voice: lazyWithPreload(() => import("./voice-settings-section").then((m) => ({ default: m.VoiceSettingsSection }))),
+  ppmbot: lazyWithPreload(() => import("./ppmbot-settings-section").then((m) => ({ default: m.PPMBotSettingsSection }))),
+  notifications: lazyWithPreload(() => import("./notifications-settings-section").then((m) => ({ default: m.NotificationsSettingsSection }))),
+  jira: lazyWithPreload(() => import("./jira-watcher-section").then((m) => ({ default: m.JiraWatcherSection }))),
+  extensions: lazyWithPreload(() => import("./extension-manager-section").then((m) => ({ default: m.ExtensionManagerSection }))),
+  proxy: lazyWithPreload(() => import("./proxy-settings-section").then((m) => ({ default: m.ProxySettingsSection }))),
+  schedules: lazyWithPreload(() => import("./schedules/schedules-settings-section").then((m) => ({ default: m.SchedulesSettingsSection }))),
+  shortcuts: lazyWithPreload(() => import("./keyboard-shortcuts-section").then((m) => ({ default: m.KeyboardShortcutsSection }))),
+  files: lazyWithPreload(() => import("./files-settings-section").then((m) => ({ default: m.FilesSettingsSection }))),
+  "query-audit": lazyWithPreload(() => import("./query-audit-section").then((m) => ({ default: m.QueryAuditSection }))),
 };
+
+/** Load every pane's code, so that opening Settings shows its pane without a spinner. */
+export function preloadSettingsSections(): Promise<unknown> {
+  return Promise.all(Object.values(SECTIONS).map((section) => section.preload()));
+}
 
 export function SettingsSectionContent({ category }: { category: SettingsCategoryId }) {
   const Section = SECTIONS[category];

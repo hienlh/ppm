@@ -33,6 +33,28 @@ export function shouldDecodeAccessUnit(hasSeenKeyframeThisInstance: boolean, isK
   return isKey || hasSeenKeyframeThisInstance;
 }
 
+/**
+ * Why `VideoDecoder` is missing — and it is usually not the browser.
+ *
+ * WebCodecs is **secure-context only**. Measured in one browser at one moment: `VideoDecoder`
+ * is `undefined` on `http://192.168.98.96:3210` and present on `http://127.0.0.1:3210`. Since
+ * PPM is most often reached over plain HTTP on a LAN — which is exactly how a phone or tablet
+ * gets to it — the common case for this message is a perfectly capable browser on an origin
+ * the specification excludes, and telling that user to "try Chrome" sends them to fix
+ * something that is not broken.
+ *
+ * Exported for the test; there is no `VideoDecoder` to stub in `bun:test` otherwise.
+ */
+export function missingDecoderReason(
+  secureContext: boolean = typeof window !== "undefined" ? window.isSecureContext : true,
+): string {
+  return secureContext
+    ? "This browser has no WebCodecs VideoDecoder — try Chrome, Edge, or Safari 16.4+."
+    : "Video needs a secure origin on this transport: browsers only expose WebCodecs over HTTPS "
+      + "or on localhost. Reach PPM through its HTTPS tunnel, or install the WebRTC relay in "
+      + "Settings, which streams over plain HTTP too.";
+}
+
 export interface UseH264CanvasDecoderResult {
   status: DecoderStatus;
   errorMessage: string | null;
@@ -78,7 +100,7 @@ export function useH264CanvasDecoder(
     lastCodecRef.current = codec;
     if (typeof VideoDecoder === "undefined") {
       setStatus("unsupported");
-      setErrorMessage("This browser has no WebCodecs VideoDecoder — try Chrome, Edge, or Safari 16.4+.");
+      setErrorMessage(missingDecoderReason());
       return;
     }
     const config: VideoDecoderConfig = { codec, optimizeForLatency: true };

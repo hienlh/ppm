@@ -358,8 +358,9 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     savePersistedExpanded(activeProject.name, useFileStore.getState().expandedPaths);
   }, [expandedPaths, activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Index invalidation is app-wide so it also works with this drawer closed.
-  // The mounted tree only refreshes the affected folder.
+  // Handle WS file:changed → invalidate folder. The index is only marked stale, and app-wide
+  // (useGlobalEvents, useFileIndexInvalidation) so that also works with this drawer closed;
+  // refetching it here was a 22 MB download per change on a large project.
   useEffect(() => {
     if (!activeProject) return;
     const projectName = activeProject.name;
@@ -389,7 +390,8 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
 
   // Symmetric with the fsChanged(...) calls this file emits after its own mutations: an
   // explorer window mutating a directory inside this project must invalidate the matching
-  // tree node too.
+  // tree node too. It is also what marks the index stale after the tree's own renames, creates
+  // and moves.
   useEffect(() => {
     if (!activeProject) return;
     const projectName = activeProject.name;
@@ -398,6 +400,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       const relative = relativeProjectPath(root, absoluteDir);
       if (relative == null) return; // outside this project — not the tree's concern
       const store = useFileStore.getState();
+      store.markIndexStale(projectName);
       store.invalidateFolder(projectName, relative);
     });
   }, [activeProject]);
@@ -529,8 +532,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       const newPath = parentPath ? `${parentPath}/${value}` : value;
       await api.post(`${projectUrl(projectName)}/files/rename`, { oldPath: node.path, newPath });
       clearInlineAction();
-      store.invalidateIndex();
-      store.loadIndex(projectName);
       store.invalidateFolder(projectName, parentPath);
       fsChanged(absoluteProjectPath(activeProject!.path, parentPath));
     } else {
@@ -538,8 +539,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       const fullPath = row.targetPath ? `${row.targetPath}/${value}` : value;
       await api.post(`${projectUrl(projectName)}/files/create`, { path: fullPath, type });
       clearInlineAction();
-      store.invalidateIndex();
-      store.loadIndex(projectName);
       store.invalidateFolder(projectName, row.targetPath);
       fsChanged(absoluteProjectPath(activeProject!.path, row.targetPath));
     }

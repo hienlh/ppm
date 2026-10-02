@@ -23,6 +23,20 @@ export interface ThemeConfig {
   customThemeId?: string;
 }
 
+export interface AndroidConfig {
+  /** SDK root the user picked. Empty/absent = discover it (env, then the per-OS default). */
+  sdk_root?: string;
+  /** How many emulators PPM may have running at once. Plan §1 keeps this at 1 by default:
+   *  each one costs gigabytes of host RAM, and two is the design test rather than the target. */
+  max_concurrent?: number;
+  /** Window mode for emulators PPM starts. `no-window` needs no display; `qt-hide-window`
+   *  creates a hidden Qt window and therefore needs one. */
+  window_mode?: "no-window" | "qt-hide-window" | "window";
+  /** `-gpu` argument. Left unset the emulator picks; `swiftshader_indirect` is the safe
+   *  software fallback on a host with no usable GPU for the guest. */
+  gpu_mode?: string;
+}
+
 export interface PpmConfig {
   device_name: string;
   port: number;
@@ -35,7 +49,9 @@ export interface PpmConfig {
   clawbot?: PPMBotConfig;
   cloud_url?: string;
   query_audit: QueryAuditConfig;
+  session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
+  android?: AndroidConfig;
 }
 
 /**
@@ -66,6 +82,13 @@ export interface QueryAuditConfig {
   /** Entries older than this are pruned. */
   retention_days: number;
   /** Hard ceiling for query-audit.db; oldest entries go first once it is hit. */
+  max_size_mb: number;
+}
+
+export interface SessionTraceConfig {
+  /** Rows older than this are pruned. */
+  retention_days: number;
+  /** Hard ceiling for session-trace.db; oldest rows go first once it is hit. */
   max_size_mb: number;
 }
 
@@ -168,6 +191,10 @@ export const DEFAULT_CONFIG: PpmConfig = {
     },
   },
   query_audit: {
+    retention_days: 30,
+    max_size_mb: 500,
+  },
+  session_trace: {
     retention_days: 30,
     max_size_mb: 500,
   },

@@ -43,7 +43,7 @@ export async function executeDelegation(
     });
 
     const opts = { permissionMode: "bypassPermissions" as PermissionMode };
-    const events = chatService.sendMessage(providerId, session.id, task.prompt, opts);
+    const events = chatService.sendMessage(providerId, session.id, task.prompt, { ...opts, origin: "ppmbot" });
 
     let fullText = "";
     let lastAssistantText = "";
