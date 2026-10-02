@@ -63,6 +63,19 @@ function resolveStoredProvider(sessionId: string): string | undefined {
   return chatService.getSession(sessionId)?.providerId;
 }
 
+/**
+ * Adopt the tab's provider when nothing is stored. `session_metadata` rows are written
+ * by whichever upsert runs first, and the account claim's leaves `provider_id` NULL —
+ * after which the global default decides, so a claude session on a codex-default install
+ * resumes as codex and every message dies with "transcript was not found". Persisting the
+ * hint fixes the session for good, including the paths (routes, restarts) that never see
+ * this socket. Only a provider this server has registered is accepted.
+ */
+function adoptProviderHint(sessionId: string, hint: string | undefined): void {
+  if (!hint || !providerRegistry.get(hint) || getSessionProvider(sessionId)) return;
+  try { setSessionProvider(sessionId, hint); } catch { /* non-fatal */ }
+}
+
 /** Resolve the model shown in session_state: per-session override, else provider default. */
 function resolveSessionModel(sessionId: string): string | undefined {
   return getSessionModel(sessionId) ?? sessionProviderConfig(sessionId)?.model;
@@ -1130,15 +1143,7 @@ export const chatWebSocket = {
   open(ws: ChatWsSocket) {
     const { sessionId, projectName, providerHint } = ws.data;
     const session = chatService.getSession(sessionId);
-    // Adopt the tab's provider when nothing is stored. `session_metadata` rows are
-    // written by whichever upsert runs first, and the account claim's leaves
-    // `provider_id` NULL — after which the global default decides, so a claude
-    // session on a codex-default install resumes as codex and every message dies
-    // with "transcript was not found". Persisting the hint fixes the session for
-    // good, including the paths (routes, restarts) that never see this socket.
-    if (providerHint && providerRegistry.get(providerHint) && !getSessionProvider(sessionId)) {
-      try { setSessionProvider(sessionId, providerHint); } catch { /* non-fatal */ }
-    }
+    adoptProviderHint(sessionId, providerHint);
     const providerId = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
 
     let projectPath: string | undefined;
@@ -1151,6 +1156,10 @@ export const chatWebSocket = {
 
     const existing = activeSessions.get(sessionId);
     if (existing) {
+      // A message that arrived before `open` may have created this entry under a
+      // provider guessed before the hint was stored. Nothing has run on it while it is
+      // idle, so it can still follow the session's real owner.
+      if (existing.phase === "idle" && existing.providerId !== providerId) existing.providerId = providerId;
       // FE reconnecting to existing session — clear cleanup timer
       if (existing.cleanupTimer) {
         clearTimeout(existing.cleanupTimer);
@@ -1274,7 +1283,11 @@ export const chatWebSocket = {
 
     // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
     if (!entry) {
-      const { projectName: pn } = ws.data;
+      const { projectName: pn, providerHint } = ws.data;
+      // Same order as open(): a message can beat it here (the Bun race above), and
+      // without the hint a new claude session on a codex-default install would run
+      // its first turn through codex.
+      adoptProviderHint(sessionId, providerHint);
       const pid = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
       if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
