@@ -110,17 +110,29 @@ export function toWindowsServiceInfo(row: WinServiceRow): ServiceInfo {
   };
 }
 
+export const CRITICAL_REFUSAL = "Windows needs this service to keep running";
+export const NOT_STOPPABLE_REFUSAL = "Windows reports this service cannot be stopped";
+
+/**
+ * The refusal that depends on the NAME alone, so it holds with no listing in hand: an
+ * action request can arrive before anyone has opened the page.
+ */
+export function criticalRefusal(name: string, action: string): string | null {
+  if (!CRITICAL_SERVICES.has(name.toLowerCase())) return null;
+  return action === "stop" || action === "restart" || action === "disable" ? CRITICAL_REFUSAL : null;
+}
+
 /** Which actions PPM refuses for a service, with the reason the menu shows. */
 export function windowsRefusals(row: WinServiceRow): ServiceInfo["refused"] {
   const refused: NonNullable<ServiceInfo["refused"]> = {};
   if (CRITICAL_SERVICES.has(row.name.toLowerCase())) {
-    const why = "Windows needs this service to keep running";
+    const why = CRITICAL_REFUSAL;
     refused.stop = why;
     refused.restart = why;
     refused.disable = why;
   } else if (row.state.toLowerCase() === "running" && !row.acceptStop) {
     // Windows itself would refuse: the service told the SCM it cannot be stopped.
-    const why = "Windows reports this service cannot be stopped";
+    const why = NOT_STOPPABLE_REFUSAL;
     refused.stop = why;
     refused.restart = why;
   }

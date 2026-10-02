@@ -113,22 +113,69 @@ describe("createWindowsServicesBackend", () => {
     expect(snap.warnings[0]).toContain("boom");
   });
 
-  test("actions: refused ones never reach PowerShell, no-ops are answered locally", async () => {
-    const scripts: string[] = [];
-    const backend = createWindowsServicesBackend(async (s) => { scripts.push(s); return s.includes("Get-CimInstance Win32_Service -Property") ? listing : "OK"; });
-    await backend.collect();
-    await expect(backend.action("RpcSs", "system", "stop")).rejects.toBeInstanceOf(ServiceActionRefused);
+  /**
+   * A stand-in SCM that answers the action script the way PowerShell would, from state it
+   * holds itself — so a decision made from a stale listing shows up as the wrong command.
+   */
+  function fakeScm(initial: Record<string, { state: "Running" | "Stopped"; canStop?: boolean }>) {
+    const state = structuredClone(initial);
+    const executed: string[] = [];
+    const run = async (script: string) => {
+      if (script.includes("Get-CimInstance Win32_Service -Property")) {
+        return Object.entries(state).map(([name, s]) => sLine({ name, state: s.state, acceptStop: s.canStop !== false })).join("\n");
+      }
+      const name = Buffer.from(/FromBase64String\('([^']+)'\)/.exec(script)![1]!, "base64").toString();
+      const svc = state[name]!;
+      const action = /(Start|Stop|Restart|Set)-Service/.exec(script)![1]!;
+      if (action === "Start" && svc.state === "Running" && script.includes("NOOP running")) return "NOOP running";
+      if (action === "Stop" && svc.state === "Stopped" && script.includes("NOOP stopped")) return "NOOP stopped";
+      if ((action === "Stop" || action === "Restart") && svc.state === "Running" && svc.canStop === false) return "REFUSED";
+      executed.push(`${action} ${name}`);
+      if (action === "Start" || action === "Restart") svc.state = "Running";
+      if (action === "Stop") svc.state = "Stopped";
+      return "OK";
+    };
+    return { run, executed, state };
+  }
+
+  test("critical services are refused by name, even before any listing", async () => {
+    const scm = fakeScm({ RpcSs: { state: "Running" }, Audiosrv: { state: "Running" } });
+    const backend = createWindowsServicesBackend(scm.run);
+    for (const action of ["stop", "restart", "disable"] as const) {
+      await expect(backend.action("RpcSs", "system", action)).rejects.toBeInstanceOf(ServiceActionRefused);
+    }
+    await expect(backend.action("Audiosrv", "system", "stop")).rejects.toBeInstanceOf(ServiceActionRefused);
+    expect(scm.executed).toEqual([]);
+  });
+
+  test("no-ops are decided from the service's live state, not the last listing", async () => {
+    const scm = fakeScm({ Spooler: { state: "Running" } });
+    const backend = createWindowsServicesBackend(scm.run);
+    await backend.collect(); // lists Spooler as running
+    await backend.action("Spooler", "system", "stop");
+    // The listing still says running; the start must still happen.
+    const started = await backend.action("Spooler", "system", "start");
+    expect(started.note).toBeUndefined();
+    expect(scm.executed).toEqual(["Stop Spooler", "Start Spooler"]);
     expect((await backend.action("Spooler", "system", "start")).note).toContain("already running");
-    expect((await backend.action("Fax", "system", "stop")).note).toContain("was not running");
-    expect(scripts).toHaveLength(1);
-    await backend.action("Spooler", "system", "restart");
-    expect(scripts).toHaveLength(2);
+    expect(scm.executed).toHaveLength(2);
+  });
+
+  test("a running service that cannot stop is refused, from live state", async () => {
+    const scm = fakeScm({ Foo: { state: "Running", canStop: false } });
+    await expect(createWindowsServicesBackend(scm.run).action("Foo", "system", "stop")).rejects.toBeInstanceOf(ServiceActionRefused);
+    expect(scm.executed).toEqual([]);
   });
 
   test("a PowerShell error surfaces as the action's error", async () => {
-    const backend = createWindowsServicesBackend(async (s) => (s.includes("-Property") ? listing : "__ERR__ Cannot open Spooler service"));
-    await backend.collect();
+    const backend = createWindowsServicesBackend(async () => "__ERR__ Cannot open Spooler service");
     await expect(backend.action("Spooler", "system", "stop")).rejects.toThrow("Cannot open Spooler service");
+  });
+
+  test("the action script never uses `return`, which would end the session's loop", () => {
+    for (const action of ["start", "stop", "restart", "enable", "disable"] as const) {
+      expect(actionScript("Spooler", action)).not.toMatch(/\breturn\b/);
+    }
   });
 });
 

@@ -30,8 +30,8 @@ import { PowerShellSession } from "../system-metrics/powershell-session.ts";
 import type { ServiceBackend } from "./service-backend.ts";
 import { ServiceActionRefused } from "./systemd-collector.ts";
 import {
-  isPlausibleWindowsServiceName, parseEventLines, parseExtraLine, parseServiceLines, scriptError, toB64,
-  toWindowsServiceInfo, windowsRefusals, type WinServiceRow,
+  criticalRefusal, isPlausibleWindowsServiceName, NOT_STOPPABLE_REFUSAL, parseEventLines, parseExtraLine,
+  parseServiceLines, scriptError, toB64, toWindowsServiceInfo, windowsRefusals, type WinServiceRow,
 } from "./windows-services-parse.ts";
 
 /** Most services; the event log is bounded below so a details read stays well inside. */
@@ -84,13 +84,27 @@ const ACTION_CMD: Record<ServiceAction, string> = {
   disable: "Set-Service -InputObject $svc -StartupType Manual -ErrorAction Stop",
 };
 
+/**
+ * One request that reads the service's state NOW and decides on it, so a decision is
+ * never made from a listing that is seconds old (an earlier action, another client, the
+ * service crashing by itself). Answers one line: `NOOP running`, `NOOP stopped`,
+ * `REFUSED`, or `OK` after the action ran.
+ */
 export function actionScript(name: string, action: ServiceAction): string {
+  // One if/elseif chain, never `return`: the script runs through Invoke-Expression inside
+  // the session's own loop, where a `return` leaves the bootstrap and ends the session.
+  const branches: string[] = [];
+  if (action === "start") branches.push("($state -eq 'Running') { 'NOOP running' }");
+  if (action === "stop") branches.push("($state -eq 'Stopped') { 'NOOP stopped' }");
+  if (action === "stop" || action === "restart") branches.push("($state -eq 'Running' -and -not $svc.CanStop) { 'REFUSED' }");
+  const run = `{ ${ACTION_CMD[action]}; 'OK' }`;
+  const chain = branches.length > 0 ? `if ${branches.join(" elseif ")} else ${run}` : `& ${run}`;
   return [
     nameVar(name),
     "$svc = Get-Service | Where-Object { $_.Name -eq $n } | Select-Object -First 1",
     "if (-not $svc) { throw \"No service named $n\" }",
-    ACTION_CMD[action],
-    "'OK'",
+    "$state = [string]$svc.Status",
+    chain,
   ].join("\n");
 }
 
@@ -108,10 +122,6 @@ export function queuedRunner(session: Pick<PowerShellSession, "request">): PsRun
 }
 
 export function createWindowsServicesBackend(run: PsRunner = defaultRunner()): ServiceBackend {
-  /** Rows from the last listing, for the guard: an action's refusal must be decided
-   *  from what the service looked like, not trusted from the client. */
-  let lastRows = new Map<string, WinServiceRow>();
-
   const withRefusals = (row: WinServiceRow): ServiceInfo => {
     const info = toWindowsServiceInfo(row);
     const refused = windowsRefusals(row);
@@ -134,7 +144,6 @@ export function createWindowsServicesBackend(run: PsRunner = defaultRunner()): S
       if (rows.length === 0) {
         return { supported: false, manager: "scm", services: [], warnings: [`services unavailable: ${err ?? "no services listed"}`] };
       }
-      lastRows = new Map(rows.map((r) => [r.name.toLowerCase(), r]));
       return {
         supported: true,
         manager: "scm",
@@ -162,18 +171,19 @@ export function createWindowsServicesBackend(run: PsRunner = defaultRunner()): S
 
     async action(name: string, scope: ServiceScope, action: ServiceAction): Promise<ServiceActionResult> {
       if (scope !== "system") throw new ServiceActionRefused("Windows services are all system services");
-      const row = lastRows.get(name.toLowerCase());
-      const refused = row ? windowsRefusals(row)?.[action] : undefined;
-      if (refused) throw new ServiceActionRefused(refused);
-      // Nothing to do, so nothing to ask Windows: unelevated, the SCM refuses even a
-      // start of a running service ("Cannot open … service"), which reads as a failure
-      // of something that already holds.
-      const state = row?.state.toLowerCase();
-      if (action === "start" && state === "running") return { unit: name, scope, action, note: `${name} is already running` };
-      if (action === "stop" && state === "stopped") return { unit: name, scope, action, note: `${name} was not running` };
+      // By name, before anything else: it must hold whether or not a listing ran first.
+      const critical = criticalRefusal(name, action);
+      if (critical) throw new ServiceActionRefused(critical);
       const text = await run(actionScript(name, action));
       const err = scriptError(text);
-      if (err || !/^OK\s*$/m.test(text)) throw new Error(err ?? "The service did not answer");
+      if (err) throw new Error(err);
+      // Nothing to do, so Windows was not asked: unelevated, the SCM refuses even a start
+      // of a running service ("Cannot open … service"), which reads as a failure of
+      // something that already holds.
+      if (/^NOOP running\s*$/m.test(text)) return { unit: name, scope, action, note: `${name} is already running` };
+      if (/^NOOP stopped\s*$/m.test(text)) return { unit: name, scope, action, note: `${name} was not running` };
+      if (/^REFUSED\s*$/m.test(text)) throw new ServiceActionRefused(NOT_STOPPABLE_REFUSAL);
+      if (!/^OK\s*$/m.test(text)) throw new Error("The service did not answer");
       return { unit: name, scope, action };
     },
   };
