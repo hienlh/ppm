@@ -8,6 +8,13 @@
 - **Disk:** ~500 MB for the binary, plus ~15 MB for the cloudflared binary PPM downloads on first start
 - **Network:** localhost is enough; internet access is needed for the tunnel and for AI providers
 
+### Remote Desktop on Windows
+
+If FFmpeg is missing, click **Install ffmpeg** in Remote Desktop. PPM installs the fixed
+`Gyan.FFmpeg` package through WinGet in the background, displays installation status or
+errors, and checks for FFmpeg again without restarting. Closing the panel does not cancel
+the installation. Windows App Installer (WinGet) and internet access are required.
+
 ### Required Software
 - **Bun** v1.3.6+ (https://bun.sh) — **only** for the `bunx`/`bun add -g`/from-source paths. The
   released binary bundles its own runtime and needs nothing installed.

@@ -10,6 +10,7 @@
  */
 import { useState, type ReactNode } from "react";
 import { CheckCircle2, Circle, ExternalLink, Loader2, MonitorSmartphone, TerminalSquare } from "@/lib/icons";
+import { FfmpegInstallButton } from "./ffmpeg-install-button";
 import { runInTerminal } from "@/lib/run-in-terminal";
 import { useRemoteDesktopReadiness, type RemoteDesktopRequirement, type RequirementAction } from "./use-remote-desktop-readiness";
 
@@ -106,6 +107,7 @@ function RequirementRow({ req, ...handlers }: { req: RemoteDesktopRequirement } 
 
 function ActionButton({ action, reqId, onHostAction, onTerminal }: { action: RequirementAction; reqId: string } & ActionHandlers) {
   const cls = "inline-flex min-h-11 items-center gap-1.5 rounded-md bg-white/10 px-3 text-sm hover:bg-white/20";
+  if (action.kind === "install") return <FfmpegInstallButton label={action.label} />;
   if (action.kind === "terminal") {
     return (
       <button type="button" className={cls} onClick={() => onTerminal(action.command)} title={action.command}>
