@@ -30,6 +30,25 @@ describe("subtreePids", () => {
   });
 });
 
+describe("buildAppRows: an app launched by another app", () => {
+  test("the shell's row stops at the apps it launched, which count only in their own rows", () => {
+    // explorer.exe (10) launched Chrome (20, with a renderer 21) and a helper with no window (30).
+    const processes = [
+      proc(10, 1, { ramMB: 100 }),
+      proc(20, 10, { ramMB: 1000 }),
+      proc(21, 20, { ramMB: 500 }),
+      proc(30, 10, { ramMB: 50 }),
+    ];
+    const rows = buildAppRows([app("explorer", [10]), app("chrome", [20])], processes);
+    const explorer = rows.find((r) => r.id === "explorer")!;
+    const chrome = rows.find((r) => r.id === "chrome")!;
+    expect(explorer.memberPids.sort()).toEqual([10, 30]);
+    expect(explorer.ramMB).toBe(150);
+    expect(chrome.memberPids.sort()).toEqual([20, 21]);
+    expect(chrome.ramMB).toBe(1500);
+  });
+});
+
 describe("buildAppRows", () => {
   const processes = [
     proc(100, 1, { cpu: 2, ramMB: 500 }),
