@@ -18,9 +18,11 @@ import {
   CircleX,
   WrapText,
   Zap,
+  Cpu,
 } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
+import { useOpenSystemMonitor } from "@/components/system/use-open-system-monitor";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -142,6 +144,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const isMobile = useIsMobile();
   const isTouchOnly = useIsTouchOnly();
   const lspEnabled = useSettingsStore((s) => s.lspEnabled);
+  const openSystemMonitor = useOpenSystemMonitor();
 
   /**
    * A query may name one place in a file — `app.ts:120`, `app.ts:120-140`, `app.ts#L120` —
@@ -314,6 +317,15 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
           onClose();
         },
       },
+      // A phone's only way in: the status bar's CPU/MEM chip, the other one, is hidden below md.
+      {
+        id: "system-monitor", label: "System Monitor", icon: Cpu, group: "action",
+        keywords: "task manager activity monitor cpu memory ram disk network gpu processes services apps performance resources",
+        action: () => {
+          openSystemMonitor();
+          onClose();
+        },
+      },
     ];
 
     // Append extension-contributed commands (with keybinding shortcuts, respecting user overrides)
@@ -338,7 +350,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     });
 
     return [...builtIn, ...designCommands, ...extCmds];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled, designCommands]);
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled, designCommands, openSystemMonitor]);
 
   // File commands — from index when ready, fallback to flattened tree
   const fileCommands = useMemo<CommandItem[]>(() => {
