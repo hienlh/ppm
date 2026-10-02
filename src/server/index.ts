@@ -807,6 +807,7 @@ if (process.argv.includes("__serve__")) {
 
   configService.load();
   await setupLogFile();
+  (await import("../services/memory-diagnostics.ts")).startMemoryDiagnostics();
 
   // Register CLI providers (cursor, codex) for the daemon/__serve__ runtime.
   // Synchronous SDK providers self-register on import; CLI providers need an

@@ -23,6 +23,7 @@ import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/sub
 import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
+import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -349,6 +350,17 @@ function broadcastBackgroundRegistry(sessionId: string): void {
 
 /** Tracks active sessions — persists even when FE disconnects */
 const activeSessions = new Map<string, SessionEntry>();
+registerMemoryGauge("chat.activeSessions", () => activeSessions.size);
+registerMemoryGauge("chat.turnEvents", () => {
+  let n = 0;
+  for (const e of activeSessions.values()) n += e.turnEvents.length;
+  return n;
+});
+registerMemoryGauge("chat.clients", () => {
+  let n = 0;
+  for (const e of activeSessions.values()) n += e.clients.size;
+  return n;
+});
 
 registerMcpSignInSync({
   sessions: () => activeSessions.entries(),
