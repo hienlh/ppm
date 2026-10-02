@@ -64,8 +64,27 @@ const LAUNCHD_WORDING: Wording = {
   },
 };
 
+/**
+ * Windows' terms. Stop does not take dependents down — Windows refuses instead — and
+ * "disable at boot" sets the startup type to Manual, so it can still be started by hand.
+ */
+const SCM_WORDING: Wording = {
+  ...WORDING,
+  stop: {
+    title: "Stop service",
+    body: (unit) => `Stop ${unit}? Windows refuses if other running services depend on it.`,
+    cta: "Stop",
+  },
+  disable: {
+    title: "Disable at boot",
+    body: (unit) => `${unit} will no longer start automatically (startup type Manual). It keeps running now.`,
+    cta: "Disable",
+  },
+};
+
 /** The system domain's jobs load at boot, as units do — only root can change them. */
 function wordingFor(manager: ServiceManager, service: ServiceInfo): Wording {
+  if (manager === "scm") return SCM_WORDING;
   if (manager !== "launchd") return WORDING;
   return service.scope === "user" ? LAUNCHD_WORDING : { ...LAUNCHD_WORDING, disable: WORDING.disable };
 }
@@ -93,7 +112,7 @@ export function ServiceActionConfirm({ pending, manager, onConfirm, onCancel }: 
     <div className="space-y-4" data-testid="sysmon-service-confirm" data-action={pending.action}>
       <p className="text-sm break-words">{wording.body(pending.service.unit)}</p>
       <p className="text-xs text-text-subtle">
-        {pending.service.scope === "system" ? "System" : "User"} {launchd ? "job" : "service"}
+        {manager === "scm" ? "Windows" : pending.service.scope === "system" ? "System" : "User"} {launchd ? "job" : "service"}
         {pending.service.mainPid !== null && ` · pid ${pending.service.mainPid}`}
       </p>
       <div className="flex flex-col-reverse md:flex-row gap-2 md:justify-end pt-2">

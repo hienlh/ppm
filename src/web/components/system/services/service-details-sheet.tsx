@@ -42,6 +42,7 @@ export function ServiceDetailsSheet({ target, manager, onClose }: ServiceDetails
   if (!target) return null;
 
   const launchd = manager === "launchd";
+  const scm = manager === "scm";
   const source = details?.logSource;
   const body = (
     <div className="space-y-3" data-testid="sysmon-service-details" data-unit={target.unit}>
@@ -49,10 +50,19 @@ export function ServiceDetailsSheet({ target, manager, onClose }: ServiceDetails
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
         <Field label="State" value={serviceStatusText(details ?? target)} />
         <Field label="Main PID" value={(details ?? target).mainPid ?? "—"} />
-        <Field label="User" value={details?.user ?? "—"} />
-        <Field label="Group" value={details?.group ?? "—"} />
-        <Field label="Scope" value={target.scope} />
-        {!launchd && <Field label="Unit file" value={details?.fragmentPath ?? "—"} />}
+        <Field label={scm ? "Log on as" : "User"} value={details?.user ?? "—"} />
+        {scm ? (
+          <>
+            <Field label="Startup type" value={(details ?? target).unitFileState ?? "—"} />
+            <Field wide label="Command" value={details?.fragmentPath ?? "—"} />
+          </>
+        ) : (
+          <>
+            <Field label="Group" value={details?.group ?? "—"} />
+            <Field label="Scope" value={target.scope} />
+          </>
+        )}
+        {!launchd && !scm && <Field label="Unit file" value={details?.fragmentPath ?? "—"} />}
         {launchd && (
           <>
             <Field label="Last exit" value={details?.lastExit ?? "—"} />

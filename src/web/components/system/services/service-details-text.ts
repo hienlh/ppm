@@ -10,6 +10,7 @@ const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1) || path
 /** The heading over the log box. `source` is undefined until the details arrive. */
 export function logHeading(manager: ServiceManager, source: ServiceLogSource | undefined): string {
   if (manager === "systemd") return "Log (this boot)";
+  if (manager === "scm") return "Event log (this boot)";
   if (!source) return "Log";
   if (source.kind === "files") return `Log (${source.paths.map(baseName).join(", ")})`;
   if ("since" in source) return source.since === "boot" ? "Log (this boot)" : "Log (since the job started)";
@@ -17,10 +18,14 @@ export function logHeading(manager: ServiceManager, source: ServiceLogSource | u
 }
 
 export function logLoadingText(manager: ServiceManager): string {
+  if (manager === "scm") return "Reading the event log…";
   return manager === "systemd" ? "Reading the journal…" : "Reading the log…";
 }
 
 export function logEmptyText(manager: ServiceManager, source: ServiceLogSource | undefined): string {
+  // Windows 10 and later no longer record routine start/stop events, so an empty
+  // log is the normal case for a healthy service rather than a sign of a problem.
+  if (manager === "scm") return "No events this boot.";
   if (manager === "systemd" || !source) return "No entries this boot.";
   if (source.kind === "files") return source.paths.length > 1 ? "The log files are empty." : "The log file is empty.";
   if ("since" in source) return source.since === "boot" ? "No entries this boot." : "No entries since the job started.";

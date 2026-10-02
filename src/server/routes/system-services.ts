@@ -26,8 +26,9 @@ const isScope = (value: string): value is ServiceScope => SCOPES.includes(value)
 
 export function createSystemServiceRoutes(backend: ServiceBackend = createServiceBackend()): Hono {
   const routes = new Hono();
-  const noun = backend.manager === "launchd" ? "job" : "unit";
-  const notAName = backend.manager === "launchd" ? "Not a job label" : "Not a unit name";
+  const noun = backend.manager === "launchd" ? "job" : backend.manager === "scm" ? "service" : "unit";
+  const notAName = backend.manager === "launchd" ? "Not a job label"
+    : backend.manager === "scm" ? "Not a service name" : "Not a unit name";
 
   routes.get("/services", async (c) => c.json(ok(await backend.collect())));
 
