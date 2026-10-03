@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Add selected code to chat.** Select code in the editor and Monaco's own yellow lightbulb offers Add to current chat and Add to new chat, in the same menu as a language server's quick fixes and refactorings (Ctrl+. opens it too). Selecting does not open anything by itself. The chip carries the file path, the selected line range and the editor's current text, unsaved edits included. When the line has no room for the bulb, Monaco puts it in the glyph margin left of the line numbers, which standalone Monaco turns off; it is now on, two lanes wide, with the bulb centred in it instead of pressed against the editor's edge, and the line-number column reserves three digits instead of five so the code starts where it did (2px further right). A click anywhere on the bulb opens the menu and keeps the selection.
+
 - **Reply to a user or AI chat message.** Select Reply to quote a completed message while keeping your draft and attachments. Quotes reach the AI on normal and mid-turn sends, survive history reloads, and remain readable if their source is unavailable. Reply drafts recover after reload or rejected sends; quote cards jump to a uniquely identified original message.
 
 ### Fixed

@@ -1164,6 +1164,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, []);
 
   // Stable callback: clear external paths once consumed (avoids inline lambda breaking MessageInput memo)
+  const handleContextsConsumed = useCallback(() => {
+    if (tabId) patchTabMetadata(tabId, { pendingContexts: undefined });
+  }, [tabId]);
   const handleExternalPathsConsumed = useCallback(() => setExternalPaths(null), []);
 
   // --- Disambiguation picker handler (OS drag resolve with multiple matches) ---
@@ -1437,6 +1440,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             onFileStateChange={handleFileStateChange}
             onFileItemsLoaded={setFileItems}
             fileSelected={fileSelected}
+            pendingContexts={metadata?.pendingContexts as Array<{ text: string; label?: string }> | undefined}
+            onContextsConsumed={handleContextsConsumed}
             externalFiles={externalFiles}
             externalPaths={externalPaths}
             onExternalPathsConsumed={handleExternalPathsConsumed}

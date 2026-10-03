@@ -530,3 +530,14 @@ html, body {
 .monaco-editor .suggest-preview-text .ghost-text {
   font-family: "Monaspace Krypton", var(--font-mono) !important;
 }
+
+/*
+ * The lightbulb Monaco draws in the glyph margin when its line has no room for
+ * it. reserveLightbulbGutter() holds that margin at two lanes, and this moves the
+ * bulb from the left one to the middle of both — half its own width is half a
+ * lane. Only where the lanes are held: anywhere else the same shift would put
+ * the bulb over the line numbers, where a click on it selects the line.
+ */
+.monaco-editor.ppm-lightbulb-gutter .glyph-margin-widgets .cgmr[class*="codicon-gutter-lightbulb"] {
+  transform: translateX(50%);
+}

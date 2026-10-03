@@ -99,6 +99,14 @@ describe("resolveSelectedChatTabId", () => {
     expect(resolveSelectedChatTabId("ppm")).toBe("chat:ppm");
   });
 
+  it("never picks another project's chat, even the only one open and selected", () => {
+    usePanelStore.setState({
+      panels: { right: panelWith("right", [chatTab("chat:other", 900, "other")], "chat:other") } as any,
+      focusedPanelId: "right",
+    });
+    expect(resolveSelectedChatTabId("ppm")).toBeNull();
+  });
+
   it("ignores non-chat tabs and reports nothing when no chat is open", () => {
     usePanelStore.setState({
       panels: {
@@ -171,6 +179,29 @@ describe("sendToChat", () => {
     expect(opened).toHaveLength(1);
     expect(opened[0].type).toBe("chat");
     expect(opened[0].metadata).toMatchObject({ projectName: "ppm", pendingMessage: "out" });
+  });
+
+  it("opens a chat in the project rather than send to another project's chat", () => {
+    const opened: any[] = [];
+    const delivered: string[] = [];
+    usePanelStore.setState({
+      panels: { right: panelWith("right", [chatTab("chat:other", 900, "other")], "chat:other") } as any,
+      focusedPanelId: "right",
+      setActiveTab: (() => {}) as any,
+      openTab: ((def: any) => { opened.push(def); return "chat:new"; }) as any,
+    });
+    const listener = (e: Event) => {
+      delivered.push((e as CustomEvent).detail.targetTabId);
+      window.dispatchEvent(new Event(SEND_TO_CHAT_ACK_EVENT));
+    };
+    window.addEventListener(SEND_TO_CHAT_EVENT, listener);
+
+    sendToChat({ text: "const a = 1;", label: "src/a.ts:1", projectName: "ppm", asContext: true });
+
+    window.removeEventListener(SEND_TO_CHAT_EVENT, listener);
+    expect(delivered).toEqual([]);
+    expect(opened).toHaveLength(1);
+    expect(opened[0].metadata).toMatchObject({ projectName: "ppm", pendingContexts: [{ text: "const a = 1;", label: "src/a.ts:1" }] });
   });
 
   it("ignores blank text", () => {

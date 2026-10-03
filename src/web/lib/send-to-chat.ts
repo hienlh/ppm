@@ -47,7 +47,9 @@ function lastActiveAt(tab: Tab): number {
  *  3. newest activation — the only ordering that compares across panels, and the
  *     answer when no chat is on screen at all.
  *
- * Chats of the given project always win over other projects' chats.
+ * Given a project, only its own chats are candidates: a project's code or output never lands
+ * in another project's conversation, and with none of its chats open the answer is null, so
+ * `sendToChat` opens one in that project.
  */
 export function resolveSelectedChatTabId(projectName?: string | null): string | null {
   const { panels, focusedPanelId } = usePanelStore.getState();
@@ -61,12 +63,10 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
         focusedPanel: p.id === focusedPanelId,
       })),
   );
-  if (chats.length === 0) return null;
-
-  const sameProject = projectName
+  const pool = projectName
     ? chats.filter((c) => c.tab.projectId === projectName || c.tab.metadata?.projectName === projectName)
-    : [];
-  const pool = sameProject.length > 0 ? sameProject : chats;
+    : chats;
+  if (pool.length === 0) return null;
 
   // Panel focus only separates chats that are BOTH on screen. For chats nobody has
   // in view, the panel it happens to live in says nothing about which one the user
@@ -100,7 +100,7 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
  */
 export function sendToChat(opts: {
   text: string; label?: string; projectName?: string | null; newTab?: boolean;
-  imageDataUrl?: string; imageName?: string;
+  imageDataUrl?: string; imageName?: string; asContext?: boolean;
 }): void {
   const { text, label, projectName } = opts;
   if (!text.trim()) return;
@@ -123,7 +123,9 @@ export function sendToChat(opts: {
     // Lazy-mounted tab: it has no listener yet, so leave the text in its metadata
     // for the composer to pick up on mount.
     const tab = Object.values(store.panels).flatMap((p) => p.tabs).find((t) => t.id === targetTabId);
-    store.updateTab(targetTabId, { metadata: { ...tab?.metadata, pendingMessage: text } });
+    store.updateTab(targetTabId, { metadata: { ...tab?.metadata, ...(opts.asContext
+      ? { pendingContexts: [...((tab?.metadata?.pendingContexts as Array<{ text: string; label?: string }>) ?? []), { text, label }] }
+      : { pendingMessage: text }) } });
     return;
   }
 
@@ -133,7 +135,7 @@ export function sendToChat(opts: {
     projectId: null,
     metadata: {
       ...(projectName ? { projectName } : {}),
-      pendingMessage: text,
+      ...(opts.asContext ? { pendingContexts: [{ text, label }] } : { pendingMessage: text }),
       ...(opts.imageDataUrl ? { pendingAttachmentDataUrl: opts.imageDataUrl, pendingAttachmentName: opts.imageName } : {}),
     },
     closable: true,

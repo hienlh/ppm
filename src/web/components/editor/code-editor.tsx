@@ -26,6 +26,7 @@ import { HtmlPreviewToolbar } from "./html-preview-toolbar";
 import { EditorLanguagePicker } from "./editor-language-picker";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
+import { EditorSelectionContext } from "./editor-selection-context";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
 import { getStatementAtCursor, splitSqlStatements } from "../database/split-sql-statements";
 import { useConnections, type Connection } from "../database/use-connections";
@@ -37,6 +38,7 @@ import type { DbQueryResult } from "../database/use-database";
 import { AUDIO_EXTS, IMAGE_EXTS, SQLITE_EXTS, VIDEO_EXTS } from "@/components/os-explorer/can-open-in-ppm";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
+import { reserveLightbulbGutter } from "@/lib/monaco-lightbulb-gutter";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -601,6 +603,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     editorRef.current = editor;
     monacoInstanceRef.current = monaco;
     setMounted({ editor, monaco });
+    reserveLightbulbGutter(editor, monaco);
     if (lineNumber && lineNumber > 0) {
       setTimeout(() => revealTarget(), 100);
     }
@@ -911,6 +914,11 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       )}
 
       {/* Content area */}
+      {mounted && !htmlPreviewVisible && !(isCsv && csvMode === "table") && !(isMarkdown && mdMode === "preview") && (
+        <>
+          <EditorSelectionContext editor={mounted.editor} monaco={mounted.monaco} filePath={filePath ?? "Untitled"} projectName={projectName} />
+        </>
+      )}
       {htmlPreviewVisible && filePath && (
         <HtmlPreview filePath={filePath} projectName={projectName} revision={htmlRevision} />
       )}
@@ -939,6 +947,14 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             onMount={handleEditorMount}
             theme={monacoTheme}
             options={{
+              // Off by default in standalone Monaco, and it is the only place the
+              // code-action lightbulb can go when the line has no room for it —
+              // without it that bulb is drawn nowhere.
+              glyphMargin: true,
+              // reserveLightbulbGutter() widens that margin by a lane so the bulb
+              // can sit centred; three digits instead of Monaco's five give the
+              // width back, so the code starts where it did.
+              lineNumbersMinChars: 3,
               fontSize: EDITOR_FONT_SIZE,
               fontFamily: EDITOR_FONT_FAMILY,
               fontLigatures: EDITOR_FONT_LIGATURES,

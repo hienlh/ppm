@@ -585,3 +585,41 @@ restored on reload (see Persistence below).
   tab-host window's titlebar keeps the tab title captured at pop-out time.
 - **Mobile.** Pop-out and PiP are hidden entirely below `md` (`useIsMobile()`) — never a scaled-down
   window.
+
+### Selected editor code as chat context
+
+`editor-selection-context.tsx` draws nothing. It registers a code-action provider for every
+language (`"*"`) that answers only for its own editor's model and, when the selection holds
+non-whitespace text, offers Add to current chat and Add to new chat. Monaco draws the lightbulb and
+the menu, so the two actions sit beside whatever a language server offers — under "More Actions…",
+Monaco's group for an action with no kind — and Ctrl+. reaches them too. Where the bulb goes is
+Monaco's decision: on the line at column 1 when its indentation has room, else on an empty or
+indented neighbouring line, else in the glyph margin left of the line numbers. Standalone Monaco
+turns the glyph margin off (`editor.api2.js`), and the gutter bulb is then drawn nowhere, which is
+why `code-editor.tsx` sets `glyphMargin: true`.
+
+That margin is one line height per glyph lane in use, so with the bulb as the only glyph it is a
+single 19px lane and the bulb fills it flush against the editor's edge. `monaco-lightbulb-gutter.ts`
+holds a second lane open with two empty glyph-margin widgets on line 1 (the width follows the line
+using the most lanes), and `globals.css` moves the bulb to the middle of the two. Moving it with CSS
+alone does not work: Monaco hit-tests the gutter by x, so a bulb drawn over the line-number column
+opens its menu and the same click selects that whole line, replacing the selection. Three details
+are load-bearing. The widgets sit at zIndex -1, because Monaco draws one glyph per lane and line,
+highest first, widgets winning ties — at 0 the left one hides the bulb on line 1. They are widgets,
+not `persistLane` decorations: a glyph decoration on the bulb's line makes Monaco give up the gutter
+and draw the bulb over the text. And `lineNumbersMinChars: 3` gives back the width of the extra lane,
+so the code starts where it did.
+
+The action's arguments are a snapshot taken when the bulb is shown: file path, line range and the
+model's text in that range, unsaved edits included. Markdown fences are sized past the longest
+backtick run. Every mounted editor registers the same command id (`ppm.selection.addToChat`);
+Monaco's registry stacks registrations, so closing one editor leaves the command to the others.
+`sendToChat` adds the snapshot to the last selected chat of the file's project as an attachment
+without replacing its draft (never to another project's chat: with none of its own open, it opens
+one), or opens a new chat with a context chip. Lazy-mounted chats receive `pendingContexts` in tab
+metadata; their composer consumes those once without replacing the existing draft. Neither action
+sends a turn.
+
+Monaco's own rules apply: the bulb waits for every code-action provider, so a slow language server
+delays it; any provider registering resets it until the cursor moves; and code actions are off in a
+read-only editor, so a database-cell preview has no bulb.

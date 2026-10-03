@@ -258,3 +258,23 @@ describe("ChatTab reply composer", () => {
   });
 
 });
+
+describe("ChatTab pending contexts", () => {
+  it("keeps the saved draft's attachments when selected code reaches the chat before its draft loads", async () => {
+    // Add to chat on a chat that has not mounted yet leaves the code in its tab metadata; the
+    // composer takes it on mount, before the saved draft arrives.
+    draft = { content: "saved draft", attachments: JSON.stringify([{ name: "notes.txt", path: "/tmp/notes.txt" }]), updatedAt: timestamp };
+    const tab = usePanelStore.getState().panels.main!.tabs[0]!;
+    usePanelStore.setState((state) => ({ panels: { main: { ...state.panels.main!, tabs: [{ ...tab, metadata: {
+      ...tab.metadata, pendingContexts: [{ text: "```ts\nconst a = 1;\n```", label: "src/a.ts:1" }],
+    } }] } } }));
+    await render();
+    expect(input().value).toBe("saved draft");
+    expect(view!.container.textContent).toContain("src/a.ts:1");
+    expect(view!.container.textContent).toContain("notes.txt");
+
+    await type("saved draft, with the code");
+    const saved = JSON.parse(sessionStorage.getItem(`ppm-chat-draft:${JSON.stringify(["test", "reply-tab", "s1"])}`)!);
+    expect(saved.attachments).toEqual([{ name: "notes.txt", path: "/tmp/notes.txt" }]);
+  });
+});

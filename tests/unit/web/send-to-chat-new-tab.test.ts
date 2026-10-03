@@ -94,3 +94,16 @@ describe("sendToChat newTab", () => {
     expect("pendingAttachmentDataUrl" in meta).toBe(false);
   });
 });
+
+it("keeps selected code as a context chip for a new chat", () => {
+  sendToChat({ text: "selected code", label: "example.ts:2-4", projectName: "demo", newTab: true, asContext: true });
+  expect(opened[0]!.metadata).toMatchObject({ pendingContexts: [{ text: "selected code", label: "example.ts:2-4" }] });
+  expect((opened[0]!.metadata as Record<string, unknown>).pendingMessage).toBeUndefined();
+});
+it("keeps selected code separate from the draft in a lazy current chat", () => {
+  let metadata: any;
+  usePanelStore.setState({ updateTab: ((_id: string, patch: any) => { metadata = patch.metadata; }) as any });
+  sendToChat({ text: "selected code", label: "example.ts:2-4", projectName: "demo", asContext: true });
+  expect(metadata.pendingContexts).toEqual([{ text: "selected code", label: "example.ts:2-4" }]);
+  expect(metadata.pendingMessage).toBeUndefined();
+});

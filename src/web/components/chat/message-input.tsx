@@ -77,6 +77,8 @@ export interface ChatAttachment {
 export type MessagePriority = 'now' | 'next' | 'later';
 
 interface MessageInputProps {
+  pendingContexts?: Array<{ text: string; label?: string }>;
+  onContextsConsumed?: () => void;
   draftReady?: boolean;
   replyTo?: ReplyReference | null;
   onCancelReply?: () => void;
@@ -154,6 +156,8 @@ interface MessageInputProps {
 
 export const MessageInput = memo(function MessageInput({
   tabId,
+  pendingContexts,
+  onContextsConsumed,
   replyTo,
   onCancelReply,
   replyChangeSignal,
@@ -356,15 +360,30 @@ export const MessageInput = memo(function MessageInput({
     return () => window.removeEventListener(SEND_TO_CHAT_EVENT, handler);
   }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend, replyTo]);
 
+  const consumedContextsRef = useRef<MessageInputProps["pendingContexts"]>(undefined);
+  useEffect(() => {
+    if (!pendingContexts?.length || consumedContextsRef.current === pendingContexts) return;
+    consumedContextsRef.current = pendingContexts;
+    setAttachments((previous) => [...previous, ...pendingContexts.map(({ text, label }) => ({
+      id: randomId(), name: label ?? "Selected code", file: new File([], "selected-code.txt"),
+      isImage: false, textContent: text, status: "ready" as const,
+    }))]);
+    onContextsConsumed?.();
+    getVisibleTextarea()?.focus();
+  }, [pendingContexts, onContextsConsumed, getVisibleTextarea]);
+
   const draftAttachmentsApplied = useRef(false);
   useEffect(() => {
     if (!draftReady || draftAttachmentsApplied.current || initialAttachments === undefined) return;
     draftAttachmentsApplied.current = true;
-    if (!initialAttachments?.length || attachments.length) return;
-    setAttachments(initialAttachments.map((attachment) => ({
+    if (!initialAttachments?.length) return;
+    const restored: ChatAttachment[] = initialAttachments.map((attachment) => ({
       id: randomId(), name: attachment.name, file: new File([], attachment.name),
       serverPath: attachment.path, isImage: isImageFile(new File([], attachment.name)), status: "ready",
-    })));
+    }));
+    // Joined, never skipped: code added to a chat that had not mounted yet arrives before its
+    // draft does, and a draft skipped here is saved back without its attachments.
+    setAttachments((previous) => [...restored, ...previous]);
   }, [draftReady, initialAttachments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
