@@ -360,6 +360,30 @@ Terminal state updated
 
 A terminal with no layout is never fitted. That covers the dock's active tab while the dock is hidden, which on a phone is every restore because the dock comes back collapsed, and any tab parked off-screen. FitAddon would propose its 2x1 floor for such a terminal, and zsh with a themed prompt aborts on the next keystroke after being redrawn that narrow. The server also drops any size below 20x2 (`src/shared/terminal-size.ts`). Until the terminal is shown, the shell keeps its last real size, or 80x24.
 
+### Terminal selection to chat
+
+A selection in the terminal offers the editor's two actions, Add to current chat and Add to new
+chat, in a small bar under the selection's last row (over its first row when there is no room
+under it), as Cursor shows its Add to Chat. `terminal-selection-chat.tsx` draws it; `useTerminal`
+hands it the xterm instance. Either action adds the selection as a context chip
+(`sendToChat({ asContext })`, label "Terminal selection") and clears it, which takes the bar away.
+On a phone the selection is made in select mode and the buttons are 44px tall.
+
+Four details are load-bearing:
+
+- xterm reports a selection on mouseup, never during the drag, so the bar does not chase the
+  pointer. But it says nothing about a selection identical to the last one it reported, and its
+  `clearSelection()` — which it also runs when the user types with something selected — does
+  not forget that one, so selecting the same text again showed no bar. The component therefore
+  also reads the selection on the mouseup that ends a press in the terminal, in the document the
+  terminal is in at that moment (a tab can move into a picture-in-picture window).
+- `getSelectionPosition()` is documented as 1-based and returns 0-based columns and buffer rows,
+  the end column exclusive; the e2e measures the bar against the rows it selected.
+- The bar is a sibling of xterm's container, not a child: in select mode that container turns
+  every touch into a selection gesture, which would swallow a tap on the buttons.
+- It is positioned by hand on xterm's `onRender`, which a scroll, a resize and new output all end
+  in, and hidden while none of the selection is in view.
+
 ---
 
 ## Git Integration Flow

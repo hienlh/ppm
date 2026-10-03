@@ -40,6 +40,8 @@ interface UseTerminalReturn {
   shellReady: boolean;
   sendData: (data: string) => void;
   getSelection: () => string;
+  /** The xterm instance once it is open, for what follows its selection or viewport; null before and after. */
+  terminal: Terminal | null;
   /** Read buffer from last command start to current cursor (for "Send to Chat"). */
   getLastCommandOutput: () => string;
   /** The prompt line the last command was typed on, empty until one is entered. */
@@ -77,6 +79,7 @@ export function useTerminal(
 ): UseTerminalReturn {
   const { sessionId, containerRef } = options;
   const termRef = useRef<Terminal | null>(null);
+  const [terminal, setTerminal] = useState<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -407,6 +410,7 @@ export function useTerminal(
 
     termRef.current = term;
     fitRef.current = fitAddon;
+    setTerminal(term);
 
     // A webfont that is still in flight is not in the stack yet: xterm measures
     // the cell and bakes the glyph atlas from ctx.font at open(), so a terminal
@@ -533,9 +537,10 @@ export function useTerminal(
       wsRef.current = null;
       term.dispose();
       termRef.current = null;
+      setTerminal(null);
       fitRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting, exited, shellReady, sendData, getSelection, getLastCommandOutput, getLastCommand, getBufferUrls, restart };
+  return { connected, reconnecting, exited, shellReady, sendData, getSelection, terminal, getLastCommandOutput, getLastCommand, getBufferUrls, restart };
 }

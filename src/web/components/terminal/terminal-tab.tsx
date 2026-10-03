@@ -13,6 +13,7 @@ import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
 
 import { TerminalMobileToolbar } from "./terminal-mobile-toolbar";
 import { TerminalLinksSheet } from "./terminal-links-sheet";
+import { TerminalSelectionChat } from "./terminal-selection-chat";
 
 interface TerminalTabProps {
   metadata?: Record<string, unknown>;
@@ -25,7 +26,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const cwd = metadata?.cwd as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { connected, reconnecting, exited, shellReady, sendData, getSelection, getLastCommandOutput, getLastCommand, getBufferUrls, restart } = useTerminal({ sessionId, projectName, cwd, containerRef, tabId });
+  const { connected, reconnecting, exited, shellReady, sendData, getSelection, terminal, getLastCommandOutput, getLastCommand, getBufferUrls, restart } = useTerminal({ sessionId, projectName, cwd, containerRef, tabId });
   const [ctrlMode, setCtrlMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
@@ -180,11 +181,14 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
       {/* Terminal container. onClick focuses xterm's hidden textarea — on mobile
           the soft keyboard only opens when focus() runs inside a recognized tap
           gesture, which xterm's internal mousedown handling doesn't reliably do. */}
-      <div
-        ref={containerRef}
-        onClick={selectMode ? undefined : focusTerminal}
-        className={cn("flex-1 min-h-0 bg-background p-1", selectMode && "touch-none")}
-      />
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        <div
+          ref={containerRef}
+          onClick={selectMode ? undefined : focusTerminal}
+          className={cn("flex-1 min-h-0 bg-background p-1", selectMode && "touch-none")}
+        />
+        <TerminalSelectionChat terminal={terminal} projectName={projectName} touch={isMobile} />
+      </div>
 
       {isMobile && (
         <>
