@@ -252,7 +252,7 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
       <button
         onClick={() => { setReloading(true); reloadWhenServerReady(); }}
         disabled={reloading}
-        className="flex items-center gap-1 px-1 rounded-sm text-success hover:brightness-110 transition-[filter] disabled:opacity-70"
+        className="flex items-center gap-1 px-1 rounded-sm text-success hover:brightness-110 transition-[filter] disabled:opacity-70 max-md:min-h-11"
         title={reloading ? "Applying update — reconnecting to the server…" : "Reload to apply the update"}
       >
         {reloading
@@ -276,7 +276,8 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         onClick={() => current && setOpen((v) => !v)}
         title={hasUpdate ? `Update available: v${effectiveAvailable}` : `PPM v${current} — release notes`}
         className={cn(
-          "flex items-center gap-1 px-1 rounded-sm transition-colors",
+          // A phone shows it in the drawer's footer, where it is a 44px target.
+          "flex items-center gap-1 px-1 rounded-sm transition-colors max-md:min-h-11",
           hasUpdate ? "text-success hover:brightness-110" : "hover:text-text",
         )}
       >

@@ -160,13 +160,15 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
         )}
       >
         {/* Header — logo + close */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+        {/* The close button is a 44px target; the header keeps its height and the X its place. */}
+        <div className="flex items-center justify-between px-4 py-1.5 border-b border-border shrink-0">
           <span className="text-sm font-bold text-primary tracking-tight">
             {activeProject?.name ?? "PPM"}
           </span>
           <button
             onClick={onClose}
-            className="flex items-center justify-center size-8 rounded-md hover:bg-surface-elevated transition-colors"
+            aria-label="Close drawer"
+            className="-mr-1.5 flex items-center justify-center size-11 rounded-md hover:bg-surface-elevated transition-colors"
           >
             <X className="size-4" />
           </button>
@@ -212,7 +214,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
               ))}
             </div>
             {/* Version / upgrade pinned at the very bottom, under a divider. */}
-            <div className="mt-2 pt-2 border-t border-border px-1 text-[11px]">
+            <div className="mt-2 border-t border-border px-1 text-[11px]">
               <UpgradeButton align="left" />
             </div>
           </div>

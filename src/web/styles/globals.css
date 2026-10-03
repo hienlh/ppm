@@ -304,6 +304,18 @@ samp,
   }
 }
 
+/*
+ * A toast's close button is 20px: on a phone it takes taps around it, a 44px target. The inset
+ * counts from inside its 1px border, so 13px each way makes 18 + 26.
+ */
+@media screen and (max-width: 767px) {
+  [data-sonner-toast] [data-close-button]::after {
+    content: "";
+    position: absolute;
+    inset: -13px;
+  }
+}
+
 /* Prevent overscroll bounce on iOS */
 html,
 body {
