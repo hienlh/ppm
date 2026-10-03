@@ -22,6 +22,10 @@ import { createHash } from "node:crypto";
 export interface SpareHandlers {
   canUseTool: (...args: any[]) => Promise<any>;
   preToolUse: (...args: any[]) => Promise<any>;
+  /** Keeps a file's state before the session's first write to it (see `buildToolHooks`). */
+  fileWrite: (...args: any[]) => Promise<any>;
+  /** Brackets a shell command with `git status` for the same purpose. */
+  shellCommand: (...args: any[]) => Promise<any>;
   stderr: (chunk: string) => void;
 }
 
@@ -85,6 +89,8 @@ export class WarmSpares<Q extends { close(): void; initializationResult?(): Prom
         ? spare.handlers.canUseTool(...args)
         : Promise.resolve({ behavior: "deny", message: "No turn has taken this process over yet" }),
       preToolUse: (...args) => spare.handlers ? spare.handlers.preToolUse(...args) : Promise.resolve({}),
+      fileWrite: (...args) => spare.handlers ? spare.handlers.fileWrite(...args) : Promise.resolve({}),
+      shellCommand: (...args) => spare.handlers ? spare.handlers.shellCommand(...args) : Promise.resolve({}),
       stderr: (chunk) => {
         if (spare.handlers) spare.handlers.stderr(chunk);
         else spare.stderr = (spare.stderr + chunk).slice(-2048);

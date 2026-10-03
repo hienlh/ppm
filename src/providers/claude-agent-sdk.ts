@@ -7,7 +7,10 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, designMcpServers, preToolUseDecision, READ_ONLY_TOOLS } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall } from "./claude-agent-sdk-query-options.ts";
+import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
+import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
+import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
@@ -935,7 +938,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ...options,
           sessionId,
           stderr: callbacks.stderr,
-          ...(!isBypass && { hooks: { PreToolUse: [{ matcher: ".*", hooks: [callbacks.preToolUse] }] } }),
+          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand }),
           canUseTool: callbacks.canUseTool,
         } as any,
       });
@@ -1119,13 +1122,49 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return preToolUseDecision("deny", "User denied tool execution");
     };
 
-    // Hooks config: add our permission hook for non-bypass modes
-    const permissionHooks = isBypass ? undefined : {
-      PreToolUse: [{
-        matcher: ".*",  // Match all tools — our hook checks internally
-        hooks: [preToolUseHook],
-      }],
+    /**
+     * The project the session's review answers for (`chat-file-changes.ts` refuses a session of
+     * another), recorded once PPM is about to keep a write of it: a session started outside PPM
+     * and resumed here has no record of its own.
+     */
+    let projectRecorded = false;
+    const recordProject = () => {
+      if (projectRecorded || !meta.projectPath) return;
+      projectRecorded = true;
+      if (!getSessionProjectPath(sessionId)) setSessionMetadata(sessionId, undefined, meta.projectPath);
     };
+
+    /**
+     * Keeps the file as it was before this session first wrote it, for the session's review, and
+     * the states each call finds it in and leaves it in, which say what turn wrote what.
+     */
+    const fileWriteHook = async (hookInput: any) => {
+      const target = fileWriteTarget(hookInput?.tool_name, hookInput?.tool_input, hookInput?.cwd);
+      if (!target) return {};
+      const call = typeof hookInput?.tool_use_id === "string" ? hookInput.tool_use_id : "";
+      const event = hookInput?.hook_event_name;
+      if (event === "PostToolUse" || event === "PostToolUseFailure") {
+        if (call) await observeFile(sessionId, target, call, "after");
+        return {};
+      }
+      recordProject();
+      noteFileToolWrite(sessionId, target);
+      await captureBaseline(sessionId, target);
+      if (call) await observeFile(sessionId, target, call, "before");
+      return {};
+    };
+
+    /** The same for the files a shell command changes, found by `git status` before and after it. */
+    const shellCommandHook = async (hookInput: any) => {
+      const call = shellHookCall(hookInput);
+      if (call?.phase === "begin") {
+        recordProject();
+        await beginShellCommand({ sessionId, ...call });
+      } else if (call?.phase === "end") await endShellCommand({ sessionId, toolUseId: call.toolUseId });
+      return {};
+    };
+
+    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook });
 
     let assistantContent = "";
     let resultSubtype: string | undefined;
@@ -1332,7 +1371,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // A new session's first attempt takes over the CLI `prewarm` started for it, if that
       // is exactly the process it would have spawned; otherwise it spawns one as always.
       const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork
-        ? this.warmSpares.adopt(sessionId, spawnFingerprint(queryOptions), { canUseTool, preToolUse: preToolUseHook, stderr: stderrCallback })
+        ? this.warmSpares.adopt(sessionId, spawnFingerprint(queryOptions), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
       const initialCtrl = spare?.controller ?? channel!.controller;
@@ -1346,7 +1385,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         prompt: channel!.generator,
         options: {
           ...queryOptions,
-          ...(permissionHooks && { hooks: permissionHooks }),
+          hooks: queryHooks,
           canUseTool,
         } as any,
       });
@@ -1377,7 +1416,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const opts = { ...queryOptions, sessionId: undefined, resume: sessionId, env };
         const rq = query({
           prompt: generator,
-          options: { ...opts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+          options: { ...opts, hooks: queryHooks, canUseTool } as any,
         });
         this.streamingSessions.set(sessionId, { meta, query: rq, controller, lastUserContent: retry.lastUserContent, lastUserImages: retry.lastUserImages });
         this.activeQueries.set(sessionId, rq);
@@ -1444,7 +1483,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId };
             const rq = query({
               prompt: retryGen,
-              options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+              options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
             });
             this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl, lastUserContent: retry1.lastUserContent, lastUserImages: retry1.lastUserImages });
             this.activeQueries.set(sessionId, rq);
@@ -1526,7 +1565,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
               const rq = query({
                 prompt: earlyAuthGen,
-                options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
               });
               this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl, lastUserContent: retry2.lastUserContent, lastUserImages: retry2.lastUserImages });
               this.activeQueries.set(sessionId, rq);
@@ -1746,7 +1785,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                  options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
                 this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl, lastUserContent: retry3.lastUserContent, lastUserImages: retry3.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
@@ -1783,7 +1822,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: ulRetryEnv };
                 const rq = query({
                   prompt: ulRetryGen,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                  options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
                 this.streamingSessions.set(sessionId, { meta, query: rq, controller: ulRetryCtrl, lastUserContent: retryU.lastUserContent, lastUserImages: retryU.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
@@ -1988,7 +2027,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen2,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                  options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
                 this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2, lastUserContent: retry6.lastUserContent, lastUserImages: retry6.lastUserImages });
                 this.activeQueries.set(sessionId, rq);

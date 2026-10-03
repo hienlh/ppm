@@ -34,6 +34,7 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   postgres: true,
   "git-diff": true,
   "branch-review": true,
+  "session-review": true,
   settings: false,
   extension: true,
   "extension-webview": true,

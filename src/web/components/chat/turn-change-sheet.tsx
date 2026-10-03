@@ -1,29 +1,23 @@
 /**
- * Phone presentation of the change tray: a modal bottom sheet with push navigation.
- * The file list and a file's edits are separate levels — `‹` pops back to the list
- * rather than closing.
+ * Phone presentation of the change tray: a modal bottom sheet holding every edit the turn made,
+ * grouped by file, each answered with full-width Keep and Revert under its lines. The footer
+ * keeps or reverts the whole turn; reverting asks first, in the same sheet.
  *
  * The panel is capped; the body scrolls inside it so the sheet itself never does.
  */
-import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ChevronLeft, X } from "@/lib/icons";
+import { useEffect, useRef, type ReactNode } from "react";
+import { Check, FileDiff, RotateCcw, X } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
-import { copyToClipboard } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
-import { ChangeCounts, ChangeFileRow } from "./change-file-row";
-import { ChangeEditList } from "./change-edit-list";
+import { turnLabel, turnTime, type SessionTurn } from "@/lib/session-turns";
+import type { TurnReview } from "@/hooks/use-turn-review";
+import { FileGroup, NoticeLine, RevertTurnBody, editsInFiles, revertedFiles, useRevertTurnFlow } from "./turn-change-review";
 
-function basenameOf(path: string): string {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return i < 0 ? path : path.slice(i + 1);
-}
+const footButton = "inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-[10px] border px-3.5 text-sm font-medium disabled:opacity-50";
 
 /** 44×44 icon control — the minimum touch target on a coarse pointer. */
-function IconButton({ label, onClick, children }: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
@@ -36,22 +30,40 @@ function IconButton({ label, onClick, children }: {
   );
 }
 
-export function TurnChangeSheet({ changes, totals, open, onClose, onJump }: {
+function SheetHead({ title, sub, icon, onClose, children }: { title: string; sub?: string; icon?: ReactNode; onClose: () => void; children?: ReactNode }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 pt-0.5 pr-1.5 pb-2 pl-4">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {icon}
+          <h4 className="m-0 min-w-0 truncate text-[15px] font-semibold">{title}</h4>
+        </div>
+        {sub && <p className="m-0 mt-0.5 line-clamp-2 text-xs text-text-subtle">{sub}</p>}
+      </div>
+      {children}
+      <IconButton label="Close" onClick={onClose}>
+        <X className="size-5" />
+      </IconButton>
+    </div>
+  );
+}
+
+export function TurnChangeSheet({ changes, turn, review, open, onClose, onJump }: {
   changes: TurnFileChange[];
-  totals: { added: number; removed: number };
+  turn: SessionTurn | undefined;
+  review: TurnReview;
   open: boolean;
   onClose: () => void;
   onJump: (editRef: string) => void;
 }) {
-  const [selected, setSelected] = useState<number | null>(null);
-  const active = selected == null ? null : changes[selected];
   const panelRef = useRef<HTMLDivElement>(null);
+  const flow = useRevertTurnFlow(review);
+  const { summary } = review;
 
   const close = () => {
-    setSelected(null);
+    flow.cancel();
     onClose();
   };
-
   const jump = (editRef: string) => {
     close();
     onJump(editRef);
@@ -62,14 +74,14 @@ export function TurnChangeSheet({ changes, totals, open, onClose, onJump }: {
   useEffect(() => {
     if (!open) return;
     const panel = panelRef.current;
-    const focusables = () =>
-      Array.from(panel?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? []);
+    const focusables = () => Array.from(panel?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? []);
     focusables()[0]?.focus();
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        close();
+        if (flow.open) flow.cancel();
+        else close();
         return;
       }
       if (e.key !== "Tab") return;
@@ -87,89 +99,86 @@ export function TurnChangeSheet({ changes, totals, open, onClose, onJump }: {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, selected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, flow.open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const nothingToRevert = !!flow.preview && revertedFiles(flow.preview).length === 0;
+  const time = turn ? turnTime(turn.at) : "";
 
   return (
-    <BottomSheet
-      open={open}
-      onClose={close}
-      className="flex max-h-[85%] flex-col rounded-t-[14px] motion-reduce:animate-none"
-    >
-      <div ref={panelRef} className="flex min-h-0 flex-1 flex-col">
-        {active ? (
+    <BottomSheet open={open} onClose={close} className="flex max-h-[90%] flex-col rounded-t-[14px] motion-reduce:animate-none">
+      <div ref={panelRef} data-testid="turn-change-sheet" className="flex min-h-0 flex-1 flex-col">
+        {flow.open && turn ? (
           <>
-            <div className="flex items-center gap-1 border-b border-border-soft px-1 pb-1">
-              <IconButton label="Back to file list" onClick={() => setSelected(null)}>
-                <ChevronLeft className="size-4" />
-              </IconButton>
-              <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-text-primary">
-                {basenameOf(active.filePath)}
-              </span>
-              <ChangeCounts
-                added={active.linesAdded}
-                removed={active.linesRemoved}
-                className="shrink-0 font-mono text-[11px]"
-              />
-              <IconButton label="Close" onClick={close}>
-                <X className="size-4" />
-              </IconButton>
+            <SheetHead
+              title={`Revert ${turnLabel(turn)}?`}
+              sub={[time, turn.prompt].filter(Boolean).join(" · ")}
+              icon={<RotateCcw className="size-5 shrink-0 text-error" />}
+              onClose={flow.cancel}
+            />
+            <div data-testid="revert-turn-confirm" className="min-h-0 flex-1 overflow-y-auto px-4 text-sm leading-normal">
+              <RevertTurnBody flow={flow} mobile />
             </div>
-
-            <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-3 pr-2">
-              <span
-                title={active.filePath}
-                className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[10.5px] text-text-subtle [direction:rtl] text-left"
-              >
-                {active.filePath}
-              </span>
+            <div className="flex gap-2 px-4 pt-3 pb-1">
+              <button type="button" className={cn(footButton, "border-border bg-panel-2 text-text")} onClick={flow.cancel}>Cancel</button>
               <button
                 type="button"
-                onClick={() => void copyToClipboard(active.filePath)}
-                className="inline-flex min-h-11 shrink-0 items-center rounded-md px-2.5 font-mono text-[10px] text-text-subtle transition-colors hover:bg-surface hover:text-text-primary"
+                disabled={flow.loading || !flow.preview || nothingToRevert}
+                className={cn(footButton, "border-transparent bg-[color-mix(in_srgb,var(--error)_85%,#000)] text-white")}
+                onClick={() => void flow.confirm()}
               >
-                copy
+                <RotateCcw className="size-5" />Revert turn
               </button>
-              {active.edits[0]?.editRef && (
-                <button
-                  type="button"
-                  onClick={() => jump(active.edits[0]!.editRef!)}
-                  className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2.5 font-mono text-[10px] text-text-subtle transition-colors hover:bg-surface hover:text-primary"
-                >
-                  <ArrowUp className="size-3" />
-                  card
-                </button>
-              )}
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <ChangeEditList change={active} onJump={jump} />
             </div>
           </>
         ) : (
           <>
-            <div className="flex items-center gap-2 border-b border-border-soft px-3 pb-2">
-              <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-text-primary">
-                Changed this turn · {changes.length} file{changes.length !== 1 ? "s" : ""}
-              </span>
-              <ChangeCounts
-                added={totals.added}
-                removed={totals.removed}
-                className="shrink-0 font-mono text-[11px]"
-              />
-              <IconButton label="Close" onClick={close}>
-                <X className="size-4" />
-              </IconButton>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {changes.map((change, i) => (
-                <ChangeFileRow
-                  key={change.filePath}
-                  change={change}
-                  onClick={() => setSelected(i)}
-                />
+            <SheetHead
+              title="Changed this turn"
+              sub={`${editsInFiles(changes)}${summary.kept > 0 ? ` · ${summary.kept} kept` : ""}`}
+              onClose={close}
+            >
+              {review.enabled && (
+                <button
+                  type="button"
+                  onClick={() => { close(); review.openReview(changes[0]?.filePath); }}
+                  className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-primary"
+                >
+                  <FileDiff className="size-4" />Review
+                </button>
+              )}
+            </SheetHead>
+            {review.notice && (
+              <NoticeLine notice={review.notice} mobile busy={review.busy} onUndo={review.undo} onDismiss={review.dismissNotice} />
+            )}
+            <div className="min-h-0 flex-1 overflow-y-auto border-t border-border-soft px-3 pb-3">
+              {changes.map((change) => (
+                <FileGroup key={change.filePath} change={change} review={review} mobile onJump={jump} />
               ))}
             </div>
+            {review.enabled && (turn || summary.open > 0) && (
+              <div className="flex gap-2 px-3 pt-2 pb-1">
+                {turn && (
+                  <button
+                    type="button"
+                    disabled={review.busy}
+                    className={cn(footButton, "border-border bg-panel-2 text-text")}
+                    onClick={() => void flow.start()}
+                  >
+                    <RotateCcw className="size-5" />Revert turn…
+                  </button>
+                )}
+                {summary.open > 0 && (
+                  <button
+                    type="button"
+                    disabled={review.busy}
+                    className={cn(footButton, "border-transparent bg-primary text-primary-foreground")}
+                    onClick={review.keepAll}
+                  >
+                    <Check className="size-5" />Keep all {summary.open}
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

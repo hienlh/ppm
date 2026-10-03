@@ -1,22 +1,19 @@
 /**
- * Desktop presentation of the change tray: an inline, non-modal two-pane panel
- * directly below the message's action bar. Left pane lists the turn's files, right
- * pane shows the selected file's edits.
- *
- * Both panes need `min-h-0` or the grid rows refuse to shrink and neither scrolls.
+ * Desktop presentation of the change tray: an inline, non-modal panel directly below the
+ * message's action bar. Every edit the turn made, grouped by file, each with its lines and —
+ * once the session's list can say which blocks it wrote — Keep and Revert. The head keeps the
+ * whole turn, reverts it, or opens the Review tab.
  */
-import { useEffect, useId, useRef, useState } from "react";
-import { X } from "@/lib/icons";
-import { copyToClipboard } from "@/lib/clipboard";
+import { useEffect, useId, useRef } from "react";
+import { Button } from "@/components/ui/button";
+import { Check, FileDiff, RotateCcw, X } from "@/lib/icons";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
-import { ChangeCounts, ChangeFileRow } from "./change-file-row";
-import { ChangeEditList } from "./change-edit-list";
-
-function splitPath(path: string): { base: string; dir: string } {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return i < 0 ? { base: path, dir: "" } : { base: path.slice(i + 1), dir: path.slice(0, i) };
-}
+import { turnLabel, type SessionTurn } from "@/lib/session-turns";
+import type { TurnReview } from "@/hooks/use-turn-review";
+import { ChangeCounts } from "./change-file-row";
+import { changeTotals } from "./turn-change-pill";
+import { FileGroup, NoticeLine, RevertTurnBody, editsInFiles, revertedFiles, useRevertTurnFlow } from "./turn-change-review";
 
 /**
  * Several messages in one chat can have a tray open at once, and `ownsGlobalShortcut`
@@ -30,110 +27,110 @@ function isTextEntry(el: Element | null): boolean {
   return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
 }
 
-export function TurnChangeTray({ changes, onJump, onClose }: {
+export function TurnChangeTray({ changes, turn, review, onJump, onClose }: {
   changes: TurnFileChange[];
+  turn: SessionTurn | undefined;
+  review: TurnReview;
   onJump: (editRef: string) => void;
   onClose: () => void;
 }) {
-  // The desktop tray never shows a bare list — a file is always selected.
-  const [selected, setSelected] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const trayId = useId();
+  const flow = useRevertTurnFlow(review);
+  const totals = changeTotals(changes);
 
   // Inline and non-modal: focus moves in, but is deliberately not trapped.
   useEffect(() => {
     activeTrayId = trayId;
-    listRef.current?.querySelector<HTMLElement>("button")?.focus();
+    containerRef.current?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
     return () => {
       if (activeTrayId === trayId) activeTrayId = null;
     };
   }, [trayId]);
 
+  const cancelRevert = flow.cancel;
+  const confirming = flow.open;
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (activeTrayId !== trayId) return;
-      if (!ownsGlobalShortcut(containerRef.current)) return;
-      if (isTextEntry(document.activeElement)) return;
-
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      } else if (e.key === "j") {
-        e.preventDefault();
-        setSelected((i) => Math.min(i + 1, changes.length - 1));
-      } else if (e.key === "k") {
-        e.preventDefault();
-        setSelected((i) => Math.max(i - 1, 0));
-      } else if (e.key === "Enter") {
-        const editRef = changes[selected]?.edits[0]?.editRef;
-        if (editRef) {
-          e.preventDefault();
-          onJump(editRef);
-        }
-      }
+      if (e.key !== "Escape" || activeTrayId !== trayId) return;
+      if (!ownsGlobalShortcut(containerRef.current) || isTextEntry(document.activeElement)) return;
+      e.preventDefault();
+      if (confirming) cancelRevert();
+      else onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [trayId, changes, selected, onJump, onClose]);
+  }, [trayId, confirming, cancelRevert, onClose]);
 
-  const active = changes[Math.min(selected, changes.length - 1)];
-  if (!active) return null;
-  const { base, dir } = splitPath(active.filePath);
+  const nothingToRevert = !!flow.preview && revertedFiles(flow.preview).length === 0;
 
   return (
-    <div ref={containerRef} className="mt-0.5 overflow-hidden rounded-[10px] border border-border-soft bg-bg">
-      <div className="grid h-[356px] grid-cols-[294px_1fr] grid-rows-[minmax(0,1fr)] bg-surface-elevated">
-        <div ref={listRef} className="min-h-0 overflow-y-auto border-r border-border-soft">
-          {changes.map((change, i) => (
-            <ChangeFileRow
-              key={change.filePath}
-              change={change}
-              dense
-              selected={i === selected}
-              onClick={() => setSelected(i)}
-            />
-          ))}
-          <p className="px-2.5 pt-2 pb-2.5 font-mono text-[10px] text-text-subtle">
-            j / k to move · enter to jump
-          </p>
-        </div>
-
-        <div className="min-h-0 overflow-y-auto">
-          <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border-soft bg-surface-elevated py-[5px] pl-2.5 pr-2">
-            <span className="shrink-0 font-mono text-xs font-medium text-text-primary">{base}</span>
-            {dir && (
-              <span
-                title={active.filePath}
-                className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[10.5px] text-text-subtle [direction:rtl] text-left"
-              >
-                {dir}
-              </span>
-            )}
-            <ChangeCounts
-              added={active.linesAdded}
-              removed={active.linesRemoved}
-              className="shrink-0 font-mono text-[11px]"
-            />
-            <button
-              type="button"
-              onClick={() => void copyToClipboard(active.filePath)}
-              className="shrink-0 rounded-md px-1.5 py-1 font-mono text-[10px] text-text-subtle transition-colors hover:bg-surface hover:text-text-primary"
+    <div ref={containerRef} data-testid="turn-change-tray" className="mt-0.5 rounded-xl border border-border bg-panel shadow-[var(--shadow-float)]">
+      <div className="relative flex min-h-12 flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-border-soft py-1.5 pr-2 pl-3.5">
+        <h4 className="m-0 text-[13px] font-semibold">Changed this turn</h4>
+        <span className="inline-flex items-center gap-1.5 text-xs text-text-subtle">
+          {editsInFiles(changes)} · <ChangeCounts added={totals.added} removed={totals.removed} className="font-mono text-[11px]" />
+        </span>
+        <div className="relative ml-auto flex flex-wrap items-center justify-end gap-1.5">
+          {review.enabled && turn && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-text-secondary"
+              aria-expanded={flow.open}
+              disabled={review.busy && !flow.open}
+              onClick={() => (flow.open ? flow.cancel() : void flow.start())}
             >
-              copy path
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close change tray"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-text-subtle transition-colors hover:bg-surface hover:text-text-primary"
+              <RotateCcw />Revert turn…
+            </Button>
+          )}
+          {review.summary.open > 0 && (
+            <Button size="sm" disabled={review.busy} onClick={review.keepAll}>
+              <Check />Keep all
+            </Button>
+          )}
+          {review.enabled && (
+            <Button variant="ghost" size="sm" className="text-primary hover:text-primary" onClick={() => review.openReview(changes[0]?.filePath)}>
+              <FileDiff />Review in tab
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close change tray"
+            title="Close (Esc)"
+            className="inline-grid size-8 shrink-0 place-items-center rounded-lg text-text-subtle transition-colors hover:bg-surface hover:text-text-primary"
+          >
+            <X className="size-3.5" />
+          </button>
+          {flow.open && turn && (
+            <div
+              role="dialog"
+              aria-label={`Revert ${turnLabel(turn)}?`}
+              data-testid="revert-turn-confirm"
+              className="absolute top-full right-0 z-40 mt-1.5 w-[400px] max-w-[calc(100vw-48px)] rounded-xl border border-border bg-panel-2 p-3.5 text-[12.5px] leading-normal shadow-[var(--shadow-float),0_18px_40px_-16px_rgba(0,0,0,.6)]"
             >
-              <X className="size-3.5" />
-            </button>
-          </div>
-
-          <ChangeEditList change={active} onJump={onJump} />
+              <h5 className="m-0 mb-1.5 flex items-center gap-2 text-[13px] font-semibold text-text">
+                <RotateCcw className="size-4 text-error" />Revert {turnLabel(turn)}?
+              </h5>
+              <RevertTurnBody flow={flow} mobile={false} />
+              <div className="mt-3 flex justify-end gap-1.5">
+                <Button variant="ghost" size="sm" onClick={flow.cancel}>Cancel</Button>
+                <Button variant="destructive" size="sm" disabled={flow.loading || !flow.preview || nothingToRevert} onClick={() => void flow.confirm()}>
+                  <RotateCcw />Revert turn
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
+      </div>
+      {review.notice && (
+        <NoticeLine notice={review.notice} mobile={false} busy={review.busy} onUndo={review.undo} onDismiss={review.dismissNotice} />
+      )}
+      <div className="max-h-[560px] overflow-y-auto rounded-b-xl px-3 pt-1 pb-3">
+        {changes.map((change) => (
+          <FileGroup key={change.filePath} change={change} review={review} mobile={false} onJump={onJump} />
+        ))}
       </div>
     </div>
   );

@@ -36,6 +36,7 @@ export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: R
   postgres: lazyWithPreload(() => import("@/components/postgres/postgres-viewer").then((m) => ({ default: m.PostgresViewer }))),
   "git-diff": lazyWithPreload(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
   "branch-review": lazyWithPreload(() => import("@/components/branch-review/branch-review-tab").then((m) => ({ default: m.BranchReviewTab }))),
+  "session-review": lazyWithPreload(() => import("@/components/session-review/session-review-tab").then((m) => ({ default: m.SessionReviewTab }))),
   settings: lazyWithPreload(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
   extension: lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
   "extension-webview": lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),

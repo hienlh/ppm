@@ -32,6 +32,8 @@ function handlers(): SpareHandlers & { log: string[] } {
     log,
     canUseTool: async (tool: string) => { log.push(`canUseTool:${tool}`); return { behavior: "allow" }; },
     preToolUse: async (input: { tool_name: string }) => { log.push(`preToolUse:${input.tool_name}`); return {}; },
+    fileWrite: async (input: { tool_name: string }) => { log.push(`fileWrite:${input.tool_name}`); return {}; },
+    shellCommand: async (input: { tool_name: string }) => { log.push(`shellCommand:${input.tool_name}`); return {}; },
     stderr: (chunk) => { log.push(`stderr:${chunk}`); },
   };
 }
@@ -68,7 +70,9 @@ describe("WarmSpares", () => {
     callbacks.stderr("ready\n");
     await callbacks.canUseTool("Bash", {});
     await callbacks.preToolUse({ tool_name: "Write" });
-    expect(turn.log).toEqual(["stderr:booting\n", "stderr:ready\n", "canUseTool:Bash", "preToolUse:Write"]);
+    await callbacks.fileWrite({ tool_name: "Edit" });
+    await callbacks.shellCommand({ tool_name: "Bash" });
+    expect(turn.log).toEqual(["stderr:booting\n", "stderr:ready\n", "canUseTool:Bash", "preToolUse:Write", "fileWrite:Edit", "shellCommand:Bash"]);
   });
 
   it("closes a spare the turn would not have spawned, and leaves the turn to start cold", () => {

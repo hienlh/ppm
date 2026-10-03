@@ -44,6 +44,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.BranchReviewTab,
     })),
   ),
+  "session-review": lazy(() =>
+    import("@/components/session-review/session-review-tab").then((m) => ({
+      default: m.SessionReviewTab,
+    })),
+  ),
   settings: lazy(() =>
     import("@/components/settings/settings-tab").then((m) => ({
       default: m.SettingsTab,

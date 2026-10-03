@@ -39,6 +39,7 @@ import { permissionModeToCodex, type CodexPermission } from "./codex-permission-
 import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, type CodexThreadParams } from "./codex-thread-params.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
+import { recordFileChangeBaselines } from "./codex-file-baselines.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
@@ -976,6 +977,11 @@ export class CodexAppServerProvider implements AIProvider {
       ? notificationThreadId !== live.threadId
       : live.subagentThreadIds.has(notificationThreadId));
     const parentToolUseId = isChild ? subagentCardId(notificationThreadId!) : undefined;
+    // Ahead of the guards below: a patch codex finished is on disk whatever becomes of the
+    // turn, and a spawned agent's patches belong to this session's review too.
+    if (notif.method === "item/completed" && live.threadId) {
+      void recordFileChangeBaselines(live.threadId, (notif.params as { item?: unknown } | undefined)?.item, live.cwd);
+    }
     // A quota refusal is an ordinary `error` notification, so it has to be recognised
     // before the mapper turns it into a plain error card in front of the user.
     if (!isChild && notif.method === "error" && !live.rotating && !live.discardingTurn) {

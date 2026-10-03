@@ -14,6 +14,8 @@ import { invalidateSdkCommands } from "../../services/slash-discovery/sdk-comman
 import { listSlashItemsForProvider } from "../../services/slash-items-for-provider.ts";
 import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts";
 import { chatPrepareRoutes } from "./chat-prepare.ts";
+import { chatFileChangesRoutes } from "./chat-file-changes.ts";
+import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
@@ -48,6 +50,7 @@ type Env = { Variables: { projectPath: string; projectName: string } };
 export const chatRoutes = new Hono<Env>();
 
 chatRoutes.route("/prepare", chatPrepareRoutes);
+chatRoutes.route("/", chatFileChangesRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {
@@ -501,6 +504,7 @@ chatRoutes.delete("/sessions", async (c) => {
         deleteSessionTitle(s.id);
         unpinSession(s.id);
         deleteBranchesFor(s.id);
+        deleteSessionBaselines(s.id);
         try { draftService.delete(projectPath, s.id); } catch { /* ignore */ }
         deleted++;
       } catch { /* skip individual failures */ }
@@ -533,6 +537,7 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     deleteSessionTitle(id);
     unpinSession(id);
     deleteBranchesFor(id);
+    deleteSessionBaselines(id);
     // Fire-and-forget draft cleanup
     try { draftService.delete(c.get("projectPath"), id); } catch { /* ignore */ }
     return c.json(ok({ deleted: id }));

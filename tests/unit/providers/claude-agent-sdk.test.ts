@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach, mock, spyOn } from "bun:test";
-import { mkdirSync, rmSync, existsSync as fsExists } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, existsSync as fsExists } from "node:fs";
 import type { ChatEvent } from "../../../src/types/chat.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { accountService } from "../../../src/services/account.service.ts";
 import { accountSelector } from "../../../src/services/account-selector.service.ts";
-import { setSessionAccount, getSessionTitle, setSessionTitle } from "../../../src/services/db.service.ts";
+import { setSessionAccount, getSessionTitle, setSessionTitle, getSessionProjectPath } from "../../../src/services/db.service.ts";
+import { deleteSessionBaselines, readBaseline } from "../../../src/services/session-file-baselines/session-file-baselines.service.ts";
+import { readHistory } from "../../../src/services/session-file-baselines/session-file-history.ts";
+import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -51,6 +54,17 @@ function createMockQueryIterator(
 }
 
 // Mock the SDK module
+/** The permission hook a turn was spawned with: the one matching every tool, not the file-write hook. */
+function permissionHook(options: any): (input: unknown) => Promise<unknown> {
+  return options.hooks.PreToolUse.find((m: { matcher: string }) => m.matcher === ".*").hooks[0];
+}
+
+/** Every PreToolUse hook whose matcher names the tool, run together, as the CLI runs them. */
+function runPreToolUse(options: any, input: { tool_name: string }): Promise<unknown[]> {
+  const matching = options.hooks.PreToolUse.filter((m: { matcher: string }) => new RegExp(`^(?:${m.matcher})$`).test(input.tool_name));
+  return Promise.all(matching.flatMap((m: { hooks: ((i: unknown) => Promise<unknown>)[] }) => m.hooks.map((hook) => hook(input))));
+}
+
 let mockQueryFn: ReturnType<typeof mock>;
 
 mock.module("@anthropic-ai/claude-agent-sdk", () => {
@@ -391,8 +405,161 @@ describe("ClaudeAgentSdkProvider", () => {
       const opts = mockQueryFn.mock.calls[0]![0].options;
       expect(opts.allowedTools).toEqual(["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch", "mcp__*"]);
       expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
-      const hook = opts.hooks.PreToolUse[0].hooks[0];
+      const hook = permissionHook(opts);
       expect(await hook({ tool_name: "Read", tool_input: { file_path: "/etc/hosts" } })).toEqual({});
+    });
+
+    it("keeps a file's state from before the session's first write, in bypass mode too", async () => {
+      const dir = `/tmp/ppm-baseline-hook-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        // Bypass mode spawns no permission hook: the file-write hook comes first, then the shell one.
+        expect(opts.hooks.PreToolUse.map((m: { matcher: string }) => m.matcher)).toEqual(["Write|Edit|MultiEdit|NotebookEdit", "Bash|PowerShell"]);
+        const fileWrite = opts.hooks.PreToolUse[0].hooks[0];
+        expect(await fileWrite({ tool_name: "Edit", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir })).toEqual({});
+        await Bun.write(`${dir}/a.ts`, "after\n");
+        await fileWrite({ tool_name: "Edit", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir });
+        expect(readBaseline(session.id, `${dir}/a.ts`)).toMatchObject({ existed: true, content: "before\n" });
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("records the project of a session started elsewhere once it keeps a write of it", async () => {
+      const dir = `/tmp/ppm-record-project-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      const sessions = [crypto.randomUUID(), crypto.randomUUID()];
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        /** A turn of a session resumed with no record, given the chat's project as the WS handler does. */
+        const turn = async (sessionId: string) => {
+          mockQueryFn.mockClear();
+          mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+          await provider.resumeSession(sessionId);
+          provider.ensureProjectPath(sessionId, dir);
+          for await (const _ of provider.sendMessage(sessionId, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+          expect(getSessionProjectPath(sessionId)).toBeNull();
+          return mockQueryFn.mock.calls[0]![0].options.hooks.PreToolUse;
+        };
+        const [byEdit, byShell] = sessions as [string, string];
+        // The review's routes answer for each in this project from then on, and only in this one.
+        await (await turn(byEdit))[0].hooks[0]({ hook_event_name: "PreToolUse", tool_name: "Edit", tool_use_id: "toolu_1", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir });
+        expect(getSessionProjectPath(byEdit)).toBe(dir);
+        await (await turn(byShell))[1].hooks[0]({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_2", tool_input: { command: "ls" }, cwd: dir });
+        expect(getSessionProjectPath(byShell)).toBe(dir);
+      } finally {
+        for (const id of sessions) deleteSessionBaselines(id);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps a file's state outside bypass mode only once its write is allowed", async () => {
+      const dir = `/tmp/ppm-baseline-gate-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        /** An Edit of a.ts through the hooks, answered once `meanwhile` has run with the prompt open. */
+        const edit = async (approved: boolean, meanwhile: () => Promise<unknown>) => {
+          const asked = new Set(pending.keys());
+          const verdicts = runPreToolUse(opts, {
+            hook_event_name: "PreToolUse", tool_name: "Edit", tool_use_id: `toolu_${approved}`, tool_input: { file_path: `${dir}/a.ts` }, cwd: dir,
+          } as { tool_name: string });
+          // Long enough for any hook that does not wait for the answer to have done its work.
+          await Bun.sleep(50);
+          const requestId = [...pending.keys()].find((k) => !asked.has(k));
+          expect(requestId).toBeTruthy();
+          await meanwhile();
+          provider.resolveApproval(requestId!, approved);
+          return verdicts;
+        };
+
+        expect(await edit(false, async () => {})).toContainEqual(preToolUseDecision("deny", "User denied tool execution"));
+        expect(readBaseline(session.id, `${dir}/a.ts`)).toBeNull();
+        expect(readHistory(session.id, `${dir}/a.ts`).entries).toEqual([]);
+
+        // Changed by hand while the prompt is open: that change is not the session's.
+        expect(await edit(true, () => Bun.write(`${dir}/a.ts`, "edited by hand\n"))).toContainEqual(preToolUseDecision("allow"));
+        expect(readBaseline(session.id, `${dir}/a.ts`)).toMatchObject({ existed: true, content: "edited by hand\n" });
+        expect(readHistory(session.id, `${dir}/a.ts`).entries.map((e) => [e.call, e.phase, e.text])).toEqual([
+          ["toolu_true", "before", "edited by hand\n"],
+        ]);
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("puts what each file tool call found and left in the session's history", async () => {
+      const dir = `/tmp/ppm-history-hook-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        const writes = (event: string) => opts.hooks[event].find((m: { matcher: string }) => m.matcher === "Write|Edit|MultiEdit|NotebookEdit").hooks[0];
+        const call = { tool_name: "Edit", tool_use_id: "toolu_edit", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir };
+        expect(await writes("PreToolUse")({ ...call, hook_event_name: "PreToolUse" })).toEqual({});
+        await Bun.write(`${dir}/a.ts`, "after\n");
+        expect(await writes("PostToolUse")({ ...call, hook_event_name: "PostToolUse", tool_response: {} })).toEqual({});
+        expect(readHistory(session.id, `${dir}/a.ts`).entries.map((e) => [e.call, e.phase, e.text])).toEqual([
+          ["toolu_edit", "before", "before\n"],
+          ["toolu_edit", "after", "after\n"],
+        ]);
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps the state of a file a shell command changes, from the hooks around the command", async () => {
+      const dir = `/tmp/ppm-shell-hook-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.txt`, "before\n");
+        for (const args of [["init", "-q"], ["config", "core.autocrlf", "false"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]]) {
+          expect(Bun.spawnSync(["git", ...args], { cwd: dir }).exitCode).toBe(0);
+        }
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        const before = opts.hooks.PreToolUse.find((m: { matcher: string }) => m.matcher === "Bash|PowerShell").hooks[0];
+        const after = opts.hooks.PostToolUse[0].hooks[0];
+        const call = { tool_name: "Bash", tool_use_id: "toolu_shell", tool_input: { command: "printf 'x\\n' >> a.txt" }, cwd: dir };
+        expect(await before({ ...call, hook_event_name: "PreToolUse" })).toEqual({});
+        // What the command does, done here: the hooks only see the file move, not what moved it.
+        appendFileSync(`${dir}/a.txt`, "x\n");
+        expect(await after({ ...call, hook_event_name: "PostToolUse", tool_response: {} })).toEqual({});
+        expect(readBaseline(session.id, `${dir}/a.txt`)).toMatchObject({ existed: true, content: "before\n" });
+        expect(readHistory(session.id, `${dir}/a.txt`).entries.map((e) => [e.call, e.phase, e.text])).toEqual([
+          ["toolu_shell", "before", "before\n"],
+          ["toolu_shell", "after", "before\nx\n"],
+        ]);
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     describe("design session", () => {
@@ -413,13 +580,13 @@ describe("ClaudeAgentSdkProvider", () => {
       });
 
       it("lets project file tools through the hook with a verdict the CLI honours", async () => {
-        const hook = (await startDesignTurn()).hooks.PreToolUse[0].hooks[0];
+        const hook = permissionHook(await startDesignTurn());
         expect(await hook({ tool_name: "Write", tool_input: { file_path: "designs/x/index.html" } }))
           .toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
       });
 
       it("asks for shell and for files outside the project, and a denial denies", async () => {
-        const hook = (await startDesignTurn()).hooks.PreToolUse[0].hooks[0];
+        const hook = permissionHook(await startDesignTurn());
         const pending = (provider as any).pendingApprovals as Map<string, unknown>;
         for (const input of [
           { tool_name: "Bash", tool_input: { command: "ls" } },
@@ -1190,7 +1357,7 @@ describe("ClaudeAgentSdkProvider", () => {
     it("asks the adopting turn for approval, in a mode that asks", async () => {
       let verdict: unknown;
       const clis = cliFactory(async (options) => {
-        verdict = await options.hooks.PreToolUse[0].hooks[0]({ tool_name: "Bash", tool_input: { command: "ls" } });
+        verdict = await permissionHook(options)({ tool_name: "Bash", tool_input: { command: "ls" } });
       });
       await provider.prewarm({ projectPath: project, opts: { permissionMode: "default" } });
       const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });

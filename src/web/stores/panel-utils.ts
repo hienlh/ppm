@@ -227,6 +227,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // someone changed them.
     case "branch-review":
       return `branch-review:${metadata?.projectName ?? "unknown"}`;
+    // One review per chat session: reopening it from the changes bar focuses it.
+    case "session-review":
+      return `session-review:${metadata?.projectName ?? "unknown"}:${metadata?.sessionId ?? "unknown"}`;
     case "conflict-editor":
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":

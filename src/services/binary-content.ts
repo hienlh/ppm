@@ -23,3 +23,11 @@ export function isBinaryContent(bytes: Uint8Array | null | undefined): boolean {
   if (!bytes) return false;
   return bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0);
 }
+
+/**
+ * `bytes` as text, a leading byte-order mark kept. The default decoder drops it, and the session
+ * review writes text back to disk: a revert would quietly take the BOM off the file.
+ */
+export function decodeText(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+}

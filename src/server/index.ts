@@ -916,6 +916,22 @@ if (process.argv.includes("__serve__")) {
     setInterval(runTraceCleanup, 24 * 60 * 60 * 1000);
   }
 
+  // A session's file "befores" (the review's left side) go with the session, or after a
+  // month without a new capture for one nobody deleted.
+  {
+    const { pruneSessionBaselines } = await import("../services/session-file-baselines/session-file-baselines.service.ts");
+    const runBaselinePrune = () => {
+      try {
+        const removed = pruneSessionBaselines();
+        if (removed > 0) console.log(`[session-baselines] pruned ${removed} sessions`);
+      } catch (e) {
+        console.error(`[session-baselines] prune failed: ${(e as Error).message}`);
+      }
+    };
+    runBaselinePrune();
+    setInterval(runBaselinePrune, 24 * 60 * 60 * 1000);
+  }
+
   // On Windows the supervisor reaps the previous server's whole process tree
   // before respawning, so the port is released cleanly. A lingering bind can
   // still appear for a moment during an upgrade handoff, so wait for it to
