@@ -24,10 +24,19 @@ export function InlineNameInput({ initial, error, onCommit, onCancel, className 
   useEffect(() => {
     const input = ref.current;
     if (!input) return;
-    input.focus();
-    const dot = initial.lastIndexOf(".");
-    if (dot > 0) input.setSelectionRange(0, dot);
-    else input.select();
+    const take = () => {
+      input.focus();
+      const dot = initial.lastIndexOf(".");
+      if (dot > 0) input.setSelectionRange(0, dot);
+      else input.select();
+    };
+    take();
+    // Opened from a context menu item, the field mounts while the menu still traps focus, which
+    // takes it straight back. The menu has closed by the next frame.
+    const frame = requestAnimationFrame(() => {
+      if (document.activeElement !== input) take();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [initial]);
 
   return (

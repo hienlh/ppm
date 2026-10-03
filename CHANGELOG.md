@@ -20,6 +20,8 @@
 
 - **The language server's quick fixes never appeared for an error.** The code-action request handed the server an empty list of diagnostics, and typescript-language-server finds its fixes from that list, so with LSP on an error had no Change spelling, no Add import, nothing. Measured against the real server, the same request offered no quick fix with the list empty, and Change spelling to 'answer' plus Remove unused declaration with the two diagnostics it had published. The request now carries the diagnostics touching the range, exactly as the server sent them.
 
+- **New File and New Folder from a right-click menu did nothing.** In the project explorer the name box appeared and was gone about 10 ms later, so the toolbar button was the only way to create a file. Radix hands focus back to whatever held it before the menu opened — the right-clicked row — a moment after the menu closes, and does it unconditionally; the box had already taken focus, reads a blur as "done", and done with nothing typed means cancel. Rename escaped only because its box replaces the very row focus would have gone back to. The explorer window lost the same race another way: its name field focused while the menu's focus trap was still up, so it sat there unfocused and whatever was typed next went to the list behind it. A context menu now leaves focus where the chosen item put it (and still returns it to the row when the item moved it nowhere), and the window's field takes focus again once the menu has closed. In Chrome against a scratch server the box survived 0 of 5 attempts before and 5 of 5 after.
+
 ## [0.23.12] - 2026-10-02
 
 ### Added

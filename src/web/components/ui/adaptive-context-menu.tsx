@@ -130,15 +130,38 @@ function ContextMenuTrigger({
 /*  Content                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Leave focus where the chosen item put it.
+ *
+ * Radix hands focus back to whatever held it before the menu opened — the right-clicked row —
+ * a tick after the menu closes, and unconditionally. An item that opens a name field (New File,
+ * New Folder, Rename in both explorers) has put focus there by then, and the field reads the
+ * blur as "done": the tree's New File box cancelled itself, empty, ~10 ms after it appeared.
+ * When the item moved focus nowhere, the menu's own content was just removed, so focus is on
+ * `<body>` and the hand-back still happens — the keyboard keeps its place.
+ */
+function keepFocusMovedByItem(event: Event): void {
+  const active = document.activeElement;
+  if (active && active !== document.body) event.preventDefault();
+}
+
 function ContextMenuContent({
   children,
   className,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof Radix.ContextMenuContent>) {
   const isMobile = React.useContext(IsMobileCtx);
   if (!isMobile) {
     return (
-      <Radix.ContextMenuContent className={className} {...props}>
+      <Radix.ContextMenuContent
+        className={className}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          keepFocusMovedByItem(event);
+        }}
+        {...props}
+      >
         {children}
       </Radix.ContextMenuContent>
     );
