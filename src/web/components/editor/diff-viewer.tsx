@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo, useRef } from "react";
-import { DiffEditor } from "@monaco-editor/react";
+import { useEffect, useLayoutEffect, useState, useMemo, useRef, type ComponentProps } from "react";
+import { DiffEditor as MonacoDiffEditor } from "@monaco-editor/react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -19,6 +19,37 @@ import {
   type BinaryViewMode,
 } from "./binary-diff-view";
 import type { FileFullDiff } from "../../../types/git";
+
+/**
+ * `@monaco-editor/react` 4.7 disposes the two models on unmount *before* the diff editor still
+ * showing them, and Monaco 0.55 reports that as "TextModel got disposed before DiffEditorWidget
+ * model got reset" — an uncaught error every time a diff closes, which a review stepping through
+ * files does once per file. This wrapper is the library component's parent, and React runs a
+ * removed subtree's cleanups parent before child, every layout one before any passive one — so
+ * the models are detached and disposed here first and the library is left only the editor to
+ * dispose. A layout effect is margin, not the fix: React 19.2 runs a removed subtree's passive
+ * cleanups parent-first too, so a passive one here would also run before the library's.
+ */
+function DiffEditor({ onMount, ...props }: ComponentProps<typeof MonacoDiffEditor>) {
+  const editorRef = useRef<Parameters<NonNullable<typeof onMount>>[0] | null>(null);
+  useLayoutEffect(() => () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const model = editor.getModel();
+    editor.setModel(null);
+    model?.original.dispose();
+    model?.modified.dispose();
+  }, []);
+  return (
+    <MonacoDiffEditor
+      {...props}
+      onMount={(editor, monaco) => {
+        editorRef.current = editor;
+        onMount?.(editor, monaco);
+      }}
+    />
+  );
+}
 
 function getMonacoLanguage(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
