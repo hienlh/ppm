@@ -273,14 +273,19 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   // wordWrapOverride2='off' on the original editor. When side-by-side resumes,
   // wordWrapOverride2 is never cleared, permanently blocking word wrap on the
   // left side. We disable that option and also force wordWrapOverride2 to clear it.
+  //
+  // Inline (a phone) is the exception: there the original editor is a hidden 35px
+  // column, and wrapped at that width every line is many rows tall — which the inline
+  // view then pads the modified side to match, drawing one changed line between
+  // screens of hatching. Monaco keeps it unwrapped itself in that mode; so do we.
   useEffect(() => {
     const editor = diffEditorRef.current;
     if (!editor) return;
     const val: "on" | "off" = wrapOn ? "on" : "off";
     editor.updateOptions({ diffWordWrap: val });
-    editor.getOriginalEditor().updateOptions({ wordWrapOverride2: val } as any);
+    editor.getOriginalEditor().updateOptions({ wordWrapOverride2: renderSideBySide ? val : "off" } as any);
     editor.getModifiedEditor().updateOptions({ wordWrapOverride2: val } as any);
-  }, [wrapOn, editorReady]);
+  }, [wrapOn, editorReady, renderSideBySide]);
 
   if (!projectName && !isInline) {
     return (

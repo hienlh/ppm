@@ -12,6 +12,8 @@
 
 - **A Codex patch that touched several files counted only the first, and a file it created counted +0.** The chip under the answer and the transcript's change list now name every file in the patch, live and in both rollout formats, and a created or deleted file counts its lines: Codex sends those as the file's content, not as a diff.
 
+- **A diff on a phone was one changed line between screens of hatching.** The inline view hides the original side in a 35px column, and the diff viewer forced word wrap on it there too, so every original line was many rows tall and the visible side was padded to match. It now stays unwrapped in that mode, as Monaco keeps it itself; the Source Control diff tab had the same problem.
+
 - **Closing or switching a diff no longer throws "TextModel got disposed before DiffEditorWidget model got reset".** `@monaco-editor/react` disposes the two models before the diff editor still showing them; the viewer now detaches them first.
 
 ## [0.23.12] - 2026-10-02
