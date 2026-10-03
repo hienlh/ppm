@@ -27,12 +27,12 @@ class FakeSession {
   readonly definition = { id: "fake", displayName: "Fake" };
   readonly rootPath = PROJECT;
   readonly serverCapabilities = { hoverProvider: true };
-  readonly asked: Array<{ method: string; signal?: AbortSignal }> = [];
+  readonly asked: Array<{ method: string; params?: unknown; signal?: AbortSignal }> = [];
   readonly notified: Array<{ method: string; params: unknown }> = [];
   private settle: ((value: unknown) => void) | null = null;
 
-  request(method: string, _params: unknown, _timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
-    this.asked.push({ method, signal });
+  request(method: string, params: unknown, _timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    this.asked.push({ method, params, signal });
     return new Promise((resolve, reject) => {
       this.settle = resolve;
       signal?.addEventListener("abort", () => reject(new Error(`${method} was cancelled`)), { once: true });
@@ -194,6 +194,38 @@ describe("a request in flight", () => {
 
     expect(() => lspWebSocket.message(s.ws, JSON.stringify({ t: "cancel", id: 5 }))).not.toThrow();
     expect(s.ofType("response")).toHaveLength(1);
+  });
+});
+
+describe("a request carrying what the server said earlier", () => {
+  it("gives the server back its own URIs, not the browser's model names", async () => {
+    // A code action hands the server the diagnostics it published, related locations included,
+    // and the bridge renamed every one of those to the model's URI on the way to the browser.
+    const s = socket();
+    s.open("src/b.ts", "inmemory://model/2");
+    await Bun.sleep(0);
+    const opened = (path: string) => (session.notified.find((n) =>
+      n.method === "textDocument/didOpen" && String((n.params as any).textDocument.uri).endsWith(path))!.params as any).textDocument.uri;
+    const a = opened("/a.ts");
+    const b = opened("/b.ts");
+    const range = { start: { line: 0, character: 6 }, end: { line: 0, character: 7 } };
+    const diagnostic = (here: string, there: string) => ({
+      range, message: "Duplicate identifier 'a'.", code: 2300, data: { kept: "inmemory://model/1" },
+      relatedInformation: [
+        { location: { uri: here, range }, message: "'a' was also declared here." },
+        { location: { uri: there, range }, message: "and here." },
+      ],
+    });
+
+    lspWebSocket.message(s.ws, JSON.stringify({
+      t: "request", id: 12, path: "src/a.ts", method: "textDocument/codeAction",
+      params: { textDocument: { uri: "inmemory://model/1" }, range, context: { diagnostics: [diagnostic("inmemory://model/1", "inmemory://model/2")] } },
+    }));
+    await Bun.sleep(0);
+
+    expect(session.asked[0]?.params).toEqual({
+      textDocument: { uri: a }, range, context: { diagnostics: [diagnostic(a, b)] },
+    });
   });
 });
 

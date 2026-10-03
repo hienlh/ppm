@@ -22,7 +22,7 @@ import {
   type LspConnection,
   type LspDocumentStatus,
 } from "@/lib/lsp/lsp-client";
-import { registerLspDocument, unregisterLspDocument } from "@/lib/lsp/lsp-documents";
+import { registerLspDocument, unregisterLspDocument, type LspDocument } from "@/lib/lsp/lsp-documents";
 import { disposeShadowModels } from "@/lib/lsp/lsp-shadow-models";
 import { registerLspProviders } from "@/lib/lsp/register-providers";
 import { fromLspRange, markerSeverity } from "@/lib/lsp/lsp-monaco";
@@ -89,7 +89,8 @@ export function useLsp({ editor, monaco, projectName, filePath, enabled }: UseLs
 
     const connection = acquireLspConnection(projectName);
     connectionRef.current = connection;
-    registerLspDocument(model, { connection, path: filePath });
+    const lspDocument: LspDocument = { connection, path: filePath };
+    registerLspDocument(model, lspDocument);
 
     const offStatus = connection.onStatus((path, next) => {
       if (path !== filePath) return;
@@ -111,6 +112,7 @@ export function useLsp({ editor, monaco, projectName, filePath, enabled }: UseLs
       if (payload.uri !== model.uri.toString()) return;
 
       const list = payload.diagnostics ?? [];
+      lspDocument.diagnostics = list;
       setDiagnostics(list);
       // Also to the shared store, which is what the Problems panel reads. The
       // markers below only draw on this model, so they can say what is wrong

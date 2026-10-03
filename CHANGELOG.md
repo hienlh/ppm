@@ -18,6 +18,8 @@
 
 - **A terminal could die with "double free or corruption" the first time you typed in it.** Some terminals are mounted but not on screen: the dock's active tab while the dock is hidden, and on a phone every dock terminal, because the dock is always restored collapsed there. Such a terminal was fitted to xterm's smallest size, 2 columns by 1 row, and that size went to the shell. zsh with a themed prompt corrupts its own memory redrawing that narrow. It then aborted on the first keystroke after the terminal was shown, which could be an hour later and at an ordinary size, so the crash pointed nowhere near its cause. Replaying the sequence against zsh with an oh-my-zsh + oh-my-posh config, 20 of 20 shells left at 2x1 died on that keystroke and none of the shells left at 80x24 did. A terminal is now never fitted below 20x2. The server also drops a smaller size, which covers a browser still running an older bundle. In Chrome against a scratch server, a terminal in a hidden dock gave its shell 2x1 before the fix and 80x24 after, then 140x11 once the dock was opened.
 
+- **The language server's quick fixes never appeared for an error.** The code-action request handed the server an empty list of diagnostics, and typescript-language-server finds its fixes from that list, so with LSP on an error had no Change spelling, no Add import, nothing. Measured against the real server, the same request offered no quick fix with the list empty, and Change spelling to 'answer' plus Remove unused declaration with the two diagnostics it had published. The request now carries the diagnostics touching the range, exactly as the server sent them.
+
 ## [0.23.12] - 2026-10-02
 
 ### Added

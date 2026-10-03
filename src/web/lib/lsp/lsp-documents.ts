@@ -12,11 +12,19 @@
  */
 import type * as MonacoType from "monaco-editor";
 import type { LspConnection } from "./lsp-client";
+import type { LspRange } from "./lsp-monaco";
 
 export interface LspDocument {
   connection: LspConnection;
   /** Project-relative path, which is what the bridge expects. */
   path: string;
+  /**
+   * What the server last published for this file, as the bridge delivered it (its URIs renamed
+   * to the models', which the bridge renames back on the way out). A code-action request hands
+   * the relevant ones back — servers find their quick fixes from them — and a Monaco marker
+   * keeps neither the numeric code nor `data` that some servers match on.
+   */
+  diagnostics?: Array<{ range: LspRange }>;
 }
 
 const documents = new Map<string, LspDocument>();

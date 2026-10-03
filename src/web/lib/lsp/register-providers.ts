@@ -402,7 +402,11 @@ function registerForLanguage(monaco: typeof MonacoType, language: string): void 
         textDocument: { uri: model.uri.toString() },
         range: toLspRange(range),
         context: {
-          diagnostics: [],
+          // The server finds its quick fixes from the diagnostics it is handed, and
+          // typescript-language-server offers none for an empty list: no error ever had its
+          // "Add import" or "Change spelling". Those touching the range, as VS Code hands them.
+          diagnostics: (document.diagnostics ?? []).filter((diagnostic) =>
+            monaco.Range.areIntersectingOrTouching(fromLspRange(diagnostic.range), range)),
           only: context.only ? [context.only] : undefined,
         },
       }, token);

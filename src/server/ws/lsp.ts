@@ -290,8 +290,11 @@ async function forwardRequest(client: Client, msg: Record<string, unknown>): Pro
   }
 
   // The browser addressed the document by its Monaco URI; the server only
-  // knows the `file:` one.
-  const params = withDocumentUri(msg.params, doc.uri);
+  // knows the `file:` one. The same goes for anything the server said earlier and
+  // the browser now hands back — a code action's diagnostics carry their related
+  // locations — which went out renamed to the model's URI and returns under the
+  // server's own name.
+  const params = withDocumentUri(rewriteUris(msg.params, fileUriMapFor(client)), doc.uri);
   const controller = new AbortController();
   client.inflight.set(id, controller);
   let result: unknown;
@@ -340,9 +343,16 @@ function uriMapFor(client: Client): Map<string, string> {
   return map;
 }
 
+/** And back: the browser's model URI to the file: URI the server knows. */
+function fileUriMapFor(client: Client): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const doc of client.docs.values()) map.set(uriKey(doc.clientUri), doc.uri);
+  return map;
+}
+
 /**
  * Rewrite every URI in a server response that names a document this socket has
- * open.
+ * open (and, given the reverse map, every model URI in what the browser sends back).
  *
  * Walks the whole value because `uri` turns up in a dozen shapes — a location,
  * a location link's `targetUri`, each key of a workspace edit's `changes`, a
