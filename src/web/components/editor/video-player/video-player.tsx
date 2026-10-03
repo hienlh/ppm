@@ -9,6 +9,10 @@ import {
   IDENTITY_TRANSFORM, fittedMaxSize, rotateClockwise, rotateCounterClockwise, toCssTransform, type VideoTransform,
 } from "./video-transform";
 
+/** `HTMLMediaElement.readyState` levels. */
+const HAVE_METADATA = 1;
+const HAVE_FUTURE_DATA = 3;
+
 interface Props {
   filePath: string;
   projectName: string;
@@ -60,6 +64,29 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   // New source (mount, other file, or transcode restart) → back to loading state.
   useEffect(() => { setElapsed(0); setWaiting(true); setError(null); }, [src]);
   useEffect(() => { setStart(0); setNativeDuration(null); setTransform(IDENTITY_TRANSFORM); }, [filePath, mode]);
+
+  const applyMetadata = (v: HTMLVideoElement) => {
+    // Re-apply user settings: a fresh load (seek restart, retry) resets the element.
+    v.playbackRate = speed;
+    v.volume = volume;
+    v.muted = muted;
+    if (!isTranscode && Number.isFinite(v.duration)) setNativeDuration(v.duration);
+    if (isTranscode && !wantPlayRef.current) v.pause();
+  };
+
+  // React sets `src` while it renders, before the element is in the page, and the browser
+  // starts loading right then — so a file already in its media cache fires `loadedmetadata`,
+  // `canplay` and `play` before React commits the element, and React drops events aimed at an
+  // element it has not committed. None of them fires again, which left the seek bar (drawn
+  // only once the duration is known) missing. Read what the element already knows instead;
+  // declared after the resets above so that it, not they, has the last word.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.readyState >= HAVE_METADATA) applyMetadata(v);
+    if (v.readyState >= HAVE_FUTURE_DATA) setWaiting(false);
+    setPlaying(!v.paused);
+  }, [src]);
 
   // Element properties survive src changes but not a remount; keep them in sync with state.
   useEffect(() => { const v = videoRef.current; if (v) { v.volume = volume; v.muted = muted; } }, [volume, muted]);
@@ -160,15 +187,7 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
           playsInline
           preload={isTranscode ? "auto" : "metadata"}
           style={{ transform: toCssTransform(transform), maxWidth: fitted.maxWidth || undefined, maxHeight: fitted.maxHeight || undefined }}
-          onLoadedMetadata={(e) => {
-            // Re-apply user settings: a fresh load (seek restart, retry) resets the element.
-            const v = e.currentTarget;
-            v.playbackRate = speed;
-            v.volume = volume;
-            v.muted = muted;
-            if (!isTranscode && Number.isFinite(v.duration)) setNativeDuration(v.duration);
-            if (isTranscode && !wantPlayRef.current) v.pause();
-          }}
+          onLoadedMetadata={(e) => applyMetadata(e.currentTarget)}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onWaiting={() => setWaiting(true)}
