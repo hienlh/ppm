@@ -623,3 +623,37 @@ sends a turn.
 Monaco's own rules apply: the bulb waits for every code-action provider, so a slow language server
 delays it; any provider registering resets it until the cursor moves; and code actions are off in a
 read-only editor, so a database-cell preview has no bulb.
+
+### Fix with AI and Explain with AI on editor problems
+
+`editor-fix-with-ai.tsx` is built the same way: a code-action provider for `"*"` that answers only
+for its own editor's model and draws nothing. Monaco hands every provider the markers touching the
+range it asks about (`context.markers`); when one of them is an error or a warning, the provider
+offers two quick fixes, Fix with AI and Explain with AI, both flagged `isAI`. That flag is all
+Monaco needs for the rest:
+
+- a sparkle beside each in its menu, under Quick Fix after the language server's own fixes
+  (Monaco sorts AI actions last, and keeps the provider's order among them);
+- the first AI action as a one-click link in the problem's hover. Monaco shows one there, which is
+  why Fix is listed before Explain, and asks providers for quick fixes only — hence
+  `kind: "quickfix"` rather than no kind;
+- a sparkle for the bulb: `lightbulbSparkle` beside other fixes, `sparkleFilled` when every fix on
+  offer is AI. Monaco runs a *lone* AI action straight from the bulb instead of opening its menu;
+  with Explain beside Fix there is never a lone one, so the bulb always opens the menu, as VS Code's
+  does with Copilot's pair. Dropping either action brings that auto-run back.
+
+The requests are a snapshot taken when the actions are offered: each problem as
+`line:column severity: message source(code)` in file order, then the model's text from three lines
+above the first to three below the last, under "Fix this problem in …:" or "Explain this problem in
+…, without changing any files:" — said outright because the chat it lands in may edit files. Both
+go through one command (`ppm.problems.askAi`) carrying the text, to a new chat, sent from there
+(`sendToChat({ newTab, autoSend })`). The new tab has not rendered when the command runs, so
+`sendOnceMounted` keeps addressing it until its composer acks — idle and empty, the composer sends
+the text itself — and leaves the text as the draft after 10 s, so a slow first load costs a
+keypress rather than the request.
+
+Markers come from the language server (`ppm-lsp`) and from Monaco's own JSON and CSS validators.
+Monaco's TypeScript diagnostics are always off (`monaco-builtin-typescript.ts`), so a TypeScript
+file has problems to fix only with LSP on. The LSP code-action request carries the server's own
+diagnostics for the range (`LspDocument.diagnostics`, as published, `data` included): servers find
+their fixes from that list, and typescript-language-server answers an empty one with none.

@@ -97,10 +97,13 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
  * user happened to select last. Only a new tab may also carry an image (a data URL, e.g. a
  * canvas screenshot): the composer of a *live* tab has its own paste/drop path for that, and
  * bolting a second one onto the cross-tab event would duplicate it for no live caller.
+ *
+ * `autoSend` (with `newTab`) sends the text from the new chat instead, for an action whose
+ * whole point is to start a turn ("Fix with AI").
  */
 export function sendToChat(opts: {
   text: string; label?: string; projectName?: string | null; newTab?: boolean;
-  imageDataUrl?: string; imageName?: string; asContext?: boolean;
+  imageDataUrl?: string; imageName?: string; asContext?: boolean; autoSend?: boolean;
 }): void {
   const { text, label, projectName } = opts;
   if (!text.trim()) return;
@@ -129,6 +132,18 @@ export function sendToChat(opts: {
     return;
   }
 
+  if (opts.newTab && opts.autoSend) {
+    const tabId = store.openTab({
+      type: "chat",
+      title: "Chat",
+      projectId: null,
+      metadata: projectName ? { projectName } : {},
+      closable: true,
+    });
+    void sendOnceMounted(tabId, text, label);
+    return;
+  }
+
   store.openTab({
     type: "chat",
     title: "Chat",
@@ -140,4 +155,33 @@ export function sendToChat(opts: {
     },
     closable: true,
   });
+}
+
+// Generous: the first chat a page opens has to fetch the chat chunk before its composer exists.
+const MOUNT_RETRY_MS = 10_000;
+const MOUNT_RETRY_INTERVAL_MS = 50;
+
+/**
+ * A tab opened by the same call has not rendered yet, so nothing answers the first events.
+ * Keep addressing it until its composer acks — idle and empty, it then sends the text itself —
+ * and leave the text as the draft if it never does, so a slow mount costs a keypress rather
+ * than the request.
+ */
+async function sendOnceMounted(tabId: string, text: string, label?: string): Promise<void> {
+  const deadline = Date.now() + MOUNT_RETRY_MS;
+  do {
+    let acked = false;
+    const onAck = () => { acked = true; };
+    window.addEventListener(SEND_TO_CHAT_ACK_EVENT, onAck);
+    window.dispatchEvent(
+      new CustomEvent<SendToChatDetail>(SEND_TO_CHAT_EVENT, { detail: { text, label, targetTabId: tabId, autoSend: true } }),
+    );
+    window.removeEventListener(SEND_TO_CHAT_ACK_EVENT, onAck);
+    if (acked) return;
+    await new Promise((resolve) => setTimeout(resolve, MOUNT_RETRY_INTERVAL_MS));
+  } while (Date.now() < deadline);
+
+  const store = usePanelStore.getState();
+  const tab = Object.values(store.panels).flatMap((p) => p.tabs).find((t) => t.id === tabId);
+  if (tab) store.updateTab(tabId, { metadata: { ...tab.metadata, pendingMessage: text } });
 }

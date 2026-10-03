@@ -3,7 +3,7 @@
  * never deliver into the chat the user last selected (or a design session), only ever open a
  * fresh chat with the text as an editable draft.
  */
-import { afterEach, beforeEach, describe, expect, it, afterAll } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, afterAll, setSystemTime } from "bun:test";
 import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 // The DOM's own `window` is the bus: the process shares one DOM, so `CustomEvent` is
@@ -17,7 +17,7 @@ installGlobal("localStorage", {
 });
 afterAll(uninstallDom);
 
-const { sendToChat, SEND_TO_CHAT_EVENT } = await import("../../../src/web/lib/send-to-chat");
+const { sendToChat, SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT } = await import("../../../src/web/lib/send-to-chat");
 const { usePanelStore } = await import("../../../src/web/stores/panel-store");
 
 const chatTab = (id: string) => ({
@@ -106,4 +106,52 @@ it("keeps selected code separate from the draft in a lazy current chat", () => {
   sendToChat({ text: "selected code", label: "example.ts:2-4", projectName: "demo", asContext: true });
   expect(metadata.pendingContexts).toEqual([{ text: "selected code", label: "example.ts:2-4" }]);
   expect(metadata.pendingMessage).toBeUndefined();
+});
+
+describe("sendToChat newTab autoSend", () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("sends from the new chat once its composer answers, and leaves no draft behind", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    // A composer that mounts on the third try, then answers like an idle, empty one.
+    const composer = (e: Event) => {
+      seen.push((e as CustomEvent).detail);
+      if (seen.length === 3) eventBus.dispatchEvent(new CustomEvent(SEND_TO_CHAT_ACK_EVENT, { detail: { sent: true } }));
+    };
+    eventBus.addEventListener(SEND_TO_CHAT_EVENT, composer);
+    try {
+      sendToChat({ text: "Fix this", label: "Problems in a.ts:2", projectName: "demo", newTab: true, autoSend: true });
+      expect(opened).toHaveLength(1);
+      expect(opened[0]!.metadata).toEqual({ projectName: "demo" });
+      await sleep(400);
+      expect(seen).toHaveLength(3);
+      expect(seen.every((d) => d.targetTabId === "chat:new" && d.autoSend === true && d.text === "Fix this")).toBe(true);
+      expect(updated).toEqual([]);
+    } finally {
+      eventBus.removeEventListener(SEND_TO_CHAT_EVENT, composer);
+    }
+  });
+
+  it("leaves the text as the new chat's draft when no composer ever answers", async () => {
+    let metadata: Record<string, unknown> | undefined;
+    usePanelStore.setState({
+      openTab: ((tab: Record<string, unknown>) => {
+        const panels = usePanelStore.getState().panels;
+        usePanelStore.setState({ panels: { ...panels, right: { id: "right", tabs: [{ ...tab, id: "chat:new" }], activeTabId: "chat:new", tabHistory: [] } } as never });
+        return "chat:new";
+      }) as never,
+      updateTab: ((_id: string, patch: { metadata: Record<string, unknown> }) => { metadata = patch.metadata; }) as never,
+    });
+    sendToChat({ text: "Fix this", projectName: "demo", newTab: true, autoSend: true });
+    await sleep(120);
+    expect(metadata).toBeUndefined();
+    // Past the deadline, without waiting it out.
+    setSystemTime(new Date(Date.now() + 11_000));
+    try {
+      await sleep(120);
+    } finally {
+      setSystemTime();
+    }
+    expect(metadata).toEqual({ projectName: "demo", pendingMessage: "Fix this" });
+  });
 });

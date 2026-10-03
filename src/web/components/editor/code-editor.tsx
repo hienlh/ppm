@@ -27,6 +27,7 @@ import { EditorLanguagePicker } from "./editor-language-picker";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
 import { EditorSelectionContext } from "./editor-selection-context";
+import { EditorFixWithAi } from "./editor-fix-with-ai";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
 import { getStatementAtCursor, splitSqlStatements } from "../database/split-sql-statements";
 import { useConnections, type Connection } from "../database/use-connections";
@@ -917,6 +918,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       {mounted && !htmlPreviewVisible && !(isCsv && csvMode === "table") && !(isMarkdown && mdMode === "preview") && (
         <>
           <EditorSelectionContext editor={mounted.editor} monaco={mounted.monaco} filePath={filePath ?? "Untitled"} projectName={projectName} />
+          {/* An untitled buffer is no file the AI could edit. */}
+          {filePath && <EditorFixWithAi editor={mounted.editor} monaco={mounted.monaco} filePath={filePath} projectName={projectName} />}
         </>
       )}
       {htmlPreviewVisible && filePath && (
