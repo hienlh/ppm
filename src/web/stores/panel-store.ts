@@ -18,6 +18,7 @@ import {
   visibleTabs,
   DOCK_PANEL_ID,
   isWindowPanelId,
+  windowIdFromPanelId,
 } from "./panel-utils";
 import {
   makePopOutTab,
@@ -50,6 +51,13 @@ import {
 
 /** Tab types that can only have 1 instance per project */
 const SINGLETON_TYPES = new Set<TabType>(["settings", "git-log"]);
+
+/**
+ * One tab per table's data, per table's structure and per object's SQL, as in DBGate: opening one
+ * again focuses it in whichever panel or floating window holds it, where other tabs are only
+ * matched within their own panel.
+ */
+const ONE_PER_WORKSPACE_TYPES = new Set<TabType>(["database", "db-structure", "db-sql"]);
 
 /** Tab types removed in a prior version — filter them out when loading persisted state */
 const OBSOLETE_TAB_TYPES = new Set(["projects", "git-status", "git-graph"]);
@@ -602,6 +610,32 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
             persist();
             return existing.id;
           }
+        }
+      }
+
+      // The grid and the floating windows only: other projects' keep-alive panels are not on
+      // screen, and neither is a window on a phone, where the window layer does not render.
+      if (ONE_PER_WORKSPACE_TYPES.has(tabDef.type)) {
+        const windows = mobile ? [] : Object.keys(get().panels).filter(isWindowPanelId);
+        const onScreen = [...get().grid.flat(), ...windows];
+        for (const opid of onScreen) {
+          const p = get().panels[opid];
+          const existing = p?.tabs.find((t) => t.id === baseId || t.id.startsWith(`${baseId}@`));
+          if (!p || !existing) continue;
+          set((s) => ({
+            focusedPanelId: focusAfterActivate(p.id),
+            panels: {
+              ...s.panels,
+              [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
+            },
+          }));
+          const windowId = windowIdFromPanelId(p.id);
+          if (windowId) {
+            useWindowStore.getState().focus(windowId);
+            saveWindowPanels(get().panels);
+          }
+          persist();
+          return existing.id;
         }
       }
 

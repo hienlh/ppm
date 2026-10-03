@@ -1,5 +1,6 @@
 import type { Subprocess, Terminal as BunTerminal } from "bun";
 import { isUsableTerminalSize } from "../shared/terminal-size";
+import { withoutAiChatMark } from "./ai-chat-env.ts";
 
 /** Max output buffer size per session (1MB — enough for ~20K lines) */
 const MAX_BUFFER_SIZE = 1024 * 1024;
@@ -35,7 +36,8 @@ function spawnBunNative(
   const decoder = new TextDecoder();
   const proc: Subprocess = Bun.spawn([shell, "-l"], {
     cwd: projectPath,
-    env: { ...process.env, TERM: "xterm-256color" },
+    // A person types here: a PPM started from an AI chat must not pass that chat's mark on.
+    env: withoutAiChatMark({ ...process.env, TERM: "xterm-256color" }),
     terminal: {
       cols,
       rows,
@@ -79,7 +81,7 @@ function spawnBunPty(
     cols,
     rows,
     cwd: projectPath,
-    env: process.env as Record<string, string>,
+    env: withoutAiChatMark(process.env as Record<string, string>),
   });
 
   pty.onData(onData);

@@ -5,6 +5,7 @@ import { openSettings } from "@/components/settings/open-settings";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
 import { designTabMetadata } from "@/lib/design/design-tab-metadata";
+import { dbObjectTabTitle, dbTabMetadataFromId, targetOf } from "@/lib/db-tabs";
 
 // ---------------------------------------------------------------------------
 // URL state types
@@ -18,8 +19,8 @@ export interface UrlState {
 }
 
 const VALID_TAB_TYPES: TabType[] = [
-  "terminal", "chat", "editor", "database", "sqlite",
-  "postgres", "git-diff", "settings",
+  "terminal", "chat", "editor", "database", "db-structure", "db-sql", "sqlite",
+  "git-diff", "settings",
   "extension", "group", "design",
 ];
 
@@ -130,15 +131,12 @@ export function buildMetadataFromUrl(
     case "terminal": return { terminalIndex: parseInt(identifier ?? "1", 10), projectName };
     case "git-diff": return identifier ? { filePath: identifier, projectName } : null;
     case "settings": return {};
-    case "database": {
-      const [connId, tableName] = (identifier ?? "").split(":");
-      return connId ? { connectionId: connId, tableName: tableName ?? "" } : null;
-    }
+    // The id names the table and where it is; the tab reads the connection's name and engine itself.
+    case "database":
+    case "db-structure":
+    case "db-sql":
+      return identifier ? dbTabMetadataFromId(type, identifier) : null;
     case "sqlite": return identifier ? { filePath: identifier, projectName } : null;
-    case "postgres": {
-      const [connId, tableName] = (identifier ?? "").split(":");
-      return connId ? { connectionId: connId, tableName: tableName ?? "" } : null;
-    }
     case "extension": return identifier ? { viewType: identifier, projectName } : null;
     case "group": return identifier ? { groupId: identifier, projectName } : null;
     // The URL names the design only. The provider is resolved by the design tab itself,
@@ -157,9 +155,14 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
     case "terminal": return `Terminal ${identifier ?? "1"}`;
     case "git-diff": return identifier?.split("/").pop() ?? "Diff";
     case "settings": return "Settings";
-    case "database": return identifier ?? "Database";
+    case "database":
+    case "db-structure":
+    case "db-sql": {
+      const m = identifier ? dbTabMetadataFromId(type, identifier) : null;
+      const name = (m?.tableName ?? m?.objectName) as string | undefined;
+      return name ? dbObjectTabTitle(targetOf(m ?? undefined), undefined, name) : "Database";
+    }
     case "sqlite": return identifier?.split("/").pop() ?? "SQLite";
-    case "postgres": return identifier ?? "PostgreSQL";
     case "extension": {
       if (!identifier) return "Extension";
       // "git-graph" → "Git Graph"

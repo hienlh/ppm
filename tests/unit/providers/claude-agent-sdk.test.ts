@@ -656,6 +656,22 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(opts.env.CLAUDE_CODE_ENTRYPOINT).toBe("ppm");
     });
 
+    it("marks the chat's processes, so `ppm db` in the model's shell keeps to the connections available to the AI chat", async () => {
+      // PPM itself may run with the mark switched off; the chat's own must still be on.
+      const saved = process.env.PPM_AI_CHAT;
+      process.env.PPM_AI_CHAT = "0";
+      try {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+        expect(mockQueryFn.mock.calls[0]![0].options.env.PPM_AI_CHAT).toBe("1");
+      } finally {
+        if (saved === undefined) delete process.env.PPM_AI_CHAT;
+        else process.env.PPM_AI_CHAT = saved;
+      }
+    });
+
     it("overrides an entrypoint inherited from the parent process", async () => {
       // PPM launched from a Claude Code session inherits that session's sdk-ts label,
       // which is the filtered one — the spread order has to keep ours last.

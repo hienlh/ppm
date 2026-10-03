@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { resolveBunPath } from "../../services/autostart-generator.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./codex-protocol.ts";
+import { AI_CHAT_MARK } from "../../services/ai-chat-env.ts";
 
 export type NotificationHandler = (notif: JsonRpcNotification) => void;
 export type ServerRequestHandler = (req: ServerRequest) => void;
@@ -28,6 +29,10 @@ const ENV_PREFIX_ALLOWLIST = ["CODEX_", "XDG_", "RUST_"];
  */
 export const CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 
+/**
+ * The allowlisted part of PPM's environment, plus AI_CHAT_MARK: `ppm db` run by the model then
+ * keeps to the connections available to the AI chat.
+ */
 function buildSpawnEnv(): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -36,7 +41,7 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
       out[k] = v;
     }
   }
-  return out;
+  return { ...out, ...AI_CHAT_MARK };
 }
 
 /**

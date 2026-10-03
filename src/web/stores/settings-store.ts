@@ -2,6 +2,11 @@ import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
+import {
+  DEFAULT_DB_EXPLORER, DEFAULT_DB_EXPLORER_VIEW, sanitizeDbExplorer, sanitizeDbExplorerView,
+  type DbExplorerPrefs, type DbExplorerView,
+} from "../../shared/db-explorer-prefs";
+import { sanitizeLookupDescriptions, withLookupDescription, type DbLookupDescriptions } from "../../shared/db-lookup-prefs";
 import { parseTempUnit, type TempUnit } from "../lib/temperature";
 import {
   parseCpuGraphMode, parseCpuBottomGraph,
@@ -25,13 +30,6 @@ export type VoiceEngine = "browser" | "whisper";
 /** Settings is deliberately absent: it opens as its own floating window (or a tab on mobile),
  *  never as a sidebar panel. See `settings/use-open-settings.ts`. */
 export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | "designs" | `ext:${string}`;
-
-/** Expanded nodes of the Database sidebar tree. Table keys are `${connId}:${schema}.${table}`. */
-export interface DbSidebarExpanded {
-  conns: number[];
-  groups: string[];
-  tables: string[];
-}
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -71,7 +69,12 @@ interface SettingsState {
   sidebarTabOrder: SidebarActiveTab[];
   jiraEnabled: boolean;
   dockPosition: DockPosition;
-  dbSidebarExpanded: DbSidebarExpanded;
+  /** The Database sidebar's tree, server-synced: open connections, expanded nodes, empty folders. */
+  dbExplorer: DbExplorerPrefs;
+  /** The Database sidebar on this device: its current database, split and search settings. */
+  dbExplorerView: DbExplorerView;
+  /** ⋯ Lookup: the column that describes a row, per table. Server-synced: it is about the data. */
+  dbLookupDescriptions: DbLookupDescriptions;
   explorerSkin: ExplorerSkinPref;
   /** Show/hide the small fps/KB-per-s/resolution overlay on the remote-desktop viewer
    *  (desktop window and mobile full-screen view both read this same flag). */
@@ -174,7 +177,9 @@ interface SettingsState {
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
   setSidebarTabOrder: (order: SidebarActiveTab[]) => void;
   setDockPosition: (position: DockPosition) => void;
-  setDbSidebarExpanded: (next: DbSidebarExpanded) => void;
+  setDbExplorer: (next: DbExplorerPrefs) => void;
+  setDbExplorerView: (next: DbExplorerView) => void;
+  setDbLookupDescription: (table: string, column: string) => void;
   setExplorerSkin: (pref: ExplorerSkinPref) => void;
   toggleRemoteDesktopStatsVisible: () => void;
   setSysmonTempUnit: (unit: TempUnit) => void;
@@ -210,7 +215,9 @@ interface PersistedSettings {
   sidebarTabOrder?: SidebarActiveTab[];
   jiraEnabled?: boolean;
   dockPosition?: DockPosition;
-  dbSidebarExpanded?: DbSidebarExpanded;
+  dbExplorer?: DbExplorerPrefs;
+  dbExplorerView?: DbExplorerView;
+  dbLookupDescriptions?: DbLookupDescriptions;
   explorerSkin?: ExplorerSkinPref;
   remoteDesktopStatsVisible?: boolean;
   remoteDesktopWarningDismissed?: boolean;
@@ -276,14 +283,6 @@ function sanitizeTabOrder(value: unknown): SidebarActiveTab[] {
   return out;
 }
 
-// "__ungrouped__" is the synthetic group holding connections without a group.
-const DEFAULT_DB_EXPANDED: DbSidebarExpanded = { conns: [], groups: ["__ungrouped__"], tables: [] };
-
-// Caps keep the pref small enough to ride along with every ui-prefs write.
-// Server mirrors these limits in its validator.
-const DB_EXPANDED_CAPS = { conns: 200, groups: 200, tables: 500 } as const;
-
-/** Coerce stored/server data into a valid expansion set; null when unusable. */
 /** Same bound as the server's validator for the pref. */
 const MAX_NAME_LIST = 200;
 
@@ -291,22 +290,6 @@ const MAX_NAME_LIST = 200;
 function sanitizeNameList(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((s): s is string => typeof s === "string" && s.length > 0 && s.length <= 200).slice(-MAX_NAME_LIST);
-}
-
-function sanitizeDbExpanded(value: unknown): DbSidebarExpanded | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const v = value as Record<string, unknown>;
-  const strings = (raw: unknown, cap: number) =>
-    Array.isArray(raw)
-      ? raw.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 300).slice(0, cap)
-      : [];
-  return {
-    conns: Array.isArray(v.conns)
-      ? v.conns.filter((x): x is number => typeof x === "number" && Number.isInteger(x)).slice(0, DB_EXPANDED_CAPS.conns)
-      : [],
-    groups: strings(v.groups, DB_EXPANDED_CAPS.groups),
-    tables: strings(v.tables, DB_EXPANDED_CAPS.tables),
-  };
 }
 
 function persistSettings(update: Partial<PersistedSettings>) {
@@ -410,8 +393,10 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   const mcpDismissed = sanitizeNameList(data.mcpSignInDismissed);
   if (mcpDismissed) patch.mcpSignInDismissed = mcpDismissed;
   if (typeof data.keepScreenAwake === "boolean") patch.keepScreenAwake = data.keepScreenAwake;
-  const dbExpanded = sanitizeDbExpanded(data.dbSidebarExpanded);
-  if (dbExpanded) patch.dbSidebarExpanded = dbExpanded;
+  const dbExplorer = sanitizeDbExplorer(data.dbExplorer);
+  if (dbExplorer) patch.dbExplorer = dbExplorer;
+  const lookupDescriptions = sanitizeLookupDescriptions(data.dbLookupDescriptions);
+  if (lookupDescriptions) patch.dbLookupDescriptions = lookupDescriptions;
   if (Object.keys(patch).length === 0) return;
   persistSettings(patch);
   useSettingsStore.setState(patch as Partial<SettingsState>);
@@ -452,7 +437,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarTabOrder: sanitizeTabOrder(_initial.sidebarTabOrder),
   jiraEnabled: _initial.jiraEnabled ?? false,
   dockPosition: (_initial.dockPosition === "left" || _initial.dockPosition === "right") ? _initial.dockPosition : "bottom",
-  dbSidebarExpanded: sanitizeDbExpanded(_initial.dbSidebarExpanded) ?? DEFAULT_DB_EXPANDED,
+  dbExplorer: sanitizeDbExplorer(_initial.dbExplorer) ?? DEFAULT_DB_EXPLORER,
+  dbExplorerView: sanitizeDbExplorerView(_initial.dbExplorerView) ?? DEFAULT_DB_EXPLORER_VIEW,
+  dbLookupDescriptions: sanitizeLookupDescriptions(_initial.dbLookupDescriptions) ?? {},
   explorerSkin: (_initial.explorerSkin === "windows" || _initial.explorerSkin === "macos") ? _initial.explorerSkin : "auto",
   remoteDesktopStatsVisible: _initial.remoteDesktopStatsVisible ?? false,
   sysmonTempUnit: parseTempUnit(_initial.sysmonTempUnit),
@@ -717,10 +704,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ dockPosition: position });
   },
 
-  setDbSidebarExpanded: (next) => {
-    const clean = sanitizeDbExpanded(next) ?? DEFAULT_DB_EXPANDED;
-    persistUiPref({ dbSidebarExpanded: clean });
-    set({ dbSidebarExpanded: clean });
+  setDbExplorer: (next) => {
+    const clean = sanitizeDbExplorer(next) ?? DEFAULT_DB_EXPLORER;
+    persistUiPref({ dbExplorer: clean });
+    set({ dbExplorer: clean });
+  },
+  // Device-local, as `persistDevicePref` explains: this browser's tabs decide the current database.
+  setDbExplorerView: (next) => {
+    const clean = sanitizeDbExplorerView(next) ?? DEFAULT_DB_EXPLORER_VIEW;
+    persistDevicePref({ dbExplorerView: clean });
+    set({ dbExplorerView: clean });
+  },
+
+  setDbLookupDescription: (table, column) => {
+    const next = withLookupDescription(get().dbLookupDescriptions, table, column);
+    persistUiPref({ dbLookupDescriptions: next });
+    set({ dbLookupDescriptions: next });
   },
 
   setExplorerSkin: (pref) => {

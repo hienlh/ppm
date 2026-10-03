@@ -147,7 +147,7 @@ describe("POST /db/connections", () => {
     expect(res.status).toBe(400);
     const json = await res.json() as any;
     expect(json.ok).toBe(false);
-    expect(json.error).toContain("sqlite or postgres");
+    expect(json.error).toBe("type must be one of postgres, mysql, mariadb, sqlite");
   });
 
   it("rejects invalid hex color with 400", async () => {

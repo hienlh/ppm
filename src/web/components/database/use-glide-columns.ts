@@ -3,10 +3,8 @@ import type { GridColumn } from "@glideapps/glide-data-grid";
 import type { GridColumnSchema } from "./glide-grid-types";
 
 interface UseGlideColumnsResult {
-  /** Ordered GridColumn definitions (pinned first) */
+  /** GridColumn definitions of the columns shown, in order. */
   columns: GridColumn[];
-  /** Number of frozen columns from left */
-  freezeColumns: number;
   /** Column name order matching GridColumn indices */
   columnOrder: string[];
 }
@@ -28,17 +26,16 @@ function estimateColWidth(name: string, rows: Record<string, unknown>[], type: s
 }
 
 /**
- * Build Glide Data Grid column definitions from schema.
- * Reorders columns: pinned first, then unpinned. Auto-sizes widths.
+ * Build Glide Data Grid column definitions from schema: the columns not hidden, in the table's
+ * order, at the width dragged on the header or else one estimated from the first rows. The titles
+ * are drawn by `columnTitleDrawer`, which shows the sort.
  */
 export function useGlideColumns(
   schema: GridColumnSchema[],
   columnNames: string[],
-  pinnedCols: Set<string>,
-  colWidths: Map<string, number>,
+  hidden: ReadonlySet<string> | undefined,
+  colWidths: Readonly<Record<string, number>>,
   rows: Record<string, unknown>[],
-  orderBy?: string | null,
-  orderDir?: "ASC" | "DESC",
 ): UseGlideColumnsResult {
   const schemaMap = useMemo(() => new Map(schema.map((s) => [s.name, s])), [schema]);
 
@@ -48,8 +45,8 @@ export function useGlideColumns(
   const typesKey = schema.map((s) => `${s.name}:${s.type}`).join("|");
   const hasRows = rows.length > 0;
 
-  // Measured once per table, from the first page that arrives: re-measuring on
-  // every fetch made sorting and paging resize every column.
+  // Measured once per table, from the first rows that arrive: re-measuring on
+  // every fetch made sorting and loading more rows resize every column.
   const autoWidths = useMemo(() => {
     const widths = new Map<string, number>();
     for (const name of columnNames) {
@@ -59,27 +56,14 @@ export function useGlideColumns(
   }, [columnsKey, typesKey, hasRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return useMemo(() => {
-    const pinned = columnNames.filter((c) => pinnedCols.has(c));
-    const unpinned = columnNames.filter((c) => !pinnedCols.has(c));
-    const ordered = [...pinned, ...unpinned];
-
+    const ordered = hidden?.size ? columnNames.filter((c) => !hidden.has(c)) : columnNames;
     const columns: GridColumn[] = ordered.map((name) => {
-      const col = schemaMap.get(name);
-      const isPk = col?.pk ?? false;
-
-      let icon: string | undefined;
-      if (orderBy === name) {
-        icon = orderDir === "ASC" ? "sortAsc" : "sortDesc";
-      } else if (isPk) {
-        icon = "headerRowID";
-      } else if (col?.fk) {
-        icon = "headerFk";
-      }
-
-      const width = colWidths.get(name) ?? autoWidths.get(name) ?? 100;
-      return { title: name, id: name, width, hasMenu: true, icon };
+      // Own keys only: a column called `constructor` or `toString` would otherwise read Object's.
+      const width = (Object.hasOwn(colWidths, name) ? colWidths[name] : undefined) ?? autoWidths.get(name) ?? 100;
+      // The menu button is HTML (`grid/grid-header-overlay.tsx`): Glide centres its own in the
+      // whole header, which the filter row makes taller than the title it belongs to.
+      return { title: name, id: name, width, hasMenu: false };
     });
-
-    return { columns, freezeColumns: pinned.length, columnOrder: ordered };
-  }, [schemaMap, columnNames, pinnedCols, colWidths, autoWidths, orderBy, orderDir]);
+    return { columns, columnOrder: ordered };
+  }, [columnNames, hidden, colWidths, autoWidths]);
 }

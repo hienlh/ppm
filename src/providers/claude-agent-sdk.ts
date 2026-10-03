@@ -46,6 +46,7 @@ import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
 import { resolve, dirname } from "node:path";
 import { existsSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
 import { homedir, totalmem } from "node:os";
+import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
 
@@ -414,7 +415,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // started here were invisible to the CLI and the VS Code extension even in the same
     // project. The value reaches the transcript verbatim; telemetry maps unknown ones to
     // "other", so naming ourselves beats borrowing another client's label.
-    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm" };
+    // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
+    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK };
 
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();

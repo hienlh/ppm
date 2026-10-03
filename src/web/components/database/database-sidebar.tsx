@@ -1,94 +1,71 @@
-import { useState } from "react";
-import { Database, Plus } from "@/lib/icons";
+/**
+ * The Database sidebar in DBGate's two parts: CONNECTIONS above, and TABLES, VIEWS, FUNCTIONS of
+ * the current database below, with a line between them to share the height. Either part folds
+ * to its header; the other then takes the height. On a phone both sit in the drawer.
+ */
+import { useRef, useState } from "react";
+import { Database } from "@/lib/icons";
+import { cn } from "@/lib/utils";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
-import { useTabStore } from "@/stores/tab-store";
-import { ConnectionList } from "./connection-list";
-import { ConnectionFormDialog } from "./connection-form-dialog";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { DEFAULT_DB_EXPLORER_VIEW } from "../../../shared/db-explorer-prefs";
 import { ConnectionImportExport } from "./connection-import-export";
-import { useConnections, type Connection, type CreateConnectionData, type UpdateConnectionData } from "./use-connections";
+import { ConnectionsSection } from "./connections-section/connections-section";
+import { ObjectsSection } from "./object-tree/objects-section";
+import { SidebarSplit } from "./sidebar-split";
+import { exportConnections, importConnections, setExplorerView } from "./explorer/db-explorer-store";
+import { useDbExplorerSync } from "./explorer/use-db-explorer-sync";
 
-export function DatabaseSidebar() {
-  const { connections, loading, cachedTables, refreshErrors, columnCache, createConnection, updateConnection, deleteConnection, testConnection, testRawConnection, refreshTables, fetchColumns, exportConnections, importConnections } = useConnections();
-  const openTab = useTabStore((s) => s.openTab);
-  const [addOpen, setAddOpen] = useState(false);
-  const [editConn, setEditConn] = useState<Connection | null>(null);
+interface DatabaseSidebarProps {
+  /** Called once the sidebar has opened a tab — the phone's drawer closes so the tab can be seen. */
+  onNavigate?: () => void;
+}
 
-  const handleOpenTable = (conn: Connection, tableName: string, schemaName: string) => {
-    openTab({
-      type: "database",
-      title: `${conn.name} · ${tableName}`,
-      projectId: null,
-      closable: true,
-      metadata: { connectionId: conn.id, connectionName: conn.name, dbType: conn.type, tableName, schemaName, connectionColor: conn.color },
-    });
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!confirm("Delete this connection?")) return;
-    try { await deleteConnection(id); } catch { /* server error — connection list will stay in sync on next fetch */ }
-  };
-
-  const handleCreate = async (data: CreateConnectionData) => {
-    const created = await createConnection(data);
-    // Auto-refresh tables after creating (use return value to avoid stale closure)
-    if (created) refreshTables(created.id).catch(() => {});
-  };
-
-  const handleUpdate = async (id: number, data: UpdateConnectionData) => {
-    await updateConnection(id, data);
-  };
+export function DatabaseSidebar({ onNavigate }: DatabaseSidebarProps = {}) {
+  useDbExplorerSync();
+  const view = useSettingsStore((s) => s.dbExplorerView);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [dragged, setDragged] = useState<number | null>(null);
+  // A phone has no line to drag, so a share set on a wider screen could never be undone there.
+  const split = useIsMobile() ? DEFAULT_DB_EXPLORER_VIEW.split : dragged ?? view.split;
+  const connectionsOpen = !view.connectionsCollapsed;
+  const objectsOpen = !view.objectsCollapsed;
+  const both = connectionsOpen && objectsOpen;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col">
       <SidebarHeader icon={Database} title="Database">
         <ConnectionImportExport onExport={exportConnections} onImport={importConnections} />
-        <button
-          onClick={() => setAddOpen(true)}
-          className="flex size-6 items-center justify-center rounded text-text-subtle hover:bg-surface-elevated hover:text-foreground"
-          title="Add connection"
-        >
-          <Plus className="size-3.5" />
-        </button>
       </SidebarHeader>
 
-      {/* Connection list */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        {loading ? (
-          <p className="px-4 py-6 text-xs text-text-subtle text-center">Loading…</p>
-        ) : (
-          <ConnectionList
-            connections={connections}
-            cachedTables={cachedTables}
-            refreshErrors={refreshErrors}
-            onOpenTable={handleOpenTable}
-            onRefreshTables={refreshTables}
-            onEdit={setEditConn}
-            onDelete={handleDelete}
-            onFetchColumns={fetchColumns}
-            columnCache={columnCache}
+      <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
+        <ConnectionsSection
+          collapsed={!connectionsOpen}
+          onToggleCollapsed={() => setExplorerView({ connectionsCollapsed: connectionsOpen })}
+          onNavigate={onNavigate}
+          className={both ? "shrink-0 grow-0" : connectionsOpen ? "flex-1" : "shrink-0"}
+          style={both ? { flexBasis: `${split * 100}%` } : undefined}
+        />
+        {both && (
+          <SidebarSplit
+            split={split}
+            containerRef={bodyRef}
+            onMove={setDragged}
+            onCommit={(next) => {
+              setDragged(null);
+              if (next !== view.split) setExplorerView({ split: next });
+            }}
           />
         )}
-      </div>
-
-      {/* Add dialog */}
-      <ConnectionFormDialog
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onSave={handleCreate}
-        onTest={() => Promise.resolve({ ok: false, error: "Save connection first" })}
-        onTestRaw={testRawConnection}
-      />
-
-      {/* Edit dialog */}
-      {editConn && (
-        <ConnectionFormDialog
-          open={!!editConn}
-          onClose={() => setEditConn(null)}
-          connection={editConn}
-          onUpdate={handleUpdate}
-          onTest={(id) => testConnection(id)}
+        <ObjectsSection
+          collapsed={!objectsOpen}
+          onToggleCollapsed={() => setExplorerView({ objectsCollapsed: objectsOpen })}
+          onNavigate={onNavigate}
+          // The split is the line between the two; without it — folded, or on a phone — a border is.
+          className={cn(objectsOpen ? "flex-1 basis-0" : "shrink-0", !both && "border-t border-border", "max-md:border-t max-md:border-border")}
         />
-      )}
+      </div>
     </div>
   );
 }

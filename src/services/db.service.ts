@@ -6,9 +6,11 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
+import type { DbType } from "../shared/db-types.ts";
+import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 54;
+export const CURRENT_SCHEMA_VERSION = 56;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1223,6 +1225,76 @@ export function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE turn_usage ADD COLUMN compacted_at INTEGER"); } catch { /* column exists */ }
     database.exec(`PRAGMA user_version = 54;`);
   }
+
+  if (current < 55) {
+    // MySQL and MariaDB connections. The type is a CHECK constraint, which SQLite cannot alter.
+    allowConnectionTypes(database, ["sqlite", "postgres", "mysql", "mariadb"]);
+    database.exec(`PRAGMA user_version = 55;`);
+  }
+
+  if (current < 56) {
+    // "Available to the AI chat": off keeps `ppm db` run from a chat away from the connection.
+    // Every connection saved before this was available, so the default keeps it that way.
+    try { database.exec("ALTER TABLE connections ADD COLUMN ai_access INTEGER NOT NULL DEFAULT 1"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 56;`);
+  }
+}
+
+/**
+ * Rebuild `connections` so its type CHECK admits `types`, by SQLite's own
+ * recipe for changing a constraint: copy into a new table, drop the old one,
+ * rename the new one into its place.
+ *
+ * Foreign keys go off first, and *outside* the transaction because the pragma
+ * is a no-op inside one: with them on, `DROP TABLE connections` deletes every
+ * row of `connection_table_cache` through its `ON DELETE CASCADE` before the
+ * new table exists. The table's own recorded SQL is reused with only the CHECK
+ * replaced, so a column added by a later migration — or by a build that ran
+ * before this one — is carried over rather than dropped, and ids are copied
+ * as they are, so every cached row still points at its connection. The
+ * AUTOINCREMENT high-water mark is kept too: an id a deleted connection had
+ * is never handed out again, which matters to the query audit rows that still
+ * name it.
+ */
+function allowConnectionTypes(database: Database, types: readonly string[]): void {
+  const foreignKeysOn = () => (database.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys === 1;
+  const foreignKeys = foreignKeysOn();
+  database.exec("PRAGMA foreign_keys = OFF");
+  try {
+    // Still on means a caller holds a transaction, where the drop below would cascade.
+    if (foreignKeysOn()) throw new Error("Cannot rebuild the connections table inside a transaction");
+    // IMMEDIATE: a second process migrating at the same moment waits, then finds the work done.
+    database.transaction(() => {
+      const table = database.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'connections'").get() as { sql: string } | null;
+      if (!table) return;
+      const check = /CHECK\s*\(\s*type\s+IN\s*\([^)]*\)\s*\)/i;
+      const current = table.sql.match(check)?.[0];
+      const wanted = `CHECK(type IN (${types.map((t) => `'${t}'`).join(", ")}))`;
+      if (!current || current === wanted) return; // no type constraint, or already widened
+      const createNew = table.sql.replace(check, wanted).replace(/^CREATE TABLE\s+(["`]?)connections\1/i, "CREATE TABLE connections_new");
+      if (!createNew.startsWith("CREATE TABLE connections_new")) throw new Error("Unexpected definition of the connections table");
+
+      const seq = database.query("SELECT seq FROM sqlite_sequence WHERE name = 'connections'").get() as { seq: number } | null;
+      const before = (database.query("SELECT COUNT(*) AS n FROM connections").get() as { n: number }).n;
+      database.exec("DROP TABLE IF EXISTS connections_new");
+      database.exec(createNew);
+      database.exec("INSERT INTO connections_new SELECT * FROM connections");
+      const after = (database.query("SELECT COUNT(*) AS n FROM connections_new").get() as { n: number }).n;
+      if (after !== before) throw new Error(`Copied ${after} of ${before} connections`);
+      database.exec("DROP TABLE connections");
+      database.exec("ALTER TABLE connections_new RENAME TO connections");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_connections_type ON connections(type)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_connections_group ON connections(group_name)");
+      if (seq) {
+        // The copy restarted the counter at the highest id it copied.
+        const copied = (database.query("SELECT seq FROM sqlite_sequence WHERE name = 'connections'").get() as { seq: number } | null)?.seq ?? 0;
+        database.exec("DELETE FROM sqlite_sequence WHERE name = 'connections'");
+        database.query("INSERT INTO sqlite_sequence (name, seq) VALUES ('connections', ?)").run(Math.max(copied, seq.seq));
+      }
+    }).immediate();
+  } finally {
+    if (foreignKeys) database.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2061,22 +2133,22 @@ export function cleanupOldLimitSnapshots(): void {
 
 export interface ConnectionRow {
   id: number;
-  type: "sqlite" | "postgres";
+  type: DbType;
   name: string;
   connection_config: string;
   group_name: string | null;
   color: string | null;
   /** 1 = readonly (default), 0 = writable. UI-only toggle — CLI cannot change this. */
   readonly: number;
+  /** 1 = available to the AI chat (default), 0 = `ppm db` run from a chat neither lists nor opens it. */
+  ai_access: number;
   sort_order: number;
   created_at: string;
   updated_at: string;
 }
 
-/** Parsed config stored in connection_config JSON */
-export type ConnectionConfig =
-  | { type: "sqlite"; path: string }
-  | { type: "postgres"; connectionString: string };
+/** Parsed config stored in connection_config JSON: a file, or a URL plus the connection form's settings. */
+export type ConnectionConfig = StoredConnectionConfig;
 
 /** Encrypt a connection config object for storage */
 function encryptConfig(config: ConnectionConfig): string {
@@ -2124,7 +2196,7 @@ export function resolveConnection(nameOrId: string): ConnectionRow | null {
 }
 
 export function insertConnection(
-  type: "sqlite" | "postgres", name: string, config: ConnectionConfig,
+  type: DbType, name: string, config: ConnectionConfig,
   groupName?: string | null, color?: string | null,
 ): ConnectionRow {
   const maxOrder = (getDb().query("SELECT COALESCE(MAX(sort_order), -1) as m FROM connections").get() as { m: number }).m;
@@ -2132,6 +2204,14 @@ export function insertConnection(
     "INSERT INTO connections (type, name, connection_config, group_name, color, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(type, name, encryptConfig(config), groupName ?? null, color ?? null, maxOrder + 1);
   return getConnectionByName(name)!;
+}
+
+/** Move every connection in folder `from` into `to`, or out of any folder for null; the count moved. */
+export function moveConnectionGroup(from: string, to: string | null): number {
+  const result = getDb().query(
+    "UPDATE connections SET group_name = ?, updated_at = datetime('now') WHERE group_name = ?",
+  ).run(to, from);
+  return result.changes;
 }
 
 export function deleteConnection(nameOrId: string): boolean {
@@ -2142,7 +2222,8 @@ export function deleteConnection(nameOrId: string): boolean {
 }
 
 export function updateConnection(
-  id: number, updates: { name?: string; config?: ConnectionConfig; groupName?: string | null; color?: string | null; readonly?: number; sortOrder?: number },
+  id: number,
+  updates: { name?: string; config?: ConnectionConfig; groupName?: string | null; color?: string | null; readonly?: number; aiAccess?: number; sortOrder?: number },
 ): void {
   const sets: string[] = [];
   const vals: unknown[] = [];
@@ -2151,6 +2232,7 @@ export function updateConnection(
   if (updates.groupName !== undefined) { sets.push("group_name = ?"); vals.push(updates.groupName); }
   if (updates.color !== undefined) { sets.push("color = ?"); vals.push(updates.color); }
   if (updates.readonly !== undefined) { sets.push("readonly = ?"); vals.push(updates.readonly); }
+  if (updates.aiAccess !== undefined) { sets.push("ai_access = ?"); vals.push(updates.aiAccess); }
   if (updates.sortOrder !== undefined) { sets.push("sort_order = ?"); vals.push(updates.sortOrder); }
   if (sets.length === 0) return;
   sets.push("updated_at = datetime('now')");

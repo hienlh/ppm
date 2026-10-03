@@ -436,7 +436,6 @@ UI updates: "src/index.ts" moves from "Unstaged" to "Staged"
 
 **3. Lazy Loading**
 - MarkdownRenderer lazy-loaded from 3 sites (reduces initial bundle)
-- CodeMirror on-demand in postgres-viewer
 - Mermaid diagram support loaded dynamically only when diagram syntax detected
 
 **4. Code Splitting (vite.config.ts)**
@@ -466,8 +465,8 @@ the **whole host filesystem** — not just registered project directories — th
 
 ### FS scope = auth boundary
 
-Every `/api/fs` route — including `docx-html`, `read`, `raw`, both SQLite doors — passes through
-one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching disk:
+Every `/api/fs` route — including `docx-html`, `read`, `raw` — and the database file door
+(`/api/db/connections/file/*`) pass through one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching disk:
 
 | Protection | Mechanism |
 |---|---|
@@ -475,7 +474,7 @@ one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching
 | Protected roots | `/`, drive roots (`C:\`), `$HOME` and the PPM dir itself refuse delete/rename/move as a source |
 | Download tokens | `/api/fs/download/token` issues a single-use, path-bound token; `/api/fs/raw` spends it on first use, rejects replay and any path mismatch |
 | Symlink safety | every op `lstat`s the entry itself (never follows to the target) so a link *to* a protected path can itself still be deleted, but nothing can read/write *through* one into the PPM dir |
-| SQL injection surface | the external-DB doors (`/api/fs/sqlite/*`) block `ATTACH`/`DETACH` by keyword scan (after stripping comments/string literals) before executing any query — the same class of guard the project-scoped `/sqlite` route also needed |
+| SQL injection surface | the database file door (`/api/db/connections/file/*`, a `.db` opened by its path) refuses `ATTACH`/`DETACH` by keyword scan (after stripping comments/string literals) before executing any query, for a file inside a project and one reached by absolute path alike |
 | No event-loop blocking | every op is `fs.promises`-based with bounded concurrency and a per-entry timeout — a dead network mount or sleeping USB drive cannot stall unrelated requests, which matters once scope is the whole disk instead of one project |
 
 ### API surface
@@ -488,7 +487,7 @@ one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching
 | POST | `/api/fs/copy` \| `/move` \| `/rename` \| `/touch` \| `/mkdir` | Mutations, collision (`EEXIST`)/self-nesting (`EINVAL`) reported for the client to resolve |
 | DELETE | `/api/fs/delete` \| `/rmdir` | `{permanent?}` — OS trash (Recycle Bin / Trash / gio) by default, permanent on request |
 | POST/GET | `/api/fs/download/token` / `/api/fs/raw` | Single-use, path-bound download |
-| GET/POST | `/api/fs/sqlite/{tables,schema,data,query}` | External `.db` viewer — same shape as the project-scoped `/sqlite` route, `path` absolute, PPM dir refused |
+| GET/POST | `/api/db/connections/file/*?path=&project=` | A `.db` opened from a file tree or the editor — the saved-connection routes under the id `file`, the file named and checked on every request. A path relative to `project` must stay inside it; an absolute one returns at most 1,000 rows of typed SQL; the PPM dir is refused, symlinks followed (`src/services/database/file-database.ts`) |
 
 `host-info.service.ts` orchestrates three OS-specific provider sets (`src/services/host-info/`)
 behind a 60s cache with in-flight de-duplication (concurrent `?refresh=true` calls share one

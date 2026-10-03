@@ -110,14 +110,20 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 ## /api/db
 
+- `GET    /api/db/ssh/agent`
 - `GET    /api/db/connections`
 - `GET    /api/db/connections/export`
 - `POST   /api/db/connections/import`
+- `POST   /api/db/connections/folder`
+- `POST   /api/db/connections/:id/duplicate`
 - `GET    /api/db/connections/:id`
+- `GET    /api/db/connections/:id/config`
 - `POST   /api/db/connections`
 - `PUT    /api/db/connections/:id`
 - `DELETE /api/db/connections/:id`
 - `POST   /api/db/test`
+- `POST   /api/db/connections/:id/login`
+- `POST   /api/db/connections/:id/disconnect`
 - `POST   /api/db/connections/:id/test`
 - `GET    /api/db/connections/:id/tables`
 - `GET    /api/db/connections/:id/schema`
@@ -162,13 +168,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `DELETE /api/fs/rmdir`
 - `PUT    /api/fs/upload`
 
-## /api/fs/sqlite
-
-- `GET    /api/fs/sqlite/tables`
-- `GET    /api/fs/sqlite/schema`
-- `GET    /api/fs/sqlite/data`
-- `POST   /api/fs/sqlite/query`
-
 ## /api/group-chat
 
 - `GET    /api/group-chat`
@@ -208,15 +207,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/mcp-auth/flows/:id/confirm`
 - `DELETE /api/mcp-auth/flows/:id`
 - `GET    /api/mcp-auth/state`
-
-## /api/postgres
-
-- `POST   /api/postgres/test`
-- `POST   /api/postgres/tables`
-- `POST   /api/postgres/schema`
-- `POST   /api/postgres/data`
-- `POST   /api/postgres/query`
-- `POST   /api/postgres/cell`
 
 ## /api/preview
 

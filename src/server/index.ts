@@ -14,12 +14,10 @@ import { tunnelService } from "../services/tunnel.service.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { chatGlobalRoutes } from "./routes/chat-global.ts";
-import { postgresRoutes } from "./routes/postgres.ts";
 import { databaseRoutes } from "./routes/database.ts";
 import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { fsOpsRoutes } from "./routes/fs-ops.ts";
 import { fsUploadRoutes } from "./routes/fs-upload.ts";
-import { fsSqliteRoutes } from "./routes/fs-sqlite.ts";
 import { htmlPreviewRoutes } from "./routes/html-preview.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
@@ -216,7 +214,6 @@ app.route("/api/tunnels", tunnelRegistryRoutes);
 app.route("/api/fs", fsBrowseRoutes);
 app.route("/api/fs", fsOpsRoutes);
 app.route("/api/fs", fsUploadRoutes);
-app.route("/api/fs/sqlite", fsSqliteRoutes);
 
 // System resource monitoring (SSE + JSON)
 import { resourceRoutes } from "./routes/resources.ts";
@@ -264,7 +261,6 @@ app.route("/api/tunnel/named", namedTunnelRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/chat", chatGlobalRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
-app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
 import { codexAccountsRoutes } from "./routes/codex-accounts.ts";
@@ -930,6 +926,12 @@ if (process.argv.includes("__serve__")) {
     };
     runBaselinePrune();
     setInterval(runBaselinePrune, 24 * 60 * 60 * 1000);
+  }
+
+  // Import/Export's files of servers that are no longer running: no job or upload names them any more.
+  {
+    const { wipeImpExpFiles } = await import("../services/database/impexp/impexp-files.ts");
+    void wipeImpExpFiles();
   }
 
   // On Windows the supervisor reaps the previous server's whole process tree

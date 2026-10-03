@@ -20,18 +20,38 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
     })),
   ),
   database: lazy(() =>
-    import("@/components/database/database-viewer").then((m) => ({
-      default: m.DatabaseViewer,
+    import("@/components/database/table/table-tab").then((m) => ({
+      default: m.TableTab,
+    })),
+  ),
+  "db-structure": lazy(() =>
+    import("@/components/database/structure/structure-tab").then((m) => ({
+      default: m.StructureTab,
+    })),
+  ),
+  "db-sql": lazy(() =>
+    import("@/components/database/sql-object/sql-object-tab").then((m) => ({
+      default: m.SqlObjectTab,
+    })),
+  ),
+  "db-query": lazy(() =>
+    import("@/components/database/query/query-tab").then((m) => ({
+      default: m.QueryTab,
+    })),
+  ),
+  "db-impexp": lazy(() =>
+    import("@/components/database/impexp/impexp-tab").then((m) => ({
+      default: m.ImpExpTab,
+    })),
+  ),
+  "db-connection": lazy(() =>
+    import("@/components/database/connection-form/connection-form-tab").then((m) => ({
+      default: m.ConnectionFormTab,
     })),
   ),
   sqlite: lazy(() =>
     import("@/components/sqlite/sqlite-viewer").then((m) => ({
       default: m.SqliteViewer,
-    })),
-  ),
-  postgres: lazy(() =>
-    import("@/components/postgres/postgres-viewer").then((m) => ({
-      default: m.PostgresViewer,
     })),
   ),
   "git-diff": lazy(() =>

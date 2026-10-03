@@ -117,11 +117,16 @@ src/
 │   │   ├── query-audit-db.ts    # Connection + schema initialization
 │   │   ├── query-audit.service.ts # Insert/list/count queries; detectOperation()
 │   │   └── result-truncate.ts   # Truncate result rows (first 5 + last 5); cap sql/params at 16KB
-│   ├── database/
-│   │   ├── adapter-registry.ts  # SQLite/Postgres adapter registry
-│   │   ├── sqlite-adapter.ts
-│   │   ├── postgres-adapter.ts
-│   │   └── readonly-check.ts    # CTE-safe readonly validation
+│   ├── database/                # External databases: SQLite, PostgreSQL, MySQL / MariaDB (docs/architecture/data-and-storage.md)
+│   │   ├── adapter-registry.ts  # One adapter per engine (sqlite-, postgres-, mysql-adapter.ts) over {sqlite,postgres,mysql}.service.ts
+│   │   ├── dialect-*.ts         # Quoting, paging and casts per engine; grid-query-builder.ts builds every grid SELECT
+│   │   ├── changeset.service.ts # Grid edits as one script in one transaction, CASCADE deletes
+│   │   ├── structure-edit.service.ts # Structure tab: table diff → DDL plan, preview / apply
+│   │   ├── query-script-runner.ts # Query tab runs: one statement at a time, Stop, row limit
+│   │   ├── readonly-check.ts    # First readonly gate; the database enforces the rest (READ ONLY transaction, readonly handle)
+│   │   ├── ddl/                 # DDL per engine, table diff, SQLite 12-step rebuild
+│   │   ├── drivers/             # mysql2 / ssh2 installed from Settings: catalog, pinned locks, installer, loader
+│   │   └── impexp/              # Import/Export jobs; readers/ for CSV, JSON, JSON lines
 │   ├── jira-api-client.ts       # Jira Cloud REST API v3 (search, getIssue, transitions)
 │   ├── jira-config.service.ts   # Jira config CRUD, AES-256 token encryption
 │   ├── jira-watcher-db.service.ts # Watchers + results table queries
@@ -264,12 +269,22 @@ src/
 │           │   ├── tab-pool-registry.ts # ADDED: slotRegistry — panels/dock/windows publish the element their tab content lives in
 │           │   ├── tab-pop-out-menu-item.tsx # ADDED: "Open in window" tab context-menu item (desktop only)
 │           │   └── use-window-panel-reconcile.ts # ADDED: one-shot repair between persisted window panels and live floating windows
-│           ├── database/            # Database management (5 files, 300+ LOC)
-│           │   ├── database-sidebar.tsx # Sidebar tab container (connection list, form)
-│           │   ├── connection-list.tsx # Connections list with actions, color badges
-│           │   ├── connection-form-dialog.tsx # Create/edit connection form (SQLite/Postgres)
+│           ├── database/            # Database UI, DBGate-style (docs/architecture/data-and-storage.md)
+│           │   ├── database-sidebar.tsx # CONNECTIONS above TABLES, VIEWS, FUNCTIONS, split and resizable
 │           │   ├── connection-color-picker.tsx # WCAG contrast-aware color picker
-│           │   └── use-connections.ts # Hook for connection CRUD operations
+│           │   ├── use-connections.ts # Hook for connection CRUD operations
+│           │   ├── connections-section/ # CONNECTIONS tree: toolbar, folders, status, menus
+│           │   ├── explorer/        # Open / focused connection and database, tree keys, openers for tabs
+│           │   ├── object-tree/     # TABLES, VIEWS, FUNCTIONS of the focused database
+│           │   ├── connection-form/ # Connection tab: General, Advanced, SSH Tunnel, SSL
+│           │   ├── db-login/        # Database Log In dialog (password mode "ask")
+│           │   ├── table/           # DBGate's data tab (type `database`), shared with the .db viewer
+│           │   ├── grid/            # Glide grid parts: filter row, Form view, Cell data, menus, Save changes, copy / export
+│           │   ├── structure/       # Structure tab (`db-structure`): columns, keys, indexes, dependencies
+│           │   ├── table-editor/    # Editing columns, keys and indexes on the Structure tab, its Save dialog
+│           │   ├── sql-object/      # SQL tab (`db-sql`): an object's CREATE / SELECT / INSERT, read-only Monaco
+│           │   ├── impexp/          # Import/Export tab (`db-impexp`)
+│           │   └── query/           # Query tab (`db-query`): scripts, Messages + Result N, Stop, History
 │           ├── projects/            # Project management (339 LOC, 2 files)
 │           ├── settings/            # Settings as its own window kind (tab below md)
 │           │   ├── settings-body.tsx # Shared shell: rail + pane, layout from @container
@@ -280,12 +295,8 @@ src/
 │           ├── shared/              # Shared components (2 files)
 │           │   ├── markdown-renderer.tsx # Render Markdown with syntax highlighting
 │           │   └── bug-report-popup.tsx  # Global bug report popup
-│           ├── sqlite/              # SQLite viewer (unified connectionId API mode)
-│           │   ├── sqlite-viewer.tsx # Display table data, execute queries
-│           │   └── use-sqlite.ts    # Hook for SQLite operations via /api/db routes
-│           ├── postgres/            # PostgreSQL viewer (unified connectionId API mode)
-│           │   ├── postgres-viewer.tsx # Display table data, execute queries
-│           │   └── use-postgres.ts  # Hook for Postgres operations via /api/db routes
+│           ├── sqlite/              # A .db opened from a file tree or the editor
+│           │   └── sqlite-viewer.tsx # Its tables in a list + the data tab's TableView, on /api/db/connections/file
 │           └── ui/                  # Radix + shadcn primitives (14 files)
 │               ├── button, input, label, dialog, dropdown-menu, select, tabs, tooltip, etc.
 │               └── portal-container-context.tsx # ADDED: shared Radix portal target context — lets a tab's popped-out primitives render into the PiP document
@@ -353,7 +364,7 @@ src/
 - **Services:**
   - **ChatService** — Session lifecycle, message queueing, streaming
   - **ConfigService** — Config in SQLite (dotted keys, typed cache)
-  - **DbService** — SQLite persistence (WAL mode, schema v41, connection/account CRUD, table cache)
+  - **DbService** — SQLite persistence (WAL mode, schema v56, connection/account CRUD, table cache)
   - **AccountService** — Multi-account management, token encryption/decryption
   - **AccountSelectorService** — Select active account based on config
   - **GitService** — Git commands via simple-git
@@ -387,8 +398,9 @@ src/
     caller asked for an ancestor object (e.g. `get tunnel` still masks `namedTunnelToken`)
   - **TableCacheService** — Cache table metadata across connections, search tables by name
   - **DatabaseAdapterRegistry** — Register/retrieve DatabaseAdapter implementations (extensible pattern)
-  - **SQLiteAdapter** — SQLite connection/query execution with readonly checks
-  - **PostgresAdapter** — PostgreSQL connection/query execution with readonly checks
+  - **SQLiteAdapter** — SQLite files via `bun:sqlite`; a readonly connection opens a readonly handle
+  - **PostgresAdapter** — PostgreSQL via postgres.js; readonly statements run inside `BEGIN READ ONLY`
+  - **MysqlAdapter** — MySQL / MariaDB via `mysql2`, installed from Settings; readonly sessions are `READ ONLY`
   - **PPMBotService** — Coordinator orchestrator (startup, shutdown, message routing, task polling)
   - **PPMBotSessionManager** — Coordinator session per chat in ~/.ppm/bot/, project resolver
   - **PPMBotTelegramService** — Telegram API (long-polling, send, edit, typing, command handling)

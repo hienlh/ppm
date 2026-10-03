@@ -280,7 +280,7 @@ try {
 
 Query audit logs every SQL statement to a separate database (`~/.ppm/query-audit.db`), recording source (editor, grid, cli, filter), actor (human vs agent), operation type, and sample result rows. **Critical:** audit failures must never break a user query.
 
-**Pattern** (`routes/database.ts`, `routes/sqlite.ts`):
+**Pattern** (`routes/database.ts`):
 ```typescript
 const startedAt = Date.now();
 // Build the audit shape once — the blocked, ok and error branches all reuse it.

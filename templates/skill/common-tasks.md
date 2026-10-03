@@ -36,11 +36,15 @@ ppm projects list --json
 ## Task 4: Add and test a database connection
 
 ```bash
-# Interactive add
-ppm db add
+# PostgreSQL (see `ppm db add --help` for every flag)
+ppm db add --name staging --type postgres --connection-string "postgres://app:secret@db.example.com:5432/myapp"
 
-# Non-interactive (check `ppm db add --help` for full flag list)
-ppm db add --name staging --type postgres --host db.example.com --port 5432 --user app --database myapp
+# MySQL / MariaDB need their driver, installed once
+ppm db driver install mysql
+ppm db add --name shop --type mysql --connection-string "mysql://app:secret@db.example.com:3306/shop"
+
+# SQLite takes an absolute file path
+ppm db add --name local --type sqlite --file /abs/path/to/app.db
 
 # Test the connection
 ppm db test staging

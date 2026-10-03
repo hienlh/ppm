@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { getStatementAtCursor } from "../../../src/web/components/database/split-sql-statements";
+import { getStatementAtCursor, statementAtCursor } from "../../../src/shared/split-sql-statements";
 
 describe("getStatementAtCursor", () => {
   it("returns the only statement when no semicolons", () => {
@@ -49,5 +49,12 @@ describe("getStatementAtCursor", () => {
 
   it("handles single semicolon", () => {
     expect(getStatementAtCursor(";", 1)).toBe(";");
+  });
+
+  it("takes the statement below a cursor parked between two, the last past the end, and none from comments", () => {
+    const text = "SELECT 1;\n\nSELECT 2;\n\n";
+    expect(statementAtCursor(text, 2)).toMatchObject({ sql: "SELECT 2;", startLine: 3 });
+    expect(statementAtCursor(text, 5)).toMatchObject({ sql: "SELECT 2;", startLine: 3 });
+    expect(statementAtCursor("  \n-- only a comment", 1)).toBeNull();
   });
 });

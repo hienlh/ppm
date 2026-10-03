@@ -10,6 +10,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { parseNdjsonLines } from "../utils/ndjson-line-parser.ts";
 import { configService } from "../services/config.service.ts";
 import { withSharedContext } from "../shared/provider-context.ts";
+import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
 
 /**
  * Abstract base class for CLI-spawning AI providers.
@@ -206,7 +207,8 @@ export abstract class CliProvider implements AIProvider {
     const proc = spawn(this.cliCommand, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
+      env: { ...process.env, ...AI_CHAT_MARK },
     });
     proc.stdin?.end();
 

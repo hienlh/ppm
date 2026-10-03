@@ -9,7 +9,7 @@
  * geometry already has.
  */
 import type { Panel } from "./panel-utils";
-import { isWindowPanelId } from "./panel-utils";
+import { isWindowPanelId, upgradePanelTabs } from "./panel-utils";
 import type { Tab, TabType } from "./tab-store";
 
 const STORAGE_KEY = "ppm-window-panels";
@@ -30,8 +30,12 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   chat: true,
   editor: true,
   database: true,
+  "db-structure": true,
+  "db-sql": true,
+  "db-query": true,
+  "db-impexp": true,
+  "db-connection": true,
   sqlite: true,
-  postgres: true,
   "git-diff": true,
   "branch-review": true,
   "session-review": true,
@@ -103,16 +107,21 @@ export function loadWindowPanels(): Record<string, Panel> {
     if (!isWindowPanelId(id) || !value || typeof value !== "object") continue;
     const panel = value as Record<string, unknown>;
     if (!Array.isArray(panel.tabs)) continue;
-    const tabs = panel.tabs.filter(isValidTab);
+    // A database tab saved by an older version is upgraded before it is checked: an old
+    // Postgres viewer's tab would fail the check, and one that can still open should.
+    const upgraded = upgradePanelTabs({
+      id,
+      tabs: panel.tabs.filter((t): t is Tab => !!t && typeof t === "object" && typeof (t as Tab).id === "string"),
+      activeTabId: typeof panel.activeTabId === "string" ? panel.activeTabId : null,
+      tabHistory: Array.isArray(panel.tabHistory) ? panel.tabHistory.filter((h): h is string => typeof h === "string") : [],
+    });
+    const tabs = upgraded.tabs.filter(isValidTab);
     if (tabs.length === 0) continue;
     const ids = new Set(tabs.map((t) => t.id));
-    const tabHistory = Array.isArray(panel.tabHistory)
-      ? panel.tabHistory.filter((h): h is string => typeof h === "string" && ids.has(h))
-      : [];
-    const activeTabId =
-      typeof panel.activeTabId === "string" && ids.has(panel.activeTabId)
-        ? panel.activeTabId
-        : (tabHistory[tabHistory.length - 1] ?? tabs[tabs.length - 1]!.id);
+    const tabHistory = upgraded.tabHistory.filter((h) => ids.has(h));
+    const activeTabId = upgraded.activeTabId && ids.has(upgraded.activeTabId)
+      ? upgraded.activeTabId
+      : (tabHistory[tabHistory.length - 1] ?? tabs[tabs.length - 1]!.id);
     out[id] = { id, tabs, activeTabId, tabHistory };
   }
   return out;

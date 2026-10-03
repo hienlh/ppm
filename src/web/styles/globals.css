@@ -563,3 +563,24 @@ html, body {
 .monaco-editor.ppm-lightbulb-gutter .glyph-margin-widgets .cgmr[class*="codicon-gutter-lightbulb"] {
   transform: translateX(50%);
 }
+
+/*
+ * The Query tab's editor (`sql-query-editor.tsx`). The statement Ctrl+Enter runs, once the script
+ * holds several, has its line numbers bold as DBGate draws them, with a bar beside them; a line an
+ * error of the last run points at is tinted until the next edit. The colour of a line number needs
+ * `!important` for the same reason as above: Monaco's `.line-numbers.active-line-number` is as
+ * specific and comes later.
+ */
+.monaco-editor .line-numbers.ppm-sql-current-statement {
+  font-weight: 700;
+  color: var(--text) !important;
+}
+.monaco-editor .ppm-sql-current-statement-bar {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.monaco-editor .ppm-sql-error-line {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+.monaco-editor .ppm-sql-error-bar {
+  box-shadow: inset 3px 0 0 var(--error);
+}

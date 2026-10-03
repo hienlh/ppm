@@ -1,6 +1,8 @@
 import type { Context, Next } from "hono";
 import { configService } from "../../services/config.service.ts";
 import { consumeDownloadToken } from "../../services/download-token.service.ts";
+import { isExportTicket } from "../../services/database/grid-export-tickets.ts";
+import { GRID_EXPORT_DOWNLOAD_PREFIX } from "../../shared/db-grid-export.ts";
 import { err } from "../../types/api.ts";
 
 /** Auth middleware — checks Bearer token against config */
@@ -52,6 +54,12 @@ export async function authMiddleware(c: Context, next: Next) {
         return next();
       }
     }
+  }
+
+  // A database export's download: the ticket in its path was issued, once, to an authenticated
+  // request, and the handler spends it.
+  if (c.req.method === "GET" && c.req.path.startsWith(GRID_EXPORT_DOWNLOAD_PREFIX)) {
+    if (isExportTicket(c.req.path.slice(GRID_EXPORT_DOWNLOAD_PREFIX.length))) return next();
   }
 
   return c.json(err("Unauthorized"), 401);

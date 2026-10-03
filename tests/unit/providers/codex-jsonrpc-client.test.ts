@@ -107,6 +107,10 @@ describe("buildSpawnEnv allowlist", () => {
     expect(env.CODEX_HOME).toBe("/x/.codex");
     delete process.env.CODEX_HOME;
   });
+
+  it("marks the process as an AI chat's, so `ppm db` in its shell keeps to the connections available to one", () => {
+    expect(buildSpawnEnv().PPM_AI_CHAT).toBe("1");
+  });
 });
 
 describe("codex runs through bun when PPM is a compiled binary", () => {

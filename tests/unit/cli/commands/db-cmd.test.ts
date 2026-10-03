@@ -26,7 +26,11 @@ describe("registerDbCommands", () => {
     expect(subNames).toContain("data");
     expect(subNames).toContain("query");
     expect(subNames).toContain("run");
-    expect(subNames).toHaveLength(9);
+    expect(subNames).toContain("driver");
+    expect(subNames).toHaveLength(10);
+
+    const driverCmd = dbCmd!.commands.find((c) => c.name() === "driver")!;
+    expect(driverCmd.commands.map((c) => c.name())).toEqual(["list", "install", "remove"]);
   });
 
   it("'add' command requires --name and --type options", () => {

@@ -13,6 +13,8 @@ import {
   type ThemeConfig,
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
+import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
+import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
@@ -127,17 +129,10 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   sidebarActiveTab: (v) => typeof v === "string",
   sidebarTabOrder: (v) => Array.isArray(v) && v.length <= 50 && v.every((t) => typeof t === "string"),
   jiraEnabled: (v) => typeof v === "boolean",
-  // Database sidebar tree expansion: { conns: number[], groups: string[], tables: string[] }
-  dbSidebarExpanded: (v) => {
-    if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-    const { conns, groups, tables } = v as Record<string, unknown>;
-    const strList = (x: unknown, max: number) =>
-      Array.isArray(x) && x.length <= max && x.every((s) => typeof s === "string" && s.length <= 300);
-    return (
-      Array.isArray(conns) && conns.length <= 200 && conns.every((n) => typeof n === "number") &&
-      strList(groups, 200) && strList(tables, 500)
-    );
-  },
+  // Database sidebar tree: open connections, expanded nodes, empty folders (see db-explorer-prefs)
+  dbExplorer: isDbExplorerPrefs,
+  // ⋯ Lookup in a table's filter row: the column that describes a row, per table (see db-lookup-prefs)
+  dbLookupDescriptions: isLookupDescriptions,
   // OS Explorer window chrome override — "auto" follows the host platform
   explorerSkin: (v) => v === "auto" || v === "windows" || v === "macos",
   // Project switcher prefs

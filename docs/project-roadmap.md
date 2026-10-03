@@ -30,6 +30,25 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 - See `docs/architecture/workspace-and-ui.md` → "Design mode". Verified by
   `tests/e2e/design-mode-e2e.mjs` at 1366 px and 390 px.
 
+### Database v2 — DBGate-style database UI (next release)
+
+- MySQL and MariaDB beside SQLite and PostgreSQL. The `mysql2` driver, and `ssh2` for SSH tunnels,
+  install from Settings → Database Drivers instead of shipping in the binary.
+- A connection tab (General, Advanced, SSH Tunnel, SSL) with "ask for password" logins, allowed
+  databases, isolation level and a query timeout per connection.
+- CONNECTIONS above TABLES, VIEWS, FUNCTIONS in the sidebar; a data grid with DBGate's filter row
+  and filter dialogs, multi-column sort, 100 rows at a time, edits saved as one script in one
+  transaction (with CASCADE deletes), Form view, Cell data, References, Copy advanced and
+  Generate SQL.
+- A Structure editor (columns, keys, indexes; SQLite tables rebuilt in 12 steps), Import/Export
+  jobs (several tables, CSV / JSON / XML / XLSX / SQL, one workbook or a zip), and a Query tab
+  that runs a script statement by statement with Messages, a Result tab per statement, Stop and
+  History.
+- Readonly connections are enforced by the database itself (READ ONLY transactions, a readonly
+  SQLite handle) on every path, `ppm db query` included.
+- See `docs/architecture/data-and-storage.md` → "Database Management". Verified by
+  `tests/e2e/database-e2e.mjs` on a desktop and a 390 × 844 phone viewport.
+
 ### Adaptive onboarding (0.22.3)
 
 - Adaptive onboarding: choose experience and goal, follow contextual guidance, pause/resume,
@@ -141,7 +160,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 | **Self-hosted PPM Cloud** | High | Docker image of PPM Cloud for enterprise/team. Same codebase, self-hosted config flag. LDAP/SSO. |
 | **PPM Marketplace** | High | Publish/install/update extensions, browse community extensions. Today extensions install from npm only. |
 | **Stability & hardening** | Critical | Security audit, performance work, test coverage, contributor docs, CI/CD. |
-| **Inline SQL** | Medium | Select text in Monaco → run as SQL, connection picker in the editor context menu, results panel below the editor. Not started. |
+| **Inline SQL** | Medium | Select text in Monaco → run as SQL, connection picker in the editor context menu, results panel below the editor. Not started, but no longer from scratch: the Query tab (Database v2) already runs a selection statement by statement and shows a result per statement, so this can reuse its runner (`POST /api/db/connections/:id/query/script`) and its result tabs. |
 
 ---
 

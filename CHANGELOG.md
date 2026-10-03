@@ -21,6 +21,25 @@
 
 - **Reply to a user or AI chat message.** Select Reply to quote a completed message while keeping your draft and attachments. Quotes reach the AI on normal and mid-turn sends, survive history reloads, and remain readable if their source is unavailable. Reply drafts recover after reload or rejected sends; quote cards jump to a uniquely identified original message.
 
+- **The database sidebar is now a DBGate-style workspace, for SQLite, PostgreSQL, MySQL and MariaDB.** It was a list of connections, a table list and a read-mostly grid. It now follows DBGate's screens, one area at a time:
+  - **Connections**: a connection tab with General, Advanced, SSH Tunnel and SSL pages; Test shows the server version and its databases. A connection can **ask for its password** instead of storing it (Database Log In holds it until Disconnect), be limited to a list of databases, set the isolation level and a query timeout. The sidebar shows CONNECTIONS above TABLES, VIEWS, FUNCTIONS, with folders, status, filters and menus.
+  - **MySQL and MariaDB**: the `mysql2` driver installs from **Settings → Database Drivers** (or `ppm db driver install mysql`) rather than shipping in the binary; SSH tunnels use `ssh2` the same way.
+  - **Data grid**: DBGate's filter row and filter syntax with Set filter, Filter multiple values, Choose value and Lookup dialogs and a Filters panel; sort on several columns; 100 rows at a time with Fetch all; a Columns panel; the Rows / Count / Sum label.
+  - **Editing**: edit cells, add and delete rows, undo and redo, then **Save** shows the script and runs it in one transaction. Deleting a row other rows still point at offers **Delete references CASCADE**.
+  - **Form view (F4), Cell data and References**, including following a foreign key from a cell.
+  - **Copy advanced** in nine formats, **Generate SQL** (INSERT / UPDATE / DELETE) from selected rows, and **Export ▾** of the current view as CSV, TSV, JSON, NDJSON, SQL, XML or XLSX.
+  - **Structure tab**: add, change, rename and drop columns, keys and indexes with a preview of the DDL; new tables. SQLite changes that `ALTER TABLE` cannot express rebuild the table in SQLite's 12 documented steps.
+  - **Import/Export tab**: export several tables at once (one file each, one XLSX workbook with a sheet per table, or a zip) and import CSV, JSON or JSON-lines files into new or existing tables, as jobs you can stop.
+  - **Query tab**: runs a script one statement at a time with a **Messages** tab and a **Result** tab per statement, marks the line that failed, can go on past an error, **Stop** cancels the running statement on PostgreSQL and MySQL / MariaDB, a row limit per tab, EXPLAIN, **Format** (Shift+Alt+F: the script laid out by `sql-formatter` in the engine's own dialect, a MySQL `DELIMITER` block left as typed), a **History** panel read from the query audit log, and Ctrl+S to save the script as a `.sql` file.
+  - **On a phone**: the tree is a drawer, menus open on long-press as bottom sheets, filters and columns are sheets, a tapped row opens as a form, and Run sits in the thumb zone.
+
+### Changed
+
+- **A readonly connection is now enforced by the database itself, on every path — `ppm db query` included.** It used to be protected by a check of the SQL text alone, which let a write hidden in a function call through: `SELECT nextval('s')`, `setval`, any function that writes. PostgreSQL now runs each statement inside `BEGIN READ ONLY`, MySQL / MariaDB inside a READ ONLY transaction on a READ ONLY session, and SQLite opens a readonly handle. A statement that ran before on a readonly connection can now fail.
+- **Dates and times come back as the database prints them.** `ppm db data` and `/api/db/connections/:id/data` used to turn PostgreSQL timestamps into ISO strings in UTC; they now pass the database's own text through, as `psql` shows it. Anything that parsed the old ISO / UTC form needs updating.
+- **`verify-full` (PostgreSQL) and `VERIFY_IDENTITY` (MySQL) now check the certificate's name when the host is an IP address.** Bun did not check the name at all for an IP target, so a certificate that does not list that IP was accepted; it is now refused.
+- The separate PostgreSQL viewer and its CodeMirror SQL editor are gone: every connection, and a `.db` file opened from the file tree, uses the same data and Query tabs. `@codemirror/lang-sql` and `@uiw/react-codemirror` are no longer dependencies.
+
 ### Fixed
 
 - **Scrolling up in a long chat failed with "File too large: 542MB exceeds 256MB limit".** A session that had run for five days reached 543MB and 141 compactions, and "Load previous conversation" refused the whole file on every scroll up, although the part each scroll shows is about 3MB. Only that part is parsed now: the file is scanned as bytes, as far as the end of the part, to find where the part starts and ends. The 256MB bound applies to the part parsed rather than the file.
@@ -38,6 +57,8 @@
 - **The lightbulb menu cut off its longest action** ("Move to a new…"). Monaco sizes that menu to its widest row and expects its 4px padding outside that width; Tailwind's global `box-sizing: border-box` put the padding inside, so every menu was 8px too narrow.
 
 - **New File and New Folder from a right-click menu did nothing.** In the project explorer the name box appeared and was gone about 10 ms later, so the toolbar button was the only way to create a file. Radix hands focus back to whatever held it before the menu opened — the right-clicked row — a moment after the menu closes, and does it unconditionally; the box had already taken focus, reads a blur as "done", and done with nothing typed means cancel. Rename escaped only because its box replaces the very row focus would have gone back to. The explorer window lost the same race another way: its name field focused while the menu's focus trap was still up, so it sat there unfocused and whatever was typed next went to the list behind it. A context menu now leaves focus where the chosen item put it (and still returns it to the row when the item moved it nowhere), and the window's field takes focus again once the menu has closed. In Chrome against a scratch server the box survived 0 of 5 attempts before and 5 of 5 after.
+
+- **On a phone, a long press that opens a menu no longer closes it when the finger lifts.** The menu opens after 400 ms, but the browser still treats a touch shorter than its own long-press delay as a tap: 500 ms by default on a phone, up to 1.5 s with a longer "Touch & hold delay". That tap landed on the menu's backdrop and closed it. This applied to every long-press menu in the app.
 
 - **On a phone, three controls outside the database screens are now 44 px touch targets:** the drawer's close button (which also had no accessible name), the version line at the foot of the drawer, and a toast's close button. Each was 17 to 32 px; the two close buttons look as they did.
 

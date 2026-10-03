@@ -17,6 +17,12 @@ export function setKeyPath(path: string): void {
   _key = null; // invalidate cached key
 }
 
+/** Test hook: back to the key in the PPM directory, whatever `setKeyPath` chose before. */
+export function _resetKeyPath(): void {
+  _keyPathOverride = null;
+  _key = null;
+}
+
 function loadOrCreateKey(): Buffer {
   const kp = getKeyPath();
   if (existsSync(kp)) {

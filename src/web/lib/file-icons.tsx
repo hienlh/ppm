@@ -25,10 +25,10 @@ import type { FC } from "react";
 // graph: nothing is fetched until the `<link>` below is appended.
 import ICON_CSS_URL from "@/styles/file-icons.generated.css?url";
 import { basename, cn } from "@/lib/utils";
-import { fileIconName, folderIconName } from "./file-icon-name";
+import { dbEngineIconName, fileIconName, folderIconName } from "./file-icon-name";
 import { useIconFramework } from "@/stores/project-framework-store";
 
-export { fileIconName, folderIconName };
+export { dbEngineIconName, fileIconName, folderIconName };
 
 /**
  * The artwork is fetched when something first asks for an icon, not before.
@@ -128,6 +128,17 @@ export function FileIcon({ name, kind = "file", open, className }: FileIconProps
         `vsi-${icon}`,
         className,
       )}
+    />
+  );
+}
+
+/** A database engine's logo, from the same artwork — the connection list's badge. */
+export function DbEngineIcon({ type, className }: { type: string; className?: string }) {
+  requestIconCss();
+  return (
+    <span
+      aria-hidden="true"
+      className={cn("inline-block shrink-0 size-4 bg-center bg-no-repeat bg-contain", `vsi-${dbEngineIconName(type)}`, className)}
     />
   );
 }

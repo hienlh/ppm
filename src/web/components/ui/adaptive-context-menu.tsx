@@ -88,8 +88,13 @@ function ContextMenuTrigger({
     clearTimeout(timerRef.current);
   }, []);
 
-  const handleTouchEnd = useCallback(() => {
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     clearTimeout(timerRef.current);
+    // The press opened the sheet, so lifting the finger is no tap. A browser whose own long press
+    // takes longer than ours (500 ms on a phone, 1–1.5 s with a longer touch & hold delay, 1 s in
+    // desktop Chromium) still reads it as one, and the click it makes lands on the sheet's
+    // backdrop and closes it. A cancelled touchend is what makes it skip that click.
+    if (suppressRef.current && e.cancelable) e.preventDefault();
   }, []);
 
   // Same timer, and the reason it has to be disarmed on three events rather than

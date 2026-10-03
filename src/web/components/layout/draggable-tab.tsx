@@ -6,6 +6,8 @@ import { isDarkColor } from "@/lib/color-utils";
 import { notificationColor } from "@/stores/notification-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { tabButtonClass } from "@/lib/tab-bar-style";
+import { isDbTabDirty } from "@/lib/db-tabs";
+import { tabUnsavedRows, useUnsavedGridRows } from "@/stores/unsaved-grid-rows-store";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -62,6 +64,7 @@ export function DraggableTab({
   const [editValue, setEditValue] = useState(tab.title);
   const inputRef = useRef<HTMLInputElement>(null);
   const editorTabStyle = useSettingsStore((s) => s.editorTabStyle);
+  const unsavedRows = useUnsavedGridRows((s) => tabUnsavedRows(s, tab.id));
 
   useEffect(() => {
     if (editing) {
@@ -161,6 +164,10 @@ export function DraggableTab({
         >
           {tab.title}
         </span>
+      )}
+      {(isDbTabDirty(tab.type, tab.metadata) || unsavedRows > 0) && (
+        // SQL typed, a table or rows changed since the tab opened live nowhere else: DBGate's unsaved dot.
+        <span role="img" aria-label="Unsaved" title="Unsaved" className="size-[7px] shrink-0 rounded-full bg-text-2" />
       )}
       {tab.closable && !editing && (
         <span

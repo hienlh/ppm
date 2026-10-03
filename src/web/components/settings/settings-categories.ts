@@ -19,6 +19,7 @@ import {
   CalendarClock,
   Keyboard,
   FolderSearch,
+  Database,
   DatabaseZap,
   LayoutGrid,
   Mic,
@@ -37,6 +38,7 @@ export type SettingsCategoryId =
   | "appearance"
   | "language-servers"
   | "remote-desktop"
+  | "database-drivers"
   | "ai-provider"
   | "accounts"
   | "design"
@@ -84,6 +86,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "appearance", group: "core", label: "Appearance", subtitle: "Theme, tabs, explorer skin", icon: Palette },
   { id: "language-servers", group: "core", label: "Language Servers", subtitle: "Completions and go to definition, per language", icon: Zap },
   { id: "remote-desktop", group: "core", label: "Remote Desktop", subtitle: "WebRTC relay for streaming this host's screen", icon: Monitor },
+  { id: "database-drivers", group: "core", label: "Database Drivers", subtitle: "MySQL and MariaDB support, installed on request", icon: Database },
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },

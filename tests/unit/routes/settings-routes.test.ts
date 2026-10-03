@@ -353,3 +353,22 @@ describe("PUT /settings/ai", () => {
     expect(json.data.providers.claude.api_key).toBeFalsy();
   });
 });
+
+describe("PUT /settings/ui-prefs", () => {
+  beforeEach(resetConfig);
+
+  const put = (body: unknown) => createApp().request("/settings/ui-prefs", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  it("keeps the Description each table's lookup was customized to, and refuses a malformed one", async () => {
+    const res = await put({ dbLookupDescriptions: { "1:shop:public:plans": "name" } });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(getConfigValue("ui_prefs")!).dbLookupDescriptions).toEqual({ "1:shop:public:plans": "name" });
+
+    const bad = await put({ dbLookupDescriptions: { "1:shop:public:plans": "" } });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toBe('Invalid value for "dbLookupDescriptions"');
+    expect(JSON.parse(getConfigValue("ui_prefs")!).dbLookupDescriptions).toEqual({ "1:shop:public:plans": "name" });
+  });
+});

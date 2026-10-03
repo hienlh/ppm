@@ -19,7 +19,7 @@ const localStorageStub = {
 };
 installGlobal("localStorage", localStorageStub);
 afterAll(uninstallDom);
-(globalThis as unknown as { fetch: () => Promise<Response> }).fetch = () => Promise.resolve(new Response("{}"));
+installGlobal("fetch", () => Promise.resolve(new Response("{}")));
 
 import { usePanelStore } from "../../../src/web/stores/panel-store";
 import { createPanel, DOCK_PANEL_ID } from "../../../src/web/stores/panel-utils";

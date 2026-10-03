@@ -13,7 +13,7 @@ import { LoginScreen } from "@/components/auth/login-screen";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { hydrateWorkspaceFromServer } from "@/stores/panel-utils";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useTheme } from "@/theme/use-theme";
 import { initShikiThemeSync } from "@/theme/adapters/shiki-adapter";
 import { initMonacoThemeSync } from "@/theme/adapters/monaco-adapter";
@@ -34,6 +34,11 @@ import { useGlobalEvents } from "@/hooks/use-global-events";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { ComparePicker } from "@/components/editor/compare-picker";
+import { DbLoginDialogHost } from "@/components/database/db-login/db-login-dialog";
+import { TabCloseConfirmHost } from "@/components/layout/tab-close-confirm-dialog";
+import { StructureSaveHost } from "@/components/database/table-editor/structure-save-host";
+import { GridSaveHost } from "@/components/database/grid/grid-save-host";
+import { OPEN_NAVIGATION } from "@/components/database/db-sidebar-reveal";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { NamedTunnelSetupPopup } from "@/components/tunnels/named-tunnel/named-tunnel-setup-popup";
 import { ImageOverlay } from "@/components/shared/image-overlay";
@@ -69,8 +74,21 @@ export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const isMobileViewport = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "search" | "history" | undefined>();
+  const [drawerTab, setDrawerTab] = useState<SidebarActiveTab | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
+
+  // Something outside the drawer wants a section of it on screen — the connection tab, once it
+  // has saved, shows the new connection in the Database section.
+  useEffect(() => {
+    const open = (e: Event) => {
+      const tab = (e as CustomEvent<{ tab?: SidebarActiveTab }>).detail?.tab;
+      if (!tab) return;
+      setDrawerTab(tab);
+      setDrawerOpen(true);
+    };
+    window.addEventListener(OPEN_NAVIGATION, open);
+    return () => window.removeEventListener(OPEN_NAVIGATION, open);
+  }, []);
 
   const [mountedProjects, setMountedProjects] = useState<Set<string>>(
     () => new Set(["__global__"]),
@@ -380,7 +398,7 @@ export function App() {
           paletteOpen={paletteOpen}
           navigationOpen={drawerOpen || projectSheetOpen}
           openProjects={() => setProjectSheetOpen(true)}
-          openNavigation={(tab) => { setDrawerTab(tab as "explorer" | "git" | "search" | "history"); setDrawerOpen(true); }}
+          openNavigation={(tab) => { setDrawerTab(tab); setDrawerOpen(true); }}
           closeNavigation={() => { setDrawerOpen(false); setProjectSheetOpen(false); }}
         />
 
@@ -389,6 +407,12 @@ export function App() {
 
         {/* Compare Files picker (Mod+Alt+D, palette, context menus) — singleton */}
         <ComparePicker />
+
+        {/* Database Log In, for a connection that keeps no password — singleton */}
+        <DbLoginDialogHost />
+        <TabCloseConfirmHost />
+        <StructureSaveHost />
+        <GridSaveHost />
 
         {/* Mobile full-screen file explorer sheet — lazy + self-gated, loads nothing until opened */}
         <Suspense fallback={null}>

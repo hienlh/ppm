@@ -186,7 +186,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {isOpen && activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
           {isOpen && activeTab === "search" && <SearchPanel onNavigate={onClose} />}
           {isOpen && activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}
-          {activeTab === "database" && <DatabaseSidebar />}
+          {activeTab === "database" && <DatabaseSidebar onNavigate={onClose} />}
           {activeTab === "tunnels" && <TunnelManagerTab />}
           {activeTab === "jira" && <JiraPanel />}
           {activeTab === "ai-resources" && <AiResourcesPanel />}

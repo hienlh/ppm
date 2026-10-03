@@ -24,6 +24,13 @@ describe("extractQueryTable", () => {
       .toEqual({ table: "self_bill", schema: "umbrella" });
   });
 
+  it("reads a MySQL table quoted in backticks, schema and all", () => {
+    expect(extractQueryTable("SELECT * FROM `order items` WHERE id = 1", "shop"))
+      .toEqual({ table: "order items", schema: "shop" });
+    expect(extractQueryTable("SELECT * FROM `shop`.`users`", ""))
+      .toEqual({ table: "users", schema: "shop" });
+  });
+
   it("tolerates comments and a trailing semicolon", () => {
     expect(extractQueryTable('-- find the bill\nSELECT * FROM "self_bill";', "public"))
       .toEqual({ table: "self_bill", schema: "public" });

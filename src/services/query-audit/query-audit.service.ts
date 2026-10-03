@@ -1,8 +1,13 @@
 import { getAuditDb } from "./query-audit-db.ts";
 import { truncateResult, capBytes, MAX_RESULT_BYTES } from "./result-truncate.ts";
 
-/** "filter" is SQL the grid's column filters build — a real query, but not one the user typed. */
-export type QuerySource = "editor" | "grid" | "cli" | "filter";
+/**
+ * "filter" is SQL the grid's column filters build — a real query, but not one the user typed;
+ * "structure" is DDL from the table editor's Save and the tree's table commands; "export" is the
+ * read behind a file Export wrote, every row of it; "import" is one uploaded file written into a
+ * table, with the table changes its Action made.
+ */
+export type QuerySource = "editor" | "grid" | "cli" | "filter" | "structure" | "export" | "import";
 export type QueryActor = "human" | "agent" | "cli";
 export type QueryOperation = "select" | "insert" | "update" | "delete" | "script" | "other";
 export type QueryStatus = "ok" | "error" | "blocked";
@@ -52,6 +57,8 @@ export interface QueryLogRow {
 
 export interface QueryLogFilter {
   connectionId?: number;
+  /** A database file's entries: they carry no connection id, only the file's path as the name. */
+  fileConnection?: string;
   status?: QueryStatus;
   source?: QuerySource;
   from?: string;
@@ -106,6 +113,7 @@ function buildWhere(filter: QueryLogFilter): { clause: string; params: unknown[]
   const params: unknown[] = [];
 
   if (filter.connectionId != null) { conditions.push("connection_id = ?"); params.push(filter.connectionId); }
+  if (filter.fileConnection != null) { conditions.push("connection_id IS NULL AND connection_name = ?"); params.push(filter.fileConnection); }
   if (filter.status) { conditions.push("status = ?"); params.push(filter.status); }
   if (filter.source) { conditions.push("source = ?"); params.push(filter.source); }
   if (filter.from) { conditions.push("created_at >= ?"); params.push(filter.from); }

@@ -23,7 +23,7 @@ PPM is a local-first web IDE + project manager. This skill describes how to cont
 Invoke when the user asks to:
 - Start, stop, restart, or check the PPM server
 - Manage registered projects (`projects list/add/remove`)
-- Manage database connections stored in PPM config (`db list/add/test/query`)
+- Manage database connections stored in PPM config — PostgreSQL, MySQL / MariaDB, SQLite (`db list/add/test/query`; MySQL and MariaDB need `db driver install mysql` once)
 - Get or set PPM config values (`config get/set`)
 - View PPM logs, status, or report a bug
 - Install, upgrade, or inspect bundled skills / extensions
@@ -35,8 +35,8 @@ Invoke when the user asks to:
 2. **Start server** → `ppm start` (use `--port <n>` to override, `--profile dev` for dev DB)
 3. **List projects** → `ppm projects list`
 4. **Add project** → `ppm projects add <path>`
-5. **List DB connections** → `ppm db list`
-6. **Query a saved DB connection** → `ppm db query <connection-name> "<sql>"`
+5. **List DB connections** → `PPM_AI_CHAT=1 ppm db list`
+6. **Query a saved DB connection** → `PPM_AI_CHAT=1 ppm db query <connection-name> "<sql>"`
 7. **Read config** → `ppm config get <key>` (e.g. `port`, `auth.enabled`)
 8. **Tail logs** → `ppm logs --tail 100` or `ppm logs -f` to follow
 9. **Upgrade PPM** → `ppm upgrade` (or `--check` to only check)
@@ -46,6 +46,7 @@ Invoke when the user asks to:
 
 - Always run `ppm status` before assuming the server is up.
 - Commands exit non-zero on failure and print to stderr. Capture both streams.
+- Set `PPM_AI_CHAT=1` for every `ppm db` command, as above: connections the user has made unavailable to AI are then left out of `db list` and refused by the rest. PPM's own chat sets it already.
 - Most listing commands accept `--json` for structured output; prefer JSON when parsing. Check `--help` if unsure.
 - The config DB is **SQLite**. You may open `~/.ppm/ppm.db` read-only for inspection — see [references/db-schema.md](references/db-schema.md).
 - Do NOT edit the config DB directly while the server is running; use `ppm config set` or the HTTP API.

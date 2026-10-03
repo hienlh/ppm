@@ -5,12 +5,15 @@ import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
 import { monacoDevAssets } from "./scripts/vite-monaco-dev-assets.ts";
+import { glideEagerEditors } from "./scripts/vite-glide-eager-editors.ts";
 
 export default defineConfig({
   plugins: [
     react(),
     // Without this the editor never paints under `bun dev:web` — see the plugin's own comment.
     monacoDevAssets(),
+    // Or the first cell edit after a load loses what was typed — see the plugin's own comment.
+    glideEagerEditors(),
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",

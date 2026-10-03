@@ -9,6 +9,7 @@
  */
 import { basename } from "@/lib/utils";
 import {
+  DB_ENGINE_ICONS,
   DEFAULT_FILE_ICON,
   DEFAULT_FOLDER_ICON,
   DEFAULT_FOLDER_OPEN_ICON,
@@ -59,4 +60,9 @@ export function folderIconName(path: string, open = false): string {
   const name = basename(path).toLowerCase();
   const table = open ? FOLDER_OPEN_ICONS : FOLDER_ICONS;
   return table[name] ?? (open ? DEFAULT_FOLDER_OPEN_ICON : DEFAULT_FOLDER_ICON);
+}
+
+/** A database engine's logo; an engine with none gets the generic SQL glyph. */
+export function dbEngineIconName(type: string): string {
+  return DB_ENGINE_ICONS[type] ?? EXTENSION_ICONS.sql ?? DEFAULT_FILE_ICON;
 }
