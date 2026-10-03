@@ -1,13 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 
 // The URL carries the PPM token, which `withWsAuth` reads from localStorage — absent under
 // bun:test, where merely calling it throws. Stubbed before the import so the module under test
 // sees it, and with a token, because "no device in the url" has to be asserted against a URL
 // that really has a query string on it.
+const previousLocalStorage = (globalThis as { localStorage?: unknown }).localStorage;
 (globalThis as { localStorage?: unknown }).localStorage = {
   getItem: (key: string) => (key.includes("token") ? "test-token" : null),
   setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, length: 0,
 } as Storage;
+// Files share one process: a stub that stores nothing, left installed, empties every later
+// file's local cache (new-chat-provider-gate's warm restore failed whenever it ran after this).
+afterAll(() => { (globalThis as { localStorage?: unknown }).localStorage = previousLocalStorage; });
 
 const { resolveAndroidWsUrl } = await import("../../../src/web/components/android/android-ws-url");
 
