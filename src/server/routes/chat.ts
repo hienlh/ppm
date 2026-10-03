@@ -20,6 +20,7 @@ import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
+import { parseCompactSegment } from "../../services/compact-segment.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
@@ -1076,10 +1077,14 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
       const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"), beforeUuid);
       return c.json(ok(messages));
     }
-    const validated = validateJsonlPath(jsonlPath);
+    // No bound on the file. `parseCompactSegment` scans it as bytes, streamed, from
+    // the start to the `before` record (to the end when no record has that uuid),
+    // and parses only the segment it finds there, which is what it bounds. A 543MB
+    // transcript answered "File too large" to every scroll up while its segments were 3MB.
+    const validated = validateJsonlPath(jsonlPath, Number.POSITIVE_INFINITY);
     // One compaction segment per request: the client walks further back by
     // expanding the summary that arrives at the head of each one.
-    const messages = await parseJsonlTranscript(validated, beforeUuid, { oneSegment: true });
+    const messages = await parseCompactSegment(validated, beforeUuid);
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

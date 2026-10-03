@@ -34,8 +34,14 @@ const BOUNDARY_MARKER = '"compact_boundary"';
  * Answers an empty map for a missing or unreadable file: a transcript that cannot be
  * read still has messages worth showing, and a divider is not worth failing a history
  * load over.
+ *
+ * `window` limits the scan to the byte range the caller parsed (see `readLines`), so a
+ * reader that windows a 543MB transcript does not then scan all of it for this.
  */
-export async function readCompactions(jsonlPath: string): Promise<Map<string, CompactionInfo>> {
+export async function readCompactions(
+  jsonlPath: string,
+  window?: { fromByte?: number; toByte?: number },
+): Promise<Map<string, CompactionInfo>> {
   const byMessageId = new Map<string, CompactionInfo>();
   if (!existsSync(jsonlPath)) return byMessageId;
 
@@ -45,7 +51,7 @@ export async function readCompactions(jsonlPath: string): Promise<Map<string, Co
   let pending: { uuid: string; info: CompactionInfo } | null = null;
 
   try {
-    for await (const line of readLines(jsonlPath)) {
+    for await (const line of readLines(jsonlPath, window?.fromByte, window?.toByte)) {
       if (line.includes(BOUNDARY_MARKER)) {
         const info = parseBoundary(line);
         pending = info ? { uuid: info.uuid, info: info.compaction } : null;

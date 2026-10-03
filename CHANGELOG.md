@@ -6,6 +6,10 @@
 
 - **Reply to a user or AI chat message.** Select Reply to quote a completed message while keeping your draft and attachments. Quotes reach the AI on normal and mid-turn sends, survive history reloads, and remain readable if their source is unavailable. Reply drafts recover after reload or rejected sends; quote cards jump to a uniquely identified original message.
 
+### Fixed
+
+- **Scrolling up in a long chat failed with "File too large: 542MB exceeds 256MB limit".** A session that had run for five days reached 543MB and 141 compactions, and "Load previous conversation" refused the whole file on every scroll up, although the part each scroll shows is about 3MB. Only that part is parsed now: the file is scanned as bytes, as far as the end of the part, to find where the part starts and ends. The 256MB bound applies to the part parsed rather than the file.
+
 ## [0.23.12] - 2026-10-02
 
 ### Added
