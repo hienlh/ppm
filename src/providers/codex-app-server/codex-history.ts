@@ -64,7 +64,7 @@ export function customToolCallToToolUse(p: Record<string, unknown>): ChatEvent {
   const callId = typeof p.call_id === "string" ? p.call_id : undefined;
   if (p.name === "apply_patch" && typeof p.input === "string") {
     const changes = parseApplyPatch(p.input);
-    if (changes.length > 0) return changeToToolUse(changes[0]!, callId);
+    if (changes.length > 0) return changeToToolUse(changes[0]!, callId, changes);
   }
   return { type: "tool_use", tool: String(p.name ?? "tool"), input: p.input ?? {}, toolUseId: callId };
 }

@@ -103,6 +103,28 @@ function extractChange(tool: string, input: Record<string, unknown>, result?: st
   }
 }
 
+/**
+ * A codex patch that touched several files is one Edit/Write call whose `files` lists every
+ * file (`changeToToolUse` in codex-patch.ts); its own fields describe only the first, which
+ * the card shows.
+ */
+function patchFiles(tool: string, input: Record<string, unknown>): RawChange[] | null {
+  if ((tool !== "Edit" && tool !== "Write") || !Array.isArray(input.files)) return null;
+  const out: RawChange[] = [];
+  for (const f of input.files as unknown[]) {
+    if (!f || typeof f !== "object") continue;
+    const file = f as Record<string, unknown>;
+    const filePath = str(file.file_path);
+    if (!filePath) continue;
+    out.push({
+      filePath,
+      op: file.op === "add" ? "create" : "edit",
+      fragments: [{ oldStr: str(file.old_string), newStr: str(file.new_string) }],
+    });
+  }
+  return out.length > 0 ? out : null;
+}
+
 /** Index tool_result output by toolUseId, recursing into sub-agent children. */
 function collectResults(events: ChatEvent[] | undefined, out: Map<string, string>): void {
   if (!events) return;
@@ -134,40 +156,43 @@ function walk(
 
     const input = ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : null;
     if (!input) continue;
-    const raw = extractChange(ev.tool, input, ev.toolUseId ? results.get(ev.toolUseId) : undefined);
-    if (!raw) continue;
-
-    let entry = files.get(raw.filePath);
-    if (!entry) {
-      // Map insertion order gives first-touched ordering for free.
-      entry = {
-        filePath: raw.filePath,
-        op: raw.op,
-        editCount: 0,
-        linesAdded: 0,
-        linesRemoved: 0,
-        edits: [],
-        viaSubagent: false,
-      };
-      files.set(raw.filePath, entry);
-    }
-    if (OP_RANK[raw.op] > OP_RANK[entry.op]) entry.op = raw.op;
-    if (viaSubagent) entry.viaSubagent = true;
-
-    raw.fragments.forEach((frag, editIndex) => {
-      const { added, removed } = countLines(frag.oldStr, frag.newStr);
-      entry!.linesAdded += added;
-      entry!.linesRemoved += removed;
-      entry!.editCount += 1;
-      entry!.edits.push({
-        ...frag,
-        toolUseId: ev.toolUseId,
-        editIndex,
-        editRef: ev.toolUseId ? `${ev.toolUseId}-${editIndex}` : undefined,
-        viaSubagent,
-      });
-    });
+    const single = extractChange(ev.tool, input, ev.toolUseId ? results.get(ev.toolUseId) : undefined);
+    const raws = patchFiles(ev.tool, input) ?? (single ? [single] : []);
+    for (const raw of raws) addChange(files, raw, ev.toolUseId, viaSubagent);
   }
+}
+
+function addChange(files: Map<string, TurnFileChange>, raw: RawChange, toolUseId: string | undefined, viaSubagent: boolean): void {
+  let entry = files.get(raw.filePath);
+  if (!entry) {
+    // Map insertion order gives first-touched ordering for free.
+    entry = {
+      filePath: raw.filePath,
+      op: raw.op,
+      editCount: 0,
+      linesAdded: 0,
+      linesRemoved: 0,
+      edits: [],
+      viaSubagent: false,
+    };
+    files.set(raw.filePath, entry);
+  }
+  if (OP_RANK[raw.op] > OP_RANK[entry.op]) entry.op = raw.op;
+  if (viaSubagent) entry.viaSubagent = true;
+
+  raw.fragments.forEach((frag, editIndex) => {
+    const { added, removed } = countLines(frag.oldStr, frag.newStr);
+    entry!.linesAdded += added;
+    entry!.linesRemoved += removed;
+    entry!.editCount += 1;
+    entry!.edits.push({
+      ...frag,
+      toolUseId,
+      editIndex,
+      editRef: toolUseId ? `${toolUseId}-${editIndex}` : undefined,
+      viaSubagent,
+    });
+  });
 }
 
 /** Files mutated by one turn, in the order the turn first touched them. */

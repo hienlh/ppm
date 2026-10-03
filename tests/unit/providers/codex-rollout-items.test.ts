@@ -117,6 +117,38 @@ describe("mapRolloutItem", () => {
     });
   });
 
+  it("reads a patch as an Edit/Write call with every file, and its result", () => {
+    // Shape verbatim from a codex 0.154 rollout (paths shortened).
+    const mapped = mapRolloutItem({
+      type: "FileChange",
+      id: "call_9",
+      changes: {
+        "/p/upload-test.srt": { type: "add", content: "1\n00:00:01,000 --> 00:00:04,000\n" },
+        "/p/plan.md": { type: "update", unified_diff: "@@ -1 +1 @@\n-old\n+new\n", move_path: null },
+      },
+      status: "completed",
+      stdout: "Success. Updated the following files:\nA /p/upload-test.srt\nM /p/plan.md\n",
+      stderr: "",
+    }) as any;
+    expect(mapped.kind).toBe("events");
+    const [use, result] = mapped.events;
+    expect(use).toMatchObject({ type: "tool_use", tool: "Write", toolUseId: "call_9" });
+    expect(use.input.content).toBe("1\n00:00:01,000 --> 00:00:04,000\n");
+    expect(use.input.files.map((f: any) => [f.file_path, f.op])).toEqual([["/p/upload-test.srt", "add"], ["/p/plan.md", "update"]]);
+    expect(result).toMatchObject({ type: "tool_result", toolUseId: "call_9", isError: false });
+    expect(result.output).toContain("Updated the following files");
+  });
+
+  it("marks a patch codex could not apply as an error", () => {
+    const mapped = mapRolloutItem({ type: "FileChange", id: "x", changes: { "/p/a": { type: "add", content: "" } }, status: "failed" }) as any;
+    expect(mapped.events[1].isError).toBe(true);
+  });
+
+  it("marks a patch the user declined as an error", () => {
+    const mapped = mapRolloutItem({ type: "FileChange", id: "x", changes: { "/p/a": { type: "add", content: "" } }, status: "declined" }) as any;
+    expect(mapped.events[1].isError).toBe(true);
+  });
+
   it("shows an unknown item type rather than dropping it", () => {
     const use = (mapRolloutItem({ type: "SomethingNew", id: "z", detail: 1 }) as any).events[0];
     expect(use.tool).toBe("SomethingNew");

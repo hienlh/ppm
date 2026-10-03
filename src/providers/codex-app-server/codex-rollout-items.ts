@@ -1,6 +1,7 @@
 import type { ChatEvent } from "../provider.interface.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseSubagentActivity, type SubagentActivity } from "./codex-subagent-thread.ts";
+import { changeToToolUse, rolloutFileChanges } from "./codex-patch.ts";
 
 /**
  * Rollout `item_completed` records → PPM chat events.
@@ -119,6 +120,26 @@ function imageGenerationEvents(item: Item): ChatEvent[] {
   ];
 }
 
+/**
+ * A patch codex applied. Without this it fell through to the generic card, so a conversation
+ * read back from disk showed its edits as raw JSON and counted no file as changed.
+ */
+function fileChangeEvents(item: Item): ChatEvent[] {
+  const changes = rolloutFileChanges(item.changes);
+  if (changes.length === 0) return genericEvents(item);
+  const toolUseId = typeof item.id === "string" ? item.id : undefined;
+  const status = String(item.status ?? "");
+  return [
+    changeToToolUse(changes[0]!, toolUseId, changes),
+    {
+      type: "tool_result",
+      output: redactTruncate(item.stdout || changes.map((c) => `${c.op} ${c.path}`).join("\n")),
+      isError: status === "failed" || status === "declined",
+      toolUseId,
+    },
+  ];
+}
+
 /** Everything the mapping does not know, shown rather than silently dropped. */
 function genericEvents(item: Item): ChatEvent[] {
   const toolUseId = typeof item.id === "string" ? item.id : undefined;
@@ -144,6 +165,7 @@ export function mapRolloutItem(item: unknown): RolloutItemMapping {
     return text ? { kind: "assistant", text } : { kind: "ignore" };
   }
   if (type === "CommandExecution") return { kind: "events", events: commandExecutionEvents(it) };
+  if (type === "FileChange") return { kind: "events", events: fileChangeEvents(it) };
   if (type === "Extension") {
     // `kind` names the extension; image generation is the one PPM renders specially.
     if (String(it.kind ?? "").startsWith("image_gen")) {

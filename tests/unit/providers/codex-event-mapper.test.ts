@@ -4,6 +4,18 @@ import { mapCodexEvent } from "../../../src/providers/codex-app-server/codex-eve
 const SID = "thread-1";
 
 describe("mapCodexEvent", () => {
+  it("maps a fileChange over several files to one call that lists every file", () => {
+    const [use] = mapCodexEvent({
+      method: "item/started",
+      params: { item: { type: "fileChange", id: "fc1", status: "inProgress", changes: [
+        { path: "/p/a.ts", kind: { type: "update", move_path: null }, diff: "@@ -1 +1 @@\n-a\n+b\n" },
+        { path: "/p/b.ts", kind: { type: "add" }, diff: "new file\n" },
+      ] } },
+    }, "s") as any[];
+    expect(use).toMatchObject({ type: "tool_use", tool: "Edit", toolUseId: "fc1", input: { file_path: "/p/a.ts", old_string: "a", new_string: "b" } });
+    expect(use.input.files.map((f: any) => [f.file_path, f.op, f.new_string])).toEqual([["/p/a.ts", "update", "b"], ["/p/b.ts", "add", "new file\n"]]);
+  });
+
   it("agentMessage/delta → text", () => {
     expect(mapCodexEvent({ method: "item/agentMessage/delta", params: { delta: "Hi" } }, SID))
       .toEqual([{ type: "text", content: "Hi" }]);

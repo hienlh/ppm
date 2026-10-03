@@ -31,6 +31,23 @@ const edit = (path: string, oldStr: string, newStr: string, id?: string) =>
   toolUse("Edit", { file_path: path, old_string: oldStr, new_string: newStr }, id);
 
 describe("aggregateTurnFileChanges", () => {
+  test("a codex patch over several files counts every file it lists, not just the card's", () => {
+    const patch = toolUse("Edit", {
+      file_path: "/p/a.ts", old_string: "a", new_string: "b",
+      files: [
+        { file_path: "/p/a.ts", op: "update", old_string: "a", new_string: "b" },
+        { file_path: "/p/new.ts", op: "add", old_string: "", new_string: "one\ntwo\n" },
+        { file_path: "/p/gone.ts", op: "delete", old_string: "x\n", new_string: "" },
+      ],
+    }, "item_1");
+    const out = aggregateTurnFileChanges([assistantMsg([patch])]);
+    expect(out.map((c) => [c.filePath, c.op, c.linesAdded, c.linesRemoved])).toEqual([
+      ["/p/a.ts", "edit", 1, 1],
+      ["/p/new.ts", "create", 2, 0],
+      ["/p/gone.ts", "edit", 0, 1],
+    ]);
+  });
+
   test("single Edit yields one row", () => {
     const out = aggregateTurnFileChanges([assistantMsg([edit("/a.ts", "x", "y", "t1")])]);
     expect(out).toHaveLength(1);
