@@ -532,6 +532,16 @@ html, body {
 }
 
 /*
+ * The lightbulb's menu measures its widest row and sets that as its width, with
+ * its 4px padding meant to sit outside it. Tailwind's `* { box-sizing:
+ * border-box }` puts the padding inside instead, so every menu came out 8px too
+ * narrow and its longest action ended in an ellipsis.
+ */
+.monaco-editor .action-widget {
+  box-sizing: content-box;
+}
+
+/*
  * The lightbulb Monaco draws in the glyph margin when its line has no room for
  * it. reserveLightbulbGutter() holds that margin at two lanes, and this moves the
  * bulb from the left one to the middle of both — half its own width is half a
