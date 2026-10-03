@@ -1,4 +1,5 @@
 import type { Subprocess, Terminal as BunTerminal } from "bun";
+import { isUsableTerminalSize } from "../shared/terminal-size";
 
 /** Max output buffer size per session (1MB — enough for ~20K lines) */
 const MAX_BUFFER_SIZE = 1024 * 1024;
@@ -206,10 +207,12 @@ export class TerminalService {
     session.pty.write(data);
   }
 
-  /** Resize terminal PTY */
+  /** Resize terminal PTY. A size below the floor is dropped: a browser that has not got the fit
+   *  guard still sends xterm's 2x1 for a hidden tab, and that size crashes zsh. */
   resize(id: string, cols: number, rows: number): void {
     const session = this.sessions.get(id);
     if (!session || session.pty.closed) return;
+    if (!isUsableTerminalSize(cols, rows)) return;
     session.pty.resize(cols, rows);
   }
 

@@ -358,6 +358,8 @@ Shell (bash/zsh) receives SIGWINCH signal
 Terminal state updated
 ```
 
+A terminal with no layout is never fitted. That covers the dock's active tab while the dock is hidden, which on a phone is every restore because the dock comes back collapsed, and any tab parked off-screen. FitAddon would propose its 2x1 floor for such a terminal, and zsh with a themed prompt aborts on the next keystroke after being redrawn that narrow. The server also drops any size below 20x2 (`src/shared/terminal-size.ts`). Until the terminal is shown, the shell keeps its last real size, or 80x24.
+
 ---
 
 ## Git Integration Flow
