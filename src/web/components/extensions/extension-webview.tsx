@@ -104,7 +104,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Seeded with the theme so the panel's first paint is already the right one.
   // Deliberately not a dependency of this memo: srcDoc is what mounts the
   // iframe, so recomputing it on a theme change would reload the panel. Later
-  // changes are posted in below instead.
+  // changes are posted in below instead, and so is the theme at every load.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const html = useMemo(
     () => injectHostTheme(injectVscodeApiShim(rawHtml), readHostTheme(document.documentElement)),
@@ -254,15 +254,19 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     return () => window.removeEventListener("ext:webview:message", handler);
   }, [resolvedPanelId]);
 
-  // Forward theme changes to the iframe (see the srcDoc memo above)
-  useEffect(() => {
-    const handler = () => {
-      const { mode, css } = readHostTheme(document.documentElement);
-      iframeRef.current?.contentWindow?.postMessage({ command: HOST_THEME_MESSAGE, mode, css }, "*");
-    };
-    window.addEventListener(THEME_CHANGE_EVENT, handler);
-    return () => window.removeEventListener(THEME_CHANGE_EVENT, handler);
+  // Tell the iframe which theme is on (see the srcDoc memo above): on every
+  // change, and on every load. The tab pool moves a tab with appendChild — a
+  // split, a tab dragged to another panel, the switch between the desktop and
+  // phone layouts — and a moved iframe loads its document again from the same
+  // srcDoc, whose seed is the theme of the moment the HTML arrived.
+  const postTheme = useCallback(() => {
+    const { mode, css } = readHostTheme(document.documentElement);
+    iframeRef.current?.contentWindow?.postMessage({ command: HOST_THEME_MESSAGE, mode, css }, "*");
   }, []);
+  useEffect(() => {
+    window.addEventListener(THEME_CHANGE_EVENT, postTheme);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, postTheme);
+  }, [postTheme]);
 
   // Loading state — waiting for extension to create the panel AND deliver HTML.
   // We must wait for HTML before mounting the iframe because browsers don't
@@ -299,6 +303,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
         ref={iframeRef}
         key={resolvedPanelId}
         srcDoc={html}
+        onLoad={postTheme}
         sandbox="allow-scripts"
         className="w-full h-full border-0 bg-white dark:bg-bg"
         title={panel.title}

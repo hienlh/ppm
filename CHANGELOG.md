@@ -87,6 +87,8 @@
 
 - **On a phone, a long-press menu's sheet could be scrolled sideways by 4 px.**
 
+- **An extension panel such as the Git Graph came back in the old theme after its tab moved.** Change the theme, then split the panel, drag its tab elsewhere, or cross between the desktop and phone layouts, and the panel reloaded in the theme it had opened with and kept it until the next theme change. A panel is now told the current theme each time it loads; in Chrome the right theme was in place before the panel's first paint.
+
 ## [0.23.12] - 2026-10-02
 
 ### Added
