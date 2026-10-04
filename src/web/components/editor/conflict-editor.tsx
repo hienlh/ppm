@@ -116,6 +116,9 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerHeight, setContainerHeight] = useState<number | undefined>();
 
+  // Re-runs on loading/error for the same reason as the effect below: the first
+  // render is the spinner, so a mount-only observer found no container, the
+  // height stayed unset and Monaco never appeared.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -124,7 +127,7 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [loading, error]);
 
   // Host-driven resize (picture-in-picture): `automaticLayout` never fires for a
   // size driven by another document, and the editor keeps the PiP size after the

@@ -218,6 +218,13 @@ describe("DraftService", () => {
       expect(result?.content).toBe("unsaved content");
     });
 
+    it("does not delete commit messages, which have no session", () => {
+      draftService.upsert("/repo/path", "git-commit", "Fix the thing");
+      draftService.deleteOrphaned();
+
+      expect(draftService.get("/repo/path", "git-commit")?.content).toBe("Fix the thing");
+    });
+
     it("deletes tab-* session drafts if not in session_metadata", () => {
       draftService.upsert("/project/path", "tab-editor-1", "editor content");
       draftService.upsert("/project/path", "tab-settings-1", "settings content");

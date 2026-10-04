@@ -48,6 +48,7 @@ const DISPATCHERS = [
   "lib/ext-command-dispatch.ts",
   "components/extensions/extension-webview.tsx",
   "components/git/git-status-panel.tsx",
+  "components/git-review/git-review-tab.tsx",
   "lib/blame-hover-commands.ts",
 ];
 

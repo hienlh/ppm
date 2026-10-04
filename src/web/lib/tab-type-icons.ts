@@ -32,6 +32,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   "git-diff": FileDiff,
   "branch-review": FileDiff,
   "session-review": FileDiff,
+  "git-review": FileDiff,
   settings: Settings,
   extension: Puzzle,
   "extension-webview": Puzzle,

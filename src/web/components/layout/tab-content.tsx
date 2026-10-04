@@ -69,6 +69,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.SessionReviewTab,
     })),
   ),
+  "git-review": lazy(() =>
+    import("@/components/git-review/git-review-tab").then((m) => ({
+      default: m.GitReviewTab,
+    })),
+  ),
   settings: lazy(() =>
     import("@/components/settings/settings-tab").then((m) => ({
       default: m.SettingsTab,

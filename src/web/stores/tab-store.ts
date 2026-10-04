@@ -16,6 +16,7 @@ export type TabType =
   | "git-diff"
   | "branch-review"
   | "session-review"
+  | "git-review"
   | "settings"
   | "extension"
   | "extension-webview"

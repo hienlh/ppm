@@ -150,56 +150,110 @@ describe("the detail panel's cells escape what the repository gave them", () => 
   });
 });
 
-describe("no field reaches the detail panel's markup unescaped", () => {
+/**
+ * Two more renderers put repository text into markup outside the detail grid:
+ * a ref pill (every branch and tag name, in the list and in the inspector) and
+ * a changed file's row. Run for real, with the helpers they call taken from the
+ * same shipped script.
+ */
+function buildRows(): {
+  refPillHtml(ref: { name: string; type: string; synced?: boolean }): string;
+  wipFileRowHtml(file: Record<string, unknown>): string;
+  fileIconHtml(path: string): string;
+} {
+  const helpers = [
+    "escHtml", "plural", "splitPath", "fileCheckState", "changeLetter", "changeCounts", "lineNote", "blockAnchor", "blockDots",
+    "hasUnstaged", "countsHtml", "statusTile", "nameAndDir", "checkboxHtml", "dotsHtml", "headAhead",
+    "fileIconHtml", "refPillHtml", "wipFileRowHtml",
+  ];
+  return new Function(`
+  const state = { changes: null, currentBranch: "" };
+  const fileIconClasses = new Map();
+  function ic() { return ""; }
+  ${declarationSource("const STATUS_NAMES = {")}
+  ${helpers.map(functionSource).join("\n")}
+  return { refPillHtml, wipFileRowHtml, fileIconHtml };
+`)() as ReturnType<typeof buildRows>;
+}
+
+const rows = buildRows();
+
+describe("ref pills and changed-file rows escape what the repository gave them", () => {
+  it("escapes a branch name in the pill's text, its data attribute and its title", () => {
+    // `<` and `>` are legal in a ref name, so a cloned repository can ship one.
+    const html = rows.refPillHtml({ name: HOSTILE, type: "local" });
+
+    expect(html).not.toContain("<img");
+    expect(html).toContain('data-ref="&lt;img');
+  });
+
+  it("escapes a ref type, which reaches an attribute too", () => {
+    const html = rows.refPillHtml({ name: "main", type: '"><img src=x onerror=alert(1)>' });
+
+    expect(html).not.toContain("<img");
+  });
+
+  it("escapes a changed file's path everywhere the row uses it", () => {
+    const side = { blocks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 }], added: 1, removed: 1 };
+    const html = rows.wipFileRowHtml({
+      path: `src/${HOSTILE}/a.ts`, x: " ", y: "M", untracked: false, conflict: false, staged: null, unstaged: side,
+    });
+
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("escapes a file name in the attribute its icon is asked for by", () => {
+    const html = rows.fileIconHtml(`src/${HOSTILE}`);
+
+    expect(html).not.toContain("<img");
+    expect(html).toContain('data-fi="&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"');
+  });
+});
+
+describe("no field reaches the panel's markup unescaped", () => {
   /**
-   * The behavioural tests above cover the cells. This covers the renderer
+   * The behavioural tests above cover the cells. This covers the renderers
    * around them, where a field is concatenated straight into a string and the
    * mistake is a missing call rather than a wrong one.
-   */
-  function bodyOf(name: string): string {
-    return functionSource(name);
-  }
-
-  /**
+   *
    * The operator is `\+=?` rather than `\+`, because half of this markup is
    * built by appending: `head += detail.author` is the same defect as
    * `head + detail.author` and the narrower pattern walks straight past it.
    */
   function rawInterpolations(name: string, field: RegExp): string[] {
     const pattern = new RegExp(`\\+=? *(${field.source})\\b(?!\\s*\\?)`, "g");
-    return [...bodyOf(name).matchAll(pattern)].map((match) => match[1]!);
+    return [...functionSource(name).matchAll(pattern)].map((match) => match[1]!);
   }
 
+  /** Numbers — counted by the panel or parsed by the host — not text from the repository. */
+  const counted = (expression: string) => !expression.endsWith(".length") && !expression.endsWith(".index")
+    && expression !== "f.additions" && expression !== "f.deletions";
+
   it("renderDetailPanel interpolates no `detail.*` value directly", () => {
-    const raw = rawInterpolations("renderDetailPanel", /detail\.\w+(?:\.\w+)?/)
-      // `detail.fileChanges.length` and `detail.parents.length` are numbers the
-      // panel counted, not text from the repository.
-      .filter((expression) => !expression.endsWith(".length"));
-
-    expect(raw).toEqual([]);
+    expect(rawInterpolations("renderDetailPanel", /detail\.\w+(?:\.\w+)?/).filter(counted)).toEqual([]);
   });
 
-  it("renderFileListHtml interpolates no file field directly", () => {
+  it("renderStashPanel interpolates no stash or detail value directly", () => {
+    expect(rawInterpolations("renderStashPanel", /detail\.\w+(?:\.\w+)?|stash\.\w+|parts\.\w+|ref|base|when/).filter(counted)).toEqual([]);
+  });
+
+  it("the file list interpolates no file field directly", () => {
     // A path is repository-supplied and lands in three attributes and the text.
-    const raw = rawInterpolations("renderFileListHtml", /f\.\w+|hash|parentHash|section/)
-      .filter((expression) => expression !== "f.additions" && expression !== "f.deletions");
-
-    expect(raw).toEqual([]);
+    expect(rawInterpolations("renderFileListHtml", /f\.\w+|hash|parentHash/).filter(counted)).toEqual([]);
+    expect(rawInterpolations("filesSectionHtml", /detail\.\w+(?:\.\w+)?/).filter(counted)).toEqual([]);
+    expect(rawInterpolations("nameAndDir", /path|parts\[\d\]/)).toEqual([]);
   });
 
-  it("renderFileTree interpolates no file field directly", () => {
-    // Tree mode renders the same rows through a different function, and a
-    // guard that only knows about the list leaves half the panel unwatched —
-    // including the directory name, which is a path segment from the repo.
-    const raw = rawInterpolations("renderFileTree", /f\.\w+|hash|parentHash|section|dir/)
-      .filter((expression) => expression !== "f.additions" && expression !== "f.deletions");
-
-    expect(raw).toEqual([]);
+  it("a changed file's row interpolates no file field directly", () => {
+    expect(rawInterpolations("wipFileRowHtml", /file\.\w+/)).toEqual([]);
   });
 
-  it("renderFileActions interpolates no file field directly", () => {
-    const raw = rawInterpolations("renderFileActions", /file\.\w+/);
+  it("a ref pill interpolates no ref field directly", () => {
+    expect(rawInterpolations("refPillHtml", /ref\.\w+/)).toEqual([]);
+  });
 
-    expect(raw).toEqual([]);
+  it("a history search result interpolates no hit field directly", () => {
+    expect(rawInterpolations("renderSearchResults", /h\.\w+(?:\.\w+)?/)).toEqual([]);
   });
 });

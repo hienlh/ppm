@@ -164,9 +164,17 @@ export async function refreshGitStatus(
   }
 }
 
+/** How long after a `git:changed` the status is read, so a burst of writes costs one read. */
+const CHANGED_DELAY_MS = 300;
+
 /**
  * Polls git status in the background so sidebar badge + file decorations stay fresh.
  * Skips polling when GitStatusPanel is mounted (it has its own 5s poll).
+ *
+ * Every write made through PPM's git routes — a push from the Git Graph, a checkout from the
+ * branch picker — is read again at once (`git:changed`): on the poll alone the status bar kept
+ * the old ahead/behind for up to ten seconds after a sync had finished. The Git Graph's own
+ * menus run git themselves and are still read at the next poll.
  */
 export function useGitChangesPoller(
   projectName: string | undefined,
@@ -184,6 +192,17 @@ export function useGitChangesPoller(
     if (skip) return;
     poll();
     const interval = setInterval(poll, 10_000);
-    return () => clearInterval(interval);
-  }, [poll, skip]);
+    let soon: ReturnType<typeof setTimeout> | undefined;
+    const ours = (e: Event) => {
+      if ((e as CustomEvent<{ projectName?: string }>).detail?.projectName !== projectName) return;
+      clearTimeout(soon);
+      soon = setTimeout(() => void poll(), CHANGED_DELAY_MS);
+    };
+    window.addEventListener("git:changed", ours);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(soon);
+      window.removeEventListener("git:changed", ours);
+    };
+  }, [poll, skip, projectName]);
 }

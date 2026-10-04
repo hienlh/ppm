@@ -9,6 +9,8 @@
  *
  * This drives the real webview HTML in headless Chrome with a synthetic history
  * of 40 parallel branches, and measures the layout rather than reading the CSS.
+ * The optional columns follow the list's own width (a container query), so the
+ * inspector opening beside the list takes them away just as a narrower window does.
  *
  * Run:
  *   bun tests/e2e/git-graph-narrow-layout.ts
@@ -174,8 +176,11 @@ const MEASURE = `(() => {
     graphDrawn: svg ? Number(svg.getAttribute('width')) : 0,
     clipRight: Math.round(clip.right),
     messageLeft: msg ? Math.round(msg.left) : 0,
-    shown: ['col-refs','col-changes','col-author','col-date','col-hash']
+    list: document.getElementById('graph-container').clientWidth,
+    shown: ['col-changes','col-author','col-date','col-hash']
       .filter((c) => { const el = row.querySelector('.' + c); return el && el.offsetParent !== null; }),
+    // Below 760px of list the author is its avatar alone.
+    author: cell('col-author') ? Math.round(cell('col-author').width) : 0,
     canPan: document.documentElement.classList.contains('graph-can-pan'),
     // Nothing may take a row between the header and the first commit: a
     // scrollbar of its own there is what this layout deliberately does without.
@@ -296,10 +301,27 @@ async function main(): Promise<void> {
     console.log(`${width}px — message ${m.message}px, graph cell ${m.graphCell}px, columns: ${m.shown.join(", ") || "(none)"}`);
     check(m.message >= 240, `${width}px keeps the message readable`, `${m.message}px`);
     check(m.overflow <= 0, `${width}px clips nothing off the edge`, `overflow ${m.overflow}px`);
-    check(!m.shown.includes("col-date") && !m.shown.includes("col-hash"), `${width}px has dropped date and hash`);
+    check(!m.shown.includes("col-hash") && m.shown.includes("col-date"), `${width}px has dropped the hash and kept the date`);
+    if (width <= 760) check(m.author > 0 && m.author <= 24, `${width}px keeps only the author's avatar`, `${m.author}px`);
   }
   await cdp.shot("git-graph-760.png");
-  check(!(await cdp.evaluate<any>(MEASURE)).shown.includes("col-changes"), "700px has dropped changes as well");
+
+  // --- The inspector open beside the list: the list's width decides, not the window's ---
+  await setWidth(cdp, 1020);
+  await cdp.evaluate(`selectCommit(${JSON.stringify(hash(2))})`);
+  await Bun.sleep(250);
+  for (const width of [1020, 960]) {
+    await setWidth(cdp, width);
+    m = await cdp.evaluate<any>(MEASURE);
+    console.log(`${width}px with the inspector — list ${m.list}px, message ${m.message}px, columns: ${m.shown.join(", ") || "(none)"}`);
+    check(m.list <= 640, `${width}px with the inspector leaves the list narrower than the window`, `${m.list}px`);
+    check(m.message >= 240, `${width}px with the inspector keeps the message readable`, `${m.message}px`);
+    check(m.overflow <= 0, `${width}px with the inspector clips nothing off the edge`, `overflow ${m.overflow}px`);
+    check(!m.shown.includes("col-hash"), `${width}px with the inspector has dropped the hash`);
+    check(m.shown.includes("col-changes") === m.list > 600, `${width}px with the inspector shows changes only above 600px of list`);
+  }
+  await cdp.shot("git-graph-inspector-960.png");
+  await cdp.evaluate("closeDetailPanel()");
 
   // --- Phone ---
   await setWidth(cdp, 390);
@@ -308,44 +330,56 @@ async function main(): Promise<void> {
   await cdp.shot("git-graph-390.png");
   check(m.overflow <= 0, "the phone layout does not overflow sideways", `overflow ${m.overflow}px`);
   check(m.message > 200, "the phone row is mostly the message", `${m.message}px`);
+  check(m.shown.length === 0, "the phone row has no columns beside the message", m.shown.join(", "));
+  // The phone's second line names the branch: one ref, with its name.
+  const pill = await cdp.evaluate<any>(`(() => {
+    const ref = document.querySelector('#commit-list .commit-row .refs .ref');
+    const name = ref && ref.querySelector('span:not(.ahead)');
+    return { refs: document.querySelectorAll('#commit-list .commit-row:first-child .refs .ref').length,
+      shown: Array.from(document.querySelectorAll('#commit-list .commit-row:first-child .refs .ref')).filter((r) => r.offsetParent !== null).length,
+      name: name ? Math.round(name.getBoundingClientRect().width) : 0 };
+  })()`);
+  check(pill.shown === 1 && pill.name > 0, "the phone row shows its first ref with the ref's name", `${pill.shown} shown, name ${pill.name}px`);
 
   // --- The header's own menu ---
   await setWidth(cdp, 700);
   const menu = await cdp.evaluate<any>(`(() => {
     document.getElementById('graph-header').dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 40 }));
-    const items = Array.from(document.querySelectorAll('#context-menu .ctx-item'));
+    const items = Array.from(document.querySelectorAll('#context-menu .mi'));
     return {
       hidden: document.getElementById('context-menu').classList.contains('hidden'),
       labels: items.map((el) => el.textContent.trim()),
-      ticked: items.filter((el) => (el.querySelector('.ctx-tick') || {}).textContent).length,
-      disabled: items.filter((el) => el.classList.contains('disabled')).map((el) => el.textContent.trim()),
+      ticked: items.filter((el) => el.getAttribute('aria-checked') === 'true').length,
+      disabled: items.filter((el) => el.disabled).map((el) => el.textContent.trim()),
     };
   })()`);
-  check(!menu.hidden && menu.labels.length === 5, "right-clicking the header offers every column", menu.labels.join(" / "));
-  check(menu.ticked === 5, "each column that is on is ticked", `${menu.ticked} ticked`);
+  check(!menu.hidden && menu.labels.length === 4, "right-clicking the header offers every column", menu.labels.join(" / "));
+  check(menu.ticked === 4, "each column that is on is ticked", `${menu.ticked} ticked`);
   check(
-    menu.disabled.length === 3 && menu.disabled.every((l: string) => l.includes("needs a wider panel")),
-    "the ones this width has taken away say so",
+    menu.disabled.length === 1 && menu.disabled[0]!.startsWith("Hash") && menu.disabled[0]!.includes("needs a wider panel"),
+    "the one this width has taken away says so",
     menu.disabled.join(" / "),
   );
   await cdp.shot("git-graph-column-menu.png");
+  await cdp.evaluate("closeMenu()");
 
   // --- A column the reader turned off gives its width to the graph ---
   await setWidth(cdp, 1020);
   const freed = await cdp.evaluate<any>(`(() => {
     const before = document.querySelector('.commit-row .col-graph').getBoundingClientRect().width;
-    setColumnVisible('colRefs', false);
+    setColumnVisible('colAuthor', false);
     return new Promise((r) => setTimeout(() => r({
       before: Math.round(before),
       after: Math.round(document.querySelector('.commit-row .col-graph').getBoundingClientRect().width),
-      refsVar: getComputedStyle(document.documentElement).getPropertyValue('--refs-col-w').trim(),
+      clip: Math.round(document.getElementById('graph-clip').getBoundingClientRect().width),
       overlayLeft: Math.round(document.getElementById('graph-clip').getBoundingClientRect().left),
     }), 150));
   })()`);
   check(freed.after > freed.before, "hiding a column widens the graph", `${freed.before} -> ${freed.after}`);
-  check(freed.refsVar === "0px", "the overlay's origin follows the hidden column", `--refs-col-w: ${freed.refsVar}`);
-  check(freed.overlayLeft <= 12, "the graph starts at the left edge now", `${freed.overlayLeft}px`);
+  check(Math.abs(freed.clip - freed.after) <= 1, "the overlay's clip follows the wider column", `clip ${freed.clip}, column ${freed.after}`);
+  check(freed.overlayLeft <= 12, "the graph starts at the left edge", `${freed.overlayLeft}px`);
+  await cdp.evaluate("setColumnVisible('colAuthor', true)");
 
   console.log(`\nScreenshots in ${SHOTS}\n`);
   if (failures.length) {

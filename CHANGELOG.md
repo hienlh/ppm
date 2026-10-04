@@ -33,12 +33,23 @@
   - **Query tab**: runs a script one statement at a time with a **Messages** tab and a **Result** tab per statement, marks the line that failed, can go on past an error, **Stop** cancels the running statement on PostgreSQL and MySQL / MariaDB, a row limit per tab, EXPLAIN, **Format** (Shift+Alt+F: the script laid out by `sql-formatter` in the engine's own dialect, a MySQL `DELIMITER` block left as typed), a **History** panel read from the query audit log, and Ctrl+S to save the script as a `.sql` file.
   - **On a phone**: the tree is a drawer, menus open on long-press as bottom sheets, filters and columns are sheets, a tapped row opens as a form, and Run sits in the thumb zone.
 
+- **Source Control, a new Review changes tab and the Git Graph now work as one flow: stage block by block, review, commit.** The three show the same changes, the same staged blocks and the same commit message, and an action in one shows in the others straight away.
+  - **Source Control** lists every changed file in one Changes group — staged, unstaged and new together — each with a checkbox (ticked, partly ticked or empty), a dot per block (green once staged), its +/− and its status letter. The branch row always says where the branch stands and offers the one action it needs: Push ↑n, Pull ↓n, Sync, Publish for a branch with no upstream, or Synced. The commit box adds Commit and push, Amend last commit, Commit with sign-off and Undo last commit (only while that commit is not pushed; its message goes back in the box). A merge, rebase or cherry-pick that stopped part way shows a banner with Abort and Continue, each conflict gets a Resolve that opens the conflict editor, and ticking a file that still has conflict markers asks first. Stashes (apply, pop, drop) and worktrees fold out below. On a phone the rows are 56 px, the checkboxes 48 px, and the commit box sits at the bottom, under the thumb.
+  - **Review changes** goes through what you have not committed block by block, the way the chat's session review goes through an agent's edits: Stage (Y), Discard (N), or Lines… (L) to stage single lines. J and K move between blocks across files, and the commit box is in the tab. A binary, very large or renamed file is one block for the whole file. Clicking a file in Source Control opens it here. On a phone the tab shows one block at a time with Discard and Stage at the bottom, and the file list and the commit box in sheets.
+  - **Git Graph** takes the app's colours, icons and font. A commit opens in an inspector on the right — an overlay below 900 px wide, a bottom sheet on a phone — with Checkout, Branch…, Cherry-pick, its message and its files, each with its own file-type icon. The Uncommitted changes row opens the commit box with a checkbox per file, and Review. The toolbar picks which branches are drawn, searches by message, author or hash, lists stashes and worktrees, and has Fetch, Pull ↓n and Push ↑n. A branch, tag or stash changed outside PPM, in a terminal for example, shows within the 5-second refresh instead of waiting for Refresh.
+  - **One commit message per repository**, kept on the server: what you type in one of the three boxes appears in the others, it survives a reload, and a commit from any of them clears all three.
+  - **A discard can be undone.** Discarding a block or a file shows a toast with Undo, and a discarded block keeps its Undo in the Review tab. git keeps nothing of a discarded change, so PPM keeps a copy for a day, up to 100 per repository, under `git-discards/` in its directory. Undo refuses rather than overwrite anything changed since; a file over 20 MB is not copied, and its discard says it cannot be undone.
+  - **Every view follows a change at once.** A git action made through PPM's git routes — everything in Source Control and the Review tab, and in the Git Graph its commit box, its toolbar and applying, popping or dropping a stash — tells Source Control, the Review tab, the Git Graph, the status bar and the file tree's colours to look again. The Git Graph's commit, branch and tag menus still run git themselves, and are seen at the next poll at the latest. After the Git Graph's Fetch, Pull or Push the status bar used to wait up to 10 seconds for its own poll; it now follows in about 0.6 s. The Git Graph's Fetch goes through PPM for that reason, and fetches every remote with prune.
+
 ### Changed
 
 - **A readonly connection is now enforced by the database itself, on every path — `ppm db query` included.** It used to be protected by a check of the SQL text alone, which let a write hidden in a function call through: `SELECT nextval('s')`, `setval`, any function that writes. PostgreSQL now runs each statement inside `BEGIN READ ONLY`, MySQL / MariaDB inside a READ ONLY transaction on a READ ONLY session, and SQLite opens a readonly handle. A statement that ran before on a readonly connection can now fail.
 - **Dates and times come back as the database prints them.** `ppm db data` and `/api/db/connections/:id/data` used to turn PostgreSQL timestamps into ISO strings in UTC; they now pass the database's own text through, as `psql` shows it. Anything that parsed the old ISO / UTC form needs updating.
 - **`verify-full` (PostgreSQL) and `VERIFY_IDENTITY` (MySQL) now check the certificate's name when the host is an IP address.** Bun did not check the name at all for an IP target, so a certificate that does not list that IP was accepted; it is now refused.
 - The separate PostgreSQL viewer and its CodeMirror SQL editor are gone: every connection, and a `.db` file opened from the file tree, uses the same data and Query tabs. `@codemirror/lang-sql` and `@uiw/react-codemirror` are no longer dependencies.
+- **Clicking a file in Source Control opens it in the Review changes tab instead of a diff.** Open diff in the file's menu still shows the whole file's diff. The list is now the default view; if you had picked the tree, it stays a tree.
+- **The Git Graph's commit details moved from the pane under the graph to an inspector on the right, and the Refs column is gone**: branch and tag labels follow the commit's subject. Create worktree, Rebase and Interactive rebase are no longer on the commit menu — rebase is on a branch label's menu, interactive rebase in the command palette, and Add worktree… in the Worktrees menu. Refresh is in the View menu.
+- `POST /git/pull` now takes `{ rebase? }` and pulls from the branch's upstream; it no longer takes a remote or a branch. `POST /git/fetch` takes `prune`.
 
 ### Fixed
 
@@ -61,6 +72,20 @@
 - **On a phone, a long press that opens a menu no longer closes it when the finger lifts.** The menu opens after 400 ms, but the browser still treats a touch shorter than its own long-press delay as a tap: 500 ms by default on a phone, up to 1.5 s with a longer "Touch & hold delay". That tap landed on the menu's backdrop and closed it. This applied to every long-press menu in the app.
 
 - **On a phone, three controls outside the database screens are now 44 px touch targets:** the drawer's close button (which also had no accessible name), the version line at the foot of the drawer, and a toast's close button. Each was 17 to 32 px; the two close buttons look as they did.
+
+- **Pull failed whenever the branch had diverged from its remote.** git 2.33 and later refuse a plain `git pull` then ("Need to specify how to reconcile divergent branches") unless the repository says how to combine the two. PPM now merges, as GitHub Desktop does, when the repository sets none of `pull.rebase`, `pull.ff` or `branch.<name>.rebase`, and leaves it to git when it sets one.
+
+- **Popping or applying a stash from the Git Graph brought staged changes back unstaged.** It now restores the index too; when the staged part no longer fits, the changes come back unstaged and a toast says so.
+
+- **The conflict editor never showed the file.** It measured the space for the editor while its loading spinner was still up, found none, and never measured again.
+
+- **The Git Graph lost your place every 5 seconds.** Its refresh cleared the selected commit and the search results, and Refresh or loading more commits dropped the branch filter.
+
+- **The Git Graph drew `origin/HEAD` as a label of its own, and listed a branch called "origin".** git 2.48 and later create that pointer on every fetch; it is the remote's default branch, not a branch.
+
+- **The file tree's git colours stood still while Source Control was open.**
+
+- **On a phone, a long-press menu's sheet could be scrolled sideways by 4 px.**
 
 ## [0.23.12] - 2026-10-02
 

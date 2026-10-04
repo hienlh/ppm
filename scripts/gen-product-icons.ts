@@ -210,6 +210,9 @@ const MAP: Record<string, string | null> = {
   Bug: "bug",
   GitBranch: "branch",
   GitCommitHorizontal: null, // no commit glyph in Fluent
+  GitMerge: "merge",
+  Archive: "archive", // a git stash
+  CloudUpload: "cloud-arrow-up", // publish a branch
   Database: "database",
   DatabaseZap: "database-lightning",
   Puzzle: "puzzle-piece",

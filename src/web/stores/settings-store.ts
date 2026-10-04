@@ -412,7 +412,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   customThemes: [],
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   sidebarWidth: _initial.sidebarWidth ?? 280,
-  gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
+  gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   inlineBlame: _initial.inlineBlame ?? false,
   wordWrap: _initial.wordWrap ?? false,
   remoteDesktopQuality: parseQualityChoice(_initial.remoteDesktopQuality),

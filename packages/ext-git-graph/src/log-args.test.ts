@@ -13,10 +13,10 @@ import { describe, it, expect } from "bun:test";
 import { logArgs } from "./extension.ts";
 
 describe("logArgs", () => {
-  it("puts a real branch at the end of the arguments", () => {
+  it("puts a real branch at the end of the arguments, closed by `--` so it is never read as a path", () => {
     const args = logArgs({ maxCommits: 50, skip: 0, branch: "feature/x" }, "--format=%H");
 
-    expect(args).toEqual(["log", "--format=%H", "--topo-order", "-n", "50", "feature/x"]);
+    expect(args).toEqual(["log", "--format=%H", "--topo-order", "-n", "50", "feature/x", "--"]);
   });
 
   it("asks for every ref but the stashes when no branch is named", () => {

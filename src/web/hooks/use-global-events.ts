@@ -39,6 +39,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  * - `jira:*` → re-dispatched as window events.
  * - `tunnel:*` → re-dispatched as window events (named-tunnel setup flow —
  *   login URL/state, setup progress/done/pending/error).
+ * - `git:*` → re-dispatched as window events (`git:changed` after any write PPM
+ *   makes to a repository, `git:commit-draft` when the shared commit message changes).
  * - `design:*` → re-dispatched as window events (`design:history_changed`,
  *   `design:comments_changed`). A design's `.design/` folder is not watched, so these
  *   are the only signal that its snapshots or comments changed.
@@ -140,6 +142,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         type.startsWith("jira:")
         || type.startsWith("tunnel:")
         || type.startsWith("design:")
+        || type.startsWith("git:")
         || type.startsWith("agent-transcript:")
         || type === "agent-activity"
       ) {

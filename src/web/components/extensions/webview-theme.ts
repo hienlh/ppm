@@ -39,6 +39,18 @@ const VAR_MAP: [webviewVar: string, appVar: string][] = [
   ["--green", "--success"],
   ["--yellow", "--warning"],
   ["--red", "--error"],
+  // Under the app's own names, for a panel drawn to the app's design rather
+  // than ported from VS Code (the Git Graph): the accent as a fill with its
+  // text colour, the selection wash and its border, the raised surface and
+  // the two shadows a menu and a sheet cast.
+  ["--accent", "--accent"],
+  ["--accent-fg", "--accent-fg"],
+  ["--accent-wash", "--accent-wash"],
+  ["--accent-wash-border", "--accent-wash-border"],
+  ["--panel", "--panel"],
+  ["--panel-2", "--panel-2"],
+  ["--shadow-float", "--shadow-float"],
+  ["--shadow-panel", "--shadow-panel"],
 ];
 
 export interface HostTheme {

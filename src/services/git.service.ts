@@ -256,24 +256,37 @@ class GitService {
     return diff;
   }
 
+  /**
+   * For commands given file names: each is that file, never a pattern. A file
+   * called `[ab].txt` is otherwise a glob, and staging or discarding it also
+   * stages or discards `a.txt`.
+   */
+  private literalGit(projectPath: string): SimpleGit {
+    return this.git(projectPath).env({ ...process.env, GIT_LITERAL_PATHSPECS: "1" });
+  }
+
   async stage(projectPath: string, files: string[]): Promise<void> {
-    await this.git(projectPath).add(files);
+    // After `--`, or a file called `--all` is git's flag of that name and stages the whole tree.
+    await this.literalGit(projectPath).add(["--", ...files]);
   }
 
   async unstage(projectPath: string, files: string[]): Promise<void> {
-    await this.git(projectPath).reset(["HEAD", "--", ...files]);
+    await this.literalGit(projectPath).reset(["HEAD", "--", ...files]);
   }
 
-  async commit(projectPath: string, message: string, amend = false): Promise<string> {
+  async commit(projectPath: string, message: string, amend = false, signoff = false): Promise<string> {
     if (amend) {
       const args = ["commit", "--amend"];
       if (message?.trim()) args.push("-m", message);
       else args.push("--no-edit");
+      if (signoff) args.push("--signoff");
       await this.git(projectPath).raw(args);
       return (await this.git(projectPath).revparse(["HEAD"])).trim();
     }
-    const result = await this.git(projectPath).commit(message);
-    return result.commit;
+    const result = await this.git(projectPath).commit(message, undefined, signoff ? { "--signoff": null } : undefined);
+    // Read off git's "[main <hash>]" line, which on a detached HEAD is
+    // "[detached HEAD <hash>]" — and simple-git then answers "HEAD <hash>".
+    return result.commit.slice(result.commit.lastIndexOf(" ") + 1);
   }
 
   async push(
@@ -457,8 +470,9 @@ class GitService {
     return { commits, branches, head };
   }
 
-  async fetch(projectPath: string, remote?: string): Promise<void> {
+  async fetch(projectPath: string, remote?: string, prune = false): Promise<void> {
     const args = remote ? [remote] : ["--all"];
+    if (prune) args.push("--prune");
     await this.git(projectPath).fetch(args);
   }
 
@@ -470,11 +484,12 @@ class GitService {
     const tracked = files.filter((f) => !untrackedSet.has(f));
     const untracked = files.filter((f) => untrackedSet.has(f));
 
+    const literal = this.literalGit(projectPath);
     if (tracked.length > 0) {
-      await git.checkout(["--", ...tracked]);
+      await literal.checkout(["--", ...tracked]);
     }
     if (untracked.length > 0) {
-      await git.clean("f", ["-e", "!.*", "--", ...untracked]);
+      await literal.clean("f", ["-e", "!.*", "--", ...untracked]);
     }
   }
 

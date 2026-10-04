@@ -239,6 +239,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // One review per chat session: reopening it from the changes bar focuses it.
     case "session-review":
       return `session-review:${metadata?.projectName ?? "unknown"}:${metadata?.sessionId ?? "unknown"}`;
+    // One per project: it follows the repository Source Control has chosen.
+    case "git-review":
+      return `git-review:${metadata?.projectName ?? "unknown"}`;
     case "conflict-editor":
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":

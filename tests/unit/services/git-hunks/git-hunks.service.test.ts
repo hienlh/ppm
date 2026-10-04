@@ -561,3 +561,38 @@ describe("a file that was deleted", () => {
     expect(await git(["status", "--porcelain"])).toBe("");
   });
 });
+
+describe("diff settings in the user's config", () => {
+  it("stages a hunk when diff.noprefix drops the a/ and b/ git apply strips", async () => {
+    await git(["config", "diff.noprefix", "true"]);
+    makeTwoDistantChanges();
+
+    await gitHunksService.stage(repo, "file.txt", await pick("file.txt", "worktree", [0]));
+
+    expect((await stagedBytes("file.txt")).toString()).toBe(withChanges({ 2: "TWO-changed" }));
+  });
+
+  it("stages from the real bytes when a textconv filter would rewrite them", async () => {
+    writeFileSync(join(repo, ".gitattributes"), "*.txt diff=upper\n");
+    await git(["config", "diff.upper.textconv", "tr a-z A-Z <"]);
+    makeTwoDistantChanges();
+
+    await gitHunksService.stage(repo, "file.txt", await pick("file.txt", "worktree", [0]));
+
+    expect((await stagedBytes("file.txt")).toString()).toBe(withChanges({ 2: "TWO-changed" }));
+  });
+
+  it("reads a glob-looking file name as that one file", async () => {
+    writeFileSync(join(repo, "a.txt"), "a\n");
+    writeFileSync(join(repo, "[ab].txt"), "glob\n");
+    await git(["add", "a.txt", "[ab].txt"]);
+    await git(["commit", "-qm", "two names"]);
+    writeFileSync(join(repo, "a.txt"), "a changed\n");
+    writeFileSync(join(repo, "[ab].txt"), "glob changed\n");
+
+    const { hunks } = await gitHunksService.getHunks(repo, "[ab].txt", "worktree");
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]!.lines.map((l) => l.kind + l.text)).toEqual(["-glob", "+glob changed"]);
+  });
+});

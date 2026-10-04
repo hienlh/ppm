@@ -174,7 +174,8 @@ function ContextMenuContent({
   const { open, setOpen } = React.useContext(BottomSheetCtx);
   return (
     <BottomSheet open={open} onClose={() => setOpen(false)} className={cn("p-2", className)}>
-      <div className="max-h-[60vh] overflow-y-auto">{children}</div>
+      {/* `overflow-x-hidden`: a separator's `-mx-1` otherwise scrolls the sheet sideways by 4px. */}
+      <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden">{children}</div>
     </BottomSheet>
   );
 }

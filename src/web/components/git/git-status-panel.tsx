@@ -1,23 +1,37 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+/**
+ * Source Control: the branch and its sync button, the shared commit message,
+ * and the working tree as one list of changed files.
+ *
+ * One list rather than VS Code's "Staged" and "Changes" groups, because a
+ * file is not one or the other — staging works block by block, so a file is
+ * often partly staged. Each row says how much with a dot per block and a
+ * three-state checkbox; ticking it stages the rest of the file, and the Review
+ * tab (or Lines…) is where a single block is picked.
+ *
+ * Read from `GET /git/changes` (`useGitChanges`), which also keeps the sidebar
+ * badge, the explorer's decorations and the status bar current while this
+ * panel is open. Every discard can be undone from its toast for a day: the
+ * server keeps what it threw away (`git-discard-journal`).
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
 import {
-  Plus,
-  Minus,
-  RefreshCw,
-  ArrowUpFromLine,
+  AlertCircle,
+  Archive,
   ArrowDownToLine,
-  Loader2,
-  Undo2,
-  List,
-  FolderTree,
-  ChevronRight,
-  ChevronDown,
-  FileText,
-  GitCommitHorizontal,
-  GitBranch,
   Check,
-  SquareDashedMousePointer,
   FileDiff,
+  FolderTree,
+  GitBranch,
+  History,
+  List,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  Trash2,
+  Undo2,
+  X,
 } from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { api, projectUrl } from "@/lib/api-client";
@@ -26,22 +40,26 @@ import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
-import { useGitStatusStore } from "@/stores/git-status-store";
 import { useGitRepo } from "@/hooks/use-git-repo";
-import { FileIcon } from "@/lib/file-icons";
+import { useGitChanges } from "@/hooks/use-git-changes";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useExtensionStore } from "@/stores/extension-store";
-import { GitWorktreePanel } from "./git-worktree-panel";
-import { HunkStageDialog, type HunkStageTarget } from "./hunk-stage-dialog";
-import { GitRepoBar, GitRepoChoice, GitNoRepo } from "./git-repo-picker";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { openGitReview } from "@/lib/open-git-review";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/adaptive-context-menu";
+  allCheckState,
+  changeTotals,
+  discardSummary,
+  fileCheckState,
+  hasConflictMarkers,
+  hasUnstaged,
+  OPERATION_NOUN,
+  splitPath,
+  syncMode,
+  unstagePaths,
+  type SyncMode,
+} from "@/lib/git-changes-view";
+import { formatRelativeDate } from "@/lib/format-date";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,16 +67,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import type { GitStatus, GitFileChange } from "../../../types/git";
-import { buildTree, compactTree, collectFiles, type TreeNode } from "@/lib/git-file-tree";
+import type { ChangedFile, DiscardRecord, GitChanges, StashEntry } from "../../../shared/git-changes";
+import { GitWorktreePanel } from "./git-worktree-panel";
+import { HunkStageDialog, type HunkStageTarget } from "./hunk-stage-dialog";
+import { GitRepoBar, GitRepoChoice, GitNoRepo } from "./git-repo-picker";
+import { GitBranchRow } from "./git-branch-row";
+import { GitCommitComposer, type CommitOptions } from "./git-commit-composer";
+import { GitOperationBanner } from "./git-operation-banner";
+import { GitStashSection, type StashAction } from "./git-stash-section";
+import { GitChangeRow, type ChangeRowActions } from "./git-change-row";
+import { GitChangeTree, type FolderActions } from "./git-change-tree";
+import { CheckCell, CountChip, GroupLabel } from "./git-change-parts";
+import { GitConfirm, type GitConfirmRequest } from "./git-confirm";
 
 interface GitStatusPanelProps {
   metadata?: Record<string, unknown>;
@@ -67,61 +87,17 @@ interface GitStatusPanelProps {
   onNavigate?: () => void;
 }
 
-type ViewMode = "flat" | "tree";
-
-const STATUS_COLORS: Record<string, string> = {
-  M: "text-warning",
-  A: "text-success",
-  D: "text-error",
-  R: "text-primary",
-  C: "text-accent-2",
-  "?": "text-text-3",
-};
-
-/** Indent per nesting level, and where that level's guide line sits inside it. */
-const TREE_INDENT = 14;
-const TREE_GUIDE_X = 7;
-
-/**
- * Ellipsize a name from its *start* instead of its end.
- *
- * These names are distinguished by their suffix, and `text-overflow: ellipsis`
- * cuts the wrong end: `remote-desktop-capture-input.ts` and
- * `remote-desktop-capture-args.ts` are identical for 23 characters, so a column
- * of right-truncated siblings renders as the same row repeated — which is the
- * bug this replaced.
- *
- * A right-to-left box ellipsizes at its end edge, which is the left one, and
- * `<bdi>` isolates the name so it still *reads* left to right. That matters for
- * a leading dot: outside an isolate, the `.` of `.gitignore` is a neutral
- * character at a run boundary and takes the paragraph's direction, so it hops
- * to the other end and the name renders as `gitignore.`.
- *
- * Preferred over splitting the name in two and pinning the tail beside an
- * ellipsized head: flex hands the head a fractional width while the ellipsis
- * lands on a whole character, and the remainder shows as a ragged gap in the
- * middle of every truncated name. Measured — `text-align` does not close it,
- * because alignment does not apply to overflowing content.
- */
-function StartEllipsis({ children, className }: { children: string; className?: string }) {
-  return (
-    <span dir="rtl" className={`truncate text-left ${className ?? ""}`}>
-      <bdi>{children}</bdi>
-    </span>
-  );
-}
+const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelProps) {
   const projectName = metadata?.projectName as string | undefined;
-  const [status, setStatus] = useState<GitStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [commitMsg, setCommitMsg] = useState("");
-  const [acting, setActing] = useState(false);
-  const [revertTarget, setRevertTarget] = useState<{
-    label: string;
-    files: string[];
-  } | null>(null);
+  // A project folder is not always the repository: it is often a container
+  // whose children are. This resolves which one every call below talks to.
+  const gitRepo = useGitRepo(projectName);
+  const { changes, error, refresh } = useGitChanges(projectName);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<GitConfirmRequest | null>(null);
   // Non-null while the hunk picker is open, for the file it was opened on.
   const [hunkTarget, setHunkTarget] = useState<HunkStageTarget | null>(null);
   const { openTab } = useTabStore(useShallow((s) => ({ openTab: s.openTab })));
@@ -130,203 +106,107 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
   const activeProjectPath = useProjectStore((s) =>
     s.projects.find((p) => p.name === projectName)?.path,
   );
-  const setGitChangesCount = useGitStatusStore((s) => s.setCount);
-  // A project folder is not always the repository: it is often a container
-  // whose children are. This resolves which one every call below talks to.
-  const gitRepo = useGitRepo(projectName);
   const gitRoot = gitRepo.repo?.path ?? activeProjectPath;
+  const isMobile = useIsMobile();
   const panelRef = useRef<HTMLDivElement>(null);
-  const requestId = useRef(0);
-  const repoKey = `${projectName}:${gitRepo.repo?.path ?? ""}`;
-  const currentRepoKey = useRef(repoKey);
-  if (currentRepoKey.current !== repoKey) {
-    currentRepoKey.current = repoKey;
-    requestId.current++;
-  }
-  const [loadedRepoKey, setLoadedRepoKey] = useState<string | null>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  // The write under way, for a toast's Undo: it outlives the render it was made in.
+  const running = useRef<string | null>(null);
+
   const activeProjectName = useProjectStore((s) => s.activeProject?.name);
   const activeTabId = useTabStore((s) => s.activeTabId);
   const [onboardingRefresh, setOnboardingRefresh] = useState(0);
   useEffect(() => {
-    const refresh = () => setOnboardingRefresh((n) => n + 1);
-    window.addEventListener("ppm:onboarding-refresh", refresh);
-    return () => window.removeEventListener("ppm:onboarding-refresh", refresh);
+    const onRefresh = () => setOnboardingRefresh((n) => n + 1);
+    window.addEventListener("ppm:onboarding-refresh", onRefresh);
+    return () => window.removeEventListener("ppm:onboarding-refresh", onRefresh);
   }, []);
   useEffect(() => {
     if (!projectName || projectName !== activeProjectName || (tabId && tabId !== activeTabId) ||
-      !gitRepo.repo || loading || error || !status || loadedRepoKey !== repoKey) return;
+      !gitRepo.repo || !changes) return;
     const visible = !!panelRef.current?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
     if (visible) emitOnboardingEvidence({ type: "git-ready", projectName, visible });
-  }, [onboardingRefresh, projectName, activeProjectName, tabId, activeTabId, gitRepo.repo, loading, error, status, loadedRepoKey, repoKey]);
+  }, [onboardingRefresh, projectName, activeProjectName, tabId, activeTabId, gitRepo.repo, changes]);
   // Git Graph extension is available when it has registered its command.
   const gitGraphAvailable = useExtensionStore(
     (s) => s.contributions?.commands?.some((c) => c.command === "git-graph.view") ?? false,
   );
 
-  const fetchStatus = useCallback(async () => {
-    // No repository resolved yet: the panel is showing the picker, and asking
-    // git in the container folder is what produced the error this replaced.
-    if (!projectName || !gitRepo.repo) return;
-    const id = ++requestId.current;
-    try {
-      setLoading(true);
-      const data = await api.get<GitStatus>(
-        gitRepo.gitUrl("/status"),
-      );
-      if (id !== requestId.current) return;
-      setStatus(data);
-      setLoadedRepoKey(`${projectName}:${gitRepo.repo.path}`);
-      setGitChangesCount(
-        projectName,
-        data.staged.length + data.unstaged.length + data.untracked.length,
-      );
-      useGitStatusStore.getState().setMeta(projectName, data);
-      setError(null);
-    } catch (e) {
-      if (id !== requestId.current) return;
-      setError(e instanceof Error ? e.message : "Failed to fetch status");
-    } finally {
-      if (id === requestId.current) setLoading(false);
-    }
-  }, [projectName, gitRepo, setGitChangesCount]);
+  const files = useMemo(() => changes?.files ?? [], [changes]);
+  const totals = useMemo(() => changeTotals(files), [files]);
+  const conflicts = useMemo(() => files.filter((f) => f.conflict), [files]);
+  const others = useMemo(() => files.filter((f) => !f.conflict), [files]);
+  const url = gitRepo.gitUrl;
 
-  useEffect(() => {
-    fetchStatus();
-    // Auto-reload every 5 seconds
-    const interval = setInterval(fetchStatus, 5000);
-    return () => { requestId.current++; clearInterval(interval); };
-  }, [fetchStatus]);
-
-  const stageFiles = async (files: string[]) => {
-    if (!projectName) return;
-    setActing(true);
+  /** One git write at a time; a failure is a toast, and the list is read again either way. */
+  async function run<T>(name: string, fn: () => Promise<T>, failure: string): Promise<{ value: T } | null> {
+    setBusy(name);
+    running.current = name;
     try {
-      await api.post(gitRepo.gitUrl("/stage"), { files });
-      await fetchStatus();
+      return { value: await fn() };
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Stage failed");
+      toast.error(failure, { description: errorText(e) });
+      return null;
     } finally {
-      setActing(false);
+      setBusy(null);
+      running.current = null;
+      void refresh();
     }
+  }
+
+  const stage = (paths: string[]) =>
+    run("stage", () => api.post(url("/stage"), { files: paths }), "Could not stage");
+  const unstage = (paths: string[]) =>
+    run("unstage", () => api.post(url("/unstage"), { files: paths }), "Could not unstage");
+  /** Tick: stage the rest; untick once it is all staged. Conflicts are only ever staged one by one. */
+  const toggleMany = (targets: ChangedFile[]) =>
+    allCheckState(targets) === "all"
+      ? unstage(targets.flatMap(unstagePaths))
+      : stage(targets.filter((f) => !f.conflict).map((f) => f.path));
+
+  const undoDiscard = async (record: DiscardRecord, what: string) => {
+    const done = await run("undo", () => api.post(url("/discard/undo"), { id: record.id }), "Could not undo the discard");
+    if (done) toast.success(`Restored ${what}`);
   };
 
-  const unstageFiles = async (files: string[]) => {
-    if (!projectName) return;
-    setActing(true);
-    try {
-      await api.post(gitRepo.gitUrl("/unstage"), { files });
-      await fetchStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unstage failed");
-    } finally {
-      setActing(false);
-    }
-  };
-
-  const discardChanges = async (files: string[]) => {
-    if (!projectName) return;
-    setActing(true);
-    try {
-      await api.post(gitRepo.gitUrl("/discard"), { files });
-      await fetchStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Discard failed");
-    } finally {
-      setActing(false);
-    }
-  };
-
-  const handleConfirmRevert = async () => {
-    if (!revertTarget) return;
-    await discardChanges(revertTarget.files);
-    setRevertTarget(null);
-  };
-
-  const handleCommit = async () => {
-    if (!projectName || !commitMsg.trim() || !status?.staged.length) return;
-    setActing(true);
-    try {
-      await api.post(gitRepo.gitUrl("/commit"), {
-        message: commitMsg.trim(),
+  const discard = async (targets: ChangedFile[]) => {
+    const what = targets.length === 1 ? splitPath(targets[0]!.path)[1] : plural(targets.length, "file");
+    const done = await run(
+      "discard",
+      () => api.post<{ discarded: string[]; undo: DiscardRecord | null }>(url("/discard"), { files: targets.map((f) => f.path) }),
+      "Could not discard",
+    );
+    const record = done?.value.undo;
+    if (!record) return;
+    // Undo brings back what was kept, and nothing else: a file too large to copy is gone
+    // for good, so a discard that kept nothing offers no Undo at all.
+    if (record.paths.length) {
+      const kept = record.paths.length === 1 ? splitPath(record.paths[0]!)[1] : plural(record.paths.length, "file");
+      toast(`Discarded changes to ${what}`, {
+        action: { label: "Undo", onClick: () => void undoDiscard(record, kept) },
+        duration: 8000,
       });
-      setCommitMsg("");
-      await fetchStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Commit failed");
-    } finally {
-      setActing(false);
     }
-  };
-
-  const handlePush = async () => {
-    if (!projectName) return;
-    setActing(true);
-    try {
-      await api.post(gitRepo.gitUrl("/push"), {});
-      await fetchStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Push failed");
-    } finally {
-      setActing(false);
-    }
-  };
-
-  const handlePull = async () => {
-    if (!projectName) return;
-    setActing(true);
-    try {
-      await api.post(gitRepo.gitUrl("/pull"), {});
-      await fetchStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Pull failed");
-    } finally {
-      setActing(false);
-    }
-  };
-
-  const handleAmend = async () => {
-    if (!projectName) return;
-    setActing(true);
-    try {
-      await api.post(gitRepo.gitUrl("/commit"), {
-        message: commitMsg.trim(),
-        amend: true,
+    if (record.skipped?.length) {
+      toast.warning(`${record.skipped.join(", ")} could not be kept, so it cannot be restored`, {
+        description: "Files over 20 MB are discarded without a copy.",
       });
-      setCommitMsg("");
-      await fetchStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Amend failed");
-    } finally {
-      setActing(false);
     }
   };
 
-  const handleFetch = async () => {
-    if (!projectName) return;
-    setActing(true);
-    try {
-      await api.post(gitRepo.gitUrl("/fetch"), {});
-      await fetchStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Fetch failed");
-    } finally {
-      setActing(false);
-    }
+  const askDiscard = (targets: ChangedFile[], anchor: HTMLElement) => {
+    if (!targets.length) return;
+    const summary = discardSummary(targets);
+    setConfirm({
+      anchor,
+      title: summary.title,
+      body: summary.body,
+      confirmLabel: summary.confirm,
+      onConfirm: () => void discard(targets),
+    });
   };
 
-  // Composite actions sequence existing handlers (each guards on `acting` itself).
-  const handleCommitPush = async () => {
-    await handleCommit();
-    await handlePush();
-  };
-
-  const handleCommitSync = async () => {
-    await handleCommit();
-    await handlePull();
-    await handlePush();
-  };
-
-  const openDiff = (file: GitFileChange) => {
+  const openDiff = (file: ChangedFile) => {
     openTab({
       type: "git-diff",
       title: basename(file.path),
@@ -342,31 +222,247 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     onNavigate?.();
   };
 
-  const openFile = (file: GitFileChange) => {
+  /** The Review changes tab, on `file` when one is given (a repository path, as git named it). */
+  const review = (file?: ChangedFile) => {
+    if (!projectName) return;
+    openGitReview(projectName, file?.path);
+    onNavigate?.();
+  };
+
+  const openFile = (file: ChangedFile) => {
     openTab({
       type: "editor",
       title: basename(file.path),
       closable: true,
-      metadata: {
-        projectName,
-        // git named this relative to the repository; a tab's filePath is
-        // relative to the project, and one directory up is an empty buffer.
-        filePath: gitRepo.projectFile(file.path),
-      },
+      metadata: { projectName, filePath: gitRepo.projectFile(file.path) },
       projectId: projectName ?? null,
     });
     onNavigate?.();
   };
 
-  const allUnstaged = useMemo(
-    () => [
-      ...(status?.unstaged ?? []),
-      ...(status?.untracked.map(
-        (p): GitFileChange => ({ path: p, status: "?" }),
-      ) ?? []),
-    ],
-    [status],
-  );
+  const resolve = (file: ChangedFile) => {
+    openTab({
+      type: "conflict-editor",
+      title: `Conflict: ${basename(file.path)}`,
+      closable: true,
+      metadata: { projectName, filePath: gitRepo.projectFile(file.path) },
+      projectId: projectName ?? null,
+    });
+    onNavigate?.();
+  };
+
+  /**
+   * Staging a conflict is what marks it resolved, markers or not — so with
+   * git's markers still in the file, ask first, as VS Code does.
+   */
+  const markResolved = async (file: ChangedFile, anchor?: HTMLElement) => {
+    const text = projectName
+      ? await api
+          .get<{ content: string }>(`${projectUrl(projectName)}/files/read?path=${encodeURIComponent(gitRepo.projectFile(file.path))}`)
+          .then((r) => r.content, () => "")
+      : "";
+    if (!anchor || !hasConflictMarkers(text)) return void stage([file.path]);
+    setConfirm({
+      anchor,
+      title: `${basename(file.path)} still has conflict markers`,
+      body: "Marking it resolved stages the file as it is, markers and all.",
+      confirmLabel: "Mark resolved",
+      confirmIcon: <Check />,
+      onConfirm: () => void stage([file.path]),
+    });
+  };
+
+  const rowActions: ChangeRowActions = {
+    onOpen: review,
+    onOpenDiff: openDiff,
+    onOpenFile: openFile,
+    onToggle: (file, anchor) => {
+      if (file.conflict) void markResolved(file, anchor);
+      else if (fileCheckState(file) === "all") void unstage(unstagePaths(file));
+      else void stage([file.path]);
+    },
+    onStage: (file, anchor) => (file.conflict ? void markResolved(file, anchor) : void stage([file.path])),
+    onUnstage: (file) => unstage(unstagePaths(file)),
+    onPickLines: (file, scope) => setHunkTarget({ filePath: file.path, scope }),
+    onDiscard: (file, anchor) => askDiscard([file], anchor),
+    onResolve: resolve,
+  };
+  const folderActions: FolderActions = {
+    onToggleFolder: toggleMany,
+    onDiscardFolder: (targets, _folder, anchor) => askDiscard(targets, anchor),
+  };
+
+  /** Undo the commit `hash` names: the server refuses once it is no longer the last one. */
+  const undoCommit = async (hash: string | undefined) => {
+    // A push still going out could carry the commit to the remote after it was taken back here.
+    if (running.current) return void toast.warning("Wait for git to finish", { description: "Undo the commit once it is done." });
+    if (!hash) return;
+    const done = await run("undo-commit", () => api.post(url("/commit/undo"), { hash }), "Could not undo the commit");
+    if (done) toast("Commit undone — its changes are staged again");
+  };
+
+  async function sync(mode: SyncMode, branch = changes?.branch): Promise<boolean> {
+    if (!branch) return false;
+    const upstream = branch.upstream ?? "the remote";
+    switch (mode) {
+      case "push": {
+        const done = await run("push", () => api.post(url("/push"), {}), "Push failed");
+        if (done) toast.success(branch.ahead ? `Pushed ${plural(branch.ahead, "commit")} to ${upstream}` : `Pushed to ${upstream}`);
+        return !!done;
+      }
+      case "pull": {
+        const done = await run("pull", () => api.post(url("/pull"), {}), "Pull failed");
+        if (done) toast.success(`Pulled ${plural(branch.behind, "commit")} from ${upstream}`);
+        return !!done;
+      }
+      case "sync": {
+        const done = await run("sync", async () => {
+          await api.post(url("/pull"), {});
+          await api.post(url("/push"), {});
+        }, "Sync failed");
+        if (done) toast.success(`In sync with ${upstream}`);
+        return !!done;
+      }
+      case "publish": {
+        const done = await run("publish", () => api.post<{ remote: string; branch: string }>(url("/publish"), {}), "Publish failed");
+        if (done) toast.success(`Published ${done.value.branch} to ${done.value.remote}`);
+        return !!done;
+      }
+      case "synced": {
+        const done = await run("fetch", () => api.post(url("/fetch"), {}), "Fetch failed");
+        if (!done) return false;
+        const next = await refresh();
+        const behind = next?.branch.behind ?? 0;
+        toast(behind ? `Fetched — ${plural(behind, "new commit")} to pull` : "Fetched — nothing new");
+        return true;
+      }
+    }
+  }
+
+  const commit = async (message: string, options: CommitOptions): Promise<boolean> => {
+    const before: GitChanges | null = changes;
+    const filesStaged = totals.filesStaged;
+    const done = await run(
+      "commit",
+      () => api.post<{ hash: string }>(url("/commit"), { message, amend: !!options.amend, signoff: !!options.signoff }),
+      options.amend ? "Could not amend the commit" : "Could not commit",
+    );
+    if (!done) return false;
+    const short = done.value.hash.slice(0, 7);
+    if (options.amend) {
+      // Undo takes a commit back whole, which for an amend is more than the amend.
+      toast(`Amended ${short}`);
+    } else {
+      const hash = done.value.hash;
+      toast(`Committed ${short} · ${plural(filesStaged, "file")}`, {
+        action: { label: "Undo", onClick: () => void undoCommit(hash) },
+      });
+    }
+    if (options.push && before) {
+      // A branch with no upstream yet is published, not pushed.
+      const mode = syncMode(before.branch) === "publish" ? "publish" : "push";
+      await sync(mode, { ...before.branch, ahead: before.branch.ahead + 1 });
+    }
+    return true;
+  };
+
+  const stashAll = async () => {
+    const done = await run("stash", async () => {
+      await api.post(url("/stash"), { includeUntracked: true });
+      const [top] = await api.get<StashEntry[]>(url("/stashes"));
+      return top;
+    }, "Could not stash");
+    const top = done?.value;
+    if (!top) return;
+    toast(`Stashed ${plural(totals.files, "file")}`, {
+      action: { label: "Undo", onClick: () => void stashAction("pop", top) },
+    });
+  };
+
+  const stashAction = async (action: StashAction, stash: StashEntry) => {
+    const done = await run(
+      `stash-${action}`,
+      () => api.post<{ indexRestored?: boolean }>(url(`/stash/${action}`), { index: stash.index, hash: stash.hash }),
+      `Could not ${action} the stash`,
+    );
+    if (!done) return;
+    const what = action === "apply" ? "Stash applied" : action === "pop" ? "Stash applied and dropped" : "Stash dropped";
+    if (done.value.indexRestored === false) {
+      toast.warning(what, { description: "Its staged changes no longer fit the index, so they came back unstaged." });
+    } else {
+      toast.success(what);
+    }
+  };
+  const onStash = (action: StashAction, stash: StashEntry, anchor: HTMLElement) => {
+    if (action !== "drop") return void stashAction(action, stash);
+    setConfirm({
+      anchor,
+      title: `Drop “${stash.message || `stash@{${stash.index}}`}”?`,
+      body: "The stash is deleted for good: nothing in PPM can bring it back.",
+      confirmLabel: "Drop stash",
+      onConfirm: () => void stashAction("drop", stash),
+    });
+  };
+
+  const abortOperation = (anchor: HTMLElement) => {
+    const op = changes?.operation;
+    if (!op) return;
+    const noun = OPERATION_NOUN[op.kind];
+    setConfirm({
+      anchor,
+      title: `Abort the ${noun}?`,
+      body: `This puts the branch back where it was before the ${noun} started. Conflicts you resolved so far are lost.`,
+      confirmLabel: `Abort ${noun}`,
+      confirmIcon: <X />,
+      onConfirm: () => void run("abort", () => api.post(url("/operation/abort"), {}), `Could not abort the ${noun}`),
+    });
+  };
+  const continueOperation = async () => {
+    const op = changes?.operation;
+    if (!op) return;
+    const done = await run("continue", () => api.post(url("/operation/continue"), {}), `Could not continue the ${OPERATION_NOUN[op.kind]}`);
+    if (done) toast.success(`The ${OPERATION_NOUN[op.kind]} is finished`);
+  };
+
+  const openGraph = () => {
+    if (gitGraphAvailable) {
+      const args: unknown[] = [];
+      // The repository, not the project folder: the graph runs git in
+      // whatever path it is handed.
+      if (gitRoot) args.push(gitRoot);
+      window.dispatchEvent(
+        new CustomEvent("ext:command:execute", {
+          detail: { command: "git-graph.view", args },
+        }),
+      );
+    } else {
+      openTab({
+        type: "git-log",
+        title: "Git Log",
+        projectId: projectName ?? null,
+        closable: true,
+        metadata: { projectName },
+      });
+    }
+    onNavigate?.();
+  };
+
+  /*
+   * Review the whole branch at once, rather than one commit at a time. Core
+   * rather than the Git Graph extension's compare panel: a review is the one
+   * git surface that wants Monaco, and a webview cannot have it. The tab picks
+   * its own defaults — main/master against the current branch.
+   */
+  const openBranchReview = () => {
+    openTab({
+      type: "branch-review",
+      title: "Branch Review",
+      projectId: projectName ?? null,
+      closable: true,
+      metadata: { projectName },
+    });
+    onNavigate?.();
+  };
 
   if (!projectName) {
     return (
@@ -376,10 +472,10 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     );
   }
 
-  // Which repository comes first: a container workspace has no status of its
+  // Which repository comes first: a container workspace has no changes of its
   // own, and the panel's body renders the chooser. Both spinners below have to
-  // let that through, or the panel sits on "Loading git status..." forever
-  // waiting for a fetch that deliberately never runs.
+  // let that through, or the panel sits on a spinner forever waiting for a
+  // fetch that deliberately never runs.
   if (!gitRepo.repo && !gitRepo.needsPick && !gitRepo.noRepo) {
     return (
       <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
@@ -389,191 +485,166 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     );
   }
 
-  if (loading && !status && gitRepo.repo) {
-    return (
-      <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-        <span className="text-sm">Loading git status...</span>
-      </div>
-    );
-  }
+  const discardable = others.filter(hasUnstaged);
+  const operation = changes?.operation ?? null;
+  const headerButton = "max-md:size-11";
 
-  if (error && !status) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-2 text-destructive text-sm">
-        <p>{error}</p>
-        <Button variant="outline" size="sm" onClick={fetchStatus}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
+  const composer = changes && files.length > 0 && !operation && (
+    <GitCommitComposer
+      projectName={projectName}
+      branch={changes.branch.head}
+      totals={totals}
+      lastCommit={changes.lastCommit}
+      busy={busy}
+      onCommit={commit}
+      onUndoCommit={() => undoCommit(changes.lastCommit?.hash)}
+      className={isMobile ? "shrink-0 border-t border-border-soft" : "shrink-0"}
+    />
+  );
 
-  const stagedCount = status?.staged.length ?? 0;
-  const commitDisabled = acting || !commitMsg.trim() || !stagedCount;
+  const list = changes && (
+    files.length > 0 ? (
+      <>
+        {conflicts.length > 0 && (
+          <>
+            <GroupLabel count={conflicts.length} tone="error">
+              <AlertCircle className="size-3.5" />
+              Conflicts
+            </GroupLabel>
+            {conflicts.map((file) => (
+              <GitChangeRow key={file.path} file={file} busy={!!busy} actions={rowActions} />
+            ))}
+          </>
+        )}
+        {others.length > 0 && (
+          <>
+            {/* On a phone the border sits outside the 44px, which the select-all box stretches to fill. */}
+            <div className="flex h-11 md:h-[34px] max-md:box-content shrink-0 items-center gap-1.5 border-t border-border-soft pl-2.5 first:border-t-0">
+              <span className="text-[10.5px] font-semibold uppercase tracking-[.07em] text-text-3">
+                {operation?.kind === "merge" ? "Merged" : "Changes"}
+              </span>
+              <CountChip count={others.length} />
+              <span className="flex-1" />
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-text-2 max-md:h-11"
+                title="Review block by block"
+                onClick={() => review()}
+              >
+                <FileDiff className="size-3.5" />
+                Review
+              </Button>
+              {/* Mid-merge these are the merge's own result: unticking them all
+                  would quietly leave them out of the merge commit. */}
+              {!operation && (
+                <CheckCell
+                  state={allCheckState(others)}
+                  disabled={!!busy}
+                  label={allCheckState(others) === "all" ? "Unstage everything" : "Stage everything"}
+                  title={allCheckState(others) === "all" ? "Unstage everything" : "Stage everything"}
+                  onToggle={() => void toggleMany(others)}
+                />
+              )}
+            </div>
+            {viewMode === "tree" ? (
+              <GitChangeTree files={others} busy={!!busy} actions={rowActions} folderActions={folderActions} />
+            ) : (
+              others.map((file) => (
+                <GitChangeRow key={file.path} file={file} busy={!!busy} actions={rowActions} />
+              ))
+            )}
+          </>
+        )}
+        {changes.truncated && (
+          <p className="px-2.5 py-2 text-xs text-text-3">Only the first {files.length.toLocaleString()} changes are listed.</p>
+        )}
+      </>
+    ) : (
+      <CleanState changes={changes} busy={busy} onUndoCommit={() => void undoCommit(changes.lastCommit?.hash)} />
+    )
+  );
 
-  // Compact commit UI — rendered in two slots (top on desktop, bottom on mobile).
-  // State lives in the parent, so both instances stay in sync.
-  const commitBox = (
-    <div className="p-2 flex flex-col gap-2">
-      <textarea
-        className="w-full h-10 px-3 py-2 text-base md:text-sm text-foreground bg-surface border border-border rounded-lg resize-none focus:outline-none focus:border-ring placeholder:text-muted-foreground"
-        placeholder="Message (⌘↵)"
-        value={commitMsg}
-        onChange={(e) => setCommitMsg(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            handleCommit();
-          }
-        }}
-      />
-      <div className="flex h-8">
-        <Button
-          size="sm"
-          className="flex-1 rounded-r-none"
-          disabled={commitDisabled}
-          onClick={handleCommit}
-        >
-          {acting ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <>
-              <Check className="size-3.5" />
-              Commit ({stagedCount})
-            </>
-          )}
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              className="w-8 px-0 rounded-l-none border-l border-white/20"
-              disabled={acting}
-              title="More commit actions"
-            >
-              <ChevronDown className="size-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem onClick={handleCommitPush} disabled={commitDisabled}>
-              <ArrowUpFromLine className="size-3.5" />
-              Commit &amp; Push
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleCommitSync} disabled={commitDisabled}>
-              <RefreshCw className="size-3.5" />
-              Commit &amp; Sync
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleAmend} disabled={acting}>
-              <GitCommitHorizontal className="size-3.5" />
-              Amend Last Commit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handlePush} disabled={acting}>
-              <ArrowUpFromLine className="size-3.5" />
-              Push
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handlePull} disabled={acting}>
-              <ArrowDownToLine className="size-3.5" />
-              Pull
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleFetch} disabled={acting}>
-              <RefreshCw className="size-3.5" />
-              Fetch
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+  const folds = projectName && changes && (
+    <div className="border-t border-border-soft">
+      <GitStashSection projectName={projectName} count={changes.stashes} busy={busy} onAction={onStash} />
+      <GitWorktreePanel projectName={projectName} projectPath={gitRoot} />
     </div>
   );
 
   return (
     <div ref={panelRef} data-onboarding="git" className="flex flex-col h-full overflow-hidden">
-      <SidebarHeader icon={GitBranch} title={status?.current ? `On: ${status.current}` : "Source Control"}>
+      <SidebarHeader icon={GitBranch} title="Source Control">
         <Button
-          variant={viewMode === "flat" ? "secondary" : "ghost"}
+          variant="ghost"
           size="icon-xs"
-          onClick={() => setViewMode("flat")}
-          title="Flat view"
+          className={headerButton}
+          onClick={() => setViewMode(viewMode === "tree" ? "flat" : "tree")}
+          title={viewMode === "tree" ? "Show as a list" : "Group by folder"}
+          aria-label={viewMode === "tree" ? "Show as a list" : "Group by folder"}
         >
-          <List className="size-3.5" />
-        </Button>
-        <Button
-          variant={viewMode === "tree" ? "secondary" : "ghost"}
-          size="icon-xs"
-          onClick={() => setViewMode("tree")}
-          title="Tree view"
-        >
-          <FolderTree className="size-3.5" />
+          {viewMode === "tree" ? <List className="size-3.5" /> : <FolderTree className="size-3.5" />}
         </Button>
         <Button
           variant="ghost"
           size="icon-xs"
-          onClick={() => {
-            if (gitGraphAvailable) {
-              const args: unknown[] = [];
-              // The repository, not the project folder: the graph runs git in
-              // whatever path it is handed.
-              if (gitRoot) args.push(gitRoot);
-              window.dispatchEvent(
-                new CustomEvent("ext:command:execute", {
-                  detail: { command: "git-graph.view", args },
-                }),
-              );
-            } else {
-              openTab({
-                type: "git-log",
-                title: "Git Log",
-                projectId: projectName ?? null,
-                closable: true,
-                metadata: { projectName },
-              });
-            }
-            onNavigate?.();
-          }}
+          className={headerButton}
+          onClick={openGraph}
           title={gitGraphAvailable ? "Open Git Graph (⌘G)" : "View Git Log"}
         >
-          <GitBranch className="size-3.5" />
+          <History className="size-3.5" />
         </Button>
-        {/*
-          Review the whole branch at once, rather than one commit at a time.
-          Core rather than the Git Graph extension's compare panel: a review is
-          the one git surface that wants Monaco, and a webview cannot have it.
-          The tab picks its own defaults — main/master against the current
-          branch — so there is nothing to pass here.
-        */}
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => {
-            openTab({
-              type: "branch-review",
-              title: "Branch Review",
-              projectId: projectName ?? null,
-              closable: true,
-              metadata: { projectName },
-            });
-            onNavigate?.();
-          }}
-          title="Review this branch against another"
-        >
-          <FileDiff className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={fetchStatus}
-          disabled={acting}
-        >
-          <RefreshCw className={loading ? "animate-spin" : ""} />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              ref={moreRef}
+              variant="ghost"
+              size="icon-xs"
+              className={headerButton}
+              title="More actions"
+              aria-label="More actions"
+            >
+              <MoreHorizontal className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuItem onClick={() => void sync("synced")} disabled={!!busy || !changes?.branch.hasRemote}>
+              <RefreshCw />
+              Fetch
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => void run("pull", () => api.post(url("/pull"), { rebase: true }), "Pull failed")}
+              disabled={!!busy || !changes?.branch.upstream || changes.branch.upstreamGone}
+            >
+              <ArrowDownToLine />
+              Pull with rebase
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void stashAll()} disabled={!!busy || !files.length}>
+              <Archive />
+              Stash all changes
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={openBranchReview}>
+              <FileDiff />
+              Review branch…
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void refresh()}>
+              <RefreshCw />
+              Refresh
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={!!busy || !discardable.length}
+              onClick={() => {
+                if (moreRef.current) askDiscard(discardable, moreRef.current);
+              }}
+            >
+              <Trash2 />
+              Discard all changes…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </SidebarHeader>
-
-      {error && (
-        <div className="px-3 py-1.5 text-xs text-destructive bg-destructive/10 shrink-0">
-          {error}
-        </div>
-      )}
 
       {/* Which repository, when the project folder is not one itself. */}
       {gitRepo.isNested && gitRepo.repo && (
@@ -585,81 +656,51 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
         <GitRepoChoice repos={gitRepo.repos} onChoose={gitRepo.choose} />
       ) : gitRepo.noRepo ? (
         <GitNoRepo onReload={gitRepo.reload} />
+      ) : !changes ? (
+        error ? (
+          <div className="flex flex-col items-center justify-center h-full gap-2 px-4 text-center text-destructive text-sm">
+            <p>{error}</p>
+            <Button variant="outline" size="sm" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
+            <Loader2 className="size-5 animate-spin" />
+            <span className="text-sm">Loading git status...</span>
+          </div>
+        )
       ) : (
         <>
-      {/* Commit block — top on web/desktop */}
-      <div className="hidden md:block border-b border-border">{commitBox}</div>
-
-      {/* Worktrees collapsible section */}
-      {projectName && (
-        <GitWorktreePanel
-          projectName={projectName}
-          projectPath={gitRoot}
-        />
-      )}
-
-      <ScrollArea className="flex-1 overflow-hidden">
-        <div className="p-1.5 space-y-2 overflow-hidden">
-          {/* Staged Changes */}
-          <FileSection
-            title="Staged Changes"
-            count={status?.staged.length ?? 0}
-            files={status?.staged ?? []}
-            viewMode={viewMode}
-            actionIcon={<Minus className="size-3" />}
-            actionAllIcon={<Minus className="size-3" />}
-            actionTitle="Unstage"
-            onAction={(f) => unstageFiles([f.path])}
-            onActionAll={
-              status?.staged.length
-                ? () => unstageFiles(status.staged.map((f) => f.path))
-                : undefined
-            }
-            actionAllLabel="Unstage All"
-            onFolderAction={(files) => unstageFiles(files.map((f) => f.path))}
-            onClickFile={openDiff}
-            onOpenFile={openFile}
-            onPickHunks={(f) => setHunkTarget({ filePath: f.path, scope: "index" })}
-            disabled={acting}
+          <GitBranchRow
+            projectName={projectName}
+            branch={changes.branch}
+            operation={operation}
+            files={files.length}
+            busy={busy}
+            onSync={(mode) => void sync(mode)}
           />
-
-          {/* Unstaged Changes */}
-          <FileSection
-            title="Changes"
-            count={allUnstaged.length}
-            files={allUnstaged}
-            viewMode={viewMode}
-            actionIcon={<Plus className="size-3" />}
-            actionAllIcon={<Plus className="size-3" />}
-            actionTitle="Stage"
-            onAction={(f) => stageFiles([f.path])}
-            onActionAll={
-              allUnstaged.length
-                ? () => stageFiles(allUnstaged.map((f) => f.path))
-                : undefined
-            }
-            actionAllLabel="Stage All"
-            onFolderAction={(files) => stageFiles(files.map((f) => f.path))}
-            onClickFile={openDiff}
-            onOpenFile={openFile}
-            onPickHunks={(f) => setHunkTarget({ filePath: f.path, scope: "worktree" })}
-            disabled={acting}
-            showRevert
-            onRevert={(f) =>
-              setRevertTarget({ label: f.path, files: [f.path] })
-            }
-            onFolderRevert={(files, folderName) =>
-              setRevertTarget({
-                label: `${folderName}/ (${files.length} files)`,
-                files: files.map((f) => f.path),
-              })
-            }
-          />
-        </div>
-      </ScrollArea>
-
-      {/* Commit block — bottom on mobile */}
-      <div className="md:hidden border-t border-border shrink-0">{commitBox}</div>
+          {error && (
+            <div className="shrink-0 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">{error}</div>
+          )}
+          {operation && (
+            <GitOperationBanner
+              operation={operation}
+              branch={changes.branch.head}
+              conflicts={conflicts.length}
+              busy={busy}
+              onAbort={abortOperation}
+              onContinue={() => void continueOperation()}
+            />
+          )}
+          {/* The message box: under the branch where there is a pointer, in the thumb zone on a phone. */}
+          {!isMobile && composer}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
+            {list}
+            {isMobile && folds}
+          </div>
+          {!isMobile && folds}
+          {isMobile && composer}
         </>
       )}
 
@@ -668,552 +709,53 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
         projectName={projectName}
         target={hunkTarget}
         onClose={() => setHunkTarget(null)}
-        onApplied={fetchStatus}
+        onApplied={() => void refresh()}
       />
-
-      {/* Revert confirmation dialog */}
-      <Dialog
-        open={!!revertTarget}
-        onOpenChange={(open) => !open && setRevertTarget(null)}
-      >
-        <DialogContent showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>Discard Changes</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to discard all changes to{" "}
-              <code className="px-1 py-0.5 rounded bg-muted text-sm font-mono">
-                {revertTarget?.label}
-              </code>
-              ? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setRevertTarget(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleConfirmRevert}
-              disabled={acting}
-            >
-              {acting ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                "Discard"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <GitConfirm request={confirm} onClose={() => setConfirm(null)} />
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Action buttons                                                     */
-/* ------------------------------------------------------------------ */
-
-/** Overlay action buttons — visible on desktop hover, hidden on mobile */
-function ActionButtons({
-  showRevert,
-  onRevert,
-  onAction,
-  onOpenFile,
-  onPickHunks,
-  actionIcon,
-  actionTitle,
-  disabled,
-}: {
-  showRevert?: boolean;
-  onRevert?: () => void;
-  onAction: () => void;
-  onOpenFile?: () => void;
-  onPickHunks?: () => void;
-  actionIcon: React.ReactNode;
-  actionTitle: string;
-  disabled: boolean;
+/** Nothing to commit: say so, and show the last commit with its Undo while that is still safe. */
+function CleanState({ changes, busy, onUndoCommit }: {
+  changes: GitChanges;
+  busy: string | null;
+  onUndoCommit: () => void;
 }) {
+  const last = changes.lastCommit;
+  const undoable = !!last && !last.pushed && last.hasParent && !changes.operation;
   return (
-    <div className="hidden md:flex absolute right-0 top-0 bottom-0 items-center gap-0.5 pl-6 pr-1 bg-gradient-to-l from-background from-70% to-transparent can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity">
-      {onOpenFile && (
-        <button
-          type="button"
-          className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-primary active:scale-95 transition-colors"
-          onClick={(e) => { e.stopPropagation(); onOpenFile(); }}
-          disabled={disabled}
-          title="Open file"
-        >
-          <FileText className="size-3" />
-        </button>
-      )}
-      {onPickHunks && (
-        <button
-          type="button"
-          className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-primary active:scale-95 transition-colors"
-          onClick={(e) => { e.stopPropagation(); onPickHunks(); }}
-          disabled={disabled}
-          title={`${actionTitle} lines…`}
-        >
-          <SquareDashedMousePointer className="size-3" />
-        </button>
-      )}
-      {showRevert && onRevert && (
-        <button
-          type="button"
-          className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-destructive active:scale-95 transition-colors"
-          onClick={(e) => { e.stopPropagation(); onRevert(); }}
-          disabled={disabled}
-          title="Discard changes"
-        >
-          <Undo2 className="size-3" />
-        </button>
-      )}
-      <button
-        type="button"
-        className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-accent-foreground active:scale-95 transition-colors"
-        onClick={(e) => { e.stopPropagation(); onAction(); }}
-        disabled={disabled}
-        title={actionTitle}
-      >
-        {actionIcon}
-      </button>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  FileSection                                                        */
-/* ------------------------------------------------------------------ */
-
-function FileSection({
-  title,
-  count,
-  files,
-  viewMode,
-  actionIcon,
-  actionAllIcon,
-  actionTitle,
-  onAction,
-  onActionAll,
-  actionAllLabel,
-  onFolderAction,
-  onClickFile,
-  onOpenFile,
-  onPickHunks,
-  disabled,
-  showRevert,
-  onRevert,
-  onFolderRevert,
-}: {
-  title: string;
-  count: number;
-  files: GitFileChange[];
-  viewMode: ViewMode;
-  actionIcon: React.ReactNode;
-  actionAllIcon?: React.ReactNode;
-  actionTitle: string;
-  onAction: (f: GitFileChange) => void;
-  onActionAll?: () => void;
-  actionAllLabel: string;
-  onFolderAction?: (files: GitFileChange[]) => void;
-  onClickFile: (f: GitFileChange) => void;
-  onOpenFile?: (f: GitFileChange) => void;
-  onPickHunks?: (f: GitFileChange) => void;
-  disabled: boolean;
-  showRevert?: boolean;
-  onRevert?: (f: GitFileChange) => void;
-  onFolderRevert?: (files: GitFileChange[], folderName: string) => void;
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-0.5">
-        <span className="text-xs font-medium text-muted-foreground uppercase">
-          {title} ({count})
-        </span>
-        {onActionAll && count > 0 && (
-          <button
-            type="button"
-            className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-accent-foreground active:scale-95 transition-colors"
-            onClick={onActionAll}
-            disabled={disabled}
-            title={actionAllLabel}
-          >
-            {actionAllIcon}
-          </button>
-        )}
-      </div>
-      {files.length === 0 ? (
-        <p className="text-xs text-muted-foreground px-1">No changes</p>
-      ) : viewMode === "flat" ? (
-        <div className="w-full overflow-hidden">
-          {files.map((f) => (
-            <FileRow
-              key={f.path}
-              file={f}
-              actionIcon={actionIcon}
-              actionTitle={actionTitle}
-              onAction={onAction}
-              onClickFile={onClickFile}
-              onOpenFile={onOpenFile}
-              onPickHunks={onPickHunks}
-              disabled={disabled}
-              showRevert={showRevert}
-              onRevert={onRevert}
-            />
-          ))}
+    <>
+      <div className="px-[18px] py-[26px] text-center text-[12.5px] text-text-2">
+        <div className="mx-auto mb-2.5 grid size-10 place-items-center rounded-full bg-success/14 text-success">
+          <Check className="size-4" />
         </div>
-      ) : (
-        <TreeView
-          files={files}
-          actionIcon={actionIcon}
-          actionTitle={actionTitle}
-          onAction={onAction}
-          onFolderAction={onFolderAction}
-          onClickFile={onClickFile}
-          onOpenFile={onOpenFile}
-          onPickHunks={onPickHunks}
-          disabled={disabled}
-          showRevert={showRevert}
-          onRevert={onRevert}
-          onFolderRevert={onFolderRevert}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  FileRow                                                            */
-/* ------------------------------------------------------------------ */
-
-function FileRow({
-  file,
-  actionIcon,
-  actionTitle,
-  onAction,
-  onClickFile,
-  onOpenFile,
-  onPickHunks,
-  disabled,
-  showRevert,
-  onRevert,
-  displayName,
-}: {
-  file: GitFileChange;
-  actionIcon: React.ReactNode;
-  actionTitle: string;
-  onAction: (f: GitFileChange) => void;
-  onClickFile: (f: GitFileChange) => void;
-  onOpenFile?: (f: GitFileChange) => void;
-  onPickHunks?: (f: GitFileChange) => void;
-  disabled: boolean;
-  showRevert?: boolean;
-  onRevert?: (f: GitFileChange) => void;
-  displayName?: string;
-}) {
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        {/* One row for both platforms: the adaptive menu is what differs, and
-            the tap that opens the diff is the filename button itself rather
-            than a hand-rolled tap detector — so a press that became a scroll,
-            or one that opened the sheet, cannot also open a diff. */}
-        {/* 44px of row on a touch screen, compact where there is a pointer. */}
-        <div className="group relative flex items-center gap-1.5 hover:bg-muted/50 rounded pl-1 py-3 md:py-1 w-full min-w-0 select-none">
-          <span
-            className={`text-xs font-mono w-3.5 text-center shrink-0 ${STATUS_COLORS[file.status] ?? ""}`}
-          >
-            {file.status}
-          </span>
-          <FileIcon name={file.path} className="size-4 shrink-0" />
-          <button
-            type="button"
-            className="flex-1 flex min-w-0 text-left text-sm can-hover:hover:underline"
-            onClick={() => onClickFile(file)}
-            title={file.path}
-          >
-            <StartEllipsis className="min-w-0 flex-1">
-              {displayName ?? file.path}
-            </StartEllipsis>
-          </button>
-          <ActionButtons
-            showRevert={showRevert}
-            onRevert={onRevert ? () => onRevert(file) : undefined}
-            onOpenFile={onOpenFile ? () => onOpenFile(file) : undefined}
-            onPickHunks={onPickHunks ? () => onPickHunks(file) : undefined}
-            onAction={() => onAction(file)}
-            actionIcon={actionIcon}
-            actionTitle={actionTitle}
-            disabled={disabled}
-          />
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="min-w-40">
-        <ContextMenuItem onClick={() => onClickFile(file)}>View Diff</ContextMenuItem>
-        {onOpenFile && (
-          <ContextMenuItem onClick={() => onOpenFile(file)}>Open File</ContextMenuItem>
-        )}
-        <ContextMenuItem onClick={() => onAction(file)} disabled={disabled}>
-          {actionTitle}
-        </ContextMenuItem>
-        {onPickHunks && (
-          <ContextMenuItem onClick={() => onPickHunks(file)} disabled={disabled}>
-            {actionTitle} Lines…
-          </ContextMenuItem>
-        )}
-        {showRevert && onRevert && (
-          <>
-            {/* Set apart, because on a sheet these rows are 44px tall and sit
-                where the thumb already is. */}
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              variant="destructive"
-              onClick={() => onRevert(file)}
-              disabled={disabled}
-            >
-              Discard Changes
-            </ContextMenuItem>
-          </>
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  TreeView                                                           */
-/* ------------------------------------------------------------------ */
-
-function TreeView({
-  files,
-  actionIcon,
-  actionTitle,
-  onAction,
-  onFolderAction,
-  onClickFile,
-  onOpenFile,
-  onPickHunks,
-  disabled,
-  showRevert,
-  onRevert,
-  onFolderRevert,
-}: {
-  files: GitFileChange[];
-  actionIcon: React.ReactNode;
-  actionTitle: string;
-  onAction: (f: GitFileChange) => void;
-  onFolderAction?: (files: GitFileChange[]) => void;
-  onClickFile: (f: GitFileChange) => void;
-  onOpenFile?: (f: GitFileChange) => void;
-  onPickHunks?: (f: GitFileChange) => void;
-  disabled: boolean;
-  showRevert?: boolean;
-  onRevert?: (f: GitFileChange) => void;
-  onFolderRevert?: (files: GitFileChange[], folderName: string) => void;
-}) {
-  const tree = useMemo(() => compactTree(buildTree(files)), [files]);
-
-  return (
-    <div>
-      {tree.map((node, i) => (
-        <TreeNodeView
-          key={node.fullPath}
-          node={node}
-          depth={0}
-          actionIcon={actionIcon}
-          actionTitle={actionTitle}
-          onAction={onAction}
-          onFolderAction={onFolderAction}
-          onClickFile={onClickFile}
-          onOpenFile={onOpenFile}
-          onPickHunks={onPickHunks}
-          disabled={disabled}
-          showRevert={showRevert}
-          onRevert={onRevert}
-          onFolderRevert={onFolderRevert}
-        />
-      ))}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  TreeNodeView                                                       */
-/* ------------------------------------------------------------------ */
-
-function TreeNodeView({
-  node,
-  depth,
-  actionIcon,
-  actionTitle,
-  onAction,
-  onFolderAction,
-  onClickFile,
-  onOpenFile,
-  onPickHunks,
-  disabled,
-  showRevert,
-  onRevert,
-  onFolderRevert,
-}: {
-  node: TreeNode;
-  depth: number;
-  actionIcon: React.ReactNode;
-  actionTitle: string;
-  onAction: (f: GitFileChange) => void;
-  onFolderAction?: (files: GitFileChange[]) => void;
-  onClickFile: (f: GitFileChange) => void;
-  onOpenFile?: (f: GitFileChange) => void;
-  onPickHunks?: (f: GitFileChange) => void;
-  disabled: boolean;
-  showRevert?: boolean;
-  onRevert?: (f: GitFileChange) => void;
-  onFolderRevert?: (files: GitFileChange[], folderName: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(true);
-  const isDir = node.children.length > 0 && !node.file;
-
-  if (node.file) {
-    return (
-      <div style={{ paddingLeft: depth * TREE_INDENT }}>
-        <FileRow
-          file={node.file}
-          displayName={node.name}
-          actionIcon={actionIcon}
-          actionTitle={actionTitle}
-          onAction={onAction}
-          onClickFile={onClickFile}
-          onOpenFile={onOpenFile}
-          onPickHunks={onPickHunks}
-          disabled={disabled}
-          showRevert={showRevert}
-          onRevert={onRevert}
-        />
+        <b className="mb-1 block text-[13px] font-semibold text-text">Nothing to commit</b>
+        The working tree matches the last commit.
       </div>
-    );
-  }
-
-  if (isDir) {
-    const folderFiles = collectFiles(node);
-    const lastSlash = node.name.lastIndexOf("/");
-    const folderPrefix = lastSlash >= 0 ? node.name.slice(0, lastSlash + 1) : "";
-    const folderLeaf = lastSlash >= 0 ? node.name.slice(lastSlash + 1) : node.name;
-
-    return (
-      <div>
-        {/* Folder row. The menu used to be a plain dropdown whose trigger was
-            the whole row, which on a touch screen opens on *tap* — so tapping
-            a folder opened a menu instead of expanding it, and there was no
-            way to expand one at all. Long-press is the gesture for a menu. */}
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div
-              // 44px of row on a touch screen, compact where there is a pointer.
-              className="group relative flex items-center hover:bg-muted/50 rounded py-3 md:py-1 select-none"
-              style={{ paddingLeft: depth * TREE_INDENT }}
-            >
+      {last && (
+        <div className="mx-2.5 mb-2.5 rounded-[10px] border border-border-soft bg-background px-3 py-2.5 text-xs text-text-2">
+          <span className="text-text-3">Last commit</span>
+          <b className="block truncate font-medium text-text" title={last.subject}>{last.subject}</b>
+          <div className="mt-1.5 flex items-center gap-2 whitespace-nowrap text-text-3">
+            <span className="font-mono">{last.hash.slice(0, 7)}</span>
+            <span>{formatRelativeDate(last.date)}</span>
+            <span className="flex-1" />
+            {undoable && (
               <button
                 type="button"
-                className="flex items-center gap-1.5 flex-1 min-w-0 text-sm text-muted-foreground"
-                onClick={() => setExpanded(!expanded)}
+                className="inline-flex h-11 md:h-6 items-center gap-1 rounded-[5px] px-1.5 text-[11.5px] font-medium text-text-2 hover:bg-surface-hover hover:text-text disabled:opacity-50"
+                disabled={!!busy}
+                onClick={onUndoCommit}
+                title="Take the commit back, keeping its changes staged"
               >
-                {expanded ? (
-                  <ChevronDown className="size-4 shrink-0" />
-                ) : (
-                  <ChevronRight className="size-4 shrink-0" />
-                )}
-                {/*
-                 * A compacted name is a path, and for a path the last segment is
-                 * the specific one — so the leading ones are what may be dropped,
-                 * and they are dimmed to read as context rather than as the
-                 * folder's own name. One inline flow inside the isolate, not two
-                 * flex children: the row's `gap-1.5` would otherwise open a space
-                 * inside the path, between `web/` and `components`.
-                 */}
-                <span dir="rtl" className="flex-1 min-w-0 truncate text-left">
-                  <bdi>
-                    {folderPrefix && <span className="opacity-55">{folderPrefix}</span>}
-                    <span className="font-medium">{folderLeaf}</span>
-                  </bdi>
-                </span>
-                <span className="text-xs opacity-55 shrink-0">
-                  ({folderFiles.length})
-                </span>
+                <Undo2 className="size-3.5" />
+                Undo
               </button>
-              <ActionButtons
-                showRevert={showRevert}
-                onRevert={
-                  onFolderRevert
-                    ? () => onFolderRevert(folderFiles, node.fullPath)
-                    : undefined
-                }
-                onAction={() => onFolderAction?.(folderFiles)}
-                actionIcon={actionIcon}
-                actionTitle={`${actionTitle} ${node.name}/`}
-                disabled={disabled}
-              />
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent className="min-w-40">
-            <ContextMenuItem onClick={() => onFolderAction?.(folderFiles)} disabled={disabled}>
-              {actionTitle} {node.name}/
-            </ContextMenuItem>
-            {onFolderRevert && (
-              <>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  variant="destructive"
-                  onClick={() => onFolderRevert(folderFiles, node.fullPath)}
-                  disabled={disabled}
-                >
-                  Discard Changes
-                </ContextMenuItem>
-              </>
             )}
-          </ContextMenuContent>
-        </ContextMenu>
-        {/*
-         * One continuous guide per level, drawn here by the parent rather than
-         * as a segment per child. The old version gave every row its own elbow
-         * positioned by hand — a file's branch at `top: 50%`, a folder's at a
-         * fixed `top: 13`, against rows of two different heights — so the
-         * pieces never met and the rails read as broken. A single line owned by
-         * the container it groups cannot drift from it, and dropping the elbows
-         * is what VS Code's own tree does.
-         */}
-        {expanded && (
-          <div className="relative">
-            <span
-              aria-hidden
-              className="absolute top-0 bottom-0 w-px bg-border/70"
-              style={{ left: depth * TREE_INDENT + TREE_GUIDE_X }}
-            />
-            {node.children.map((child, i) => (
-              <TreeNodeView
-                key={child.fullPath}
-                node={child}
-                depth={depth + 1}
-                actionIcon={actionIcon}
-                actionTitle={actionTitle}
-                onAction={onAction}
-                onFolderAction={onFolderAction}
-                onClickFile={onClickFile}
-                onOpenFile={onOpenFile}
-                onPickHunks={onPickHunks}
-                disabled={disabled}
-                showRevert={showRevert}
-                onRevert={onRevert}
-                onFolderRevert={onFolderRevert}
-              />
-            ))}
           </div>
-        )}
-      </div>
-    );
-  }
-
-  return null;
+        </div>
+      )}
+    </>
+  );
 }

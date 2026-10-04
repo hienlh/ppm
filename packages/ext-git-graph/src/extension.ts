@@ -3,7 +3,7 @@
  * Visualizes git commit history as an interactive graph in a webview.
  */
 import type { ExtensionContext } from "@ppm/vscode-compat";
-import type { GitGraphSettings, WebviewToExt, Worktree } from "./types.ts";
+import type { CommitDraftData, GitGraphSettings, PpmGitChanges, WebviewToExt, Worktree } from "./types.ts";
 import { DEFAULT_SETTINGS } from "./types.ts";
 import { getWebviewHtml } from "./webview-html.ts";
 import type { VscodeApi } from "./git-exec.ts";
@@ -18,7 +18,7 @@ import { registerRebaseView } from "./rebase-view.ts";
 import { registerReflogView } from "./reflog-view.ts";
 import { parseSubmoduleStatus } from "./submodule-parser.ts";
 import { openPanel } from "./panel-registry.ts";
-import { detectMergeState } from "./git-state.ts";
+import { createPpmRepoResolver, ppmGit, remoteWeb } from "./ppm-git.ts";
 import { navigateToPanel } from "./panel-nav.ts";
 import { registerViewCommand } from "./register-view-command.ts";
 import { buildSearchArgs, isSearchMode, parseSearchResults } from "./commit-search.ts";
@@ -31,7 +31,7 @@ const VALID_SETTING_KEYS = new Set<string>([
   "maxCommits", "showTags", "showStashes", "showRemoteBranches", "graphStyle",
   "firstParentOnly", "dateFormat", "commitOrdering", "issueLinkingRules", "prCreation",
   "autoFetchInterval",
-  "colRefs", "colChanges", "colAuthor", "colDate", "colHash",
+  "colChanges", "colAuthor", "colDate", "colHash",
 ]);
 
 async function saveSetting(context: ExtensionContext, key: string, value: unknown): Promise<GitGraphSettings> {
@@ -40,6 +40,52 @@ async function saveSetting(context: ExtensionContext, key: string, value: unknow
   (settings as any)[key] = value;
   await context.globalState.update("settings", settings);
   return settings;
+}
+
+const SYNC_ACTIONS = ["fetch", "pull", "push", "publish", "sync"] as const;
+type SyncAction = typeof SYNC_ACTIONS[number];
+
+/** What the toolbar's sync buttons may ask for; anything else is refused. */
+function syncAction(value: unknown): SyncAction {
+  if (!SYNC_ACTIONS.includes(value as SyncAction)) throw new Error(`Unknown sync action: "${String(value)}"`);
+  return value as SyncAction;
+}
+
+/** A worktree directory from the panel: typed by the user, or read back from `git worktree list`. */
+function assertWorktreePath(value: unknown): string {
+  const s = typeof value === "string" ? value : "";
+  if (!s.trim() || s.startsWith("-") || /[\x00-\x1f\x7f]/.test(s)) throw new Error(`Invalid worktree path: "${s}"`);
+  return s;
+}
+
+/**
+ * The name the panel files a request's answer under. An `error` from the
+ * handler carries it, so the button waiting on that request stops waiting;
+ * requests nobody waits on have none.
+ */
+function actionKeyFor(msg: WebviewToExt): string | undefined {
+  switch (msg.command) {
+    case "gitAction":
+    case "sync":
+      return typeof msg.action === "string" ? msg.action : undefined;
+    case "operation":
+      return `operation:${msg.action === "continue" ? "continue" : "abort"}`;
+    case "stageFiles":
+    case "unstageFiles":
+    case "discardFiles":
+    case "undoDiscard":
+    case "commitStaged":
+    case "undoCommit":
+    case "stash":
+    case "stashAction":
+    case "addWorktree":
+    case "removeWorktree":
+    case "pruneWorktrees":
+    case "updateSubmodule":
+      return msg.command;
+    default:
+      return undefined;
+  }
 }
 
 export function activate(context: ExtensionContext, vscode: VscodeApi): void {
@@ -75,8 +121,16 @@ function openGitGraph(
 
   // Declared before openPanel so the message handler can reach the panel it is
   // attached to without threading it through every handler signature.
-  let uncommittedPollTimer: ReturnType<typeof setInterval> | undefined;
+  let changesPollTimer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
+  // The branch the graph is scoped to. Every refresh the host starts itself —
+  // after an action, after a setting changed — has to ask for the same window
+  // the user is looking at, or the graph silently jumps back to all branches.
+  let scope = "all";
+  const ppmRepo = createPpmRepoResolver(projectPath);
+  // Comes back in the draft broadcast, so other surfaces can tell this panel's
+  // typing from their own.
+  const draftClientId = `git-graph:${Math.random().toString(36).slice(2, 10)}`;
 
   const panel = openPanel({
     vscode,
@@ -86,13 +140,18 @@ function openGitGraph(
     html: getWebviewHtml(),
     onDispose: () => {
       disposed = true;
-      if (uncommittedPollTimer) clearInterval(uncommittedPollTimer);
+      if (changesPollTimer) clearInterval(changesPollTimer);
     },
     onMessage: async (raw: unknown) => {
-    const msg = raw as WebviewToExt;
+    // `reqId`: sent with a request that waits for its answer.
+    const msg = raw as WebviewToExt & { reqId?: number };
     // Panel is bound to its project for life — reopening a project recreates
     // the panel, so the closure path is always current.
     const pp = projectPath;
+    // Messages are handled concurrently, so two requests of one action can finish
+    // in either order: every answer echoes the id of the request it answers.
+    const runAction = (action: string, run: () => Promise<unknown>, refresh: Parameters<typeof answerAction>[3]) =>
+      answerAction(msg.reqId, action, run, refresh);
     try {
       switch (msg.command) {
         case "ready":
@@ -101,9 +160,10 @@ function openGitGraph(
           // settings panel was opened — so a saved choice took effect on the
           // second look at the panel rather than the first.
           await panel.webview.postMessage({ command: "loadSettings", data: getSettings(context) });
+          refsSeen = await readRefs().catch(() => null);
           await handleRepoInfo(vscode, panel, pp);
-          await handleRequestCommits(vscode, panel, pp, context);
-          handleUncommittedStatus(vscode, panel, pp); // fire-and-forget
+          await readCommits(undefined, 0);
+          void refreshChanges();
           handleWorktrees(vscode, panel, pp); // fire-and-forget
           handleStashes(vscode, panel, pp); // fire-and-forget
           handleSubmodules(vscode, panel, pp); // fire-and-forget
@@ -112,19 +172,132 @@ function openGitGraph(
           await handleRepoInfo(vscode, panel, pp);
           break;
         case "requestCommits":
-          await handleRequestCommits(vscode, panel, pp, context, msg.maxCommits, msg.skip, msg.branch);
+          scope = msg.branch || "all";
+          await readCommits(msg.maxCommits, msg.skip ?? 0);
           break;
         case "requestCommitDetails":
           await handleCommitDetails(vscode, panel, pp, msg.hash);
           break;
-        case "requestUncommitted":
-          await handleUncommittedStatus(vscode, panel, pp);
+        case "requestStashDetails":
+          await handleStashDetails(vscode, panel, pp, msg.hash);
           break;
+        case "requestChanges":
+          await refreshChanges();
+          break;
+        case "saveDraft": {
+          await ppmGit<CommitDraftData>(await ppmRepo(), "PUT", "/commit-draft", {
+            message: String(msg.message ?? ""),
+            clientId: draftClientId,
+          });
+          break;
+        }
+        case "stageFiles":
+        case "unstageFiles":
+        case "discardFiles": {
+          const route = msg.command === "stageFiles" ? "/stage" : msg.command === "unstageFiles" ? "/unstage" : "/discard";
+          // Checked inside the action, so a refused path is answered like any
+          // other failure rather than leaving the button waiting.
+          await runAction(msg.command, async () => {
+            const paths = Array.isArray(msg.paths) ? msg.paths.map(String) : [];
+            assertSafeFilePaths(paths, pp);
+            return ppmGit<{ undo?: unknown }>(await ppmRepo(), "POST", route, { files: paths });
+          }, "changes");
+          break;
+        }
+        case "undoDiscard":
+          await runAction("undoDiscard", async () => ppmGit(await ppmRepo(), "POST", "/discard/undo", { id: String(msg.id) }), "changes");
+          break;
+        case "commitStaged":
+          await runAction("commitStaged", async () => {
+            const ref = await ppmRepo();
+            const done = await ppmGit<{ hash: string }>(ref, "POST", "/commit", {
+              message: String(msg.message ?? ""),
+              amend: !!msg.amend,
+              signoff: !!msg.signoff,
+            });
+            if (!msg.push) return done;
+            // The commit stands even if the push fails; say which half failed.
+            try {
+              const changes = await ppmGit<PpmGitChanges>(ref, "GET", "/changes");
+              const publish = !changes.branch.upstream || changes.branch.upstreamGone;
+              await ppmGit(ref, "POST", publish ? "/publish" : "/push", publish ? undefined : {});
+            } catch (e) {
+              throw new Error(`Committed, but the push failed: ${e instanceof Error ? e.message : String(e)}`);
+            }
+            return { ...done, pushed: true };
+          }, "all");
+          break;
+        case "undoCommit":
+          // The commit the panel named: PPM refuses once it is no longer the last one.
+          await runAction("undoCommit", async () => ppmGit(await ppmRepo(), "POST", "/commit/undo", { hash: String(msg.hash ?? "") }), "all");
+          break;
+        case "sync": {
+          const action = syncAction(msg.action);
+          await runAction(action, async () => {
+            const ref = await ppmRepo();
+            switch (action) {
+              case "fetch": {
+                // Every remote, pruned: what the toolbar's Fetch promises. Through
+                // PPM rather than git directly, so the app's status bar and Source
+                // Control hear of it at once. The answer carries how far behind
+                // that left the branch.
+                await ppmGit(ref, "POST", "/fetch", { prune: true });
+                const changes = await ppmGit<PpmGitChanges>(ref, "GET", "/changes");
+                return { behind: changes.branch.behind };
+              }
+              case "sync":
+                await ppmGit(ref, "POST", "/pull", {});
+                return ppmGit(ref, "POST", "/push", {});
+              case "publish":
+                return ppmGit(ref, "POST", "/publish");
+              default:
+                return ppmGit(ref, "POST", `/${action}`, {});
+            }
+          }, "all");
+          break;
+        }
+        case "stash":
+          await runAction("stash", async () => {
+            const ref = await ppmRepo();
+            await ppmGit(ref, "POST", "/stash", {
+              message: typeof msg.message === "string" && msg.message ? msg.message : undefined,
+              includeUntracked: msg.includeUntracked === true,
+            });
+            // The new entry, so the toast's Undo can pop exactly it.
+            const [top] = await ppmGit<Array<{ index: number; hash: string }>>(ref, "GET", "/stashes");
+            return top ?? null;
+          }, "all");
+          break;
+        case "stashAction": {
+          const action = msg.action === "pop" || msg.action === "drop" ? msg.action : "apply";
+          await runAction("stashAction", async () => ppmGit(await ppmRepo(), "POST", `/stash/${action}`, {
+            index: Number(msg.index),
+            hash: String(msg.hash ?? ""),
+          }), "all");
+          break;
+        }
+        case "operation": {
+          const action = msg.action === "continue" ? "continue" : "abort";
+          await runAction(`operation:${action}`, async () => ppmGit(await ppmRepo(), "POST", `/operation/${action}`, {}), "all");
+          break;
+        }
+        case "openReview": {
+          const ref = await ppmRepo();
+          const path = typeof msg.path === "string" && msg.path ? msg.path : undefined;
+          if (path) assertSafeFilePaths([path], pp);
+          await vscode.window.openTab("git-review", "Review changes", ref.projectName, {
+            projectName: ref.projectName,
+            ...(ref.repo ? { repo: ref.repo } : {}),
+            ...(path ? { path } : {}),
+          });
+          break;
+        }
         case "openDiff": {
           assertSafeFilePaths([msg.filePath], pp);
           const fileName = msg.filePath.split(/[\\/]/).pop() || msg.filePath;
           const target = await resolveFileTab(pp, msg.filePath);
-          await vscode.window.openTab("git-diff", `${fileName} (${msg.hash.substring(0, 7)})`, target.projectName, {
+          const side = msg.hash === "uncommitted" ? "working tree" : msg.hash === "staged" ? "staged" : msg.hash.substring(0, 7);
+          await vscode.window.openTab("git-diff", `${fileName} (${side})`, target.projectName, {
             ...target,
             ...(msg.parentHash ? { ref1: msg.parentHash } : {}),
             ...(msg.hash !== "uncommitted" && msg.hash !== "staged" ? { ref2: msg.hash } : {}),
@@ -138,7 +311,7 @@ function openGitGraph(
           const updated = await saveSetting(context, msg.key, msg.value);
           await panel.webview.postMessage({ command: "loadSettings", data: updated });
           if (["maxCommits", "firstParentOnly", "commitOrdering"].includes(msg.key)) {
-            await handleRequestCommits(vscode, panel, pp, context, updated.maxCommits);
+            await readCommits(updated.maxCommits, 0);
           }
           break;
         }
@@ -192,14 +365,7 @@ function openGitGraph(
           break;
         }
         case "gitAction":
-          if (msg.args?.files && Array.isArray(msg.args.files)) {
-            assertSafeFilePaths(msg.args.files as string[], pp);
-          }
-          if (msg.action === "discard") {
-            await handleDiscard(vscode, panel, pp, context, msg.args);
-          } else {
-            await handleGitAction(vscode, panel, pp, context, msg.action, msg.args);
-          }
+          await handleGitAction(vscode, panel, pp, msg.action, msg.args ?? {}, () => refreshAfter(refreshAll), msg.reqId);
           break;
         case "openFile": {
           assertSafeFilePaths([msg.filePath], pp);
@@ -216,23 +382,23 @@ function openGitGraph(
         case "requestSubmodules":
           await handleSubmodules(vscode, panel, pp);
           break;
-        case "updateSubmodule": {
-          // A path from the webview, so it gets the same treatment as any other.
-          // `--` keeps a path that starts with a dash out of the option list.
-          const subPath = String(msg.path || "");
-          assertSafeFilePaths([subPath], pp);
-          const updateRes = await spawnGit(
-            vscode,
-            ["submodule", "update", "--init", "--recursive", "--", subPath],
-            pp,
-            180_000,
-          );
-          if (updateRes.exitCode !== 0) {
-            throw new Error(updateRes.stderr.trim() || "git could not update that submodule.");
-          }
-          await handleSubmodules(vscode, panel, pp);
+        case "updateSubmodule":
+          await runAction("updateSubmodule", async () => {
+            // A path from the webview, so it gets the same treatment as any other.
+            // `--` keeps a path that starts with a dash out of the option list.
+            const subPath = String(msg.path || "");
+            assertSafeFilePaths([subPath], pp);
+            const updateRes = await spawnGit(
+              vscode,
+              ["submodule", "update", "--init", "--recursive", "--", subPath],
+              pp,
+              180_000,
+            );
+            if (updateRes.exitCode !== 0) {
+              throw new Error(updateRes.stderr.trim() || "git could not update that submodule.");
+            }
+          }, () => handleSubmodules(vscode, panel, pp));
           break;
-        }
         case "openSubmodule": {
           const subPath = String(msg.path || "");
           assertSafeFilePaths([subPath], pp);
@@ -300,51 +466,30 @@ function openGitGraph(
             projectPath: pp,
           });
           break;
-        case "openInteractiveRebase":
-          await navigateToPanel({
-            vscode,
-            context,
-            viewType: "git-graph.interactiveRebase",
-            title: "Interactive Rebase",
-            projectPath: pp,
-            target: msg.base ? { base: assertValidHash(msg.base) } : undefined,
-          });
+        case "addWorktree":
+          await runAction("addWorktree", async () => {
+            const addArgs = ["worktree", "add"];
+            if (msg.newBranch) addArgs.push("-b", assertValidRef(msg.newBranch, "newBranch"));
+            addArgs.push(assertWorktreePath(msg.path));
+            if (msg.branch) addArgs.push(assertValidRef(msg.branch, "branch"));
+            // A commit or a branch name: both are what `git worktree add` takes here.
+            if (msg.startPoint) addArgs.push(assertValidRef(msg.startPoint, "startPoint"));
+            const res = await spawnGit(vscode, addArgs, pp);
+            if (res.exitCode !== 0) throw new Error(res.stderr.trim() || "git could not add the worktree.");
+          }, () => handleWorktrees(vscode, panel, pp));
           break;
-        case "addWorktree": {
-          const addArgs = ["worktree", "add"];
-          if (msg.newBranch) {
-            addArgs.push("-b", assertValidRef(msg.newBranch, "newBranch"));
-          }
-          addArgs.push(msg.path);
-          if (msg.branch) addArgs.push(assertValidRef(msg.branch, "branch"));
-          if (msg.startPoint) addArgs.push(assertValidHash(msg.startPoint));
-          const addResult = await spawnGit(vscode, addArgs, pp);
-          await panel.webview.postMessage({
-            command: "actionResult", action: "addWorktree",
-            result: { ok: addResult.exitCode === 0, error: addResult.exitCode !== 0 ? addResult.stderr.trim() : undefined },
-          });
-          if (addResult.exitCode === 0) await handleWorktrees(vscode, panel, pp);
+        case "removeWorktree":
+          await runAction("removeWorktree", async () => {
+            const res = await spawnGit(vscode, ["worktree", "remove", ...(msg.force ? ["--force"] : []), assertWorktreePath(msg.path)], pp);
+            if (res.exitCode !== 0) throw new Error(res.stderr.trim() || "git could not remove the worktree.");
+          }, () => handleWorktrees(vscode, panel, pp));
           break;
-        }
-        case "removeWorktree": {
-          const rmArgs = ["worktree", "remove", ...(msg.force ? ["--force"] : []), msg.path];
-          const rmResult = await spawnGit(vscode, rmArgs, pp);
-          await panel.webview.postMessage({
-            command: "actionResult", action: "removeWorktree",
-            result: { ok: rmResult.exitCode === 0, error: rmResult.exitCode !== 0 ? rmResult.stderr.trim() : undefined },
-          });
-          if (rmResult.exitCode === 0) await handleWorktrees(vscode, panel, pp);
+        case "pruneWorktrees":
+          await runAction("pruneWorktrees", async () => {
+            const res = await spawnGit(vscode, ["worktree", "prune"], pp);
+            if (res.exitCode !== 0) throw new Error(res.stderr.trim() || "git could not prune the worktrees.");
+          }, () => handleWorktrees(vscode, panel, pp));
           break;
-        }
-        case "pruneWorktrees": {
-          const pruneResult = await spawnGit(vscode, ["worktree", "prune"], pp);
-          await panel.webview.postMessage({
-            command: "actionResult", action: "pruneWorktrees",
-            result: { ok: pruneResult.exitCode === 0, error: pruneResult.exitCode !== 0 ? pruneResult.stderr.trim() : undefined },
-          });
-          if (pruneResult.exitCode === 0) await handleWorktrees(vscode, panel, pp);
-          break;
-        }
         case "openWorktree":
           await openProjectAt(vscode, msg.path, "Worktree");
           break;
@@ -355,21 +500,154 @@ function openGitGraph(
           await vscode.window.openTab("conflict-editor", `Conflict: ${msg.filePath.split(/[\\/]/).pop()}`, target.projectName, target);
           break;
         }
-        case "openSourceControl": {
-          await vscode.window.showInformationMessage("Open the Source Control panel from the sidebar.");
-          break;
-        }
       }
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
-      await panel.webview.postMessage({ command: "error", message: errMsg });
+      // `failed` and `reqId` name the request this answers, so a button waiting on it stops waiting.
+      await panel.webview.postMessage({ command: "error", message: errMsg, failed: actionKeyFor(msg), reqId: msg.reqId });
     }
     },
   });
 
-  // Poll uncommitted changes every 5 seconds
-  uncommittedPollTimer = setInterval(() => {
-    if (!disposed) handleUncommittedStatus(vscode, panel, projectPath);
+  /**
+   * The working tree and the shared commit message, from PPM's own routes.
+   *
+   * Coalesced: a refresh asked for while one is in flight runs once more after
+   * it rather than being dropped, because the one in flight may have read the
+   * tree from before the action that asked.
+   */
+  let changesRun: Promise<void> | null = null;
+  let changesAgain = false;
+  async function readChangesOnce(): Promise<void> {
+    try {
+      const ref = await ppmRepo();
+      const [changes, draft] = await Promise.all([
+        ppmGit<PpmGitChanges>(ref, "GET", "/changes"),
+        ppmGit<CommitDraftData>(ref, "GET", "/commit-draft"),
+      ]);
+      if (disposed) return;
+      await panel.webview.postMessage({ command: "loadChanges", data: changes });
+      await panel.webview.postMessage({ command: "loadDraft", data: draft });
+    } catch (e) {
+      if (disposed) return;
+      await panel.webview.postMessage({
+        command: "loadChanges",
+        data: null,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  function refreshChanges(): Promise<void> {
+    if (changesRun) {
+      changesAgain = true;
+      return changesRun;
+    }
+    changesRun = (async () => {
+      do {
+        changesAgain = false;
+        await readChangesOnce();
+      } while (changesAgain && !disposed);
+    })().finally(() => { changesRun = null; });
+    return changesRun;
+  }
+
+  async function refreshAll(): Promise<void> {
+    // Taken before the reads, so a ref that moves during them is still a change at the next poll.
+    refsSeen = await readRefs().catch(() => refsSeen);
+    await handleRepoInfo(vscode, panel, projectPath);
+    await readCommits(undefined, 0);
+    await refreshChanges();
+  }
+
+  /**
+   * The history for the panel's branch filter. A filter on a branch that is gone comes
+   * back as every branch, and is dropped here too: kept, it would fail every refresh.
+   */
+  async function readCommits(maxCommits: number | undefined, skip: number): Promise<void> {
+    const asked = scope;
+    const shown = await handleRequestCommits(vscode, panel, projectPath, context, maxCommits, skip, asked);
+    // Unless a newer request chose a filter meanwhile.
+    if (shown && scope === asked) scope = shown;
+  }
+
+  /*
+   * Refs that move while HEAD stays put — a stash pushed, popped or dropped, a branch or a tag
+   * made or deleted, a fetch — when it happens outside this panel, in a terminal or another
+   * tool. The working-tree poll cannot see those, so they showed only after View → Refresh.
+   * Two cheap reads each poll say whether anything moved; only then is the rest read again.
+   */
+  let refsSeen: string | null = null;
+  let refsBusy = false;
+  async function readRefs(): Promise<string> {
+    const [refs, stashes] = await Promise.all([
+      spawnGit(vscode, ["for-each-ref", "--format=%(refname) %(objectname)"], projectPath, 10_000),
+      // A stash dropped from below the top leaves refs/stash where it was; only its list moves.
+      spawnGit(vscode, ["stash", "list", "--format=%H"], projectPath, 10_000),
+    ]);
+    if (refs.exitCode !== 0) throw new Error(refs.stderr || "git for-each-ref failed");
+    return refs.stdout + "\n" + stashes.stdout;
+  }
+  async function followOutsideRefChanges(): Promise<void> {
+    if (refsBusy) return;
+    refsBusy = true;
+    try {
+      const now = await readRefs();
+      const before = refsSeen;
+      refsSeen = now;
+      if (before === null || before === now || disposed) return;
+      await handleRepoInfo(vscode, panel, projectPath);
+      await readCommits(undefined, 0);
+      await handleWorktrees(vscode, panel, projectPath);
+    } catch {
+      // Unreadable this time; the next poll asks again.
+    } finally {
+      refsBusy = false;
+    }
+  }
+
+  /**
+   * One write: the outcome as an `actionResult` answering request `reqId`, then
+   * whatever it changed read again — the working tree only, the history too, or
+   * a list of its own. A failed write is refreshed as well, since a pull that
+   * stops on a conflict has changed the tree all the same.
+   */
+  async function answerAction(
+    reqId: number | undefined,
+    action: string,
+    run: () => Promise<unknown>,
+    refresh: "changes" | "all" | (() => Promise<void>),
+  ): Promise<void> {
+    let result: { ok: boolean; error?: string; data?: unknown };
+    try {
+      result = { ok: true, data: await run() };
+    } catch (e) {
+      result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+    await panel.webview.postMessage({ command: "actionResult", action, result, reqId });
+    await refreshAfter(refresh === "all" ? refreshAll : refresh === "changes" ? refreshChanges : refresh);
+  }
+
+  /**
+   * A re-read after an answer has gone out. It may not throw into the message
+   * handler, which would report the action as failed after its answer already
+   * said how it went.
+   */
+  async function refreshAfter(refresh: () => Promise<void>): Promise<void> {
+    try {
+      await refresh();
+    } catch (e) {
+      if (disposed) return;
+      await panel.webview.postMessage({ command: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  changesPollTimer = setInterval(() => {
+    if (disposed) return;
+    // Refs first: a commit made in a terminal then reaches the panel as history before the
+    // working tree that goes with it, and the panel has no reason to ask for the history again.
+    void followOutsideRefChanges().finally(() => {
+      if (!disposed) void refreshChanges();
+    });
   }, 5_000);
 }
 
@@ -380,10 +658,10 @@ async function handleRepoInfo(
   projectPath: string,
 ): Promise<void> {
   const [branchResult, tagResult, remoteResult, stashResult, headResult, headHashResult] = await Promise.all([
-    spawnGit(vscode, ["branch", "-a", "--format=%(refname:short)|%(objectname:short)|%(HEAD)"], projectPath),
+    spawnGit(vscode, ["branch", "-a", "--format=%(refname:short)|%(objectname:short)|%(HEAD)|%(symref)"], projectPath),
     spawnGit(vscode, ["tag", "-l", "--format=%(refname:short)|%(objectname:short)"], projectPath),
     spawnGit(vscode, ["remote", "-v"], projectPath),
-    spawnGit(vscode, ["stash", "list", "--format=%gd|%H|%P|%s"], projectPath),
+    spawnGit(vscode, ["stash", "list", `--format=${STASH_FORMAT}`], projectPath),
     spawnGit(vscode, ["rev-parse", "--abbrev-ref", "HEAD"], projectPath),
     spawnGit(vscode, ["rev-parse", "HEAD"], projectPath),
   ]);
@@ -394,10 +672,14 @@ async function handleRepoInfo(
   const stashes = parseStashes(stashResult.stdout);
   const currentBranch = headResult.stdout.trim();
   const headHash = headHashResult.stdout.trim();
+  const webRemote = remotes.find((r) => r.name === "origin") ?? remotes[0];
 
   await panel.webview.postMessage({
     command: "loadRepoInfo",
-    data: { path: projectPath, branches, tags, remotes, stashes, head: headHash, currentBranch },
+    data: {
+      path: projectPath, branches, tags, remotes, stashes, head: headHash, currentBranch,
+      remoteWeb: webRemote ? remoteWeb(webRemote.fetchUrl || webRemote.pushUrl) : null,
+    },
   });
 }
 
@@ -420,6 +702,8 @@ async function handleRepoInfo(
 export interface CommitRequestState {
   latest: number;
   lastReset: number;
+  /** How many commits the panel's list holds, by the answers sent so far. */
+  shown?: number;
 }
 
 /** Record a new request and return its generation. */
@@ -436,40 +720,55 @@ export function isStaleCommitRequest(state: CommitRequestState, generation: numb
 
 const commitRequests = new WeakMap<object, CommitRequestState>();
 
+/** Posts the commit window; answers with the branch filter it was read for, or undefined when it was dropped as stale. */
 async function handleRequestCommits(
   vscode: VscodeApi,
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
   projectPath: string,
   context?: ExtensionContext,
-  maxCommits = 300,
+  maxCommits?: number,
   skip = 0,
   branch?: string,
-): Promise<void> {
+): Promise<string | undefined> {
   const { parseGitLog } = await import("./git-log-parser.ts");
   const settings = context ? getSettings(context) : DEFAULT_SETTINGS;
-  const window = { maxCommits, skip, branch, firstParentOnly: settings.firstParentOnly,
-    ordering: settings.commitOrdering };
-
   let requests = commitRequests.get(panel);
   if (!requests) {
     requests = { latest: 0, lastReset: 0 };
     commitRequests.set(panel, requests);
   }
-  const generation = beginCommitRequest(requests, skip);
+  // A re-read the host starts by itself asks for as many commits as the panel has paged
+  // in: the first page alone would take the rest from under the reader.
+  const window = { maxCommits: maxCommits ?? Math.max(settings.maxCommits, requests.shown ?? 0), skip, branch,
+    firstParentOnly: settings.firstParentOnly, ordering: settings.commitOrdering };
+  let generation = beginCommitRequest(requests, skip);
 
-  const result = await spawnGit(
-    vscode,
-    logArgs(window, `--format=%H%n%P%n%an%n%ae%n%at%n%cn%n%ce%n%ct%n%D%n%s%n<END_COMMIT>`),
-    projectPath,
-  );
-  if (isStaleCommitRequest(requests, generation)) return;
+  const format = `--format=%H%n%P%n%an%n%ae%n%at%n%cn%n%ce%n%ct%n%D%n%s%n<END_COMMIT>`;
+  let result = await spawnGit(vscode, logArgs(window, format), projectPath);
+  // A filter on a branch that is gone — renamed, deleted, pruned by a fetch — fails the
+  // log. That is not an empty history: every branch is read from the top instead, which
+  // replaces the list, and the answer says "all" so the picker stops naming the branch.
+  if (result.exitCode !== 0 && window.branch && window.branch !== "all" && !isStaleCommitRequest(requests, generation)) {
+    window.branch = undefined;
+    window.skip = 0;
+    generation = beginCommitRequest(requests, 0);
+    result = await spawnGit(vscode, logArgs(window, format), projectPath);
+  }
+  if (isStaleCommitRequest(requests, generation)) return undefined;
   const commits = parseGitLog(result.stdout);
+  const shown = window.branch ?? "all";
 
   await panel.webview.postMessage({
     command: "loadCommits",
     data: commits,
-    append: skip > 0,
+    append: window.skip > 0,
+    // Where a page goes: the panel drops one that does not continue the list it holds.
+    skip: window.skip,
+    // Which window this is, so a list the host refreshed by itself keeps the
+    // branch picker saying what is on screen.
+    scope: shown,
   });
+  requests.shown = window.skip + commits.length;
 
   // Lines changed, in a second pass. Asking the first log for --shortstat makes
   // git diff every commit in the window, and that cost would land before the
@@ -478,7 +777,7 @@ async function handleRequestCommits(
   try {
     const { parseShortstat } = await import("./shortstat-parser.ts");
     const stats = await spawnGit(vscode, logArgs(window, "--format=%H", "--shortstat"), projectPath);
-    if (isStaleCommitRequest(requests, generation)) return;
+    if (isStaleCommitRequest(requests, generation)) return shown;
     await panel.webview.postMessage({
       command: "loadCommitStats",
       data: parseShortstat(stats.stdout),
@@ -486,6 +785,7 @@ async function handleRequestCommits(
   } catch {
     // A column of numbers is not worth an error banner over the graph.
   }
+  return shown;
 }
 
 export interface LogWindow {
@@ -515,7 +815,8 @@ export function logArgs(window: LogWindow, ...format: string[]): string[] {
     // refname on its own, but that is a coincidence rather than a design, and
     // this window is now spawned twice per request — once for the graph and
     // once for the stats — so the value reaches git on two paths.
-    args.push(assertValidRef(window.branch, "branch"));
+    // `--`: a branch that no longer exists is an error, not the history of a path of that name.
+    args.push(assertValidRef(window.branch, "branch"), "--");
   } else {
     // Exclude stash refs — stashes are loaded separately via handleStashes
     args.push("--exclude=refs/stash", "--all");
@@ -530,67 +831,40 @@ async function handleCommitDetails(
   rawHash: string,
 ): Promise<void> {
   const hash = assertValidHash(rawHash);
-  const result = await spawnGit(vscode, [
-    "show", "--numstat", "--format=%H%n%P%n%an%n%ae%n%at%n%cn%n%ce%n%ct%n%B%n<END_MSG>", hash,
-  ], projectPath);
+  const result = await spawnGit(vscode, ["show", "--numstat", "--summary", DETAIL_FORMAT, hash], projectPath);
 
   const detail = parseCommitDetail(result.stdout);
   await panel.webview.postMessage({ command: "commitDetails", data: detail });
 }
 
-const UNMERGED_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
-
-async function handleUncommittedStatus(
+/**
+ * A stash, as the inspector shows a commit: its message, and what it changed
+ * against the commit it was made on.
+ *
+ * Not `git show`: a stash is a merge of its base and its index, and the
+ * combined diff `show` prints for a merge leaves out every file whose staged
+ * state was stashed unchanged — the file matches one parent, so it is not
+ * "different from all of them". The diff against the first parent is what was
+ * stashed, and the third parent, when there is one, holds the untracked files.
+ */
+async function handleStashDetails(
   vscode: VscodeApi,
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
   projectPath: string,
+  rawHash: string,
 ): Promise<void> {
-  try {
-    const result = await spawnGit(vscode, ["status", "--porcelain=v1", "-u"], projectPath, 10_000);
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      await panel.webview.postMessage({ command: "loadUncommitted", data: null });
-      return;
-    }
-    const staged: import("./types.ts").FileChange[] = [];
-    const unstaged: import("./types.ts").FileChange[] = [];
-    const conflicted: import("./types.ts").FileChange[] = [];
-    for (const line of result.stdout.split("\n").filter(Boolean)) {
-      if (staged.length + unstaged.length + conflicted.length >= 500) break;
-      const xy = line.substring(0, 2);
-      const filePath = line.substring(3);
-
-      // Check for unmerged/conflict entries first
-      if (UNMERGED_CODES.has(xy)) {
-        conflicted.push({ path: filePath, status: "U", additions: 0, deletions: 0 });
-        continue;
-      }
-
-      const x = xy[0]; // staged status
-      const y = xy[1]; // unstaged status
-      if (x !== " " && x !== "?") {
-        staged.push({ path: filePath, status: mapStatusCode(x), additions: 0, deletions: 0 });
-      }
-      if (y !== " " && y !== "?") {
-        unstaged.push({ path: filePath, status: mapStatusCode(y), additions: 0, deletions: 0 });
-      }
-      if (x === "?" && y === "?") {
-        unstaged.push({ path: filePath, status: "A", additions: 0, deletions: 0 });
-      }
-    }
-
-    // Only detect merge state when conflicts exist (perf optimization)
-    let mergeState: import("./types.ts").MergeState | undefined;
-    if (conflicted.length > 0) {
-      mergeState = await detectMergeState(vscode, projectPath);
-    }
-
-    await panel.webview.postMessage({
-      command: "loadUncommitted",
-      data: { staged, unstaged, conflicted, mergeState },
-    });
-  } catch {
-    await panel.webview.postMessage({ command: "loadUncommitted", data: null });
-  }
+  const hash = assertValidHash(rawHash);
+  const header = await spawnGit(vscode, ["show", "-s", DETAIL_FORMAT, hash], projectPath);
+  if (header.exitCode !== 0) throw new Error(header.stderr.trim() || "git could not read that stash.");
+  const parents = (header.stdout.split("\n")[1] || "").split(" ").filter(Boolean);
+  const [tracked, untracked] = await Promise.all([
+    spawnGit(vscode, ["diff", "--numstat", "--summary", `${hash}^1`, hash], projectPath),
+    parents.length > 2
+      ? spawnGit(vscode, ["show", "--numstat", "--summary", "--format=", `${hash}^3`], projectPath)
+      : Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
+  ]);
+  const detail = parseCommitDetail(`${header.stdout.trimEnd()}\n${tracked.stdout}\n${untracked.stdout}`);
+  await panel.webview.postMessage({ command: "commitDetails", data: detail });
 }
 
 /**
@@ -694,111 +968,75 @@ async function handleStashes(
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
   projectPath: string,
 ): Promise<void> {
-  const result = await spawnGit(vscode, ["stash", "list", "--format=%gd|%H|%P|%s"], projectPath, 10_000);
-  const stashes: import("./types.ts").Stash[] = [];
-  if (result.exitCode === 0 && result.stdout.trim()) {
-    for (const line of result.stdout.split("\n").filter(Boolean)) {
-      const parts = line.split("|");
-      if (parts.length >= 4) {
-        const refMatch = parts[0].match(/\{(\d+)\}/);
-        // %P gives space-separated parent hashes; first parent is the commit the stash was created on
-        const parentHash = parts[2].split(" ")[0] || "";
-        stashes.push({
-          index: refMatch ? parseInt(refMatch[1]) : stashes.length,
-          hash: parts[1],
-          parentHash,
-          message: parts.slice(3).join("|"),
-        });
-      }
-    }
-  }
+  const result = await spawnGit(vscode, ["stash", "list", `--format=${STASH_FORMAT}`], projectPath, 10_000);
+  const stashes = result.exitCode === 0 ? parseStashes(result.stdout) : [];
   await panel.webview.postMessage({ command: "loadStashes", data: stashes });
 }
 
-function mapStatusCode(code: string): "A" | "M" | "D" | "R" {
-  if (code === "A" || code === "?") return "A";
-  if (code === "D") return "D";
-  if (code === "R") return "R";
-  return "M";
-}
-
+/**
+ * One git command from the panel's menus, answered exactly once.
+ *
+ * A refused argument is answered like a failed command, because the button
+ * that asked is waiting on this action's answer. The re-read runs either way:
+ * a merge or a rebase that stops on a conflict has moved things all the same.
+ */
 async function handleGitAction(
   vscode: VscodeApi,
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
   projectPath: string,
-  context: ExtensionContext,
   action: string,
   args: Record<string, unknown>,
+  refresh: () => Promise<void>,
+  reqId?: number,
 ): Promise<void> {
-  const gitArgs = buildGitActionArgs(action, args);
-  const result = await spawnGit(vscode, gitArgs, projectPath);
-  const ok = result.exitCode === 0;
-
-  await panel.webview.postMessage({
-    command: "actionResult",
-    action,
-    args,
-    result: { ok, error: ok ? undefined : result.stderr.trim() },
-  });
-
-  // Refresh after action
-  if (ok) {
-    await handleRepoInfo(vscode, panel, projectPath);
-    await handleRequestCommits(vscode, panel, projectPath, context);
-    handleUncommittedStatus(vscode, panel, projectPath); // fire-and-forget
+  let result: { ok: boolean; error?: string };
+  try {
+    const gitArgs = buildGitActionArgs(action, args);
+    if (action === "stashBranch") await assertStashUnchanged(vscode, projectPath, args.index, args.hash);
+    const res = await spawnGit(vscode, gitArgs, projectPath);
+    result = res.exitCode === 0
+      ? { ok: true }
+      : { ok: false, error: res.stderr.trim() || `git exited with ${res.exitCode}` };
+  } catch (e) {
+    result = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+  await panel.webview.postMessage({ command: "actionResult", action, args, result, reqId });
+  await refresh();
 }
 
-async function handleDiscard(
-  vscode: VscodeApi,
-  panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
-  projectPath: string,
-  context: ExtensionContext,
-  args: Record<string, unknown>,
-): Promise<void> {
-  const files = (args.files as string[] | undefined) || [];
-  if (!files.length) throw new Error("No files to discard");
-
-  // Determine tracked vs untracked
-  const statusResult = await spawnGit(vscode, ["status", "--porcelain=v1"], projectPath, 10_000);
-  const untracked = new Set<string>();
-  for (const line of statusResult.stdout.split("\n").filter(Boolean)) {
-    if (line.startsWith("??")) untracked.add(line.substring(3).trim());
+/** `stash@{n}` for an index from the panel. */
+function stashRef(index: unknown): string {
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+    throw new Error(`Invalid stash index: "${String(index)}"`);
   }
+  return `stash@{${index}}`;
+}
 
-  const trackedFiles = files.filter((f) => !untracked.has(f));
-  const untrackedFiles = files.filter((f) => untracked.has(f));
-  const errors: string[] = [];
-
-  if (trackedFiles.length > 0) {
-    const r = await spawnGit(vscode, ["checkout", "--", ...trackedFiles], projectPath);
-    if (r.exitCode !== 0) errors.push(r.stderr.trim());
+/**
+ * A stash is named by its position, and positions shift as stashes come and
+ * go — so act only if the position still holds the stash the panel showed.
+ * Same check, same words, as PPM's own stash routes.
+ */
+async function assertStashUnchanged(vscode: VscodeApi, projectPath: string, index: unknown, hash: unknown): Promise<void> {
+  const res = await spawnGit(vscode, ["rev-parse", "--verify", "-q", stashRef(index)], projectPath);
+  if (typeof hash !== "string" || !hash || res.stdout.trim() !== hash) {
+    throw new Error("The stash list changed. Reload it and try again.");
   }
-  if (untrackedFiles.length > 0) {
-    const r = await spawnGit(vscode, ["clean", "-f", "--", ...untrackedFiles], projectPath);
-    if (r.exitCode !== 0) errors.push(r.stderr.trim());
-  }
-
-  const ok = errors.length === 0;
-  await panel.webview.postMessage({
-    command: "actionResult",
-    action: "discard",
-    result: { ok, error: ok ? undefined : errors.join("; ") },
-  });
-
-  // Always refresh to show current state (even on partial failure some files may have been discarded)
-  await handleRepoInfo(vscode, panel, projectPath);
-  await handleRequestCommits(vscode, panel, projectPath, context);
-  handleUncommittedStatus(vscode, panel, projectPath);
 }
 
 // --- Parsers ---
 
-function parseBranches(stdout: string): import("./types.ts").Branch[] {
-  return stdout.trim().split("\n").filter(Boolean).map((line) => {
-    const [name, hash, head] = line.split("|");
+/**
+ * A symbolic ref (`%(symref)` set) is skipped: `refs/remotes/origin/HEAD` only points at the
+ * remote's default branch, and `refname:short` shortens it to the bare remote name, so it was
+ * listed as a local branch called "origin".
+ */
+export function parseBranches(stdout: string): import("./types.ts").Branch[] {
+  return stdout.trim().split("\n").filter(Boolean).flatMap((line) => {
+    const [name, hash, head, symref] = line.split("|");
+    if (symref) return [];
     const remote = name.includes("/") ? name.split("/")[0] : undefined;
-    return { name, hash, current: head === "*", remote };
+    return [{ name, hash, current: head === "*", remote }];
   });
 }
 
@@ -823,12 +1061,15 @@ function parseRemotes(stdout: string): import("./types.ts").Remote[] {
   return [...map.entries()].map(([name, urls]) => ({ name, ...urls }));
 }
 
-function parseStashes(stdout: string): import("./types.ts").Stash[] {
+/** Fields split by the unit separator: a name or a message may hold any printable character. */
+export const STASH_FORMAT = "%H%x1f%P%x1f%at%x1f%an%x1f%ae%x1f%s";
+
+export function parseStashes(stdout: string): import("./types.ts").Stash[] {
   return stdout.trim().split("\n").filter(Boolean).map((line, i) => {
-    const parts = line.split("|");
-    const [, hash, parents, ...messageParts] = parts;
-    const parentHash = (parents || "").split(" ")[0] || "";
-    return { index: i, hash, parentHash, message: messageParts.join("|") };
+    const [hash = "", parents = "", date = "", author = "", authorEmail = "", ...message] = line.split("\x1f");
+    // The first parent is the commit the stash was made on.
+    const parentHash = parents.split(" ")[0] || "";
+    return { index: i, hash, parentHash, message: message.join("\x1f"), author, authorEmail, date: Number(date) || 0 };
   });
 }
 
@@ -857,6 +1098,9 @@ export const MAX_DETAIL_FILES = 500;
  */
 const MAX_MESSAGE_CHARS = 100_000;
 
+/** The header `parseCommitDetail` reads, ahead of the `--numstat --summary` lines. */
+export const DETAIL_FORMAT = "--format=%H%n%P%n%an%n%ae%n%at%n%cn%n%ce%n%ct%n%B%n<END_MSG>";
+
 export function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
   const [headerBlock, rest] = stdout.split("<END_MSG>");
   const lines = headerBlock.trim().split("\n");
@@ -872,6 +1116,14 @@ export function parseCommitDetail(stdout: string): import("./types.ts").CommitDe
   const message = full.length > MAX_MESSAGE_CHARS
     ? `${full.slice(0, MAX_MESSAGE_CHARS)}\n\n[… ${full.length - MAX_MESSAGE_CHARS} more characters]`
     : full;
+
+  // `--summary` says which files were created or deleted; the line counts cannot.
+  // A file that only gained lines is not a new file.
+  const created = new Set<string>();
+  const deleted = new Set<string>();
+  for (const m of (rest ?? "").matchAll(/^ (create|delete) mode \d+ (.+)$/gm)) {
+    (m[1] === "create" ? created : deleted).add(m[2]!);
+  }
 
   // Parse --numstat output for file changes (format: "adds\tdels\tpath")
   const fileChanges: import("./types.ts").FileChange[] = [];
@@ -892,7 +1144,7 @@ export function parseCommitDetail(stdout: string): import("./types.ts").CommitDe
         let oldPath: string | undefined;
         // Renamed files: "old => new" or "{prefix/old => prefix/new}"
         const renameMatch = filePath.match(/^(.+)\{(.+) => (.+)\}(.*)$/) || filePath.match(/^(.+) => (.+)$/);
-        let status: "A" | "M" | "D" | "R" = "M";
+        let status: "A" | "M" | "D" | "R" = created.has(filePath) ? "A" : deleted.has(filePath) ? "D" : "M";
         if (renameMatch) {
           status = "R";
           if (renameMatch.length === 5) {
@@ -902,10 +1154,6 @@ export function parseCommitDetail(stdout: string): import("./types.ts").CommitDe
             oldPath = renameMatch[1];
             filePath = renameMatch[2];
           }
-        } else if (additions > 0 && deletions === 0) {
-          status = "A";
-        } else if (deletions > 0 && additions === 0) {
-          status = "D";
         }
         fileChanges.push({ path: filePath, oldPath, status, additions, deletions });
       }
@@ -915,77 +1163,37 @@ export function parseCommitDetail(stdout: string): import("./types.ts").CommitDe
   return { hash, parents, author, authorEmail, authorDate, committer, committerEmail, commitDate, message, fileChanges, filesOmitted };
 }
 
+/** The git command behind each menu action the panel can send — and nothing else. */
 function buildGitActionArgs(action: string, args: Record<string, unknown>): string[] {
   const VALID_RESET_MODES = ["soft", "mixed", "hard"];
 
   switch (action) {
-    case "checkout": return ["checkout", assertValidRef(args.target, "target")];
+    // `--`: without it a name that is not a ref is read as a path when one exists, and git
+    // quietly puts that path back as the index has it — a deleted branch's pill discarded
+    // every edit under the folder of the same name.
+    case "checkout": return ["checkout", assertValidRef(args.target, "target"), "--"];
     case "createBranch": return ["branch", ...(args.force ? ["-f"] : []), assertValidRef(args.name, "name"), ...(args.startPoint ? [assertValidHash(args.startPoint)] : [])];
     case "deleteBranch": return ["branch", args.force ? "-D" : "-d", assertValidRef(args.name, "name")];
-    case "merge": {
-      const mergeArgs = ["merge", assertValidRef(args.branch, "branch")];
-      if (args.noFf) mergeArgs.push("--no-ff");
-      if (args.squash) mergeArgs.push("--squash");
-      return mergeArgs;
-    }
+    case "renameBranch": return ["branch", "-m", assertValidRef(args.oldName, "oldName"), assertValidRef(args.newName, "newName")];
+    case "merge": return ["merge", assertValidRef(args.branch, "branch")];
     case "rebase": return ["rebase", assertValidRef(args.branch, "branch")];
+    case "rebaseSkip": return ["rebase", "--skip"];
     case "cherryPick": return ["cherry-pick", assertValidHash(args.hash)];
-    case "revert": return ["revert", assertValidHash(args.hash)];
+    // Without --no-edit git opens an editor for the message, which nothing here
+    // can answer — the command would sit until the spawn timed out.
+    case "revert": return ["revert", "--no-edit", assertValidHash(args.hash)];
     case "reset": {
       const mode = VALID_RESET_MODES.includes(String(args.mode)) ? String(args.mode) : "mixed";
       return ["reset", `--${mode}`, assertValidHash(args.hash)];
     }
-    case "stashSave": return ["stash", "push", ...(args.message ? ["-m", String(args.message)] : [])];
-    case "stashPop": return ["stash", "pop", ...(args.stashRef ? [assertValidRef(args.stashRef, "stashRef")] : [])];
-    case "stashDrop": return ["stash", "drop", ...(args.stashRef ? [assertValidRef(args.stashRef, "stashRef")] : [])];
-    case "stashApply": return ["stash", "apply", ...(args.stashRef ? [assertValidRef(args.stashRef, "stashRef")] : [])];
-    case "rebaseContinue": return ["rebase", "--continue"];
-    case "rebaseAbort": return ["rebase", "--abort"];
-    case "rebaseSkip": return ["rebase", "--skip"];
-    case "mergeAbort": return ["merge", "--abort"];
-    case "cherryPickAbort": return ["cherry-pick", "--abort"];
-    case "cherryPickContinue": return ["cherry-pick", "--continue"];
-    case "fetch": return ["fetch", ...(args.remote ? [assertValidRemote(args.remote)] : []), ...(args.prune ? ["--prune"] : [])];
-    case "pull": return ["pull", ...(args.remote ? [assertValidRemote(args.remote)] : []), ...(args.branch ? [assertValidRef(args.branch, "branch")] : [])];
-    case "renameBranch": {
-      const oldName = assertValidRef(args.oldName, "oldName");
-      const newName = assertValidRef(args.newName, "newName");
-      return ["branch", "-m", oldName, newName];
-    }
-    case "push": {
-      const pushArgs = ["push"];
-      if (args.remote) pushArgs.push(assertValidRemote(args.remote));
-      if (args.delete && args.branch) {
-        pushArgs.push("--delete", assertValidRef(args.branch, "branch"));
-      } else {
-        if (args.branch) pushArgs.push(assertValidRef(args.branch, "branch"));
-        if (args.force) pushArgs.push("--force");
-      }
-      return pushArgs;
-    }
-    case "createTag": {
-      const tagArgs = ["tag", assertValidRef(args.name, "name")];
-      if (args.hash) tagArgs.push(assertValidHash(args.hash));
-      if (args.message) tagArgs.push("-m", String(args.message));
-      return tagArgs;
-    }
+    case "stashBranch": return ["stash", "branch", assertValidRef(args.name, "name"), stashRef(args.index)];
+    case "createTag": return ["tag", assertValidRef(args.name, "name"), ...(args.hash ? [assertValidHash(args.hash)] : [])];
     case "deleteTag": return ["tag", "-d", assertValidRef(args.name, "name")];
-    case "stage": {
-      const files = args.files as string[] | undefined;
-      if (!files?.length) throw new Error("No files to stage");
-      return ["add", "--", ...files];
+    case "push": {
+      // Only deleting a remote branch: pushing and publishing go through PPM's own routes.
+      if (!args.delete) throw new Error("Push from the toolbar instead.");
+      return ["push", assertValidRemote(args.remote), "--delete", assertValidRef(args.branch, "branch")];
     }
-    case "unstage": {
-      const files = args.files as string[] | undefined;
-      if (!files?.length) throw new Error("No files to unstage");
-      return ["restore", "--staged", "--", ...files];
-    }
-    case "commit": {
-      const message = String(args.message || "").trim();
-      if (!message) throw new Error("Commit message required");
-      return ["commit", "-m", message];
-    }
-    case "clean": return ["clean", "-fd"];
     default: throw new Error(`Unknown git action: ${action}`);
   }
 }

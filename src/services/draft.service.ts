@@ -36,12 +36,16 @@ class DraftService {
       .run(projectPath, sessionId);
   }
 
-  /** Delete orphaned drafts whose session_id is not in session_metadata */
+  /**
+   * Delete orphaned drafts whose session_id is not in session_metadata.
+   * `git-commit` rows are commit messages (`git-commit-draft.service.ts`), not
+   * chat drafts, and have no session.
+   */
   deleteOrphaned(): number {
     const result = getDb()
       .query(
         `DELETE FROM chat_drafts
-         WHERE session_id != '__new__'
+         WHERE session_id NOT IN ('__new__', 'git-commit')
            AND session_id NOT IN (SELECT session_id FROM session_metadata)`,
       )
       .run();

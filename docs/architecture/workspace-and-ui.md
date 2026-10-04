@@ -418,6 +418,70 @@ GitService.status() returns:
 UI updates: "src/index.ts" moves from "Unstaged" to "Staged"
 ```
 
+### Source Control, Review changes and Git Graph — one flow
+
+The three are views of one thing, the working tree and the commit about to be made, and they read
+and write it through the same routes, so they cannot disagree about a rename, a conflict or the
+message being written.
+
+- **What is changed**: `GET /git/changes` (`src/services/git-changes/git-changes.service.ts`)
+  answers the branch (upstream, ahead/behind), the operation stopped part way (`git-operation.ts`
+  reads the rebase/merge/cherry-pick/revert markers in `--absolute-git-dir`, which in a linked
+  worktree is `.git/worktrees/<name>`), and one row per file with its blocks on both sides —
+  staged (HEAD → index) and open (index → working tree) — without their lines. One
+  `git status --porcelain=v2` names the files (`porcelain-v2.ts`), then at most one `git diff` per
+  side covers all of them, cut back into files while it streams (`diff-sections.ts`); untracked
+  files go through a throwaway index, at most 400 of them and 4 MB each, beyond which a file is one
+  whole-file block. Every diff uses `PATCH_DIFF_ARGS`, so a block's id is the fingerprint the hunk
+  routes (`src/services/git-hunks/`) resolve a request by. It runs with `GIT_OPTIONAL_LOCKS=0`: it
+  runs on a poll, and a refreshed index would take the lock from under the user's own
+  `git commit`. `GET /git/changes/file?path=` adds the lines of one file. Shapes in
+  `src/shared/git-changes.ts`.
+- **Writes**: blocks and lines are staged, unstaged and discarded through the hunk routes. Undo
+  last commit, publish, pull and the stash are `src/services/git-workflow/git-workflow.service.ts`
+  (pull adds `--no-rebase` only when the repository configures no strategy; stash apply/pop use
+  `--index` and first check the hash of `stash@{n}`). After every POST on the git router a
+  middleware emits `git:changed` (`git-events.ts`), relayed on `/ws/global`, failed commands
+  included; Source Control, the Review tab, the Git Graph and the status bar's poller
+  (`useGitChangesPoller`) read again about 300 ms later.
+- **Discard Undo**: `src/services/git-discard-journal/` keeps what a discard threw away in
+  `<ppm dir>/git-discards/<repo key>/` — the reversed patch for a block (Undo only while the file
+  is still exactly what the discard left), the bytes for a whole file (Undo only while every file
+  is still what the discard left) — for a day, 100 per repository, nothing over 20 MB.
+- **One commit message per repository**: `src/services/git-commit-draft.service.ts` keeps it in
+  `chat_drafts` (session id `git-commit`, keyed by the repository's real path, left alone by
+  `deleteOrphaned`), behind `GET/PUT /git/commit-draft`; a change goes out as `git:commit-draft`
+  with the sender's client id, so the sender ignores its own echo. Browser side
+  `src/web/stores/commit-draft-store.ts` (saved 300 ms after the last keystroke) and
+  `src/web/hooks/use-commit-draft.ts`.
+- **Source Control**: `src/web/components/git/git-status-panel.tsx` with `git-branch-row.tsx`,
+  `git-commit-composer.tsx`, `git-change-row.tsx` / `git-change-tree.tsx`,
+  `git-operation-banner.tsx`, `git-stash-section.tsx` and `git-confirm.tsx`; data from
+  `src/web/hooks/use-git-changes.ts`, and the decisions (checkbox state, sync button, hints) as
+  pure functions in `src/web/lib/git-changes-view.ts`.
+- **Review changes**: the `git-review` tab type, one per project and repository
+  (`src/web/components/git-review/`, `src/web/hooks/use-git-review.ts`, opened through
+  `src/web/lib/open-git-review.ts`). `src/web/lib/git-review-model.ts` puts staged blocks, open
+  blocks and the tab's own discards in one list by the one coordinate they share, the line in the
+  index version of the file. Code lines reuse the session review's `review-tokens.tsx`.
+- **Git Graph** (`packages/ext-git-graph/`): the working tree, the blocks and the draft come from
+  PPM's routes (`ppm-git.ts`), and so do the writes of the inspector and the toolbar: stage,
+  unstage, discard and its Undo, commit and Undo last commit, Fetch, Pull, Push, Sync and Publish,
+  stash save, apply, pop and drop, and Abort/Continue. The rest still runs git itself (`spawnGit` in
+  `extension.ts`, `reflog-view.ts`, `rebase-view.ts`) and sends no `git:changed`: the commit,
+  branch, tag and stash menus (checkout, merge, rebase and its Skip, cherry-pick, revert, reset,
+  creating, renaming and deleting branches and tags, a branch from a stash, deleting a remote
+  branch), the Reflog and Rebase views, worktrees, submodule updates, remotes and the user name.
+  Source Control and the Review tab see those when the file watcher reports a change to the working
+  tree, or at their next 5 s poll; the status bar at its next 10 s one. A write that bypasses the
+  routes is heard by nobody until then — the toolbar's Fetch once ran `git fetch` itself and left
+  the status bar on "synced" for up to 10 s. The webview's script is built from the
+  `webview-script-*.ts` modules into one `<script>`. Its file icons are the app's: the panel posts
+  `__ppm.fileIcons` with file names and `src/web/components/extensions/webview-file-icons.ts`
+  answers with each name's class and only the drawings those classes need, the light-theme ones
+  rewritten to `:root[data-ppm-theme="light"]`. Its 5 s poll also reads `for-each-ref` and
+  `stash list`, so a ref moved outside PPM triggers a full re-read.
+
 ---
 
 ## Frontend Performance Optimization (v0.9.86+)
