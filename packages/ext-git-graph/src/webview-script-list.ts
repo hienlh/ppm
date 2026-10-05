@@ -133,7 +133,7 @@ function headAhead() {
   return b && b.head === state.currentBranch ? (b.ahead || 0) : 0;
 }
 
-function refPillHtml(ref) {
+function refPillHtml(ref, lane) {
   const name = escHtml(ref.name);
   const type = ref.type;
   const icon = type === 'remote' ? 'cloud' : type === 'tag' ? 'tag' : type === 'stash' ? 'stash' : 'branch';
@@ -142,15 +142,24 @@ function refPillHtml(ref) {
     : type === 'remote' ? ' · remote branch' : type === 'tag' ? ' · tag' : type === 'stash' ? ' · stash'
     : ref.synced ? ' · in sync with its remote' : '';
   return '<span class="ref' + (type === 'head' ? ' head' : type === 'remote' ? ' remote' : '') + '" data-ref="' + name
-    + '" data-ref-type="' + escHtml(type) + '" title="' + name + escHtml(what) + '">'
-    + ic(icon) + '<span>' + name + '</span>'
+    + '" data-ref-type="' + escHtml(type) + '"' + (lane ? ' style="--lane: ' + escHtml(lane) + '"' : '')
+    + ' title="' + name + escHtml(what) + '">'
+    + '<span class="ref-ic">' + ic(icon) + '</span><span class="ref-name">' + name + '</span>'
     + (ref.synced ? ic('cloud', 'ic-xs cloud') : '')
     + (ahead ? '<span class="ahead">' + ic('arrow-up') + ahead + '</span>' : '')
     + '</span>';
 }
 
+/** The colour of the commit's dot, so a label can be matched to its line in the graph. */
+function commitLane(commit) {
+  if (commit._isStash) return 'var(--subtext)';
+  const i = gCommitLookup[commit.hash];
+  return typeof i === 'number' && gVertices[i] ? laneVar(gVertices[i].getColour()) : '';
+}
+
 function refPillsHtml(commit) {
-  return classifyRefs(commit.refs).map(refPillHtml).join('');
+  const lane = commitLane(commit);
+  return classifyRefs(commit.refs).map((ref) => refPillHtml(ref, lane)).join('');
 }
 
 // --- Rows ---

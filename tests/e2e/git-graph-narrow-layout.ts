@@ -254,7 +254,7 @@ async function main(): Promise<void> {
   const PILL = `(() => {
     const row = document.querySelector('#commit-list .commit-row');
     const ref = row.querySelector('.refs .ref');
-    const name = ref.querySelector('span:not(.ahead)');
+    const name = ref.querySelector('.ref-name');
     const subject = row.querySelector('.msg-subject');
     return { refLeft: Math.round(ref.getBoundingClientRect().left), subjectLeft: Math.round(subject.getBoundingClientRect().left),
       nameShown: Math.round(name.clientWidth), nameFull: Math.round(name.scrollWidth),
@@ -266,12 +266,14 @@ async function main(): Promise<void> {
   // At the message column's floor the two share it: most to the branch, the rest to the subject.
   check(pills.nameShown >= 120 && pills.subjectWidth >= 60, "a crowded row still gives the branch most of the room",
     `name ${pills.nameShown}px of ${pills.nameFull}px, subject ${pills.subjectWidth}px in ${pills.message}px`);
-  await setWidth(cdp, 1400);
+  // A bold label on its lane's colour tile takes more room than the old grey one: at 1400px the
+  // 44-character name now gives its last few pixels to the subject's floor, so ask with room to spare.
+  await setWidth(cdp, 1600);
   pills = await cdp.evaluate<any>(PILL);
   check(pills.nameShown >= pills.nameFull, "with room, the branch name is shown whole",
     `${pills.nameShown}px of ${pills.nameFull}px in a ${pills.message}px message column`);
   check(pills.subjectWidth >= 60, "the subject keeps room beside it", `${pills.subjectWidth}px`);
-  await cdp.shot("git-graph-1400-refs-first.png");
+  await cdp.shot("git-graph-1600-refs-first.png");
   await setWidth(cdp, 1020);
 
   // --- Panning by dragging the graph itself ---
@@ -359,7 +361,7 @@ async function main(): Promise<void> {
   // The phone's second line names the branch: one ref, with its name.
   const pill = await cdp.evaluate<any>(`(() => {
     const ref = document.querySelector('#commit-list .commit-row .refs .ref');
-    const name = ref && ref.querySelector('span:not(.ahead)');
+    const name = ref && ref.querySelector('.ref-name');
     return { refs: document.querySelectorAll('#commit-list .commit-row:first-child .refs .ref').length,
       shown: Array.from(document.querySelectorAll('#commit-list .commit-row:first-child .refs .ref')).filter((r) => r.offsetParent !== null).length,
       name: name ? Math.round(name.getBoundingClientRect().width) : 0 };
