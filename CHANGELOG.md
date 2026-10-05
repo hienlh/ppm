@@ -57,6 +57,8 @@
 
 - **A Codex patch that touched several files counted only the first, and a file it created counted +0.** The chip under the answer and the transcript's change list now name every file in the patch, live and in both rollout formats, and a created or deleted file counts its lines: Codex sends those as the file's content, not as a diff.
 
+- **A refused turn said only "Invalid request sent to the API."** The API reports a refusal as an `invalid_request` error, and the chat showed the generic hint for that error. The CLI's own text in the message says what happened and what to do next (rephrase in a new session, or change the model), and it is now the error the chat shows.
+
 - **A diff on a phone was one changed line between screens of hatching.** The inline view hides the original side in a 35px column, and the diff viewer forced word wrap on it there too, so every original line was many rows tall and the visible side was padded to match. It now stays unwrapped in that mode, as Monaco keeps it itself; the Source Control diff tab had the same problem.
 
 - **Closing or switching a diff no longer throws "TextModel got disposed before DiffEditorWidget model got reset".** `@monaco-editor/react` disposes the two models before the diff editor still showing them; the viewer now detaches them first.
@@ -68,6 +70,10 @@
 - **The lightbulb menu cut off its longest action** ("Move to a new…"). Monaco sizes that menu to its widest row and expects its 4px padding outside that width; Tailwind's global `box-sizing: border-box` put the padding inside, so every menu was 8px too narrow.
 
 - **New File and New Folder from a right-click menu did nothing.** In the project explorer the name box appeared and was gone about 10 ms later, so the toolbar button was the only way to create a file. Radix hands focus back to whatever held it before the menu opened — the right-clicked row — a moment after the menu closes, and does it unconditionally; the box had already taken focus, reads a blur as "done", and done with nothing typed means cancel. Rename escaped only because its box replaces the very row focus would have gone back to. The explorer window lost the same race another way: its name field focused while the menu's focus trap was still up, so it sat there unfocused and whatever was typed next went to the list behind it. A context menu now leaves focus where the chosen item put it (and still returns it to the row when the item moved it nowhere), and the window's field takes focus again once the menu has closed. In Chrome against a scratch server the box survived 0 of 5 attempts before and 5 of 5 after.
+
+- **The video player's seek bar came and went between two opens of the same file.** A video already in the media cache fires its load events before React has put the element in the page, and React drops them, so the player never learned the duration. It now reads that state from the element whenever the source changes.
+
+- **Dragging the video player's seek bar showed no frame until the release, and then the thumb jumped back.** A drag now seeks as it goes and holds a playing video still until the release (a transcoded stream still waits for the release, since each seek there is a new ffmpeg job), and the thumb stays where it was let go. The spinner fades in after 300 ms instead of flashing over every quick seek.
 
 - **On a phone, a long press that opens a menu no longer closes it when the finger lifts.** The menu opens after 400 ms, but the browser still treats a touch shorter than its own long-press delay as a tap: 500 ms by default on a phone, up to 1.5 s with a longer "Touch & hold delay". That tap landed on the menu's backdrop and closed it. This applied to every long-press menu in the app.
 
