@@ -108,13 +108,14 @@ input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
    label can be matched to its line: a solid tile saying what kind of ref it is, then
    the name on a wash of the same hue. The tile's glyph is the background colour, which
    is white on the light theme's deep lanes and near-black on the dark theme's pale ones.
-   The checked-out branch is the loudest: full border, a halo, bold. */
-.ref { --lane: var(--ln-0); display: inline-flex; align-items: stretch; flex: none; max-width: 200px; height: 20px; border: 1px solid color-mix(in srgb, var(--lane) 50%, transparent); border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--lane) 13%, var(--bg)); color: color-mix(in srgb, var(--lane) 55%, var(--text)); font: 600 11.5px/1 var(--ui-font); white-space: nowrap; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+   Only the checked-out branch has its border in that colour, and is bold; every other
+   label has the neutral border, so the two still differ when they share a lane. */
+.ref { --lane: var(--ln-0); display: inline-flex; align-items: stretch; flex: none; max-width: 200px; height: 20px; border: 1px solid var(--border2); border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--lane) 13%, var(--bg)); color: color-mix(in srgb, var(--lane) 55%, var(--text)); font: 600 11.5px/1 var(--ui-font); white-space: nowrap; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
 .ref-ic { display: inline-grid; place-items: center; flex: none; width: 20px; background: var(--lane) linear-gradient(160deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 70%); color: var(--bg); }
 .ref .ic { width: 12px; height: 12px; }
 .ref-name { align-self: center; overflow: hidden; text-overflow: ellipsis; min-width: 0; padding: 0 7px 0 6px; }
-.ref:hover { border-color: var(--lane); box-shadow: 0 2px 8px -3px color-mix(in srgb, var(--lane) 70%, transparent); }
-.ref.head { border-color: var(--lane); background: color-mix(in srgb, var(--lane) 22%, var(--bg)); font-weight: 700; box-shadow: 0 0 0 2px color-mix(in srgb, var(--lane) 22%, transparent); }
+.ref:hover { box-shadow: 0 2px 8px -3px color-mix(in srgb, var(--lane) 70%, transparent); }
+.ref.head { border-color: var(--lane); background: color-mix(in srgb, var(--lane) 22%, var(--bg)); font-weight: 700; }
 .ref.remote { border-style: dashed; }
 .ref.remote .ref-ic { background: color-mix(in srgb, var(--lane) 24%, var(--bg)); color: var(--lane); }
 .ref .ahead { display: inline-flex; align-items: center; gap: 1px; padding: 0 6px 0 5px; border-left: 1px solid color-mix(in srgb, var(--lane) 45%, transparent); font: 700 10.5px/1 var(--mono-font); }
