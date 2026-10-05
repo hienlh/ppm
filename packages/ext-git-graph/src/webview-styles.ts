@@ -240,11 +240,13 @@ input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
 .graph-resize-handle::after { content: ""; position: absolute; top: 3px; bottom: 3px; left: 4px; width: 1px; background: var(--border2); opacity: 0; transition: opacity 0.15s; }
 .header-row:hover .graph-resize-handle::after, .graph-resize-handle.dragging::after { opacity: 1; }
 
-.msg-subject { flex: 0 1 auto; min-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+/* The pills come first and keep their whole names; the subject takes what is left and is the one cut
+   short, down to its own 60px. No cap on a pill: the name's end is usually the part that differs. */
+.msg-subject { flex: 1 1 0; min-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .commit-row.merge .msg-subject { color: var(--subtext); }
 .commit-row.stash .msg-subject { color: var(--subtext); font-style: italic; }
 .refs { display: flex; gap: 4px; flex: 0 1 auto; min-width: 0; }
-.refs .ref { flex: 0 1 auto; min-width: 0; }
+.refs .ref { flex: 0 1 auto; min-width: 0; max-width: none; }
 .refs .ref > .ic, .refs .ref > .ahead { flex: none; }
 .msg-meta { display: none; }
 .commit-row mark { background: color-mix(in srgb, var(--yellow) 28%, transparent); color: inherit; border-radius: 2px; }
@@ -553,7 +555,8 @@ a.commit-link:hover { text-decoration: underline; }
   .col-changes, .col-author, .col-date, .col-hash { display: none; }
   .commit-row { padding-right: 12px; }
   .col-message { flex-wrap: wrap; align-content: center; row-gap: 3px; column-gap: 6px; }
-  .col-message .msg-subject { flex: 1 1 100%; }
+  /* The subject keeps the first line to itself; the branch starts the second. */
+  .col-message .msg-subject { flex: 1 1 100%; order: -1; }
   .col-message .refs .ref:not(:first-child) { display: none; }
   .col-message .refs .ref { max-width: 180px; }
   .msg-meta { display: block; flex: 1 1 0; min-width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--subtle); }

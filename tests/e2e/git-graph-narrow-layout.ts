@@ -249,6 +249,31 @@ async function main(): Promise<void> {
     `header ends ${m.headerBottom}, first row ${m.firstRowTop}`,
   );
 
+  // --- The branch comes before the subject, and keeps its name ---
+  // After the subject it was squeezed to "cherry-pick/..." by any subject long enough to fill the row.
+  const PILL = `(() => {
+    const row = document.querySelector('#commit-list .commit-row');
+    const ref = row.querySelector('.refs .ref');
+    const name = ref.querySelector('span:not(.ahead)');
+    const subject = row.querySelector('.msg-subject');
+    return { refLeft: Math.round(ref.getBoundingClientRect().left), subjectLeft: Math.round(subject.getBoundingClientRect().left),
+      nameShown: Math.round(name.clientWidth), nameFull: Math.round(name.scrollWidth),
+      message: Math.round(row.querySelector('.col-message').getBoundingClientRect().width),
+      subjectWidth: Math.round(subject.getBoundingClientRect().width) };
+  })()`;
+  let pills = await cdp.evaluate<any>(PILL);
+  check(pills.refLeft < pills.subjectLeft, "the branch pill comes before the subject", `pill at ${pills.refLeft}, subject at ${pills.subjectLeft}`);
+  // At the message column's floor the two share it: most to the branch, the rest to the subject.
+  check(pills.nameShown >= 120 && pills.subjectWidth >= 60, "a crowded row still gives the branch most of the room",
+    `name ${pills.nameShown}px of ${pills.nameFull}px, subject ${pills.subjectWidth}px in ${pills.message}px`);
+  await setWidth(cdp, 1400);
+  pills = await cdp.evaluate<any>(PILL);
+  check(pills.nameShown >= pills.nameFull, "with room, the branch name is shown whole",
+    `${pills.nameShown}px of ${pills.nameFull}px in a ${pills.message}px message column`);
+  check(pills.subjectWidth >= 60, "the subject keeps room beside it", `${pills.subjectWidth}px`);
+  await cdp.shot("git-graph-1400-refs-first.png");
+  await setWidth(cdp, 1020);
+
   // --- Panning by dragging the graph itself ---
   const at = await cdp.evaluate<any>(`(() => {
     const cell = document.querySelectorAll('#commit-list .commit-row')[4].querySelector('.col-graph');

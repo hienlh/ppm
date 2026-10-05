@@ -230,8 +230,9 @@ function renderCommitList() {
       authorCol.innerHTML = wipAuthorHtml();
       dateCol.textContent = 'now';
     } else if (isStash) {
-      msgCol.innerHTML = '<span class="msg-subject" title="' + escHtml(commit.message) + '">' + escHtml(commit.message) + '</span>'
-        + '<span class="refs">' + refPillsHtml(commit) + '</span>'
+      const pills = refPillsHtml(commit);
+      msgCol.innerHTML = (pills ? '<span class="refs">' + pills + '</span>' : '')
+        + '<span class="msg-subject" title="' + escHtml(commit.message) + '">' + escHtml(commit.message) + '</span>'
         + '<span class="msg-meta">' + escHtml(commit.author) + ' · ' + escHtml(formatDate(commit.commitDate)) + '</span>';
       changesCol.innerHTML = NOT_COUNTED;
       changesCol.title = 'Open the stash to see what it changed';
@@ -242,8 +243,10 @@ function renderCommitList() {
     } else {
       const subject = firstLine(commit.message);
       const pills = refPillsHtml(commit);
-      msgCol.innerHTML = '<span class="msg-subject" title="' + escHtml(subject) + '">' + escHtml(subject) + '</span>'
-        + (pills ? '<span class="refs">' + pills + '</span>' : '')
+      // Branch names first, as the Git Graph had them before the redesign: they are what a reader
+      // scans the list for, and placed after a long subject they were squeezed to a few characters.
+      msgCol.innerHTML = (pills ? '<span class="refs">' + pills + '</span>' : '')
+        + '<span class="msg-subject" title="' + escHtml(subject) + '">' + escHtml(subject) + '</span>'
         + '<span class="msg-meta">' + escHtml(commit.author) + ' · ' + escHtml(formatDate(commit.commitDate)) + ' · ' + escHtml(commit.hash.substring(0, 7)) + '</span>';
       if (commit.parents.length > 1) {
         changesCol.innerHTML = NOT_COUNTED;
