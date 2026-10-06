@@ -1,11 +1,13 @@
 /**
- * "Undo last commit" in Source Control and the Review tab names what it undoes.
+ * Every Undo in Source Control and the Review tab names what it undoes.
  *
- * It sends the commit the toast or the box is about, so PPM refuses once
- * another commit has landed on top: without it, the server took back whatever
- * was last by the time the click arrived. Source Control also refuses it while
- * a push is still going out, which could otherwise carry the commit to the
- * remote after it was taken back here.
+ * "Undo last commit" sends the commit the toast or the box is about, so PPM
+ * refuses once another commit has landed on top: without it, the server took
+ * back whatever was last by the time the click arrived. Source Control also
+ * refuses it while a push is still going out, which could otherwise carry the
+ * commit to the remote after it was taken back here. And "Stash all changes"
+ * offers Undo for the stash PPM says it made, never the one on top of the
+ * list, which is an older one when git found nothing it could save.
  *
  * Mounted for real against a stubbed `fetch`, toasts included: the bug was
  * which value each click handler sends, which no helper test would show.
@@ -28,6 +30,8 @@ type GitReview = ReturnType<typeof useGitReview>;
 
 const LAST = "a".repeat(40);
 const MADE = "c".repeat(40);
+const OLDER = { index: 0, hash: "f".repeat(40), base: null, branch: "main", message: "older", date: "2026-10-01T00:00:00Z" };
+const MINE = { index: 0, hash: "e".repeat(40), base: null, branch: "main", message: "WIP", date: "2026-10-06T00:00:00Z" };
 
 const FILE = {
   path: "a.txt", x: "M", y: ".", untracked: false, conflict: false,
@@ -44,6 +48,7 @@ const changesWith = (files: unknown[]) => ({
 });
 
 let files: unknown[] = [];
+let stashAnswer: unknown = null;
 let posts: { route: string; body: unknown }[] = [];
 let pushDone: (() => void) | null = null;
 
@@ -51,6 +56,7 @@ const ok = (data: unknown) => new Response(JSON.stringify({ ok: true, data }));
 
 beforeEach(() => {
   files = [FILE];
+  stashAnswer = null;
   posts = [];
   pushDone = null;
   useGitRepoStore.setState({ discovery: {}, chosen: {} });
@@ -69,6 +75,9 @@ beforeEach(() => {
       await new Promise<void>((resolve) => { pushDone = resolve; });
       return ok({ pushed: true });
     }
+    if (route === "/stash") return ok(stashAnswer);
+    if (route === "/stashes") return ok([OLDER]);
+    if (route === "/stash/pop") return ok({ pop: true, indexRestored: true });
     if (route === "/worktrees") return ok([]);
     return ok(null);
   });
@@ -164,6 +173,31 @@ describe("Undo last commit in Source Control", () => {
     await press(button((b) => b.title === "Take the commit back, keeping its changes staged", "Undo button"));
     await until(() => sent("/commit/undo").length === 1, "the undo");
     expect(sent("/commit/undo")).toEqual([{ hash: LAST }]);
+  });
+});
+
+describe("Stash all changes", () => {
+  async function stashAll(): Promise<void> {
+    await mountPanel();
+    await until(() => buttons().some((b) => b.textContent?.trim() === "Commit 1 file"), "the changes");
+    await choose(button((b) => b.getAttribute("aria-label") === "More actions", "More actions"), "Stash all changes");
+    await until(() => sent("/stash").length === 1, "the stash");
+  }
+
+  it("offers Undo for the stash it made, not the one on top of the list", async () => {
+    stashAnswer = { stashed: true, stash: MINE };
+    await stashAll();
+    await until(() => toastsText().some((t) => t.startsWith("Stashed 1 file")), "the stash toast");
+    await press(toastUndo("Stashed 1 file"));
+    await until(() => sent("/stash/pop").length === 1, "the pop");
+    expect(sent("/stash/pop")).toEqual([{ index: MINE.index, hash: MINE.hash }]);
+  });
+
+  it("says nothing was stashed, with no Undo, when git found nothing it could save", async () => {
+    stashAnswer = { stashed: false, stash: null };
+    await stashAll();
+    await until(() => toastsText().some((t) => t.startsWith("Nothing was stashed")), "the toast");
+    expect(toastsText().some((t) => t.startsWith("Stashed"))).toBe(false);
   });
 });
 

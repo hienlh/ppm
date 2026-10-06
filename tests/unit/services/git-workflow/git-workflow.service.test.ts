@@ -230,6 +230,21 @@ describe("stash", () => {
     expect(await gitWorkflowService.listStashes(repo)).toEqual([]);
   });
 
+  it("answers with the stash it made", async () => {
+    write("a.txt", "stash me\n");
+    const made = await gitWorkflowService.stash(repo, { message: "mine" });
+    expect(made).toMatchObject({ index: 0, message: "mine", hash: (await git(["rev-parse", "refs/stash"])).trim() });
+  });
+
+  it("answers null, leaving an older stash alone, when git found nothing it could save", async () => {
+    write("a.txt", "older\n");
+    await gitWorkflowService.stash(repo, { message: "older" });
+    // Only an untracked file, and no --include-untracked: git saves nothing and still exits 0.
+    write("b.txt", "untracked\n");
+    expect(await gitWorkflowService.stash(repo)).toBeNull();
+    expect((await gitWorkflowService.listStashes(repo)).map((s) => s.message)).toEqual(["older"]);
+  });
+
   it("refuses when the index no longer names the stash on screen", async () => {
     write("a.txt", "x\n");
     await gitWorkflowService.stash(repo);

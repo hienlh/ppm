@@ -259,13 +259,14 @@ function openGitGraph(
         case "stash":
           await runAction("stash", async () => {
             const ref = await ppmRepo();
-            await ppmGit(ref, "POST", "/stash", {
+            // The new entry, so the toast's Undo can pop exactly it. Never the one on top:
+            // with nothing it could save, git still succeeds and that one is older.
+            const { stash } = await ppmGit<{ stash: { index: number; hash: string } | null }>(ref, "POST", "/stash", {
               message: typeof msg.message === "string" && msg.message ? msg.message : undefined,
               includeUntracked: msg.includeUntracked === true,
             });
-            // The new entry, so the toast's Undo can pop exactly it.
-            const [top] = await ppmGit<Array<{ index: number; hash: string }>>(ref, "GET", "/stashes");
-            return top ?? null;
+            if (!stash) throw new Error("Nothing was stashed: git found no change it could save.");
+            return stash;
           }, "all");
           break;
         case "stashAction": {

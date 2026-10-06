@@ -1,6 +1,8 @@
 /**
- * The Git Graph's "Undo last commit" names what it undoes: it sends the commit
- * the panel showed, so PPM refuses once something else has landed on top of it.
+ * The Git Graph's two Undos name what they undo. "Undo last commit" sends the
+ * commit the panel showed, so PPM refuses once something else has landed on
+ * top of it; Stash answers with the stash PPM says it made, never the one on
+ * top of the list, which is an older one when git found nothing it could save.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -13,10 +15,12 @@ import { _resetPanelRegistry } from "./panel-registry.ts";
 type Posted = { command: string; action?: string; result?: { ok: boolean; data?: unknown; error?: string } };
 
 const HASH = "0123456789abcdef0123456789abcdef01234567";
+const OLDER = { index: 0, hash: "f".repeat(40), message: "older" };
 
 let repo: string;
 let posted: Posted[] = [];
 let requests: { method: string; url: string; body?: string }[] = [];
+let stashAnswer: unknown = null;
 let send: (msg: unknown) => void = () => {};
 let dispose: () => void = () => {};
 const realFetch = globalThis.fetch;
@@ -45,6 +49,7 @@ const posts = (route: string) => requests
 beforeEach(async () => {
   posted = [];
   requests = [];
+  stashAnswer = null;
   repo = mkdtempSync(join(tmpdir(), "gg-undo-"));
   git("init", "-q", "-b", "main");
   writeFileSync(join(repo, "a.txt"), "one\n");
@@ -56,6 +61,8 @@ beforeEach(async () => {
     requests.push({ method: init?.method ?? "GET", url, body: typeof init?.body === "string" ? init.body : undefined });
     if (url.endsWith("/api/projects")) return envelope([{ name: "demo", path: repo }]);
     if (url.includes("/api/project/demo/git/commit/undo")) return envelope({ hash: HASH, message: "m", draft: { message: "m", updatedAt: null } });
+    if (url.includes("/api/project/demo/git/stashes")) return envelope([OLDER]);
+    if (url.includes("/api/project/demo/git/stash")) return envelope(stashAnswer);
     if (url.includes("/api/project/demo/git/changes")) return envelope({ branch: { head: "main", oid: "x", ahead: 0, behind: 0 }, files: [] });
     return new Response(JSON.stringify({ ok: false, error: "not in this test" }), { status: 503 });
   }) as typeof fetch;
@@ -136,5 +143,22 @@ describe("Undo last commit", () => {
     await until(() => !!answerTo("undoCommit"));
     expect(answerTo("undoCommit")!.result!.ok).toBe(true);
     expect(posts("/commit/undo")).toEqual([{ hash: HASH }]);
+  });
+});
+
+describe("Stash", () => {
+  it("answers with the stash PPM made", async () => {
+    stashAnswer = { stashed: true, stash: { index: 0, hash: HASH, message: "mine" } };
+    send({ command: "stash", message: "mine", includeUntracked: true });
+    await until(() => !!answerTo("stash"));
+    expect(answerTo("stash")!.result).toEqual({ ok: true, data: { index: 0, hash: HASH, message: "mine" } });
+  });
+
+  it("fails, offering no Undo, when nothing was stashed", async () => {
+    // The list's top is an older stash: popping it would bring back work set aside long ago.
+    stashAnswer = { stashed: false, stash: null };
+    send({ command: "stash", includeUntracked: false });
+    await until(() => !!answerTo("stash"));
+    expect(answerTo("stash")!.result).toEqual({ ok: false, error: expect.stringMatching(/^Nothing was stashed/) });
   });
 });

@@ -367,13 +367,16 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
   };
 
   const stashAll = async () => {
-    const done = await run("stash", async () => {
-      await api.post(url("/stash"), { includeUntracked: true });
-      const [top] = await api.get<StashEntry[]>(url("/stashes"));
-      return top;
-    }, "Could not stash");
-    const top = done?.value;
-    if (!top) return;
+    const done = await run(
+      "stash",
+      () => api.post<{ stash: StashEntry | null }>(url("/stash"), { includeUntracked: true }),
+      "Could not stash",
+    );
+    if (!done) return;
+    // The stash this made, never the one on top: with nothing it could save, git
+    // still succeeds, and the stash on top is then an older one.
+    const top = done.value.stash;
+    if (!top) return void toast("Nothing was stashed", { description: "git found no change it could save." });
     toast(`Stashed ${plural(totals.files, "file")}`, {
       action: { label: "Undo", onClick: () => void stashAction("pop", top) },
     });

@@ -306,12 +306,25 @@ describe("git:changed", () => {
 describe("stash", () => {
   it("stashes, lists and pops", async () => {
     write("file.txt", "stashed\n");
-    expect((await call("POST", "/stash", { message: "keep" })).status).toBe(200);
+    const stashed = await call("POST", "/stash", { message: "keep" });
+    expect(stashed.status).toBe(200);
     const list = (await call("GET", "/stashes")).body.data;
     expect(list).toEqual([expect.objectContaining({ index: 0, message: "keep", branch: "main" })]);
+    expect(stashed.body.data).toEqual({ stashed: true, stash: list[0] });
     expect((await call("POST", "/stash/pop", { index: 0, hash: list[0].hash })).status).toBe(200);
     expect(read("file.txt")).toBe("stashed\n");
     expect((await call("POST", "/stash/pop", { index: 0 })).status).toBe(400);
+  });
+});
+
+describe("POST /git/stash with nothing git can save", () => {
+  it("says nothing was stashed rather than naming an older stash", async () => {
+    write("file.txt", "older\n");
+    await call("POST", "/stash", { message: "older" });
+    write("new.txt", "untracked\n");
+    const res = await call("POST", "/stash", {});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ stashed: false, stash: null });
   });
 });
 

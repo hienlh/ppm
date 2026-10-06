@@ -132,12 +132,25 @@ export const gitWorkflowService = {
     });
   },
 
-  async stash(cwd: string, options: { message?: string; includeUntracked?: boolean } = {}): Promise<void> {
+  /**
+   * Stash, and answer with the stash that made — or null when git found nothing
+   * it could save. It exits 0 for that too, so the stash on top is then an older
+   * one, and an Undo that popped it would bring back work set aside long ago.
+   */
+  async stash(cwd: string, options: { message?: string; includeUntracked?: boolean } = {}): Promise<StashEntry | null> {
     const args = ["stash", "push"];
     if (options.includeUntracked) args.push("--include-untracked");
     if (options.message?.trim()) args.push("-m", options.message.trim());
+    const top = async () => (await runGit(cwd, ["rev-parse", "-q", "--verify", "refs/stash"])).stdout.trim();
+    const before = await top();
     await git(cwd, args);
+    const after = await top();
+    if (!after || after === before) {
+      log.info(`nothing to stash in ${cwd} (untracked=${!!options.includeUntracked})`);
+      return null;
+    }
     log.info(`stashed in ${cwd} (untracked=${!!options.includeUntracked})`);
+    return (await gitWorkflowService.listStashes(cwd)).find((s) => s.hash === after) ?? null;
   },
 
   /**

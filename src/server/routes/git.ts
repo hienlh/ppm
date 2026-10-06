@@ -710,15 +710,18 @@ gitRoutes.get("/stashes", async (c) => {
   }
 });
 
-/** POST /git/stash { message?, includeUntracked? } */
+/**
+ * POST /git/stash { message?, includeUntracked? } — answers with the stash it
+ * made, or `stashed: false, stash: null` when git found nothing it could save.
+ */
 gitRoutes.post("/stash", async (c) => {
   try {
     const body = await c.req.json<{ message?: unknown; includeUntracked?: unknown }>().catch(() => ({} as { message?: unknown; includeUntracked?: unknown }));
-    await gitWorkflowService.stash(c.get("projectPath"), {
+    const stash = await gitWorkflowService.stash(c.get("projectPath"), {
       message: typeof body.message === "string" ? body.message : undefined,
       includeUntracked: body.includeUntracked === true,
     });
-    return c.json(ok({ stashed: true }));
+    return c.json(ok({ stashed: !!stash, stash }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
