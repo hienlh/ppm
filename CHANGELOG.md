@@ -60,6 +60,8 @@
 
 ### Fixed
 
+- **Save closed a new database connection's form.** It now stays open, as DBGate's does, as that connection's form: a second Save updates the connection instead of adding another one, and Edit on the connection brings that tab forward when it is in the focused panel. Connect still closes it.
+
 - **Account rotation sent most chats to one account.** A chat kept the account it started on for as long as it existed, so chats resumed days later all went back to it: five landed on one account in a single morning while another sat at 3%. A chat now keeps its account only while that account still holds the chat's prompt cache, which is all that staying saves, and is routed like a new chat once the cache has lapsed. Round-robin also started over at the first account after every restart, and skipped an account whenever another one dropped out of the list; it now carries on after the account it handed out last. And moving an idle Claude chat to another account in the usage panel now applies to its next message, as it already did for Codex, instead of waiting until something restarted the chat's process.
 
 - **A tool call made alongside another one lost its result when the turn ended.** The card showed a tick and nothing in it. Each block of a reply is stored as its own message, so two calls made at once sit in two messages with both results after the second, and the history reload that ends every turn put both results under the second call. Each result now stays with the call that made it.

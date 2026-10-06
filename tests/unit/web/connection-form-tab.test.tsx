@@ -240,18 +240,50 @@ describe("Connect and Save", () => {
     expect(changed).toContainEqual({ connectionId: 41, refreshTables: true });
   });
 
-  it("closes its tab once saved", async () => {
-    serve(on("POST", "/api/db/connections", ok(SAVED)));
+  it("keeps its tab open once saved, as that connection's: Edit finds it, and the next Save updates it", async () => {
+    serve(
+      on("POST", "/api/db/connections", ok(SAVED)),
+      on("GET", "/api/db/connections/41", ok(SAVED)),
+      on("GET", "/api/db/connections/41/config", ok({ type: "postgres", connectionString: "postgres://app@db1/shop", hasPassword: true, entry: "fields" })),
+      on("PUT", "/api/db/connections/41", ok(SAVED)),
+    );
     openConnectionForm();
-    const tab = useTabStore.getState().tabs.find((t) => t.type === "db-connection");
-    expect(tab?.title).toBe("New connection");
-    view = await mount(<ConnectionFormTab metadata={tab!.metadata} tabId={tab!.id} />);
+    const id = useTabStore.getState().tabs.find((t) => t.type === "db-connection")!.id;
+    expect(useTabStore.getState().tabs.find((t) => t.id === id)?.title).toBe("New connection");
+    // As the tab pool does: the tab's metadata comes from the store, so Save's update reaches the form.
+    function FromStore() {
+      const tab = useTabStore((s) => s.tabs.find((t) => t.id === id));
+      return tab ? <ConnectionFormTab metadata={tab.metadata} tabId={tab.id} /> : null;
+    }
+    view = await mount(<FromStore />);
     await settle();
+    await type("#cf-host", "db1");
+    await type("#cf-user", "app");
+    await type("#cf-password", "pw");
+    await type("#cf-database", "shop");
 
     await click(button("Save"));
     await settle();
     expect(sent("POST", "/api/db/connections")).toHaveLength(1);
-    expect(useTabStore.getState().tabs.some((t) => t.id === tab!.id)).toBe(false);
+    const tab = useTabStore.getState().tabs.find((t) => t.id === id);
+    expect(tab?.title).toBe("Edit shop@db1");
+    expect(tab?.metadata).toMatchObject({ connectionId: 41, connectionName: "shop@db1" });
+    // Reloaded as Edit opens it: the password stays on the host.
+    expect($<HTMLInputElement>("#cf-password").value).toBe("");
+    expect($<HTMLInputElement>("#cf-password").placeholder).toBe("Saved on the PPM host");
+
+    await act(async () => { openConnectionForm(SAVED as Parameters<typeof openConnectionForm>[0]); });
+    expect(useTabStore.getState().tabs.filter((t) => t.type === "db-connection").map((t) => t.id)).toEqual([id]);
+    expect(useTabStore.getState().activeTabId).toBe(id);
+
+    await click(button("Save"));
+    await settle();
+    expect(sent("POST", "/api/db/connections")).toHaveLength(1);
+    expect(sent("PUT", "/api/db/connections/41")).toHaveLength(1);
+    // Reloaded again, and ready for the next press.
+    expect(sent("GET", "/api/db/connections/41/config")).toHaveLength(2);
+    expect(button("Save").disabled).toBe(false);
+    await act(async () => { useTabStore.getState().closeTab(id); });
   });
 
   it("saves without testing, and refuses a name another connection has", async () => {

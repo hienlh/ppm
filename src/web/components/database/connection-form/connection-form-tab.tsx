@@ -3,8 +3,8 @@
  *
  * A centred column under a row of sub-tabs, with Connect · Test · Save pinned to the bottom and
  * the result beside them — on a phone, above them, where a thumb reaches. Nothing is saved until
- * Connect has connected or Save is pressed; either closes the tab and shows the connection in
- * the tree.
+ * Connect has connected or Save is pressed; either shows the connection in the tree. Connect
+ * closes the tab; Save keeps it open as the saved connection's, as DBGate does.
  */
 import { useRef } from "react";
 import { Loader2, X } from "@/lib/icons";

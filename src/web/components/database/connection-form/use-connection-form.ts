@@ -74,7 +74,8 @@ export function useConnectionForm(connectionId: number | null, tabId: string | u
       // The duplicate-name check waits for it; the server refuses a duplicate either way.
     });
     if (connectionId !== null) {
-      setLoad({ kind: "loading" });
+      // A form already on screen — the one Save just stored — is refreshed in place.
+      setLoad((l) => (l.kind === "ready" ? l : { kind: "loading" }));
       Promise.all([
         api.get<Connection>(`/api/db/connections/${connectionId}`),
         api.get<EditableConnectionConfig>(`/api/db/connections/${connectionId}/config`),
@@ -84,6 +85,8 @@ export function useConnectionForm(connectionId: number | null, tabId: string | u
         setValues(loaded);
         setEditing({ id: conn.id, ...saved });
         setLoad({ kind: "ready" });
+        // Save keeps its buttons off until the form is the saved connection's.
+        setRun((r) => (r.kind === "running" && r.action === "save" ? { kind: "idle" } : r));
       }).catch((e: Error) => {
         if (!cancelled) setLoad({ kind: "failed", message: e.message });
       });
@@ -218,8 +221,16 @@ export function useConnectionForm(connectionId: number | null, tabId: string | u
       connected ? `${edited ? "Updated" : "Saved"} and connected “${conn.name}”` : `${edited ? "Updated" : "Saved"} “${conn.name}”`,
       trusted ? { description: `First connection through SSH: PPM now trusts the host key of ${trusted}.` } : undefined,
     );
-    if (tabId) useTabStore.getState().closeTab(tabId);
-    else setRun({ kind: "idle" });
+    if (!tabId) { setRun({ kind: "idle" }); return; }
+    if (connected) { useTabStore.getState().closeTab(tabId); return; }
+    // Save keeps the tab, as DBGate does, and makes it this connection's edit tab, reloaded as
+    // Edit opens it: the next Save updates the connection instead of adding a second one.
+    useTabStore.getState().updateTab(tabId, {
+      title: `Edit ${conn.name}`,
+      metadata: { connectionId: conn.id, connectionName: conn.name, dbType: conn.type },
+    });
+    // A new connection reloads by getting its id; an edited one already had it.
+    if (edited) setReloads((n) => n + 1);
   };
 
   const runTest = async (action: "test" | "connect") => {
