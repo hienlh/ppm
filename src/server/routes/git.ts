@@ -416,7 +416,10 @@ gitRoutes.post("/fetch", async (c) => {
   }
 });
 
-/** POST /git/discard { files } — discard unstaged changes (checkout tracked, clean untracked) */
+/**
+ * POST /git/discard { files } — discard unstaged changes (checkout tracked, clean untracked).
+ * Answers with an `undo` record; a 500 carries one too when the discard failed part way.
+ */
 gitRoutes.post("/discard", async (c) => {
   try {
     const projectPath = c.get("projectPath");
@@ -427,10 +430,16 @@ gitRoutes.post("/discard", async (c) => {
     try {
       await gitService.discardChanges(projectPath, files);
     } catch (e) {
-      await gitDiscardJournal.abandon(pending);
-      throw e;
+      // It may have got part way (the tracked files go before the untracked
+      // ones): the answer carries the Undo for whatever it already threw away.
+      const undo = await gitDiscardJournal.failed(pending);
+      return c.json({ ...err((e as Error).message), undo }, 500);
     }
-    const undo = await gitDiscardJournal.commitFiles(pending);
+    // The discard happened, and the entry written before it can still undo it.
+    const undo = await gitDiscardJournal.commitFiles(pending).catch((e) => {
+      log.error(`could not note what the discard in ${projectPath} left; its Undo is the entry written before it:`, e);
+      return gitDiscardJournal.summarize(pending);
+    });
     return c.json(ok({ discarded: files, undo }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

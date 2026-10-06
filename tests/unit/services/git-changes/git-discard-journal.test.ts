@@ -2,10 +2,10 @@
  * Undo for discards, against real repositories. PPM_HOME is the preload's
  * scratch directory, so the journal never reaches the real one.
  */
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
   chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync,
-  symlinkSync, unlinkSync, writeFileSync,
+  statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +35,14 @@ async function discardFiles(paths: string[]) {
   const pending = await gitDiscardJournal.captureFiles(repo, paths);
   await gitService.discardChanges(repo, paths);
   return gitDiscardJournal.commitFiles(pending);
+}
+
+/** The journal's directory that holds this entry. */
+function journalDirOf(id: string): string {
+  const root = join(getPpmDir(), "git-discards");
+  const dir = readdirSync(root).find((d) => existsSync(join(root, d, `${id}.json`)));
+  if (!dir) throw new Error(`no entry ${id}`);
+  return join(root, dir);
 }
 
 beforeEach(async () => {
@@ -113,14 +121,6 @@ describe("block discards", () => {
     expect(await gitDiscardJournal.list(repo)).toEqual([]);
     await expect(gitDiscardJournal.undo(repo, record.id)).rejects.toThrow(/no longer be undone/);
   });
-
-  it("can be undone once only, and is listed until then", async () => {
-    const record = await discardFirstHunk();
-    expect((await gitDiscardJournal.list(repo)).map((r) => r.id)).toEqual([record.id]);
-    await gitDiscardJournal.undo(repo, record.id);
-    expect(await gitDiscardJournal.list(repo)).toEqual([]);
-    await expect(gitDiscardJournal.undo(repo, record.id)).rejects.toThrow(/no longer be undone/);
-  });
 });
 
 describe("whole-file discards", () => {
@@ -176,6 +176,81 @@ describe("whole-file discards", () => {
     expect(read("run.sh")).toBe("echo typed since\n");
   });
 
+  it("is written down before the discard, so one PPM never finished noting can still be undone", async () => {
+    write("file.txt", "mine\n");
+    write("new.md", "# draft\n");
+    const pending = await gitDiscardJournal.captureFiles(repo, ["file.txt", "new.md"]);
+    await gitService.discardChanges(repo, ["file.txt", "new.md"]);
+    // PPM stopped here, before `commitFiles`.
+    expect((await gitDiscardJournal.list(repo)).map((r) => r.id)).toEqual([pending.entry.id]);
+    await gitDiscardJournal.undo(repo, pending.entry.id);
+    expect(read("file.txt")).toBe("mine\n");
+    expect(read("new.md")).toBe("# draft\n");
+  });
+
+  it("never lets an entry PPM did not finish overwrite an edit made since", async () => {
+    write("file.txt", "mine\n");
+    write("new.md", "# draft\n");
+    const pending = await gitDiscardJournal.captureFiles(repo, ["file.txt", "new.md"]);
+    await gitService.discardChanges(repo, ["file.txt", "new.md"]);
+    write("new.md", "typed since\n");
+    await expect(gitDiscardJournal.undo(repo, pending.entry.id)).rejects.toThrow(/new\.md changed after/);
+    expect(read("file.txt")).toBe(ORIGINAL);
+    expect(read("new.md")).toBe("typed since\n");
+  });
+
+  it("keeps what a discard that failed part way already threw away", async () => {
+    write("file.txt", "mine\n");
+    write("run.sh", "echo mine\n");
+    const pending = await gitDiscardJournal.captureFiles(repo, ["file.txt", "run.sh"]);
+    await git(["checkout", "--", "file.txt"]); // and then the discard failed
+    const record = await gitDiscardJournal.failed(pending);
+    expect(record?.paths).toEqual(["file.txt", "run.sh"]);
+    const untouched = new Date("2020-01-01T00:00:00Z");
+    utimesSync(join(repo, "run.sh"), untouched, untouched);
+    await gitDiscardJournal.undo(repo, record!.id);
+    expect(read("file.txt")).toBe("mine\n");
+    expect(read("run.sh")).toBe("echo mine\n");
+    // The file the discard never reached is left alone, not written again.
+    expect(statSync(join(repo, "run.sh")).mtimeMs).toBe(untouched.getTime());
+  });
+
+  it("keeps those copies even when what the discard did cannot be noted", async () => {
+    write("file.txt", "mine\n");
+    const pending = await gitDiscardJournal.captureFiles(repo, ["file.txt"]);
+    await git(["checkout", "--", "file.txt"]); // and then the discard failed
+    const commit = spyOn(gitDiscardJournal, "commitFiles").mockRejectedValue(new Error("disk full"));
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    let record: Awaited<ReturnType<typeof gitDiscardJournal.failed>>;
+    try {
+      record = await gitDiscardJournal.failed(pending);
+    } finally {
+      commit.mockRestore();
+      errors.mockRestore();
+    }
+    expect(record?.id).toBe(pending.entry.id);
+    await gitDiscardJournal.undo(repo, record!.id);
+    expect(read("file.txt")).toBe("mine\n");
+  });
+
+  it("forgets a discard that failed before changing anything", async () => {
+    write("file.txt", "mine\n");
+    const pending = await gitDiscardJournal.captureFiles(repo, ["file.txt"]);
+    const dir = journalDirOf(pending.entry.id);
+    expect(await gitDiscardJournal.failed(pending)).toBeNull();
+    expect(readdirSync(dir).filter((n) => n.startsWith(pending.entry.id))).toEqual([]);
+    expect(await gitDiscardJournal.list(repo)).toEqual([]);
+  });
+
+  it("leaves no copy behind when one of the paths cannot be taken", async () => {
+    write("file.txt", "mine\n");
+    const kept = await discardFiles(["run.sh"]); // so the journal's directory exists
+    const dir = journalDirOf(kept.id);
+    const before = readdirSync(dir).sort();
+    await expect(gitDiscardJournal.captureFiles(repo, ["file.txt", ".git/config"])).rejects.toThrow(/Refusing/);
+    expect(readdirSync(dir).sort()).toEqual(before);
+  });
+
   it("does not copy a file over 20 MB, and says so", async () => {
     write("huge.bin", Buffer.alloc(21 * 1024 * 1024, 7));
     const record = await discardFiles(["huge.bin"]);
@@ -200,6 +275,24 @@ describe("whole-file discards", () => {
 });
 
 describe("retention", () => {
+  it("drops copies no entry names once they are a day old", async () => {
+    write("file.txt", "mine\n");
+    const record = await discardFiles(["file.txt"]);
+    const dir = journalDirOf(record.id);
+    // What a capture PPM stopped in the middle of leaves: copies, and no entry.
+    const old = join(dir, "00000000-0000-4000-8000-000000000000.0.bin");
+    const fresh = join(dir, "00000000-0000-4000-8000-000000000001.0.bin");
+    writeFileSync(old, "x");
+    writeFileSync(fresh, "x");
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    utimesSync(old, twoDaysAgo, twoDaysAgo);
+    await gitDiscardJournal.list(repo);
+    expect(existsSync(old)).toBe(false);
+    // Younger than a day it may be a capture still running.
+    expect(existsSync(fresh)).toBe(true);
+    expect((await gitDiscardJournal.list(repo)).map((r) => r.id)).toEqual([record.id]);
+  });
+
   it("keeps the newest 100 entries per repository", async () => {
     write("file.txt", "x\n");
     const ids: string[] = [];

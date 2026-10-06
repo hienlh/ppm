@@ -5,13 +5,14 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Hono } from "hono";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitRoutes } from "../../../src/server/routes/git.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { onGitEvent } from "../../../src/services/git-changes/git-events.ts";
 import { gitDiscardJournal } from "../../../src/services/git-discard-journal/git-discard-journal.service.ts";
+import { gitService } from "../../../src/services/git.service.ts";
 import type { GitEvent } from "../../../src/shared/git-changes.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -212,6 +213,71 @@ describe("discard and Undo", () => {
     const undo = await call("POST", "/discard/undo", { id: discard.body.data.undo.id });
     expect(undo.status).toBe(409);
     expect(read("file.txt")).toBe("typed since\n");
+  });
+
+  it("answers a discard that failed part way with the Undo for what it already threw away", async () => {
+    write("file.txt", "mine\n");
+    write("new.txt", "untracked\n");
+    // The tracked half is checked out, then removing the untracked half fails.
+    const discard = spyOn(gitService, "discardChanges").mockImplementation(async () => {
+      await git(["checkout", "--", "file.txt"]);
+      throw new Error("could not remove new.txt");
+    });
+    let res: Awaited<ReturnType<typeof call>>;
+    try {
+      res = await call("POST", "/discard", { files: ["file.txt", "new.txt"] });
+    } finally {
+      discard.mockRestore();
+    }
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("could not remove new.txt");
+    expect(read("file.txt")).toBe(ORIGINAL);
+    expect((await call("POST", "/discard/undo", { id: res.body.undo.id })).status).toBe(200);
+    expect(read("file.txt")).toBe("mine\n");
+    expect(read("new.txt")).toBe("untracked\n");
+  });
+
+  // A directory nothing may be deleted from: the checkout succeeds, then `git clean` fails.
+  // Windows has no such directory mode, and root may delete anything.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps that Undo when git clean really fails after the checkout",
+    async () => {
+      mkdirSync(join(repo, "ro"));
+      write("ro/keep.txt", "k\n");
+      await git(["add", "ro/keep.txt"]);
+      await git(["commit", "-qm", "ro"]);
+      write("file.txt", "mine\n");
+      write("ro/new.txt", "untracked\n");
+      chmodSync(join(repo, "ro"), 0o555);
+      try {
+        const res = await call("POST", "/discard", { files: ["file.txt", "ro/new.txt"] });
+        expect(res.status).toBe(500);
+        expect(read("file.txt")).toBe(ORIGINAL);
+        // Undo leaves alone the file the discard never reached, in a directory it could not write.
+        expect((await call("POST", "/discard/undo", { id: res.body.undo.id })).status).toBe(200);
+        expect(read("file.txt")).toBe("mine\n");
+        expect(read("ro/new.txt")).toBe("untracked\n");
+      } finally {
+        chmodSync(join(repo, "ro"), 0o755);
+      }
+    },
+  );
+
+  it("answers a discard that happened with its Undo, even when what it left could not be noted", async () => {
+    write("file.txt", "mine\n");
+    const commit = spyOn(gitDiscardJournal, "commitFiles").mockRejectedValue(new Error("disk full"));
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    let res: Awaited<ReturnType<typeof call>>;
+    try {
+      res = await call("POST", "/discard", { files: ["file.txt"] });
+    } finally {
+      commit.mockRestore();
+      errors.mockRestore();
+    }
+    expect(res.status).toBe(200);
+    expect(read("file.txt")).toBe(ORIGINAL);
+    expect((await call("POST", "/discard/undo", { id: res.body.data.undo.id })).status).toBe(200);
+    expect(read("file.txt")).toBe("mine\n");
   });
 
   it("does not discard anything when the path cannot be copied first", async () => {

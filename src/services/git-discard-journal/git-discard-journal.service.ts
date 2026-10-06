@@ -10,9 +10,12 @@
  *   look for them elsewhere in the file, and a copy of them there is enough to
  *   put the block back in the wrong place.
  * - A whole-file discard keeps the file's bytes (or the fact it did not exist)
- *   from before, plus what the discard left behind. Undo writes the bytes back
- *   only while every file is still exactly what the discard left, so it can
- *   never overwrite an edit made since.
+ *   from before, written down *before* anything is discarded, so a discard that
+ *   fails or stops half way can still be undone; then what the discard left
+ *   behind. Undo writes the bytes back only while every file is still exactly
+ *   what the discard left, so it can never overwrite an edit made since. Where
+ *   that was never noted (PPM stopped first), a file is written back only while
+ *   that loses nothing: it is gone, unchanged, or what the index holds.
  *
  * Entries live in `<ppm dir>/git-discards/<repo key>/` for a day, at most 100
  * per repository. A file over 20 MB is not copied and cannot be restored; the
@@ -20,12 +23,13 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import {
-  chmod, lstat, mkdir, readdir, readFile, readlink, rm, symlink, unlink, writeFile,
+  chmod, lstat, mkdir, readdir, readFile, readlink, rename, rm, stat, symlink, unlink, writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { ChangeHunk, DiscardRecord } from "../../shared/git-changes.ts";
 import { isInsideDir, realPathOrSelf, realPathOrSelfSync } from "../fs-ops/fs-real-path.ts";
-import { assertSafeFilePath, runGit, toDisplay } from "../git-hunks/git-hunks.service.ts";
+import { parsePorcelainV2 } from "../git-changes/porcelain-v2.ts";
+import { assertSafeFilePath, LITERAL_PATHSPECS, runGit, toDisplay } from "../git-hunks/git-hunks.service.ts";
 import { hunkFingerprint, parseUnifiedDiff } from "../git-hunks/unified-diff.ts";
 import { createLogger } from "../logger.ts";
 import { getPpmDir } from "../ppm-dir.ts";
@@ -140,12 +144,16 @@ class GitDiscardJournal {
     };
     const dir = this.dirFor(repo);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, `${entry.id}.json`), JSON.stringify(entry));
+    await this.writeEntry(dir, entry);
     await this.prune(dir);
     return this.summary(entry);
   }
 
-  /** Copy the files a whole-file discard is about to touch. Call before discarding. */
+  /**
+   * Copy the files a whole-file discard is about to touch, and write the entry
+   * down. Call before discarding: once this returns, a discard that stops half
+   * way, PPM included, leaves an entry that can undo what it did.
+   */
   async captureFiles(repo: string, paths: string[]): Promise<PendingFileCapture> {
     const root = this.repoRoot(repo);
     const entry: JournalEntry = {
@@ -153,20 +161,26 @@ class GitDiscardJournal {
     };
     const dir = this.dirFor(repo);
     await mkdir(dir, { recursive: true });
-    let total = 0;
-    for (const [i, path] of paths.entries()) {
-      const read = await this.stateOf(await this.target(root, path));
-      if (!read || (read.bytes && total + read.bytes.length > MAX_ENTRY_BYTES)) {
-        entry.skipped!.push(path);
-        continue;
+    try {
+      let total = 0;
+      for (const [i, path] of paths.entries()) {
+        const read = await this.stateOf(await this.target(root, path));
+        if (!read || (read.bytes && total + read.bytes.length > MAX_ENTRY_BYTES)) {
+          entry.skipped!.push(path);
+          continue;
+        }
+        const record: FileRecord = { path, before: read.state };
+        if (read.bytes) {
+          total += read.bytes.length;
+          record.blob = `${entry.id}.${i}.bin`;
+          await writeFile(join(dir, record.blob), read.bytes);
+        }
+        entry.files!.push(record);
       }
-      const record: FileRecord = { path, before: read.state };
-      if (read.bytes) {
-        total += read.bytes.length;
-        record.blob = `${entry.id}.${i}.bin`;
-        await writeFile(join(dir, record.blob), read.bytes);
-      }
-      entry.files!.push(record);
+      await this.writeEntry(dir, entry);
+    } catch (e) {
+      await this.removeEntry(dir, entry.id).catch(() => undefined);
+      throw e;
     }
     return { entry, dir };
   }
@@ -178,14 +192,40 @@ class GitDiscardJournal {
       const read = await this.stateOf(await this.target(entry.repo, record.path));
       if (read) record.after = read.state;
     }
-    await writeFile(join(dir, `${entry.id}.json`), JSON.stringify(entry));
+    await this.writeEntry(dir, entry);
     await this.prune(dir);
     return this.summary(entry);
   }
 
-  /** The discard failed: drop the copies. */
-  async abandon(pending: PendingFileCapture): Promise<void> {
-    await this.removeEntry(pending.dir, pending.entry.id);
+  /** The entry `captureFiles` wrote, as the discard routes answer it. */
+  summarize(pending: PendingFileCapture): DiscardRecord {
+    return this.summary(pending.entry);
+  }
+
+  /**
+   * The discard failed. When it changed nothing, the copies go; when it got
+   * part way, they are what brings back what it already threw away, so the
+   * entry is kept and returned.
+   */
+  async failed(pending: PendingFileCapture): Promise<DiscardRecord | null> {
+    const { entry, dir } = pending;
+    try {
+      const untouched = await Promise.all(entry.files!.map(async (record) => {
+        const now = await this.stateOf(await this.target(entry.repo, record.path));
+        return !!now && sameState(record.before, now.state);
+      }));
+      if (untouched.every(Boolean)) {
+        await this.removeEntry(dir, entry.id);
+        return null;
+      }
+      const record = await this.commitFiles(pending);
+      log.warn(`a discard in ${entry.repo} failed part way; discard ${entry.id} can put back what it already removed`);
+      return record;
+    } catch (e) {
+      // The entry written before the discard is still there, and can still undo it.
+      log.error(`could not tell what the failed discard ${entry.id} in ${entry.repo} changed; keeping its copies:`, e);
+      return this.summary(entry);
+    }
   }
 
   async list(repo: string): Promise<DiscardRecord[]> {
@@ -224,10 +264,18 @@ class GitDiscardJournal {
 
     const files = entry.files ?? [];
     const targets = await Promise.all(files.map((f) => this.target(root, f.path)));
+    // Never noted (PPM stopped before it could): only what git can give back may be overwritten.
+    const unnoted = files.filter((f) => !f.after).map((f) => f.path);
+    const unlike = unnoted.length ? await this.unlikeIndex(root, unnoted) : new Set<string>();
     // Check every file before writing any: all or nothing.
+    const unchanged: boolean[] = [];
     for (const [i, record] of files.entries()) {
       const now = await this.stateOf(targets[i]!);
-      if (!now || !sameState(record.after, now.state)) {
+      unchanged[i] = !!now && sameState(record.before, now.state);
+      const safe = !!now && (record.after
+        ? sameState(record.after, now.state)
+        : unchanged[i] || now.state.kind === "missing" || !unlike.has(record.path));
+      if (!safe) {
         throw new Error(`${record.path} changed after it was discarded, so Undo would overwrite that. Nothing was restored.`);
       }
     }
@@ -235,6 +283,8 @@ class GitDiscardJournal {
     try {
       for (const [i, record] of files.entries()) {
         at = i;
+        // Never discarded (the discard failed first): nothing to put back.
+        if (unchanged[i]) continue;
         const abs = targets[i]!;
         const before = record.before;
         // Never write *through* whatever is there now.
@@ -287,6 +337,26 @@ class GitDiscardJournal {
     return record;
   }
 
+  /** Write an entry whole or not at all: a crash mid-write must not lose the one already there. */
+  private async writeEntry(dir: string, entry: JournalEntry): Promise<void> {
+    const file = join(dir, `${entry.id}.json`);
+    await writeFile(`${file}.tmp`, JSON.stringify(entry));
+    await rename(`${file}.tmp`, file);
+  }
+
+  /** Of these paths, those whose working-tree file is not what the index holds. */
+  private async unlikeIndex(root: string, paths: string[]): Promise<Set<string>> {
+    const res = await runGit(
+      root,
+      ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignored=matching", "--", ...paths],
+      { env: LITERAL_PATHSPECS },
+    );
+    if (res.exitCode !== 0) throw new Error(res.stderr.trim() || `git status exited with ${res.exitCode}`);
+    return new Set(parsePorcelainV2(res.stdout).entries
+      .filter((e) => !(e.kind === "ordinary" || e.kind === "renamed") || e.y !== ".")
+      .map((e) => toDisplay(e.path)));
+  }
+
   private async readEntry(dir: string, id: string): Promise<JournalEntry | null> {
     try {
       return JSON.parse(await readFile(join(dir, `${id}.json`), "utf8")) as JournalEntry;
@@ -318,12 +388,24 @@ class GitDiscardJournal {
     await Promise.all(names.filter((n) => n.startsWith(`${id}.`)).map((n) => rm(join(dir, n), { force: true })));
   }
 
-  /** Drop entries older than a day, and all but the newest 100. */
+  /**
+   * Drop entries older than a day, and all but the newest 100 — and, once a
+   * day old, files no entry names: the copies of a capture PPM stopped in the
+   * middle of, whose entry was never written. A day, because a capture still
+   * running has written its copies and not yet its entry.
+   */
   private async prune(dir: string): Promise<void> {
     const entries = (await this.readEntries(dir)).sort((a, b) => b.createdAt - a.createdAt);
     const now = Date.now();
     const stale = entries.filter((e, i) => i >= MAX_ENTRIES || now - e.createdAt > MAX_AGE_MS);
     for (const e of stale) await this.removeEntry(dir, e.id);
+    const kept = new Set(entries.filter((e) => !stale.includes(e)).map((e) => e.id));
+    for (const name of await readdir(dir).catch(() => [] as string[])) {
+      if (kept.has(name.slice(0, name.indexOf(".")))) continue;
+      const file = join(dir, name);
+      const st = await stat(file).catch(() => null);
+      if (st && now - st.mtimeMs > MAX_AGE_MS) await rm(file, { force: true });
+    }
   }
 }
 

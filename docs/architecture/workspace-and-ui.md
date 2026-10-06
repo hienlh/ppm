@@ -446,8 +446,9 @@ message being written.
   (`useGitChangesPoller`) read again about 300 ms later.
 - **Discard Undo**: `src/services/git-discard-journal/` keeps what a discard threw away in
   `<ppm dir>/git-discards/<repo key>/` — the reversed patch for a block (Undo only while the file
-  is still exactly what the discard left), the bytes for a whole file (Undo only while every file
-  is still what the discard left) — for a day, 100 per repository, nothing over 20 MB.
+  is still exactly what the discard left), the bytes for a whole file, written before the discard
+  runs (Undo only while every file is still what the discard left) — for a day, 100 per
+  repository, nothing over 20 MB.
 - **One commit message per repository**: `src/services/git-commit-draft.service.ts` keeps it in
   `chat_drafts` (session id `git-commit`, keyed by the repository's real path, left alone by
   `deleteOrphaned`), behind `GET/PUT /git/commit-draft`; a change goes out as `git:commit-draft`
