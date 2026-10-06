@@ -100,6 +100,8 @@
 
 ### Fixed
 
+- **The running-agents bar listed every named agent twice, and grew over the chat.** An agent given a name was reported once as an Agent card and again as a teammate, so a session that fanned out to eleven agents showed 22 rows covering the whole conversation. Each agent is one row now, and from four agents on the list scrolls inside about three rows under an "N agents running" header that folds it away: open on a desktop, folded on a phone.
+
 - **Save closed a new database connection's form.** It now stays open, as DBGate's does, as that connection's form: a second Save updates the connection instead of adding another one, and Edit on the connection brings that tab forward when it is in the focused panel. Connect still closes it.
 
 - **Account rotation sent most chats to one account.** A chat kept the account it started on for as long as it existed, so chats resumed days later all went back to it: five landed on one account in a single morning while another sat at 3%. A chat now keeps its account only while that account still holds the chat's prompt cache, which is all that staying saves, and is routed like a new chat once the cache has lapsed. Round-robin also started over at the first account after every restart, and skipped an account whenever another one dropped out of the list; it now carries on after the account it handed out last. And moving an idle Claude chat to another account in the usage panel now applies to its next message, as it already did for Codex, instead of waiting until something restarted the chat's process.

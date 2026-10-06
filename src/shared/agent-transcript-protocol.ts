@@ -46,7 +46,10 @@ export interface AgentTranscriptEnvelope {
 
 export type AgentTranscriptErrorCode = "not_found" | "forbidden" | "limit" | "bad_request";
 
-/** One entry of the running-agents bar. Exactly one of `cardId`/`memberName` is set. */
+/**
+ * One entry of the running-agents bar: `cardId` for an agent this session spawned, with
+ * `memberName` too when it was given a name, or `memberName` alone for a teammate with no card.
+ */
 export interface AgentTranscriptRunningEntry {
   cardId?: string;
   memberName?: string;

@@ -480,6 +480,32 @@ describe("agent transcript hub", () => {
     expect(last.running[0]!.cardId).toBe("toolu_card1");
   });
 
+  it("a named agent the session spawned is one running entry, not a card and a teammate too", async () => {
+    const subagentsDir = join(ownClaude(), "subagents");
+    mkdirSync(subagentsDir, { recursive: true });
+    const agent = (id: string, meta: Record<string, string>) => {
+      writeFileSync(join(subagentsDir, `agent-${id}.meta.json`), JSON.stringify(meta));
+      writeFileSync(join(subagentsDir, `agent-${id}.jsonl`), assistantLine("working"));
+    };
+    // The CLI stamps the spawning call's id on a named agent's meta as well as its name.
+    agent("named", { toolUseId: "toolu_named", name: "fix-review" });
+    agent("plain", { toolUseId: "toolu_plain" });
+    agent("mate", { name: "dev-p1" }); // a teammate this session holds no card for
+    const ws = makeWs();
+    handleAgentActivitySubscribe(ws, {
+      type: "agent-activity:subscribe", subId: "act1", projectName: PROJECT_A, providerId: "claude", sessionId: SESSION_ID,
+    });
+    const hub = _getSessionHubForTest("claude", SESSION_ID)!;
+    await tickActivity(hub);
+
+    const last = ws.sent.filter((m) => m.type === "agent-activity").at(-1) as AgentActivityMsg;
+    expect(last.running.map((e) => `${e.cardId ?? "-"} ${e.memberName ?? "-"}`).sort()).toEqual([
+      "- dev-p1",
+      "toolu_named fix-review",
+      "toolu_plain -",
+    ]);
+  });
+
   it("a session with no recent transcript writes reports an empty running list", async () => {
     ownClaude(); // no card written at all — subagents dir does not exist
     const ws = makeWs();
