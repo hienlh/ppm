@@ -268,6 +268,18 @@ describe("revertTurn", () => {
     expect(read(b)).toBe(set(BASE, 5, "five\n"));
   });
 
+  test("writes nothing when what Undo needs cannot be saved first", async () => {
+    const file = join(work, "a.ts");
+    writeFileSync(file, BASE);
+    await call(file, "toolu_1", set(BASE, 5, "five\n"));
+    // A file where the undo folder goes: no journal can be written there.
+    writeFileSync(join(ppmHome, "session-baselines", SESSION, "undo"), "");
+    const { applied } = await revertNow(["toolu_1"]);
+    expect(applied.undoId).toBeUndefined();
+    expect(applied.files).toEqual([expect.objectContaining({ path: resolve(file), action: "none", error: expect.stringContaining("Undo") })]);
+    expect(read(file)).toBe(set(BASE, 5, "five\n"));
+  });
+
   test("is undone like a revert answer, every file of it", async () => {
     const a = join(work, "a.ts");
     const created = join(work, "new.ts");

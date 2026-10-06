@@ -13,16 +13,25 @@
  * in when only what changed since is open.
  *
  * Each answer is journalled under `<session dir>/undo/`: the session's own records for every file
- * it touched, as they were and as it left them, and for a revert the file before and after. Undo
- * puts a revert's change back even after other blocks of the file were answered — wherever its
- * lines are still as the revert left them — and the records only while nothing has answered the
- * file since. A file Undo cannot put back makes the whole Undo `stale`, so a turn's worth of
- * files never comes back half.
+ * it touched, as they were and as it left them, and for a revert the file before and after. A
+ * revert writes that journal before it writes any file (`journalAhead`), so a crash between two
+ * writes leaves nothing Undo cannot put back, and a write that fails part way still leaves the
+ * file's old bytes in the journal; with no journal it writes nothing. A file it cannot write is
+ * answered with why, and the others still go.
+ *
+ * Undo puts back every file of an answer or none. It works each one out first: a file still as
+ * the revert left it gets the bytes it replaced, one already back to them is left alone, and one
+ * written since gets the revert's change made again wherever its lines are untouched; the
+ * session's records go back only while nothing has answered the file since. A file it cannot
+ * work out makes the whole Undo `stale`, and one that then cannot be written, or moves meanwhile,
+ * takes back the files written before it and keeps the journal, so the same Undo can be asked
+ * again. Only a file that cannot be taken back either — written again in that moment — stays
+ * put back, and the error says so.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { assertReadPermitted } from "../fs-ops/fs-ops-read-write.service.ts";
 import { realPathOrSelf } from "../fs-ops/fs-real-path.ts";
 import { assertNotPpmSubtreeDeep } from "../fs-credential-path-guard.ts";
@@ -56,11 +65,11 @@ interface UndoEntry {
   /** The session's own records for the file (`answerRecordFiles` order) before and after the answer; null where there was none. */
   records: { before: (string | null)[]; after: (string | null)[] };
   /**
-   * A revert: whether the file existed before it (its bytes are then in `<id>.<n>.before`), the
-   * version it left, and whether it left a file (written to `<id>.<n>.after`, to find the change
-   * again once the file has moved on).
+   * A revert: whether the file existed before it (its bytes are then in `<id>.<blob>.before`) and
+   * whether it left a file (written to `<id>.<blob>.after`). `blob` is the entry's place in the
+   * journal as first written, and its place in the list when absent.
    */
-  revert?: { before: boolean; afterVersion: string; after: boolean };
+  revert?: { blob?: number; before: boolean; after: boolean };
 }
 
 interface UndoRecord {
@@ -69,12 +78,35 @@ interface UndoRecord {
   createdAt: string;
 }
 
-/** What one file's answer did, for the answer's result and its journal. */
+/** What one file's keep or open answer did, for the answer's result and its journal. */
 interface Done {
   answer: SessionFileAnswer;
   changed: boolean;
-  revert?: { before: Uint8Array | null; after: string | Uint8Array | null; afterVersion: string };
 }
+
+/** A file's bytes on disk, or null when there is no file. */
+export type State = Uint8Array | null;
+
+/** The file's bytes; null when it does not exist. Any other failure to read it throws. */
+export async function readState(path: string): Promise<State> {
+  try {
+    return await readFile(path);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw e;
+  }
+}
+
+/** Whether a file read as `state` (undefined: it could not be read) holds exactly `expected`. */
+export function sameState(state: State | undefined, expected: State | string): boolean {
+  if (state === undefined) return false;
+  if (state === null || expected === null) return state === expected;
+  return Buffer.from(state).equals(typeof expected === "string" ? Buffer.from(expected) : Buffer.from(expected));
+}
+
+const stateOf = (target: Target): State | string => (target.exists ? target.bytes : null);
+const targetOf = (state: State): Target => (state === null ? { exists: false } : { exists: true, bytes: state });
 
 const textOf = (side: Compared["before"]): string => (side.exists ? side.text ?? "" : "");
 
@@ -182,44 +214,91 @@ async function revertTarget(compared: Compared, path: string, keys: string[] | u
 }
 
 /** Write `target` over `path` (through a symlink, to the file it names), behind the same guards as reading it. */
-export async function writeTarget(path: string, target: Target): Promise<string> {
+export async function writeTarget(path: string, target: Target): Promise<void> {
   const real = await realPathOrSelf(path);
   assertReadPermitted(path, real);
   await assertNotPpmSubtreeDeep(path);
   if (!target.exists) {
     await unlink(real).catch((e) => { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; });
-    return "";
+    return;
   }
   await mkdir(dirname(real), { recursive: true });
   await writeFile(real, target.bytes);
-  return versionOf(path);
 }
 
-/** Revert blocks of one file, or the whole file. */
-async function revertOne(sessionId: string, chain: string[], projectPath: string, path: string, f: SessionAnswerFile): Promise<Done> {
-  const compared = await compare(chain, projectPath, path).catch(() => null);
-  const stale = (): Done => ({ answer: { path, stale: true, file: compared?.change ?? null }, changed: false });
-  if (!compared || compared.change.version !== f.version) return stale();
-  const target = await revertTarget(compared, path, f.keys);
-  if (target === "stale") return stale();
-  if (typeof target === "string") return { answer: { path, error: target, file: compared.change }, changed: false };
+/** A revert of one file worked out, nothing written yet: what goes over the bytes it holds now. */
+interface RevertPlan {
+  path: string;
+  compared: Compared;
+  target: Target;
+  /** The file as the blocks were cut from it; null when there is none. */
+  before: State;
+  /** The session's records for the file before the answer. */
+  records: (string | null)[];
+}
 
-  let before: Uint8Array | null = null;
+/** Work out the revert of blocks of one file, or of the whole file, or why it cannot be done. */
+async function planRevert(sessionId: string, chain: string[], projectPath: string, path: string, f: SessionAnswerFile): Promise<RevertPlan | SessionFileAnswer> {
+  const compared = await compare(chain, projectPath, path).catch(() => null);
+  const stale: SessionFileAnswer = { path, stale: true, file: compared?.change ?? null };
+  if (!compared || compared.change.version !== f.version) return stale;
+  const target = await revertTarget(compared, path, f.keys);
+  if (target === "stale") return stale;
+  if (typeof target === "string") return { path, error: target, file: compared.change };
+
+  let before: State = null;
   if (compared.after.exists) {
-    if ((await stat(path)).size > REVERT_MAX_BYTES) return { answer: { path, error: "This file is too large to revert.", file: compared.change }, changed: false };
+    if ((await stat(path)).size > REVERT_MAX_BYTES) return { path, error: "This file is too large to revert.", file: compared.change };
     before = await readFile(path);
     // Written since it was compared: the blocks were cut from other bytes than these.
     const hash = compared.after.hash;
-    if (hash ? createHash("sha256").update(before).digest("hex") !== hash : (await versionOf(path)) !== f.version) return stale();
+    if (hash ? createHash("sha256").update(before).digest("hex") !== hash : (await versionOf(path)) !== f.version) return stale;
   } else if ((await versionOf(path)) !== "") {
-    return stale();
+    return stale;
   }
-  const afterVersion = await writeTarget(path, target);
-  return {
-    answer: { path, file: await settle(sessionId, chain, projectPath, path) },
-    changed: true,
-    revert: { before, after: target.exists ? target.bytes : null, afterVersion },
-  };
+  return { path, compared, target, before, records: readRecords(sessionId, path) };
+}
+
+/**
+ * Revert blocks or whole files: every file worked out, the journal written, then each file
+ * written as long as it still holds the bytes it was worked out from.
+ */
+async function revertFiles(sessionId: string, chain: string[], projectPath: string, files: { path: string; f: SessionAnswerFile }[]): Promise<{ answers: SessionFileAnswer[]; undoId: string | null; written: number }> {
+  const answers: SessionFileAnswer[] = [];
+  const plans: { at: number; plan: RevertPlan }[] = [];
+  for (const { path, f } of files) {
+    const planned = await planRevert(sessionId, chain, projectPath, path, f)
+      .catch((e): SessionFileAnswer => ({ path, error: (e as Error).message, file: null }));
+    if ("target" in planned) plans.push({ at: answers.length, plan: planned });
+    answers.push("target" in planned ? { path, file: planned.compared.change } : planned);
+  }
+  if (plans.length === 0) return { answers, undoId: null, written: 0 };
+
+  const journal = journalAhead(sessionId, plans.map(({ plan }) => ({
+    path: plan.path, records: plan.records, before: plan.before, after: plan.target.exists ? plan.target.bytes : null,
+  })));
+  if (!journal) {
+    for (const { at, plan } of plans) answers[at] = { path: plan.path, error: "What Undo needs could not be saved, so nothing was written.", file: plan.compared.change };
+    return { answers, undoId: null, written: 0 };
+  }
+  const written: number[] = [];
+  for (const [n, { at, plan }] of plans.entries()) {
+    try {
+      if (!sameState(await readState(plan.path), plan.before)) {
+        answers[at] = { path: plan.path, stale: true, file: await current(chain, projectPath, plan.path) };
+        continue;
+      }
+      await writeTarget(plan.path, plan.target);
+      written.push(n);
+      answers[at] = { path: plan.path, file: await settle(sessionId, chain, projectPath, plan.path) };
+    } catch (e) {
+      answers[at] = { path: plan.path, error: (e as Error).message, file: plan.compared.change };
+      // A write that failed part way changed the file all the same: Undo keeps its bytes.
+      if (!sameState(await readState(plan.path).catch(() => undefined), plan.before)) written.push(n);
+      log.error(`session ${sessionId} review revert could not write ${plan.path}:`, e);
+    }
+  }
+  return { answers, undoId: settleJournal(sessionId, journal, written), written: written.length };
 }
 
 function undoDir(sessionId: string): string | null {
@@ -256,28 +335,84 @@ function journal(sessionId: string, entries: UndoEntry[], blobs: { name: string;
     return id;
   } catch (e) {
     log.warn(`undo journal failed: ${(e as Error).message}`);
-    for (const blob of blobs) rmSync(join(dir, `${id}.${blob.name}`), { force: true });
+    for (const blob of blobs) {
+      try {
+        rmSync(join(dir, `${id}.${blob.name}`), { force: true });
+      } catch { /* never written: the folder could not be made */ }
+    }
     return null;
   }
 }
 
+/** A file about to be written: its bytes now (null: there is none), and what goes over them. */
+export interface PlannedWrite {
+  path: string;
+  before: State;
+  after: string | Uint8Array | null;
+  /** The session's records for the file now; read here when absent. */
+  records?: (string | null)[];
+}
+
+/** A journal written ahead of its writes. */
+export interface OpenJournal { id: string; entries: UndoEntry[]; createdAt: string }
+
 /**
- * Journal files written outside an answer — a turn's revert — so `undoSessionAnswer` puts them
- * back like a revert's: the bytes each file had, and what was written over them.
+ * Journal writes before any is made: each file's bytes now (`<id>.<n>.before`) and what goes
+ * over them (`.after`), so Undo can put back whichever of them were made. Null when the journal
+ * could not be written: then nothing may be written either.
  */
-export function journalWrites(
-  sessionId: string,
-  writes: { path: string; before: Uint8Array | null; after: string | null; afterVersion: string }[],
-): string | null {
+export function journalAhead(sessionId: string, writes: PlannedWrite[]): OpenJournal | null {
   const entries: UndoEntry[] = [];
   const blobs: { name: string; bytes: string | Uint8Array }[] = [];
   for (const [n, w] of writes.entries()) {
-    const records = readRecords(sessionId, w.path);
-    entries.push({ path: w.path, records: { before: records, after: records }, revert: { before: w.before !== null, afterVersion: w.afterVersion, after: w.after !== null } });
+    const records = w.records ?? readRecords(sessionId, w.path);
+    entries.push({ path: w.path, records: { before: records, after: records }, revert: { blob: n, before: w.before !== null, after: w.after !== null } });
     if (w.before) blobs.push({ name: `${n}.before`, bytes: w.before });
     if (w.after !== null) blobs.push({ name: `${n}.after`, bytes: w.after });
   }
-  return entries.length ? journal(sessionId, entries, blobs) : null;
+  const id = entries.length ? journal(sessionId, entries, blobs) : null;
+  return id ? { id, entries, createdAt: new Date().toISOString() } : null;
+}
+
+/**
+ * Close a journal once its writes are made: only the files `written` (their places in it) stay,
+ * each with the session's records as the answer left them. Returns its id, or null — and the
+ * journal is gone — when nothing was written. Should the rewrite fail, the journal as written
+ * ahead still puts back every file: one never written already holds its old bytes.
+ */
+export function settleJournal(sessionId: string, open: OpenJournal, written: number[]): string | null {
+  const dir = undoDir(sessionId);
+  if (!dir) return null;
+  const files = (): string[] => {
+    try {
+      return readdirSync(dir).filter((name) => name.startsWith(`${open.id}.`));
+    } catch {
+      return [];
+    }
+  };
+  if (written.length === 0) {
+    for (const name of files()) rmSync(join(dir, name), { force: true });
+    return null;
+  }
+  const kept = new Set(written);
+  const entries = open.entries
+    .filter((_, n) => kept.has(n))
+    .map((e) => ({ ...e, records: { before: e.records.before, after: readRecords(sessionId, e.path) } }));
+  try {
+    const record: UndoRecord = { id: open.id, entries, createdAt: open.createdAt };
+    const tmp = join(dir, `${open.id}.json.${process.pid}.tmp`);
+    writeFileSync(tmp, JSON.stringify(record));
+    renameSync(tmp, join(dir, `${open.id}.json`));
+    // Only once the record no longer names them: the bytes of files that were not written.
+    const blobs = new Set(entries.map((e) => e.revert?.blob));
+    for (const name of files()) {
+      const n = /^[^.]+\.(\d+)\.(before|after)$/.exec(name)?.[1];
+      if (n !== undefined && !blobs.has(Number(n))) rmSync(join(dir, name), { force: true });
+    }
+  } catch (e) {
+    log.warn(`undo journal ${open.id} kept as written ahead: ${(e as Error).message}`);
+  }
+  return open.id;
 }
 
 /** Keep, open or revert blocks — or whole files — as the browser drew each file. */
@@ -288,55 +423,72 @@ export async function answerSessionChanges(p: {
   files: SessionAnswerFile[];
 }): Promise<SessionAnswerResult> {
   const chain = lineage(p.sessionId);
-  const files: SessionFileAnswer[] = [];
-  const entries: UndoEntry[] = [];
-  const blobs: { name: string; bytes: string | Uint8Array }[] = [];
-  const seen = new Set<string>();
+  const named: { path: string; f: SessionAnswerFile }[] = [];
   for (const f of p.files) {
     const path = resolve(p.projectPath, f.path);
-    if (seen.has(path)) continue;
-    seen.add(path);
-    const records = readRecords(p.sessionId, path);
-    const done = p.answer === "revert"
-      ? await revertOne(p.sessionId, chain, p.projectPath, path, f)
-      : await keepOne(p.sessionId, chain, p.projectPath, path, f, p.answer === "keep");
-    files.push(done.answer);
-    if (!done.changed) continue;
-    const n = entries.length;
-    const entry: UndoEntry = { path, records: { before: records, after: readRecords(p.sessionId, path) } };
-    if (done.revert) {
-      const { before, after, afterVersion } = done.revert;
-      entry.revert = { before: before !== null, afterVersion, after: after !== null };
-      if (before) blobs.push({ name: `${n}.before`, bytes: before });
-      if (after !== null) blobs.push({ name: `${n}.after`, bytes: after });
-    }
-    entries.push(entry);
+    if (!named.some((n) => n.path === path)) named.push({ path, f });
   }
-  const undoId = entries.length ? journal(p.sessionId, entries, blobs) : null;
-  // A revert rewrites files on disk; keep and open only move the session's own records.
+  if (p.answer === "revert") {
+    const { answers, undoId, written } = await revertFiles(p.sessionId, chain, p.projectPath, named);
+    const stale = answers.filter((f) => f.stale).length;
+    const failed = answers.filter((f) => f.error).length;
+    log.info(`session ${p.sessionId} review revert: ${written} of ${answers.length} file(s) written, ${stale} stale, ${failed} refused, undo=${undoId ?? "none"}`);
+    return { files: answers, ...(undoId ? { undoId } : {}) };
+  }
+
+  const files: SessionFileAnswer[] = [];
+  const entries: UndoEntry[] = [];
+  for (const { path, f } of named) {
+    const records = readRecords(p.sessionId, path);
+    const done = await keepOne(p.sessionId, chain, p.projectPath, path, f, p.answer === "keep");
+    files.push(done.answer);
+    if (done.changed) entries.push({ path, records: { before: records, after: readRecords(p.sessionId, path) } });
+  }
+  // Keep and open only move the session's own records, so their journal can come after.
+  const undoId = entries.length ? journal(p.sessionId, entries, []) : null;
   const stale = files.filter((f) => f.stale).length;
-  const line = `session ${p.sessionId} review ${p.answer}: ${entries.length} of ${files.length} file(s) ${p.answer === "revert" ? "written" : "answered"}, ${stale} stale, undo=${undoId ?? "none"}`;
-  if (p.answer === "revert") log.info(line);
-  else log.debug(line);
+  log.debug(`session ${p.sessionId} review ${p.answer}: ${entries.length} of ${files.length} file(s) answered, ${stale} stale, undo=${undoId ?? "none"}`);
   return { files, ...(undoId ? { undoId } : {}) };
 }
 
 /**
- * What putting a revert back writes: the bytes it replaced while the file is still as it left
- * it, or its change made again wherever those lines are untouched. Null when neither can be done.
+ * What putting a revert back writes over the file as it is `now`: the bytes the revert replaced
+ * while the file is still as it left it, nothing ("done") once it holds them again, or else the
+ * revert's change made again wherever its lines are untouched. Null when none of that can be done.
  */
-async function undoTarget(dir: string, id: string, n: number, entry: UndoEntry): Promise<Target | null> {
+function undoTarget(dir: string, id: string, n: number, entry: UndoEntry, now: State): Target | "done" | null {
   const r = entry.revert!;
-  const blob = (name: string) => readFileSync(join(dir, `${id}.${n}.${name}`));
-  const before: Target = r.before ? { exists: true, bytes: blob("before") } : { exists: false };
-  if ((await versionOf(entry.path)) === r.afterVersion) return before;
-  if (!before.exists || !r.after) return null;
-  const now = await readFile(entry.path).catch(() => null);
-  if (!now) return null;
-  const texts = [blob("after"), before.bytes as Uint8Array, now].map((b) => (isBinaryContent(b) ? null : decodeText(b)));
+  const blob = (name: string) => readFileSync(join(dir, `${id}.${r.blob ?? n}.${name}`));
+  const before: State = r.before ? blob("before") : null;
+  const after: State = r.after ? blob("after") : null;
+  if (sameState(now, after)) return targetOf(before);
+  if (sameState(now, before)) return "done";
+  if (!before || !after || !now) return null;
+  const texts = [after, before, now].map((b) => (isBinaryContent(b) ? null : decodeText(b)));
   if (texts.some((t) => t === null || lossy(t))) return null;
   const merged = reapply(texts[0]!, texts[1]!, texts[2]!);
   return merged === null ? null : { exists: true, bytes: merged };
+}
+
+/** A file an Undo writes: as it was found, and what goes over it. */
+interface UndoWrite { path: string; now: State; target: Target }
+
+/**
+ * Put back what an Undo wrote, each file only while it still holds what the Undo left. Whether
+ * every one of them went back.
+ */
+async function takeBack(writes: UndoWrite[]): Promise<boolean> {
+  let all = true;
+  for (const w of [...writes].reverse()) {
+    try {
+      if (sameState(await readState(w.path), stateOf(w.target))) await writeTarget(w.path, targetOf(w.now));
+      else all = false;
+    } catch (e) {
+      all = false;
+      log.error(`undo could not take back ${w.path}:`, e);
+    }
+  }
+  return all;
 }
 
 /** Undo an answer: every file it touched, or none of them. */
@@ -350,26 +502,51 @@ export async function undoSessionAnswer(p: { sessionId: string; projectPath: str
     return { stale: true, files: [] };
   }
   const chain = lineage(p.sessionId);
-  const plans: { entry: UndoEntry; target: Target | null; records: boolean }[] = [];
-  let stale = false;
-  for (const [n, entry] of record.entries.entries()) {
-    const records = sameRecords(readRecords(p.sessionId, entry.path), entry.records.after);
-    const target = entry.revert ? await undoTarget(dir, record.id, n, entry) : null;
-    // A revert is undone by its bytes; an answer that wrote none, only while its records stand.
-    if (entry.revert ? !target : !records) stale = true;
-    plans.push({ entry, target, records });
-  }
   const states = async () => Promise.all(record.entries.map(async (e) => ({ path: e.path, file: await current(chain, p.projectPath, e.path) })));
-  if (stale) {
+  const notApplied = async () => {
     log.debug(`session ${p.sessionId} undo ${record.id} not applied: a file moved since`);
     return { stale: true, files: await states() };
-  }
+  };
 
-  for (const { entry, target, records } of plans) {
-    if (target) await writeTarget(entry.path, target);
-    if (records) restoreRecords(p.sessionId, entry.path, entry.records.before);
+  const writes: UndoWrite[] = [];
+  const records: UndoEntry[] = [];
+  let stale = false;
+  for (const [n, entry] of record.entries.entries()) {
+    const standing = sameRecords(readRecords(p.sessionId, entry.path), entry.records.after);
+    if (standing) records.push(entry);
+    // A revert is undone by its bytes; an answer that wrote none, only while its records stand.
+    if (!entry.revert) {
+      if (!standing) stale = true;
+      continue;
+    }
+    const now = await readState(entry.path).catch(() => undefined);
+    const target = now === undefined ? null : undoTarget(dir, record.id, n, entry, now);
+    if (target === null) stale = true;
+    else if (target !== "done") writes.push({ path: entry.path, now: now!, target });
   }
+  if (stale) return notApplied();
+
+  const done: UndoWrite[] = [];
+  for (const w of writes) {
+    let failure: (Error & { status?: number }) | null = null;
+    try {
+      // Only over the bytes it was worked out from: a file written since makes the Undo stale.
+      if (sameState(await readState(w.path), w.now)) {
+        await writeTarget(w.path, w.target);
+        done.push(w);
+        continue;
+      }
+    } catch (e) {
+      failure = e as Error;
+    }
+    const all = await takeBack(done);
+    if (!failure && all) return notApplied();
+    const why = `${failure ? `Could not put back ${basename(w.path)}: ${failure.message}` : `${basename(w.path)} changed while Undo ran`}. ${all ? "Nothing was undone." : "Some files could not be taken back; Undo again once they can be written."}`;
+    log.error(`session ${p.sessionId} undo ${record.id} failed: ${why}`);
+    throw Object.assign(new Error(why), { status: failure?.status });
+  }
+  for (const entry of records) restoreRecords(p.sessionId, entry.path, entry.records.before);
   for (const name of readdirSync(dir).filter((f) => f.startsWith(`${record.id}.`))) rmSync(join(dir, name), { force: true });
-  log.info(`session ${p.sessionId} undid ${record.id}: ${plans.length} file(s), ${plans.filter((plan) => plan.target).length} rewritten on disk`);
+  log.info(`session ${p.sessionId} undid ${record.id}: ${record.entries.length} file(s), ${done.length} rewritten on disk`);
   return { files: await states() };
 }

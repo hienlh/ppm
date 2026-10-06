@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { Hono } from "hono";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chatFileChangesRoutes } from "../../../src/server/routes/chat-file-changes.ts";
@@ -541,6 +541,56 @@ describe("POST /chat/sessions/:id/file-changes/answer — revert", () => {
     expect((await changes(SESSION)).body.data.files).toHaveLength(3);
   });
 
+  it("answers a file it cannot write with why, and still writes the others, with an Undo for them", async () => {
+    const a = join(project, "a.ts");
+    const b = join(project, "dir", "b.ts");
+    recordBaseline(SESSION, a, "one\n");
+    writeFileSync(a, "two\n");
+    // The session deleted dir/b.ts, and a file named dir stands where its folder was: it cannot be written back.
+    recordBaseline(SESSION, b, "bravo\n");
+    writeFileSync(join(project, "dir"), "not a folder\n");
+    const files = (await changes(SESSION)).body.data.files.map((f: any) => ({ path: f.path, version: f.version }));
+    expect(files.map((f: any) => f.path)).toEqual([a, b]);
+
+    const res = await answer(SESSION, "revert", files);
+    expect(res.status).toBe(200);
+    expect(res.body.data.files.map((f: any) => [f.path, typeof f.error])).toEqual([[a, "undefined"], [b, "string"]]);
+    expect(readFileSync(a, "utf8")).toBe("one\n");
+    expect((await undo(SESSION, res.body.data.undoId)).body.data.stale).toBeUndefined();
+    expect(readFileSync(a, "utf8")).toBe("two\n");
+  });
+
+  it("leaves a file written while the others are being reverted, and answers it stale", async () => {
+    // Two names for one file: reverting a.ts writes b.ts after b.ts was worked out, as an agent
+    // still running would.
+    const a = join(project, "a.ts");
+    const b = join(project, "b.ts");
+    writeFileSync(a, "two\n");
+    linkSync(a, b);
+    recordBaseline(SESSION, a, "one\n");
+    recordBaseline(SESSION, b, "uno\n");
+    const files = (await changes(SESSION)).body.data.files.map((f: any) => ({ path: f.path, version: f.version }));
+    expect(files.map((f: any) => f.path)).toEqual([a, b]);
+
+    const res = await answer(SESSION, "revert", files);
+    expect(res.body.data.files.map((f: any) => [f.path, f.stale === true])).toEqual([[a, false], [b, true]]);
+    expect(readFileSync(a, "utf8")).toBe("one\n");
+    expect((await undo(SESSION, res.body.data.undoId)).body.data.stale).toBeUndefined();
+    expect(readFileSync(b, "utf8")).toBe("two\n");
+  });
+
+  it("writes nothing when what Undo needs cannot be saved first", async () => {
+    const a = join(project, "a.ts");
+    recordBaseline(SESSION, a, "one\n");
+    writeFileSync(a, "two\n");
+    // A file where the undo folder goes: no journal can be written there.
+    writeFileSync(join(home, "session-baselines", SESSION, "undo"), "");
+    const res = await answer(SESSION, "revert", [{ path: a, version: (await listed(SESSION, a)).version }]);
+    expect(res.body.data.undoId).toBeUndefined();
+    expect(res.body.data.files).toEqual([{ path: a, error: expect.stringContaining("Undo"), file: expect.objectContaining({ path: a }) }]);
+    expect(readFileSync(a, "utf8")).toBe("two\n");
+  });
+
   it("deletes a file the session created once its last block is reverted", async () => {
     const a = join(project, "created.ts");
     recordBaseline(SESSION, a, null);
@@ -684,6 +734,36 @@ describe("POST /chat/sessions/:id/file-changes/undo", () => {
     expect(back.body.data.stale).toBe(true);
     expect(readFileSync(a, "utf8")).toBe(replaceLine(numbered(10), 6, "someone else"));
     expect(readFileSync(b, "utf8")).toBe(numbered(10));
+  });
+
+  it("puts back every file or none: one it cannot write takes back the ones written before it", async () => {
+    const a = join(project, "a.ts");
+    const made = join(project, "dir", "made.ts");
+    recordBaseline(SESSION, a, "one\n");
+    writeFileSync(a, "two\n");
+    recordBaseline(SESSION, made, null);
+    mkdirSync(join(project, "dir"));
+    writeFileSync(made, "made\n");
+    const files = (await changes(SESSION)).body.data.files.map((f: any) => ({ path: f.path, version: f.version }));
+    expect(files.map((f: any) => f.path)).toEqual([a, made]);
+    const res = await answer(SESSION, "revert", files);
+    expect(readFileSync(a, "utf8")).toBe("one\n");
+    expect(existsSync(made)).toBe(false);
+    // A file named dir now stands where the folder was, so made.ts cannot be written back.
+    rmSync(join(project, "dir"), { recursive: true });
+    writeFileSync(join(project, "dir"), "not a folder\n");
+
+    const failed = await undo(SESSION, res.body.data.undoId);
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).toContain("Nothing was undone");
+    expect(readFileSync(a, "utf8")).toBe("one\n");
+
+    // Once it can be written, the same Undo puts both back.
+    rmSync(join(project, "dir"));
+    const back = await undo(SESSION, res.body.data.undoId);
+    expect(back.body.data.stale).toBeUndefined();
+    expect(readFileSync(a, "utf8")).toBe("two\n");
+    expect(readFileSync(made, "utf8")).toBe("made\n");
   });
 
   it("undoes a keep while nothing has answered the file since", async () => {

@@ -13,7 +13,8 @@
  *
  * A preview writes nothing. Applying works everything out again and refuses outright when a
  * file is no longer at the version the preview was shown at. A revert is journalled like a
- * revert answer, so the same Undo puts it back.
+ * revert answer, before any file is written, so the same Undo puts it back. A file that cannot
+ * be written is answered with why, and the others still go.
  */
 import { readFile, stat } from "node:fs/promises";
 import { diffLines } from "diff";
@@ -25,7 +26,7 @@ import type { TurnRevertFile, TurnRevertResult } from "../../shared/session-file
 import { createLogger } from "../logger.ts";
 import { BASELINE_MAX_BYTES } from "./session-file-baselines.service.ts";
 import { historyPaths, readHistory, type HistoryEntry } from "./session-file-history.ts";
-import { journalWrites, versionOf, writeTarget, type Target } from "./session-review-actions.ts";
+import { journalAhead, readState, sameState, settleJournal, versionOf, writeTarget, type State, type Target } from "./session-review-actions.ts";
 
 const log = createLogger("session-review");
 
@@ -181,16 +182,17 @@ function isBack(was: Int32Array, h: Hunk, lines: number): boolean {
 
 interface Plan {
   file: TurnRevertFile;
-  /** What to write, when anything. */
+  /** What to write, when anything, over `bytes`: the file as it was worked out from. */
   target?: Target;
+  bytes?: State;
 }
 
 function emptyFile(path: string, version: string, error?: string): TurnRevertFile {
   return { path, version, action: "none", changes: 0, added: 0, removed: 0, skipped: [], ...(error ? { error } : {}) };
 }
 
-/** The file now: its text ("" when it does not exist), or why it cannot be reverted by lines. */
-async function readNow(path: string): Promise<{ exists: boolean; text: string } | string> {
+/** The file now: its bytes and text ("" when it does not exist), or why it cannot be reverted by lines. */
+async function readNow(path: string): Promise<{ exists: boolean; text: string; bytes: State } | string> {
   try {
     assertReadPermitted(path, await realPathOrSelf(path));
   } catch (e) {
@@ -203,10 +205,10 @@ async function readNow(path: string): Promise<{ exists: boolean; text: string } 
     const bytes = new Uint8Array(await readFile(path));
     if (isBinaryContent(bytes)) return "A binary file cannot be reverted by lines.";
     const text = decodeText(bytes);
-    return text.includes("\uFFFD") ? "This file is not plain UTF-8 text, so it can only be reverted by hand." : { exists: true, text };
+    return text.includes("\uFFFD") ? "This file is not plain UTF-8 text, so it can only be reverted by hand." : { exists: true, text, bytes };
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    return code === "ENOENT" || code === "ENOTDIR" ? { exists: false, text: "" } : (e as Error).message;
+    return code === "ENOENT" || code === "ENOTDIR" ? { exists: false, text: "", bytes: null } : (e as Error).message;
   }
 }
 
@@ -295,7 +297,7 @@ async function planFile(sessionId: string, path: string, calls: Set<string>): Pr
   const target: Target | undefined = action === "none" ? undefined : exists ? { exists: true, bytes: working } : { exists: false };
   return {
     file: { path, version, action, changes, added, removed, skipped: skipped.sort((a, b) => a.line - b.line) },
-    ...(target ? { target } : {}),
+    ...(target ? { target, bytes: now.bytes } : {}),
   };
 }
 
@@ -329,27 +331,38 @@ export async function revertTurn(p: {
     return { files, stale: true };
   }
 
-  const writes: Parameters<typeof journalWrites>[1] = [];
+  const writes = plans.filter((plan): plan is Plan & { target: Target; bytes: State } => !!plan.target);
+  const journal = journalAhead(p.sessionId, writes.map((plan) => ({
+    path: plan.file.path,
+    before: plan.bytes,
+    after: plan.target.exists ? plan.target.bytes : null,
+  })));
+  const written: number[] = [];
   let failed = 0;
-  for (const plan of plans) {
-    const target = plan.target;
-    if (!target) continue;
-    const path = plan.file.path;
-    try {
-      const before = await readFile(path).then((b) => new Uint8Array(b), () => null);
-      const afterVersion = await writeTarget(path, target);
-      writes.push({ path, before, after: target.exists ? (target.bytes as string) : null, afterVersion });
-    } catch (e) {
-      // What was written so far stays written, and journalled, so Undo still covers it.
-      plan.file.error = (e as Error).message;
-      plan.file.action = "none";
-      failed++;
-      // Answered inside a 200, as this file's `error`: the request itself succeeded.
-      log.error(`turn revert in session ${p.sessionId} could not write ${path}:`, e);
+  const leave = (plan: Plan, error: string) => {
+    plan.file.error = error;
+    plan.file.action = "none";
+    failed++;
+  };
+  if (writes.length > 0 && !journal) {
+    for (const plan of writes) leave(plan, "What Undo needs could not be saved, so nothing was written.");
+  } else {
+    for (const [n, plan] of writes.entries()) {
+      const path = plan.file.path;
+      try {
+        await writeTarget(path, plan.target);
+        written.push(n);
+      } catch (e) {
+        leave(plan, (e as Error).message);
+        // A write that failed part way changed the file all the same: Undo keeps its bytes.
+        if (!sameState(await readState(path).catch(() => undefined), plan.bytes)) written.push(n);
+        // Answered inside a 200, as this file's `error`: the request itself succeeded.
+        log.error(`turn revert in session ${p.sessionId} could not write ${path}:`, e);
+      }
     }
   }
-  const undoId = journalWrites(p.sessionId, writes);
+  const undoId = journal ? settleJournal(p.sessionId, journal, written) : null;
   const left = files.reduce((n, f) => n + f.skipped.length, 0);
-  log.info(`session ${p.sessionId} reverted a turn: ${writes.length} file(s) written, ${failed} failed, ${left} change(s) left, undo=${undoId ?? "none"}`);
+  log.info(`session ${p.sessionId} reverted a turn: ${written.length} file(s) written, ${failed} failed, ${left} change(s) left, undo=${undoId ?? "none"}`);
   return { files, ...(undoId ? { undoId } : {}) };
 }
