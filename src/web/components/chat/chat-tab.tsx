@@ -23,6 +23,7 @@ import { RunningAgentsBar } from "./running-agents-bar";
 import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { SessionChangesBar } from "./session-changes-bar";
+import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
 import { SessionChangesContext, type SessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
 import { openSessionReview } from "@/lib/session-file-changes-client";
@@ -447,6 +448,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     compactStatus,
     promptCache,
     mcpNeedsAuth,
+    turnStop,
     statusMessage,
     sessionTitle,
     liveAccount,
@@ -1352,6 +1354,12 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         messages={messages}
         teamName={primaryTeam}
         teamMembers={teamMembers}
+      />
+
+      {/* Why the last turn ended, when an error ended it */}
+      <TurnStopBar
+        stop={phase === "idle" ? turnStop : null}
+        onContinue={() => sendMessage(CONTINUE_AFTER_STOP, { permissionMode })}
       />
 
       {/* MCP servers this session cannot use until someone signs in */}

@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
+import type { TurnStop } from "../../shared/turn-stop";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
@@ -107,6 +108,11 @@ interface UseChatReturn {
   promptCache: PromptCacheState | null;
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   mcpNeedsAuth: string[];
+  /**
+   * The error that ended the last turn, if one did. Kept apart from `messages`: it is not in
+   * the transcript, so every history reload would otherwise wipe it.
+   */
+  turnStop: TurnStop | null;
   statusMessage: string | null;
   sessionTitle: string | null;
   /**
@@ -221,6 +227,7 @@ export function useChat(
   const [promptCache, setPromptCache] = useState<PromptCacheState | null>(null);
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
+  const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -1003,6 +1010,11 @@ export function useChat(
       return;
     }
 
+    if ((data as any).type === "turn_stop") {
+      setTurnStop((data as any).stop ?? null);
+      return;
+    }
+
     // Handle compact status events
     if ((data as any).type === "compact_status") {
       const status = (data as any).status;
@@ -1028,6 +1040,8 @@ export function useChat(
       const wasActive = phaseRef.current !== "idle";
       if (!wasActive && p !== "idle") turnFinalizedRef.current = false;
       if (p !== "idle") historyActivityRef.current++;
+      // A new turn is running, so the last one's stop no longer describes the session.
+      if (p !== "idle") setTurnStop(null);
       setPhase(p);
       phaseRef.current = p;
       setConnectingElapsed(p === "connecting" ? ((data as any).elapsed ?? 0) : 0);
@@ -1092,6 +1106,10 @@ export function useChat(
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
+      // The server reads it from the trace on every connect, so a reload or a reconnect still
+      // says how the last turn ended. A greeting without the field (a model switch) keeps it.
+      if (p !== "idle") setTurnStop(null);
+      else if ("turnStop" in state) setTurnStop((state.turnStop as TurnStop | null) ?? null);
       // The server is the only holder of when the cache was last written and how big the
       // replayed prefix was — neither is in the transcript, so a reload has to be told.
       setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
@@ -1264,6 +1282,7 @@ export function useChat(
     setCompactStatus(null);
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
+    setTurnStop(null);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
     // Drop the previous session's version groups. Keeping them would let the
@@ -1408,6 +1427,8 @@ export function useChat(
       if (!content.trim() && !opts?.images?.length) return;
       const encodedContent = encodeReply(content, opts?.replyTo);
       historyActivityRef.current++;
+      // Whatever ended the last turn, this message moves the session past it.
+      setTurnStop(null);
 
       const isFollowUp = phaseRef.current !== "idle";
       if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
@@ -1762,6 +1783,7 @@ export function useChat(
     compactStatus,
     promptCache,
     mcpNeedsAuth,
+    turnStop,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

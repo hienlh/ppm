@@ -28,10 +28,26 @@ import { claudeTranscriptExists } from "../../services/claude-transcript-exists.
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
 import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
+import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
+import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
+
+/**
+ * How the session's last turn ended, when an error ended it. Told on every connect because
+ * nothing in the transcript says so, and a reload otherwise shows a turn that just stops.
+ * Never throws into the socket: without the trace the chat simply shows no stop bar.
+ */
+function lastTurnStop(sessionId: string): TurnStop | null {
+  try {
+    return readLastTurnStop(sessionId);
+  } catch (e) {
+    log.warn(`session=${sessionId} could not read how the last turn ended: ${(e as Error).message}`);
+    return null;
+  }
+}
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -1060,19 +1076,25 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         incrementSessionUnread(sessionId, "done", doneSession?.title, entry.projectName || null);
         broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneSession?.title || null });
 
+        // The trace already holds this `done`: ChatService records an event before yielding it.
+        // Sent ahead of the `done` itself, so the bar is there the moment the turn goes idle.
+        const turnStop = lastTurnStop(sessionId);
+        if (turnStop) broadcast(sessionId, { type: "turn_stop", stop: turnStop });
+        const stopped = turnStop ? describeTurnStop(turnStop) : null;
+
         const finalText = entry.finalText;
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
           const sessionTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
           notificationService.broadcast("done", {
-            title: "Chat completed",
+            title: stopped ? "Chat stopped" : "Chat completed",
             body: `${project} — ${sessionTitle}`,
             project: entry.projectName || "",
             sessionId,
             providerId: entry.providerId,
             sessionTitle,
-            detail: finalText,
+            detail: stopped ? [stopped.title, stopped.detail].filter(Boolean).join("\n") : finalText,
             detailStyle: "quote",
           }, {
             // Any browser showing the session clears its unread mark at once.
@@ -1179,6 +1201,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     log.error(`session=${sessionId} provider=${providerId} consumer failed:`, e);
     logSessionEvent(sessionId, "ERROR", `Exception: ${errMsg}`);
     bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
+    // ChatService wrote `run_failed` and flushed the trace before the throw reached here.
+    const turnStop = lastTurnStop(sessionId);
+    if (turnStop) broadcast(sessionId, { type: "turn_stop", stop: turnStop });
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     // Drain nested-agent tails while their turn buffer still exists, so the last
@@ -1269,6 +1294,7 @@ export const chatWebSocket = {
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, existing),
+        turnStop: existing.phase === "idle" ? lastTurnStop(sessionId) : null,
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -1331,6 +1357,7 @@ export const chatWebSocket = {
       sessionTitle: session?.title || null,
       compactStatus: null,
       model: resolveSessionModel(sessionId),
+      turnStop: lastTurnStop(sessionId),
     }));
 
     // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
@@ -1436,6 +1463,7 @@ export const chatWebSocket = {
         effort: resolveSessionEffort(sessionId),
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, entry),
+        turnStop: entry.phase === "idle" ? lastTurnStop(sessionId) : null,
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
