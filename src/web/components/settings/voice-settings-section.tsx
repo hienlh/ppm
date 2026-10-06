@@ -15,6 +15,7 @@ import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useSettingsStore, type VoiceEngine } from "@/stores/settings-store";
+import { RunInTerminalButton } from "./run-in-terminal-button";
 
 interface StatusModel {
   id: string;
@@ -86,6 +87,17 @@ export function VoiceSettingsSection() {
       if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, [installing, status, load]);
+
+  // Homebrew runs in a terminal the pane cannot watch, so once its command has been handed over
+  // the status is re-read until whisper-cli turns up — for ten minutes at most.
+  const [awaitingTool, setAwaitingTool] = useState(false);
+  const toolArrived = !!status?.installable;
+  useEffect(() => {
+    if (!awaitingTool || toolArrived) return;
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 4000);
+    const stop = setTimeout(() => setAwaitingTool(false), 10 * 60_000);
+    return () => { clearInterval(timer); clearTimeout(stop); };
+  }, [awaitingTool, toolArrived, load]);
 
   // An engine that was removed must not stay selected.
   useEffect(() => {
@@ -169,12 +181,25 @@ export function VoiceSettingsSection() {
           </p>
         </div>
 
-        {status && !status.installable && (
+        {status && !status.installable && (status.installHint ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              There is no prebuilt whisper.cpp for this platform, so it comes from Homebrew:{" "}
+              <code className="rounded bg-muted px-1 py-0.5">{status.installHint}</code>. PPM types it into a
+              terminal; press Enter there, and the models appear here once it is installed.
+            </p>
+            <RunInTerminalButton
+              command={status.installHint}
+              label="Install with Homebrew"
+              onRun={() => setAwaitingTool(true)}
+            />
+          </div>
+        ) : (
           <p className="text-xs text-muted-foreground">
             There is no prebuilt whisper.cpp for this platform. Install it yourself and PPM will find it:{" "}
-            <code className="rounded bg-muted px-1 py-0.5">{status.installHint ?? "whisper-cli on PATH"}</code>
+            <code className="rounded bg-muted px-1 py-0.5">whisper-cli on PATH</code>
           </p>
-        )}
+        ))}
 
         {job && !job.done && (
           <div className="space-y-2">

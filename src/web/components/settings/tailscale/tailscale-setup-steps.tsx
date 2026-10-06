@@ -7,6 +7,7 @@ import { CheckCircle, Loader2, LogIn, RefreshCw } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CopyableCode, ExternalButton } from "./tailscale-ui";
+import { RunInTerminalButton } from "../run-in-terminal-button";
 import {
   currentSetupStep,
   TAILSCALE_ADMIN,
@@ -30,7 +31,15 @@ const DOWNLOAD: Record<string, string> = {
   darwin: "https://tailscale.com/download/mac",
   win32: "https://tailscale.com/download/windows",
 };
+/** Tailscale's own script, which also enables and starts tailscaled on every distro it knows. */
 const LINUX_INSTALL = "curl -fsSL https://tailscale.com/install.sh | sh";
+const LINUX_START = "sudo systemctl enable --now tailscaled";
+/**
+ * The operator line as a shell will read it. A directory user can be `CORP\alice` or hold a space,
+ * which the shell would rewrite or split, so any name but a plain one is single-quoted.
+ */
+export const operatorCommand = (user: string) =>
+  `sudo tailscale set --operator=${/^[\w.@-]+$/.test(user) ? user : `'${user.replace(/'/g, "'\\''")}'`}`;
 /** Suggested for a machine with no tag yet; an existing tag is used where one is needed. */
 const SUGGESTED_TAG = "tag:ppm";
 
@@ -60,13 +69,21 @@ export function TailscaleSetupSteps({ state, onRefresh, onSignIn, onShowSignIn }
   );
   const device = state.device?.name || "this machine";
   const name = state.service.name;
+  // The operator step rides along with installing or starting, so one password covers all of
+  // it (sudo remembers it for the terminal). Root needs no operator, and may have no sudo.
+  const grantOperator = state.osUser && state.osUser !== "root" ? ` && ${operatorCommand(state.osUser)}` : "";
+  const installCommand = `${LINUX_INSTALL}${grantOperator}`;
+  const startCommand = `${LINUX_START}${grantOperator}`;
+  const typesIt = "PPM types it into a terminal on this machine; press Enter there and give your password once.";
 
   const content: Record<TailscaleStepId, () => ReactNode> = {
     install: () => state.platform === "linux" ? (
       <>
-        <Text>Run this on the machine PPM runs on (a PPM terminal works):</Text>
-        <CopyableCode code={LINUX_INSTALL} />
-        <Actions>{checkAgain}</Actions>
+        <Text>
+          This installs Tailscale, starts it{grantOperator ? " and lets PPM manage it" : ""}. {typesIt}
+        </Text>
+        <CopyableCode code={installCommand} />
+        <Actions><RunInTerminalButton command={installCommand} label="Install in terminal" />{checkAgain}</Actions>
       </>
     ) : (
       <>
@@ -79,9 +96,9 @@ export function TailscaleSetupSteps({ state, onRefresh, onSignIn, onShowSignIn }
     ),
     start: () => state.platform === "linux" ? (
       <>
-        <Text>Tailscale is installed, but its service is not running. Start it:</Text>
-        <CopyableCode code="sudo systemctl enable --now tailscaled" />
-        <Actions>{checkAgain}</Actions>
+        <Text>Tailscale is installed, but its service is not running. {typesIt}</Text>
+        <CopyableCode code={startCommand} />
+        <Actions><RunInTerminalButton command={startCommand} label="Start in terminal" />{checkAgain}</Actions>
       </>
     ) : (
       <>
@@ -93,10 +110,10 @@ export function TailscaleSetupSteps({ state, onRefresh, onSignIn, onShowSignIn }
       <>
         <Text>
           On Linux, Tailscale only takes changes from root and from one user it trusts. PPM runs
-          as <Code>{state.osUser}</Code>; run this once:
+          as <Code>{state.osUser}</Code>, which has to be named once. {typesIt}
         </Text>
-        <CopyableCode code={`sudo tailscale set --operator=${state.osUser}`} />
-        <Actions>{checkAgain}</Actions>
+        <CopyableCode code={operatorCommand(state.osUser)} />
+        <Actions><RunInTerminalButton command={operatorCommand(state.osUser)} label="Run in terminal" />{checkAgain}</Actions>
       </>
     ),
     "sign-in": () => {

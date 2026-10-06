@@ -7,7 +7,7 @@
  * and fatal on a real machine.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { LspManager, isUnavailable, type LspHandle } from "../../../../src/services/lsp/lsp-manager.ts";
@@ -187,6 +187,36 @@ describe("LspManager.acquire", () => {
     const result = await manager.acquire(project, "a.lua", "s1");
 
     expect(isUnavailable(result)).toBe(false);
+    expect((result as LspHandle).session.state).toBe("ready");
+  });
+
+  it.skipIf(process.platform === "win32")("starts PPM's own gem server with GEM_PATH pointing at its gems", async () => {
+    // A gem binstub asks RubyGems for its gem, and PPM's gem folder is on no gem path: started
+    // with PPM's own environment it exits with Gem::GemNotFoundException. The stand-in binstub
+    // refuses to start unless GEM_PATH leads with that folder.
+    const installDir = mkdtempSync(join(tmpdir(), "ppm-lsp-gem-"));
+    extraProjects.push(installDir);
+    const binDir = join(installDir, "ruby", "bin");
+    mkdirSync(binDir, { recursive: true });
+    const binstub = join(binDir, "fake-gem-server");
+    writeFileSync(
+      binstub,
+      `#!/bin/sh\ncase "$GEM_PATH" in ${JSON.stringify(join(installDir, "ruby"))}*) ;; *) echo "GEM_PATH=$GEM_PATH" >&2; exit 3;; esac\n`
+        + `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FIXTURE)}\n`,
+    );
+    chmodSync(binstub, 0o755);
+    const gemServer: LanguageServerDefinition = {
+      ...FAKE,
+      id: "gem-server",
+      command: "fake-gem-server",
+      args: [],
+      install: { with: "gem", gem: "fake-gem-server" },
+    };
+
+    manager = new LspManager([gemServer], 60_000, 6, () => installDir);
+    const result = await manager.acquire(project, "a.lua", "s1");
+
+    expect(isUnavailable(result) ? result.message : "started").toBe("started");
     expect((result as LspHandle).session.state).toBe("ready");
   });
 

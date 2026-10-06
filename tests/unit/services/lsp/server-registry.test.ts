@@ -9,11 +9,13 @@ import {
   candidateCommandPaths,
   installedBinaryPath,
   installedServerEntry,
+  installedServerEnv,
   lspLanguageForPath,
   packageName,
   serverById,
   serversForLanguage,
   serversSharingInstall,
+  releaseAssetFor,
 } from "../../../../src/services/lsp/server-registry.ts";
 
 describe("lspLanguageForPath", () => {
@@ -338,16 +340,14 @@ describe("installedServerEntry", () => {
 describe("what the Install button will run", () => {
   const installable = LANGUAGE_SERVERS.filter((s) => s.install);
 
-  it("offers every server PPM can install without a system package manager", () => {
-    expect(installable.map((s) => s.id).sort()).toEqual([
-      "bash", "css", "gopls", "html", "intelephense", "json",
-      "pyright", "rust-analyzer", "svelte", "typescript", "vue", "yaml",
-    ]);
-    // Left out on purpose: clangd, lua-language-server and solargraph mean pacman, apt, brew
-    // or a gem — a password, and a choice about the machine PPM has no business making.
-    for (const id of ["clangd", "solargraph", "lua"]) {
-      expect(serverById(id)!.install).toBeUndefined();
-    }
+  it("offers every server without a system package manager", () => {
+    // clangd, lua-language-server and solargraph once meant pacman, apt or brew — a password,
+    // and a choice about the machine PPM has no business making. A pinned release build, or a
+    // gem installed into PPM's own folder, needs neither, so every server has a button now.
+    expect(installable.map((s) => s.id).sort()).toEqual(LANGUAGE_SERVERS.map((s) => s.id).sort());
+    expect(serverById("clangd")!.install?.with).toBe("download");
+    expect(serverById("lua")!.install?.with).toBe("download");
+    expect(serverById("solargraph")!.install?.with).toBe("gem");
   });
 
   it("runs exactly what the hint tells the user to run", () => {
@@ -355,9 +355,13 @@ describe("what the Install button will run", () => {
     // that can drift are two different installs, and only one of them is ever tested.
     for (const server of installable) {
       const plan = server.install!;
+      // A download has no command to show: the hint keeps the package-manager route for
+      // anyone who would rather take that one, and the build itself is pinned by checksum.
+      if (plan.with === "download") continue;
       const expected =
         plan.with === "bun" ? `bun add -g ${plan.packages.join(" ")}`
         : plan.with === "go" ? `go install ${plan.module}`
+        : plan.with === "gem" ? `gem install ${plan.gem}`
         : `rustup component add ${plan.component}`;
       expect(server.installHint).toBe(expected);
     }
@@ -368,7 +372,11 @@ describe("what the Install button will run", () => {
     // different command than the one the table claims to describe.
     for (const server of installable) {
       const plan = server.install!;
-      const specs = plan.with === "bun" ? plan.packages : [plan.with === "go" ? plan.module : plan.component];
+      const specs = plan.with === "bun" ? plan.packages
+        : plan.with === "go" ? [plan.module]
+        : plan.with === "gem" ? [plan.gem]
+        : plan.with === "rustup" ? [plan.component]
+        : []; // a download is no argv: its URL and checksum are pinned in lsp-release-catalog.ts
       for (const spec of specs) {
         expect(spec.startsWith("-")).toBe(false);
         expect(spec).not.toContain(" ");
@@ -395,6 +403,57 @@ describe("what the Install button will run", () => {
     // rust-analyzer belongs to a rustup toolchain; PPM keeps no copy to find.
     expect(installedBinaryPath(serverById("rust-analyzer")!, "/ppm")).toBeNull();
     expect(installedServerEntry(serverById("rust-analyzer")!, "/ppm")).toBeNull();
+  });
+
+  it("finds a downloaded server inside its own unpacked release", () => {
+    // clangd keeps its compiler headers beside `bin/`, so the whole release folder is the install.
+    const clangd = serverById("clangd")!;
+    expect(installedBinaryPath(clangd, "/ppm", "linux", "x64"))
+      .toBe(join("/ppm", "clangd", "clangd_23.1.0", "bin", "clangd"));
+    expect(installedBinaryPath(clangd, "/ppm", "win32", "x64"))
+      .toBe(join("/ppm", "clangd", "clangd_23.1.0", "bin", "clangd.exe"));
+    expect(installedBinaryPath(serverById("lua")!, "/ppm", "darwin", "arm64"))
+      .toBe(join("/ppm", "lua", "bin", "lua-language-server"));
+    // No build for this machine: nothing PPM could have put there.
+    expect(installedBinaryPath(clangd, "/ppm", "linux", "arm64")).toBeNull();
+  });
+
+  it("finds a gem server by the binstub in PPM's own gem folder", () => {
+    const solargraph = serverById("solargraph")!;
+    expect(installedBinaryPath(solargraph, "/ppm", "linux")).toBe(join("/ppm", "ruby", "bin", "solargraph"));
+    expect(installedBinaryPath(solargraph, "/ppm", "win32")).toBe(join("/ppm", "ruby", "bin", "solargraph.bat"));
+  });
+});
+
+describe("releaseAssetFor", () => {
+  it("picks the build for the platform and architecture asked about", () => {
+    const plan = serverById("lua")!.install!;
+    expect(releaseAssetFor(plan, "linux", "arm64")?.url).toEndWith("-linux-arm64.tar.gz");
+    expect(releaseAssetFor(plan, "win32", "x64")?.archive).toBe("zip");
+    // The Mac clangd is one universal file, so both architectures get it.
+    const clangd = serverById("clangd")!.install!;
+    expect(releaseAssetFor(clangd, "darwin", "arm64")).toEqual(releaseAssetFor(clangd, "darwin", "x64"));
+  });
+
+  it("answers null for a machine with no build, and for a plan that downloads nothing", () => {
+    expect(releaseAssetFor(serverById("clangd")!.install!, "linux", "arm64")).toBeNull();
+    expect(releaseAssetFor(serverById("gopls")!.install!, "linux", "x64")).toBeNull();
+  });
+});
+
+describe("installedServerEnv", () => {
+  it("points a gem server's GEM_PATH at PPM's gem folder, ahead of the user's own", () => {
+    // Without it the binstub cannot find its own gems and exits with Gem::GemNotFoundException.
+    const solargraph = serverById("solargraph")!;
+    expect(installedServerEnv(solargraph, "/ppm", {})).toEqual({ GEM_PATH: join("/ppm", "ruby") });
+    expect(installedServerEnv(solargraph, "/ppm", { GEM_PATH: "/mine" }))
+      .toEqual({ GEM_PATH: [join("/ppm", "ruby"), "/mine"].join(process.platform === "win32" ? ";" : ":") });
+  });
+
+  it("adds nothing for any other server", () => {
+    for (const id of ["typescript", "gopls", "rust-analyzer", "clangd", "lua"]) {
+      expect(installedServerEnv(serverById(id)!, "/ppm", { GEM_PATH: "/mine" })).toBeUndefined();
+    }
   });
 });
 

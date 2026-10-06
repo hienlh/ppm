@@ -15,24 +15,30 @@
  *   `rustup` is the one exception, below.
  * - **The packages come from the registry, by server id.** Nothing the browser sends is ever
  *   part of a command, so the route cannot be talked into installing something else.
- * - **PPM installs servers, never toolchains.** `go install` needs a Go and
- *   `rustup component add` needs a rustup; where the host has neither, there is no button at
- *   all rather than one that fails when pressed.
+ * - **PPM installs servers, never toolchains.** `go install` needs a Go, `gem install` a Ruby
+ *   and `rustup component add` a rustup; where the host has none, there is no button at all
+ *   rather than one that fails when pressed. A server whose project publishes a build (clangd,
+ *   lua-language-server) needs no toolchain: the pinned release is downloaded, checked against
+ *   its SHA-256 and unpacked — and proven to start with `--version` before it counts.
  * - **The directory gets a `package.json` before `bun add` runs.** Measured: `bun add` in a
  *   directory with no manifest does not create one there — it walks *up* to the nearest parent
  *   that has one and installs into that, leaving the directory it was asked about empty.
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { resolveBunPath } from "../autostart-generator.ts";
 import { createLogger } from "../logger.ts";
 import { getPpmDir } from "../ppm-dir.ts";
+import { downloadVerified, type FetchFn } from "../speech-to-text/whisper-download.ts";
 import {
+  gemInstallDir,
   installedBinaryPath,
   installedServerEntry,
   packageName,
+  releaseAssetFor,
   type LanguageServerDefinition,
   type LanguageServerInstall,
+  type ReleaseAsset,
 } from "./server-registry.ts";
 
 const log = createLogger("lsp");
@@ -101,7 +107,33 @@ export function installToolPath(plan: LanguageServerInstall): string | null {
   // started with* and never looks at `process.env.PATH` again — measured: adding a directory to
   // it changes nothing, and neither does emptying it. The tool is then spawned by the absolute
   // path this returns, so the lookup and the run can never disagree.
-  return Bun.which(plan.with === "go" ? "go" : "rustup", { PATH: process.env.PATH ?? "" });
+  const which = (tool: string) => Bun.which(tool, { PATH: process.env.PATH ?? "" });
+  if (plan.with === "download") {
+    // No build for this host means no button, whatever is on PATH.
+    const asset = releaseAssetFor(plan);
+    return asset ? unpackToolPath(asset, which) : null;
+  }
+  // RubyGems writes a `.bat` binstub on Windows, which nothing here has been seen to spawn, so
+  // Windows keeps the copyable command instead of a button that might install a dead server.
+  if (plan.with === "gem") return process.platform === "win32" ? null : which("gem");
+  return which(plan.with === "go" ? "go" : "rustup");
+}
+
+/**
+ * What unpacks a release. `tar` reads a tarball everywhere, and a zip on Windows, whose
+ * `tar.exe` is bsdtar (shipped since Windows 10). Elsewhere a zip needs `unzip` or libarchive's
+ * `bsdtar`: GNU tar cannot read one, and neither can `Bun.Archive` ("Unrecognized archive format").
+ */
+function unpackToolPath(asset: ReleaseAsset, which: (tool: string) => string | null): string | null {
+  if (asset.archive === "tar.gz" || process.platform === "win32") return which("tar");
+  return which("unzip") ?? which("bsdtar");
+}
+
+function unpackCommand(tool: string, asset: ReleaseAsset, archive: string, dest: string): string[] {
+  if (asset.archive === "tar.gz") return [tool, "-xzf", archive, "-C", dest];
+  return /^unzip(\.exe)?$/i.test(path.basename(tool))
+    ? [tool, "-q", archive, "-d", dest]
+    : [tool, "-xf", archive, "-C", dest];
 }
 
 /** Whether the Install button can work here. The editor draws the button from this. */
@@ -148,13 +180,13 @@ const inFlight = new Map<string, Promise<void>>();
  */
 export function installLanguageServer(
   definition: LanguageServerDefinition,
-  options: { projectPath?: string; run?: Runner } = {},
+  options: { projectPath?: string; run?: Runner; fetchFn?: FetchFn } = {},
 ): Promise<void> {
   return enqueue(`install:${definition.id}`, async () => {
     // A failure needs no line here: the route answers it with a 500, which the access log records.
     const startedAt = performance.now();
     log.info(`installing ${describeInstall(definition)} scope=${options.projectPath ? "project" : "global"}`);
-    await install(definition, options.projectPath, options.run ?? runCommand);
+    await install(definition, options.projectPath, options.run ?? runCommand, options.fetchFn);
     log.info(`installed ${describeInstall(definition)} in ${Math.round(performance.now() - startedAt)}ms`);
   });
 }
@@ -186,7 +218,11 @@ export function uninstallLanguageServer(
 function describeInstall(definition: LanguageServerDefinition): string {
   const plan = definition.install;
   if (!plan) return definition.id;
-  const target = plan.with === "bun" ? plan.packages.join(" ") : plan.with === "go" ? plan.module : plan.component;
+  const target = plan.with === "bun" ? plan.packages.join(" ")
+    : plan.with === "go" ? plan.module
+    : plan.with === "gem" ? plan.gem
+    : plan.with === "download" ? plan.version
+    : plan.component;
   return `${definition.id} via ${plan.with} (${target})`;
 }
 
@@ -201,12 +237,23 @@ function enqueue(key: string, work: () => Promise<void>): Promise<void> {
   return tracked;
 }
 
-async function install(definition: LanguageServerDefinition, projectPath: string | undefined, run: Runner): Promise<void> {
+async function install(
+  definition: LanguageServerDefinition,
+  projectPath: string | undefined,
+  run: Runner,
+  fetchFn?: FetchFn,
+): Promise<void> {
   const plan = definition.install;
   if (!plan) throw new Error(`PPM cannot install ${definition.displayName}`);
   const tool = installToolPath(plan);
   if (!tool) {
-    throw new Error(`${plan.with} is not installed on this host, so PPM cannot install ${definition.displayName}.`);
+    throw new Error(
+      plan.with === "download"
+        ? `There is no build of ${definition.displayName} for this machine, or nothing here to unpack one.`
+        : plan.with === "gem" && process.platform === "win32"
+          ? `PPM does not install gems on Windows. Run: ${definition.installHint}`
+          : `${plan.with} is not installed on this host, so PPM cannot install ${definition.displayName}.`,
+    );
   }
 
   const dir = lspInstallDir();
@@ -220,6 +267,46 @@ async function install(definition: LanguageServerDefinition, projectPath: string
     // name that now points somewhere else. Saying so beats a second "not installed".
     if (!installedServerEntry(definition, dir)) {
       throw new Error(`Installed ${plan.packages.join(" ")}, but it provides no ${definition.command}`);
+    }
+    return;
+  }
+
+  if (plan.with === "download") {
+    mkdirSync(dir, { recursive: true });
+    await installRelease(definition, plan, tool, dir, run, fetchFn);
+    return;
+  }
+
+  if (plan.with === "gem") {
+    const gemDir = gemInstallDir(dir);
+    // `--install-dir` keeps the gems out of the user's own gem home and `--bindir` puts the
+    // binstub beside them rather than in a system bin directory. A GEM_HOME or GEM_PATH from
+    // the user's environment is left out, so the install does not count gems elsewhere as
+    // present and skip them — the server would then depend on folders PPM does not own.
+    const { GEM_HOME: _home, GEM_PATH: _path, ...env } = process.env;
+    mkdirSync(dir, { recursive: true });
+    const fresh = !existsSync(gemDir);
+    const result = await run(
+      [tool, "install", "--no-document", "--install-dir", gemDir, "--bindir", path.join(gemDir, "bin"), plan.gem],
+      { cwd: dir, env, timeoutMs: INSTALL_TIMEOUT_MS },
+    );
+    if (result.code !== 0) {
+      // gem leaves what it managed "for inspection"; a first install that failed has nothing
+      // worth keeping, while a working one being updated must survive its update failing.
+      if (fresh) rmSync(gemDir, { recursive: true, force: true });
+      // Its own message ends on a log path; the cause is that some dependency (prism, rbs,
+      // jaro_winkler) compiles C, and the host has no compiler — measured with one off PATH.
+      if (/Failed to build gem native extension/.test(`${result.stderr}\n${result.stdout}`)) {
+        throw new Error(
+          `${plan.gem} needs a C compiler to build one of its gems, and this host has none on PATH`
+          + ` (Linux: gcc and make; macOS: xcode-select --install). ${output(result)}`,
+        );
+      }
+      throw failed(result, plan.gem);
+    }
+    const binstub = installedBinaryPath(definition, dir);
+    if (!binstub || !existsSync(binstub)) {
+      throw new Error(`Installed ${plan.gem}, but no ${definition.command} appeared in ${path.dirname(binstub ?? gemDir)}`);
     }
     return;
   }
@@ -253,6 +340,68 @@ async function install(definition: LanguageServerDefinition, projectPath: string
   }
 }
 
+/** How long `--version` may take to prove an unpacked server starts on this host. */
+const PROBE_TIMEOUT_MS = 30_000;
+
+/**
+ * Download, verify, unpack and prove one release build, then swap it in whole.
+ *
+ * Everything happens in a staging folder beside the target, so the server folder only ever holds
+ * a complete build that has started once: a failed download, a corrupt archive or a binary that
+ * cannot run on this host (a glibc too old, the wrong architecture) leaves the previous install —
+ * or nothing — exactly as it was.
+ */
+async function installRelease(
+  definition: LanguageServerDefinition,
+  plan: Extract<LanguageServerInstall, { with: "download" }>,
+  tool: string,
+  dir: string,
+  run: Runner,
+  fetchFn?: FetchFn,
+): Promise<void> {
+  const asset = releaseAssetFor(plan);
+  if (!asset) throw new Error(`${definition.displayName} publishes no build for ${process.platform}-${process.arch}.`);
+  const name = path.posix.basename(new URL(asset.url).pathname);
+  const stage = mkdtempSync(path.join(dir, `.${definition.id}-`));
+  try {
+    const archive = path.join(stage, name);
+    await downloadVerified({ url: asset.url, dest: archive, sha256: asset.sha256, fetchFn });
+    const unpacked = path.join(stage, "release");
+    mkdirSync(unpacked);
+    const result = await run(unpackCommand(tool, asset, archive, unpacked), { cwd: stage, timeoutMs: INSTALL_TIMEOUT_MS });
+    if (result.code !== 0) throw new Error(`Could not unpack ${name}: ${output(result)}`);
+
+    const binary = path.join(unpacked, ...asset.binary.split("/"));
+    if (!existsSync(binary)) throw new Error(`${name} has no ${asset.binary}`);
+    if (process.platform !== "win32") chmodSync(binary, 0o755);
+    const probe = await run([binary, "--version"], { cwd: stage, timeoutMs: PROBE_TIMEOUT_MS });
+    if (probe.code !== 0) {
+      throw new Error(`${definition.displayName} ${plan.version} does not start on this host: ${output(probe)}`);
+    }
+
+    // Swapped by renames, never by deleting first: the working install waits in the stage until
+    // the new one is in place and goes back if it cannot be, so a rename Windows refuses (an
+    // antivirus scanning the new exe, a server still running from the old folder) costs nothing.
+    const target = path.join(dir, definition.id);
+    const previous = path.join(stage, "previous");
+    let movedAside = false;
+    try {
+      renameSync(target, previous);
+      movedAside = true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    try {
+      renameSync(unpacked, target);
+    } catch (e) {
+      if (movedAside) renameSync(previous, target);
+      throw e;
+    }
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
+
 async function uninstall(definition: LanguageServerDefinition, projectPath: string | undefined, run: Runner): Promise<void> {
   const plan = definition.install;
   // Both of these are the route's job to prevent; they are here because this function deletes
@@ -271,6 +420,22 @@ async function uninstall(definition: LanguageServerDefinition, projectPath: stri
     const names = plan.packages.map(packageName);
     const result = await run([tool, "remove", ...names], { cwd: dir, timeoutMs: INSTALL_TIMEOUT_MS });
     if (result.code !== 0) throw new Error(`Could not remove ${names.join(" ")}: ${output(result)}`);
+    return;
+  }
+
+  if (plan.with === "download" || plan.with === "gem") {
+    const binary = installedBinaryPath(definition, dir);
+    if (!binary || !existsSync(binary)) {
+      throw new Error(`${definition.displayName} is not in PPM's own folder, so there is nothing for PPM to remove.`);
+    }
+    // The whole release folder for a download. For a gem, the whole gem folder: it holds the
+    // server's dependencies too, and solargraph is the only gem plan (a test keeps it so).
+    const folder = plan.with === "download" ? path.join(dir, definition.id) : gemInstallDir(dir);
+    try {
+      rmSync(folder, { recursive: true, force: true });
+    } catch (e) {
+      throw new Error(`Could not delete ${folder}: ${(e as Error).message}`);
+    }
     return;
   }
 

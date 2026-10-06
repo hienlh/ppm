@@ -1,14 +1,16 @@
 import {
-  extractSkillMentions, resolveSkillMentions, type SkillCandidate,
+  DESIGN_INSTRUCTIONS_MAX_BYTES, extractSkillMentions, resolveSkillMentions, utf8ByteLength, type SkillCandidate,
 } from "./design-skill-mentions";
 
 /**
- * The design skill PPM points to when a machine has none. PPM never installs it: the
- * commands are shown for the user to run, copied from the upstream README
- * (github.com/nextlevelbuilder/ui-ux-pro-max-skill, MIT) rather than invented here.
+ * The design skill PPM points to when a machine has none. The Install button puts this
+ * `version` in place (`design-skill-install.service.ts`); `installs` are the upstream README's
+ * own commands (github.com/nextlevelbuilder/ui-ux-pro-max-skill, MIT), kept for anyone who
+ * would rather run them, copied rather than invented here.
  */
 export const DESIGN_SKILL_SUGGESTION = {
   name: "ui-ux-pro-max",
+  version: "2.15.0",
   repoUrl: "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
   license: "MIT",
   requirement: "Its search scripts need Python 3.",
@@ -47,4 +49,18 @@ export function needsDesignSkillSuggestion(instructions: string, skillLists: Rea
   const mentions = extractSkillMentions(instructions);
   return !skillLists.some((skills) =>
     skills.some(isKnownDesignSkill) || resolveSkillMentions(mentions, skills).resolved.length > 0);
+}
+
+/**
+ * The instructions with the suggested skill named in them. Installing a skill only makes its name
+ * resolvable; design chats are told to use the skills the instructions name, so the Install button
+ * adds the name too. Unchanged when the text already names it under any namespace
+ * (`/ak:ui-ux-pro-max` counts), and null when one more line would pass the size cap.
+ */
+export function withDesignSkillMention(instructions: string): string | null {
+  const name = DESIGN_SKILL_SUGGESTION.name;
+  if (extractSkillMentions(instructions).some((m) => m === name || m.endsWith(`:${name}`))) return instructions;
+  const line = `Use /${name} before designing.`;
+  const next = instructions.trim() ? `${instructions.trimEnd()}\n${line}` : line;
+  return utf8ByteLength(next) <= DESIGN_INSTRUCTIONS_MAX_BYTES ? next : null;
 }

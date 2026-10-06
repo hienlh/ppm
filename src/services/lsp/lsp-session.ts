@@ -59,6 +59,8 @@ export interface LspSessionOptions {
   command: string[];
   /** Directory the server is rooted at; becomes its rootUri. */
   rootPath: string;
+  /** Variables laid over PPM's own environment for this server (a gem copy's `GEM_PATH`). */
+  env?: Record<string, string>;
   /** Server-initiated notifications (diagnostics, progress, logs). */
   onNotification?: (method: string, params: unknown) => void;
   /** Server-initiated requests this session does not answer itself. */
@@ -140,7 +142,7 @@ export class LspSession {
   }
 
   private async spawn(): Promise<void> {
-    const { definition, command, rootPath } = this.options;
+    const { definition, command, rootPath, env } = this.options;
     try {
       this.proc = Bun.spawn([...command, ...definition.args], {
         cwd: rootPath,
@@ -149,7 +151,7 @@ export class LspSession {
         stderr: "pipe",
         // The server inherits the environment so it can find its own toolchain
         // (a Go module cache, a rustup shim, a project-local node).
-        env: process.env,
+        env: env ? { ...process.env, ...env } : process.env,
       });
     } catch (e) {
       throw new Error(

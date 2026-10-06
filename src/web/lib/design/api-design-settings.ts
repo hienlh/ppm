@@ -46,3 +46,14 @@ export async function saveDesignInstructions(instructions: string): Promise<stri
   const data = await api.put<{ instructions: string }>("/api/settings/design", { instructions });
   return data.instructions;
 }
+
+export interface DesignSkillInstallResponse {
+  results: Array<{ runtime: "claude" | "codex"; dir: string; installed: boolean; companions: string[] }>;
+  /** Whether python3 (or python) is on the host's PATH — the skill's scripts need it. */
+  python: boolean;
+}
+
+/** Install the suggested design skill for every design runtime the host has. */
+export async function installDesignSkill(): Promise<DesignSkillInstallResponse> {
+  return api.post<DesignSkillInstallResponse>("/api/settings/design/skill");
+}

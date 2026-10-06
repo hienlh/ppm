@@ -8,6 +8,8 @@ import { QRCodeSVG } from "qrcode.react";
 import { Loader2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { AdaptiveDialog, CopyableCode, ExternalButton } from "./tailscale-ui";
+import { RunInTerminalButton } from "../run-in-terminal-button";
+import { operatorCommand } from "./tailscale-setup-steps";
 import { TAILSCALE_ADMIN, type TailscaleLoginSnapshot } from "../../../../shared/tailscale-setup";
 
 interface Props {
@@ -61,16 +63,25 @@ export function TailscaleSignInDialog({ open, login, osUser, onRetry, onCancel, 
     body = <p className={text}>Signed in. An admin has to approve this machine before it joins the tailnet.</p>;
     actions = <>{close}<ExternalButton href={TAILSCALE_ADMIN.machines} primary>Open machines</ExternalButton></>;
   } else if (login.state === "needs-operator") {
+    const command = operatorCommand(osUser);
     body = (
       <>
         <p className={text}>
-          Tailscale on this machine only takes changes from root and from one user it trusts. Run this
-          once on the machine (a PPM terminal works), then try again:
+          Tailscale on this machine only takes changes from root and from one user it trusts. This has
+          to be run once, with your password. PPM types it into a terminal; press Enter there, then
+          sign in again.
         </p>
-        <CopyableCode code={`sudo tailscale set --operator=${osUser}`} />
+        <CopyableCode code={command} />
       </>
     );
-    actions = <>{close}{retry}</>;
+    // Closes the dialog on the way: the terminal opens in the dock behind it.
+    actions = (
+      <>
+        {close}
+        <Button variant="outline" onClick={onRetry} className="min-h-11 cursor-pointer md:min-h-9">Try again</Button>
+        <RunInTerminalButton command={command} label="Run in terminal" onRun={onClose} />
+      </>
+    );
   } else {
     body = <p className={text}>{login.message ?? "The sign-in was cancelled."}</p>;
     actions = <>{close}{retry}</>;

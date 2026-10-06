@@ -27,6 +27,7 @@ import {
   candidateCommandPaths,
   installedBinaryPath,
   installedServerEntry,
+  installedServerEnv,
   lspLanguageForPath,
   serversSharingInstall,
   type LanguageServerDefinition,
@@ -67,7 +68,7 @@ export interface LspUnavailable {
     installHint: string;
     installable: boolean;
     /** What the button would use, so the editor can say what pressing it does. */
-    installWith?: "bun" | "go" | "rustup";
+    installWith?: LanguageServerInstall["with"];
   };
   message: string;
 }
@@ -208,7 +209,7 @@ export class LspManager {
 
       this.claim(key);
       try {
-        const session = await this.startOrReuse(key, definition, resolved.command, rootPath);
+        const session = await this.startOrReuse(key, definition, resolved, rootPath);
         // Subscribe *then* trim, so the session this call is about to hand out is never the
         // one the cap takes away.
         if (!this.subscribe(key, subscriber)) {
@@ -242,7 +243,7 @@ export class LspManager {
   private async startOrReuse(
     key: string,
     definition: LanguageServerDefinition,
-    command: string[],
+    { command, env }: { command: string[]; env?: Record<string, string> },
     rootPath: string,
   ): Promise<LspSession> {
     const existing = this.entries.get(key);
@@ -265,6 +266,7 @@ export class LspManager {
     const promise = LspSession.start({
       definition,
       command,
+      env,
       rootPath,
       onNotification: (method, params) => {
         for (const listener of this.notificationListeners) listener(key, method, params);
@@ -405,7 +407,7 @@ export class LspManager {
   private async resolveCommand(
     definition: LanguageServerDefinition,
     dirs: string[],
-  ): Promise<{ command: string[]; origin: ServerOrigin } | null> {
+  ): Promise<{ command: string[]; origin: ServerOrigin; env?: Record<string, string> } | null> {
     const candidates = candidateCommandPaths(definition.command, dirs);
     for (const candidate of candidates.slice(0, -1)) {
       if (await exists(candidate)) return { command: [candidate], origin: "project" };
@@ -424,10 +426,12 @@ export class LspManager {
     const onPath = Bun.which(definition.command);
     if (onPath) return { command: [onPath], origin: "path" };
 
-    // What the Install button built with the host's Go: a real binary in PPM's own directory,
-    // spawned as itself.
+    // What the Install button put in PPM's own directory as a real binary — built with the
+    // host's Go, unpacked from a release, or a gem's binstub — spawned as itself.
     const binary = installedBinaryPath(definition, this.installDir());
-    if (binary && (await exists(binary))) return { command: [binary], origin: "ppm" };
+    if (binary && (await exists(binary))) {
+      return { command: [binary], origin: "ppm", env: installedServerEnv(definition, this.installDir()) };
+    }
 
     // Both of PPM's npm copies are entry scripts rather than npm's `.bin` shims: that shim is
     // `#!/usr/bin/env node`, and someone who installed PPM with bun may have no node at all —
