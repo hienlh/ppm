@@ -12,6 +12,9 @@ import {
   cleanupScheduleRuns,
 } from "./scheduler-db.service.ts";
 import type { Schedule, RunResult } from "../types/scheduler.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("scheduler");
 
 const TICK_MS = 60_000;
 
@@ -40,15 +43,15 @@ export class SchedulerService {
       try {
         updateSchedule(s.id, { next_fire_at: nextFireAt(s.cron_expr) });
       } catch (e) {
-        console.warn(`[scheduler] invalid cron for schedule ${s.id} (${s.name}): ${(e as Error).message}`);
+        log.warn(`invalid cron for schedule ${s.id} (${s.name}): ${(e as Error).message}`);
       }
     }
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
-    console.log("[scheduler] started");
+    log.info("started");
   }
 
   stop(): void {
-    if (this.tickTimer) { clearInterval(this.tickTimer); this.tickTimer = null; }
+    if (this.tickTimer) { clearInterval(this.tickTimer); this.tickTimer = null; log.info("stopped"); }
     // In-flight runs finish naturally
   }
 
@@ -66,12 +69,12 @@ export class SchedulerService {
     try {
       due = getDueSchedules(new Date().toISOString());
     } catch (e) {
-      console.warn(`[scheduler] tick query failed: ${(e as Error).message}`);
+      log.warn(`tick query failed: ${(e as Error).message}`);
       return;
     }
     for (const schedule of due) {
       if (this.isRunning(schedule.id)) {
-        console.log(`[scheduler] skipped ${schedule.id} (${schedule.name}) — previous run still active`);
+        log.info(`skipped ${schedule.id} (${schedule.name}) — previous run still active`);
         const runId = insertScheduleRun(schedule.id, schedule.session_id, "skipped");
         updateScheduleRun(runId, { ended_at: new Date().toISOString() });
         continue;
@@ -80,12 +83,14 @@ export class SchedulerService {
     }
   }
 
-  /** Start one run. Creates the run row synchronously; execution is fire-and-forget. */
-  fire(schedule: Schedule): number {
+  /** Start one run. Creates the run row synchronously; execution is fire-and-forget. `trigger` is for the log line. */
+  fire(schedule: Schedule, trigger = "tick"): number {
     this.active.set(schedule.id, (this.active.get(schedule.id) ?? 0) + 1);
     const runId = insertScheduleRun(schedule.id, schedule.session_id, "running");
+    log.info(`Schedule ${schedule.id} (${schedule.name}) fired: run ${runId} (${trigger})`);
     void this.execute(schedule, runId).catch((e) => {
-      console.warn(`[scheduler] run ${runId} crashed: ${(e as Error).message}`);
+      // The run's outcome could not be recorded, so its row may still say "running".
+      log.error(`run ${runId} crashed:`, e);
     });
     return runId;
   }
@@ -95,11 +100,12 @@ export class SchedulerService {
     const schedule = getSchedule(id);
     if (!schedule) throw new Error(`Schedule ${id} not found`);
     const wasRunning = this.isRunning(id);
-    const runId = this.fire(schedule);
+    const runId = this.fire(schedule, wasRunning ? "manual, previous run still active" : "manual");
     return { runId, wasRunning };
   }
 
   private async execute(schedule: Schedule, runId: number): Promise<void> {
+    const startedAt = Date.now();
     try {
       const sessionId = await this.runner.ensureScheduleSession(schedule);
       if (sessionId !== schedule.session_id) {
@@ -116,7 +122,13 @@ export class SchedulerService {
         rotated_to_session_id: result.rotatedToSessionId ?? null,
         ended_at: new Date().toISOString(),
       });
+      const summary = `Schedule ${schedule.id} run ${runId} ${result.status} in ${Date.now() - startedAt}ms`
+        + (result.costUsd != null ? ` cost=$${result.costUsd.toFixed(4)}` : "")
+        + (result.contextWindowPct != null ? ` ctx=${result.contextWindowPct}%` : "");
+      if (result.status === "error") log.error(`${summary}: ${(result.error ?? "unknown error").slice(0, 300)}`);
+      else log.info(summary);
     } catch (e) {
+      log.error(`Schedule ${schedule.id} (${schedule.name}) run ${runId} failed after ${Date.now() - startedAt}ms:`, e);
       updateScheduleRun(runId, {
         status: "error",
         error: (e as Error).message,
@@ -132,7 +144,7 @@ export class SchedulerService {
           next_fire_at: nextFireAt(schedule.cron_expr),
         });
       } catch (e) {
-        console.warn(`[scheduler] failed to advance schedule ${schedule.id}: ${(e as Error).message}`);
+        log.warn(`failed to advance schedule ${schedule.id}: ${(e as Error).message}`);
       }
     }
   }

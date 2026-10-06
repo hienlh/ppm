@@ -20,7 +20,10 @@
 import nodePath from "node:path";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { isUnavailable, lspManager } from "../../services/lsp/lsp-manager.ts";
+import { createLogger } from "../../services/logger.ts";
 import { pathToFileUri, uriKey } from "../../shared/lsp-uri.ts";
+
+const log = createLogger("lsp");
 
 interface OpenDoc {
   /** Session key, for releasing the hold when the document closes. */
@@ -167,6 +170,8 @@ async function handleMessage(ws: WsLike, raw: string | Buffer): Promise<void> {
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    // Per request, so per keystroke while completing: a server that keeps failing would bury the log.
+    log.debug(`${String(msg.t)}${msg.method ? ` ${String(msg.method)}` : ""} failed: ${message}`);
     if (typeof msg.id === "number") send(client, { t: "error", id: msg.id, message });
     else send(client, { t: "notice", message });
   }
@@ -176,10 +181,20 @@ async function openDocument(client: Client, msg: Record<string, unknown>): Promi
   const path = String(msg.path ?? "");
   const text = String(msg.text ?? "");
   const version = Number(msg.version ?? 1);
-  const absolute = resolveDocumentPath(client.projectPath, path);
+  let absolute: string;
+  try {
+    absolute = resolveDocumentPath(client.projectPath, path);
+  } catch (e) {
+    // The editor never sends a file outside the project, so this is a bug or a crafted message.
+    log.warn(`project=${client.ws.data.projectName} rejected document path: ${(e as Error).message.slice(0, 300)}`);
+    throw e;
+  }
 
   const result = await lspManager.acquire(client.projectPath, absolute, client.id);
   if (isUnavailable(result)) {
+    // A failed start is logged once by the manager; the other two are the ordinary answer for a
+    // file nothing serves or a server nobody installed.
+    log.debug(`project=${client.ws.data.projectName} ${path}: ${result.reason}${result.server ? ` (${result.server.id})` : ""}`);
     send(client, {
       t: "unavailable",
       path,

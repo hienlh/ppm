@@ -13,8 +13,14 @@
  * again. A reinstall writes a file with a new name, and a new URL is a new module.
  */
 import { pathToFileURL } from "node:url";
+import { createLogger } from "../../logger.ts";
 import { DB_DRIVERS, type DbDriverDefinition, type DbDriverId } from "./db-driver-catalog.ts";
 import { installedBundlePath, readInstalledDriver } from "./db-driver-store.ts";
+
+const log = createLogger("db");
+
+/** Bundles already reported as not loading: a failed load is retried by every use of the driver. */
+const loggedLoadFailures = new Set<string>();
 
 /**
  * A connection needs a driver that is not installed (or no longer loads).
@@ -67,6 +73,12 @@ async function importInstalled(def: DbDriverDefinition): Promise<unknown> {
   try {
     return await importDriverBundle(def, installedBundlePath(installed));
   } catch (e) {
+    // Answered with a 424 and an Install button, which is no record that an install broke.
+    const key = `${def.id} ${String(installed.file)}`;
+    if (!loggedLoadFailures.has(key)) {
+      loggedLoadFailures.add(key);
+      log.error(`installed DB driver ${def.id} ${installed.version} failed to load from ${String(installed.file)}: ${(e as Error).message}`);
+    }
     throw new DbDriverMissingError(def, (e as Error).message);
   }
 }

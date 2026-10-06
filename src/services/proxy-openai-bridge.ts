@@ -44,7 +44,7 @@ export async function forwardOpenAiViaSdk(body: any, account: SdkAccount): Promi
   const { prompt, systemPrompt } = buildPromptFromOpenAiMessages(body);
   const env = buildSdkEnv(account.accessToken);
 
-  console.log(`[proxy-openai] ${stream ? "stream" : "non-stream"} → ${model} via ${account.email ?? account.id}`);
+  console.log(`[proxy-openai] ${stream ? "stream" : "non-stream"} → ${model} via ${account.id}`);
 
   if (!stream) return handleNonStreaming(prompt, systemPrompt, model, env, body, account);
   return handleStreaming(prompt, systemPrompt, model, env, body, account);

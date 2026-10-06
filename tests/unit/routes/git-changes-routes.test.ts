@@ -3,7 +3,7 @@
  * the working tree's blocks, the shared commit message, discard Undo, and the
  * `git:changed` notice every write sends.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Hono } from "hono";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { gitRoutes } from "../../../src/server/routes/git.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { onGitEvent } from "../../../src/services/git-changes/git-events.ts";
+import { gitDiscardJournal } from "../../../src/services/git-discard-journal/git-discard-journal.service.ts";
 import type { GitEvent } from "../../../src/shared/git-changes.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -182,6 +183,24 @@ describe("discard and Undo", () => {
     const undo = await call("POST", "/discard/undo", { id: discard.body.data.undo.id });
     expect(undo.status).toBe(200);
     expect(read("file.txt")).toContain("TWO\n");
+  });
+
+  it("keeps a block discard whose undo copy could not be saved, and logs that it cannot be undone", async () => {
+    write("file.txt", ORIGINAL.replace("line-2\n", "TWO\n"));
+    const listed = (await call("GET", "/changes")).body.data.files[0].unstaged.blocks[0];
+    const record = spyOn(gitDiscardJournal, "recordHunks").mockRejectedValue(new Error("disk full"));
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const discard = await call("POST", "/discard-hunks", { path: "file.txt", hunks: [{ hunk: 0, id: listed.id }] });
+      expect(discard.status).toBe(200);
+      expect(discard.body.data.undo).toBeNull();
+      expect(read("file.txt")).toBe(ORIGINAL);
+      const lines = errors.mock.calls.map(([line]) => String(line));
+      expect(lines.some((line) => line.startsWith("[git] could not keep an undo copy of the discarded hunks of file.txt"))).toBe(true);
+    } finally {
+      record.mockRestore();
+      errors.mockRestore();
+    }
   });
 
   it("answers a file discard with an undo record, and 409 once the file moved on", async () => {

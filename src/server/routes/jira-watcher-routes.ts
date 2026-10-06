@@ -14,6 +14,9 @@ import {
 } from "../../services/jira-api-client.ts";
 import { ok, err } from "../../types/api.ts";
 import type { JiraWatcherMode } from "../../types/jira.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("jira");
 
 /** Validate Jira issue key format (e.g. PROJ-123) */
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/i;
@@ -106,7 +109,10 @@ jiraWatcherRoutes.post("/watchers/pull-all", async (c) => {
     const all = (await import("../../services/jira-watcher-db.service.ts")).getAllEnabledWatchers();
     let total = 0;
     for (const w of all) {
-      try { total += await jiraWatcherService.pollWatcher(w.id, "manual"); } catch {}
+      try { total += await jiraWatcherService.pollWatcher(w.id, "manual"); } catch (e) {
+        // The response carries totals only, so this is the one place a single watcher's failure shows.
+        log.warn(`pull-all watcher=${w.id} "${w.name}" poll failed: ${(e as Error).message}`);
+      }
     }
     return c.json(ok({ polled: true, watcherCount: all.length, newIssues: total }));
   } catch (e: any) {

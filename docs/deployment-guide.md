@@ -174,8 +174,41 @@ The split exists so a restart does not rotate the public URL. Use `down` for a r
 
 ### Logs
 
-The daemon writes to `~/.ppm/ppm.log` (inside `getPpmDir()`). `ppm logs -n 200`, `ppm logs -f` and
-`ppm logs --clear` read and manage it. There is no separate logging config.
+The daemon writes to `~/.ppm/ppm.log` (inside `getPpmDir()`), one line per event:
+
+```
+[2026-10-06T03:06:13.123Z] [WARN] [http] POST /api/project/ppm/git/branch 409 12ms — branch already exists
+```
+
+Every line has a level:
+
+| Level | Meaning |
+|---|---|
+| `FATAL` | the process is about to exit, or a core part cannot run (database will not open, port will not bind) |
+| `ERROR` | something that was asked for did not happen (a request failed, a job failed, a child process died) |
+| `WARN` | unexpected but recovered — a fallback, a retry, a refusal, a timeout |
+| `INFO` | lifecycle and changes: started, stopped, created, deleted, a setting changed, a request that changed something |
+| `DEBUG` | per-event detail: every read request, stream events, protocol chatter |
+
+`info` is the default: `DEBUG` lines are not written at all until asked for.
+
+```bash
+ppm logs -n 200              # last 200 lines
+ppm logs -f                  # follow
+ppm logs --level warn        # only WARN, ERROR and FATAL (works with -n and -f)
+ppm config set log_level debug   # write DEBUG lines too; a running server picks it up within 10s
+ppm config set log_level info    # back to the default
+PPM_LOG_LEVEL=debug bun dev:server   # pins the level for that process, over the config
+ppm logs --clear
+```
+
+Every HTTP request is logged once (`[http]`, with method, path, status and duration — a change at
+`INFO`, a read at `DEBUG`, a failure with the error message it returned), and so is every
+WebSocket opening and closing (`[ws]`). Secrets are redacted before a line is written, and file
+contents, chat text and tool output are never logged. The file rotates at 20 MB, keeping
+`ppm.log.1` … `ppm.log.3`. `GET /api/logs/recent` (used by the bug report) returns only `INFO` and
+above. A CLI command (`ppm db query`, `ppm config set`, …) does not write to `ppm.log`: its log
+lines go to stderr, so what it prints on stdout stays parseable.
 
 ---
 

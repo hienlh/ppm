@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:
 import type { ExtensionManifest } from "../types/extension.ts";
 import { getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage } from "./db.service.ts";
 import { readManifestAt } from "./extension-manifest.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("ExtService");
 
 const INSTALL_TIMEOUT = 60_000;
 const NPM_PACKAGE_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(@[^@]+)?$/;
@@ -43,7 +46,7 @@ export async function installExtension(name: string, extensionsDir: string): Pro
   if (!manifest) throw new Error(`Installed ${name} but no valid manifest found`);
 
   upsertExtensionInDb(manifest);
-  console.log(`[ExtService] Installed ${manifest.id}@${manifest.version}`);
+  log.info(`Installed ${manifest.id}@${manifest.version}`);
   return manifest;
 }
 
@@ -55,14 +58,19 @@ export async function removeExtension(id: string, extensionsDir: string): Promis
       stdout: "pipe",
       stderr: "pipe",
     });
-    await proc.exited;
+    const exitCode = await proc.exited;
+    // The record goes regardless, so a failed removal leaves the package on disk unnoticed.
+    if (exitCode !== 0) {
+      const stderr = await new Response(proc.stderr).text().catch(() => "");
+      log.warn(`bun remove ${id} exited ${exitCode} (DB record still removed): ${stderr.replace(/\s+/g, " ").trim().slice(-300)}`);
+    }
   } catch (e) {
-    console.error(`[ExtService] npm remove ${id} failed (DB record still removed):`, e);
+    log.warn(`bun remove ${id} failed (DB record still removed):`, e);
   }
 
   deleteExtensionStorage(id);
   deleteExtension(id);
-  console.log(`[ExtService] Removed ${id}`);
+  log.info(`Removed ${id}`);
 }
 
 /** Symlink a local extension path for development */
@@ -83,7 +91,7 @@ export function devLinkExtension(localPath: string, extensionsDir: string): Exte
   symlinkSync(absPath, targetDir, "dir");
 
   upsertExtensionInDb(manifest);
-  console.log(`[ExtService] Dev-linked ${manifest.id} → ${absPath}`);
+  log.info(`Dev-linked ${manifest.id} → ${absPath}`);
   return manifest;
 }
 

@@ -25,8 +25,11 @@ import {
   markIndexStale,
   clearIndexCache,
 } from "./file-list-index.service.ts";
+import { createLogger } from "./logger.ts";
 
 export { invalidateIndexCache, clearIndexCache };
+
+const log = createLogger("fs");
 
 /** Directories/files excluded from tree listing (legacy — kept for getTree back-compat) */
 const EXCLUDED_NAMES = new Set([".git", "node_modules"]);
@@ -233,6 +236,7 @@ class FileService {
     if (!existsSync(absPath)) throw new NotFoundError(`Not found: ${filePath}`);
 
     removeEntrySync(absPath);
+    log.info(`deleted ${filePath} in ${projectPath}`);
   }
 
   /** Rename a file or directory */
@@ -249,6 +253,7 @@ class FileService {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     renameEntrySync(absOld, absNew);
+    log.info(`renamed ${oldPath} → ${newPath} in ${projectPath}`);
   }
 
   /** Move a file or directory to a new location */
@@ -268,6 +273,7 @@ class FileService {
     const dir = dirname(absDest);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     copyEntrySync(absSrc, absDest);
+    log.debug(`copied ${source} → ${destination} in ${projectPath}`);
   }
 
   /**

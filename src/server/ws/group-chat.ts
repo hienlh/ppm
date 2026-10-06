@@ -1,5 +1,8 @@
 import { groupChatService } from "../../services/group-chat/group-chat.service.ts";
 import type { GroupChatClientMessage } from "../../types/group-chat-ws.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("group-chat");
 
 type GroupWsSocket = {
   data: { type: string; groupId: string; projectName?: string };
@@ -32,9 +35,11 @@ export const groupChatWebSocket = {
       if (!content) { ws.send(JSON.stringify({ type: "error", message: "empty message" })); return; }
       // Detached: FE disconnect does not abort the loop.
       groupChatService.start(groupId, content).catch((e) => {
+        log.error(`group=${groupId} start failed: ${(e as Error)?.message ?? e}`);
         ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));
       });
     } else if (msg.type === "stop") {
+      log.info(`group=${groupId} stopped by client`);
       groupChatService.stop(groupId);
     }
     // "ready" is a no-op ack.

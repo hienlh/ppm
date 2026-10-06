@@ -6,6 +6,10 @@
  * client cannot tell a lost connection from a failed boot. So start returns an id and the client
  * polls — and a client that reconnects mid-boot re-attaches rather than starting a second one.
  */
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("android");
+
 export type OperationState = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 
 export interface Operation<T = unknown> {
@@ -74,6 +78,7 @@ export function finishOperation<T>(id: string, result: T): void {
   op.state = "succeeded";
   op.result = result;
   op.endedAt = Date.now();
+  log.info(`op ${op.kind} ${id} succeeded in ${Math.round((op.endedAt - op.startedAt) / 1000)}s`);
 }
 
 export function failOperation(id: string, error: string): void {
@@ -84,6 +89,10 @@ export function failOperation(id: string, error: string): void {
   op.state = "failed";
   op.error = error;
   op.endedAt = Date.now();
+  // The only place a background boot or install failure is recorded: the route has long since
+  // answered with an id, and the operation itself is gone five minutes after it ends.
+  // One line: a failed boot carries the emulator's last lines of output after its own message.
+  log.error(`op ${op.kind} ${id} failed after ${Math.round((op.endedAt - op.startedAt) / 1000)}s: ${error.split("\n").join(" | ")}`);
 }
 
 /** Test seam: drop everything. */
@@ -119,6 +128,7 @@ export function cancelOperation(id: string): boolean {
   op.state = "cancelled";
   op.detail = "cancelled";
   op.endedAt = Date.now();
+  log.info(`op ${op.kind} ${id} cancelled`);
   try { cancel(); } catch { /* the work was already finishing */ }
   return true;
 }

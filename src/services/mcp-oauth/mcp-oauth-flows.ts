@@ -13,6 +13,9 @@
 import { randomUUID } from "node:crypto";
 import type { McpControlHandle, OpenMcpControlQuery } from "./mcp-control-query.ts";
 import { openClaudeMcpControlQuery, withTimeout } from "./mcp-control-query.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("mcp-oauth");
 
 export type McpAuthFlowStatus = "waiting" | "completing" | "done" | "failed" | "expired" | "cancelled";
 
@@ -86,7 +89,7 @@ export class McpOAuthFlows {
     }
 
     const t0 = Date.now();
-    console.log(`[mcp-oauth] ${serverName}: starting sign-in (cwd=${cwd}, redirect=${redirectUri ? "custom" : "localhost"})`);
+    log.info(`${serverName}: starting sign-in (cwd=${cwd}, redirect=${redirectUri ? "custom" : "localhost"})`);
     const control = await this.open(cwd);
     const flow: Flow = { id: randomUUID(), serverName, status: "waiting", callbackExpected: false, control };
     this.flows.set(flow.id, flow);
@@ -98,7 +101,7 @@ export class McpOAuthFlows {
         this.timing.startMs,
         `${serverName} did not return a sign-in link. Try again.`,
       );
-      console.log(`[mcp-oauth] ${serverName}: sign-in link ready in ${Date.now() - t0}ms (redirect=${res.redirectScheme ?? "none"}, flow=${flow.id})`);
+      log.info(`${serverName}: sign-in link ready in ${Date.now() - t0}ms (redirect=${res.redirectScheme ?? "none"}, flow=${flow.id})`);
       // A newer sign-in for this server may have cancelled this one while the CLI answered.
       if (!isOpen(flow.status)) return view(flow);
       if (!res.requiresUserAction) {
@@ -148,6 +151,8 @@ export class McpOAuthFlows {
       if (isOpen(flow.status)) {
         flow.status = "waiting";
         flow.error = errorMessage(e);
+        // The callback URL carries the authorization code: never let an echo of it reach the log.
+        log.warn(`${flow.serverName}: callback rejected (flow=${flow.id}): ${flow.error.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>")}`);
       }
     }
     return view(flow);
@@ -217,7 +222,9 @@ export class McpOAuthFlows {
 
   private settle(flow: Flow, status: McpAuthFlowStatus, error?: string): void {
     if (!isOpen(flow.status)) return;
-    console.log(`[mcp-oauth] ${flow.serverName}: sign-in ${status}${error ? ` — ${error}` : ""} (flow=${flow.id})`);
+    (status === "failed" || status === "expired" ? log.warn : log.info)(
+      `${flow.serverName}: sign-in ${status}${error ? ` — ${error}` : ""} (flow=${flow.id})`,
+    );
     flow.status = status;
     flow.error = error;
     if (flow.expiryTimer) clearTimeout(flow.expiryTimer);
@@ -230,7 +237,7 @@ export class McpOAuthFlows {
     flow.state = undefined;
     if (status === "done") {
       for (const l of this.listeners) {
-        try { l(flow.serverName); } catch (e) { console.warn(`[mcp-oauth] listener failed: ${errorMessage(e)}`); }
+        try { l(flow.serverName); } catch (e) { log.warn(`listener failed: ${errorMessage(e)}`); }
       }
     }
     const timer = setTimeout(() => this.flows.delete(flow.id), this.timing.retentionMs);

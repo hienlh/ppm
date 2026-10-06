@@ -6,6 +6,9 @@ import { ok, err } from "../../types/api.ts";
 import { getConfigValue } from "../../services/db.service.ts";
 import { resolveTunnelConfig } from "../../services/named-tunnel/named-tunnel-config.ts";
 import { requestTunnelReload } from "../../services/supervisor-state.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("tunnel");
 
 export const tunnelRoutes = new Hono();
 
@@ -39,6 +42,8 @@ tunnelRoutes.post("/enabled", async (c) => {
   const current = configService.get("tunnel");
   configService.set("tunnel", { ...current, enabled: body.enabled });
   const reload = requestTunnelReload();
+  // "busy": another supervisor command is pending, so the switch is saved but not acted on yet.
+  log[reload === "busy" ? "warn" : "info"](`Public tunnel switched ${body.enabled ? "on" : "off"}, reload=${reload}`);
   return c.json(ok({ enabled: body.enabled, reload }));
 });
 

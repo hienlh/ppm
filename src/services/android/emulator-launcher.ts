@@ -22,6 +22,9 @@ import { findRunningEmulatorByAvd, findRunningEmulators, type RunningEmulator } 
 import { claimOwnership, listDevices, releaseOwnership } from "./device-registry.ts";
 import { createOperation, failOperation, finishOperation, updateOperation, type Operation } from "./android-operations.ts";
 import { avdHomeEnv } from "./sdk-discovery.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("android");
 
 /** How long to wait for the guest to report boot complete before calling it failed. */
 const DEFAULT_BOOT_DEADLINE_MS = 5 * 60_000;
@@ -82,6 +85,9 @@ interface InFlight {
 const starting = new Map<string, InFlight>();
 /** Bounded log of what each emulator printed, for the error surface. */
 const logs = new Map<string, string[]>();
+/** AVDs `stopEmulator` has asked to shut down, so their exit is not logged as a crash. Taken by
+ *  the exit listener, and cleared by the next start of that AVD in case the exit was not ours. */
+const stopRequested = new Set<string>();
 
 export function emulatorLog(avdName: string): string[] {
   return logs.get(avdName) ?? [];
@@ -196,6 +202,7 @@ async function run(opts: StartOptions, operation: Operation<StartedDevice>): Pro
   const deadline = Date.now() + (opts.bootDeadlineMs ?? DEFAULT_BOOT_DEADLINE_MS);
   updateOperation(operation.id, { state: "running", detail: "spawning emulator" });
   logs.delete(opts.avdName);
+  stopRequested.delete(opts.avdName);
 
   if (!existsSync(opts.emulatorPath)) {
     const message = `emulator binary not found at ${opts.emulatorPath}`;
@@ -213,9 +220,27 @@ async function run(opts: StartOptions, operation: Operation<StartedDevice>): Pro
 
   child.stdout?.on("data", (d: Buffer) => appendLog(opts.avdName, d.toString()));
   child.stderr?.on("data", (d: Buffer) => appendLog(opts.avdName, d.toString()));
+  log.info(
+    `emulator starting avd=${opts.avdName} pid=${child.pid ?? "?"} window=${opts.windowMode ?? "no-window"} ` +
+    `boot=${opts.bootMode ?? "quick"} gpu=${opts.gpuMode ?? "auto"}`,
+  );
 
   let spawnError: Error | null = null;
-  child.on("error", (e) => { spawnError = e; });
+  child.on("error", (e) => {
+    spawnError = e;
+    // Logged now: the operation only reports it once the boot deadline passes, minutes later.
+    log.error(`emulator avd=${opts.avdName} failed to spawn: ${e.message}`);
+  });
+  // Without this a crash during or after boot leaves no trace at all.
+  child.on("exit", (code, signal) => {
+    if (spawnError) return;   // already logged above
+    if (stopRequested.delete(opts.avdName)) {
+      log.debug(`emulator avd=${opts.avdName} pid=${child.pid} exited code=${code} signal=${signal}`);
+      return;
+    }
+    const tail = emulatorLog(opts.avdName).slice(-3).join(" | ");
+    log.error(`emulator avd=${opts.avdName} pid=${child.pid} exited code=${code} signal=${signal}: ${tail || "(no output)"}`);
+  });
 
   try {
     updateOperation(operation.id, { detail: "waiting for the emulator to advertise itself" });
@@ -225,6 +250,10 @@ async function run(opts: StartOptions, operation: Operation<StartedDevice>): Pro
     await waitForBoot(emulator, deadline, (detail) => updateOperation(operation.id, { detail }));
 
     const generation = claimOwnership(opts.avdName, emulator.pid);
+    log.info(
+      `emulator booted avd=${opts.avdName} pid=${emulator.pid} grpc=${emulator.grpcPort} ` +
+      `adb=${emulator.adbSerial ?? "none"} in ${Math.round((Date.now() - operation.startedAt) / 1000)}s`,
+    );
     const started: StartedDevice = {
       avdName: opts.avdName,
       pid: emulator.pid,
@@ -266,19 +295,27 @@ export async function stopEmulator(
     if (entry?.runtime && !entry.runtime.ownedByPpm) return "not-owned";
   }
 
+  const stopStartedAt = Date.now();
   const channel = connectToEmulator(emulator);
+  stopRequested.add(avdName);
   try {
     await requestShutdown(channel);
+  } catch (e) {
+    stopRequested.delete(avdName);   // it is not going away, so a later exit is not ours
+    throw e;
   } finally {
     channel.close();
   }
 
   // Wait for the process to actually go, so the caller can report truthfully.
   const deadline = Date.now() + 30_000;
+  let gone = false;
   while (Date.now() < deadline) {
-    try { process.kill(emulator.pid, 0); } catch { break; }
+    try { process.kill(emulator.pid, 0); } catch { gone = true; break; }
     await sleep(250);
   }
+  if (gone) log.info(`emulator stopped avd=${avdName} in ${Math.round((Date.now() - stopStartedAt) / 1000)}s`);
+  else log.warn(`emulator avd=${avdName} pid=${emulator.pid} still alive 30s after SHUTDOWN`);
   releaseOwnership(avdName);
   return "stopped";
 }
@@ -287,4 +324,5 @@ export async function stopEmulator(
 export function _resetLauncher(): void {
   starting.clear();
   logs.clear();
+  stopRequested.clear();
 }

@@ -10,14 +10,17 @@ import { IMPORT_PREVIEW_ROWS, type ColumnMapEntry, type ImportFileFormat, type I
 import type { DbWriteSession } from "../../../types/database.ts";
 import type { TableRef } from "../ddl/ddl-objects.ts";
 import type { GridTarget } from "../grid.service.ts";
+import { createLogger } from "../../logger.ts";
 import { mapColumns, pickRow } from "./column-map.ts";
-import { addMessage, finishJob, type ImpExpJob } from "./impexp-job-store.ts";
+import { addMessage, finishJob, loggableError, type ImpExpJob } from "./impexp-job-store.ts";
 import type { ImportItemPlan, ImportJobPlan } from "./impexp-request.ts";
 import { holdUpload, type HeldUpload } from "./import-uploads.ts";
 import { ImportRowWriter, planImportTable } from "./import-table-writer.ts";
 import { openCsv } from "./readers/csv-reader.ts";
 import { previewValue, type FileRows, type FileValue } from "./readers/file-rows.ts";
 import { openJson, openJsonLines } from "./readers/json-reader.ts";
+
+const log = createLogger("impexp");
 
 /** What an upload that is no longer kept answers. */
 export const UPLOAD_GONE = "The uploaded file is gone. Add it again.";
@@ -148,6 +151,10 @@ async function importItem(job: ImpExpJob, index: number, plan: ImportJobPlan, ct
       status.error = message;
       addMessage(job, "error", `${item.source}: ${message}`);
       if (session) addMessage(job, "info", `${item.source}: rolled back, ${label} holds none of the file's rows${kept}`);
+      log.error(
+        `import job ${job.id} failed on item ${index} '${item.source}' → ${label} (${type}): ${loggableError(e)} ` +
+        `(${session ? "rolled back" : "nothing written"}${committedDdl ? ", DDL kept" : ""})`,
+      );
       audit.ended(sql, message, 0);
     }
     throw e;

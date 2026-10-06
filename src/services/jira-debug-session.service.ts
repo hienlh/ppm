@@ -5,6 +5,9 @@ import { notificationService } from "./notification.service.ts";
 import { forwardEventToSession } from "../server/ws/chat.ts";
 import type { JiraWatcherRow } from "../types/jira.ts";
 import type { PermissionMode } from "../types/config.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("jira-debug");
 
 const MAX_CONCURRENT = 2;
 const MAX_PER_PROJECT = 1;
@@ -28,7 +31,7 @@ class JiraDebugSessionService {
        WHERE status IN ('running', 'queued') AND deleted = 0 RETURNING id, issue_key`,
     ).all() as { id: number; issue_key: string }[];
     if (zombies.length > 0) {
-      console.log(`[jira-debug] Reset ${zombies.length} zombie results: ${zombies.map((z) => z.issue_key).join(", ")}`);
+      log.info(`Reset ${zombies.length} zombie results: ${zombies.map((z) => z.issue_key).join(", ")}`);
     }
   }
 
@@ -76,6 +79,7 @@ class JiraDebugSessionService {
       this.enqueuedIds.delete(resultId);
       const result = getResultById(resultId);
       updateResultStatus(resultId, "failed", { aiSummary: "Cancelled by user" });
+      log.info(`Jira debug cancelled while queued: result ${resultId}${result ? ` (${result.issueKey})` : ""}`);
       if (result) this.broadcastStatusChange(resultId, result.issueKey, "failed");
       return true;
     }
@@ -85,6 +89,7 @@ class JiraDebugSessionService {
     abort.abort();
     const result = getResultById(resultId);
     updateResultStatus(resultId, "failed", { aiSummary: "Cancelled by user" });
+    log.info(`Jira debug cancelled while running: result ${resultId}${result ? ` (${result.issueKey})` : ""}`);
     if (result) this.broadcastStatusChange(resultId, result.issueKey, "failed");
     return true;
   }
@@ -95,14 +100,18 @@ class JiraDebugSessionService {
     while (i < this.queue.length && this.active.size < MAX_CONCURRENT) {
       const item = this.queue[i]!;
       const project = this.resolveProjectInfo(item.resultId);
-      if (!project) { this.queue.splice(i, 1); continue; }
+      if (!project) {
+        log.error(`Jira debug result ${item.resultId} (${getResultById(item.resultId)?.issueKey ?? "?"}) dropped: no project linked to its Jira config`);
+        this.queue.splice(i, 1);
+        continue;
+      }
 
       const projectCount = this.activeByProject.get(project.path) ?? 0;
       if (projectCount >= MAX_PER_PROJECT) { i++; continue; }
 
       this.queue.splice(i, 1);
       this.runDebugSession(item.resultId, item.prompt, project, item.resume).catch((e) => {
-        console.error(`[jira-debug] session error resultId=${item.resultId}:`, e.message);
+        log.error(`session error resultId=${item.resultId}:`, e);
       });
     }
   }
@@ -159,6 +168,9 @@ class JiraDebugSessionService {
 
     updateResultStatus(resultId, "running");
     this.broadcastStatusChange(resultId, result.issueKey, "running");
+    const startedAt = Date.now();
+    let sessionId: string | undefined;
+    log.info(`Jira debug started: result ${resultId} ${result.issueKey} project=${project.name} resume=${!!resume}`);
 
     try {
       // Resume: reuse existing session (SDK can resume from disk even after restart)
@@ -178,6 +190,7 @@ class JiraDebugSessionService {
         });
       }
 
+      sessionId = session.id;
       // Persist sessionId immediately so UI can show "Open" button while running
       updateResultStatus(resultId, "running", { sessionId: session.id });
       this.broadcastStatusChange(resultId, result.issueKey, "running", session.id);
@@ -198,6 +211,7 @@ class JiraDebugSessionService {
 
       const aiSummary = lastAssistantText.slice(0, 500) || "Debug session completed (no text output)";
       updateResultStatus(resultId, "done", { sessionId: session.id, aiSummary });
+      log.info(`Jira debug done: result ${resultId} ${result.issueKey} session ${session.id} in ${Date.now() - startedAt}ms`);
 
       // Broadcast WS event + notification
       this.broadcastStatusChange(resultId, result.issueKey, "done", session.id);
@@ -210,6 +224,7 @@ class JiraDebugSessionService {
       }).catch(() => {});
     } catch (e: any) {
       if (!abort.signal.aborted) {
+        log.error(`Jira debug failed: result ${resultId} ${result.issueKey} session ${sessionId ?? "none"} after ${Date.now() - startedAt}ms:`, e);
         updateResultStatus(resultId, "failed", { aiSummary: e.message?.slice(0, 300) ?? "Unknown error" });
         this.broadcastStatusChange(resultId, result.issueKey, "failed");
       }

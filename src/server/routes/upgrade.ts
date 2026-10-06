@@ -12,6 +12,9 @@ import {
 } from "../../services/upgrade.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { getPpmDir } from "../../services/ppm-dir.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("upgrade");
 
 export const upgradeRoutes = new Hono();
 
@@ -78,7 +81,7 @@ upgradeRoutes.post("/apply", async (c) => {
   // Signal supervisor to self-replace
   const signal = signalSupervisorUpgrade();
   if (!signal.sent) {
-    console.warn(`[upgrade] Supervisor signal failed: ${signal.error ?? "unknown"}`);
+    log.warn(`Supervisor signal failed after upgrade to v${result.newVersion} (was v${VERSION}, method=${getInstallMethod()}): ${signal.error ?? "unknown"} — needs a manual restart`);
     return c.json(ok({
       success: true,
       newVersion: result.newVersion,
@@ -87,6 +90,7 @@ upgradeRoutes.post("/apply", async (c) => {
     }));
   }
 
+  log.info(`Upgrade to v${result.newVersion} (was v${VERSION}, method=${getInstallMethod()}) — supervisor signalled to restart`);
   return c.json(ok({
     success: true,
     newVersion: result.newVersion,

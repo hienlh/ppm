@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { createLogger } from "./logger.ts";
 
 /**
  * The smallest MCP server that speaks Streamable HTTP with plain JSON responses
@@ -42,7 +43,7 @@ async function readCappedBody(req: Request): Promise<string | null> {
 const rpcResult = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
-export function createMcpHttpHandler<B>(opts: {
+export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   /** `serverInfo.name`, and the tag on a failed call's log line. */
   serverName: string;
   /** The 401 body's message when no valid token is presented. */
@@ -53,6 +54,7 @@ export function createMcpHttpHandler<B>(opts: {
   callTool: (binding: B, name: string, args: unknown) => Promise<Json>;
 }) {
   const names = new Set(opts.tools.map((t) => t.name));
+  const log = createLogger(opts.serverName);
 
   async function dispatch(binding: B, msg: Json): Promise<Json> {
     const id = msg.id;
@@ -105,7 +107,8 @@ export function createMcpHttpHandler<B>(opts: {
     try {
       return c.json(await dispatch(binding, message));
     } catch (e) {
-      console.warn(`[${opts.serverName}] ${String(message.method)} failed: ${(e as Error).message}`);
+      // Answered as a 200, so the access log records a success.
+      log.error(`${String(message.method).slice(0, 60)} failed (session ${binding.sessionId}): ${(e as Error).message}`);
       return c.json(rpcError(message.id, -32603, "Internal error"));
     }
   };

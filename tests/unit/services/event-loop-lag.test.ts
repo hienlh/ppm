@@ -10,7 +10,7 @@
  * outside, which is why `/api/health` taking 18.9s told us nothing about where
  * to look.
  */
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, afterEach, spyOn } from "bun:test";
 import {
   classifyLag,
   sampleFromTick,
@@ -18,9 +18,13 @@ import {
   stopLagMonitor,
   lagReport,
   resetLagMonitorForTest,
+  logLongStall,
   TICK_MS,
   REPORT_THRESHOLD_MS,
   MAX_SAMPLES,
+  LOG_STALL_MS,
+  LOG_STALL_INTERVAL_MS,
+  type LagSample,
 } from "../../../src/services/event-loop-lag.ts";
 
 afterEach(() => {
@@ -126,5 +130,26 @@ describe("the monitor itself", () => {
     expect(r.running).toBe(false);
     expect(r.blockedFraction).toBe(0);
     expect(r.samples).toEqual([]);
+  });
+});
+
+describe("leaving a trace in ppm.log", () => {
+  const stall = (at: number, lagMs: number): LagSample => ({ at, lagMs, cpuMs: 40, rssMb: 512, cause: "starved" });
+
+  it("writes a long stall, at most once a minute, with the count of the ones left out", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const t0 = 5_000_000;
+      logLongStall(stall(t0, LOG_STALL_MS - 1)); // short: memory only
+      logLongStall(stall(t0 + 1, 18_900));
+      logLongStall(stall(t0 + 1000, 2500)); // inside the minute: counted, not written
+      logLongStall(stall(t0 + 1 + LOG_STALL_INTERVAL_MS, 3000));
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        "[event-loop] Event loop stalled 18900ms (cause=starved, cpu=40ms, rss=512MB)",
+        `[event-loop] Event loop stalled 3000ms (cause=starved, cpu=40ms, rss=512MB) (+1 more of ${LOG_STALL_MS}ms+ since the last one logged)`,
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

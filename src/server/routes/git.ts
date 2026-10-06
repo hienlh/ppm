@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
-import { gitService } from "../../services/git.service.ts";
+import { gitService, remoteForLog } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
 import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
@@ -12,8 +12,17 @@ import { gitCommitDraftService } from "../../services/git-commit-draft.service.t
 import { gitWorkflowService } from "../../services/git-workflow/git-workflow.service.ts";
 import { emitGitEvent } from "../../services/git-changes/git-events.ts";
 import { isInsideDir, realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
+import { createLogger } from "../../services/logger.ts";
 import { ok, err } from "../../types/api.ts";
 import type { CheckoutMode } from "../../types/git.ts";
+
+/**
+ * Commit, push, branch create/checkout/delete and merge are logged here rather than in
+ * `git.service`, because the CLI calls those service methods as well and has no log file — a
+ * line there would print in the terminal beside the CLI's own message. The rest of the git
+ * writes are logged by their services.
+ */
+const log = createLogger("git");
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -572,7 +581,10 @@ gitRoutes.post("/discard-hunks", async (c) => {
     if (typeof parsed === "string") return c.json(err(parsed), 400);
     const patch = await gitHunksService.discard(projectPath, parsed.filePath, parsed.hunks);
     // The discard already happened; failing to keep a copy must not report it as failed.
-    const undo = await gitDiscardJournal.recordHunks(projectPath, parsed.filePath, patch).catch(() => null);
+    const undo = await gitDiscardJournal.recordHunks(projectPath, parsed.filePath, patch).catch((e) => {
+      log.error(`could not keep an undo copy of the discarded hunks of ${parsed.filePath} in ${projectPath} — the discard cannot be undone:`, e);
+      return null;
+    });
     return c.json(ok({ discarded: parsed.filePath, undo }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -593,6 +605,7 @@ gitRoutes.post("/commit", async (c) => {
     let draftBefore: string | null = null;
     try { draftBefore = gitCommitDraftService.get(projectPath).message; } catch { /* the commit does not need it */ }
     const hash = await gitService.commit(projectPath, message ?? "", !!amend, !!signoff);
+    log.info(`committed ${hash.slice(0, 7)} in ${projectPath} (amend=${!!amend}, signoff=${!!signoff})`);
     try {
       const draft = gitCommitDraftService.get(projectPath).message;
       if (draft === draftBefore || draft.trim() === (message ?? "").trim()) {
@@ -610,7 +623,9 @@ gitRoutes.post("/push", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const { remote, branch } = await c.req.json<{ remote?: string; branch?: string }>();
+    const started = performance.now();
     await gitService.push(projectPath, remote, branch);
+    log.info(`pushed ${branch ?? "the current branch"} to ${remote ? remoteForLog(remote) : "its default remote"} in ${projectPath} (${Math.round(performance.now() - started)} ms)`);
     return c.json(ok({ pushed: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -726,6 +741,7 @@ gitRoutes.post("/branch/create", async (c) => {
       assertRef(name, "name"),
       from ? assertRef(from, "from") : undefined,
     );
+    log.info(`created and checked out branch ${name} from ${from ?? "HEAD"} in ${projectPath}`);
     return c.json(ok({ created: name }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -752,6 +768,7 @@ gitRoutes.post("/checkout", async (c) => {
       return c.json(err(`Unknown checkout mode: "${mode}"`), 400);
     }
     await gitService.checkout(projectPath, assertRef(ref, "ref"), mode);
+    log.info(`checked out ${ref} (mode=${mode ?? "checkout"}) in ${projectPath}`);
     return c.json(ok({ checkedOut: ref }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -765,6 +782,7 @@ gitRoutes.post("/branch/delete", async (c) => {
     const { name, force } = await c.req.json<{ name: string; force?: boolean }>();
     if (!name) return c.json(err("Missing: name"), 400);
     await gitService.deleteBranch(projectPath, name, force);
+    log.info(`deleted branch ${name} force=${!!force} in ${projectPath}`);
     return c.json(ok({ deleted: name }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -778,6 +796,7 @@ gitRoutes.post("/merge", async (c) => {
     const { source } = await c.req.json<{ source: string }>();
     if (!source) return c.json(err("Missing: source"), 400);
     await gitService.merge(projectPath, source);
+    log.info(`merged ${source} into HEAD in ${projectPath}`);
     return c.json(ok({ merged: source }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

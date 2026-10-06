@@ -8,6 +8,9 @@ import { VERSION } from "../version.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { applyBinaryUpgrade } from "./binary-upgrade-apply.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("upgrade");
 
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@hienlh/ppm/latest";
 const FETCH_TIMEOUT_MS = 10_000;
@@ -41,20 +44,43 @@ export async function checkForUpdate(): Promise<{
   current: string;
   latest: string | null;
 }> {
+  let httpStatus: number | null = null;
   try {
     const res = await fetch(NPM_REGISTRY_URL, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    if (!res.ok) httpStatus = res.status;
     const data = await res.json();
     const latest = data.version as string;
-    return {
+    const result = {
       available: compareSemver(VERSION, latest) < 0,
       current: VERSION,
       latest,
     };
-  } catch {
+    noteRegistryCheck(null);
+    return result;
+  } catch (e) {
+    // A 429/5xx body has no version, so it fails here too — name the status, not the parse.
+    noteRegistryCheck(httpStatus !== null ? `HTTP ${httpStatus}` : e instanceof Error ? e.message : String(e));
     return { available: false, current: VERSION, latest: null };
   }
+}
+
+/**
+ * A failed check is reported as "no update", so without a line here an offline or
+ * rate-limited machine looks up to date. Offline, every check fails the same way: warn when
+ * that starts, not on each one.
+ */
+let registryFailing = false;
+function noteRegistryCheck(failure: string | null): void {
+  if (failure === null) {
+    if (registryFailing) log.info("npm registry check succeeded again");
+    registryFailing = false;
+    return;
+  }
+  if (registryFailing) log.debug(`npm registry check failed: ${failure}`);
+  else log.warn(`npm registry check failed: ${failure} — treated as no update until it answers`);
+  registryFailing = true;
 }
 
 const LATEST_VERSION_CACHE_MS = 300_000; // 5min
@@ -167,12 +193,14 @@ export async function applyUpgrade(deps?: {
   const cmd = buildUpgradeCommand(method, pkg);
 
   try {
+    const startedAt = Date.now();
     const proc = spawnFn({ cmd, stdout: "pipe", stderr: "pipe" });
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text();
       return { success: false, error: `Install failed (exit ${exitCode}): ${stderr.slice(0, 200)}` };
     }
+    log.info(`Upgrade installed via ${method}: v${VERSION} → v${update.latest} in ${Date.now() - startedAt}ms`);
     return { success: true, newVersion: update.latest };
   } catch (e) {
     return { success: false, error: (e as Error).message };

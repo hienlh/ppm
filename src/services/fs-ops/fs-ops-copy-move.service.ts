@@ -5,7 +5,10 @@ import {
   assertNotProtected,
   resolvePath,
 } from "../fs-path-guard.service.ts";
+import { createLogger } from "../logger.ts";
 import { copyEntry, moveEntry } from "./fs-core-ops.ts";
+
+const log = createLogger("fs");
 
 export interface CopyMoveResult {
   source: string;
@@ -44,6 +47,7 @@ async function resolvePair(source: string, destination: string): Promise<[string
 export async function copyPath(source: string, destination: string): Promise<CopyMoveResult> {
   const [src, dst] = await resolvePair(source, destination);
   await copyEntry(src, dst);
+  log.info(`copied ${src} → ${dst}`);
   return { source: src, destination: dst };
 }
 
@@ -56,5 +60,6 @@ export async function movePath(source: string, destination: string): Promise<Cop
   const [src, dst] = await resolvePair(source, destination);
   await assertNotProtected(src);
   const { crossDevice, sourceRemoved } = await moveEntry(src, dst);
+  log.info(`moved ${src} → ${dst} (crossDevice=${crossDevice}, sourceRemoved=${sourceRemoved})`);
   return { source: src, destination: dst, crossDevice, sourceRemoved };
 }

@@ -10,6 +10,7 @@ import type { ProcessCollector } from "./process-collector-types.ts";
 import { identityMatches, resolveLiveProcess } from "./kill-identity-resolver.ts";
 import { checkKillAllowed } from "./kill-guard.ts";
 import type { ProtectedPids } from "./ppm-protected-pids.ts";
+import type { Logger } from "../logger.ts";
 
 export interface KillHandlerDeps {
   platform: MetricsPlatform;
@@ -18,7 +19,7 @@ export interface KillHandlerDeps {
   execute: (pid: number, tree: boolean) => Promise<KillProcessResult>;
   /** Audit line: pid + name + result ONLY. `~/.ppm/ppm.log`'s tail is served
    *  unauthenticated by `/api/logs/recent`, so a command line must never land here. */
-  log: (line: string) => void;
+  log: Logger;
 }
 
 export type KillStatus = 200 | 400 | 403 | 404 | 409 | 500;
@@ -60,20 +61,20 @@ export async function handleKillRequest(body: unknown, deps: KillHandlerDeps): P
     ppidOf: maps.ppidOf,
     startedAtOf: maps.startedAtOf,
   });
-  const prefix = `[SystemMetrics] kill pid=${live.pid} name=${live.name} tree=${tree}`;
+  const prefix = `kill pid=${live.pid} name=${live.name} tree=${tree}`;
   if (!verdict.allowed) {
-    deps.log(`${prefix} → refused: ${verdict.reason}`);
+    deps.log.warn(`${prefix} → refused: ${verdict.reason}`);
     return { status: 403, body: err(verdict.reason ?? "Refused") };
   }
 
-  deps.log(`${prefix} → allowed`);
+  deps.log.debug(`${prefix} → allowed`);
   try {
     const result = await deps.execute(live.pid, tree);
-    deps.log(`${prefix} → done (${result.method}, ${result.killed.length} signalled)`);
+    deps.log.info(`${prefix} → done (${result.method}, ${result.killed.length} signalled)`);
     return { status: 200, body: ok(result) };
   } catch (e) {
     const message = (e as Error)?.message ?? String(e);
-    deps.log(`${prefix} → failed: ${message}`);
+    deps.log.error(`${prefix} → failed: ${message}`);
     return { status: 500, body: err(`Failed to end PID ${live.pid}: ${message}`) };
   }
 }

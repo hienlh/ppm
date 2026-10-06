@@ -17,6 +17,7 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { resolveBunPath } from "../autostart-generator.ts";
+import { createLogger } from "../logger.ts";
 import { canInstall, lspInstallDir, rustupServerPath } from "./lsp-install.ts";
 import { LspSession, type LspSessionState } from "./lsp-session.ts";
 import {
@@ -31,6 +32,8 @@ import {
   type LanguageServerDefinition,
   type LanguageServerInstall,
 } from "./server-registry.ts";
+
+const log = createLogger("lsp");
 
 /** How long a session with no subscribers is kept before being shut down. */
 const IDLE_GRACE_MS = 5 * 60 * 1000;
@@ -285,6 +288,13 @@ export class LspManager {
         this.entries.set(key, { session, subscribers: new Set(), idleTimer: null, lastUsed: ++this.useCounter });
         return session;
       })
+      .catch((e: unknown) => {
+        // Here rather than in `acquire`: every tab waiting on this start gets the same rejection,
+        // and a reconnect re-opens all of them at once. The message can carry the server's stderr.
+        const message = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").slice(0, 400);
+        log.error(`failed to start ${definition.id} root=${rootPath}: ${message}`);
+        throw e;
+      })
       .finally(() => this.starting.delete(key));
 
     this.starting.set(key, promise);
@@ -310,6 +320,7 @@ export class LspManager {
       if (this.entries.size <= this.maxSessions) return;
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       this.entries.delete(key);
+      log.info(`stopping ${entry.session.definition.id} root=${entry.session.rootPath}: session cap ${this.maxSessions} reached (${this.entries.size} running)`);
       void entry.session.dispose();
     }
   }
@@ -365,6 +376,10 @@ export class LspManager {
       const current = this.entries.get(key);
       if (!current || current.subscribers.size > 0) return;
       this.entries.delete(key);
+      log.info(
+        `stopping ${current.session.definition.id} root=${current.session.rootPath}: ` +
+        `idle ${Math.round(this.idleGraceMs / 1000)}s (${this.entries.size} running)`,
+      );
       void current.session.dispose();
     }, this.idleGraceMs);
     // A pending reap must not hold the process open at shutdown.
@@ -529,6 +544,7 @@ export class LspManager {
     for (const [key, entry] of doomed) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       this.entries.delete(key);
+      log.info(`stopping ${serverId} root=${entry.session.rootPath}: uninstalling it`);
     }
     await Promise.all(doomed.map(([, entry]) => entry.session.dispose()));
   }
@@ -542,6 +558,10 @@ export class LspManager {
    */
   killAllSync(): void {
     this.disposed = true;
+    if (this.entries.size > 0) {
+      const ids = [...this.entries.values()].map((entry) => entry.session.definition.id);
+      log.info(`killing ${ids.length} language server(s) at shutdown: ${ids.join(", ")}`);
+    }
     for (const entry of this.entries.values()) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       try {

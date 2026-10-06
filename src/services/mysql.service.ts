@@ -50,9 +50,12 @@ import { mysqlDialect } from "./database/dialect-mysql.ts";
 import { loadDbDriver, onDbDriverUnload } from "./database/drivers/db-driver-loader.ts";
 import { isReadOnlyQuery } from "./database/readonly-check.ts";
 import { isolationLevelSql } from "./database/isolation-level.ts";
-import { readCertificateFiles, takeEndpoint } from "./database/connection-endpoint.ts";
+import { connectionLogTarget as logTarget, readCertificateFiles, takeEndpoint } from "./database/connection-endpoint.ts";
 import { sshChannelStream } from "./database/ssh-tunnel.ts";
 import { installTlsIdentityCheck } from "./database/tls-identity-check.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("db");
 
 type Mysql2 = { createPool(options: PoolOptions): Pool };
 
@@ -339,7 +342,7 @@ class MysqlService {
     }
     return pending.then((cached) => {
       clearTimeout(cached.timer);
-      cached.timer = setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS);
+      cached.timer = setTimeout(() => this.disconnect(connectionString, "idle"), IDLE_TIMEOUT_MS);
       return cached;
     });
   }
@@ -352,14 +355,24 @@ class MysqlService {
     // The core pool's event, whose connection has the callback API: the
     // statements queue ahead of whatever the caller who asked for it sends.
     pool.pool.on("connection", (conn: { query(sql: string, cb: (err: unknown) => void): unknown; destroy(): void }) => {
-      for (const sql of init) conn.query(sql, (err) => { if (err) conn.destroy(); });
+      for (const sql of init) {
+        conn.query(sql, (err) => {
+          if (!err) return;
+          const why = (err as { code?: unknown }).code ?? (err as Error).message;
+          log.warn(`mysql session init "${sql}" failed on ${logTarget(connectionString)}: ${String(why).slice(0, 200)} — connection dropped`);
+          conn.destroy();
+        });
+      }
     });
-    return { pool, timer: setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS) };
+    log.info(`mysql pool opened ${logTarget(connectionString)}${this instanceof ReadonlyMysqlService ? " readonly" : ""}`);
+    return { pool, timer: setTimeout(() => this.disconnect(connectionString, "idle"), IDLE_TIMEOUT_MS) };
   }
 
-  private async disconnect(connectionString: string): Promise<void> {
+  /** `reason` is for the log. */
+  private async disconnect(connectionString: string, reason: string): Promise<void> {
     const pending = this.pools.get(connectionString);
     if (!pending) return;
+    log.info(`mysql pool closed ${logTarget(connectionString)}${this instanceof ReadonlyMysqlService ? " readonly" : ""}: ${reason}`);
     this.pools.delete(connectionString);
     try {
       const cached = await pending;
@@ -381,6 +394,7 @@ class MysqlService {
       } catch (e) {
         const code = (e as { code?: unknown } | null)?.code;
         if (attempt >= CONNECT_RETRIES || typeof code !== "string" || !RETRYABLE_CONNECT_ERRORS.has(code)) throw e;
+        log.warn(`mysql connect to ${logTarget(connectionString)} failed (${code}), retrying in ${RETRY_DELAY_MS}ms`);
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       }
     }
@@ -655,6 +669,7 @@ class MysqlService {
           pool.end().catch(() => {});
           throw e;
         }
+        log.warn(`mysql connect to ${logTarget(connectionString)} failed (${code}), retrying in ${RETRY_DELAY_MS}ms`);
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       }
     }
@@ -952,7 +967,7 @@ class MysqlService {
   async close(connectionString: string): Promise<void> {
     for (const conn of this.jobConnections.get(connectionString) ?? []) conn.destroy();
     this.jobConnections.delete(connectionString);
-    await this.disconnect(connectionString);
+    await this.disconnect(connectionString, "closed");
   }
 
   async closeAll(): Promise<void> {

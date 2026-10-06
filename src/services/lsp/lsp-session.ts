@@ -25,6 +25,9 @@ import { LspMessageDecoder, encodeMessage, type JsonRpcMessage } from "./lsp-pro
 import type { LanguageServerDefinition } from "./server-registry.ts";
 import { pathToFileUri } from "../../shared/lsp-uri.ts";
 import { killProcessTree } from "../windows-process-tree.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("lsp");
 
 /**
  * `stopping` is the polite handshake in `dispose()` and nothing else. It is a state rather
@@ -126,8 +129,13 @@ export class LspSession {
   /** Spawn the server and complete the initialize handshake. */
   static async start(options: LspSessionOptions): Promise<LspSession> {
     const session = new LspSession(options);
+    const startedAt = performance.now();
     await session.spawn();
     await session.initialize();
+    log.info(
+      `${options.definition.id} ready pid=${session.proc?.pid} root=${options.rootPath} ` +
+      `cmd=${options.command.join(" ")} init=${Math.round(performance.now() - startedAt)}ms`,
+    );
     return session;
   }
 
@@ -193,11 +201,23 @@ export class LspSession {
 
   private async watchExit(): Promise<void> {
     const code = (await this.proc?.exited) ?? null;
+    const before = this.state;
     // An exit during `dispose()`'s handshake is that handshake working, and it races the
     // assignment at the end of `dispose()` — so settle it here rather than reporting whichever
     // won as the session's final state.
     if (this.state === "stopping") this.state = "stopped";
     else if (this.state !== "stopped") this.state = "crashed";
+    const who = `${this.definition.id} pid=${this.proc?.pid}`;
+    const how = `(exit ${code}${this.proc?.signalCode ? ` ${this.proc.signalCode}` : ""})`;
+    if (this.state === "stopped") log.info(`${who} stopped ${how}`);
+    else if (before === "ready") {
+      // The tail, not the last line: Node and Bun end a crash with their own version banner.
+      const tail = this.stderrTail.replace(/\s+/g, " ").trim().slice(-300);
+      log.error(`${who} crashed ${how} root=${this.rootPath}${tail ? `: ${tail}` : ""}`);
+    }
+    // `fail()` killed it and said why, or it died starting up — which rejects `initialize`, and
+    // whoever started the session reports that, stderr included.
+    else log.debug(`${who} exited ${how} while ${before}`);
     this.rejectAllPending(
       new Error(
         `${this.definition.displayName} exited (code ${code}).` +
@@ -389,6 +409,11 @@ export class LspSession {
 
   private fail(reason: string): void {
     if (this.state === "stopped" || this.state === "stopping") return;
+    // Not when `watchExit` already reported the exit as a crash. And without the quoted output
+    // the decoder appends: after a desync that is part of a response body — a file's contents.
+    if (this.state !== "crashed") {
+      log.error(`${this.definition.id} pid=${this.proc?.pid} session failed: ${reason.replace(/:\s*".*$/s, "")}; killed`);
+    }
     this.state = "crashed";
     this.rejectAllPending(new Error(`${this.definition.displayName} session failed: ${reason}`));
     this.killProcess();

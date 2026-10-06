@@ -15,6 +15,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { recordFile, sessionDir } from "./session-file-baselines.service.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("session-review");
 
 export interface BlockAnswers {
   /** Absolute path. */
@@ -80,7 +83,8 @@ export function writeKeptBlocks(sessionId: string, filePath: string, baseHash: s
     return true;
   } catch (e) {
     rmSync(tmp, { force: true });
-    console.warn(`[session-review] block answers failed for ${path}: ${(e as Error).message}`);
+    // The caller answers "Could not save the answer" inside a 200: the user's answer is lost.
+    log.error(`block answers failed for ${path} (session ${sessionId}): ${(e as Error).message}`);
     return false;
   }
 }

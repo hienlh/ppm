@@ -5,7 +5,8 @@ import {
   PsSessionDisabledError,
   POWERSHELL_BOOTSTRAP,
 } from "../../../../src/services/system-metrics/powershell-session.ts";
-import { createFakeSpawner } from "./fixtures/fake-powershell-child.ts";
+import { createFakePsChild, createFakeSpawner, type FakePsChild } from "./fixtures/fake-powershell-child.ts";
+import type { Logger } from "../../../../src/services/logger.ts";
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
@@ -130,5 +131,66 @@ describe("PowerShellSession", () => {
     s.stop();
     expect(children[0]!.killed).toBe(true);
     expect(s.childPid()).toBeNull();
+  });
+});
+
+describe("PowerShellSession logging", () => {
+  function recordingLog() {
+    const lines: { level: string; text: string }[] = [];
+    const at = (level: string) => (...args: unknown[]) => { lines.push({ level, text: args.map(String).join(" ") }); };
+    const log: Logger = { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error"), fatal: at("fatal"), isEnabled: () => true };
+    return { log, lines };
+  }
+
+  test("each failure is a WARN with the reason, pid, budget and the child's last stderr; giving up is one ERROR", async () => {
+    const { log, lines } = recordingLog();
+    const children: FakePsChild[] = [];
+    const spawn = () => {
+      const c = createFakePsChild({ pid: 500 + children.length });
+      c.stderr = new ReadableStream<Uint8Array>({
+        start(ctl) { ctl.enqueue(new TextEncoder().encode("Get-CimInstance : Access\r\n    is denied.\r\n")); },
+      });
+      children.push(c);
+      return c;
+    };
+    const s = new PowerShellSession({ spawn, requestTimeoutMs: 5, maxRestarts: 1, log });
+    await expect(s.request("hang")).rejects.toThrow(/timed out/);
+    await expect(s.request("hang")).rejects.toThrow(/timed out/);
+    await expect(s.request("x")).rejects.toBeInstanceOf(PsSessionDisabledError);
+    await expect(s.request("y")).rejects.toBeInstanceOf(PsSessionDisabledError);
+
+    expect(lines.filter((l) => l.level === "warn").map((l) => l.text)).toEqual([
+      "PowerShell session failed: PowerShell request timed out after 5 ms pid=500 restarts=0/1: Get-CimInstance : Access is denied.",
+      "PowerShell session failed: PowerShell request timed out after 5 ms pid=501 restarts=1/1: Get-CimInstance : Access is denied.",
+    ]);
+    expect(lines.filter((l) => l.level === "error").map((l) => l.text)).toEqual([
+      "PowerShell collector disabled after 1 restarts",
+    ]);
+    expect(lines.filter((l) => l.level === "info").map((l) => l.text)).toEqual([
+      "PowerShell session started pid=500 reason=first",
+      "PowerShell session started pid=501 reason=restart",
+    ]);
+  });
+
+  test("an idle stop, the scheduled recycle and a resume are INFO lines, never failures", async () => {
+    const { log, lines } = recordingLog();
+    let now = 0;
+    const { spawn } = createFakeSpawner({ autoReply: () => "ok" });
+    const s = new PowerShellSession({ spawn, recycleAfterMs: 1000, now: () => now, log });
+    await s.request("a");
+    now = 1000;
+    await s.request("b");
+    s.stop();
+    s.stop(); // nothing running: nothing to say
+    await s.request("c");
+    s.stop();
+    expect(lines).toEqual([
+      { level: "info", text: "PowerShell session started pid=1000 reason=first" },
+      { level: "info", text: "PowerShell session stopped pid=1000" },
+      { level: "info", text: "PowerShell session started pid=1001 reason=recycle" },
+      { level: "info", text: "PowerShell session stopped pid=1001" },
+      { level: "info", text: "PowerShell session started pid=1002 reason=resume" },
+      { level: "info", text: "PowerShell session stopped pid=1002" },
+    ]);
   });
 });

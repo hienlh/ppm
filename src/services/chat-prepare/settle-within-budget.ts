@@ -1,3 +1,7 @@
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("chat-prepare");
+
 /**
  * Race a promise against a budget, without ever rejecting and without ever leaving the
  * original promise unhandled.
@@ -9,9 +13,11 @@
  * that rejects later counts as an unhandled rejection, and three of those in 60 seconds
  * exits the server (see `src/server/index.ts`). `fallback` covers both a timeout and a
  * genuine rejection — a caller that cannot tell the two apart from the outside is exactly
- * the point, since both mean "this part did not come back in time to trust it".
+ * the point, since both mean "this part did not come back in time to trust it". The log can:
+ * a timeout is expected here and says nothing, a rejection is a failure and is logged under
+ * `label`, the part's name.
  */
-export function settleWithinBudget<T, F>(promise: Promise<T>, budgetMs: number, fallback: F): Promise<T | F> {
+export function settleWithinBudget<T, F>(promise: Promise<T>, budgetMs: number, fallback: F, label = "part"): Promise<T | F> {
   return new Promise<T | F>((resolve) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -27,7 +33,8 @@ export function settleWithinBudget<T, F>(promise: Promise<T>, budgetMs: number, 
         clearTimeout(timer);
         resolve(value);
       },
-      () => {
+      (e) => {
+        log.warn(`${label} failed${settled ? " after its budget" : ""}: ${e instanceof Error ? e.message : String(e)}`);
         if (settled) return;
         settled = true;
         clearTimeout(timer);

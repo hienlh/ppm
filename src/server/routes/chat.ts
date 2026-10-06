@@ -44,6 +44,9 @@ import { pageHistory, parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("chat");
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -424,7 +427,7 @@ chatRoutes.post("/prewarm", async (c) => {
       accountId: typeof accountId === "string" ? accountId : undefined,
       opts,
     })
-    .catch((e) => console.warn(`[chat] prewarm failed: ${(e as Error).message}`));
+    .catch((e) => log.warn(`prewarm failed: ${(e as Error).message}`));
   return c.json(ok({ accepted: true }), 202);
 });
 
@@ -495,6 +498,7 @@ chatRoutes.delete("/sessions", async (c) => {
     );
 
     let deleted = 0;
+    let firstFailure: string | undefined;
     for (const s of toDelete) {
       try {
         await chatService.deleteSession(s.providerId ?? providerId, s.id);
@@ -507,11 +511,20 @@ chatRoutes.delete("/sessions", async (c) => {
         deleteSessionBaselines(s.id);
         try { draftService.delete(projectPath, s.id); } catch { /* ignore */ }
         deleted++;
-      } catch { /* skip individual failures */ }
+      } catch (e) {
+        // Skipped, as before. One WARN per failure would repeat for every session a single fault
+        // reaches, so each is DEBUG and the summary below says how many and the first one.
+        const msg = (e as Error).message;
+        log.debug(`bulk delete session=${s.id} failed: ${msg}`);
+        firstFailure ??= `session=${s.id}: ${msg}`;
+      }
     }
     // Clean up any orphaned drafts left behind
     try { draftService.deleteOrphaned(); } catch { /* ignore */ }
 
+    const summary = `bulk-deleted ${deleted}/${toDelete.length} sessions older than ${olderThanDays}d provider=${providerId} project=${c.get("projectName")}`;
+    if (firstFailure) log.warn(`${summary} — ${toDelete.length - deleted} failed, first ${firstFailure}`);
+    else log.info(summary);
     return c.json(ok({ deleted, total: toDelete.length }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -804,7 +817,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
             if (rootTitle) setSessionTitle(result.sessionId, rootTitle);
           }
         } catch (branchErr) {
-          console.warn(`[chat] recordBranch failed: ${(branchErr as Error).message}`);
+          log.warn(`recordBranch failed: ${(branchErr as Error).message}`);
         }
         const forkedSession = {
           id: result.sessionId,
@@ -821,7 +834,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         // Surface as 400 instead of silently creating an empty session — FE can show a toast
         // and let the user pick a different fork point.
         const msg = (forkErr as Error).message;
-        console.warn(`[chat] forkAtMessage failed: ${msg}`);
+        log.warn(`forkAtMessage failed: ${msg}`);
         return c.json(err(`Cannot fork at message: ${msg}`), 400);
       }
     } else {
@@ -1038,6 +1051,7 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     );
 
     const result = await stripTranscriptImagesFile(found.path, mode, { includeAttachments });
+    log.info(`session=${sessionId} stripped ${result.removed} images (${result.bytesFreed} B) mode=${mode} attachments=${includeAttachments}`);
     return c.json(ok({
       removed: result.removed,
       bytesFreed: result.bytesFreed,

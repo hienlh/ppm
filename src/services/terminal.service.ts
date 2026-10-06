@@ -1,6 +1,10 @@
 import type { Subprocess, Terminal as BunTerminal } from "bun";
 import { isUsableTerminalSize } from "../shared/terminal-size";
 import { withoutAiChatMark } from "./ai-chat-env.ts";
+import { createLogger } from "./logger.ts";
+
+/** PTY lifecycle only — never what is typed into a terminal or what it prints. */
+const log = createLogger("terminal");
 
 /** Max output buffer size per session (1MB — enough for ~20K lines) */
 const MAX_BUFFER_SIZE = 1024 * 1024;
@@ -22,7 +26,12 @@ export interface PtyHandle {
   resize(cols: number, rows: number): void;
   kill(): void;
   readonly closed: boolean;
+  /** The shell's pid, for the log. */
+  readonly pid?: number;
 }
+
+/** How a shell ended: an exit code, or the signal that ended it. */
+type ExitHandler = (code: number | null, signal: string | null) => void;
 
 /** Bun native PTY wrapper (macOS/Linux) */
 function spawnBunNative(
@@ -31,7 +40,7 @@ function spawnBunNative(
   cols: number,
   rows: number,
   onData: (text: string) => void,
-  onExit: () => void,
+  onExit: ExitHandler,
 ): PtyHandle {
   const decoder = new TextDecoder();
   const proc: Subprocess = Bun.spawn([shell, "-l"], {
@@ -47,7 +56,8 @@ function spawnBunNative(
     },
   });
   const terminal = proc.terminal!;
-  proc.exited.then(onExit);
+  // A signal death resolves as 128 + its number; the signal itself is the clearer answer.
+  proc.exited.then((code) => onExit(proc.signalCode ? null : code, proc.signalCode ?? null));
 
   let _closed = false;
   return {
@@ -62,6 +72,7 @@ function spawnBunNative(
     get closed() {
       return _closed || terminal.closed;
     },
+    pid: proc.pid,
   };
 }
 
@@ -72,7 +83,7 @@ function spawnBunPty(
   cols: number,
   rows: number,
   onData: (text: string) => void,
-  onExit: () => void,
+  onExit: ExitHandler,
 ): PtyHandle {
   // Dynamic import to avoid loading native binaries on non-Windows
   const { spawn } = require("@skitee3000/bun-pty");
@@ -85,7 +96,8 @@ function spawnBunPty(
   });
 
   pty.onData(onData);
-  pty.onExit(onExit);
+  pty.onExit((e: { exitCode?: number; signal?: number | string } | undefined) =>
+    onExit(e?.exitCode ?? null, e?.signal ? String(e.signal) : null));
 
   let _closed = false;
   return {
@@ -97,6 +109,7 @@ function spawnBunPty(
       try { pty.kill(); } catch { /* already dead */ }
     },
     get closed() { return _closed; },
+    pid: pty.pid,
   };
 }
 
@@ -143,6 +156,7 @@ export class TerminalService {
   create(projectPath: string, cols = 80, rows = 24): string {
     const id = crypto.randomUUID();
     const shell = getDefaultShell();
+    const createdAt = new Date();
 
     const onData = (text: string) => {
       this.appendBuffer(id, text);
@@ -150,7 +164,14 @@ export class TerminalService {
       const listener = this.outputListeners.get(id);
       if (listener) listener(id, text);
     };
-    const onExit = () => {
+    const onExit: ExitHandler = (code, signal) => {
+      const how = `${signal ? `signal=${signal}` : `code=${code ?? "?"}`} after ${Math.round((Date.now() - createdAt.getTime()) / 1000)}s`;
+      // Gone from the map: PPM killed it, and said why when it did.
+      if (!this.sessions.has(id)) log.debug(`session=${id} shell exited ${how} (killed by PPM)`);
+      else if (signal) log.error(`session=${id} shell died ${how}`);
+      // A shell exits with its last command's status, so non-zero is worth a look but not a failure.
+      else if (code !== 0) log.warn(`session=${id} shell exited ${how}`);
+      else log.info(`session=${id} shell exited ${how}`);
       const listener = this.outputListeners.get(id);
       if (listener) {
         listener(id, "\r\n[Process exited]\r\n");
@@ -161,12 +182,13 @@ export class TerminalService {
     const pty = isWindows
       ? spawnBunPty(shell, projectPath, cols, rows, onData, onExit)
       : spawnBunNative(shell, projectPath, cols, rows, onData, onExit);
+    log.info(`session=${id} spawned pid=${pty.pid ?? "?"} shell=${shell} cwd=${projectPath} ${cols}x${rows}`);
 
     const session: TerminalSession = {
       id,
       pty,
       projectPath,
-      createdAt: new Date(),
+      createdAt,
       ws: null,
       disconnectTimer: null,
       idleTimer: this.createIdleTimer(id),
@@ -294,8 +316,16 @@ export class TerminalService {
     session.idleTimer = this.createIdleTimer(id);
 
     session.disconnectTimer = setTimeout(() => {
-      this.kill(id);
+      this.expire(id, "grace");
     }, RECONNECT_GRACE_MS);
+  }
+
+  /** A timer ran out: say which one, then kill. */
+  private expire(id: string, reason: "idle" | "grace"): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    log.info(`session=${id} killed reason=${reason} pid=${session.pty.pid ?? "?"}`);
+    this.kill(id);
   }
 
   /** Append to circular output buffer (max 10KB) */
@@ -311,7 +341,7 @@ export class TerminalService {
   /** Create idle timeout — kills session after IDLE_TIMEOUT_MS */
   private createIdleTimer(id: string): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
-      this.kill(id);
+      this.expire(id, "idle");
     }, IDLE_TIMEOUT_MS);
   }
 

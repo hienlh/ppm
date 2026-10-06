@@ -32,6 +32,9 @@
  */
 import { detectLinuxSession } from "./remote-desktop-linux-session.ts";
 import { asPointer, getX11, type X11Connection } from "./remote-desktop-x11.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 /** `RR_Connected` from `randr.h`. */
 const RR_CONNECTED = 0;
@@ -287,11 +290,14 @@ export async function setHostResolution(
       );
       x.x11.XSync(x.dpy, 0);
       if (status !== SET_CONFIG_SUCCESS) {
+        log.warn(`X refused mode=${modeId} status=${status}`);
         // Put the container back, or the desktop keeps a dead strip the CRTC never filled.
         if (plan.grow) setScreen(oldWidth, oldHeight);
         return fail(`The X server refused the mode (status ${status}).`);
       }
       setScreen(plan.final.width, plan.final.height);
+      // The host's own screen changes under whoever sits at it — the one switch worth a line.
+      log.info(`host resolution ${oldWidth}x${oldHeight} -> ${target.width}x${target.height} mode=${modeId}`);
       return { ok: true, width: target.width, height: target.height, error: null };
     } finally {
       x.xrandr.XRRFreeOutputInfo(asPointer(active.info));

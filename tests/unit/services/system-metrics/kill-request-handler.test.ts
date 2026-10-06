@@ -14,6 +14,8 @@ const ROWS = [
 
 function deps(over: Partial<KillHandlerDeps> = {}) {
   const log: string[] = [];
+  const levels: string[] = [];
+  const at = (level: string) => (line: unknown) => { log.push(String(line)); levels.push(level); };
   const executed: Array<[number, boolean]> = [];
   const collector: ProcessCollector = { collect: async () => ({ rows: ROWS, warnings: [] }), stop: () => {} };
   const d: KillHandlerDeps = {
@@ -21,10 +23,10 @@ function deps(over: Partial<KillHandlerDeps> = {}) {
     collector,
     resolveProtected: () => ({ pids: new Set([3100, 3000]), roots: new Set([3100, 3000]), selfPid: 3100 }),
     execute: async (pid, tree) => { executed.push([pid, tree]); return { pid, tree, method: "taskkill", killed: [pid] }; },
-    log: (l) => log.push(l),
+    log: { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error"), fatal: at("fatal"), isEnabled: () => true },
     ...over,
   };
-  return { d, log, executed };
+  return { d, log, levels, executed };
 }
 
 describe("parseKillRequest", () => {
@@ -71,11 +73,12 @@ describe("handleKillRequest", () => {
   });
 
   test("403 for the server, for an OS-critical name and for an ancestor; reason in the body", async () => {
-    const { d, log } = deps();
+    const { d, log, levels } = deps();
     expect((await handleKillRequest({ pid: 3100, startedAt: 11 }, d)).status).toBe(403);
     expect((await handleKillRequest({ pid: 900, startedAt: 5 }, d)).body.error).toBe("svchost is an OS-critical process");
     expect((await handleKillRequest({ pid: 3000, startedAt: 10, tree: true }, d)).status).toBe(403);
     expect(log.every((l) => l.includes("refused"))).toBe(true);
+    expect(levels).toEqual(["warn", "warn", "warn"]);
   });
 
   test("the guard runs on the FRESH name, not anything the client sent", async () => {
@@ -85,7 +88,7 @@ describe("handleKillRequest", () => {
   });
 
   test("200 executes with the requested tree flag and logs pid + name + result only — never the command line", async () => {
-    const { d, log, executed } = deps();
+    const { d, log, levels, executed } = deps();
     const r = await handleKillRequest({ pid: 4000, startedAt: 20, tree: true }, d);
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ ok: true, data: { pid: 4000, tree: true, method: "taskkill", killed: [4000] } });
@@ -93,6 +96,8 @@ describe("handleKillRequest", () => {
     expect(log.join("\n")).not.toContain("SECRET");
     expect(log.join("\n")).not.toContain("--token");
     expect(log[0]).toContain("pid=4000 name=notepad tree=true");
+    // The decision is a DEBUG line; what happened to the process is the INFO one.
+    expect(levels).toEqual(["debug", "info"]);
   });
 
   test("PPM's own descendant is killable", async () => {
@@ -101,9 +106,11 @@ describe("handleKillRequest", () => {
   });
 
   test("500 when the executor throws, with the message in the body", async () => {
-    const { d } = deps({ execute: async () => { throw new Error("taskkill: access denied"); } });
+    const { d, log, levels } = deps({ execute: async () => { throw new Error("taskkill: access denied"); } });
     const r = await handleKillRequest({ pid: 4000, startedAt: 20 }, d);
     expect(r.status).toBe(500);
     expect(r.body.error).toContain("access denied");
+    expect(levels).toEqual(["debug", "error"]);
+    expect(log[1]).toContain("failed: taskkill: access denied");
   });
 });

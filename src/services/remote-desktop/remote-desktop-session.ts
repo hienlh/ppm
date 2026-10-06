@@ -14,7 +14,7 @@ import {
 } from "../../shared/remote-desktop-custom-quality.ts";
 import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
-import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable, releaseRemoteInput } from "./remote-desktop-input.ts";
+import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable, releaseRemoteInput, getInputBackend } from "./remote-desktop-input.ts";
 import { resolveDisplay, type RemoteDisplay } from "./remote-desktop-displays.ts";
 import { startRelay, type RelayHandle } from "./mediamtx-process.ts";
 import { findMediamtxBinary } from "./mediamtx-paths.ts";
@@ -28,6 +28,9 @@ import {
   type AdaptiveState, type QualityPresetId,
   type QualityPreset,
 } from "./remote-desktop-quality.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 /** Minimal socket surface this module needs — matches Bun's `ServerWebSocket` shape closely
  *  enough to be faked in a unit test without a real connection. */
@@ -118,6 +121,14 @@ export class RemoteDesktopSession {
   /** The mode that was live when this session first changed it, so teardown can put it back.
    *  Set once and never overwritten: after two switches the *first* value is the user's own. */
   private originalModeId: string | null = null;
+  /** For the duration on the closing log line. */
+  private readonly startedAt = Date.now();
+  /** Message types whose failure this session has already logged at WARN. One missing injector
+   *  fails every pointer event, so a repeat goes to DEBUG rather than burying the log. */
+  private readonly failedMessageTypes = new Set<string>();
+  /** The last error `restartCapture` logged, so the message that asked for the respawn does not
+   *  log the same failure a second time on its way out. */
+  private loggedRespawnError: unknown = null;
 
   constructor(
     private readonly ws: RemoteDesktopSocket,
@@ -137,8 +148,18 @@ export class RemoteDesktopSession {
     return this.captureExited;
   }
 
+  /** The current grabber's pid, for log lines; null before the first capture starts. */
+  get capturePid(): number | null {
+    return this.capture?.pid ?? null;
+  }
+
+  /** Which transport the stream actually took — a relay that would not start falls back. */
+  get transport(): "webrtc" | "ws" {
+    return this.relay ? "webrtc" : "ws";
+  }
+
   async start(): Promise<void> {
-    await this.beginCapture();
+    await this.beginCapture("start");
     this.heartbeatTimer = setInterval(() => this.onHeartbeatTick(), HEARTBEAT_INTERVAL_MS);
   }
 
@@ -170,7 +191,7 @@ export class RemoteDesktopSession {
     return { fps: DEFAULT_FPS, bitrate: ratioBitrateArg(ratio, width, height) };
   }
 
-  private async beginCapture(): Promise<void> {
+  private async beginCapture(startReason: string): Promise<void> {
     const generation = ++this.captureGeneration;
     let resolveExit!: () => void;
     this.captureExited = new Promise<void>((resolve) => { resolveExit = resolve; });
@@ -181,6 +202,7 @@ export class RemoteDesktopSession {
       display: this.display,
       preset: this.effectivePreset(),
       drawMouse: this.drawMouse,
+      reason: startReason,
       ...(this.encoder ? { encoder: this.encoder } : {}),
       // Exactly one of these. With a relay the encoded stream leaves over RTSP and this socket
       // carries only control, so there are no access units to frame.
@@ -199,7 +221,7 @@ export class RemoteDesktopSession {
           if (reason) {
             try { this.ws.send(JSON.stringify({ type: "error", message: `Capture failed: ${reason}` })); } catch { /* closing anyway */ }
           }
-          this.close();
+          this.close("capture-exit");
         }
       },
     });
@@ -227,7 +249,7 @@ export class RemoteDesktopSession {
       this.whepTicket = registerWhepTarget(this.relay.whepUrl);
       return this.relay.publishUrl;
     } catch (e) {
-      console.warn(`[remote-desktop] WebRTC relay unavailable, using the WebSocket path: ${(e as Error).message}`);
+      log.warn(`WebRTC relay unavailable, using the WebSocket path: ${(e as Error).message}`);
       this.relay = null;
       return null;
     }
@@ -263,7 +285,7 @@ export class RemoteDesktopSession {
    *
    *  Sequential on purpose — two grabbers on one display contend (see the note on
    *  `createRemoteDesktopSession`), so the ~400ms gap is accepted rather than overlapped. */
-  private async restartCapture(mutate: () => void): Promise<boolean> {
+  private async restartCapture(reason: string, mutate: () => void): Promise<boolean> {
     if (this.closed || this.switchingPreset) return false;
     this.switchingPreset = true;
     try {
@@ -274,11 +296,18 @@ export class RemoteDesktopSession {
       // and tears down the whole session on every quality change.
       this.captureGeneration++;
       const previous = this.captureExited;
+      const previousPid = this.capture?.pid;
       this.capture?.stop();
-      await Promise.race([previous, Bun.sleep(2000)]);
+      if (!(await exitedWithin(previous, 2000))) {
+        log.warn(`previous capture pid=${previousPid ?? "?"} still running after 2s; starting anyway`);
+      }
       if (this.closed) return false;
-      await this.beginCapture();
+      await this.beginCapture(`respawn:${reason}`);
       return true;
+    } catch (e) {
+      log.error(`capture respawn failed reason=${reason}: ${(e as Error)?.message ?? e}`);
+      this.loggedRespawnError = e;
+      throw e;
     } finally {
       this.switchingPreset = false;
     }
@@ -288,7 +317,7 @@ export class RemoteDesktopSession {
    *  message is also what makes its decoder reconfigure. */
   private async applyPreset(next: QualityPresetId): Promise<void> {
     if (next === this.presetId && this.ratioScale === 1) return;
-    const restarted = await this.restartCapture(() => {
+    const restarted = await this.restartCapture("quality", () => {
       this.presetId = next;
       // Picking a rung is an explicit statement about bandwidth, so it also clears whatever
       // congestion had held back — otherwise choosing "Good image quality" on a link that has
@@ -304,7 +333,7 @@ export class RemoteDesktopSession {
    *  encoded frame is thrown away. */
   private async applyRatioScale(scale: number): Promise<void> {
     if (scale === this.ratioScale) return;
-    const restarted = await this.restartCapture(() => {
+    const restarted = await this.restartCapture(`adaptive scale=${scale.toFixed(2)}`, () => {
       this.ratioScale = scale;
       this.adaptive = initialAdaptiveState(Date.now());
     });
@@ -331,7 +360,7 @@ export class RemoteDesktopSession {
         this.send({ type: "resolutionError", message: result.error ?? "The host refused the mode." });
         return;
       }
-      await this.restartCapture(() => { /* geometry is read fresh by `beginCapture` */ });
+      await this.restartCapture("resolution", () => { /* geometry is read fresh by `beginCapture` */ });
       // Read back rather than echoing `result`: the picker must tick what the host is really
       // doing, and X is free to have landed on something else.
       await this.sendResolution();
@@ -452,11 +481,32 @@ export class RemoteDesktopSession {
     this.lastPingAt = Date.now();
   }
 
+  /** Never rejects. The socket handler's promise is dropped by the server, so a rejection here
+   *  would be an unhandled one — a failed inject on a view-only host, a respawn that could not
+   *  start — and three of those in a minute exit the whole server. */
   async handleClientMessage(raw: string): Promise<void> {
     let msg: Record<string, unknown>;
     try { msg = JSON.parse(raw); } catch { return; }
+    try {
+      await this.handleMessage(msg);
+    } catch (e) {
+      this.logMessageFailure(msg, e);
+    }
+  }
+
+  /** The type and the error only — never the message, which can carry clipboard text or keys. */
+  private logMessageFailure(msg: unknown, e: unknown): void {
+    if (e === this.loggedRespawnError) return; // `restartCapture` has already said why
+    const type = typeof (msg as { type?: unknown } | null)?.type === "string" ? (msg as { type: string }).type : "unknown";
+    const line = `${type} message failed: ${(e as Error)?.message ?? e}`;
+    if (this.failedMessageTypes.has(type)) { log.debug(line); return; }
+    this.failedMessageTypes.add(type);
+    log.warn(line);
+  }
+
+  private async handleMessage(msg: Record<string, unknown>): Promise<void> {
     if (msg.type === "ping") { this.noteClientAlive(); return; }
-    if (msg.type === "stop") { this.close(); return; }
+    if (msg.type === "stop") { this.close("client-stop"); return; }
     if (msg.type === "quality") {
       // RustDesk's custom rung: a bitrate percentage and an fps, both re-clamped here because
       // they arrive off the wire from a device whose localStorage the user can edit. `More` is
@@ -469,7 +519,7 @@ export class RemoteDesktopSession {
           fps: clampCustomFps(fps),
         };
         if (this.custom && this.custom.percent === next.percent && this.custom.fps === next.fps) return;
-        const restarted = await this.restartCapture(() => {
+        const restarted = await this.restartCapture("custom-quality", () => {
           this.custom = next;
           // Typed numbers replace whatever congestion had held back, the same as a named rung.
           this.ratioScale = 1;
@@ -490,7 +540,7 @@ export class RemoteDesktopSession {
         if (chosen === this.presetId) {
           // Same rung id as before custom: `applyPreset` would early-return and the capture
           // would keep running with `leaving`'s numbers.
-          const restarted = await this.restartCapture(() => {
+          const restarted = await this.restartCapture("quality", () => {
             this.ratioScale = 1;
             this.adaptive = initialAdaptiveState(Date.now());
           });
@@ -520,7 +570,7 @@ export class RemoteDesktopSession {
       const { encoder } = msg as { encoder?: unknown };
       if (typeof encoder !== "string" || encoder === this.encoder) return;
       if (!(await workingEncoders()).includes(encoder)) return;
-      const restarted = await this.restartCapture(() => { this.encoder = encoder; });
+      const restarted = await this.restartCapture("codec", () => { this.encoder = encoder; });
       if (restarted) this.sendCodec();
       return;
     }
@@ -536,7 +586,7 @@ export class RemoteDesktopSession {
       // (which `auto` lets the *session* change), nothing here moves it but the client.
       const { show } = msg as { show?: unknown };
       if (typeof show !== "boolean" || show === this.drawMouse) return;
-      await this.restartCapture(() => { this.drawMouse = show; });
+      await this.restartCapture("cursor", () => { this.drawMouse = show; });
       return;
     }
     // Both clipboard directions sit *above* the input gate: moving text is not input
@@ -631,9 +681,12 @@ export class RemoteDesktopSession {
     await releaseAllModifiers();
   }
 
-  close(): void {
+  /** `reason` says which of the six ways in this was: the client's stop, a missed heartbeat,
+   *  the capture dying, eviction by a newer session, the socket closing, or process shutdown. */
+  close(reason: string): void {
     if (this.closed) return;
     this.closed = true;
+    log.info(`session closed reason=${reason} duration=${Math.round((Date.now() - this.startedAt) / 1000)}s`);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.capture?.stop();
     // Relay after capture: the publisher should go first so MediaMTX sees a clean disconnect.
@@ -653,7 +706,13 @@ export class RemoteDesktopSession {
     if (this.originalModeId !== null) {
       const restore = this.originalModeId;
       this.originalModeId = null;
-      setHostResolution(restore).catch(() => {});
+      setHostResolution(restore)
+        .then((r) => {
+          // The switch itself is already an INFO line from `setHostResolution`.
+          if (r.ok) log.debug(`restored host resolution ${r.width}x${r.height}`);
+          else log.error(`failed to restore host resolution mode=${restore}: ${r.error}`);
+        })
+        .catch((e) => log.error(`failed to restore host resolution mode=${restore}: ${(e as Error)?.message ?? e}`));
     }
     activeSessions.delete(this);
     // The uinput virtual devices are per *process*, not per session, so a Wayland host was left
@@ -671,8 +730,8 @@ export class RemoteDesktopSession {
    *  events at all, so there is nothing else to hang "things have been fine for a while" on. */
   private onHeartbeatTick(): void {
     if (Date.now() - this.lastPingAt > HEARTBEAT_TIMEOUT_MS) {
-      console.warn("[remote-desktop] heartbeat timeout — tearing down session");
-      this.close();
+      log.warn("heartbeat timeout — tearing down session");
+      this.close("heartbeat-timeout");
       return;
     }
     this.considerRatioScale();
@@ -685,7 +744,13 @@ export class RemoteDesktopSession {
     // a third of it would make the dialog lie about what the host is doing.
     if (this.custom) return;
     const next = nextRatioScale(this.ratioScale, this.adaptive, Date.now());
-    if (next !== null) void this.applyRatioScale(next);
+    // Nobody awaits this, so a respawn that cannot start would otherwise be an unhandled
+    // rejection — on the same counter that exits the server at three a minute.
+    if (next !== null) {
+      void this.applyRatioScale(next).catch((e) => {
+        if (e !== this.loggedRespawnError) log.error(`adaptive respawn failed scale=${next.toFixed(2)}: ${(e as Error)?.message ?? e}`);
+      });
+    }
   }
 
   private handleAccessUnit(au: AccessUnit, generation: number): void {
@@ -753,16 +818,32 @@ export async function createRemoteDesktopSession(
   { displayId, showCursor = true, encoder, webrtc = false }: CreateRemoteDesktopSessionOptions = {},
 ): Promise<RemoteDesktopSession> {
   for (const existing of [...activeSessions]) {
-    existing.close();
-    await Promise.race([existing.exited, Bun.sleep(2000)]);
+    existing.close("evicted");
+    if (!(await exitedWithin(existing.exited, 2000))) {
+      log.warn(`previous capture pid=${existing.capturePid ?? "?"} still running after 2s; starting anyway`);
+    }
   }
   const usable = encoder && (await workingEncoders()).includes(encoder) ? encoder : null;
+  const display = await resolveDisplay(displayId);
   const session = new RemoteDesktopSession(
-    ws, await resolveDisplay(displayId), showCursor, usable, webrtc,
+    ws, display, showCursor, usable, webrtc,
   );
   await session.start();
   activeSessions.add(session);
+  // Which encoder ran and whether the client's request was dropped (a device-local pref
+  // naming another host's GPU encoder) — the encoder actually chosen is on `capture started`.
+  // The request is the client's own string, so it is quoted and cut rather than trusted.
+  log.info(
+    `session started display=${display?.id ?? "default"} transport=${session.transport} encoder=${usable ?? "auto"} ` +
+    `requested=${encoder === undefined ? "none" : JSON.stringify(encoder.slice(0, 40))} preset=${DEFAULT_PRESET_ID} ` +
+    `cursor=${showCursor} input=${getInputBackend()?.id ?? "none"}`,
+  );
   return session;
+}
+
+/** True once `exited` settles, false if `ms` passes first. */
+function exitedWithin(exited: Promise<void>, ms: number): Promise<boolean> {
+  return Promise.race([exited.then(() => true), Bun.sleep(ms).then(() => false)]);
 }
 
 /** Process-exit sweep so ffmpeg never outlives a server crash/exit — a clean WS close or an
@@ -772,7 +853,7 @@ let sweepRegistered = false;
 export function registerRemoteDesktopExitSweep(): void {
   if (sweepRegistered) return;
   sweepRegistered = true;
-  const sweep = () => { for (const s of [...activeSessions]) s.close(); };
+  const sweep = () => { for (const s of [...activeSessions]) s.close("shutdown"); };
   process.on("exit", sweep);
   process.on("SIGINT", sweep);
   process.on("SIGTERM", sweep);

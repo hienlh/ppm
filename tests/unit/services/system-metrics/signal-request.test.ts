@@ -112,8 +112,10 @@ describe("handleSignalRequest", () => {
   const harness = (over: Record<string, unknown> = {}) => {
     const executed: unknown[] = [];
     const logs: string[] = [];
+    const levels: string[] = [];
+    const at = (level: string) => (line: unknown) => { logs.push(String(line)); levels.push(level); };
     return {
-      executed, logs,
+      executed, logs, levels,
       deps: {
         platform: "linux" as const,
         collector: { collect: async () => ({ rows, warnings: [] }), stop: () => {} },
@@ -123,7 +125,7 @@ describe("handleSignalRequest", () => {
           return { pid, signal, tree, method: "signal" as const, signalled: [pid] };
         },
         supported: supportedSignals("linux"),
-        log: (l: string) => { logs.push(l); },
+        log: { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error"), fatal: at("fatal"), isEnabled: () => true },
         ...over,
       },
     };
@@ -160,6 +162,7 @@ describe("handleSignalRequest", () => {
     expect(r.status).toBe(403);
     expect(h.executed).toEqual([]);
     expect(h.logs.some((l) => l.includes("refused"))).toBe(true);
+    expect(h.levels).toEqual(["warn"]);
   });
 
   test("SIGSTOP on an OS-critical process is refused as firmly as a kill would be", async () => {
@@ -175,6 +178,7 @@ describe("handleSignalRequest", () => {
     expect(h.executed).toEqual([[400, "USR1", true]]);
     expect(h.logs.join("\n")).toContain("signal=USR1 pid=400 name=vim tree=true");
     expect(h.logs.join("\n")).not.toContain("command");
+    expect(h.levels).toEqual(["debug", "info"]);
   });
 
   test("an executor failure is a 500 carrying the reason", async () => {
@@ -182,5 +186,6 @@ describe("handleSignalRequest", () => {
     const r = await handleSignalRequest({ pid: 400, startedAt: 20, signal: "TERM" }, h.deps as never);
     expect(r.status).toBe(500);
     expect(JSON.stringify(r.body)).toContain("EPERM");
+    expect(h.levels).toEqual(["debug", "error"]);
   });
 });

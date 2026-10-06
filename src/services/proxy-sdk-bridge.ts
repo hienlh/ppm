@@ -84,7 +84,7 @@ export async function forwardViaSdk(
   const { prompt, systemPrompt } = buildPromptFromBody(body);
   const env = buildSdkEnv(account.accessToken);
 
-  console.log(`[proxy-sdk] ${stream ? "stream" : "non-stream"} → ${model} via account ${account.email ?? account.id}`);
+  console.log(`[proxy-sdk] ${stream ? "stream" : "non-stream"} → ${model} via account ${account.id}`);
 
   if (!stream) {
     return handleNonStreaming(prompt, systemPrompt, model, env, body, account);

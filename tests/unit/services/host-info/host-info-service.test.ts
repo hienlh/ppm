@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   buildHostInfo,
   getHostInfo,
@@ -179,5 +179,39 @@ describe("getHostInfo cache", () => {
     };
     await Promise.all([getHostInfo({}, overrides), getHostInfo({}, overrides), getHostInfo({}, overrides)]);
     expect(calls).toBe(1);
+  });
+});
+
+describe("getHostInfo warnings in the server log", () => {
+  test("a build's warnings are logged once, and again only when they change", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let failing = true;
+      const overrides = {
+        getDrives: async (_platform: NodeJS.Platform, warnings: string[]) => {
+          if (failing) warnings.push("drives: findmnt failed (boom), falling back to /proc/mounts");
+          return [];
+        },
+        getKnownFolders: noKnownFolders,
+        getPinned: noPinned,
+        isDirectory: async () => true,
+      };
+      const build = async () => {
+        _resetHostInfoCache();
+        await getHostInfo({}, overrides);
+      };
+      await build();
+      await build(); // the same warning again: nothing new to say
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        "[host-info] host info built with 1 warnings: drives: findmnt failed (boom), falling back to /proc/mounts",
+      ]);
+      failing = false;
+      await build();
+      failing = true;
+      await build(); // back after a clean build: worth saying again
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

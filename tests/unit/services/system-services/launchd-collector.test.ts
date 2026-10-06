@@ -1,5 +1,5 @@
 /** The Services page on macOS: listing, details and actions through `launchctl`, faked. */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RunResult } from "../../../../src/services/host-info/spawn-runner.ts";
@@ -277,6 +277,24 @@ describe("details", () => {
 
   test("a label launchd does not know is nothing, not an error", async () => {
     expect(await backend().b.details("com.example.gone", "user")).toBeNull();
+  });
+
+  test("a launchctl that fails for another reason is still a null, and says why in the log", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { b } = backend((argv) =>
+        argv[1] === "print" && argv[2] === "gui/501/com.example.wedged" ? { stdout: "", stderr: "", code: null, timedOut: true } : undefined);
+      expect(await b.details("com.example.wedged", "user")).toBeNull();
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        expect.stringContaining("launchctl print user/com.example.wedged failed:"),
+      ]);
+      // An unknown label is the ordinary 404, not something to log.
+      warn.mockClear();
+      expect(await b.details("com.example.gone", "user")).toBeNull();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

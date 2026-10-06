@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, spyOn } from "bun:test";
 import {
   parseResponders,
   buildRouterPrompt,
@@ -101,5 +101,18 @@ describe("makeResponderRouter", () => {
     const { backend } = fakeBackend([{ type: "text", content: "NONE" }, { type: "done" }]);
     const route = makeResponderRouter(backend, "claude", "router-sess");
     expect(await route({ history: history(), members: MEMBERS, isUserTurn: false })).toEqual([]);
+  });
+  it("logs a failing router once per burst instead of before every turn", async () => {
+    const { backend } = fakeBackend([], { throws: true });
+    const route = makeResponderRouter(backend, "claude", "router-sess");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await route({ history: history(), members: MEMBERS, isUserTurn: false })).toEqual([]);
+      expect(await route({ history: history(), members: MEMBERS, isUserTurn: false })).toEqual([]);
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("router failed"));
+      expect(lines).toEqual(["[group-chat] router failed session=router-sess: boom — falling back"]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

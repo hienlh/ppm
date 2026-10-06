@@ -1,6 +1,9 @@
 import { resolve } from "node:path";
 import { existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("cloudflared");
 
 const isWindows = process.platform === "win32";
 const cloudflaredDir = () => resolve(getPpmDir(), "bin");
@@ -36,6 +39,10 @@ async function downloadWithProgress(url: string): Promise<Buffer> {
 
   const chunks: Uint8Array[] = [];
   let downloaded = 0;
+  // A progress bar is for a terminal. Under the supervisor or the server stdout is ppm.log or
+  // the journal, where the `\r` frames run together into one long line.
+  const tty = !!process.stdout.isTTY;
+  let loggedTenths = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -44,10 +51,15 @@ async function downloadWithProgress(url: string): Promise<Buffer> {
     downloaded += value.byteLength;
     if (totalBytes > 0) {
       const pct = Math.round((downloaded / totalBytes) * 100);
-      process.stdout.write(`\r  Downloading cloudflared... ${pct}%`);
+      if (tty) {
+        process.stdout.write(`\r  Downloading cloudflared... ${pct}%`);
+      } else if (Math.floor(pct / 10) > loggedTenths) {
+        loggedTenths = Math.floor(pct / 10);
+        log.debug(`Downloading cloudflared... ${pct}%`);
+      }
     }
   }
-  process.stdout.write("\n");
+  if (tty) process.stdout.write("\n");
   return Buffer.concat(chunks);
 }
 
@@ -79,8 +91,12 @@ export async function ensureCloudflared(): Promise<string> {
   const isExe = url.endsWith(".exe");
   const tmpPath = resolve(cloudflaredDir(), isTgz ? "cloudflared.tgz" : isExe ? "cloudflared.exe.tmp" : "cloudflared.tmp");
 
+  log.info(`cloudflared missing — downloading ${url}`);
+  const startedAt = Date.now();
+  let bytes = 0;
   try {
     const data = await downloadWithProgress(url);
+    bytes = data.byteLength;
     await Bun.write(tmpPath, data);
 
     if (isTgz) {
@@ -98,6 +114,7 @@ export async function ensureCloudflared(): Promise<string> {
     throw err;
   }
 
+  log.info(`cloudflared installed at ${cloudflaredPath()} (${(bytes / 1048576).toFixed(1)} MB, ${Date.now() - startedAt}ms)`);
   return cloudflaredPath();
 }
 

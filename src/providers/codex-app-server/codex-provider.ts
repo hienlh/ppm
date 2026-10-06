@@ -23,6 +23,8 @@ import {
   getCodexAccountUsage,
   codexUsageLevel,
   type CodexAccount,
+  CodexDailyGuardError,
+  CodexSignedOutError,
 } from "../../services/codex-account.service.ts";
 import { dailyGuardMessage, dailyGuardState } from "../../shared/codex-daily-guard.ts";
 import { isCodexAccountUsageLimited, markCodexAccountUsageLimited } from "../../services/codex-account-cooldown.ts";
@@ -33,7 +35,7 @@ import {
 } from "../../services/codex-account-auth-state.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
 import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
@@ -65,6 +67,10 @@ import type {
   CodexSkill,
 } from "./codex-protocol.ts";
 import { parseSkillList } from "./codex-skill-parser.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("codex");
+const usageLog = createLogger("usage");
 
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
 
@@ -304,6 +310,12 @@ function missingRolloutError(sessionId: string): Error {
   return new Error(`Cannot resume Codex session ${sessionId}: its transcript was not found in the available account homes for this project. Restore the original account/transcript and retry, or explicitly open a new chat.`);
 }
 
+/** An error as a log line may show it. The signed-out message names account labels, which are often emails. */
+function loggableError(err: unknown): string {
+  if (err instanceof CodexSignedOutError) return "every enabled Codex account is signed out";
+  return redactTruncate((err as Error)?.message ?? String(err), 200);
+}
+
 /** Human label for an approval prompt (dormant in MVP under default bypass). */
 function approvalToolLabel(method: string, params: unknown): string {
   const p = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
@@ -355,6 +367,8 @@ export class CodexAppServerProvider implements AIProvider {
    *  instead of starting its own app-server. Without it, `/chat/prepare`'s 400ms slash
    *  budget left a cold cache spawning one app-server per concurrent request. */
   private skillsPending = new Map<string, Promise<CodexSkill[]>>();
+  /** model/list and skills/list fail again on every picker open, so each is a WARN once a minute. */
+  private listFailureWarned = new Map<string, { at: number; suppressed: number }>();
 
   private get config() {
     try { return configService.get("ai").providers["codex"] ?? null; } catch { return null; }
@@ -443,6 +457,9 @@ export class CodexAppServerProvider implements AIProvider {
       try {
         live = await this.connect(sessionId, opts);
       } catch (err) {
+        // Only a chat socket sees the error event below; every other origin needs this line.
+        if (err instanceof CodexDailyGuardError) log.warn(`session=${sessionId} connect refused by daily guard`);
+        else log.error(`session=${sessionId} connect failed: ${loggableError(err)}`);
         this.abortQuery(sessionId, "connect_failed");
         yield { type: "error", message: redactTruncate((err as Error)?.message ?? String(err), 512) };
         yield { type: "done", sessionId, resultSubtype: "error_during_execution" };
@@ -507,6 +524,7 @@ export class CodexAppServerProvider implements AIProvider {
     const guardError = await this.dailyGuardError(live);
     live.checkingDailyGuard = false;
     if (guardError) {
+      log.warn(`session=${live.threadId} turn refused by daily guard account=${getSessionCodexAccount(live.threadId) ?? "ambient"}`);
       live.channel.push({ type: "error", message: guardError });
       live.channel.push({ type: "done", sessionId: live.threadId, resultSubtype: "error_during_execution" });
       this.endTurn(live);
@@ -644,7 +662,7 @@ export class CodexAppServerProvider implements AIProvider {
       live.transcript.push({ id: nextRolloutId(live), role: "user", content: item.message, timestamp: new Date().toISOString() });
     }).catch((err) => {
       if (live.client.isClosed) return;
-      console.warn(`[codex] session=${live.threadId} steer refused, sending as its own turn: ${redactTruncate((err as Error)?.message ?? String(err), 200)}`);
+      log.warn(`session=${live.threadId} steer refused, sending as its own turn: ${redactTruncate((err as Error)?.message ?? String(err), 200)}`);
       const retry: QueuedTurn = { ...item, priority: "later" };
       // `later` so it is not steered straight back into a turn that just refused it; the
       // head of the queue because it was sent before anything waiting there.
@@ -687,7 +705,10 @@ export class CodexAppServerProvider implements AIProvider {
       (a) => a.status !== "disabled" && a.id !== currentId
         && !isCodexAccountUsageLimited(a.id) && !isCodexAccountAuthFailed(a.id),
     );
-    if (candidates.length === 0) return false;
+    if (candidates.length === 0) {
+      log.error(`session=${threadId} turn failed: ${kind === "auth" ? "signed out" : "usage limit"} on account ${currentId ?? "ambient"}, nothing to rotate to`);
+      return false;
+    }
     live.rotating = true;
     void this.rotateAccount(live, threadId, currentId, reason, kind);
     return true;
@@ -751,9 +772,14 @@ export class CodexAppServerProvider implements AIProvider {
       next = selectCodexAccount(currentId ? { exclude: [currentId] } : undefined);
     }
 
-    if (!next) { giveUp(); return; }
+    if (!next) {
+      log.error(`session=${threadId} turn failed: ${kind === "auth" ? "signed out" : "usage limit"} on account ${currentId ?? "ambient"}, nothing to rotate to`);
+      giveUp();
+      return;
+    }
 
-    console.warn(`[codex] session=${threadId} ${kind === "auth" ? "account signed out" : "usage limit"} — switching to ${next.id} (${next.label})`);
+    // By id only: a label defaults to the account's ChatGPT email.
+    log.warn(`session=${threadId} ${kind === "auth" ? "account signed out" : "usage limit"} — switching to ${next.id}`);
     live.channel.push({
       type: "account_retry",
       reason: kind === "auth" ? "Account signed out — switching account" : "Usage limit reached — switching account",
@@ -764,7 +790,7 @@ export class CodexAppServerProvider implements AIProvider {
     try {
       await this.respawnOn(live, threadId, next);
     } catch (e) {
-      console.error(`[codex] session=${threadId} rotation to ${next.id} failed: ${redactTruncate((e as Error)?.message, 200)}`);
+      log.error(`session=${threadId} rotation to ${next.id} failed: ${redactTruncate((e as Error)?.message, 200)}`);
       giveUp();
       return;
     }
@@ -832,7 +858,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd: live.cwd, codexHome: account.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) } });
+    client.start({ cwd: live.cwd, codexHome: account.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) }, purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
@@ -874,7 +900,7 @@ export class CodexAppServerProvider implements AIProvider {
     const target = sessionsDirForHome(codexHome);
     const path = localizeRollout(found.path, found.sessionsDir, target);
     if (path !== found.path) {
-      console.log(`[codex] thread=${threadId} rollout copied into the serving account's home to resume`);
+      log.info(`thread=${threadId} rollout copied into the serving account's home to resume`);
     }
     return client.request("thread/resume", { threadId, path, ...resumeBase });
   }
@@ -920,12 +946,13 @@ export class CodexAppServerProvider implements AIProvider {
 
     // Multi-account: resolve which codex account backs this session (sticky → strategy →
     // null = default ~/.codex). Spawn the app-server with that account's CODEX_HOME.
+    const sticky = getSessionCodexAccount(sessionId); // only for the log line below
     const account = await resolveCodexAccountForSession(sessionId);
 
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd, codexHome: account?.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) } });
+    client.start({ cwd, codexHome: account?.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) }, purpose: "chat" });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
@@ -972,6 +999,8 @@ export class CodexAppServerProvider implements AIProvider {
       const msgs = getRolloutMessages(d, threadId, cwd);
       return msgs.length > 0 ? msgs : null;
     }) ?? [] : [];
+    const how = !account ? "" : account.id === sticky ? " (sticky)" : sticky ? ` (moved from ${sticky})` : " (picked)";
+    log.info(`session=${sessionId} thread=${threadId} ${found ? "resumed" : "new"} account=${account?.id ?? "ambient"}${how} pid=${client.pid ?? "?"}`);
     return live;
   }
 
@@ -1109,7 +1138,7 @@ export class CodexAppServerProvider implements AIProvider {
         ...(account?.label ? { accountLabel: account.label } : {}),
       });
     } catch (err) {
-      console.warn(`[usage] failed to persist codex usage: ${(err as Error).message}`);
+      usageLog.warn(`failed to persist codex usage: ${(err as Error).message}`);
     }
   }
 
@@ -1186,7 +1215,13 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   private handleClose(live: LiveSession): void {
-    for (const [k, v] of this.live) if (v === live) this.live.delete(k);
+    // abortQuery forgets the session before it closes the client, so one still listed here
+    // is an app-server that exited on its own.
+    let unexpected = false;
+    for (const [k, v] of this.live) if (v === live) { this.live.delete(k); unexpected = true; }
+    if (unexpected) {
+      log.error(`session=${live.threadId ?? "?"} app-server pid=${live.client.pid ?? "?"} exited unexpectedly turnInFlight=${!!live.turnInFlight}`);
+    }
     live.channel.done();
   }
 
@@ -1321,11 +1356,13 @@ export class CodexAppServerProvider implements AIProvider {
 
   private async loadModels(): Promise<ModelOption[]> {
     const client = new CodexJsonRpcClient();
+    let accountId: string | null = null;
     try {
       // Without a CODEX_HOME the app-server falls back to the machine's own
       // ~/.codex login, which may be stale or absent — the model list then comes
       // from an account PPM does not use, or fails outright on a refresh error.
       const account = await resolveCodexAccountForSession();
+      accountId = account?.id ?? null;
       client.start({ cwd: process.cwd(), ...(account ? { codexHome: account.home } : {}) });
       await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
       client.notify("initialized");
@@ -1339,7 +1376,9 @@ export class CodexAppServerProvider implements AIProvider {
       const models = parseModelList(all);
       if (models.length > 0) this.modelsCache = { models, expiry: Date.now() + MODELS_CACHE_TTL };
       return models;
-    } catch {
+    } catch (err) {
+      // The picker shows an empty list either way; this is the only record of why.
+      this.warnListFailure("model/list", accountId ?? "ambient", err);
       return [];
     } finally {
       client.close();
@@ -1400,11 +1439,22 @@ export class CodexAppServerProvider implements AIProvider {
       const skills = parseSkillList(await client.request("skills/list", {}, CONTROL_REQUEST_TIMEOUT_MS));
       if (skills.length > 0) this.skillsCache.set(key, { skills, expiry: Date.now() + SKILLS_CACHE_TTL });
       return skills;
-    } catch {
+    } catch (err) {
+      // CODEX_HOME is <ppm dir>/codex-accounts/<account id>.
+      this.warnListFailure("skills/list", home ? basename(home) : "ambient", err);
       return [];
     } finally {
       client.close();
     }
+  }
+
+  private warnListFailure(method: string, account: string, err: unknown): void {
+    const now = Date.now();
+    const last = this.listFailureWarned.get(method);
+    if (last && now - last.at < 60_000) { last.suppressed++; return; }
+    this.listFailureWarned.set(method, { at: now, suppressed: 0 });
+    const more = last?.suppressed ? ` (+${last.suppressed} more since the last warning)` : "";
+    log.warn(`${method} failed account=${account}: ${loggableError(err)}${more}`);
   }
 
   /** Read the session's account without advancing the account-selection strategy. */

@@ -3,7 +3,7 @@
  * given up, and that a turn only ever takes over a process spawned exactly as it would
  * have spawned one itself.
  */
-import { afterEach, describe, expect, it, jest, mock } from "bun:test";
+import { afterEach, describe, expect, it, jest, mock, spyOn } from "bun:test";
 import { WarmSpares, spawnFingerprint, type SpareHandlers } from "../../../src/providers/claude-warm-spare.ts";
 
 interface FakeCli {
@@ -145,6 +145,35 @@ describe("WarmSpares", () => {
     spares.closeAll();
     expect(spawned.every((cli) => cli.close.mock.calls.length === 1)).toBe(true);
     expect(spares.claim("/a")).toBeUndefined();
+  });
+
+  it("logs why each process it gives up went, and a CLI that failed to start", async () => {
+    jest.useFakeTimers();
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { spares, start } = registry({ idleMs: 1000, claimedMs: 100, max: 1 });
+      const first = spares.offer("/a", "fp", start());
+      const second = spares.offer("/a", "other", start());
+      const third = spares.offer("/b", "fp", start());
+      jest.advanceTimersByTime(1000);
+      const closes = info.mock.calls.map((c) => String(c[0]).replace(/ ageMs=\d+$/, ""));
+      expect(closes).toEqual([
+        `[sdk] warm CLI session=${first} closed reason=replaced`,
+        `[sdk] warm CLI session=${second} closed reason=evicted`,
+        `[sdk] warm CLI session=${third} closed reason=expired`,
+      ]);
+
+      const failing = spares.offer("/c", "fp", start(() => Promise.reject(new Error("exited with code 1"))));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        `[sdk] warm CLI session=${failing} for /c failed to start: exited with code 1`,
+      ]);
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
   });
 });
 

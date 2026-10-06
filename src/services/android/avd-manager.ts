@@ -22,6 +22,9 @@ import type { SystemImage } from "./system-images.ts";
 import { avdHomeEnv } from "./sdk-discovery.ts";
 import { AVD_LIMITS, validateAvdName } from "../../shared/android-avd.ts";
 import type { AvdDeviceProfile, CreateAvdRequest } from "../../shared/android-avd.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("android");
 
 // The name rule and the bounds are shared with the browser's create form (see
 // `src/shared/android-avd.ts`) and re-exported here so callers keep one import.
@@ -280,7 +283,11 @@ export function wipeAvdData(avdDir: string): WipeOutcome {
       freed += Bun.file(path).size;
       rmSync(path, { force: true });
       removed.push(name);
-    } catch { /* locked by something; the caller checks the AVD is stopped first */ }
+    } catch (e) {
+      // Locked by something; the caller checks the AVD is stopped first. Still reported as ok,
+      // so this line is the only record that the wipe was partial.
+      log.warn(`wipe ${basenameOf(avdDir)}: could not remove ${name}: ${(e as Error).message}`);
+    }
   }
   for (const name of WIPE_DIRS) {
     const path = join(avdDir, name);
@@ -289,8 +296,11 @@ export function wipeAvdData(avdDir: string): WipeOutcome {
       freed += dirBytes(path);
       rmSync(path, { recursive: true, force: true });
       removed.push(`${name}/`);
-    } catch { /* same */ }
+    } catch (e) {
+      log.warn(`wipe ${basenameOf(avdDir)}: could not remove ${name}/: ${(e as Error).message}`);
+    }
   }
+  log.info(`wiped ${basenameOf(avdDir)} removed=${removed.length} freed=${(freed / 1048576).toFixed(1)}MB`);
 
   return {
     ok: true,
@@ -340,11 +350,15 @@ async function runTool(
   stdin = "",
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<ToolResult> {
+  // "avdmanager create Pixel_9": the tool, the verb and the AVD — never the rest of the argv.
+  const nameAt = args.indexOf("--name");
+  const what = [basenameOf(path), args[0], nameAt >= 0 ? args[nameAt + 1] : undefined].filter(Boolean).join(" ");
   let proc: ReturnType<typeof spawnTool>;
   try {
     proc = spawnTool(path, args, stdin, env);
   } catch (e) {
     // Bun.spawn throws synchronously on a missing binary (CLAUDE.md, host-info/spawn-runner.ts).
+    log.error(`${what} failed exit=spawn: ${(e as Error).message}`);
     return { ok: false, message: `could not run ${path}: ${(e as Error).message}`, output: "" };
   }
 
@@ -365,6 +379,7 @@ async function runTool(
   try {
     const outcome = await Promise.race([collected, expired]);
     if (outcome === "expired") {
+      log.error(`${what} failed exit=timeout after ${Math.round(timeoutMs / 1000)}s`);
       return { ok: false, message: `${basenameOf(path)} did not finish in ${Math.round(timeoutMs / 1000)}s`, output: "" };
     }
     // The progress bar is carriage-return animation; keeping it makes every error message a wall.
@@ -373,7 +388,10 @@ async function runTool(
     const output = outcome.text.replace(/\r\n/g, "\n").replace(/^.*\r/gm, "").trim();
     if (outcome.exitCode !== 0) {
       const firstError = output.split("\n").map((l) => l.trim()).find((l) => /^error/i.test(l));
-      return { ok: false, message: firstError ?? output.split("\n")[0] ?? `exited with ${outcome.exitCode}`, output };
+      const message = firstError ?? output.split("\n")[0] ?? `exited with ${outcome.exitCode}`;
+      // The route answers 400 with this, and the access log keeps no message for a 4xx.
+      log.error(`${what} failed exit=${outcome.exitCode}: ${message}`);
+      return { ok: false, message, output };
     }
     return { ok: true, message: "done", output };
   } finally {

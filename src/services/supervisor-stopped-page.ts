@@ -7,14 +7,14 @@
  * which is the whole point of the page. Binding the public port directly would
  * collide with the edge, which owns it.
  */
-import { appendFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { getPpmDir } from "./ppm-dir.ts";
+import { writeFileSync } from "node:fs";
 import { SERVER_PORT_FILE } from "./edge-target-resolver.ts";
+import { createLogger, type LogLevel } from "./logger.ts";
 
-function log(level: string, msg: string) {
-  const ts = new Date().toISOString();
-  try { appendFileSync(resolve(getPpmDir(), "ppm.log"), `[${ts}] [${level}] [stopped-page] ${msg}\n`); } catch {}
+const stoppedPageLog = createLogger("stopped-page");
+
+function log(level: "INFO" | "WARN", msg: string) {
+  stoppedPageLog[level.toLowerCase() as LogLevel](msg);
 }
 
 const STOPPED_HTML = `<!DOCTYPE html>

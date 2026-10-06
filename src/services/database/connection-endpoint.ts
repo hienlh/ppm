@@ -13,7 +13,7 @@
  * neither — the CLI's, the form's Test — keeps its URL byte for byte.
  */
 import { createHmac, randomBytes } from "node:crypto";
-import { buildDbUrl, DEFAULT_PORT, parseDbUrl, sslFlags } from "../../shared/db-connection-url.ts";
+import { buildDbUrl, dbUrlTarget, DEFAULT_PORT, parseDbUrl, sslFlags } from "../../shared/db-connection-url.ts";
 import type { SshTunnelSettings, SslFileSettings, StoredConnectionConfig } from "../../shared/db-connection-config.ts";
 import type { SshHop } from "../../shared/db-connection-config.ts";
 import { ConnectionConfigError, readSshTunnelSettings, readSslFileSettings } from "./connection-config.ts";
@@ -86,6 +86,18 @@ export function serviceConnectionString(config: EndpointConfig): string {
   const id = endpointId(profile ?? {}, config);
   profiles.set(id, profile ?? {});
   return buildDbUrl({ ...parsed.parts, params: [...parsed.parts.params, [ENDPOINT_PARAM, id]] });
+}
+
+/**
+ * `host:port/db (tunnel=…)` for the log: parsed, because the services key their pools by the whole
+ * connection string, password included.
+ */
+export function connectionLogTarget(connectionString: string): string {
+  const parsed = parseDbUrl(connectionString);
+  if (parsed.kind !== "url") return "(unreadable URL)";
+  const id = parsed.parts.params.find(([name]) => name === ENDPOINT_PARAM)?.[1];
+  const tunnel = id !== undefined && !!profiles.get(id)?.ssh;
+  return `${dbUrlTarget(parsed.parts)}/${parsed.parts.database} (tunnel=${tunnel})`;
 }
 
 /** The URL a driver may see, and the endpoint the parameter named. */

@@ -24,10 +24,15 @@
  * stalled" is a fact with two opposite conclusions.
  *
  * The monitor costs one timer and two counter reads per tick. It holds its
- * samples in memory and writes nothing to disk — `~/.ppm/ppm.log` is already
+ * samples in memory, and only a stall of `LOG_STALL_MS` or more also reaches
+ * `~/.ppm/ppm.log` — at most one line a minute, since that log once reached
  * 261 MB with 54% of its lines duplicated, and a diagnostic that makes the
- * problem it diagnoses worse is not one.
+ * problem it diagnoses worse is not one. Without that one line, an 18.9s stall
+ * left nothing behind once the process restarted.
  */
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("event-loop");
 
 /** How often the monitor checks in. */
 export const TICK_MS = 250;
@@ -37,6 +42,12 @@ export const REPORT_THRESHOLD_MS = 250;
 
 /** Samples kept. At one stall per tick this is ~50s of solid stalling. */
 export const MAX_SAMPLES = 240;
+
+/** A stall at least this long is also written to ppm.log. */
+export const LOG_STALL_MS = 2000;
+
+/** At most one ppm.log line per this long; the ones in between are counted into it. */
+export const LOG_STALL_INTERVAL_MS = 60_000;
 
 /** CPU/wall at or above this during the gap: the loop was busy with our work. */
 export const SELF_RATIO = 0.7;
@@ -130,6 +141,25 @@ let ticks = 0;
 let stalls = 0;
 let blockedMs = 0;
 let worstMs = 0;
+let lastStallLoggedAt = 0;
+let longStallsNotLogged = 0;
+
+/**
+ * Write a long stall to ppm.log: one line a minute at most, carrying the count of long
+ * stalls left out since the previous one. Split out from the timer for the same reason as
+ * `sampleFromTick`.
+ */
+export function logLongStall(sample: LagSample): void {
+  if (sample.lagMs < LOG_STALL_MS) return;
+  if (lastStallLoggedAt && sample.at - lastStallLoggedAt < LOG_STALL_INTERVAL_MS) {
+    longStallsNotLogged++;
+    return;
+  }
+  const more = longStallsNotLogged ? ` (+${longStallsNotLogged} more of ${LOG_STALL_MS}ms+ since the last one logged)` : "";
+  log.warn(`Event loop stalled ${sample.lagMs}ms (cause=${sample.cause}, cpu=${sample.cpuMs}ms, rss=${sample.rssMb}MB)${more}`);
+  lastStallLoggedAt = sample.at;
+  longStallsNotLogged = 0;
+}
 
 function tick(): void {
   const now = Date.now();
@@ -155,6 +185,7 @@ function tick(): void {
   if (sample.lagMs > worstMs) worstMs = sample.lagMs;
   samples.push(sample);
   if (samples.length > MAX_SAMPLES) samples.shift();
+  logLongStall(sample);
 }
 
 /** Idempotent: calling it twice does not start a second timer. */
@@ -168,6 +199,8 @@ export function startLagMonitor(): void {
   blockedMs = 0;
   worstMs = 0;
   samples = [];
+  lastStallLoggedAt = 0;
+  longStallsNotLogged = 0;
   timer = setInterval(tick, TICK_MS);
   // The monitor must never be the reason the process stays alive.
   (timer as unknown as { unref?: () => void }).unref?.();
@@ -205,4 +238,6 @@ export function resetLagMonitorForTest(): void {
   blockedMs = 0;
   worstMs = 0;
   startedAt = 0;
+  lastStallLoggedAt = 0;
+  longStallsNotLogged = 0;
 }

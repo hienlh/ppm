@@ -19,6 +19,10 @@ import type { DbColumnRef, DbForeignKey, DbObjectList, DbObjectRef, DbTableStruc
 import { pgObjectSql } from "./database/object-sql-postgres.ts";
 import type { DbCatalogTable, DbProbe, DbQuerySession, DbRowSet, DbRunResult, DbStatement, DbStatementOutcome, DbWriteSession, StreamRowsOptions } from "../types/database.ts";
 import { installTlsIdentityCheck } from "./database/tls-identity-check.ts";
+import { connectionLogTarget as logTarget } from "./database/connection-endpoint.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("db");
 
 // verify-full checks the certificate's name for a server named by IP address too.
 installTlsIdentityCheck();
@@ -221,12 +225,13 @@ class PostgresService {
     const cached = this.cache.get(connectionString);
     if (cached) {
       clearTimeout(cached.timer);
-      cached.timer = setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS);
+      cached.timer = setTimeout(() => this.disconnect(connectionString, "idle"), IDLE_TIMEOUT_MS);
       return cached.sql;
     }
     const sql = this.client(connectionString, 3);
-    const timer = setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS);
+    const timer = setTimeout(() => this.disconnect(connectionString, "idle"), IDLE_TIMEOUT_MS);
     this.cache.set(connectionString, { sql, timer });
+    log.info(`postgres pool opened ${logTarget(connectionString)}${this instanceof ReadonlyPostgresService ? " readonly" : ""}`);
     return sql;
   }
 
@@ -255,10 +260,11 @@ class PostgresService {
     return sql;
   }
 
-  /** Close and remove from cache */
-  protected async disconnect(connectionString: string) {
+  /** Close and remove from cache. `reason` is for the log; a pool dropped to retry its connect has none. */
+  protected async disconnect(connectionString: string, reason?: string) {
     const cached = this.cache.get(connectionString);
     if (!cached) return;
+    if (reason) log.info(`postgres pool closed ${logTarget(connectionString)}${this instanceof ReadonlyPostgresService ? " readonly" : ""}: ${reason}`);
     clearTimeout(cached.timer);
     // Drop the cache entry first: end() on a pool whose socket never came up can
     // stall for the full drain timeout, and callers must not see it again meanwhile.
@@ -288,6 +294,7 @@ class PostgresService {
         return await fn(sql);
       } catch (e) {
         if (attempt >= CONNECT_RETRIES || !this.isRetryableConnectError(e)) throw e;
+        log.warn(`postgres connect to ${logTarget(connectionString)} failed (${(e as { code?: unknown }).code}), retrying in ${RETRY_DELAY_MS}ms`);
         // Discard the pool that failed to connect so the retry starts clean.
         await this.disconnect(connectionString);
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
@@ -938,7 +945,7 @@ class PostgresService {
     const exports = [...(this.jobClients.get(connectionString) ?? [])];
     this.jobClients.delete(connectionString);
     await Promise.all([
-      this.disconnect(connectionString),
+      this.disconnect(connectionString, "closed"),
       ...exports.map((sql) => sql.end({ timeout: END_TIMEOUT_SEC }).catch(() => {})),
     ]);
   }

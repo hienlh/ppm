@@ -17,8 +17,9 @@ import { xlsxWorkbook, type XlsxSheetSource } from "../grid-export-xlsx.ts";
 import { buildExportSelect } from "../grid-query-builder.ts";
 import { loadGridTable, type GridTarget } from "../grid.service.ts";
 import { isIdentity, mapColumns, pickRow, uniqueColumnNames } from "./column-map.ts";
+import { createLogger } from "../../logger.ts";
 import { removePath, writeChunks } from "./impexp-files.ts";
-import { addMessage, finishJob, type ImpExpJob } from "./impexp-job-store.ts";
+import { addMessage, finishJob, loggableError, type ImpExpJob } from "./impexp-job-store.ts";
 import type { ExportItemPlan, ExportJobPlan } from "./impexp-request.ts";
 import { zipFiles } from "./zip-output.ts";
 
@@ -36,6 +37,8 @@ export interface ExportJobContext {
   auditItem(item: ExportItemPlan): ExportItemAudit;
   limits?: BatchLimits;
 }
+
+const log = createLogger("impexp");
 
 /** What Create single file's one sheet a file is called, as DBGate names it. */
 const SINGLE_SHEET = "Sheet 1";
@@ -266,7 +269,13 @@ export async function runExportJob(job: ImpExpJob, plan: ExportJobPlan, ctx: Exp
     if (plan.zip) await zipOutput(job, plan.zip);
     addMessage(job, "info", "Finished job");
     finishJob(job, "done");
-  } catch {
+  } catch (e) {
+    if (!job.abort.signal.aborted) {
+      // No row in Error means the zip or the single workbook is what failed.
+      const i = job.items.findIndex((item) => item.state === "error");
+      const where = i >= 0 ? `item ${i} '${job.items[i]!.source}'` : "writing its output file";
+      log.error(`export job ${job.id} failed on ${where} (${ctx.target.type}): ${loggableError(e)}`);
+    }
     finishJob(job, job.abort.signal.aborted ? "stopped" : "error");
   }
 }

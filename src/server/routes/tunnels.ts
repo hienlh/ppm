@@ -12,6 +12,9 @@ import {
   spawnTunnelProcess,
   registerTunnel,
 } from "./tunnel-spawn.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("tunnels");
 
 /**
  * Tunnel registry API — manage ALL cloudflared processes on the machine.
@@ -57,6 +60,7 @@ tunnelRegistryRoutes.post("/", async (c) => {
     const { process: proc, url } = await spawnTunnelProcess(port);
     registerTunnel(port, proc, url);
     invalidateTunnelCache();
+    log.info(`quick tunnel port=${port} pid=${proc.pid} → ${url}`);
     return c.json(ok({ port, url }));
   } catch (e: any) {
     return c.json(err(e.message || "Failed to start tunnel"), 500);

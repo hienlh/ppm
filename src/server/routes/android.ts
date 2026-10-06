@@ -40,6 +40,9 @@ import { getClipboard } from "../../services/android/android-input.ts";
 import { MAX_CLIPBOARD_CHARS, screenshotFilename, setDeviceClipboard, takeScreenshot } from "../../services/android/android-screenshot.ts";
 import { findProjectApks, installApk, stageApkUpload } from "../../services/android/android-apk.ts";
 import { cancelOperation, createOperation, failOperation, finishOperation, registerCanceller, updateOperation } from "../../services/android/android-operations.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("android");
 
 export const androidRoutes = new Hono();
 
@@ -371,6 +374,9 @@ async function beginInstall(
 
   const op = createOperation<{ message: string; code: string | null; package: string | null }>(
     "android-install", `installing ${label} on ${device.name}`);
+  // What the operation's own outcome line (`android-operations.ts`) cannot say: what and where.
+  // The label is an uploaded file's name, so it is quoted rather than trusted to be one line.
+  log.info(`install ${JSON.stringify(label)} on ${JSON.stringify(device.name)} started op=${op.id}`);
   const controller = new AbortController();
   registerCanceller(op.id, () => controller.abort());
   updateOperation(op.id, { state: "running" });

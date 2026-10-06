@@ -32,7 +32,7 @@ function harness(opts: { collectDelayMs?: number; intervalMs?: number } = {}) {
     now: () => clock,
     resolveProtected: () => ({ pids: new Set([500]), roots: new Set([500]), selfPid: 500 }),
     execute: async (pid, tree) => ({ pid, tree, method: "signal", killed: [pid] }),
-    log: () => {},
+    log: { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, isEnabled: () => false },
     exitHooks: false,
   });
   const sub = (tier: "light" | "full") => {

@@ -20,10 +20,13 @@ import type { EventEmitter } from "node:events";
 import os from "node:os";
 import { Duplex } from "node:stream";
 import { parseSshAddress, DEFAULT_SSH_PORT, type SshHop, type SshTunnelSettings } from "../../shared/db-connection-config.ts";
+import { createLogger } from "../logger.ts";
 import { loadDbDriver, onDbDriverUnload } from "./drivers/db-driver-loader.ts";
 import { readHostFile } from "./host-files.ts";
 import { findSshAgent } from "./ssh-agent-socket.ts";
 import { checkHostKey, knownHostsPath, type HostKeyCheck } from "./ssh-known-hosts.ts";
+
+const log = createLogger("db");
 
 /** The SSH handshake and login, for each hop: a bastion has a budget of its own. */
 export const SSH_READY_TIMEOUT_MS = 10_000;
@@ -110,6 +113,8 @@ interface Hop {
 
 interface Session {
   key: string;
+  /** `user@host:port[ via bastion] → db host:port`, for the log. */
+  label: string;
   ready: Promise<Ssh2Client>;
   clients: Ssh2Client[];
   hops: SshHop[];
@@ -141,6 +146,21 @@ function hopsOf(settings: SshTunnelSettings): Hop[] {
   const bastion = parseSshAddress(settings.bastionHost);
   if ("error" in bastion) throw new SshTunnelError("config", bastion.error);
   return [{ host: bastion.host, port: bastion.port, user: bastion.user || user }, server];
+}
+
+/**
+ * The route for the log: logins and hosts, never a credential. A login name cannot hold a `:`, so
+ * whatever follows one is a password typed into the wrong field and is left out.
+ */
+function routeLabel(settings: SshTunnelSettings, target: SshTarget): string {
+  let route: string;
+  try {
+    const hops = hopsOf(settings).map((h) => `${h.user.split(":")[0]}@${h.host}:${h.port}`);
+    route = hops.length > 1 ? `${hops[1]} via ${hops[0]}` : hops[0]!;
+  } catch {
+    route = `${settings.host.trim()}:${settings.port ?? DEFAULT_SSH_PORT}`;
+  }
+  return `${route} → ${target.host}:${target.port}`;
 }
 
 /** The login options every hop shares: the same credentials reach the bastion and the server, as in DBGate. */
@@ -386,8 +406,10 @@ function endClients(session: Session): void {
   }
 }
 
-function closeSession(session: Session): void {
+/** `reason` is for a tunnel that was up; one that failed to open, or failed once up, was already logged. */
+function closeSession(session: Session, reason?: string): void {
   if (session.closed) return;
+  if (reason) log.info(`SSH tunnel ${session.label} closed (${reason})`);
   session.closed = true;
   clearTimeout(session.idle);
   if (sessions.get(session.key) === session) sessions.delete(session.key);
@@ -402,21 +424,29 @@ function session(key: string, settings: SshTunnelSettings, target: SshTarget): S
   const id = sessionKey(key, target);
   const existing = sessions.get(id);
   if (existing && !existing.closed) return existing;
-  const created: Session = { key: id, clients: [], hops: [], channels: 0, closed: false, ready: undefined! };
+  const created: Session = {
+    key: id, label: routeLabel(settings, target), clients: [], hops: [], channels: 0, closed: false, ready: undefined!,
+  };
+  const startedAt = performance.now();
   created.ready = openSession(created, settings).then(
     (client) => {
+      log.info(`SSH tunnel up ${created.label} in ${Math.round(performance.now() - startedAt)}ms`);
       // After login a failure has no caller to go to; it ends the session, and the next
       // connection opens a new one. Without a listener it would crash the process.
       for (const c of created.clients) {
         c.on("error", (e: Error) => {
-          console.warn(`[db] SSH tunnel to ${target.host}:${target.port} failed: ${e.message}`);
+          if (!created.closed) log.warn(`SSH tunnel ${created.label} failed: ${e.message}; closed`);
           closeSession(created);
         });
-        c.once("close", () => closeSession(created));
+        c.once("close", () => closeSession(created, "the SSH connection ended"));
       }
       return client;
     },
     (e) => {
+      // Also thrown to whoever asked for the connection; this is the copy that outlives the request.
+      if (!created.closed) {
+        log.warn(`SSH tunnel ${created.label} failed (${e instanceof SshTunnelError ? e.kind : "error"}): ${(e as Error).message}`);
+      }
       closeSession(created);
       throw e;
     },
@@ -434,7 +464,7 @@ function channelClosed(session: Session): void {
   session.channels = Math.max(0, session.channels - 1);
   if (session.channels === 0 && !session.closed) {
     clearTimeout(session.idle);
-    session.idle = setTimeout(() => closeSession(session), idleCloseMs);
+    session.idle = setTimeout(() => closeSession(session, `idle ${Math.round(idleCloseMs / 1000)}s`), idleCloseMs);
     session.idle.unref?.();
   }
 }
@@ -456,7 +486,7 @@ export async function openSshChannel(key: string, settings: SshTunnelSettings, t
       channelClosed(s);
       if (e instanceof SshTunnelError) throw e;
       // A session that died after it was looked up, before its close event said so.
-      if ((e as Error).message === "Not connected") closeSession(s);
+      if ((e as Error).message === "Not connected") closeSession(s, "found disconnected, logging in again");
       if (s.closed && attempt === 0) continue; // log in again, once
       throw sshForwardError(e as Error, target);
     }
@@ -559,12 +589,12 @@ export function sshTunnelHops(key: string, target: SshTarget): SshHop[] | null {
 /** Close every session opened under `key`, whatever database it reached. */
 export function closeSshTunnels(key: string): void {
   for (const s of [...sessions.values()]) {
-    if (s.key.startsWith(`${key}\n`)) closeSession(s);
+    if (s.key.startsWith(`${key}\n`)) closeSession(s, "disconnected");
   }
 }
 
 export function closeAllSshTunnels(): void {
-  for (const s of [...sessions.values()]) closeSession(s);
+  for (const s of [...sessions.values()]) closeSession(s, "closing every tunnel");
 }
 
 /** How many sessions are open. */

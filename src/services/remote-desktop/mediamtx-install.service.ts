@@ -16,6 +16,9 @@ import { activeRelayCount } from "./mediamtx-process.ts";
 import {
   findMediamtxBinary, mediamtxBinDir, mediamtxBinaryName, mediamtxDir, mediamtxTmpDir,
 } from "./mediamtx-paths.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 export interface MediamtxStatus {
   installed: boolean;
@@ -99,15 +102,20 @@ export function startMediamtxInstall(opts: InstallOptions = {}): RelayInstallJob
   if (currentJob && !currentJob.done) throw new Error("An install is already running");
   const job: RelayInstallJob = { receivedBytes: 0, totalBytes: 0, done: false, error: null };
   currentJob = job;
+  log.info(`relay install started version=${MEDIAMTX_VERSION}`);
   installMediamtx({
     ...opts,
     onProgress: (received, total) => { job.receivedBytes = received; job.totalBytes = total; },
   })
-    .then(() => { job.done = true; })
+    .then((version) => {
+      job.done = true;
+      // No path: an install always lands in `<ppm dir>/mediamtx/bin`.
+      log.info(`relay installed version=${version.slice(0, 40)}`);
+    })
     .catch((e: any) => {
       job.error = e?.message ?? String(e);
       job.done = true;
-      console.error("[remote-desktop] relay install failed:", job.error);
+      log.error("relay install failed:", e);
     });
   return job;
 }
@@ -187,5 +195,6 @@ export function uninstallMediamtx(platform: NodeJS.Platform = process.platform):
   if (found?.source !== "bundled") return false;
   rmSync(mediamtxDir(), { recursive: true, force: true });
   currentJob = null;
+  log.info("relay uninstalled");
   return true;
 }

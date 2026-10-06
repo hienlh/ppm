@@ -149,7 +149,7 @@ export async function forwardImageGeneration(providerId: string, body: ImageGene
     const produced = await runImageTurn(providerId, generationPrompt(body), body.model, []);
     return imagesResponse(produced.slice(0, Math.min(Math.max(body.n ?? 1, 1), 4)));
   } catch (e) {
-    return turnFailureResponse(e, openAiError);
+    return turnFailureResponse(e, openAiError, providerId);
   }
 }
 
@@ -179,7 +179,7 @@ export async function forwardImageEdit(providerId: string, body: ImageEditBody):
     const produced = await runImageTurn(providerId, prompt, body.model, [path]);
     return imagesResponse(produced.slice(0, Math.min(Math.max(body.n ?? 1, 1), 4)));
   } catch (e) {
-    return turnFailureResponse(e, openAiError);
+    return turnFailureResponse(e, openAiError, providerId);
   } finally {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   }

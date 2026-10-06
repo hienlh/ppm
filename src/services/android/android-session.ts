@@ -30,6 +30,9 @@ import {
   encodeVideoFrame, type AndroidClientMessage, type AndroidGeometry, type AndroidLogEntry,
   type AndroidQuality, type AndroidServerMessage,
 } from "../../shared/android-protocol.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("android");
 
 /** Plan §5: heartbeat every 5s, lease gone after 15s of silence. */
 const LEASE_EXPIRY_MS = 15_000;
@@ -223,6 +226,10 @@ async function openDeviceSession(
     sweep: setInterval(() => sweepLease(session), LEASE_SWEEP_MS),
   };
   self = session;
+  log.info(
+    `session opened avd=${emulator.avdName} encoder=${pipeline.encoder} quality=${quality} ` +
+    `${pipeline.geometry.width}x${pipeline.geometry.height}`,
+  );
   return session;
 }
 
@@ -231,6 +238,8 @@ async function closeDeviceSession(session: DeviceSession): Promise<void> {
   // Only what is this session's own: the device may already have a newer one, and both the map
   // entry and the logcat stream are keyed by device.
   if (sessions.get(session.deviceId) === session) {
+    // Inside the check: a stale viewer's second close reaches here for a session already gone.
+    log.info(`session closed avd=${session.emulator.avdName}`);
     sessions.delete(session.deviceId);
     // The logcat stream holds this same channel, so it has to go before the channel is closed —
     // and it would not be dropped by the last viewer leaving if that viewer died without a close.
@@ -345,6 +354,16 @@ export async function attachAndroidViewer(
   });
 
   const isController = () => session.controllerId === viewer.id;
+
+  /** Message types whose failure this viewer has logged at WARN: a dead channel fails them all. */
+  const warnedTypes = new Set<string>();
+  function logFailure(type: string, e: unknown): void {
+    const line = `${type} failed avd=${session.emulator.avdName}: ${(e as Error)?.message ?? e}`;
+    // Touch and key are per input event; the rest are one deliberate action each.
+    if (type === "touch" || type === "key" || warnedTypes.has(type)) { log.debug(line); return; }
+    warnedTypes.add(type);
+    log.warn(line);
+  }
 
   /**
    * Logcat is delivered in batches on a timer rather than per gRPC message.
@@ -470,6 +489,7 @@ export async function attachAndroidViewer(
       try {
         await handle(message);
       } catch (e) {
+        logFailure(message.type, e);
         send(viewer, { type: "error", message: (e as Error).message });
       }
     },

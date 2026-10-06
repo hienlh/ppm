@@ -87,7 +87,7 @@ describe("createWindowsProcessCollector", () => {
         return script.includes("CommandLine") ? `${P_ROWS}\r\n${gpu}\r\n${C_ROWS}` : `${P_ROWS}\r\n${gpu}`;
       },
     });
-    const c = createWindowsProcessCollector({ session: new PowerShellSession({ spawn }), now: () => now, log: () => {} });
+    const c = createWindowsProcessCollector({ session: new PowerShellSession({ spawn }), now: () => now, log: { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, isEnabled: () => false } });
 
     const first = await c.collect();
     const node = first.rows.find((r) => r.pid === 200)!;
@@ -114,7 +114,7 @@ describe("createWindowsProcessCollector", () => {
     const { spawn } = createFakeSpawner({
       autoReply: () => (withGpu ? `${P_ROWS}\r\n${GPU_ROWS}` : P_ROWS),
     });
-    const c = createWindowsProcessCollector({ session: new PowerShellSession({ spawn }), log: () => {} });
+    const c = createWindowsProcessCollector({ session: new PowerShellSession({ spawn }), log: { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, isEnabled: () => false } });
     await c.collect();
     withGpu = false;
     const r = await c.collect();
@@ -127,12 +127,18 @@ describe("createWindowsProcessCollector", () => {
 
   test("the round-trip cost is logged exactly once, so the 2 s tick budget is observable at startup", async () => {
     const logs: string[] = [];
+    const levels: string[] = [];
+    const at = (level: string) => (m: unknown) => { logs.push(String(m)); levels.push(level); };
     const { spawn } = createFakeSpawner({ autoReply: () => `${P_ROWS}\r\n${GPU_ROWS}` });
-    const c = createWindowsProcessCollector({ session: new PowerShellSession({ spawn }), log: (m) => logs.push(m) });
+    const c = createWindowsProcessCollector({
+      session: new PowerShellSession({ spawn }),
+      log: { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error"), fatal: at("fatal"), isEnabled: () => true },
+    });
     await c.collect();
     await c.collect();
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain("windows tick round trip");
+    expect(levels).toEqual(["info"]);
     c.stop();
   });
 

@@ -6,6 +6,9 @@ import { VERSION } from "../version.ts";
 import { configService } from "./config.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { readStatus } from "./supervisor-state.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("cloud");
 
 const authFile = () => resolve(getPpmDir(), "cloud-auth.json");
 const deviceFile = () => resolve(getPpmDir(), "cloud-device.json");
@@ -345,7 +348,14 @@ export async function linkDevice(name?: string): Promise<CloudDevice> {
   };
 
   saveCloudDevice(device);
+  // Never the secret_key: the id is what Cloud's own records are keyed by.
+  log.info(`Cloud device linked: id=${device.device_id} name=${device.name} cloud=${hostOf(auth.cloud_url)}`);
   return device;
+}
+
+/** A URL's host, for a log line: never its path or anything in it. */
+function hostOf(url: string): string {
+  try { return new URL(url).host; } catch { return "?"; }
 }
 
 /** Unlink this machine from cloud */
@@ -356,12 +366,16 @@ export async function unlinkDevice(): Promise<void> {
     return;
   }
 
+  // Continue even if cloud unreachable — clean up local state. The device then stays
+  // registered in Cloud, which only this line records.
   try {
-    await cloudFetch(`/api/devices/${device.device_id}`, { method: "DELETE" });
-  } catch {
-    // Continue even if cloud unreachable — clean up local state
+    const res = await cloudFetch(`/api/devices/${device.device_id}`, { method: "DELETE" });
+    if (!res.ok) log.warn(`Cloud unlink: DELETE device ${device.device_id} failed (HTTP ${res.status}) — removed locally only`);
+  } catch (e) {
+    log.warn(`Cloud unlink: DELETE device ${device.device_id} failed (${e instanceof Error ? e.message : e}) — removed locally only`);
   }
   removeCloudDevice();
+  log.info(`Cloud device unlinked: id=${device.device_id}`);
 }
 
 /** List all devices for the logged-in user */
@@ -396,6 +410,23 @@ function describeTunnelHealth(): { status: "online" | "degraded"; tunnel_mode?: 
   }
 }
 
+/**
+ * A revoked device or a Cloud outage fails every heartbeat the same way, and every caller
+ * only sees `false`: warn when that starts, say when it ends, and keep the rest at debug.
+ */
+let heartbeatFailing = false;
+function noteHeartbeat(deviceId: string, failure: string | null): void {
+  if (failure === null) {
+    if (heartbeatFailing) log.info(`Cloud heartbeat OK again (device ${deviceId})`);
+    else log.debug(`Cloud heartbeat sent (device ${deviceId})`);
+    heartbeatFailing = false;
+    return;
+  }
+  if (heartbeatFailing) log.debug(`Cloud heartbeat failed: ${failure} (device ${deviceId})`);
+  else log.warn(`Cloud heartbeat failed: ${failure} (device ${deviceId})`);
+  heartbeatFailing = true;
+}
+
 export async function sendHeartbeat(tunnelUrl: string): Promise<boolean> {
   const device = getCloudDevice();
   if (!device) return false;
@@ -414,8 +445,10 @@ export async function sendHeartbeat(tunnelUrl: string): Promise<boolean> {
         name: device.name,
       }),
     });
+    noteHeartbeat(device.device_id, res.ok ? null : `HTTP ${res.status}`);
     return res.ok;
-  } catch {
+  } catch (e) {
+    noteHeartbeat(device.device_id, e instanceof Error ? e.message : String(e));
     return false;
   }
 }
@@ -431,11 +464,9 @@ export function startHeartbeat(tunnelUrl: string): void {
   // Clear any existing heartbeat to prevent duplicates on restart
   if (cloudHotState.heartbeatTimer) clearInterval(cloudHotState.heartbeatTimer);
 
-  // Initial heartbeat immediately
-  sendHeartbeat(tunnelUrl).then((ok) => {
-    if (ok) console.log("  ➜  Cloud:   synced to PPM Cloud");
-    else console.warn("  ⚠  Cloud sync failed (non-blocking)");
-  });
+  // Initial heartbeat immediately; sendHeartbeat logs how it went.
+  log.info(`Cloud heartbeat started (every ${HEARTBEAT_INTERVAL_MS / 60_000} min)`);
+  void sendHeartbeat(tunnelUrl);
 
   // Periodic heartbeat every 5 minutes
   cloudHotState.heartbeatTimer = setInterval(() => {

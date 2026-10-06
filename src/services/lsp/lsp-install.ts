@@ -25,6 +25,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { resolveBunPath } from "../autostart-generator.ts";
+import { createLogger } from "../logger.ts";
 import { getPpmDir } from "../ppm-dir.ts";
 import {
   installedBinaryPath,
@@ -33,6 +34,8 @@ import {
   type LanguageServerDefinition,
   type LanguageServerInstall,
 } from "./server-registry.ts";
+
+const log = createLogger("lsp");
 
 /** Generous: a cold `go install` builds the server from source. 10.6 s here, minutes elsewhere. */
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
@@ -64,7 +67,10 @@ export type Runner = (
 
 const runCommand: Runner = async (cmd, { cwd, env, timeoutMs }) => {
   const proc = Bun.spawn(cmd, { cwd, env: env as Record<string, string> | undefined, stdout: "pipe", stderr: "pipe" });
-  const timer = setTimeout(() => proc.kill(), timeoutMs);
+  const timer = setTimeout(() => {
+    log.warn(`${path.basename(cmd[0] ?? "")} ${cmd[1] ?? ""} timed out after ${Math.round(timeoutMs / 1000)}s; killed pid=${proc.pid}`);
+    proc.kill();
+  }, timeoutMs);
   // Drained while it runs: a pipe nobody reads fills up, and a full pipe blocks the child
   // instead of failing it, so awaiting the exit first can wait forever on a noisy install.
   const [code, stdout, stderr] = await Promise.all([
@@ -144,7 +150,13 @@ export function installLanguageServer(
   definition: LanguageServerDefinition,
   options: { projectPath?: string; run?: Runner } = {},
 ): Promise<void> {
-  return enqueue(`install:${definition.id}`, () => install(definition, options.projectPath, options.run ?? runCommand));
+  return enqueue(`install:${definition.id}`, async () => {
+    // A failure needs no line here: the route answers it with a 500, which the access log records.
+    const startedAt = performance.now();
+    log.info(`installing ${describeInstall(definition)} scope=${options.projectPath ? "project" : "global"}`);
+    await install(definition, options.projectPath, options.run ?? runCommand);
+    log.info(`installed ${describeInstall(definition)} in ${Math.round(performance.now() - startedAt)}ms`);
+  });
 }
 
 /**
@@ -164,7 +176,18 @@ export function uninstallLanguageServer(
   definition: LanguageServerDefinition,
   options: { projectPath?: string; run?: Runner } = {},
 ): Promise<void> {
-  return enqueue(`uninstall:${definition.id}`, () => uninstall(definition, options.projectPath, options.run ?? runCommand));
+  return enqueue(`uninstall:${definition.id}`, async () => {
+    await uninstall(definition, options.projectPath, options.run ?? runCommand);
+    log.info(`removed ${describeInstall(definition)}`);
+  });
+}
+
+/** `<id> via <tool> (<what it installs>)`: registry values only, never anything from a request. */
+function describeInstall(definition: LanguageServerDefinition): string {
+  const plan = definition.install;
+  if (!plan) return definition.id;
+  const target = plan.with === "bun" ? plan.packages.join(" ") : plan.with === "go" ? plan.module : plan.component;
+  return `${definition.id} via ${plan.with} (${target})`;
 }
 
 function enqueue(key: string, work: () => Promise<void>): Promise<void> {

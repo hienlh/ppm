@@ -12,6 +12,9 @@ import {
   invalidateCachedUsage,
 } from "./usage-memory-cache.ts";
 import { readStoredUsage, writeStoredUsage } from "./usage-snapshot-store.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("usage");
 
 /**
  * Registry of provider usage sources, and the read/refresh path over them.
@@ -81,6 +84,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
  */
 const inflight = new Map<string, { token: object; promise: Promise<UsageInfo> }>();
 
+/** Accounts whose last fetch failed. The sweep retries every few minutes, so only a change is logged loudly. */
+const failing = new Set<string>();
+
 /**
  * Fetch one account live, then cache and store it.
  *
@@ -112,10 +118,13 @@ export async function refreshUsage(
       );
       setCachedUsage(providerId, accountId, usage);
       writeStoredUsage(providerId, accountId, usage);
+      if (failing.delete(key)) log.info(`${providerId}/${accountId || "ambient"}: usage readable again`);
       return usage;
     } catch (e) {
       setCachedFailure(providerId, accountId);
-      console.error(`[usage] ${providerId}/${accountId || "ambient"}:`, (e as Error).message);
+      // The caller gets the last stored reading instead, so this is a fallback, not a failure.
+      (failing.has(key) ? log.debug : log.warn)(`${providerId}/${accountId || "ambient"}:`, (e as Error).message);
+      failing.add(key);
       return readStoredUsage(providerId, accountId) ?? {};
     } finally {
       // Only clear if this is still the current attempt. An abandoned fetch
@@ -129,9 +138,10 @@ export async function refreshUsage(
   return run;
 }
 
-/** Test seam: forget every in-flight fetch so the next call starts a fresh one. */
+/** Test seam: forget every in-flight fetch so the next call starts a fresh one (and which accounts were failing). */
 export function _clearInflightUsage(): void {
   inflight.clear();
+  failing.clear();
 }
 
 /**

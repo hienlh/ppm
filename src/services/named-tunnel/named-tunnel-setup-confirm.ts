@@ -20,6 +20,9 @@
  */
 import { readStatus } from "../supervisor-state.ts";
 import { broadcastGlobalEvent } from "../../server/ws/global.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("named-tunnel");
 
 const CONFIRM_POLL_BUDGET_MS = 45_000;
 const CONFIRM_POLL_INTERVAL_MS = 1_000;
@@ -71,19 +74,22 @@ export function confirmReloadInBackground(
     .then((confirmed) => {
       if (isSuperseded()) return;
       if (confirmed) {
+        log.info(`Named tunnel ${hostname} confirmed live`);
         broadcastGlobalEvent({ type: "tunnel:setup_done", hostname });
         return;
       }
       const latest = readStatus();
       const warning = typeof latest.tunnelWarning === "string" ? latest.tunnelWarning : null;
+      log.warn(`Named tunnel ${hostname} not confirmed within ${Math.round(budgetMs / 1000)}s (${warning ?? "no tunnel warning from the supervisor"})`);
       broadcastGlobalEvent({
         type: "tunnel:setup_pending",
         hostname,
         message: warning ?? "setup saved but the supervisor has not confirmed it yet — check again shortly",
       });
     })
-    .catch(() => {
+    .catch((e) => {
       if (isSuperseded()) return;
+      log.warn(`Named tunnel ${hostname} confirmation check failed: ${e instanceof Error ? e.message : e}`);
       broadcastGlobalEvent({
         type: "tunnel:setup_pending",
         hostname,

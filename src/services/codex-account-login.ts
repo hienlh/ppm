@@ -20,6 +20,10 @@ import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "../providers/cod
 import { codexAccountHome, createCodexAccount, getCodexAccount, updateCodexAccountMeta, type CodexAccount } from "./codex-account.service.ts";
 import { clearCodexAccountAuthFailure } from "./codex-account-auth-state.ts";
 import { refreshUsage } from "./provider-usage/usage-registry.ts";
+import { redactTruncate } from "../providers/codex-app-server/codex-redact.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("codex");
 
 const CLIENT_INFO = { name: "ppm", title: "PPM", version: "0.0.0" };
 const CAPABILITIES = { experimentalApi: true, requestAttestation: false, optOutNotificationMethods: null };
@@ -29,7 +33,7 @@ interface AccountRead { account: { type: string; email?: string; planType?: stri
 /** The slice of the app-server client the login flow uses. Narrowing it here lets
  * a unit test drive the whole flow without spawning a real subprocess. */
 export interface LoginClient {
-  start(opts?: { cwd?: string; codexHome?: string }): void;
+  start(opts?: { cwd?: string; codexHome?: string; purpose?: "login" }): void;
   onNotification(fn: (n: { method: string; params?: unknown }) => void): void;
   onClose(fn: (code: number | null) => void): void;
   request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
@@ -49,15 +53,17 @@ export async function addApiKeyAccount(apiKey: string, label?: string): Promise<
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const client = new CodexJsonRpcClient();
   try {
-    client.start({ codexHome: home });
+    client.start({ codexHome: home, purpose: "login" });
     await handshake(client);
     await client.request("account/login/start", { type: "apiKey", apiKey });
     const read = await client.request<AccountRead>("account/read", {});
     if (!read?.account) throw new Error("apiKey login did not authenticate");
-    return createCodexAccount({
+    const account = createCodexAccount({
       id, label: label || "API key", type: "apiKey",
       planType: read.account.planType ?? null, creds: { type: "apiKey", apiKey },
     });
+    log.info(`account added id=${account.id} type=apiKey`);
+    return account;
   } catch (e) {
     try { rmSync(home, { recursive: true, force: true }); } catch { /* ignore */ }
     throw e;
@@ -134,6 +140,9 @@ function settle(id: string, status: Exclude<DeviceLoginStatus, { state: "pending
   const p = pendingLogins.get(id);
   if (!p || p.status.state !== "pending") return;
   p.status = status;
+  // Settled outside any request: the polling browser only ever sees a 200 either way.
+  if (status.state === "done") log.info(`login flow=${id} method=${p.method} done account=${status.account.id} (${p.reloginId ? "relogin" : "new"})`);
+  else log.warn(`login flow=${id} method=${p.method} failed: ${redactTruncate(status.error, 200)}`);
   clearTimeout(p.timer);
   p.callbackAbort?.abort();
   try { p.client.close(); } catch { /* ignore */ }
@@ -238,12 +247,13 @@ async function startChatGptLogin(
   pendingLogins.set(id, pending);
   try {
     if (method === "browser") await checkCodexLoginPort();
-    client.start({ codexHome: home });
+    client.start({ codexHome: home, purpose: "login" });
     await handshake(client);
     const start = await client.request<{ userCode?: string; verificationUrl?: string; authUrl?: string }>(
       "account/login/start", { type: method === "browser" ? "chatgpt" : "chatgptDeviceCode" }, CONTROL_REQUEST_TIMEOUT_MS,
     );
     if (method === "browser") pending.browser = parseBrowserLogin(start.authUrl ?? "");
+    log.info(`login flow=${id} method=${method} started${target ? ` relogin=${target.id}` : ""}`);
     return { id, userCode: start?.userCode ?? "", verificationUrl: start?.verificationUrl ?? "", authUrl: start?.authUrl ?? "" };
   } catch (e) {
     disposeLogin(id, true);
@@ -344,5 +354,6 @@ export function getDeviceLoginStatus(id: string): DeviceLoginStatus {
 export function cancelDeviceLogin(id: string): void {
   const p = pendingLogins.get(id);
   if (!p || p.finalizing) return;
+  if (p.status.state === "pending") log.info(`login flow=${id} method=${p.method} cancelled`);
   disposeLogin(id, p.status.state !== "done");
 }

@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach, beforeEach } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { describe, it, expect, afterEach, beforeEach, spyOn } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WatchTree } from "../../../src/services/file-watcher/watch-tree.ts";
@@ -510,4 +510,48 @@ describe.skipIf(process.platform !== "linux")("raw inotify on Linux", () => {
     expect(overflows()).toBe(1);
     expect(tree.stats().dirs).toBe(covered);
   }, 60_000);
+});
+
+/**
+ * A spent watch limit (ENOSPC) fails every directory after the first, so the failure is logged
+ * once — per errno for the raw inotify instance the process shares, per tree for `fs.watch`.
+ * An unreadable directory stands in for it: EACCES fails the same way and needs no tuning.
+ */
+describe.skipIf(process.platform !== "linux" || process.getuid?.() === 0)("a directory that cannot be watched", () => {
+  let locked: string[] = [];
+  afterEach(() => {
+    for (const dir of locked) chmodSync(dir, 0o755); // or the root cannot be removed
+    locked = [];
+  });
+
+  async function warningsFor(inotify: boolean, marker: string): Promise<string[]> {
+    const root = makeRoot();
+    locked = [join(root, "a", "locked"), join(root, "b", "locked")];
+    for (const dir of locked) {
+      mkdirSync(dir, { recursive: true });
+      chmodSync(dir, 0o000);
+    }
+    const warns = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const tree = new WatchTree({ root, maxDirs: 1000, onChange: () => {}, inotify });
+      trees.push(tree);
+      await tree.start();
+      expect(tree.stats().truncated).toBe(true);
+      return warns.mock.calls.map(([line]) => String(line)).filter((line) => line.includes(marker));
+    } finally {
+      warns.mockRestore();
+    }
+  }
+
+  it("is logged once per errno through raw inotify", async () => {
+    const lines = await warningsFor(true, "inotify_add_watch failed");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("EACCES");
+  });
+
+  it("is logged once per tree through fs.watch", async () => {
+    const lines = await warningsFor(false, "cannot watch");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("EACCES");
+  });
 });

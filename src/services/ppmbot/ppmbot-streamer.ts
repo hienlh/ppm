@@ -5,6 +5,9 @@ import {
   chunkMessage,
   escapeHtml,
 } from "./ppmbot-formatter.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("ppmbot-stream");
 
 const MAX_MSG_LEN = 4096;
 const TYPING_REFRESH_MS = 4000;
@@ -161,7 +164,7 @@ export async function streamToTelegram(
       eventCount++;
       // Debug: log each event type to help diagnose streaming issues
       if (event.type !== "text") {
-        console.log(`[ppmbot-stream] event #${eventCount}: ${event.type}${event.type === "tool_use" ? ` (${(event as any).tool})` : ""}`);
+        log.debug(`event #${eventCount}: ${event.type}${event.type === "tool_use" ? ` (${(event as any).tool})` : ""}`);
       }
       await refreshTyping();
 
@@ -235,14 +238,14 @@ export async function streamToTelegram(
       }
     }
   } catch (err) {
-    console.error(`[ppmbot-stream] Stream ended with error after ${eventCount} events: ${(err as Error).message}`);
+    log.error(`Stream to chat ${chatId} ended with error after ${eventCount} events: ${(err as Error).message}`);
     appendHtml(
       segments,
       `\n\n❌ <b>Stream error:</b> ${escapeHtml((err as Error).message)}`,
     );
   }
 
-  console.log(`[ppmbot-stream] Complete: ${eventCount} events, ${segments.length} segments`);
+  log.info(`Complete for chat ${chatId}: ${eventCount} events, ${segments.length} segments`);
 
   // Final edit with complete content
   if (currentMsgId && hasContent(segments)) {

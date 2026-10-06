@@ -27,7 +27,10 @@ import type { ChangeHunk, DiscardRecord } from "../../shared/git-changes.ts";
 import { isInsideDir, realPathOrSelf, realPathOrSelfSync } from "../fs-ops/fs-real-path.ts";
 import { assertSafeFilePath, runGit, toDisplay } from "../git-hunks/git-hunks.service.ts";
 import { hunkFingerprint, parseUnifiedDiff } from "../git-hunks/unified-diff.ts";
+import { createLogger } from "../logger.ts";
 import { getPpmDir } from "../ppm-dir.ts";
+
+const log = createLogger("git");
 
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 100;
@@ -215,6 +218,7 @@ class GitDiscardJournal {
       const res = await runGit(root, ["apply", "-"], { stdin: patch });
       if (res.exitCode !== 0) throw new Error(res.stderr.trim() || "git could not put the change back.");
       await this.removeEntry(dir, id);
+      log.info(`restored discard ${id} in ${root} (hunks of ${entry.path})`);
       return { paths: [entry.path!] };
     }
 
@@ -227,22 +231,31 @@ class GitDiscardJournal {
         throw new Error(`${record.path} changed after it was discarded, so Undo would overwrite that. Nothing was restored.`);
       }
     }
-    for (const [i, record] of files.entries()) {
-      const abs = targets[i]!;
-      const before = record.before;
-      // Never write *through* whatever is there now.
-      await unlink(abs).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; });
-      if (before.kind === "missing") continue;
-      await mkdir(dirname(abs), { recursive: true });
-      if (before.kind === "symlink") {
-        await symlink(before.target, abs);
-      } else {
-        if (!record.blob || !BLOB.test(record.blob)) throw new Error("The saved copy of this file is missing.");
-        await writeFile(abs, await readFile(join(dir, record.blob)));
-        await chmod(abs, before.mode);
+    let at = 0;
+    try {
+      for (const [i, record] of files.entries()) {
+        at = i;
+        const abs = targets[i]!;
+        const before = record.before;
+        // Never write *through* whatever is there now.
+        await unlink(abs).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; });
+        if (before.kind === "missing") continue;
+        await mkdir(dirname(abs), { recursive: true });
+        if (before.kind === "symlink") {
+          await symlink(before.target, abs);
+        } else {
+          if (!record.blob || !BLOB.test(record.blob)) throw new Error("The saved copy of this file is missing.");
+          await writeFile(abs, await readFile(join(dir, record.blob)));
+          await chmod(abs, before.mode);
+        }
       }
+    } catch (e) {
+      // The files before this one are back; this one was unlinked first, so it may now be gone.
+      log.error(`undo of discard ${id} in ${root} failed at ${files[at]!.path} after restoring ${at}/${files.length} file(s):`, e);
+      throw e;
     }
     await this.removeEntry(dir, id);
+    log.info(`restored discard ${id} in ${root} (${files.length} path(s))`);
     return { paths: files.map((f) => f.path) };
   }
 

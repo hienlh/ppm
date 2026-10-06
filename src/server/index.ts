@@ -6,6 +6,8 @@ import { configService } from "../services/config.service.ts";
 import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { gzipJson } from "./middleware/gzip-json.ts";
+import { accessLog } from "./middleware/access-log.ts";
+import { createLogger } from "../services/logger.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { settingsThemesRoutes } from "./routes/settings-themes.ts";
@@ -37,68 +39,51 @@ import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-deskto
 import { isAndroidEmulatorEnabled } from "../services/android/android-flag.ts";
 import { ok, err } from "../types/api.ts";
 
-/** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
+/**
+ * Send this process's log lines — `createLogger()` and bare `console.*` alike — to
+ * ~/.ppm/ppm.log at their level, while a terminal (`bun dev:server`) keeps its output.
+ * Where stdout/stderr already *is* ppm.log (the supervisor spawns this process that way)
+ * the echo is skipped, so each event is written once and redacted; see `logger.ts`.
+ *
+ * Runs before `configService.load()`: opening and migrating the database is the first thing
+ * that can fail, and what it logs has to reach the file with a level like everything else.
+ * The level the config asks for is applied once the config is loaded — `followLogLevelConfig`.
+ */
 async function setupLogFile() {
   // Guard: prevent re-wrapping console on hot-reload (bun --hot re-executes the module)
   if ((globalThis as any).__PPM_LOG_SETUP__) return;
   (globalThis as any).__PPM_LOG_SETUP__ = true;
 
-  const { resolve } = await import("node:path");
-  const { appendFileSync, mkdirSync, existsSync } = await import("node:fs");
+  const { mkdirSync, existsSync } = await import("node:fs");
   const { getPpmDir } = await import("../services/ppm-dir.ts");
-  const { stdioIsLogFile, consumeStdioIsLogEnv } = await import("../services/log-rotate.ts");
+  const { installFileLogSink, createLogger } = await import("../services/logger.ts");
 
   const ppmDir = getPpmDir();
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
-  const logPath = resolve(ppmDir, "ppm.log");
+  installFileLogSink({ echo: "console", routeConsole: true });
 
-  const origLog = console.log.bind(console);
-  const origError = console.error.bind(console);
-  const origWarn = console.warn.bind(console);
+  const log = createLogger("process");
 
-  /** Redact tokens, passwords, API keys, and other sensitive values from log output */
-  const redact = (text: string): string =>
-    text
-      .replace(/Token:\s*\S+/gi, "Token: [REDACTED]")
-      .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
-      .replace(/password['":\s]+\S+/gi, "password: [REDACTED]")
-      .replace(/api[_-]?key['":\s]+\S+/gi, "api_key: [REDACTED]")
-      .replace(/ANTHROPIC_API_KEY=\S+/gi, "ANTHROPIC_API_KEY=[REDACTED]")
-      .replace(/secret['":\s]+\S+/gi, "secret: [REDACTED]");
+  // A `process.emitWarning()` from a library is printed by the runtime straight to stderr —
+  // into ppm.log with no timestamp, level or redaction. A listener replaces that print (Bun
+  // 1.3.11 prints nothing once one is attached). The Agent SDK warns on every query that
+  // `bypassPermissions` shadows `canUseTool`, which is expected here: the callback is still
+  // what answers AskUserQuestion.
+  const expectedWarnings = new Set(["CLAUDE_SDK_CAN_USE_TOOL_SHADOWED"]);
+  process.on("warning", (warning) => {
+    const code = (warning as { code?: string }).code;
+    const line = `${warning.name}${code ? ` [${code}]` : ""}: ${warning.message}`;
+    if (code && expectedWarnings.has(code)) log.debug(line);
+    else log.warn(line);
+  });
 
-  const writeLog = (level: string, args: unknown[]) => {
-    const ts = new Date().toISOString();
-    const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
-    try { appendFileSync(logPath, `[${ts}] [${level}] ${redact(msg)}\n`); } catch {}
-  };
-
-  // The supervisor spawns this process with `stdio: ["ignore", logFd, logFd]`
-  // where logFd is ppm.log itself, so console output already lands in the log
-  // through fd 1 — with no timestamp, no level, and crucially *unredacted*,
-  // because `redact()` above only ever ran on the appended copy. That is how
-  // ppm.log came to hold 1,395,012 lines of which only 532,792 carried the
-  // prefix: the other 862,220 were the same events arriving raw.
-  //
-  // Where the console already reaches the file, the original call is dropped
-  // and only the formatted, redacted line is written — one copy per event, and
-  // the safe one. Run from a terminal (`bun dev:server`) stdout is a tty, both
-  // checks are false, and the terminal keeps its output exactly as before.
-  const stdoutIsLogFile = stdioIsLogFile(1, logPath);
-  const stderrIsLogFile = stdioIsLogFile(2, logPath);
-  // Read once, then dropped: the terminals, SDK children and `ppm` invocations this server
-  // spawns inherit its environment, and none of their stdouts is the log file.
-  consumeStdioIsLogEnv();
-
-  console.log = (...args: unknown[]) => { if (!stdoutIsLogFile) origLog(...args); writeLog("INFO", args); };
-  console.error = (...args: unknown[]) => { if (!stderrIsLogFile) origError(...args); writeLog("ERROR", args); };
-  console.warn = (...args: unknown[]) => { if (!stderrIsLogFile) origWarn(...args); writeLog("WARN", args); };
-
-  // Capture uncaught errors — count-based exit for supervisor restart
+  // Capture uncaught errors — count-based exit for supervisor restart. The process keeps
+  // running after one, so it is an ERROR; only the exit that follows the third is FATAL.
   let exceptionCount = 0;
   let lastExceptionTime = 0;
 
-  const handleFatalError = (label: string, detail: string) => {
-    writeLog("FATAL", [`${label}: ${detail}`]);
+  const handleFatalError = (label: string, detail: unknown) => {
+    log.error(`${label}:`, detail);
     const now = Date.now();
     if (now - lastExceptionTime < 60_000) exceptionCount++;
     else exceptionCount = 1;
@@ -106,17 +91,23 @@ async function setupLogFile() {
 
     // 3+ fatal errors in 1 minute → exit and let supervisor restart fresh
     if (exceptionCount >= 3) {
-      writeLog("FATAL", ["Too many errors in 1 min, exiting for supervisor restart"]);
+      log.fatal("Too many errors in 1 min, exiting for supervisor restart");
       process.exit(1);
     }
   };
 
   process.on("uncaughtException", (err) => {
-    handleFatalError("Uncaught exception", err.stack ?? err.message);
+    handleFatalError("Uncaught exception", err);
   });
   process.on("unhandledRejection", (reason) => {
-    handleFatalError("Unhandled rejection", String(reason));
+    handleFatalError("Unhandled rejection", reason);
   });
+}
+
+/** Apply the `log_level` config row, and keep following it. Needs a loaded config. */
+async function followLogLevelConfig() {
+  const { startLogLevelSync } = await import("../services/log-level-config.ts");
+  startLogLevelSync();
 }
 
 /**
@@ -129,10 +120,52 @@ export function isWsUpgradeAuthorized(url: URL): boolean {
   return url.searchParams.get("token") === authConfig.token;
 }
 
+const wsLog = createLogger("ws");
+const serveLog = createLogger("serve");
+
+/** `Bun.serve` throws when it cannot bind (EADDRINUSE, EACCES): that ends this process. */
+function listenOrExit<T>(host: string, port: number, listen: () => T): T {
+  try {
+    return listen();
+  } catch (e) {
+    serveLog.fatal(`Cannot listen on ${host}:${port}:`, e);
+    process.exit(1);
+  }
+}
+
+function upgradeFailed(url: URL): Response {
+  wsLog.warn(`Upgrade failed for ${url.pathname}`);
+  return new Response("WebSocket upgrade failed", { status: 400 });
+}
+
+/** `chat project=ppm session=…` — which socket, never its token. */
+function describeSocket(data: Record<string, unknown> | undefined): string {
+  if (!data) return "unknown";
+  const parts = [String(data.type ?? "unknown")];
+  if (data.projectName) parts.push(`project=${data.projectName}`);
+  if (data.sessionId) parts.push(`session=${data.sessionId}`);
+  if (data.groupId) parts.push(`group=${data.groupId}`);
+  if (data.type === "terminal" && data.id) parts.push(`id=${data.id}`);
+  return parts.join(" ");
+}
+
 // Register database adapters at module load time
 initAdapters();
 
 export const app = new Hono();
+
+// One log line per request (see access-log.ts) — first, so it times and sees everything.
+app.use("*", accessLog);
+
+// Hono's default handler, minus its `console.error(err)`: the access log writes the failure
+// once, on the request's own line and with the stack, from `c.error`.
+app.onError((error, c) => {
+  if ("getResponse" in error) {
+    const res = (error as { getResponse(): Response }).getResponse();
+    return c.newResponse(res.body, res);
+  }
+  return c.text("Internal Server Error", 500);
+});
 
 // CORS for dev
 app.use("*", cors());
@@ -160,13 +193,16 @@ app.get("/api/logs/recent", async (c) => {
   const { resolve } = await import("node:path");
   const { existsSync } = await import("node:fs");
   const { getPpmDir } = await import("../services/ppm-dir.ts");
-  const { redactSecrets } = await import("../services/redact-secrets.ts");
+  const { redactForBugReport } = await import("../services/redact-secrets.ts");
   const { tailLines } = await import("../services/file-lines.ts");
   const logFile = resolve(getPpmDir(), "ppm.log");
   if (!existsSync(logFile)) return c.json(ok({ logs: "" }));
-  const lines = await tailLines(logFile, 30);
+  const { filterLogLines } = await import("../shared/log-levels.ts");
+  // Never DEBUG: it can hold tool output, and this tail ends up in a public GitHub issue.
+  const tail = (await tailLines(logFile, 400)).split("\n");
+  const lines = filterLogLines(tail, "info").slice(-30).join("\n");
   // Double-redact in case old logs have unredacted content
-  return c.json(ok({ logs: redactSecrets(lines) }));
+  return c.json(ok({ logs: redactForBugReport(lines) }));
 });
 
 // Dev-only: crash endpoint for testing health check UI
@@ -369,12 +405,13 @@ export async function startServer(options: {
   // Tunnel always enabled — cloudflared shares the server publicly
   options.share = true;
 
+  await setupLogFile();
+
   // Load config
   configService.load();
+  await followLogLevelConfig();
   let port = parseInt(options.port ?? String(configService.get("port")), 10);
   const host = configService.get("host");
-
-  await setupLogFile();
 
   // Bootstrap CLI providers (checks binary availability)
   const { bootstrapProviders, providerRegistry } = await import("../providers/registry.ts");
@@ -816,8 +853,9 @@ if (process.argv.includes("__serve__")) {
     setDbProfile(profileArg);
   }
 
-  configService.load();
   await setupLogFile();
+  configService.load();
+  await followLogLevelConfig();
   (await import("../services/memory-diagnostics.ts")).startMemoryDiagnostics();
 
   // Register CLI providers (cursor, codex) for the daemon/__serve__ runtime.
@@ -861,9 +899,16 @@ if (process.argv.includes("__serve__")) {
   // Auto-cleanup old proxy request logs (30-day retention): on startup + daily
   {
     const { cleanupOldProxyRequests } = await import("../services/db.service.ts");
-    const deleted = cleanupOldProxyRequests(30);
-    if (deleted > 0) console.log(`[proxy] cleaned up ${deleted} proxy request logs older than 30 days`);
-    setInterval(() => cleanupOldProxyRequests(30), 24 * 60 * 60 * 1000);
+    const runProxyCleanup = () => {
+      try {
+        const deleted = cleanupOldProxyRequests(30);
+        if (deleted > 0) console.log(`[proxy] cleaned up ${deleted} proxy request logs older than 30 days`);
+      } catch (e) {
+        console.error(`[proxy] cleanup failed: ${(e as Error).message}`);
+      }
+    };
+    runProxyCleanup();
+    setInterval(runProxyCleanup, 24 * 60 * 60 * 1000);
   }
 
   // Same idea for the SQL audit log, but the limits are user-configurable.
@@ -954,9 +999,10 @@ if (process.argv.includes("__serve__")) {
     const deadline = Date.now() + 10_000;
     while (await isPortInUse()) {
       if (Date.now() > deadline) {
-        console.error(`\n  ✗  Port ${port} is still in use after waiting 10s.`);
-        console.error(`     A stale process may be holding it. Run 'ppm stop', then start again.`);
-        console.error(`     If it persists, run PowerShell as Admin: netsh int tcp reset (then restart).\n`);
+        serveLog.fatal(
+          `Port ${port} is still in use after waiting 10s — exiting. A stale process may be holding it: ` +
+          `run 'ppm stop', then start again. If it persists, run PowerShell as Admin: netsh int tcp reset (then restart).`,
+        );
         process.exit(1); // supervisor will back off and respawn on the same port
       }
       console.warn(`[serve] Port ${port} still releasing, waiting...`);
@@ -964,7 +1010,7 @@ if (process.argv.includes("__serve__")) {
     }
   }
 
-  const server = Bun.serve({
+  const server = listenOrExit(host, port, () => Bun.serve({
     port,
     hostname: host,
     fetch(req, server) {
@@ -973,7 +1019,7 @@ if (process.argv.includes("__serve__")) {
       if (url.pathname === "/ws/health") {
         const upgraded = server.upgrade(req, { data: { type: "health" } });
         if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        return upgradeFailed(url);
       }
 
       // Every socket except the health probe is authenticated at upgrade time.
@@ -981,6 +1027,7 @@ if (process.argv.includes("__serve__")) {
       // token travels as `?token=`; the terminal socket in particular hands out
       // a shell, so an unauthenticated upgrade must never reach the handlers.
       if (url.pathname.startsWith("/ws/") && !isWsUpgradeAuthorized(url)) {
+        wsLog.warn(`Refused ${url.pathname}: unauthorized`);
         return new Response("Unauthorized", { status: 401 });
       }
 
@@ -994,13 +1041,13 @@ if (process.argv.includes("__serve__")) {
         const token = authConfig.enabled ? (url.searchParams.get("token") ?? null) : null;
         const upgraded = server.upgrade(req, { data: { type: "global", token } });
         if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        return upgradeFailed(url);
       }
 
       if (url.pathname === "/ws/extensions") {
         const upgraded = server.upgrade(req, { data: { type: "extensions" } });
         if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        return upgradeFailed(url);
       }
 
       if (url.pathname === "/ws/remote-desktop") {
@@ -1010,11 +1057,12 @@ if (process.argv.includes("__serve__")) {
         // when PPM auth is disabled — a live keyboard/mouse channel must not inherit that.
         if (!isRemoteDesktopEnabled()) return new Response("Not Found", { status: 404 });
         if (!configService.get("auth").enabled) {
+          wsLog.warn(`Refused ${url.pathname}: PPM authentication is disabled`);
           return new Response("Forbidden: remote desktop requires PPM authentication to be enabled", { status: 403 });
         }
         const upgraded = server.upgrade(req, { data: { type: "remote-desktop" } });
         if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        return upgradeFailed(url);
       }
 
       if (url.pathname === "/ws/android") {
@@ -1024,11 +1072,12 @@ if (process.argv.includes("__serve__")) {
         // true unconditionally when PPM auth is disabled.
         if (!isAndroidEmulatorEnabled()) return new Response("Not Found", { status: 404 });
         if (!configService.get("auth").enabled) {
+          wsLog.warn(`Refused ${url.pathname}: PPM authentication is disabled`);
           return new Response("Forbidden: android emulator control requires PPM authentication to be enabled", { status: 403 });
         }
         const upgraded = server.upgrade(req, { data: { type: "android" } });
         if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        return upgradeFailed(url);
       }
 
       if (url.pathname.startsWith("/ws/project/")) {
@@ -1044,7 +1093,7 @@ if (process.argv.includes("__serve__")) {
             data: { type: "terminal", id, projectName, cwd },
           });
           if (upgraded) return undefined;
-          return new Response("WebSocket upgrade failed", { status: 400 });
+          return upgradeFailed(url);
         }
 
         if (wsType === "chat") {
@@ -1057,7 +1106,7 @@ if (process.argv.includes("__serve__")) {
             data: { type: "chat", sessionId, projectName, providerHint },
           });
           if (upgraded) return undefined;
-          return new Response("WebSocket upgrade failed", { status: 400 });
+          return upgradeFailed(url);
         }
 
         if (wsType === "group") {
@@ -1065,7 +1114,7 @@ if (process.argv.includes("__serve__")) {
             data: { type: "group", groupId: id, projectName },
           });
           if (upgraded) return undefined;
-          return new Response("WebSocket upgrade failed", { status: 400 });
+          return upgradeFailed(url);
         }
 
         if (wsType === "lsp") {
@@ -1073,7 +1122,7 @@ if (process.argv.includes("__serve__")) {
             data: { type: "lsp", projectName },
           });
           if (upgraded) return undefined;
-          return new Response("WebSocket upgrade failed", { status: 400 });
+          return upgradeFailed(url);
         }
       }
 
@@ -1085,6 +1134,11 @@ if (process.argv.includes("__serve__")) {
       perMessageDeflate: false,
       open(ws: any) {
         const t = ws.data?.type;
+        // The health probe opens one every few seconds for as long as PPM runs.
+        if (t !== "health") {
+          ws.data.openedAt = Date.now();
+          wsLog.info(`Opened ${describeSocket(ws.data)}`);
+        }
         if (t === "chat") chatWebSocket.open(ws);
         else if (t === "group") groupChatWebSocket.open(ws);
         else if (t === "extensions") extensionWebSocket.open(ws);
@@ -1097,17 +1151,31 @@ if (process.argv.includes("__serve__")) {
       },
       message(ws: any, msg: any) {
         const t = ws.data?.type;
-        if (t === "chat") chatWebSocket.message(ws, msg);
-        else if (t === "group") groupChatWebSocket.message(ws, msg);
-        else if (t === "extensions") extensionWebSocket.message(ws, msg);
-        else if (t === "global") globalWebSocket.message(ws, msg);
-        else if (t === "remote-desktop") remoteDesktopWebSocket.message(ws, msg);
-        else if (t === "android") androidWebSocket.message(ws, msg);
-        else if (t === "terminal") terminalWebSocket.message(ws, msg);
-        else if (t === "lsp") lspWebSocket.message(ws, msg);
+        // Most handlers are async. A rejection nobody catches reaches the process handler as an
+        // anonymous "Unhandled rejection" — no socket named, and counted toward the exit after
+        // three in a minute — so each dispatch is caught here, with the socket it came from.
+        const failed = (e: unknown) => wsLog.error(`Message handler failed on ${describeSocket(ws.data)}:`, e);
+        try {
+          let pending: unknown;
+          if (t === "chat") pending = chatWebSocket.message(ws, msg);
+          else if (t === "group") pending = groupChatWebSocket.message(ws, msg);
+          else if (t === "extensions") pending = extensionWebSocket.message(ws, msg);
+          else if (t === "global") pending = globalWebSocket.message(ws, msg);
+          else if (t === "remote-desktop") pending = remoteDesktopWebSocket.message(ws, msg);
+          else if (t === "android") pending = androidWebSocket.message(ws, msg);
+          else if (t === "terminal") pending = terminalWebSocket.message(ws, msg);
+          else if (t === "lsp") pending = lspWebSocket.message(ws, msg);
+          if (pending instanceof Promise) pending.catch(failed);
+        } catch (e) {
+          failed(e);
+        }
       },
-      close(ws: any) {
+      close(ws: any, code: number, reason: string) {
         const t = ws.data?.type;
+        if (t !== "health") {
+          const secs = ws.data?.openedAt ? Math.round((Date.now() - ws.data.openedAt) / 1000) : 0;
+          wsLog.info(`Closed ${describeSocket(ws.data)} code=${code}${reason ? ` reason=${reason}` : ""} after ${secs}s`);
+        }
         if (t === "chat") chatWebSocket.close(ws);
         else if (t === "group") groupChatWebSocket.close(ws);
         else if (t === "extensions") extensionWebSocket.close(ws);
@@ -1118,16 +1186,22 @@ if (process.argv.includes("__serve__")) {
         else if (t === "lsp") lspWebSocket.close(ws);
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
-  });
+  }));
 
   // Start background account token refresh in daemon child
-  import("../services/account.service.ts").then(({ accountService }) => accountService.startAccountMaintenance()).catch(() => {});
+  import("../services/account.service.ts").then(({ accountService }) => accountService.startAccountMaintenance()).catch((e) => {
+    console.error("[accounts] Token maintenance failed to start:", e);
+  });
 
   // Start background usage limit polling (every 5 min)
-  import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
+  import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch((e) => {
+    console.error("[usage] Usage polling failed to start:", e);
+  });
 
   // Watch how long the loop is unavailable for, and whose fault that is
-  import("../services/event-loop-lag.ts").then(({ startLagMonitor }) => startLagMonitor()).catch(() => {});
+  import("../services/event-loop-lag.ts").then(({ startLagMonitor }) => startLagMonitor()).catch((e) => {
+    console.warn("[event-loop] Lag monitor failed to start:", e);
+  });
 
   // Discover + activate enabled extensions
   import("../services/extension.service.ts").then(({ extensionService }) => extensionService.startup()).catch((e) => {
@@ -1147,12 +1221,16 @@ if (process.argv.includes("__serve__")) {
       // Reset zombie debug sessions from previous server run
       import("../services/jira-debug-session.service.ts").then(({ jiraDebugService }) => {
         jiraDebugService.init();
-      }).catch(() => {});
+      }).catch((e) => {
+        console.error("[jira] Resetting debug sessions left by the previous run failed:", e);
+      });
       jiraWatcherService.startAll().catch((e) => {
         console.error("[jira] Failed to start watchers:", (e as Error).message);
       });
     })
-    .catch(() => {});
+    .catch((e) => {
+      console.error("[jira] Watcher service failed to load:", e);
+    });
 
   // Start scheduled-agents cron scheduler
   let schedulerStop: (() => void) | null = null;
@@ -1166,7 +1244,8 @@ if (process.argv.includes("__serve__")) {
     });
 
   // Graceful shutdown: close the listening socket so the port is released
-  const gracefulShutdown = () => {
+  const gracefulShutdown = (trigger: string) => {
+    serveLog.info(`Shutting down (${trigger}) after ${Math.round(process.uptime())}s`);
     try { schedulerStop?.(); } catch {}
     try { codexCleanupRef?.(); } catch {}
     // Language servers are long-lived children; most exit on stdin EOF, but a
@@ -1178,8 +1257,8 @@ if (process.argv.includes("__serve__")) {
     try { server.stop(true); } catch {}
     process.exit(0);
   };
-  process.on("SIGTERM", gracefulShutdown);
-  process.on("SIGINT", gracefulShutdown);
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
   // On Windows, SIGTERM maps to TerminateProcess — graceful handlers never fire.
   // Poll for a shutdown file written by the supervisor instead.
@@ -1191,7 +1270,7 @@ if (process.argv.includes("__serve__")) {
     setInterval(() => {
       if (ex(shutdownFile)) {
         try { ul(shutdownFile); } catch {}
-        gracefulShutdown();
+        gracefulShutdown("shutdown file");
       }
     }, 200);
   }

@@ -21,6 +21,7 @@
  */
 import type { Runner } from "../host-info/spawn-runner.ts";
 import { defaultRunner } from "../host-info/spawn-runner.ts";
+import { createLogger, type Logger } from "../logger.ts";
 
 export const NETTOP_ARGV = ["nettop", "-n", "-P", "-x", "-L", "1", "-J", "bytes_in,bytes_out"];
 const NETTOP_TIMEOUT_MS = 5000;
@@ -78,7 +79,7 @@ const MAX_FAILURES = 3;
 
 export function createDarwinProcessNetCollector(
   run: Runner = defaultRunner,
-  log: (message: string) => void = (m) => console.log(m),
+  log: Logger = createLogger("SystemMetrics"),
 ): ProcessNetCollector {
   let failures = 0;
   let disabled = false;
@@ -90,16 +91,23 @@ export function createDarwinProcessNetCollector(
       const startedAt = Date.now();
       try {
         const r = await run(NETTOP_ARGV, NETTOP_TIMEOUT_MS);
-        if (r.code !== 0 || r.timedOut) throw new Error(r.stderr || `exit ${r.code}`);
+        if (r.code !== 0 || r.timedOut) throw new Error(r.timedOut ? "timed out" : r.stderr || `exit ${r.code}`);
         failures = 0;
         if (!logged) {
           logged = true;
           // The 2 s tick budget is what breaks first if nettop turns out slow.
-          log(`[system-metrics] nettop sample: ${Date.now() - startedAt} ms`);
+          log.info(`nettop sample: ${Date.now() - startedAt} ms`);
         }
         return parseNettopCsv(r.stdout);
-      } catch {
-        if (++failures >= MAX_FAILURES) disabled = true;
+      } catch (e) {
+        if (++failures >= MAX_FAILURES) {
+          disabled = true;
+          // Given up on for the life of the server: say so, unless nettop simply is not there.
+          const reason = (e as Error)?.message ?? String(e);
+          if (!/ENOENT|Executable not found/i.test(reason)) {
+            log.warn(`nettop disabled after ${failures} failures: ${reason.replace(/\s+/g, " ").trim().slice(0, 300)}`);
+          }
+        }
         return null;
       }
     },

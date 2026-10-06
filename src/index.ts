@@ -89,6 +89,7 @@ export async function buildProgram(): Promise<Command> {
     .description("View PPM daemon logs")
     .option("-n, --tail <lines>", "Number of lines to show", "50")
     .option("-f, --follow", "Follow log output")
+    .option("-l, --level <level>", "Only this level and above: debug, info, warn, error, fatal")
     .option("--clear", "Clear log file")
     .action(async (options) => {
       const { showLogs } = await import("./cli/commands/logs.ts");
@@ -203,6 +204,9 @@ if (import.meta.main) {
       await import("./services/edge-forwarder.ts");
       break;
     default: {
+      // A command's stdout is its output (`--json`, a pipe): log lines go to stderr.
+      const { sendConsoleLogsToStderr } = await import("./services/logger.ts");
+      sendConsoleLogsToStderr();
       const program = await buildProgram();
       program.parse();
     }

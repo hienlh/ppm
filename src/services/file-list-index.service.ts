@@ -15,6 +15,9 @@ import { SecurityError, NotFoundError } from "./file.service.ts";
 import { loadGitignore, type IndexBuild } from "./file-index/index-walk.ts";
 import { fileIndexRunner } from "./file-index/file-index-runner.ts";
 import type { SearchKind } from "./file-index/index-search.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("file-index");
 
 // ---------------------------------------------------------------------------
 // Index cache keyed by absolute project path
@@ -46,7 +49,12 @@ interface IndexEntry {
   /** When the last walk ended, and how long it took: what spaces background walks out. */
   lastWalkEndedAt: number;
   lastWalkMs: number;
+  /** A walk took `SLOW_WALK_LOG_MS` or more and said so at INFO; later slow walks stay at DEBUG. */
+  slowLogged?: boolean;
 }
+
+/** A walk this long is worth a line at INFO, once per project: it keeps a core busy that long. */
+const SLOW_WALK_LOG_MS = 5_000;
 
 const indexCache = new Map<string, IndexEntry>();
 
@@ -300,6 +308,14 @@ function startBuild(projectPath: string, entry: IndexEntry): Promise<IndexBuild>
       entry.build = next;
       entry.lastWalkEndedAt = Date.now();
       entry.lastWalkMs = next.walkMs;
+      // A rebuild follows every burst of file changes, so only a project's first walk and the
+      // first one that turns slow are worth INFO.
+      const slowNow = next.walkMs >= SLOW_WALK_LOG_MS && !entry.slowLogged;
+      if (slowNow) entry.slowLogged = true;
+      const line = `indexed ${projectPath}: ${next.count} entries in ${Math.round(next.walkMs)} ms (` +
+        `${previous ? `changed=${previous.hash !== next.hash}, ` : ""}${fileIndexRunner.onMainThread ? "main thread" : "worker"})`;
+      if (!previous || slowNow) log.info(line);
+      else log.debug(line);
       if (previous) {
         const changed = previous.hash !== next.hash;
         for (const listener of rebuiltListeners) listener(projectPath, changed);
@@ -317,7 +333,7 @@ function startBuild(projectPath: string, entry: IndexEntry): Promise<IndexBuild>
   entry.building = build;
   // Nobody awaits a background rebuild, so its failure is only logged; the old list stays.
   if (previous) {
-    build.catch((e) => console.warn(`[file-index] rebuilding ${projectPath} failed: ${(e as Error).message}`));
+    build.catch((e) => log.warn(`rebuilding ${projectPath} failed: ${(e as Error).message}`));
   }
   return build;
 }

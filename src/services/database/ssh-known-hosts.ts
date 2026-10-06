@@ -14,8 +14,14 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { createLogger } from "../logger.ts";
 import { getPpmDir } from "../ppm-dir.ts";
 import { DEFAULT_SSH_PORT } from "../../shared/db-connection-config.ts";
+
+const log = createLogger("db");
+
+/** Changed keys already logged: every connection attempt checks again and is refused the same way. */
+const loggedChanges = new Set<string>();
 
 export function knownHostsPath(): string {
   return path.join(getPpmDir(), "ssh", "known_hosts");
@@ -84,15 +90,24 @@ export function checkHostKey(host: string, port: number, key: Buffer): HostKeyCh
   const recorded = readEntries(file).filter((e) => e.names.includes(name));
   if (recorded.some((e) => e.key === blob)) return { status: "known", fingerprint };
   if (recorded.length > 0) {
-    return {
+    const changed: Extract<HostKeyCheck, { status: "changed" }> = {
       status: "changed",
       fingerprint,
       recorded: recorded.map((e) => hostKeyFingerprint(Buffer.from(e.key, "base64"))),
       lines: recorded.map((e) => e.line),
     };
+    if (!loggedChanges.has(`${name} ${fingerprint}`)) {
+      loggedChanges.add(`${name} ${fingerprint}`);
+      log.warn(
+        `SSH host key for ${name} changed: got ${fingerprint}, ${file} line(s) ${changed.lines.join(", ")} ` +
+        `hold ${changed.recorded.join(", ")} — refused`,
+      );
+    }
+    return changed;
   }
   const type = hostKeyType(key) ?? "ssh-unknown";
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   appendFileSync(file, `${name} ${type} ${blob}\n`, { mode: 0o600 });
+  log.info(`trusted new SSH host key for ${name}: ${type} ${fingerprint} (${file})`);
   return { status: "added", fingerprint };
 }

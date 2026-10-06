@@ -239,7 +239,7 @@ describe("GET /app-icon/:id", () => {
       devices: null,
       apps: null,
     };
-    const service = new SystemMetricsService({ collectors, exitHooks: false, log: () => {} });
+    const service = new SystemMetricsService({ collectors, exitHooks: false, log: { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, isEnabled: () => false } });
     const app = new Hono();
     app.route("/api/system", createResourceRoutes(
       service,

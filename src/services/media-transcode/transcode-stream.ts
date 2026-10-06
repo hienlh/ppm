@@ -17,6 +17,9 @@
  * Only the job's own PID is ever killed — never a blanket kill by image name.
  */
 import { encoderArgs, getFfmpegCapabilities } from "./ffmpeg-capabilities.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("transcode");
 
 /** Parallel ffmpeg jobs allowed across all players (one per player after session replacement). */
 export const MAX_CONCURRENT_TRANSCODES = 4;
@@ -99,6 +102,7 @@ export async function startTranscode(absPath: string, opts: TranscodeOptions = {
     stdin: "ignore",
   });
   active++;
+  log.info(`ffmpeg pid=${proc.pid} transcoding ${absPath} with ${caps.encoder}${opts.start ? ` from ${opts.start}s` : ""} (${active} running)`);
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -114,7 +118,9 @@ export async function startTranscode(absPath: string, opts: TranscodeOptions = {
     finish();
     if (code !== 0 && code !== null && !proc.killed) {
       const tail = (await stderrTail).trim().split("\n").slice(-3).join(" | ");
-      console.warn(`[transcode] ffmpeg exited ${code} for ${absPath}: ${tail}`);
+      log.error(`ffmpeg pid=${proc.pid} (${caps.encoder}) exited ${code}${proc.signalCode ? ` ${proc.signalCode}` : ""} for ${absPath}: ${tail}`);
+    } else {
+      log.debug(`ffmpeg pid=${proc.pid} ${proc.killed ? "stopped" : `exited ${code}`}`);
     }
   });
 

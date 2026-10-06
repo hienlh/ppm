@@ -12,6 +12,9 @@
  */
 import { renameSync, rmSync, chmodSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("upgrade");
 
 export const OLD_SUFFIX = ".old";
 
@@ -37,8 +40,15 @@ export function swapBinaryAndWeb(
   // stays bootable (worst case a version skew, never a missing binary).
   const oldWeb = webDir + OLD_SUFFIX;
   try { rmSync(oldWeb, { recursive: true, force: true }); } catch {}
-  if (existsSync(webDir)) renameSync(webDir, oldWeb);
-  renameSync(newWeb, webDir);
+  const hadWeb = existsSync(webDir);
+  if (hadWeb) renameSync(webDir, oldWeb);
+  try {
+    renameSync(newWeb, webDir);
+  } catch (e) {
+    // The old web/ is already aside and nothing puts it back: the UI is gone until fixed by hand.
+    log.error(`web/ swap failed (${e}): no UI at ${webDir}${hadWeb ? `; previous one left at ${oldWeb}` : ""}`);
+    throw e;
+  }
   try { rmSync(oldWeb, { recursive: true, force: true }); } catch {}
 
   if (platform === "win32") {
@@ -50,7 +60,12 @@ export function swapBinaryAndWeb(
     try {
       renameSync(newBinary, execPath);
     } catch (e) {
-      try { renameSync(oldBinary, execPath); } catch {}
+      try {
+        renameSync(oldBinary, execPath);
+        log.warn(`Binary swap failed (${e}) — previous binary restored at ${execPath}`);
+      } catch (rollbackErr) {
+        log.fatal(`Binary swap failed (${e}) and rollback failed (${rollbackErr}): no binary at ${execPath}; previous binary left at ${oldBinary}`);
+      }
       throw e;
     }
   } else {

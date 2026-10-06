@@ -18,6 +18,9 @@ import { providerRegistry } from "../providers/registry.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { traceStream } from "./session-trace/trace-recorder.ts";
 import type { AIProvider, ChatEvent } from "../types/chat.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("proxy");
 
 /**
  * Read-only, no prompts. An agent reachable with the proxy key must not be able
@@ -52,6 +55,10 @@ let activeProxyTurns = 0;
 /** Refused because {@link MAX_CONCURRENT_PROXY_TURNS} turns are already running. */
 export class ProxyBusyError extends Error {}
 
+/** A retrying client is refused once per request, so the busy WARN is written once a minute. */
+let busyWarnedAt = 0;
+let busySuppressed = 0;
+
 /** Current number of running proxy turns (for tests and diagnostics). */
 export function activeProxyTurnCount(): number {
   return activeProxyTurns;
@@ -74,10 +81,26 @@ function acquireTurnSlot(): () => void {
 /**
  * The error response for a turn that could not run, in the caller's dialect.
  * A busy refusal is a 429 with Retry-After so SDKs back off; anything else is a 502.
+ * `providerId` only names the provider in the log line.
  */
-export function turnFailureResponse(e: unknown, render: (status: number, message: string) => Response): Response {
+export function turnFailureResponse(
+  e: unknown,
+  render: (status: number, message: string) => Response,
+  providerId?: string,
+): Response {
   const message = (e as Error)?.message ?? String(e);
-  if (!(e instanceof ProxyBusyError)) return render(502, message);
+  const who = providerId ? `${providerId} turn` : "agent turn";
+  if (!(e instanceof ProxyBusyError)) {
+    log.error(`${who} failed: ${message.slice(0, 300)}`);
+    return render(502, message);
+  }
+  if (Date.now() - busyWarnedAt >= 60_000) {
+    log.warn(`${who} refused: ${message}${busySuppressed ? ` (+${busySuppressed} more since the last warning)` : ""}`);
+    busyWarnedAt = Date.now();
+    busySuppressed = 0;
+  } else {
+    busySuppressed++;
+  }
   const res = render(429, message);
   res.headers.set("Retry-After", String(BUSY_RETRY_AFTER_S));
   return res;

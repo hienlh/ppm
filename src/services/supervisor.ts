@@ -7,11 +7,12 @@
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
 import {
-  readFileSync, writeFileSync, existsSync, mkdirSync, openSync, closeSync, appendFileSync,
+  readFileSync, writeFileSync, existsSync, mkdirSync, openSync, closeSync,
   unlinkSync, statSync,
 } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
-import { stdioIsLogFile, consumeStdioIsLogEnv, rotateIfOversized, MAX_LOG_BYTES, STDIO_IS_LOG_ENV } from "./log-rotate.ts";
+import { rotateIfOversized, MAX_LOG_BYTES, STDIO_IS_LOG_ENV } from "./log-rotate.ts";
+import { createLogger, installFileLogSink, type LogLevel } from "./logger.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { cleanupStaleBinaryUpgradeArtifacts } from "./binary-upgrade-swap.ts";
 import {
@@ -38,6 +39,7 @@ import { reapZombiePortOrphans } from "./windows-zombie-port-reaper.ts";
 import {
   SERVER_PORT_FILE, resolveTargetPort, _resetTargetCache,
 } from "./edge-target-resolver.ts";
+import { EDGE_PRIOR_DEATHS_ENV } from "./edge-forwarder.ts";
 import { PLIST_LABEL } from "./autostart-generator.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
@@ -77,6 +79,10 @@ let adoptedTunnelPid: number | null = null; // PID of tunnel kept alive across u
 // survives self-replace, so a new supervisor adopts it rather than respawning.
 let edgePid: number | null = null;
 let edgeProbeTimer: ReturnType<typeof setInterval> | null = null;
+// Deaths the edge probe saw in a row. An edge that cannot bind dies again within a second of
+// every respawn, so without this the same lines repeat every 10s while the public port is dark.
+let edgeDeathStreak = 0;
+const EDGE_DEATHS_BEFORE_ERROR = 3;
 // The loopback port our own server child published. Cleared on every respawn so
 // a stale value never fights the incoming generation. Once set, it makes the
 // supervisor the authority on what `.server-port` should contain.
@@ -162,28 +168,16 @@ let originalArgv: string[] = [];
 
 // ─── Logging ───────────────────────────────────────────────────────────
 
-/**
- * Whether this process's own stderr already lands in ppm.log.
- *
- * Normally it does not — under systemd stderr is the journal, and the
- * supervisor's lines belong there as well as in the log. But the replacement
- * supervisor of a self-upgrade is spawned with `stdio: ["ignore", newLogFd,
- * newLogFd]`, and from then on every line would be written to the file twice.
- * Resolved once, lazily: fd 2 does not change underneath a running process.
- */
-let stderrIsLogFile: boolean | null = null;
+const supervisorLog = createLogger("supervisor");
 
-function log(level: string, msg: string) {
-  const ts = new Date().toISOString();
-  const line = `[${ts}] [${level}] [supervisor] ${msg}\n`;
-  try { appendFileSync(logFile(), line); } catch {}
-  if (stderrIsLogFile === null) {
-    stderrIsLogFile = stdioIsLogFile(2, logFile());
-    consumeStdioIsLogEnv();
-  }
-  // Write supervisor logs to stderr so journalctl captures them — unless
-  // stderr is the log file itself, where that is the same line again.
-  if (!stderrIsLogFile) { try { process.stderr.write(line); } catch {} }
+/**
+ * The supervisor's own lines, through the shared logger (and so its level and redaction).
+ * Under systemd its stderr is the journal, and the sink installed at the entry point below
+ * echoes each line there as well; when stderr already is ppm.log (the replacement supervisor
+ * of a self-upgrade is spawned that way) the echo is skipped rather than written twice.
+ */
+function log(level: "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL", msg: string) {
+  supervisorLog[level.toLowerCase() as LogLevel](msg);
 }
 
 let logRotateTimer: ReturnType<typeof setInterval> | null = null;
@@ -533,11 +527,14 @@ async function spawnEdge(publicPort: number, host: string, logFd: number): Promi
     detached: true,
     windowsHide: true,
     stdio: ["ignore", "ignore", logFd] as ["ignore", "ignore", number],
+    // Told that its stderr is ppm.log (Windows cannot work that out, see logger.ts), and how
+    // many edges died before it, so a bind failure on every respawn is not logged as news.
+    env: { ...process.env, [STDIO_IS_LOG_ENV]: "1", [EDGE_PRIOR_DEATHS_ENV]: String(edgeDeathStreak) },
   }));
   proc.unref();
   edgePid = proc.pid ?? null;
   updateStatus({ edgePid });
-  log("INFO", `Edge forwarder started on ${host}:${publicPort} (PID: ${edgePid}, detached)`);
+  log(edgeDeathStreak > 1 ? "DEBUG" : "INFO", `Edge forwarder started on ${host}:${publicPort} (PID: ${edgePid}, detached)`);
 }
 
 /**
@@ -588,8 +585,15 @@ function startEdgeProbe(publicPort: number, host: string, logFd: number) {
     if (shuttingDown || getState() === "upgrading" || !edgePid) return;
     try {
       process.kill(edgePid, 0);
+      if (edgeDeathStreak >= EDGE_DEATHS_BEFORE_ERROR) {
+        log("INFO", `Edge forwarder up again (PID: ${edgePid}) after ${edgeDeathStreak} deaths in a row`);
+      }
+      edgeDeathStreak = 0;
     } catch {
-      log("WARN", `Edge forwarder (PID: ${edgePid}) died — respawning`);
+      edgeDeathStreak++;
+      if (edgeDeathStreak === 1) log("WARN", `Edge forwarder (PID: ${edgePid}) died — respawning`);
+      else if (edgeDeathStreak === EDGE_DEATHS_BEFORE_ERROR) log("ERROR", `Edge forwarder died ${edgeDeathStreak} times in a row — public port ${publicPort} is dark`);
+      else log("DEBUG", `Edge forwarder (PID: ${edgePid}) died again (#${edgeDeathStreak} in a row) — respawning`);
       edgePid = null;
       void spawnEdge(publicPort, host, logFd).catch((e) =>
         log("ERROR", `Edge respawn failed: ${e}`));
@@ -702,8 +706,13 @@ export async function spawnServer(
   log("INFO", `Server started (PID: ${childPid})`);
   void mirrorServerPort();
 
+  // Kept past the null below: a crash line without the signal and uptime cannot tell an
+  // OOM kill or a health-check kill from a crash at boot.
+  const exitedChild = serverChild;
+  const startedAt = Date.now();
   const exitCode = await serverChild.exited;
   serverChild = null;
+  const exitSignal = exitedChild.signalCode ?? "none";
 
   // Don't respawn if in stopped state (soft stop)
   if (getState() === "stopped") {
@@ -737,7 +746,7 @@ export async function spawnServer(
   serverRestarts++;
 
   if (serverRestarts > MAX_RESTARTS) {
-    log("WARN", `Server exceeded ${MAX_RESTARTS} restarts, pausing`);
+    log("FATAL", `Server crashed ${serverRestarts} times in a row, under ${STABLE_WINDOW_MS / 60_000} min apart (last exit ${exitCode}, signal ${exitSignal}) — giving up; server paused until 'ppm restart --force' or a Cloud resume`);
     notifyStateChange("running", "paused", "max_restarts_exceeded");
     setState("paused");
     updateStatus({
@@ -760,7 +769,7 @@ export async function spawnServer(
   }
 
   const delay = backoffDelay(serverRestarts);
-  log("WARN", `Server crashed (exit ${exitCode}), restarting in ${delay}ms (#${serverRestarts})`);
+  log("ERROR", `Server crashed (exit ${exitCode}, signal ${exitSignal}, up ${Math.round((Date.now() - startedAt) / 1000)}s) — restart #${serverRestarts}/${MAX_RESTARTS}, restarting in ${delay}ms`);
   await Bun.sleep(delay);
 
   if (!shuttingDown) return spawnServer(serverArgs, logFd);
@@ -768,6 +777,33 @@ export async function spawnServer(
 
 // ─── Tunnel management ─────────────────────────────────────────────────
 const cloudflaredLogPath = () => resolve(getPpmDir(), "cloudflared.log");
+
+/**
+ * Why cloudflared failed, in its own words: the last ERR line it wrote after `fromByteOffset`,
+ * preferring one that names an `error=`. Read before the next spawn deletes the file. Left out
+ * whenever it could carry a credential — a connector's settings line can hold the run token.
+ * A visitor's failed request is not the tunnel failing, and its `dest=` is the URL that was
+ * asked for, a capability path or `?token=` among them: those lines are never picked.
+ */
+function lastCloudflaredError(fromByteOffset = 0): string | null {
+  try {
+    const lines = readFileSync(cloudflaredLogPath()).subarray(fromByteOffset).toString("utf8").split(/\r?\n/)
+      .filter((l) => / ERR /.test(l) && !/\b(dest|originService|cfRay)=/.test(l));
+    const line = lines.findLast((l) => /error=/.test(l)) ?? lines.at(-1);
+    if (!line) return null;
+    const msg = line.replace(/^\S*\s*ERR\s+/, "").replace(/https?:\/\/\S+/g, "<url>").trim();
+    if (/token|secret|password|credential/i.test(msg) || /[A-Za-z0-9+/_=-]{40,}/.test(msg)) return null;
+    return msg.slice(0, 240);
+  } catch {
+    return null;
+  }
+}
+
+/** `" — cloudflared: <last ERR line>"`, or nothing when there is none worth showing. */
+function cloudflaredCause(fromByteOffset = 0): string {
+  const line = lastCloudflaredError(fromByteOffset);
+  return line ? ` — cloudflared: ${line}` : "";
+}
 
 /**
  * Wait for the quick-mode trycloudflare URL in the (offset-anchored) log —
@@ -788,7 +824,7 @@ async function syncUrlToCloud(url: string) {
     if (getCloudDevice()) {
       const ok = await sendHeartbeat(url);
       if (ok) log("INFO", `Cloud synced: ${url}`);
-      else log("WARN", "Cloud sync failed (non-blocking)");
+      else log("DEBUG", "Cloud sync failed (non-blocking)"); // sendHeartbeat warned, with the reason
     }
   } catch {}
 }
@@ -802,7 +838,7 @@ async function syncUrlToCloud(url: string) {
  * just slower — so named mode's extra fallback attempt never changes the
  * retry cadence quick-only installs already depend on.
  */
-async function retryTunnelAfterFailure(generation: number): Promise<void> {
+async function retryTunnelAfterFailure(generation: number, failure?: string): Promise<void> {
   if (shuttingDown) return;
   const now = Date.now();
   if (now - lastTunnelCrash > STABLE_WINDOW_MS) tunnelRestarts = 0;
@@ -810,7 +846,9 @@ async function retryTunnelAfterFailure(generation: number): Promise<void> {
   tunnelRestarts++;
   if (tunnelRestarts > MAX_RESTARTS) tunnelRestarts = MAX_RESTARTS;
   const delay = backoffDelay(tunnelRestarts) + Math.floor(Math.random() * 1000);
-  log("WARN", `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
+  // One line per failed round: what failed (when the caller knows) and when it is tried again.
+  // A warning, not an error — an offline laptop goes round this loop all night.
+  log("WARN", failure ? `${failure} — retry #${tunnelRestarts} in ${delay}ms` : `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
   await Bun.sleep(delay);
   if (generation !== tunnelGeneration) return; // superseded during backoff
   // Re-read the live server port: spawnServer may have moved it since this
@@ -932,6 +970,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     let successfulMode: TunnelMode | null = null;
     let resolvedUrl: string | null = null;
     let downgraded = false;
+    let lastFailure: string | undefined;
 
     for (let i = 0; i < attempts.length; i++) {
       const attempt = attempts[i]!;
@@ -961,7 +1000,9 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
         downgraded = i > 0;
         break;
       } catch (err) {
-        log("ERROR", `${attempt.mode} tunnel failed to start: ${err}`);
+        lastFailure = `${attempt.mode} tunnel failed to start (${err})${cloudflaredCause(offset)}`;
+        const next = attempts[i + 1];
+        if (next) log("WARN", `${lastFailure} — falling back to ${next.mode}`);
         try { if (pid) process.kill(pid, "SIGKILL"); } catch {}
         tunnelUrl = null;
         if (generation !== tunnelGeneration) return; // superseded — don't bother with the next attempt
@@ -969,7 +1010,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     }
 
     if (winPid === null || !successfulMode || resolvedUrl === null) {
-      return retryTunnelAfterFailure(generation);
+      return retryTunnelAfterFailure(generation, lastFailure);
     }
 
     // A newer authoritative (re)start superseded us while we extracted the URL —
@@ -1018,6 +1059,8 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   let successfulMode: TunnelMode | null = null;
   let resolvedUrl: string | null = null;
   let downgraded = false;
+  let lastFailure: string | undefined;
+  let readyOffset = 0; // where the live connector's own log lines start
 
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i]!;
@@ -1050,9 +1093,12 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
       child = attemptChild;
       successfulMode = attempt.mode;
       downgraded = i > 0;
+      readyOffset = offset;
       break;
     } catch (err) {
-      log("ERROR", `${attempt.mode} tunnel failed to start: ${err}`);
+      lastFailure = `${attempt.mode} tunnel failed to start (${err})${cloudflaredCause(offset)}`;
+      const next = attempts[i + 1];
+      if (next) log("WARN", `${lastFailure} — falling back to ${next.mode}`);
       try { attemptChild.kill(); } catch {}
       if (tunnelChild === attemptChild) tunnelChild = null;
       tunnelUrl = null;
@@ -1061,7 +1107,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   }
 
   if (!child || !successfulMode || resolvedUrl === null) {
-    return retryTunnelAfterFailure(generation);
+    return retryTunnelAfterFailure(generation, lastFailure);
   }
 
   // A newer authoritative (re)start superseded us while we extracted the URL —
@@ -1102,8 +1148,10 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     return;
   }
 
-  log("WARN", `Tunnel process exited (code=${exitCode}, url=${deadUrl}), applying backoff`);
-  return retryTunnelAfterFailure(generation);
+  return retryTunnelAfterFailure(
+    generation,
+    `Tunnel process exited (code=${exitCode}, signal=${child.signalCode ?? "none"}, url=${deadUrl})${cloudflaredCause(readyOffset)}`,
+  );
 }
 
 // ─── Config-database snapshots ─────────────────────────────────────────
@@ -1176,15 +1224,21 @@ function startServerHealthCheck() {
       healthFailCount = 0;
       return;
     }
+    let lastProbe: string;
     try {
       const res = await fetch(`http://127.0.0.1:${checkPort}/api/health`, {
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) { healthFailCount = 0; return; }
-    } catch {}
+      lastProbe = `HTTP ${res.status}`;
+    } catch (e) {
+      const err = e as { name?: string; code?: string; message?: string } | null;
+      lastProbe = err?.name === "TimeoutError" ? "timeout after 5s" : err?.code ?? err?.message ?? String(e);
+    }
     healthFailCount++;
+    log("DEBUG", `Server health probe on port ${checkPort} failed (${healthFailCount}/${SERVER_HEALTH_FAIL_THRESHOLD}): ${lastProbe}`);
     if (healthFailCount >= SERVER_HEALTH_FAIL_THRESHOLD && serverChild) {
-      log("WARN", `Server unresponsive (${healthFailCount} failures), killing`);
+      log("ERROR", `Server unresponsive for ${healthFailCount}×${SERVER_HEALTH_INTERVAL_MS / 1000}s (last probe: ${lastProbe}) — killing PID ${serverChild.pid}`);
       const pid = serverChild.pid;
       if (process.platform === "win32") {
         killProcessTree(pid);
@@ -1654,6 +1708,9 @@ async function notifyStateChange(from: string, to: string, reason: string) {
   } catch {}
 }
 
+/** The actions `connectCloud`'s command switch handles; anything else is refused with a warning. */
+const KNOWN_CLOUD_COMMANDS = new Set(["start", "restart", "resume", "stop", "shutdown", "status"]);
+
 /** Connect supervisor to Cloud via WebSocket (if device is linked) */
 async function connectCloud(opts: { port: number }, serverArgs: string[], logFd: number): Promise<boolean> {
   try {
@@ -1714,6 +1771,10 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           data,
           timestamp: new Date().toISOString(),
         });
+        // The outcome otherwise reaches only Cloud: the log would show the command arriving
+        // and nothing about whether it was carried out.
+        if (success) log("INFO", `Cloud command ${cmd.action} id=${cmd.id} → ok`);
+        else log(KNOWN_CLOUD_COMMANDS.has(cmd.action) ? "INFO" : "WARN", `Cloud command ${cmd.action} id=${cmd.id} → rejected: ${error}`);
       };
 
       log("INFO", `Cloud command received: ${cmd.action}`);
@@ -1816,8 +1877,9 @@ function startCloudMonitor(opts: { port: number }, serverArgs: string[], logFd: 
         log("INFO", "Cloud monitor: device linked detected, connecting to cloud");
         await connectCloud(opts, serverArgs, logFd);
       } else if (device && cloudConnected && !isConnected()) {
-        // Device linked, we attempted connection but WS is dead — reconnect
-        log("WARN", "Cloud monitor: WS disconnected, reconnecting");
+        // Device linked, we attempted connection but WS is dead — reconnect. Debug: during an
+        // outage this fires every minute, and cloud-ws already reported the disconnect.
+        log("DEBUG", "Cloud monitor: WS not connected — reconnecting");
         const { disconnect } = await import("./cloud-ws.service.ts");
         disconnect();
         cloudConnected = false;
@@ -2381,7 +2443,8 @@ export async function runSupervisor(opts: {
 
   // Spawn server + (fresh) tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];
-  if (tunnelSharingEnabled && !tunnelAdopted) promises.push(spawnTunnel(_opts.port));
+  const tunnelLoopStarted = tunnelSharingEnabled && !tunnelAdopted;
+  if (tunnelLoopStarted) promises.push(spawnTunnel(_opts.port));
 
   await Promise.all(promises);
 
@@ -2392,7 +2455,8 @@ export async function runSupervisor(opts: {
   }
 
   // If we get here, both loops exited (shutdown or max restarts)
-  log("INFO", "Supervisor exiting");
+  if (shuttingDown) log("INFO", "Supervisor exiting");
+  else log("FATAL", `Supervisor exiting unexpectedly (exit 1, state=${getState()}, server loop ended, tunnel loop ${tunnelLoopStarted ? "ended" : "never started here (adopted or switched off)"})`);
   process.exit(shuttingDown ? 0 : 1);
 }
 
@@ -2407,11 +2471,17 @@ if (process.argv.includes("__supervise__")) {
   // (see src/server/index.ts:227, src/index.ts:27). Supervisor must not gate on it.
   const share = true;
 
+  // Every line of this process — its own and those of the tunnel, upgrade and cloud code it
+  // hosts, which log through `console.*` — goes to ppm.log, and to the journal through stderr.
+  installFileLogSink({ echo: "stderr", routeConsole: true });
+
   // Set DB profile for supervisor (needed to read config)
   if (profile) {
     const { setDbProfile } = await import("./db.service.ts");
     setDbProfile(profile);
   }
+  const { startLogLevelSync } = await import("./log-level-config.ts");
+  startLogLevelSync();
 
   runSupervisor({ port, host, profile, share });
 }

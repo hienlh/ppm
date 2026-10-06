@@ -8,6 +8,9 @@ import {
 } from "node:fs";
 import { constants } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("supervisor");
 
 export const CMD_FILE = () => resolve(getPpmDir(), ".supervisor-cmd");
 export const STATUS_FILE = () => resolve(getPpmDir(), "status.json");
@@ -56,8 +59,7 @@ export function updateStatus(patch: Record<string, unknown>) {
     const data = { ...readStatus(), ...patch };
     atomicWriteJson(STATUS_FILE(), data);
   } catch (e) {
-    // Log to stderr so failures are visible in ppm.log
-    try { process.stderr.write(`[updateStatus] Failed to write status.json: ${e}\n`); } catch {}
+    log.error(`Failed to write status.json (${Object.keys(patch).join(", ")}): ${e}`);
   }
 }
 
@@ -66,7 +68,7 @@ export function writeStatus(data: Record<string, unknown>) {
   try {
     atomicWriteJson(STATUS_FILE(), data);
   } catch (e) {
-    try { process.stderr.write(`[writeStatus] Failed to write status.json: ${e}\n`); } catch {}
+    log.error(`Failed to write status.json (full rewrite: ${Object.keys(data).join(", ")}): ${e}`);
   }
 }
 
@@ -119,7 +121,7 @@ export function writeCmd(action: CmdAction): boolean {
     if (existing?.action && existing.action !== action) {
       const lifecycleOverridesRetunnel = LIFECYCLE_ACTIONS.includes(action) && existing.action === "retunnel";
       if (!lifecycleOverridesRetunnel) {
-        try { process.stderr.write(`[writeCmd] dropped "${action}" — "${existing.action}" is already pending\n`); } catch {}
+        log.warn(`Supervisor command '${action}' dropped — '${existing.action}' still unclaimed`);
         return false;
       }
     }

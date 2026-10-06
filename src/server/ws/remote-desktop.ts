@@ -28,6 +28,9 @@ import {
   type RemoteDesktopSession,
   type RemoteDesktopSocket,
 } from "../../services/remote-desktop/remote-desktop-session.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("remote-desktop");
 
 registerRemoteDesktopExitSweep();
 
@@ -49,9 +52,15 @@ function guardOrClose(ws: RemoteDesktopWs): boolean {
 
 async function authenticateFirstMessage(ws: RemoteDesktopWs, text: string): Promise<void> {
   let parsed: Record<string, unknown>;
-  try { parsed = JSON.parse(text); } catch { ws.close(1008, "expected auth message"); return; }
+  try { parsed = JSON.parse(text); } catch {
+    log.warn("auth rejected: first message is not JSON");
+    ws.close(1008, "expected auth message");
+    return;
+  }
   const nonce = parsed.type === "auth" ? parsed.nonce : undefined;
   if (typeof nonce !== "string" || !consumeRemoteDesktopNonce(nonce)) {
+    // Never the nonce itself: a refusal on a channel that hands over the host's screen and input.
+    log.warn("auth rejected: invalid or expired nonce");
     ws.close(1008, "invalid or expired session nonce");
     return;
   }
@@ -73,7 +82,7 @@ async function authenticateFirstMessage(ws: RemoteDesktopWs, text: string): Prom
       webrtc: parsed.webrtc === true,
     });
   } catch (e) {
-    console.error(`[remote-desktop] failed to start capture: ${(e as Error).message}`);
+    log.error("failed to start capture:", e);
     ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));
     ws.close(1011, "capture failed to start");
   }
@@ -85,16 +94,23 @@ export const remoteDesktopWebSocket = {
   },
 
   async message(ws: RemoteDesktopWs, msg: string | ArrayBuffer | Uint8Array) {
-    if (!guardOrClose(ws)) return;
-    const text = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
-    if (!ws.data.authenticated) {
-      await authenticateFirstMessage(ws, text);
-      return;
+    // The server drops this promise, so anything that escapes is an unhandled rejection — and
+    // three of those in a minute exit the whole server. The session catches its own messages;
+    // this is for the rest (a first message of `null` fails reading `.type`, for one).
+    try {
+      if (!guardOrClose(ws)) return;
+      const text = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
+      if (!ws.data.authenticated) {
+        await authenticateFirstMessage(ws, text);
+        return;
+      }
+      await ws.data.session?.handleClientMessage(text);
+    } catch (e) {
+      log.warn(`message handling failed: ${(e as Error)?.message ?? e}`);
     }
-    await ws.data.session?.handleClientMessage(text);
   },
 
   close(ws: RemoteDesktopWs) {
-    ws.data.session?.close();
+    ws.data.session?.close("socket-closed");
   },
 };

@@ -1,8 +1,11 @@
-import { lstatSync, readdirSync, watch } from "node:fs";
+import { existsSync, lstatSync, readdirSync, watch } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { hasIgnoredDirSegment, isIgnoredDirName, isIgnoredPath } from "./ignore-rules.ts";
 import { inotifyAvailable, onInotifyOverflow, watchDirectory } from "./linux-inotify.ts";
 import { RecreatedDirPoller } from "./recreated-dir-poller.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("file-watcher");
 
 /**
  * Watches a project directory while keeping the number of watched directories
@@ -143,6 +146,10 @@ export class WatchTree {
   private covered = 0;
   private truncated = false;
   private closed = false;
+  /** The first walk has landed: the service reports a budget spent by it, this class one spent later. */
+  private started = false;
+  /** One "cannot watch" line per tree: a spent watch limit fails every directory after the first. */
+  private failureLogged = false;
   private sinceYield = 0;
   /**
    * Covers run one at a time, as they did when they were synchronous.
@@ -174,6 +181,7 @@ export class WatchTree {
   async start(): Promise<void> {
     await this.cover(this.options.root);
     await this.reconcile();
+    this.started = true;
   }
 
   close(): void {
@@ -214,7 +222,7 @@ export class WatchTree {
     if (this.closed) return;
     const budget = { left: this.options.maxDirs - this.covered };
     if (budget.left <= 0) {
-      this.truncated = true;
+      this.budgetSpent();
       return;
     }
     this.sinceYield = 0;
@@ -279,7 +287,7 @@ export class WatchTree {
         // Unscanned directories remain: mark the node so no ancestor covers them
         // recursively, since we cannot know what they hold.
         node.hasIgnored = true;
-        this.truncated = true;
+        this.budgetSpent();
         break;
       }
       const child = await this.scan(join(absDir, entry.name), budget);
@@ -353,7 +361,7 @@ export class WatchTree {
     // falls through to here too, so one unwatchable directory cannot silently drop
     // everything beneath it.
     if (this.covered + 1 > this.options.maxDirs) {
-      this.truncated = true;
+      this.budgetSpent();
       return;
     }
     this.addWatcher(node.path, false, 1);
@@ -384,16 +392,44 @@ export class WatchTree {
       });
       // An FSWatcher with no error listener throws on failure, which would take the
       // server down; drop the handle instead and record the lost coverage.
-      watcher.on("error", () => this.dropWatcher(absDir));
+      watcher.on("error", (e) => {
+        this.watchFailed(absDir, e);
+        this.dropWatcher(absDir);
+      });
       this.attached.set(absDir, { watcher, covers, recursive });
       this.everAttached.add(absDir);
       this.covered += covers;
       return true;
-    } catch {
+    } catch (e) {
       // Raced with a delete, not permitted, or the kernel watch limit is exhausted.
+      this.watchFailed(absDir, e);
       this.truncated = true;
       return false;
     }
+  }
+
+  /**
+   * `fs.watch` could not watch `absDir`, or stopped. A directory that is gone is the race with a
+   * delete (ENOENT, or EPERM from a deleted directory's watcher on Windows); anything else —
+   * ENOSPC and EMFILE are a spent limit — would otherwise surface only as "truncated", which the
+   * service words as a budget the tree never reached.
+   */
+  private watchFailed(absDir: string, e: unknown): void {
+    const code = (e as NodeJS.ErrnoException | undefined)?.code;
+    if (this.closed || this.failureLogged || code === "ENOENT" || !existsSync(absDir)) return;
+    this.failureLogged = true;
+    log.warn(
+      `cannot watch ${absDir}: ${code ?? (e as Error | undefined)?.message} (${this.covered} dirs covered) — ` +
+      `changes below it will be missed; further failures under ${this.options.root} are not logged`,
+    );
+  }
+
+  /** Coverage reached `maxDirs`. After the first walk this is the only report of it. */
+  private budgetSpent(): void {
+    if (this.started && !this.truncated) {
+      log.warn(`${this.options.root} exceeded its ${this.options.maxDirs}-dir budget after start — new directories are not watched`);
+    }
+    this.truncated = true;
   }
 
   private dropWatcher(absDir: string): void {

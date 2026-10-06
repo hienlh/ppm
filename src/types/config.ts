@@ -1,4 +1,5 @@
 import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
+import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 
 export interface TelegramConfig {
   bot_token: string;
@@ -52,6 +53,8 @@ export interface PpmConfig {
   session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
   android?: AndroidConfig;
+  /** Lowest level written to ppm.log. `PPM_LOG_LEVEL` overrides it; see `services/logger.ts`. */
+  log_level?: LogLevel;
 }
 
 /**
@@ -219,6 +222,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
     enabled: true,
     mode: "quick",
   },
+  log_level: DEFAULT_LOG_LEVEL,
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;

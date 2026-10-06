@@ -22,6 +22,9 @@ import { executeDelegation, getActiveDelegationCount } from "./ppmbot-delegation
 import type { TelegramUpdate, PPMBotCommand } from "../../types/ppmbot.ts";
 import type { PPMBotConfig, TelegramConfig, ProjectConfig, PermissionMode } from "../../types/config.ts";
 import type { SendMessageOpts } from "../../types/chat.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("ppmbot");
 
 const CONTEXT_WINDOW_THRESHOLD = 80;
 
@@ -52,7 +55,7 @@ class PPMBotService {
   async start(): Promise<void> {
     const ppmbotConfig = this.getConfig();
     if (!ppmbotConfig?.enabled) {
-      console.log("[ppmbot] Disabled in config");
+      log.info("Disabled in config");
       return;
     }
 
@@ -76,9 +79,9 @@ class PPMBotService {
 
       await this.checkRestartNotification();
 
-      console.log("[ppmbot] Started");
+      log.info("Started");
     } catch (err) {
-      console.error("[ppmbot] Start failed:", (err as Error).message);
+      log.error("Start failed:", (err as Error).message);
     }
   }
 
@@ -98,7 +101,7 @@ class PPMBotService {
     this.processing.clear();
     this.messageQueue.clear();
 
-    console.log("[ppmbot] Stopped");
+    log.info("Stopped");
   }
 
   get isRunning(): boolean {
@@ -163,6 +166,7 @@ class PPMBotService {
   private async handleCommand(cmd: PPMBotCommand): Promise<void> {
     const chatId = String(cmd.chatId);
     const tg = this.telegram!;
+    log.info(`/${cmd.command} from chat ${chatId} user ${cmd.userId}`);
 
     try {
       switch (cmd.command) {
@@ -173,6 +177,7 @@ class PPMBotService {
         default: await tg.sendMessage(Number(chatId), `Just chat naturally — I'll handle it! Try /help`);
       }
     } catch (err) {
+      log.error(`/${cmd.command} failed for chat ${chatId}:`, err);
       await tg.sendMessage(
         Number(chatId),
         `❌ Command error: ${escapeHtml((err as Error).message)}`,
@@ -246,7 +251,7 @@ class PPMBotService {
       const chatIds = approvedChats.map((c) => c.telegram_chat_id);
       const markerPath = join(homedir(), ".ppm", "restart-notify.json");
       writeFileSync(markerPath, JSON.stringify({ chatIds, ts: Date.now() }));
-      console.log("[ppmbot] Restart requested via Telegram, exiting with code 42...");
+      log.info("Restart requested via Telegram, exiting with code 42...");
       process.exit(42);
     }, 500);
   }
@@ -351,10 +356,12 @@ I'll answer directly or delegate to your project's AI.`;
       for (const task of pending) {
         const config = this.getConfig();
         const providerId = config?.default_provider || configService.get("ai").default_provider;
-        executeDelegation(task.id, this.telegram!, providerId);
+        executeDelegation(task.id, this.telegram!, providerId).catch((err) => {
+          log.error(`Task ${task.id} crashed:`, err);
+        });
       }
     } catch (err) {
-      console.error("[ppmbot] checkPendingTasks error:", (err as Error).message);
+      log.error("checkPendingTasks error:", (err as Error).message);
     }
   }
 
@@ -368,9 +375,9 @@ I'll answer directly or delegate to your project's AI.`;
           `⚠️ Task interrupted by server restart: <i>${escapeHtml(task.prompt.slice(0, 80))}</i>`,
         );
       }
-      if (stale.length) console.log(`[ppmbot] Cleaned up ${stale.length} stale task(s)`);
+      if (stale.length) log.info(`Cleaned up ${stale.length} stale task(s)`);
     } catch (err) {
-      console.error("[ppmbot] cleanupStaleTasks error:", (err as Error).message);
+      log.error("cleanupStaleTasks error:", (err as Error).message);
     }
   }
 
@@ -441,14 +448,14 @@ I'll answer directly or delegate to your project's AI.`;
         result.contextWindowPct != null &&
         result.contextWindowPct > CONTEXT_WINDOW_THRESHOLD
       ) {
-        await this.sessions.rotateCoordinatorSession(chatId);
+        await this.sessions.rotateCoordinatorSession(chatId, `rotated at ctx ${result.contextWindowPct}%`);
         await this.telegram?.sendMessage(
           Number(chatId),
           "<i>Context refreshed.</i>",
         );
       }
     } catch (err) {
-      console.error(`[ppmbot] processMessage error for ${chatId}:`, (err as Error).message);
+      log.error(`processMessage error for ${chatId}:`, (err as Error).message);
       await this.telegram?.sendMessage(
         Number(chatId),
         `❌ ${escapeHtml((err as Error).message)}`,

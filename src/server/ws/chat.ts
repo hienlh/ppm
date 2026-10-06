@@ -27,6 +27,10 @@ import { claudeTranscriptExists } from "../../services/claude-transcript-exists.
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
 import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("chat");
+const bgShellLog = createLogger("bg-shell");
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -195,6 +199,8 @@ interface SessionEntry {
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
   /** The socket whose message opened the latest turn: where the AI's tab tools open a tab. */
   lastSender?: ChatWsSocket;
+  /** Events broadcast with no client attached since the session last went idle — logged then, as one count. */
+  droppedEvents?: number;
 }
 
 /** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
@@ -228,7 +234,7 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
   chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
-  console.log(`[chat] session=${sessionId} released subprocess (${reason})`);
+  log.info(`session=${sessionId} released subprocess (${reason})`);
   logSessionEvent(sessionId, "INFO", note);
 }
 
@@ -256,7 +262,7 @@ export function dropIdleSubprocess(sessionId: string, reason: string, note: stri
     clearTimeout(entry.cacheReleaseTimer);
     entry.cacheReleaseTimer = undefined;
   }
-  console.log(`[chat] session=${sessionId} released subprocess (${reason})`);
+  log.info(`session=${sessionId} released subprocess (${reason})`);
   logSessionEvent(sessionId, "INFO", note);
 }
 
@@ -442,6 +448,20 @@ export function listRunningSessions(
  */
 export { broadcastGlobalEvent } from "./global.ts";
 
+/** Project names already reported as unregistered: a tab reconnects often, and the news is once. */
+const reportedUnregisteredProjects = new Set<string>();
+
+/** A chat socket named a project that is not registered, so the session runs with no project path. */
+function reportUnregisteredProject(sessionId: string, projectName: string): void {
+  const line = `session=${sessionId} project '${projectName}' not registered — running without project path`;
+  if (reportedUnregisteredProjects.has(projectName)) {
+    log.debug(line);
+    return;
+  }
+  reportedUnregisteredProjects.add(projectName);
+  log.warn(line);
+}
+
 /** Remove a client from the session, cleaning up its ping interval */
 function evictClient(entry: SessionEntry, ws: ChatWsSocket): void {
   clearClientPing(entry, ws);
@@ -488,7 +508,10 @@ function broadcast(sessionId: string, event: unknown): void {
   if (!entry || entry.clients.size === 0) {
     const evType = (event as any)?.type ?? "unknown";
     if (evType !== "ping" && evType !== "phase_changed") {
-      console.warn(`[chat] session=${sessionId} broadcast: no clients, dropping ${evType}`);
+      // The normal state of a turn nobody is watching, at the rate of streamed chunks: counted,
+      // and said once when the session goes idle (setPhase).
+      if (entry) entry.droppedEvents = (entry.droppedEvents ?? 0) + 1;
+      else log.debug(`session=${sessionId} broadcast: no session entry, dropping ${evType}`);
     }
     return;
   }
@@ -569,7 +592,7 @@ async function attachTeamWatcher(sessionId: string, teamName: string): Promise<v
   if (!live) { watcher.cleanup(); return; }
   live.teamWatchers.set(teamName, watcher);
   bufferAndBroadcast(sessionId, { type: "team_detected", teamName });
-  console.log(`[chat] session=${sessionId} team detected: ${teamName}`);
+  log.info(`session=${sessionId} team detected: ${teamName}`);
 }
 
 /** Attach to the team Claude Code creates implicitly for this session.
@@ -617,9 +640,10 @@ async function rewriteProviderSkillSigil(
     const skills = await provider.listSkills(sessionId);
     const rewritten = applySkillSigil(content, new Set(skills.map((s) => s.name)), "$");
     if (rewritten !== content) parsed.content = rewritten;
-  } catch {
+  } catch (e) {
     // Listing failed (app-server down, account not logged in). Send what the
     // user typed rather than dropping their message.
+    log.warn(`session=${sessionId} provider=${providerId} skill list failed, sent unrewritten: ${(e as Error).message}`);
   }
 }
 
@@ -632,7 +656,9 @@ function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): voi
   // running session whose chat tab is not mounted, and — more importantly — must
   // stop indicating once it goes idle. Volume is a handful of events per turn.
   broadcastGlobalEvent({ type: "session:phase_changed", sessionId, phase, projectName: entry.projectName ?? "" });
-  console.log(`[chat] session=${sessionId} phase → ${phase}`);
+  const dropped = phase === "idle" ? entry.droppedEvents : undefined;
+  if (dropped) entry.droppedEvents = 0;
+  log.debug(`session=${sessionId} phase → ${phase}${dropped ? ` (${dropped} events dropped: no clients)` : ""}`);
 }
 
 /** Send buffered turn events to a single client (reconnect sync) */
@@ -653,7 +679,7 @@ function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
       ...(truncated ? { truncated: true } : {}),
     }));
   } catch (e) {
-    console.warn(`[chat] session=${sessionId} sendTurnEvents failed: ${(e as Error).message}`);
+    log.warn(`session=${sessionId} sendTurnEvents failed: ${(e as Error).message}`);
   }
 }
 
@@ -691,7 +717,7 @@ function startCleanupTimer(sessionId: string): void {
       startCleanupTimer(sessionId);
       return;
     }
-    console.log(`[chat] session=${sessionId} cleanup: idle with no FE for ${CLEANUP_TIMEOUT_MS / 1000}s`);
+    log.info(`session=${sessionId} cleanup: idle with no FE for ${CLEANUP_TIMEOUT_MS / 1000}s`);
     logSessionEvent(sessionId, "INFO", "Session cleaned up (idle, no FE reconnected)");
     // Backstop for the subprocess: scheduleSubprocessRelease normally gets there first,
     // timed off the last turn rather than off this disconnect. It bails when a turn was in
@@ -721,10 +747,10 @@ function startCleanupTimer(sessionId: string): void {
 async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[]): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
-    console.error(`[chat] session=${sessionId} startSessionConsumer: no entry — aborting`);
+    log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
     return;
   }
-  console.log(`[chat] session=${sessionId} startSessionConsumer started (clients=${entry.clients.size})`);
+  log.debug(`session=${sessionId} startSessionConsumer started (clients=${entry.clients.size})`);
 
   entry.isStreamingActive = true;
   entry.pendingApprovalEvent = undefined;
@@ -738,7 +764,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   try {
     const userPreview = content.slice(0, 200);
     logSessionEvent(sessionId, "USER", userPreview);
-    console.log(`[chat] session=${sessionId} sending message to provider=${providerId}`);
+    log.debug(`session=${sessionId} sending message to provider=${providerId}`);
 
     let eventCount = 0;
     let firstEventReceived = false;
@@ -754,7 +780,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       if (elapsed >= CONNECTION_TIMEOUT_S) {
         clearInterval(heartbeat);
-        console.error(`[chat] session=${sessionId} SDK connection timeout after ${elapsed}s`);
+        log.error(`session=${sessionId} SDK connection timeout after ${elapsed}s`);
         logSessionEvent(sessionId, "ERROR", `SDK connection timeout after ${elapsed}s — subprocess may have failed to start`);
         const projectPath = entry?.projectPath ?? "";
         if (providerId === "claude") {
@@ -809,11 +835,11 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           broadcast(sessionId, mcpStatusEvent(entry.mcpNeedsAuth));
         } else if (sub === "compacting") {
           entry.compactStatus = "compacting";
-          console.log(`[chat] session=${sessionId} compact_status=compacting (persisted on entry)`);
+          log.debug(`session=${sessionId} compact_status=compacting (persisted on entry)`);
           broadcast(sessionId, { type: "compact_status", status: "compacting" });
         } else if (sub === "compact_done") {
           entry.compactStatus = null;
-          console.log(`[chat] session=${sessionId} compact_status=done (via compact_boundary)`);
+          log.debug(`session=${sessionId} compact_status=done (via compact_boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
         } else if (sub === "task_started" || sub === "task_updated" || sub === "task_notification") {
           // Background command (local_bash) lifecycle. shellId === SDK task_id.
@@ -844,7 +870,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
             if (done && backgroundShellRegistry.setStatus(sessionId, taskId, "stopped")) {
               const sh = backgroundShellRegistry.get(sessionId, taskId);
               if (sh?.toolUseId) { bashOutputSpy.stopSpy(sh.toolUseId); entry.backgroundToolUseIds?.delete(sh.toolUseId); }
-              console.log(`[bg-shell] session=${sessionId} task ${taskId} -> stopped (${taskStatus})`);
+              bgShellLog.info(`session=${sessionId} task ${taskId} -> stopped (${taskStatus})`);
               broadcastBackgroundRegistry(sessionId);
             } else {
               broadcastBackgroundRegistry(sessionId);
@@ -875,7 +901,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // A turn nobody sent over this socket (scheduler, remote trigger) has no receipt time.
         const waitMs = Date.now() - (requested?.at ?? startTime);
         const path = requested ? (requested.cold ? "cold" : "warm") : "unsent";
-        console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType} path=${path}`);
+        log.info(`session=${sessionId} first SDK event after ${waitMs}ms: type=${evType} path=${path}`);
         logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType}, ${path})`);
         if (heartbeat) clearInterval(heartbeat);
         const newPhase = evType === "thinking" ? "thinking" : "streaming";
@@ -896,7 +922,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // Track TeamCreate calls for team detection
         if (ev.tool === "TeamCreate") {
           entry.pendingTeamCreate = ev.toolUseId;
-          console.log(`[chat] session=${sessionId} TeamCreate tool_use detected, toolUseId=${ev.toolUseId}`);
+          log.info(`session=${sessionId} TeamCreate tool_use detected, toolUseId=${ev.toolUseId}`);
         }
         // A session-level Agent card: the SDK streams its agent's own steps, but
         // nothing from agents that agent spawns in turn. Tail those nested
@@ -924,7 +950,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           if (command) {
             if (isBackground) {
               (entry.backgroundToolUseIds ??= new Set()).add(toolUseId);
-              console.log(`[bg-shell] session=${sessionId} background tool_use detected toolUseId=${toolUseId} cmd="${command.slice(0, 60)}"`);
+              bgShellLog.debug(`session=${sessionId} background command started toolUseId=${toolUseId}`);
             }
             bashOutputSpy.startSpy(toolUseId, command, sessionId, (output) => {
               broadcast(sessionId, {
@@ -937,7 +963,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
               // Resolved .output path → register the background shell (shellId = basename w/o ext)
               const shellId = basename(filePath).replace(/\.output$/, "");
               backgroundShellRegistry.register(sessionId, { shellId, command, outputPath: filePath, toolUseId });
-              console.log(`[bg-shell] session=${sessionId} registered shellId=${shellId} clients=${activeSessions.get(sessionId)?.clients.size ?? 0} file=${filePath}`);
+              bgShellLog.info(`session=${sessionId} registered shellId=${shellId} clients=${activeSessions.get(sessionId)?.clients.size ?? 0} file=${filePath}`);
               broadcastBackgroundRegistry(sessionId);
             } : undefined);
           }
@@ -960,7 +986,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         }
       } else if (evType === "tool_result") {
         logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
-        console.log(`[chat] session=${sessionId} tool_result: toolUseId=${ev.toolUseId} pendingTeamCreate=${entry.pendingTeamCreate} output=${(ev.output ?? "").slice(0, 200)}`);
+        log.debug(`session=${sessionId} tool_result toolUseId=${ev.toolUseId} isError=${ev.isError ?? false} chars=${typeof ev.output === "string" ? ev.output.length : 0}`);
         // A backgrounded Agent's tool_result is only a launch ack while the agent
         // runs on — keep its nested spy until the terminal task_notification.
         // Keyed off the ack text: `input.run_in_background` is optional and absent
@@ -978,7 +1004,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (entry.pendingTeamCreate && entry.pendingTeamCreate === ev.toolUseId) {
           const { extractTeamName } = await import("./team-inbox-watcher.ts");
           const teamName = extractTeamName(ev.output ?? "");
-          console.log(`[chat] session=${sessionId} TeamCreate result matched, extracted teamName=${teamName}`);
+          log.info(`session=${sessionId} TeamCreate result matched, extracted teamName=${teamName}`);
           if (teamName) await attachTeamWatcher(sessionId, teamName);
           entry.pendingTeamCreate = undefined;
         }
@@ -987,7 +1013,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         void detectImplicitTeam(sessionId);
       } else if (evType === "error") {
         const errorDetail = ev.message ?? JSON.stringify(ev).slice(0, 500);
-        console.error(`[chat] session=${sessionId} error: ${errorDetail}`);
+        log.error(`session=${sessionId} error: ${errorDetail}`);
         logSessionEvent(sessionId, "ERROR", errorDetail);
       } else if (evType === "done") {
         // Turn complete — transition to idle, clear buffer for next turn
@@ -1062,7 +1088,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // CLI providers discover real session ID from CLI output — migrate WS tracking
         const newId = ev.newSessionId as string;
         if (newId && newId !== sessionId) {
-          console.log(`[chat] session_migrated: ${sessionId} → ${newId}`);
+          log.info(`session_migrated: ${sessionId} → ${newId}`);
           // Persist the link before re-keying. A tab that opened under the old
           // id keeps it in its own storage, so without this the conversation
           // becomes unreachable from that tab the moment the turn ends.
@@ -1115,7 +1141,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // resolved, or errored); without this clear, UI shows stuck "Compacting…".
         if (entry.compactStatus === "compacting") {
           entry.compactStatus = null;
-          console.log(`[chat] session=${sessionId} compact_status=done (cleared on turn done without boundary)`);
+          log.debug(`session=${sessionId} compact_status=done (cleared on turn done without boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
         }
         setPhase(sessionId, "idle");
@@ -1126,9 +1152,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     }
 
     logSessionEvent(sessionId, "INFO", `Session consumer completed (${eventCount} events total)`);
-    console.log(`[chat] session=${sessionId} session consumer completed (${eventCount} events)`);
+    log.debug(`session=${sessionId} session consumer completed (${eventCount} events)`);
   } catch (e) {
     const errMsg = (e as Error).message;
+    log.error(`session=${sessionId} provider=${providerId} consumer failed:`, e);
     logSessionEvent(sessionId, "ERROR", `Exception: ${errMsg}`);
     bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
   } finally {
@@ -1141,7 +1168,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // Force-clear compact status on stream teardown (error, close, etc.)
     if (entry.compactStatus === "compacting") {
       entry.compactStatus = null;
-      console.log(`[chat] session=${sessionId} compact_status=done (cleared on stream teardown)`);
+      log.debug(`session=${sessionId} compact_status=done (cleared on stream teardown)`);
       broadcast(sessionId, { type: "compact_status", status: "done" });
     }
     setPhase(sessionId, "idle");
@@ -1162,7 +1189,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     if (entry.clients.size === 0) {
       startCleanupTimer(sessionId);
     }
-    console.log(`[chat] session=${sessionId} consumer loop ended`);
+    log.info(`session=${sessionId} consumer loop ended`);
   }
 }
 
@@ -1181,7 +1208,7 @@ export const chatWebSocket = {
 
     let projectPath: string | undefined;
     if (projectName) {
-      try { projectPath = resolveProjectPath(projectName); } catch { /* ignore */ }
+      try { projectPath = resolveProjectPath(projectName); } catch { reportUnregisteredProject(sessionId, projectName); }
     }
     if (session && !session.projectPath && projectPath) {
       session.projectPath = projectPath;
@@ -1248,7 +1275,7 @@ export const chatWebSocket = {
           }
         }).catch(() => {});
       }
-      console.log(`[chat] session=${sessionId} FE reconnected (phase=${existing.phase}, clients=${existing.clients.size})`);
+      log.debug(`session=${sessionId} FE reconnected (phase=${existing.phase}, clients=${existing.clients.size})`);
       return;
     }
 
@@ -1352,7 +1379,7 @@ export const chatWebSocket = {
       adoptProviderHint(sessionId, providerHint);
       const pid = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
-      if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
+      if (pn) { try { pp = resolveProjectPath(pn); } catch { reportUnregisteredProject(sessionId, pn); } }
       const newEntry: SessionEntry = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
         pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false, streamSeq: 0,
@@ -1362,7 +1389,7 @@ export const chatWebSocket = {
       activeSessions.set(sessionId, newEntry);
       setupClientPing(newEntry, ws);
       entry = newEntry;
-      console.log(`[chat] session=${sessionId} auto-created entry in message handler`);
+      log.info(`session=${sessionId} auto-created entry in message handler`);
     }
 
     // Ensure ws is in clients set
@@ -1536,10 +1563,17 @@ export const chatWebSocket = {
         // Resume session in provider (can be slow on first call — sdkListSessions)
         if (provider && "resumeSession" in provider) {
           const t0 = Date.now();
-          await (provider as any).resumeSession(sessionId);
+          try {
+            await (provider as any).resumeSession(sessionId);
+          } catch (e) {
+            // The message is dropped, as it was when this rejected out of the handler; this
+            // names the session and provider that the socket dispatcher's catch cannot.
+            log.error(`session=${sessionId} resume failed provider=${providerId}:`, e);
+            return;
+          }
           const elapsed = Date.now() - t0;
           if (elapsed > 500) {
-            console.warn(`[chat] session=${sessionId} resumeSession took ${elapsed}ms`);
+            log.warn(`session=${sessionId} resumeSession took ${elapsed}ms`);
             logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
           }
         }
@@ -1564,21 +1598,26 @@ export const chatWebSocket = {
         if (provider && "pushMessage" in provider && parsed.type === "message") {
           const effort = getSessionEffort(sessionId) ?? undefined;
           const thinkingBudget = getSessionThinking(sessionId);
-          await chatService.pushMessage(providerId, sessionId, parsed.content, {
-            origin: "ws",
-            priority: parsed.priority ?? 'next',
-            images: parsed.images,
-            imagePaths: parsed.imagePaths,
-            ...(entry.model ? { model: entry.model } : {}),
-            ...(effort ? { effort } : {}),
-            ...(thinkingBudget != null ? { thinkingBudget } : {}),
-          });
+          try {
+            await chatService.pushMessage(providerId, sessionId, parsed.content, {
+              origin: "ws",
+              priority: parsed.priority ?? 'next',
+              images: parsed.images,
+              imagePaths: parsed.imagePaths,
+              ...(entry.model ? { model: entry.model } : {}),
+              ...(effort ? { effort } : {}),
+              ...(thinkingBudget != null ? { thinkingBudget } : {}),
+            });
+          } catch (e) {
+            log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);
+            return;
+          }
         }
         // Clear turn events for new turn display + transition phase
         entry.turnEvents = [];
         entry.pendingApprovalEvent = undefined;
         setPhase(sessionId, "thinking");
-        console.log(`[chat] session=${sessionId} follow-up pushed to generator`);
+        log.debug(`session=${sessionId} follow-up pushed to generator`);
       }
     } else if (parsed.type === "set_model") {
       // Persist per-session model override. If an idle subprocess is alive,
@@ -1662,7 +1701,7 @@ export const chatWebSocket = {
     } else if (parsed.type === "cancel") {
       // Fully teardown streaming session — user must resume to continue
       const phase = entry?.phase ?? "unknown";
-      console.log(`[chat] session=${sessionId} WS cancel received from FE (phase=${phase})`);
+      log.info(`session=${sessionId} WS cancel received from FE (phase=${phase})`);
       logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
       chatService.abortQuery(providerId, sessionId, "ws_cancel", "ws");
     } else if (parsed.type === "kill_background_shell") {
@@ -1681,7 +1720,14 @@ export const chatWebSocket = {
         entry.turnRequestedAt = { at: Date.now(), cold: !entry.isStreamingActive };
       }
       if (!entry.isStreamingActive) {
-        if (provider && "resumeSession" in provider) await (provider as any).resumeSession(sessionId);
+        if (provider && "resumeSession" in provider) {
+          try {
+            await (provider as any).resumeSession(sessionId);
+          } catch (e) {
+            log.error(`session=${sessionId} resume failed provider=${providerId} (kill_background_shell shellId=${shellId}):`, e);
+            return;
+          }
+        }
         if (entry.projectPath && provider && "ensureProjectPath" in provider) {
           (provider as any).ensureProjectPath(sessionId, entry.projectPath);
         }
@@ -1695,7 +1741,12 @@ export const chatWebSocket = {
           }, 0);
         });
       } else if (provider && "pushMessage" in provider) {
-        await chatService.pushMessage(providerId, sessionId, instruction, { priority: "next", origin: "ws" });
+        try {
+          await chatService.pushMessage(providerId, sessionId, instruction, { priority: "next", origin: "ws" });
+        } catch (e) {
+          log.error(`session=${sessionId} follow-up failed provider=${providerId} (kill_background_shell shellId=${shellId}):`, e);
+          return;
+        }
         entry.turnEvents = [];
         entry.pendingApprovalEvent = undefined;
         setPhase(sessionId, "thinking");
@@ -1740,7 +1791,7 @@ export const chatWebSocket = {
 
     // Remove from clients Set + clear per-client ping
     evictClient(entry, ws);
-    console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
+    log.debug(`session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
     if (entry.clients.size === 0) {
       // No clients listening anymore. The streaming query is NOT torn down here: a

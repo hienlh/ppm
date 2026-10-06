@@ -35,6 +35,9 @@ import {
   whisperTmpDir,
   type WhisperBinary,
 } from "./whisper-paths.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("whisper");
 
 export type InstallPhase = "binary" | "model" | "vad" | "verify";
 
@@ -221,14 +224,23 @@ export function startWhisperInstall(
   };
   currentJob = job;
 
+  // The lookup `runInstall` starts with: a host that already has whisper-cli downloads models only.
+  let existing: WhisperBinary | null = null;
+  try { existing = findWhisperBinary(platform); } catch { /* runInstall meets the same error and reports it */ }
+  const startedAt = Date.now();
+  log.info(
+    `install started: model=${modelId} ${platform}/${arch}, ` +
+    (existing ? `using ${existing.source} whisper-cli ${existing.path}` : `downloading whisper.cpp ${WHISPER_VERSION}`),
+  );
   runInstall(modelId, platform, arch, opts.fetchFn)
     .then(() => {
       job.done = true;
+      log.info(`installed ${existing ? "" : `whisper.cpp ${WHISPER_VERSION} + `}model ${modelId} in ${((Date.now() - startedAt) / 1000).toFixed(1)} s`);
     })
     .catch((e: any) => {
       job.error = e?.message ?? String(e);
       job.done = true;
-      console.error("[whisper] install failed:", job.error);
+      log.error(`install failed (phase=${job.phase}):`, job.error);
     });
 
   return job;

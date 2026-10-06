@@ -7,6 +7,9 @@ import {
   setSessionAccount,
   getLastTurnCacheState,
 } from "./db.service.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("accounts");
 
 export type AccountStrategy = "round-robin" | "fill-first" | "lowest-usage";
 
@@ -269,7 +272,14 @@ export class AccountSelectorService {
     const picked = this.next(excludeIds);
     if (picked) this.bindSession(sessionId, picked.id);
     if (lapsed && picked && picked.id !== boundId) {
-      console.log(`[accounts] session=${sessionId} prompt cache lapsed on ${boundId} — routed to ${picked.id}`);
+      log.info(`session=${sessionId} prompt cache lapsed on ${boundId} — routed to ${picked.id}`);
+    } else if (picked && picked.id !== boundId) {
+      // Why the binding above was not held (the cache lapse has its own line).
+      const reason = !boundId ? "unbound"
+        : excludeIds?.has(boundId) ? "excluded"
+        : !this.isUsable(boundId) ? "unusable"
+        : "no_quota";
+      log.info(`session=${sessionId} bound to ${picked.id} strategy=${this.getStrategy()} reason=${reason}`);
     }
     return picked;
   }
@@ -295,6 +305,9 @@ export class AccountSelectorService {
   bindSession(sessionId: string, accountId: string): void {
     setSessionAccount(sessionId, accountId);
   }
+
+  /** Whether the last next() found every candidate near its cap — logged once per change, not per turn. */
+  private allNearCap = false;
 
   /**
    * Pick next available account (skips cooldown/disabled).
@@ -332,6 +345,11 @@ export class AccountSelectorService {
       setConfigValue(ROUND_ROBIN_LAST_KEY, pickedId);
     }
     this._lastPickedId = pickedId;
+    if ((withRoom.length === 0) !== this.allNearCap) {
+      this.allNearCap = withRoom.length === 0;
+      if (this.allNearCap) log.warn(`all ${notExcluded.length} accounts near quota cap — picking ${pickedId} anyway`);
+      else log.info(`accounts have quota room again — picked ${pickedId}`);
+    }
     const result = accountService.getWithTokens(pickedId);
     if (!result) {
       this._lastFailReason = "all_decrypt_failed";
@@ -444,7 +462,7 @@ export class AccountSelectorService {
     const backoffMs = Math.min(BACKOFF_BASE_MS * Math.pow(2, retries - 1), BACKOFF_MAX_MS);
     const cooldownUntilMs = Date.now() + backoffMs;
     accountService.setCooldown(accountId, cooldownUntilMs);
-    console.log(`[accounts] ${accountId} rate limited — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
+    log.warn(`account ${accountId} cooldown reason=rate_limit for=${Math.round(backoffMs / 1000)}s until=${new Date(cooldownUntilMs).toISOString()} retry=#${retries}`);
   }
 
   /** Called when account hits a hard usage/session limit (5h/weekly cap).
@@ -457,7 +475,7 @@ export class AccountSelectorService {
       resetAtMs && resetAtMs > Date.now() ? resetAtMs : Date.now() + FALLBACK_MS;
     accountService.setCooldown(accountId, cooldownUntilMs);
     const mins = Math.round((cooldownUntilMs - Date.now()) / 60_000);
-    console.log(`[accounts] ${accountId} usage limit — cooldown ${mins}m (until reset)`);
+    log.warn(`account ${accountId} cooldown reason=usage_limit for=${mins}m until=${new Date(cooldownUntilMs).toISOString()}${resetAtMs && resetAtMs > Date.now() ? "" : " (no reset time — 1h fallback)"}`);
   }
 
   /** Called when auth error (401 / authentication_failed) — cooldown with longer backoff */
@@ -467,7 +485,7 @@ export class AccountSelectorService {
     if (!this.isCooldownEnabled()) return;
     const backoffMs = Math.min(AUTH_BACKOFF_BASE_MS * Math.pow(2, retries - 1), BACKOFF_MAX_MS);
     accountService.setCooldown(accountId, Date.now() + backoffMs);
-    console.log(`[accounts] ${accountId} auth error — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
+    log.warn(`account ${accountId} cooldown reason=auth_error for=${Math.round(backoffMs / 1000)}s until=${new Date(Date.now() + backoffMs).toISOString()} retry=#${retries}`);
   }
 
   private static readonly PREFLIGHT_BACKOFF_BASE_MS = 60_000; // 1 minute
@@ -484,7 +502,7 @@ export class AccountSelectorService {
       AccountSelectorService.PREFLIGHT_BACKOFF_MAX_MS,
     );
     accountService.setCooldown(accountId, Date.now() + backoffMs);
-    console.log(`[accounts] ${accountId} preflight refresh failed — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
+    log.warn(`account ${accountId} cooldown reason=preflight_refresh_failed for=${Math.round(backoffMs / 1000)}s until=${new Date(Date.now() + backoffMs).toISOString()} retry=#${retries}`);
   }
 
   /** Called on successful request — reset retry count + track usage */

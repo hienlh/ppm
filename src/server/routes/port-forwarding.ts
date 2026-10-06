@@ -6,6 +6,9 @@ import {
   registerTunnel,
   MAX_PROBE_FAILURES,
 } from "./tunnel-spawn.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("preview");
 
 /**
  * Port forwarding API — starts per-port Cloudflare Quick Tunnels so the
@@ -63,7 +66,7 @@ portForwardingRoutes.delete("/tunnel/:port{[0-9]+}", (c) => {
 
   try { tunnel.process.kill(); } catch {}
   activeTunnels.delete(port);
-  console.log(`[preview] tunnel stopped for port ${port}`);
+  log.info(`tunnel stopped for port ${port}`);
   return c.json(ok({ port }));
 });
 
@@ -102,7 +105,7 @@ async function cleanupGhostTunnels() {
     for (const [port, tunnel] of activeTunnels) {
       // Check if cloudflared process is still running
       if (!isProcessAlive(tunnel.process)) {
-        console.log(`[preview] ghost cleanup: port ${port} — process dead`);
+        log.warn(`ghost cleanup: port ${port} — cloudflared (PID ${tunnel.process.pid}) died unexpectedly`);
         activeTunnels.delete(port);
         continue;
       }
@@ -113,7 +116,7 @@ async function cleanupGhostTunnels() {
         }});
         conn.end();
       } catch {
-        console.log(`[preview] ghost cleanup: port ${port} — port not listening`);
+        log.info(`ghost cleanup: port ${port} — port not listening`);
         try { tunnel.process.kill(); } catch {}
         activeTunnels.delete(port);
         continue;
@@ -127,10 +130,10 @@ async function cleanupGhostTunnels() {
       }
 
       tunnel.probeFailures++;
-      console.log(`[preview] tunnel probe failed for port ${port} (${tunnel.probeFailures}/${MAX_PROBE_FAILURES})`);
+      log.info(`tunnel probe failed for port ${port} (${tunnel.probeFailures}/${MAX_PROBE_FAILURES})`);
 
       if (tunnel.probeFailures >= MAX_PROBE_FAILURES) {
-        console.log(`[preview] tunnel URL expired for port ${port}, restarting...`);
+        log.info(`tunnel URL expired for port ${port}, restarting...`);
         try { tunnel.process.kill(); } catch {}
         activeTunnels.delete(port);
         try {
@@ -138,7 +141,7 @@ async function cleanupGhostTunnels() {
           registerTunnel(port, proc, url);
           console.log(`[preview] tunnel restarted for port ${port} → ${url}`);
         } catch (e: any) {
-          console.warn(`[preview] tunnel restart failed for port ${port}: ${e.message}`);
+          log.error(`tunnel restart failed for port ${port}, its tunnel is gone: ${e.message}`);
         }
       }
     }

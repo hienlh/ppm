@@ -39,6 +39,9 @@ import type {
   SessionFileAnswer,
   SessionFileChange,
 } from "../../shared/session-file-changes.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("session-review");
 
 /** A journal older than this is dropped: Undo is offered for seconds, and Change for a sitting. */
 const UNDO_KEEP_MS = 24 * 60 * 60 * 1000;
@@ -252,7 +255,7 @@ function journal(sessionId: string, entries: UndoEntry[], blobs: { name: string;
     writeFileSync(join(dir, `${id}.json`), JSON.stringify(record));
     return id;
   } catch (e) {
-    console.warn(`[session-review] undo journal failed: ${(e as Error).message}`);
+    log.warn(`undo journal failed: ${(e as Error).message}`);
     for (const blob of blobs) rmSync(join(dir, `${id}.${blob.name}`), { force: true });
     return null;
   }
@@ -310,6 +313,11 @@ export async function answerSessionChanges(p: {
     entries.push(entry);
   }
   const undoId = entries.length ? journal(p.sessionId, entries, blobs) : null;
+  // A revert rewrites files on disk; keep and open only move the session's own records.
+  const stale = files.filter((f) => f.stale).length;
+  const line = `session ${p.sessionId} review ${p.answer}: ${entries.length} of ${files.length} file(s) ${p.answer === "revert" ? "written" : "answered"}, ${stale} stale, undo=${undoId ?? "none"}`;
+  if (p.answer === "revert") log.info(line);
+  else log.debug(line);
   return { files, ...(undoId ? { undoId } : {}) };
 }
 
@@ -352,12 +360,16 @@ export async function undoSessionAnswer(p: { sessionId: string; projectPath: str
     plans.push({ entry, target, records });
   }
   const states = async () => Promise.all(record.entries.map(async (e) => ({ path: e.path, file: await current(chain, p.projectPath, e.path) })));
-  if (stale) return { stale: true, files: await states() };
+  if (stale) {
+    log.debug(`session ${p.sessionId} undo ${record.id} not applied: a file moved since`);
+    return { stale: true, files: await states() };
+  }
 
   for (const { entry, target, records } of plans) {
     if (target) await writeTarget(entry.path, target);
     if (records) restoreRecords(p.sessionId, entry.path, entry.records.before);
   }
   for (const name of readdirSync(dir).filter((f) => f.startsWith(`${record.id}.`))) rmSync(join(dir, name), { force: true });
+  log.info(`session ${p.sessionId} undid ${record.id}: ${plans.length} file(s), ${plans.filter((plan) => plan.target).length} rewritten on disk`);
   return { files: await states() };
 }

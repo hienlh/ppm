@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll, spyOn } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,12 +165,26 @@ describe("startEdgeForwarder", () => {
     });
     openServers.push(edge);
 
-    await expect(roundTrip(listenPort(edge), "nobody-home")).rejects.toThrow();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(roundTrip(listenPort(edge), "nobody-home")).rejects.toThrow();
+      // The public URL just hangs and fails, so the drop is the only trace of the outage.
+      expect(warn.mock.calls.map((c) => String(c[0]))).toContainEqual(
+        `[edge] No server on .server-port=${deadPort} within 400ms — dropped 1 connection(s) so far`,
+      );
 
-    // The edge must still be serving: a dead target is not a fatal condition.
-    const revived = await startEchoOrigin();
-    setServerPort(revived.port);
-    expect(await roundTrip(listenPort(edge), "back")).toBe("BACK");
+      // The edge must still be serving: a dead target is not a fatal condition.
+      const revived = await startEchoOrigin();
+      setServerPort(revived.port);
+      expect(await roundTrip(listenPort(edge), "back")).toBe("BACK");
+      expect(info.mock.calls.map((c) => String(c[0]))).toContainEqual(
+        `[edge] Server reachable again on port ${revived.port} — 1 connection(s) were dropped while it was not`,
+      );
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
   });
 
   it("survives an upstream reset mid-connection", async () => {

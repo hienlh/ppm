@@ -5,6 +5,10 @@ import { homedir } from "node:os";
 import { mcpConfigService } from "../../services/mcp-config.service";
 import { validateMcpName, validateMcpConfig, type McpServerConfig } from "../../types/mcp";
 import { ok, err } from "../../types/api";
+import { createLogger } from "../../services/logger.ts";
+
+/** Server names and counts only — a server's config can carry tokens. */
+const log = createLogger("mcp");
 
 export const mcpRoutes = new Hono();
 
@@ -24,8 +28,12 @@ mcpRoutes.get("/", (c) => {
   if (servers.length === 0) {
     const claudeServers = readClaudeMcpServers();
     if (claudeServers && Object.keys(claudeServers).length > 0) {
-      mcpConfigService.bulkImport(claudeServers as Record<string, McpServerConfig>);
+      const { imported, skipped } = mcpConfigService.bulkImport(claudeServers as Record<string, McpServerConfig>);
       servers = mcpConfigService.listWithMeta();
+      // A write inside a read, which the access log keeps at DEBUG. Nothing imported means
+      // the next list tries again, so that case stays at DEBUG too.
+      if (imported > 0) log.info(`Auto-imported ${imported} server(s) from ~/.claude.json${skipped ? ` (${skipped} skipped)` : ""}: ${servers.map((s) => s.name).join(", ")}`);
+      else log.debug(`Auto-import from ~/.claude.json skipped all ${skipped} server(s)`);
     }
   }
   return c.json(ok(servers));
@@ -43,6 +51,7 @@ mcpRoutes.post("/import", (c) => {
   const servers = readClaudeMcpServers();
   if (!servers) return c.json(err("~/.claude.json not found or has no mcpServers"), 404);
   const result = mcpConfigService.bulkImport(servers as Record<string, McpServerConfig>);
+  log.info(`Imported ${result.imported} server(s) from ~/.claude.json (${result.skipped} skipped)`);
   return c.json(ok(result));
 });
 
@@ -62,6 +71,7 @@ mcpRoutes.post("/", async (c) => {
   if (configErrs.length) return c.json(err(configErrs.join("; ")), 400);
   if (mcpConfigService.exists(name)) return c.json(err("Server already exists"), 409);
   mcpConfigService.set(name, config);
+  log.info(`Added server "${name}"`);
   return c.json(ok({ name }), 201);
 });
 

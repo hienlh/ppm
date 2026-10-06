@@ -17,6 +17,9 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { getBinaryArtifact, buildAssetUrl, buildSha256SumsUrl } from "./binary-upgrade-artifact.ts";
 import { headCheckAsset, downloadAndExtract } from "./binary-upgrade-download.ts";
 import { swapBinaryAndWeb } from "./binary-upgrade-swap.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("upgrade");
 
 export interface UpdateCheck {
   available: boolean;
@@ -67,6 +70,7 @@ export async function applyBinaryUpgrade(deps: BinaryUpgradeDeps): Promise<Upgra
   }
 
   const tmpDir = mkdtempSync(resolve(getPpmDir(), ".upgrade-tmp-"));
+  const startedAt = Date.now();
   try {
     const payloadRoot = await downloadFn({
       assetUrl,
@@ -77,6 +81,7 @@ export async function applyBinaryUpgrade(deps: BinaryUpgradeDeps): Promise<Upgra
       platform,
     });
     swapFn(payloadRoot, execPath, resolve(dirname(execPath), "web"), platform);
+    log.info(`Binary upgrade v${update.current} → v${update.latest}: ${artifact.artifact}.${artifact.ext} downloaded+verified, binary+web swapped in ${Date.now() - startedAt}ms`);
     return { success: true, newVersion: update.latest };
   } catch (e) {
     return { success: false, error: (e as Error).message };

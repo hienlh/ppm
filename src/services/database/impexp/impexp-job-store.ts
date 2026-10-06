@@ -9,7 +9,10 @@ import { join } from "node:path";
 import type {
   ImpExpFileFormat, ImpExpItemStatus, ImpExpJobState, ImpExpJobStatus, ImpExpMessage, ImpExpMessageLevel, ImpExpOutputFile,
 } from "../../../shared/db-impexp.ts";
+import { createLogger } from "../../logger.ts";
 import { IMPEXP_FILE_TTL_MS, exportsDir, makeDir, removePath } from "./impexp-files.ts";
+
+const log = createLogger("impexp");
 
 /**
  * Jobs running at once. Each holds a connection to its database, and an export a batch of rows,
@@ -93,6 +96,7 @@ export async function createJob(kind: "export" | "import", items: readonly { sou
     }
   }
   startSweeper();
+  log.info(`${kind} job ${id} started: ${items.length} item(s)`);
   return job;
 }
 
@@ -114,6 +118,27 @@ export function finishJob(job: ImpExpJob, state: Exclude<ImpExpJobState, "runnin
   if (job.dropped) addMessageAnyway(job, "warning", `${job.dropped.toLocaleString("en-US")} more messages were left out`);
   job.state = state;
   job.endedAt = Date.now();
+  // The detail stays in the job: this is the line that outlives it. A failure's cause is logged by the runner.
+  const done = job.items.filter((i) => i.state === "done").length;
+  const rows = job.items.reduce((n, i) => n + i.rowsWritten, 0);
+  log.info(
+    `${job.kind} job ${job.id} ${state} in ${job.endedAt - job.startedAt}ms: ` +
+    `${done}/${job.items.length} items, ${rows} rows, ${job.files.length} file(s)`,
+  );
+}
+
+/**
+ * A job's error for `ppm.log`: the driver's code and its message with every quoted literal elided,
+ * because that is where databases and readers put values, SQL and file contents
+ * (`Duplicate entry '…'`, `syntax error at or near "…"`). A quote after a letter is an apostrophe.
+ */
+export function loggableError(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  const message = (e instanceof Error ? e.message : String(e))
+    .replace(/(^|[^\p{L}\p{N}])(["'`]).*?\2(?![\p{L}\p{N}])/gsu, "$1$2…$2")
+    .replace(/\s+/g, " ")
+    .slice(0, 300);
+  return typeof code === "string" || typeof code === "number" ? `[${code}] ${message}` : message;
 }
 
 function addMessageAnyway(job: ImpExpJob, level: ImpExpMessageLevel, text: string): void {
@@ -122,7 +147,9 @@ function addMessageAnyway(job: ImpExpJob, level: ImpExpMessageLevel, text: strin
 
 /** Stop a running job: what it is reading or writing is cancelled, and what it has not begun stays Queued. */
 export function stopJob(job: ImpExpJob): void {
-  if (job.state === "running") job.abort.abort();
+  if (job.state !== "running") return;
+  log.info(`${job.kind} job ${job.id} stop requested`);
+  job.abort.abort();
 }
 
 /** The job as the tab reads it, with the messages from the `since`-th on. */

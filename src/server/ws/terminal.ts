@@ -3,6 +3,9 @@ import { homedir } from "node:os";
 import { terminalService } from "../../services/terminal.service.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { assertAllowed, resolvePath } from "../../services/fs-path-guard.service.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("terminal");
 
 /**
  * Where a new shell starts. An explicit `cwd` (explorer "Open in Terminal") wins
@@ -44,8 +47,9 @@ export const terminalWebSocket = {
     // so does a stale id that still knows its project/cwd (tab reopened after a restart).
     // Only a stale id with no context left is "Session not found".
     if (!session && (id === "new" || projectName || cwd)) {
+      let startDir: string | undefined;
       try {
-        const startDir = resolveStartDir(projectName, cwd);
+        startDir = resolveStartDir(projectName, cwd);
         // Create session with the requested ID — but TerminalService generates its own ID.
         // Instead, create and return the new session ID to client.
         const newId = terminalService.create(startDir);
@@ -55,6 +59,9 @@ export const terminalWebSocket = {
           ws.data.id = newId;
         }
       } catch (e) {
+        // No start dir yet: the project or the cwd was refused. Otherwise the shell did not start.
+        if (startDir === undefined) log.warn(`spawn refused project=${projectName ?? "-"} cwd=${cwd ?? "-"}: ${(e as Error).message}`);
+        else log.error(`spawn failed project=${projectName ?? "-"} cwd=${startDir}:`, e);
         ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));
         return;
       }

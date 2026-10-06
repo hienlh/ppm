@@ -38,7 +38,7 @@ export interface CodexPickOptions {
 export async function pickCodexAccount(opts: CodexPickOptions = {}): Promise<PickedAccount | null | "timeout"> {
   if (listCodexAccounts().length === 0) return null;
   const usages = opts.usageBudgetMs != null
-    ? await settleWithinBudget(getAllCodexUsages(), opts.usageBudgetMs, null)
+    ? await settleWithinBudget(getAllCodexUsages(), opts.usageBudgetMs, null, "codex usage")
     : await getAllCodexUsages();
   if (usages === null) return "timeout";
   // A failed usage fetch yields {} → +Infinity, which the selector reads as "unknown", not

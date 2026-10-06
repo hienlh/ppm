@@ -8,6 +8,10 @@ import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 import type { DbType } from "../shared/db-types.ts";
 import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("db");
+const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
 export const CURRENT_SCHEMA_VERSION = 56;
@@ -35,12 +39,28 @@ export function getDb(): Database {
   // and other isolated callers never reach this -- setDb() short-circuits above,
   // and PPM_HOME clears the guard.
   assertProdDbAccessAllowed(getDbPath());
-  const ppmDir = getPpmDir();
-  if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
-  db = new Database(getDbPath());
-  applyDbPragmas(db);
-  backupBeforeMigrations(db);
-  runMigrations(db);
+  const path = getDbPath();
+  let version = -1;
+  try {
+    const ppmDir = getPpmDir();
+    if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
+    db = new Database(path);
+    applyDbPragmas(db);
+    version = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+    if (version > CURRENT_SCHEMA_VERSION) {
+      log.warn(`${path} is at schema v${version}, newer than this version of PPM knows (v${CURRENT_SCHEMA_VERSION}) — was PPM downgraded?`);
+    }
+    backupBeforeMigrations(db);
+    const started = performance.now();
+    runMigrations(db);
+    const ms = Math.round(performance.now() - started);
+    if (version === 0) log.info(`Created ${path} (schema v${CURRENT_SCHEMA_VERSION})`);
+    else if (version < CURRENT_SCHEMA_VERSION) log.info(`Migrated ${path} from schema v${version} to v${CURRENT_SCHEMA_VERSION} in ${ms} ms`);
+  } catch (e) {
+    // Nothing runs without this file: config, projects, sessions and accounts all live in it.
+    log.fatal(`Cannot open the app database ${path}${version >= 0 ? ` (schema v${version}, this version expects v${CURRENT_SCHEMA_VERSION})` : ""}:`, e);
+    throw e;
+  }
   return db;
 }
 
@@ -63,9 +83,9 @@ function backupBeforeMigrations(database: Database): void {
   if (row.user_version === 0) return; // brand-new database — nothing to lose yet
   try {
     const result = backupDbSync("premigrate", { sourceDb: database, dbPath: getDbPath() });
-    console.log(`[db] Pre-migration snapshot: ${result.path} (${(result.bytes / 1_048_576).toFixed(1)} MB)`);
+    log.info(`Pre-migration snapshot: ${result.path} (${(result.bytes / 1_048_576).toFixed(1)} MB)`);
   } catch (e: any) {
-    console.error(`[db] Pre-migration snapshot FAILED (continuing): ${e?.message ?? e}`);
+    log.error(`Pre-migration snapshot FAILED (continuing): ${e?.message ?? e}`);
   }
 }
 
@@ -523,7 +543,8 @@ export function runMigrations(database: Database): void {
         }
       }
     } catch (e) {
-      console.warn(`[db] session_map migration warning: ${(e as Error).message}`);
+      // user_version still moves to 16 below, so these titles and pins are never retried.
+      log.error(`Migration v16 (session_map → SDK ids) failed, its rows were not migrated: ${(e as Error).message}`);
     }
     database.exec("PRAGMA user_version = 16");
   }
@@ -1985,7 +2006,7 @@ export function insertProxyRequest(record: {
       record.status, record.durationMs ?? null,
     );
   } catch (e) {
-    console.error(`[proxy] failed to log proxy request:`, (e as Error).message);
+    proxyLog.error(`failed to log proxy request:`, (e as Error).message);
   }
 }
 
@@ -2160,11 +2181,20 @@ function encryptConfig(config: ConnectionConfig): string {
 
 /** Decrypt a stored connection_config string, with fallback for pre-migration plaintext */
 export function decryptConfig(encrypted: string): ConnectionConfig {
+  let decryptError: unknown;
   try {
     return JSON.parse(decrypt(encrypted));
-  } catch {
-    // Fallback: might be plaintext (pre-migration or test DB)
+  } catch (e) {
+    decryptError = e;
+  }
+  // Fallback: might be plaintext (pre-migration or test DB)
+  try {
     return JSON.parse(encrypted);
+  } catch (e) {
+    // Neither: the key it was encrypted with is gone or changed, which would otherwise surface
+    // as a bare JSON syntax error. Never the config or the ciphertext.
+    log.error(`A saved connection's config could not be decrypted: ${(decryptError as Error)?.message ?? decryptError}`);
+    throw e;
   }
 }
 

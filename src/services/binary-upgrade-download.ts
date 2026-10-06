@@ -14,6 +14,9 @@
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { verifyChecksum, parseSha256Sums } from "./binary-upgrade-verify.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("upgrade");
 
 export type FetchFn = typeof fetch;
 
@@ -34,10 +37,15 @@ const ARCHIVE_TIMEOUT_MS = 120_000;
 
 /** HEAD the asset URL to confirm the GH release actually has it (npm-ahead-of-GH guard). */
 export async function headCheckAsset(url: string, fetchFn: FetchFn = fetch): Promise<boolean> {
+  // Every `false` reads as "not yet available on GitHub" to the user, which is true only of
+  // a 404: a DNS failure, a timeout or a 403 is the check failing, and only the log says so.
   try {
     const res = await fetchFn(url, { method: "HEAD", signal: AbortSignal.timeout(HEAD_TIMEOUT_MS) });
+    if (res.status === 404) log.debug(`Release asset not published yet: ${url}`);
+    else if (!res.ok) log.warn(`Release asset check ${url} failed: HTTP ${res.status}`);
     return res.ok;
-  } catch {
+  } catch (e) {
+    log.warn(`Release asset check ${url} failed: ${e instanceof Error ? e.message : e}`);
     return false;
   }
 }

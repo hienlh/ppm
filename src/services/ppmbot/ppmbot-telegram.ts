@@ -4,6 +4,9 @@ import type {
   TelegramSentMessage,
   PPMBotCommand,
 } from "../../types/ppmbot.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("ppmbot");
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 const POLL_TIMEOUT = 25;
@@ -23,6 +26,8 @@ export class PPMBotTelegram {
   private running = false;
   private abortController: AbortController | null = null;
   private retryCount = 0;
+  /** The getUpdates refusal last logged — see `logRefusal`. */
+  private refusal: { text: string; loggedAt: number; suppressed: number } | null = null;
 
   /** Track last edit time per chatId:messageId to throttle */
   private lastEditTime = new Map<string, number>();
@@ -39,16 +44,17 @@ export class PPMBotTelegram {
   /** Register bot commands with Telegram so they show in the menu */
   async registerCommands(): Promise<void> {
     try {
-      await this.callApi("setMyCommands", {
+      const res = await this.callApi("setMyCommands", {
         commands: [
           { command: "start", description: "Welcome + list projects" },
           { command: "status", description: "Running tasks + delegations" },
           { command: "help", description: "Show commands" },
         ],
       });
-      console.log("[ppmbot] Commands registered");
+      if (res.ok) log.info("Commands registered");
+      else log.warn(`Failed to register commands: HTTP ${res.status}`);
     } catch (err) {
-      console.warn("[ppmbot] Failed to register commands:", (err as Error).message);
+      log.warn("Failed to register commands:", (err as Error).message);
     }
   }
 
@@ -61,7 +67,7 @@ export class PPMBotTelegram {
     // Register commands on startup
     await this.registerCommands();
 
-    console.log("[ppmbot] Polling started");
+    log.info("Polling started");
 
     while (this.running) {
       try {
@@ -73,21 +79,21 @@ export class PPMBotTelegram {
           // Fire-and-forget: don't block polling on handler execution
           // Per-chatId serialization is handled by processing lock in service
           handler(update).catch((err) => {
-            console.error("[ppmbot] Handler error:", (err as Error).message);
+            log.error("Handler error:", (err as Error).message);
           });
         }
       } catch (err) {
         if (!this.running) break;
         this.retryCount++;
         const delay = Math.min(1000 * 2 ** this.retryCount, 30_000);
-        console.error(
-          `[ppmbot] Poll error (retry ${this.retryCount}): ${(err as Error).message}. Retrying in ${delay}ms`,
+        log.warn(
+          `Poll error (retry ${this.retryCount}): ${(err as Error).message}. Retrying in ${delay}ms`,
         );
         await Bun.sleep(delay);
       }
     }
 
-    console.log("[ppmbot] Polling stopped");
+    log.info("Polling stopped");
   }
 
   /** Stop polling gracefully */
@@ -123,13 +129,39 @@ export class PPMBotTelegram {
         signal: this.abortController.signal,
       });
 
-      const json = (await res.json()) as { ok: boolean; result?: TelegramUpdate[] };
+      const json = (await res.json()) as { ok: boolean; result?: TelegramUpdate[]; error_code?: number; description?: string };
+      if (!json.ok) this.logRefusal(json.error_code, json.description);
+      else if (this.refusal) {
+        log.info("getUpdates accepted again");
+        this.refusal = null;
+      }
       if (!json.ok || !json.result) return [];
       return json.result;
     } finally {
       clearTimeout(fetchTimeout);
       this.abortController = null;
     }
+  }
+
+  /**
+   * Telegram refused the poll — 401: the token was revoked; 409: something else reads this bot.
+   * The loop asks again at once, so a refusal is logged when it changes and then at most once a
+   * minute, with how many went unlogged in between.
+   */
+  private logRefusal(code: number | undefined, description: string | undefined): void {
+    const text = `${code ?? "?"} ${description ?? "(no description)"}`;
+    const now = Date.now();
+    const prev = this.refusal;
+    if (prev && prev.text === text && now - prev.loggedAt < 60_000) {
+      prev.suppressed++;
+      return;
+    }
+    const repeats = prev && prev.text === text && prev.suppressed > 0 ? ` (${prev.suppressed} more since the last line)` : "";
+    const line = `getUpdates refused: ${text}${repeats}`;
+    // 401/404: the token is dead and nothing will work until it is replaced.
+    if (code === 401 || code === 404) log.error(line);
+    else log.warn(line);
+    this.refusal = { text, loggedAt: now, suppressed: 0 };
   }
 
   /** Send a text message */
@@ -147,12 +179,12 @@ export class PPMBotTelegram {
       });
       const json = (await res.json()) as { ok: boolean; result?: TelegramSentMessage; description?: string };
       if (!json.ok) {
-        console.error(`[ppmbot] sendMessage failed: ${json.description}`);
+        log.error(`sendMessage failed: ${json.description}`);
         return null;
       }
       return json.result ?? null;
     } catch (err) {
-      console.error(`[ppmbot] sendMessage error: ${(err as Error).message}`);
+      log.error(`sendMessage error: ${(err as Error).message}`);
       return null;
     }
   }
@@ -182,12 +214,12 @@ export class PPMBotTelegram {
       const json = (await res.json()) as { ok: boolean; description?: string };
       if (!json.ok) {
         if (json.description?.includes("not modified")) return true;
-        console.error(`[ppmbot] editMessage failed: ${json.description}`);
+        log.error(`editMessage failed: ${json.description}`);
         return false;
       }
       return true;
     } catch (err) {
-      console.error(`[ppmbot] editMessage error: ${(err as Error).message}`);
+      log.error(`editMessage error: ${(err as Error).message}`);
       return false;
     }
   }

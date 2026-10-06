@@ -18,6 +18,10 @@ import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("settings");
+const ppmbotLog = createLogger("ppmbot");
 
 export const settingsRoutes = new Hono();
 
@@ -70,6 +74,8 @@ settingsRoutes.put("/device-name", async (c) => {
       }
     } catch (e) {
       cloud_error = (e as Error).message;
+      // The response is a 200 that carries the error, so this is the only place it is recorded.
+      log.warn(`Device name saved, cloud sync failed: ${cloud_error.slice(0, 200)}`);
     }
 
     return c.json(ok({ device_name: trimmed, cloud_synced, cloud_error }));
@@ -393,6 +399,8 @@ settingsRoutes.put("/auth/password", async (c) => {
     const auth = configService.get("auth");
     configService.set("auth", { ...auth, token: trimmed });
     configService.save();
+    // Every other signed-in client has to sign in again. Never the value, nor its length.
+    log.info("Access password changed");
 
     return c.json(ok({ token: trimmed }));
   } catch (e) {
@@ -534,7 +542,10 @@ settingsRoutes.put("/clawbot", async (c) => {
       } else if (!updated.enabled && ppmbotService.isRunning) {
         ppmbotService.stop();
       }
-    } catch { /* PPMBot module not loaded yet — OK */ }
+    } catch (e) {
+      // The response still says the new state; the bot did not follow it.
+      ppmbotLog.error(`${updated.enabled ? "Start" : "Stop"} after settings change failed:`, e);
+    }
 
     return c.json(ok(updated));
   } catch (e) {
@@ -647,6 +658,8 @@ settingsRoutes.get("/clawbot/tasks", (c) => {
     ).all(limit);
     return c.json(ok(rows));
   } catch (e) {
+    // Answered as an empty list, so the failure is recorded nowhere else.
+    log.error("Bot task list failed:", e);
     return c.json(ok([]));
   }
 });

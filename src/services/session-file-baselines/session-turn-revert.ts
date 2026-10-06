@@ -22,9 +22,12 @@ import { assertReadPermitted } from "../fs-ops/fs-ops-read-write.service.ts";
 import { realPathOrSelf } from "../fs-ops/fs-real-path.ts";
 import { lineMap, splitLines } from "../../shared/review-blocks.ts";
 import type { TurnRevertFile, TurnRevertResult } from "../../shared/session-file-changes.ts";
+import { createLogger } from "../logger.ts";
 import { BASELINE_MAX_BYTES } from "./session-file-baselines.service.ts";
 import { historyPaths, readHistory, type HistoryEntry } from "./session-file-history.ts";
 import { journalWrites, versionOf, writeTarget, type Target } from "./session-review-actions.ts";
+
+const log = createLogger("session-review");
 
 /** Calls one revert may name: a turn has tens, a long one a few hundred. */
 export const MAX_TURN_CALLS = 2000;
@@ -321,9 +324,13 @@ export async function revertTurn(p: {
   if (!p.apply) return { files };
 
   const shown = new Map(p.apply.map((f) => [f.path, f.version]));
-  if (plans.some((plan) => shown.get(plan.file.path) !== plan.file.version)) return { files, stale: true };
+  if (plans.some((plan) => shown.get(plan.file.path) !== plan.file.version)) {
+    log.debug(`session ${p.sessionId} turn revert not applied: a file moved since the preview`);
+    return { files, stale: true };
+  }
 
   const writes: Parameters<typeof journalWrites>[1] = [];
+  let failed = 0;
   for (const plan of plans) {
     const target = plan.target;
     if (!target) continue;
@@ -336,8 +343,13 @@ export async function revertTurn(p: {
       // What was written so far stays written, and journalled, so Undo still covers it.
       plan.file.error = (e as Error).message;
       plan.file.action = "none";
+      failed++;
+      // Answered inside a 200, as this file's `error`: the request itself succeeded.
+      log.error(`turn revert in session ${p.sessionId} could not write ${path}:`, e);
     }
   }
   const undoId = journalWrites(p.sessionId, writes);
+  const left = files.reduce((n, f) => n + f.skipped.length, 0);
+  log.info(`session ${p.sessionId} reverted a turn: ${writes.length} file(s) written, ${failed} failed, ${left} change(s) left, undo=${undoId ?? "none"}`);
   return { files, ...(undoId ? { undoId } : {}) };
 }

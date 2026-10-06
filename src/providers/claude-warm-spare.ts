@@ -17,6 +17,9 @@
  * message), which is what lets its id go on to a cold start.
  */
 import { createHash } from "node:crypto";
+import { createLogger } from "../services/logger.ts";
+
+const log = createLogger("sdk");
 
 /** The per-turn callbacks a CLI is spawned with. A spare's forward to the turn that adopts it. */
 export interface SpareHandlers {
@@ -73,11 +76,11 @@ export class WarmSpares<Q extends { close(): void; initializationResult?(): Prom
       this.expireIn(waiting, this.limits.idleMs);
       return waiting.sessionId;
     }
-    if (waiting) this.close(waiting);
+    if (waiting) this.close(waiting, "replaced");
     // Oldest first, and a claimed spare last: its first message is at most seconds away.
     for (const victim of [...this.spares.values()].sort((a, b) => Number(a.claimed) - Number(b.claimed))) {
       if (this.spares.size < this.limits.max) break;
-      this.close(victim);
+      this.close(victim, "evicted");
     }
 
     const spare: Spare<Q> = {
@@ -100,9 +103,12 @@ export class WarmSpares<Q extends { close(): void; initializationResult?(): Prom
     this.spares.set(spare.sessionId, spare);
     this.expireIn(spare, this.limits.idleMs);
     // A CLI that dies during startup (a broken MCP entry, a missing binary) says so here;
-    // dropping it keeps a turn from adopting a process that is already gone.
-    spare.query.initializationResult?.().catch(() => {
-      if (this.spares.get(spare.sessionId) === spare) this.close(spare);
+    // dropping it keeps a turn from adopting a process that is already gone. One no longer
+    // listed was adopted or closed already, and the rejection is that close, not news.
+    spare.query.initializationResult?.().catch((e) => {
+      if (this.spares.get(spare.sessionId) !== spare) return;
+      log.warn(`warm CLI session=${spare.sessionId} for ${spare.key} failed to start: ${e instanceof Error ? e.message : String(e)}`);
+      this.close(spare);
     });
     return spare.sessionId;
   }
@@ -126,7 +132,7 @@ export class WarmSpares<Q extends { close(): void; initializationResult?(): Prom
     if (!spare) return undefined;
     this.forget(spare);
     if (spare.fingerprint !== fingerprint) {
-      console.log(`[sdk] session=${sessionId} warm CLI does not match this turn's options — starting cold`);
+      log.info(`session=${sessionId} warm CLI does not match this turn's options — starting cold`);
       this.stop(spare);
       return undefined;
     }
@@ -136,7 +142,7 @@ export class WarmSpares<Q extends { close(): void; initializationResult?(): Prom
   }
 
   closeAll(): void {
-    for (const spare of [...this.spares.values()]) this.close(spare);
+    for (const spare of [...this.spares.values()]) this.close(spare, "closed_all");
   }
 
   private waiting(key: string): Spare<Q> | undefined {
@@ -146,13 +152,18 @@ export class WarmSpares<Q extends { close(): void; initializationResult?(): Prom
 
   private expireIn(spare: Spare<Q>, ms: number): void {
     clearTimeout(spare.timer);
-    spare.timer = setTimeout(() => this.close(spare), ms);
+    spare.timer = setTimeout(() => this.close(spare, spare.claimed ? "claimed_unused" : "expired"), ms);
     spare.timer.unref?.();
   }
 
-  private close(spare: Spare<Q>): void {
+  /**
+   * Give a spare up unused. Each one is a ~500 MB process whose start was logged, so its end
+   * is too — under `reason`, which a caller that has already said why leaves out.
+   */
+  private close(spare: Spare<Q>, reason?: string): void {
     this.forget(spare);
     this.stop(spare);
+    if (reason) log.info(`warm CLI session=${spare.sessionId} closed reason=${reason} ageMs=${Date.now() - spare.startedAt}`);
   }
 
   private forget(spare: Spare<Q>): void {

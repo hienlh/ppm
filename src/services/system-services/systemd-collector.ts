@@ -24,6 +24,9 @@ import {
   SHOW_DETAIL_PROPERTIES, SHOW_PROPERTIES, toServiceInfo, type ListUnitsRow,
 } from "./systemd-parse.ts";
 import { checkServiceActionAllowed, serviceRefusals, type ServiceGuardContext } from "./service-guard.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("SystemServices");
 
 export const SYSTEMCTL_TIMEOUT_MS = 10_000;
 /** An action may legitimately take a while; a stop waits for the unit to settle. */
@@ -135,7 +138,12 @@ export async function serviceDetails(
   const show = await deps.run(systemctlArgv(scope, [
     "show", `--property=${SHOW_DETAIL_PROPERTIES.join(",")}`, "--no-pager", "--", unit,
   ]), SYSTEMCTL_TIMEOUT_MS);
-  if (show.timedOut || show.code !== 0) return null;
+  if (show.timedOut || show.code !== 0) {
+    // An unknown unit is a clean exit with LoadState=not-found (below), so this is systemctl
+    // failing — which the route can only answer as "No unit named X".
+    log.warn(`systemctl show ${scope}/${unit} failed: ${failureText(show).replace(/\s+/g, " ").slice(0, 300)}`);
+    return null;
+  }
 
   const record = parseShowBlock(show.stdout);
   // `show` answers for a unit it has never heard of too, with LoadState=not-found

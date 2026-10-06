@@ -41,6 +41,9 @@ import {
   recordBaseline,
   type BaselineSource,
 } from "./session-file-baselines.service.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("session-baselines");
 
 /** A status that takes longer belongs to a repository too big to bracket every command with. */
 const GIT_TIMEOUT_MS = 5_000;
@@ -218,7 +221,7 @@ async function git(cwd: string, args: string[], opts: { stdin?: string; maxBytes
 }
 
 function pause(top: string, why: string): void {
-  if (!pausedRepos.has(top)) console.warn(`[session-baselines] not tracking shell changes in ${top} for 10 min: ${why}`);
+  if (!pausedRepos.has(top)) log.warn(`not tracking shell changes in ${top} for 10 min: ${why}`);
   pausedRepos.set(top, Date.now() + SLOW_REPO_PAUSE_MS);
 }
 
@@ -350,7 +353,7 @@ export async function beginShellCommand(p: { sessionId: string; toolUseId: strin
       .filter((r): r is RepoSnapshot => r !== null);
     if (repos.length > 0) pending.set(pendingKey(p.sessionId, p.toolUseId), { sessionId: p.sessionId, toolUseId: p.toolUseId, startedAt, repos });
   } catch (e) {
-    console.warn(`[session-baselines] shell snapshot failed: ${(e as Error).message}`);
+    log.warn(`shell snapshot failed: ${(e as Error).message}`);
   }
 }
 
@@ -469,10 +472,11 @@ export async function endShellCommand(p: { sessionId: string; toolUseId: string 
     try {
       recorded.push(...await settleRepo(job, repo, MAX_RECORDS_PER_COMMAND - recorded.length));
     } catch (e) {
-      console.warn(`[session-baselines] shell changes in ${repo.top} not read: ${(e as Error).message}`);
+      log.warn(`shell changes in ${repo.top} not read: ${(e as Error).message}`);
     }
   }
-  if (recorded.length > 0) console.log(`[session-baselines] session=${p.sessionId} shell command changed ${recorded.length} file(s)`);
+  // Once per AI shell command that changed something: chatter, not a state change.
+  if (recorded.length > 0) log.debug(`session=${p.sessionId} shell command changed ${recorded.length} file(s)`);
   return recorded;
 }
 

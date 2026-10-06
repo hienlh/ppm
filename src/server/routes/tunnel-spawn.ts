@@ -6,6 +6,9 @@
  * ONE shared `activeTunnels` map (no duplicate spawn logic, no split-brain state).
  */
 import { ensureCloudflared, getQuickTunnelArgs } from "../../services/cloudflared.service.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("tunnels");
 
 export const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 
@@ -78,5 +81,14 @@ export function registerTunnel(port: number, proc: import("bun").Subprocess, url
   activeTunnels.set(port, {
     port, url, process: proc, pid: proc.pid, startedAt: Date.now(), probeFailures: 0,
   });
-  proc.exited.then(() => activeTunnels.delete(port)).catch(() => activeTunnels.delete(port));
+  const cleanup = () => {
+    // Every stop path removes the entry before the child is gone, so one still registered
+    // died on its own (a crash, or the quick tunnel expired) and its URL went dead with it.
+    const unexpected = activeTunnels.get(port)?.process === proc;
+    const exit = `cloudflared port=${port} pid=${proc.pid} exited code=${proc.exitCode}${proc.signalCode ? ` signal=${proc.signalCode}` : ""}`;
+    if (unexpected) log.warn(`${exit} — ${url} is down`);
+    else log.info(`${exit} (stopped by PPM)`);
+    activeTunnels.delete(port);
+  };
+  proc.exited.then(cleanup).catch(cleanup);
 }

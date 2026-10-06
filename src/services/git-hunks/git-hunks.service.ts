@@ -12,6 +12,9 @@ import type { DiffHunk } from "./unified-diff.ts";
 import {
   buildPatch, hunkFingerprint, parseUnifiedDiff, resolveRequestedHunks, selectionFromRequest,
 } from "./unified-diff.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("git");
 
 export type HunkScope = "worktree" | "index";
 
@@ -281,11 +284,13 @@ class GitHunksService {
   /** Move the selected worktree changes into the index. */
   async stage(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<void> {
     await this.applySelection(projectPath, filePath, "worktree", hunks, { cached: true, reverse: false });
+    log.debug(`staged ${hunks.length} hunk(s) of ${filePath} in ${projectPath}`);
   }
 
   /** Take the selected staged changes back out of the index. */
   async unstage(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<void> {
     await this.applySelection(projectPath, filePath, "index", hunks, { cached: true, reverse: true });
+    log.debug(`unstaged ${hunks.length} hunk(s) of ${filePath} in ${projectPath}`);
   }
 
   /**
@@ -299,11 +304,13 @@ class GitHunksService {
    * where the client saw it is refused rather than guessed at.
    */
   async discard(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<string> {
-    return this.applySelection(projectPath, filePath, "worktree", hunks, {
+    const patch = await this.applySelection(projectPath, filePath, "worktree", hunks, {
       cached: false,
       reverse: true,
       refuseMoved: true,
     });
+    log.info(`discarded ${hunks.length} hunk(s) of ${filePath} in ${projectPath}`);
+    return patch;
   }
 }
 

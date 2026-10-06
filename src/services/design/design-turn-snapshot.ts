@@ -3,6 +3,9 @@ import { isValidDesignSlug } from "./design-slug.ts";
 import { designLockKey, detachFromDesignLocks } from "./design-lock.ts";
 import { snapshotDesign } from "./design-snapshots.service.ts";
 import { recordBuiltFromAfterDesignTurn } from "./design-systems-showcase.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("design");
 
 /**
  * Snapshot a design after each turn of its design session.
@@ -53,7 +56,7 @@ export function scheduleTurnSnapshot(sessionId: string, projectPath?: string | n
       try {
         await snapshotDesign(project, slug, "turn", { sessionId });
       } catch (e) {
-        console.warn(`[design] turn snapshot of ${slug} failed: ${(e as Error).message}`);
+        log.error(`turn snapshot of ${slug} failed: ${(e as Error).message}`);
       }
       // Server-recorded, not agent-written: refreshes the app's builtFrom commit, which is
       // what the stale reminder compares HEAD against (see recordBuiltFromAfterDesignTurn for
@@ -67,7 +70,7 @@ export function scheduleTurnSnapshot(sessionId: string, projectPath?: string | n
     };
     pending.set(key, { timer: setTimeout(fire, debounceMs), fire });
   } catch (e) {
-    console.warn(`[design] could not schedule a turn snapshot for ${sessionId}: ${(e as Error).message}`);
+    log.warn(`could not schedule a turn snapshot for ${sessionId}: ${(e as Error).message}`);
   }
 }
 

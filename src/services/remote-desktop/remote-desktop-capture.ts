@@ -20,6 +20,9 @@ import { detectLinuxSession, linuxSessionEnv } from "./remote-desktop-linux-sess
 import { DEFAULT_FPS, type QualityPreset } from "./remote-desktop-quality.ts";
 import { AccessUnitAssembler, type AccessUnit } from "./access-unit-assembler.ts";
 import type { RemoteDisplay } from "./remote-desktop-displays.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 export class CaptureUnavailableError extends Error {
   constructor(msg = "ffmpeg is not installed (screen capture requires it)") {
@@ -78,6 +81,8 @@ function withVideoFilter(filter: string): string[] {
 }
 
 export interface CaptureHandle {
+  /** The grabber's pid (gst-launch's on Wayland), for log lines. */
+  pid: number;
   /** SPS bytes cached from the stream (for the avc1 codec string), null before the encoder's
    *  first keyframe has been parsed. */
   cachedSps(): Uint8Array | null;
@@ -99,6 +104,8 @@ export interface StartCaptureOptions {
    *  `workingEncoders()` reported: an encoder this build/GPU cannot run makes ffmpeg exit at
    *  once, which the session then reports as "Capture failed". */
   encoder?: string;
+  /** Why this capture is starting — `start`, or `respawn:<what changed>` — for the log only. */
+  reason?: string;
   /**
    * Push the encoded stream into this RTSP URL (the local MediaMTX relay) instead of reading
    * it back over `pipe:1`. When set there is no stdout to parse, so `onAccessUnit` is never
@@ -146,8 +153,9 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
   if (!publishUrl && !opts.onAccessUnit) {
     throw new CaptureUnavailableError("startCapture needs either onAccessUnit or publishUrl");
   }
+  const encoder = opts.encoder ?? caps.encoder ?? "libx264";
   const argv = buildCaptureArgs(
-    caps.ffmpeg, opts.encoder ?? caps.encoder ?? "libx264", input, opts.preset,
+    caps.ffmpeg, encoder, input, opts.preset,
     opts.drawMouse ?? true, publishUrl,
   );
   const proc = Bun.spawn(argv, {
@@ -160,6 +168,12 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
     stdin: "ignore",
     ...(session ? { env: { ...process.env, ...linuxSessionEnv(session) } } : {}),
   });
+  // Never the argv or the publish URL: its path is this session's stream secret.
+  log.info(
+    `capture started pid=${proc.pid} grabber=${input.kind} encoder=${encoder} ` +
+    `fps=${opts.preset?.fps ?? DEFAULT_FPS} bitrate=${opts.preset?.bitrate ?? "1M"} ` +
+    `out=${publishUrl ? "relay" : "pipe"} reason=${opts.reason ?? "start"}`,
+  );
 
   let stopped = false;
   const stop = () => {
@@ -184,9 +198,28 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
     const diedOnItsOwn = !stopped;
     stopped = true;
     let reason: string | undefined;
-    if (diedOnItsOwn && code !== 0 && code !== null) {
-      reason = (await stderrTail).trim().split("\n").slice(-3).join(" | ");
-      console.warn(`[remote-desktop] ffmpeg exited ${code}: ${reason}`);
+    if (diedOnItsOwn) {
+      // Every exit we did not ask for ends the session, a clean 0 or a signal (OOM killer)
+      // included, so all of them are logged. Only a nonzero code goes to the client, and only
+      // that case waits for the stderr read before `onExit` — both as before.
+      const unexpected = (stderr: string) => {
+        const tail = stderr.trim().split("\n").slice(-3).join(" | ");
+        // ffmpeg names its output when the push fails, and that URL's path is the stream secret.
+        // Matched only when long: a real one is `randomStreamPath`'s 33 characters, and a short
+        // one would replace every occurrence of some ordinary letter.
+        const streamPath = publishUrl?.slice(publishUrl.lastIndexOf("/") + 1) ?? "";
+        const logged = streamPath.length >= 16 ? tail.split(streamPath).join("[path]") : tail;
+        log.error(`capture ffmpeg pid=${proc.pid} exited unexpectedly code=${proc.exitCode} signal=${proc.signalCode}: ${logged || "(no stderr)"}`);
+      };
+      if (code !== 0 && code !== null) {
+        const stderr = await stderrTail;
+        reason = stderr.trim().split("\n").slice(-3).join(" | ");
+        unexpected(stderr);
+      } else {
+        void stderrTail.then(unexpected);
+      }
+    } else {
+      log.debug(`capture ffmpeg pid=${proc.pid} stopped`);
     }
     opts.onExit?.(code, reason);
   });
@@ -197,7 +230,7 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
     const idle = proc.stdout.getReader();
     (async () => { for (;;) { const { done } = await idle.read(); if (done) return; } })()
       .catch(() => { /* the process is gone; stop() has already run or is about to */ });
-    return { cachedSps: () => null, stop, isStopped: () => stopped };
+    return { pid: proc.pid, cachedSps: () => null, stop, isStopped: () => stopped };
   }
 
   const assembler = new AccessUnitAssembler();
@@ -215,10 +248,11 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
       for (const au of assembler.push(value)) onAccessUnit(au);
     }
   })().catch((e) => {
-    console.error(`[remote-desktop] capture pump failed: ${(e as Error).message}`);
+    log.error(`capture pump failed: ${(e as Error).message}`);
   });
 
   return {
+    pid: proc.pid,
     cachedSps: () => assembler.cachedSps(),
     stop,
     isStopped: () => stopped,

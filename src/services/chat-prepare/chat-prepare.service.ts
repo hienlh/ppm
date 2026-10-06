@@ -88,6 +88,7 @@ export async function prepareNewChat(projectPath: string, body: PrepareChatBody)
       (async () => draftService.get(projectPath, "__new__"))(),
       DEFAULT_BUDGET_MS,
       null,
+      "draft",
     ),
     settleWithinBudget(
       (async (): Promise<PrepareTagsSnapshot> => ({
@@ -97,6 +98,7 @@ export async function prepareNewChat(projectPath: string, body: PrepareChatBody)
       }))(),
       DEFAULT_BUDGET_MS,
       null,
+      "tags",
     ),
     settleWithinBudget(
       listSlashItemsForProvider(projectPath, providerId, undefined).then(
@@ -104,6 +106,7 @@ export async function prepareNewChat(projectPath: string, body: PrepareChatBody)
       ),
       SLASH_BUDGET_MS,
       null,
+      "slash items",
     ),
     body.skipPick
       ? Promise.resolve({ pickedAccount: "skipped" as const, usage: null })
@@ -129,7 +132,7 @@ async function pickAccountWithUsage(providerId: string): Promise<Pick<PrepareCha
     pickedAccount = null;
   }
   const usage: ChatUsageSnapshot | null = pickedAccount && pickedAccount !== "timeout"
-    ? await settleWithinBudget(readUsageSnapshot(providerId, { accountId: pickedAccount.id }), USAGE_BUDGET_MS, null)
+    ? await settleWithinBudget(readUsageSnapshot(providerId, { accountId: pickedAccount.id }), USAGE_BUDGET_MS, null, "usage")
     : null;
   return { pickedAccount, usage };
 }

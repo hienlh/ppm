@@ -16,6 +16,9 @@
 
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("bash-spy");
 
 interface SpyEntry {
   sessionId: string;
@@ -220,7 +223,7 @@ async function startSpy(
   }
 
   if (!filePath) {
-    console.log(`[bash-spy] toolUseId=${toolUseId} output file not resolved — skipping`);
+    log.debug(`toolUseId=${toolUseId} output file not resolved — skipping`);
     return;
   }
 
@@ -244,7 +247,7 @@ async function startSpy(
 
   activeSpies.set(toolUseId, entry);
   lineCounters.set(toolUseId, 0);
-  console.log(`[bash-spy] started toolUseId=${toolUseId} file=${filePath}`);
+  log.debug(`started toolUseId=${toolUseId} file=${filePath}`);
 }
 
 /** Stop monitoring a specific Bash tool */
@@ -254,7 +257,7 @@ function stopSpy(toolUseId: string): void {
   clearInterval(entry.intervalId);
   activeSpies.delete(toolUseId);
   lineCounters.delete(toolUseId);
-  console.log(`[bash-spy] stopped toolUseId=${toolUseId}`);
+  log.debug(`stopped toolUseId=${toolUseId}`);
 }
 
 /** Stop all active spies for a session (cleanup on disconnect) */

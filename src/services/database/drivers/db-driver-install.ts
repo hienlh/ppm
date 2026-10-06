@@ -27,11 +27,14 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { DbDriverStatus } from "../../../shared/db-drivers.ts";
+import { createLogger } from "../../logger.ts";
 import { DB_DRIVERS, DB_DRIVER_IDS, driverLockfile, driverManifest, type DbDriverDefinition, type DbDriverId } from "./db-driver-catalog.ts";
 import { importDriverBundle, rememberLoadedDriver, unloadDbDriver } from "./db-driver-loader.ts";
 import {
   bundleFileName, dbDriverDir, dbDriversDir, readInstalledDriver, writeInstalledDriver, type InstalledDbDriver,
 } from "./db-driver-store.ts";
+
+const log = createLogger("db");
 
 /** A cold download of a driver and its dependencies; generous for a slow link. */
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
@@ -50,7 +53,10 @@ export type Runner = (
 
 const runCommand: Runner = async (cmd, { cwd, env, timeoutMs }) => {
   const proc = Bun.spawn(cmd, { cwd, env: env as Record<string, string>, stdout: "pipe", stderr: "pipe" });
-  const timer = setTimeout(() => proc.kill(), timeoutMs);
+  const timer = setTimeout(() => {
+    log.warn(`DB driver ${path.basename(cmd[0] ?? "")} ${cmd[1] ?? ""} timed out after ${Math.round(timeoutMs / 1000)}s; killed pid=${proc.pid}`);
+    proc.kill();
+  }, timeoutMs);
   // Drained while it runs: a full pipe blocks the child instead of failing it.
   const [code, stdout, stderr] = await Promise.all([
     proc.exited,
@@ -85,7 +91,16 @@ export function installDbDriver(
   /** `run` downloads, `bundle` runs the child that bundles: seams for a test, the real commands otherwise. */
   options: { run?: Runner; bundle?: Runner } = {},
 ): Promise<InstalledDbDriver> {
-  return enqueue(`install:${id}`, () => install(DB_DRIVERS[id], options.run ?? runCommand, options.bundle ?? runCommand));
+  return enqueue(`install:${id}`, async () => {
+    // A failure needs no line here: the route answers it with a 500 (the CLI prints it).
+    const startedAt = performance.now();
+    const installed = await install(DB_DRIVERS[id], options.run ?? runCommand, options.bundle ?? runCommand);
+    log.info(
+      `installed DB driver ${id} ${installed.package}@${installed.version} ` +
+      `(${installed.bytes} B, sha256 ${installed.sha256.slice(0, 12)}) in ${Math.round(performance.now() - startedAt)}ms`,
+    );
+    return installed;
+  });
 }
 
 /** Remove a driver: close every pool built on it, then delete its folder. */
@@ -93,6 +108,7 @@ export function uninstallDbDriver(id: DbDriverId): Promise<void> {
   return enqueue(`uninstall:${id}`, async () => {
     await unloadDbDriver(id);
     rmSync(dbDriverDir(id), { recursive: true, force: true });
+    log.info(`removed DB driver ${id}`);
   });
 }
 

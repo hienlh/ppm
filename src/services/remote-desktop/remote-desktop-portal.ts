@@ -32,6 +32,9 @@ import { CString, dlopen, FFIType, ptr, suffix, type Pointer } from "bun:ffi";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { getPpmDir } from "../ppm-dir.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 const BUS = "org.freedesktop.portal.Desktop";
 const OBJ = "/org/freedesktop/portal/desktop";
@@ -236,14 +239,17 @@ function readRestoreToken(): string | null {
   }
 }
 
-function saveRestoreToken(token: string): void {
+/** True when the token was written — for the log line only. */
+function saveRestoreToken(token: string): boolean {
   try {
     const p = restoreTokenPath();
     mkdirSync(dirname(p), { recursive: true });
     // 0600: the token is a standing grant to capture this user's screen.
     writeFileSync(p, token, { mode: 0o600 });
+    return true;
   } catch (e) {
-    console.warn(`[remote-desktop] could not save the portal restore token: ${(e as Error).message}`);
+    log.warn(`could not save the portal restore token: ${(e as Error).message}`);
+    return false;
   }
 }
 
@@ -353,13 +359,23 @@ export async function startPortalScreenCast(opts: PortalOptions = {}): Promise<P
     });
 
     const token = stringField(started, "restore_token");
-    if (token) saveRestoreToken(token);
+    const saved = token ? saveRestoreToken(token) : false;
 
     const stream = firstStream(started);
     if (!stream) {
       throw new PortalUnavailableError(
         "the portal granted no stream — the screen-share dialog was dismissed",
       );
+    }
+    // Whether a stored grant was offered says whether the host's user was likely asked on their
+    // own screen. Never the token: it is a standing grant to capture this screen.
+    log.info(
+      `portal session opened node=${stream.nodeId} size=${stream.width ?? "?"}x${stream.height ?? "?"} stored-grant=${!!restore}`,
+    );
+    // The portal hands out a fresh token every session, so only the first one is news.
+    if (saved) {
+      if (restore) log.debug("portal grant refreshed");
+      else log.info("portal grant saved");
     }
 
     return {

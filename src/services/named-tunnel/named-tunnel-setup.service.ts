@@ -17,6 +17,9 @@ import { requestTunnelReload, readStatus } from "../supervisor-state.ts";
 import { broadcastGlobalEvent } from "../../server/ws/global.ts";
 import { pinsMatch } from "./cloudflared-login-helpers.ts";
 import { confirmReloadInBackground, isConfirmationRunning } from "./named-tunnel-setup-confirm.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("named-tunnel");
 
 export type CertState = "none" | "invalid" | "ok" | "mismatch";
 
@@ -66,7 +69,8 @@ export async function readZoneInfo(): Promise<{ zone: string; zoneID: string; ac
 export async function disableNamedTunnel(): Promise<void> {
   const current = configService.get("tunnel");
   configService.set("tunnel", { ...current, mode: "quick" });
-  requestTunnelReload();
+  const reload = requestTunnelReload();
+  log[reload === "busy" ? "warn" : "info"](`Named tunnel disabled (${current?.namedTunnelHostname ?? "no hostname"}), back to quick; supervisor reload ${reload}`);
 }
 
 export type SetupOutcome =
@@ -175,10 +179,13 @@ async function runSetupInner(hostname: string): Promise<SetupOutcome> {
     broadcastGlobalEvent({ type: "tunnel:setup_pending", hostname, message });
     return { ok: "pending", hostname, tunnelName, message };
   };
+  // Never the run token: it is the credential the connector runs with.
+  const configured = `Named tunnel configured: ${hostname} tunnel=${tunnelName} reused=${!!existing} overwriteDns=${overwrite}`;
 
   const status = readStatus();
   const capabilities = Array.isArray(status.capabilities) ? (status.capabilities as unknown[]) : [];
   if (!capabilities.includes("retunnel")) {
+    log.info(`${configured}; supervisor cannot reload it (older version) — needs ppm restart`);
     return pending("run `ppm restart` to apply — this PPM version needs a restart to pick up named tunnels");
   }
 
@@ -187,6 +194,7 @@ async function runSetupInner(hostname: string): Promise<SetupOutcome> {
     await Bun.sleep(RELOAD_RETRY_DELAY_MS);
     reload = requestTunnelReload();
   }
+  log[reload === "busy" ? "warn" : "info"](`${configured}; supervisor reload ${reload}`);
   if (reload === "busy") {
     return pending("supervisor busy — it will pick up the new setting shortly, or run `ppm restart`");
   }

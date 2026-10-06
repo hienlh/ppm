@@ -29,6 +29,9 @@ import { join } from "node:path";
 import type { ChatEvent } from "../types/chat.ts";
 import { createAgentTranscriptLineParser } from "./subagent-transcript-merger.ts";
 import { getCachedSubagentGroups } from "./agent-transcript/agent-transcript-index-cache.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("nested-spy");
 
 const POLL_INTERVAL_MS = 1000;
 /** Repeated per-file read failures (locked/replaced file) log once per this window. */
@@ -92,7 +95,7 @@ function warnThrottled(spy: SessionSpy, message: string): void {
   const now = Date.now();
   if (now - spy.lastWarnAt < WARN_THROTTLE_MS) return;
   spy.lastWarnAt = now;
-  console.warn(`[nested-spy] session=${spy.sessionId} ${message}`);
+  log.warn(`session=${spy.sessionId} ${message}`);
 }
 
 /** One poll for a session: scan the dir once, then drain each open card's nested tails. */
@@ -174,7 +177,7 @@ function startSpy(
   }
   if (spy.cards.has(cardToolUseId)) return;
   spy.cards.set(cardToolUseId, { tails: new Map(), onEvents });
-  console.log(`[nested-spy] session=${sessionId} started card=${cardToolUseId} (${spy.cards.size} open)`);
+  log.debug(`session=${sessionId} started card=${cardToolUseId} (${spy.cards.size} open)`);
 }
 
 /** Stop a card's spy, draining whatever landed since the last poll first. */
@@ -184,7 +187,7 @@ function stopSpy(cardToolUseId: string): void {
     // Final drain covers every open card; the spare work is one scan.
     tick(spy);
     spy.cards.delete(cardToolUseId);
-    console.log(`[nested-spy] session=${spy.sessionId} stopped card=${cardToolUseId} (${spy.cards.size} open)`);
+    log.debug(`session=${spy.sessionId} stopped card=${cardToolUseId} (${spy.cards.size} open)`);
     if (spy.cards.size === 0) {
       clearInterval(spy.intervalId);
       sessions.delete(spy.sessionId);
@@ -200,7 +203,7 @@ function stopAllForSession(sessionId: string): void {
   tick(spy);
   clearInterval(spy.intervalId);
   sessions.delete(sessionId);
-  console.log(`[nested-spy] session=${sessionId} stopped all (${spy.cards.size} cards)`);
+  log.debug(`session=${sessionId} stopped all (${spy.cards.size} cards)`);
 }
 
 export const nestedSubagentSpy = { startSpy, stopSpy, stopAllForSession };

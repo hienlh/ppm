@@ -13,6 +13,9 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { recordFile, sessionDir } from "./session-file-baselines.service.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("session-review");
 
 export interface ReviewMark {
   /** Absolute path. */
@@ -75,7 +78,8 @@ export function writeReviewMark(sessionId: string, mark: Omit<ReviewMark, "marke
     return true;
   } catch (e) {
     rmSync(tmp, { force: true });
-    console.warn(`[session-review] mark failed for ${path}: ${(e as Error).message}`);
+    // The caller answers "Could not save the answer" inside a 200: the user's answer is lost.
+    log.error(`mark failed for ${path} (session ${sessionId}): ${(e as Error).message}`);
     return false;
   }
 }

@@ -1,6 +1,9 @@
 import { cpSync, renameSync, rmSync, lstatSync } from "node:fs";
 import { cp, lstat, rename, rm } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("fs");
 
 /**
  * Shared copy/move/rename/remove core used by both the project-scoped file
@@ -123,7 +126,8 @@ export async function moveEntry(
     // copies now exist rather than be told the move completed.
     try {
       await rm(src, { recursive: true, force: false });
-    } catch {
+    } catch (e) {
+      log.warn(`cross-device move ${src} → ${dst}: copied, but the source was not removed: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`);
       return { crossDevice: true, sourceRemoved: false };
     }
     return { crossDevice: true, sourceRemoved: true };

@@ -5,6 +5,9 @@
 import type { GitOperationKind, StashEntry } from "../../shared/git-changes.ts";
 import { gitChangesService } from "../git-changes/git-changes.service.ts";
 import { runGit, toDisplay } from "../git-hunks/git-hunks.service.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("git");
 
 async function git(cwd: string, args: string[], env?: Record<string, string>): Promise<string> {
   const res = await runGit(cwd, args, { env });
@@ -71,6 +74,7 @@ export const gitWorkflowService = {
     // with the old value refuses once anything moved it since it was read, where
     // `reset --soft <hash>~1` would take back whatever had landed on top as well.
     await git(cwd, ["update-ref", "-m", `undo commit ${last.hash.slice(0, 7)}`, "HEAD", `${last.hash}~1`, last.hash]);
+    log.info(`undid commit ${last.hash.slice(0, 7)} in ${cwd} (soft reset)`);
     return { hash: last.hash, message };
   },
 
@@ -82,6 +86,7 @@ export const gitWorkflowService = {
     const remote = remotes.includes("origin") ? "origin" : remotes[0];
     if (!remote) throw new Error("This repository has no remote to publish to.");
     await git(cwd, ["push", "-u", remote, toDisplay(branch)]);
+    log.info(`published ${toDisplay(branch)} to ${remote} in ${cwd}`);
     return { remote, branch: toDisplay(branch) };
   },
 
@@ -99,6 +104,7 @@ export const gitWorkflowService = {
       throw new Error("Resolve every conflict and stage the result first.");
     }
     await git(cwd, [operation.kind, `--${action}`], { GIT_EDITOR: ":" });
+    log.info(`${operation.kind} --${action} in ${cwd}`);
     return operation.kind;
   },
 
@@ -109,8 +115,11 @@ export const gitWorkflowService = {
    * every git did before it started asking; a configured choice is left to git.
    */
   async pull(cwd: string, options: { rebase?: boolean } = {}): Promise<void> {
-    if (options.rebase) await git(cwd, ["pull", "--rebase"]);
-    else await git(cwd, (await pullStrategyConfigured(cwd)) ? ["pull"] : ["pull", "--no-rebase"]);
+    const started = performance.now();
+    const configured = !options.rebase && await pullStrategyConfigured(cwd);
+    await git(cwd, options.rebase ? ["pull", "--rebase"] : configured ? ["pull"] : ["pull", "--no-rebase"]);
+    const how = options.rebase ? "--rebase" : configured ? "the configured strategy" : "--no-rebase";
+    log.info(`pulled in ${cwd} (${how}) in ${Math.round(performance.now() - started)} ms`);
   },
 
   async listStashes(cwd: string): Promise<StashEntry[]> {
@@ -128,6 +137,7 @@ export const gitWorkflowService = {
     if (options.includeUntracked) args.push("--include-untracked");
     if (options.message?.trim()) args.push("-m", options.message.trim());
     await git(cwd, args);
+    log.info(`stashed in ${cwd} (untracked=${!!options.includeUntracked})`);
   },
 
   /**
@@ -152,18 +162,24 @@ export const gitWorkflowService = {
     const ref = `stash@{${index}}`;
     const current = (await runGit(cwd, ["rev-parse", "--verify", "-q", ref])).stdout.trim();
     if (current !== hash) throw new Error("The stash list changed. Reload it and try again.");
+    const what = `stash ${action} ${ref} ${hash.slice(0, 7)} in ${cwd}`;
     if (action === "drop") {
       await git(cwd, ["stash", "drop", ref]);
+      log.info(what);
       return {};
     }
     // In git's English: its stderr is how the fallback below is chosen, and it
     // follows the locale, so a German one would make every fallback an error.
     const withIndex = await runGit(cwd, ["stash", action, "--index", ref], { env: { LC_ALL: "C" } });
-    if (withIndex.exitCode === 0) return { indexRestored: true };
+    if (withIndex.exitCode === 0) {
+      log.info(what);
+      return { indexRestored: true };
+    }
     if (!/conflicts in index/i.test(withIndex.stderr)) {
       throw new Error(withIndex.stderr.trim() || `git stash ${action} exited with ${withIndex.exitCode}`);
     }
     await git(cwd, ["stash", action, ref]);
+    log.warn(`${what}: index not restored, applied without --index`);
     return { indexRestored: false };
   },
 };

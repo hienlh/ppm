@@ -2,9 +2,7 @@
  * Cloud WebSocket client — persistent connection from supervisor to PPM Cloud.
  * Auto-reconnects with exponential backoff + jitter. Queues messages when disconnected.
  */
-import { appendFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { getPpmDir } from "./ppm-dir.ts";
+import { createLogger, type LogLevel } from "./logger.ts";
 
 // ─── Types (must match Cloud's ws-types.ts) ─────────
 interface WsMessage {
@@ -89,6 +87,13 @@ let secretKey = "";
 // For heartbeat payload
 let getHeartbeatData: (() => HeartbeatMsg) | null = null;
 
+// While Cloud is unreachable every attempt fails the same way, about six a minute: the
+// first failure is a warning, the retries are debug, and getting back is one info line.
+let outageReported = false;
+let offlineSince = 0;
+let attemptsWhileOffline = 0;
+let lastConstructError: string | null = null;
+
 // ─── Public API ─────────────────────────────────────
 
 export function connect(opts: {
@@ -163,6 +168,7 @@ export function sendNotification(payload: {
 function doConnect(): void {
   if (!shouldConnect || reconnecting) return;
   reconnecting = true;
+  if (outageReported) attemptsWhileOffline++;
 
   // Capture local ref — if a reconnect replaces `ws` before this socket's
   // handlers fire, stale handlers must not reset module-level state.
@@ -170,8 +176,13 @@ function doConnect(): void {
   try {
     sock = new WebSocket(wsUrl);
     ws = sock;
-  } catch {
+  } catch (e) {
     reconnecting = false;
+    markOffline();
+    // A bad cloud_url fails here on every attempt, forever: say why once, not per retry.
+    const reason = e instanceof Error ? e.message : String(e);
+    log(reason === lastConstructError ? "DEBUG" : "WARN", `Cloud WS cannot connect to ${cloudHost()}: ${reason}`);
+    lastConstructError = reason;
     scheduleReconnect("constructor");
     return;
   }
@@ -182,7 +193,7 @@ function doConnect(): void {
     // Don't reset reconnectAttempt here — only after auth succeeds.
     // Resetting on open causes tight reconnect loops when the server
     // keeps closing immediately after connect (backoff never builds up).
-    log("INFO", "Cloud WS connected, sending auth");
+    log("DEBUG", "Cloud WS connected, sending auth");
 
     // Send auth as first message — server must process this before any other msg
     sock.send(JSON.stringify({
@@ -200,6 +211,14 @@ function doConnect(): void {
       if (ws !== sock) return; // replaced during delay
       connected = true;
       reconnectAttempt = 0; // Auth succeeded — reset backoff
+      if (outageReported) {
+        log("INFO", `Cloud WS connected (after ${attemptsWhileOffline} attempts, ${Math.round((Date.now() - offlineSince) / 1000)}s offline)`);
+      } else {
+        log("INFO", "Cloud WS connected");
+      }
+      outageReported = false;
+      attemptsWhileOffline = 0;
+      lastConstructError = null;
 
       // Flush queued messages
       while (outboundQueue.length > 0 && connected) {
@@ -229,7 +248,7 @@ function doConnect(): void {
 
   sock.onclose = (event) => {
     if (ws !== sock) return; // stale — ignore close from replaced connection
-    log("WARN", `Cloud WS closed: code=${event.code} reason=${event.reason || ""}`);
+    log(markOffline() ? "WARN" : "DEBUG", `Cloud WS closed: code=${event.code} reason=${event.reason || ""}`);
     connected = false;
     reconnecting = false;
     ws = null;
@@ -243,8 +262,9 @@ function doConnect(): void {
     if (shouldConnect) scheduleReconnect("onclose");
   };
 
+  // Always followed by onclose, which carries the code and reason.
   sock.onerror = (event) => {
-    log("ERROR", `Cloud WS error: ${String(event)}`);
+    log("DEBUG", `Cloud WS error: ${(event as ErrorEvent).message || event.type}`);
   };
 }
 
@@ -255,15 +275,29 @@ function scheduleReconnect(source = "unknown"): void {
   const jitter = base * (0.7 + Math.random() * 0.6);
   const delay = Math.round(jitter);
   reconnectAttempt++;
-  log("WARN", `Cloud WS reconnect in ${delay}ms (attempt #${reconnectAttempt}) src=${source}`);
+  log("DEBUG", `Cloud WS reconnect in ${delay}ms (attempt #${reconnectAttempt}) src=${source}`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     doConnect();
   }, delay);
 }
 
-function log(level: string, msg: string): void {
-  const ts = new Date().toISOString();
-  const logFile = resolve(getPpmDir(), "ppm.log");
-  try { appendFileSync(logFile, `[${ts}] [${level}] [cloud-ws] ${msg}\n`); } catch {}
+/** Returns true when this failure starts an outage (the one worth a warning). */
+function markOffline(): boolean {
+  if (outageReported) return false;
+  outageReported = true;
+  offlineSince = Date.now();
+  attemptsWhileOffline = 0;
+  return true;
+}
+
+/** Host of the Cloud endpoint, for a log line: never the path, never credentials in the URL. */
+function cloudHost(): string {
+  return wsUrl.replace(/^[a-z]+:\/\//i, "").split("/")[0]!.split("@").pop()!;
+}
+
+const cloudLog = createLogger("cloud-ws");
+
+function log(level: "DEBUG" | "INFO" | "WARN" | "ERROR", msg: string): void {
+  cloudLog[level.toLowerCase() as LogLevel](msg);
 }

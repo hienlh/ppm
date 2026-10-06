@@ -27,6 +27,7 @@ import { executeSignal, supportedSignals } from "./signal-executor.ts";
 import { readProcessDetails } from "./process-details-linux.ts";
 import { readProcessDetailsDarwin } from "./process-details-darwin.ts";
 import { CollectorLock } from "./metrics-collector-lock.ts";
+import { createLogger, type Logger } from "../logger.ts";
 
 /** Over a proxy a closed window's lease lives until the reap; 8 leaves room for
  *  a few open/close cycles across devices without a spurious 429. */
@@ -46,7 +47,8 @@ export interface SystemMetricsServiceOptions {
   /** Injected in tests so a unit test never reads the real /proc. Explicit
    *  `null` models a host with no reader for this at all. */
   details?: DetailsReader | null;
-  log?: (line: string) => void;
+  /** Kill/signal audit lines, tick failures and collector warnings. */
+  log?: Logger;
   /** Register process exit/signal teardown of children (off in unit tests). */
   exitHooks?: boolean;
 }
@@ -77,8 +79,13 @@ export class SystemMetricsService {
   private readonly execute: NonNullable<SystemMetricsServiceOptions["execute"]>;
   private readonly signalExecutor: NonNullable<SystemMetricsServiceOptions["executeSignal"]>;
   private readonly details: DetailsReader | null;
-  private readonly log: (line: string) => void;
+  private readonly log: Logger;
   private readonly exitHooks: boolean;
+  /** The failure the last tick logged, so a fault that lasts is one WARN, not one every tick. */
+  private lastTickError: string | null = null;
+  /** Warnings the last full tick carried. They are recomputed every tick, so each one is
+   *  logged when it appears and when it clears, not every time it is seen. */
+  private activeWarnings = new Set<string>();
 
   /** Serialises the one tick or kill collection allowed to hold the collector. */
   private readonly collectorLock = new CollectorLock();
@@ -93,7 +100,7 @@ export class SystemMetricsService {
     this.execute = opts.execute ?? executeKill;
     this.signalExecutor = opts.executeSignal ?? executeSignal;
     this.details = opts.details !== undefined ? opts.details : detailsReaderFor(this.collectors.platform);
-    this.log = opts.log ?? ((line) => console.log(line));
+    this.log = opts.log ?? createLogger("SystemMetrics");
     this.exitHooks = opts.exitHooks ?? true;
     this.tickDeps = {
       platform: this.collectors.platform,
@@ -251,10 +258,28 @@ export class SystemMetricsService {
       if (!tier) return;
       const { snapshot, nextState } = await assembleTick(tier, this.state, this.tickDeps, this.latest.full);
       this.state = nextState;
+      if (this.lastTickError !== null) {
+        this.lastTickError = null;
+        this.log.info("tick recovered");
+      }
+      if (tier === "full") this.logWarningChanges(snapshot.warnings);
       this.publish(snapshot);
     } catch (e) {
-      console.error("[SystemMetrics] tick failed:", (e as Error)?.message ?? e);
+      // Ticks are lossy and the next one retries, so a lasting fault is logged once.
+      const message = (e as Error)?.message ?? String(e);
+      if (message === this.lastTickError) this.log.debug("tick failed again:", message);
+      else this.log.warn("tick failed:", e);
+      this.lastTickError = message;
     }
+  }
+
+  /** The snapshot's warnings otherwise reach the UI only: a collector failing (PowerShell
+   *  gone, /proc unreadable, a device read throwing) left nothing in the log. */
+  private logWarningChanges(warnings: readonly string[]): void {
+    const current = new Set(warnings);
+    for (const w of current) if (!this.activeWarnings.has(w)) this.log.warn(`warning: ${w}`);
+    for (const w of this.activeWarnings) if (!current.has(w)) this.log.info(`warning cleared: ${w}`);
+    this.activeWarnings = current;
   }
 
   /** Drop every subscriber, stop timers and kill children. */
@@ -282,6 +307,8 @@ export class SystemMetricsService {
       this.state = {
         ...this.state, procCpu: null, procIo: null, disk: null, net: null, devices: EMPTY_DEVICE_STATE,
       };
+      // Nothing measures them until the full tier resumes, which logs what is still wrong.
+      this.activeWarnings = new Set();
     }
   }
 

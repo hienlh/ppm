@@ -1,6 +1,10 @@
 /** Shared argv-array shell-out for host-info providers. Every provider that
  *  needs PowerShell/plutil/findmnt/xdg-user-dir injects a `Runner` so unit
  *  tests never spawn a real process — only `defaultRunner` touches `Bun.spawn`. */
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("spawn");
+
 export interface RunResult {
   stdout: string;
   stderr: string;
@@ -12,6 +16,26 @@ export interface RunResult {
 export type Runner = (argv: string[], timeoutMs?: number) => Promise<RunResult>;
 
 const DEFAULT_TIMEOUT_MS = 5000;
+
+/** A tool that hangs tends to hang on every poll, so each binary's timeout is a WARN at
+ *  most once a minute and a DEBUG line otherwise. Keyed by binary name: the arguments
+ *  are never logged, since a caller's argv is its own business. */
+const TIMEOUT_REPORT_EVERY_MS = 60_000;
+const timeoutReports = new Map<string, { at: number; suppressed: number }>();
+
+function reportTimeout(argv0: string | undefined, timeoutMs: number): void {
+  const bin = argv0?.split(/[\\/]/).pop() || "?";
+  const now = Date.now();
+  const last = timeoutReports.get(bin);
+  if (last && now - last.at < TIMEOUT_REPORT_EVERY_MS) {
+    last.suppressed++;
+    log.debug(`${bin} timed out after ${timeoutMs} ms; killed`);
+    return;
+  }
+  const more = last?.suppressed ? ` (+${last.suppressed} more since the last one logged)` : "";
+  timeoutReports.set(bin, { at: now, suppressed: 0 });
+  log.warn(`${bin} timed out after ${timeoutMs} ms; killed${more}`);
+}
 
 /** Real implementation: argv array only (never string-interpolated into a shell), bounded by timeoutMs.
  *
@@ -46,6 +70,7 @@ export const defaultRunner: Runner = async (argv, timeoutMs = DEFAULT_TIMEOUT_MS
   const abandoned = new Promise<void>((resolve) => { giveUp = resolve; });
   const killTimer = setTimeout(() => {
     timedOut = true;
+    reportTimeout(argv[0], timeoutMs);
     try {
       proc.kill();
     } catch {

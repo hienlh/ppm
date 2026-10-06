@@ -27,6 +27,9 @@ import { existsSync } from "node:fs";
 import { getFfmpegCapabilities } from "../media-transcode/ffmpeg-capabilities.ts";
 import { detectLinuxSession, linuxSessionEnv } from "./remote-desktop-linux-session.ts";
 import { OggOpusDemuxer } from "./remote-desktop-ogg-opus.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 /** Opus always decodes at 48 kHz whatever the source rate was. */
 export const AUDIO_SAMPLE_RATE = 48_000;
@@ -134,11 +137,11 @@ export interface StartAudioOptions {
  *  start because the machine has no loopback device. */
 export async function startAudioCapture(opts: StartAudioOptions): Promise<AudioHandle | null> {
   const { ffmpeg } = await getFfmpegCapabilities();
-  if (!ffmpeg) return null;
+  if (!ffmpeg) { log.warn("audio requested but unavailable: ffmpeg is not installed."); return null; }
   const support = await audioSupport();
-  if (!support.available) return null;
+  if (!support.available) { log.warn(`audio requested but unavailable: ${support.reason}`); return null; }
   const input = audioInputArgs();
-  if (!input) return null;
+  if (!input) { log.warn(`audio requested but unavailable: no audio input on ${process.platform}`); return null; }
 
   const session = process.platform === "linux" ? detectLinuxSession() : null;
   const proc = Bun.spawn(buildAudioArgs(ffmpeg, input), {
@@ -147,6 +150,7 @@ export async function startAudioCapture(opts: StartAudioOptions): Promise<AudioH
     stdin: "ignore",
     ...(session ? { env: { ...process.env, ...linuxSessionEnv(session) } } : {}),
   });
+  log.info(`audio capture started pid=${proc.pid} input=${input[1]}`);
 
   let stopped = false;
   const stop = () => {
@@ -161,9 +165,19 @@ export async function startAudioCapture(opts: StartAudioOptions): Promise<AudioH
     const diedOnItsOwn = !stopped;
     stopped = true;
     let reason: string | undefined;
-    if (diedOnItsOwn && code !== 0 && code !== null) {
-      reason = (await stderrTail).trim().split("\n").slice(-2).join(" | ");
-      console.warn(`[remote-desktop] audio ffmpeg exited ${code}: ${reason}`);
+    if (diedOnItsOwn) {
+      // Any exit nobody asked for is logged, a clean 0 or a signal included. Only a nonzero code
+      // is passed on as a reason, and only that case waits for stderr first — both as before.
+      const unexpected = (tail: string) =>
+        log.error(`audio ffmpeg pid=${proc.pid} exited unexpectedly code=${proc.exitCode} signal=${proc.signalCode}: ${tail || "(no stderr)"}`);
+      if (code !== 0 && code !== null) {
+        reason = (await stderrTail).trim().split("\n").slice(-2).join(" | ");
+        unexpected(reason);
+      } else {
+        void stderrTail.then((t) => unexpected(t.trim().split("\n").slice(-2).join(" | ")));
+      }
+    } else {
+      log.debug(`audio ffmpeg pid=${proc.pid} stopped`);
     }
     opts.onExit?.(code, reason);
   });
@@ -187,7 +201,10 @@ export async function startAudioCapture(opts: StartAudioOptions): Promise<AudioH
       }
       for (const p of packets) opts.onPacket(p);
     }
-  })();
+  })().catch((e) => {
+    // Unhandled, this would count toward the server's exit; ffmpeg is left as it is.
+    log.error(`audio pump failed: ${(e as Error)?.message ?? e}`);
+  });
 
   return { stop };
 }

@@ -5,6 +5,9 @@ import { escapeHtml } from "./ppmbot-formatter.ts";
 import type { PPMBotTelegram } from "./ppmbot-telegram.ts";
 import type { ChatEvent } from "../../types/chat.ts";
 import type { PermissionMode } from "../../types/config.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("ppmbot");
 
 /** Active background tasks: taskId -> AbortController */
 const activeTasks = new Map<string, AbortController>();
@@ -24,11 +27,14 @@ export async function executeDelegation(
   activeTasks.set(taskId, abort);
 
   updateBotTaskStatus(taskId, "running");
+  const startedAt = Date.now();
+  log.info(`Task ${taskId} started: project=${task.projectName} provider=${providerId}`);
 
   const timer = setTimeout(() => {
     abort.abort();
     activeTasks.delete(taskId);
     updateBotTaskStatus(taskId, "timeout");
+    log.warn(`Task ${taskId} (${task.projectName}) timed out after ${task.timeoutMs}ms`);
     telegram.sendMessage(
       Number(task.chatId),
       `⏱ Task timed out: <i>${escapeHtml(task.prompt.slice(0, 80))}</i>`,
@@ -72,6 +78,7 @@ export async function executeDelegation(
       resultSummary: summary,
       resultFull: fullText.trim(),
     });
+    log.info(`Task ${taskId} (${task.projectName}) completed in ${Date.now() - startedAt}ms, session ${session.id}`);
 
     await telegram.sendMessage(
       Number(task.chatId),
@@ -88,6 +95,7 @@ export async function executeDelegation(
 
     const errorMsg = err instanceof Error ? err.message : String(err);
     updateBotTaskStatus(taskId, "failed", { error: errorMsg });
+    log.error(`Task ${taskId} (${task.projectName}) failed after ${Date.now() - startedAt}ms:`, err);
 
     await telegram.sendMessage(
       Number(task.chatId),
