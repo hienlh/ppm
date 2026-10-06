@@ -4,7 +4,7 @@
  * once the disk moved on, and undone by the same journal a revert answer uses.
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -266,6 +266,33 @@ describe("revertTurn", () => {
     const partial = await revertTurn({ sessionId: SESSION, calls: ["toolu_1"], apply: late.files.slice(0, 1).map((f) => ({ path: f.path, version: f.version })) });
     expect(partial.stale).toBe(true);
     expect(read(b)).toBe(set(BASE, 5, "five\n"));
+  });
+
+  test("leaves a file written while the turn is being reverted, and still writes and undoes the others", async () => {
+    // Two names for one file: putting a.ts back writes b.ts after b.ts was worked out, as a
+    // later turn still running would.
+    const a = join(work, "a.ts");
+    const b = join(work, "b.ts");
+    writeFileSync(a, BASE);
+    linkSync(a, b);
+    const one = set(BASE, 5, "five\n");
+    await call(a, "toolu_1", one);
+    const two = set(one, 30, "thirty\n");
+    await call(b, "toolu_1", two);
+
+    const { applied } = await revertNow(["toolu_1"]);
+    expect(applied.stale).toBeUndefined();
+    expect(applied.files).toEqual([
+      expect.objectContaining({ path: resolve(a), action: "edit" }),
+      expect.objectContaining({ path: resolve(b), action: "none", error: expect.stringContaining("changed while") }),
+    ]);
+    expect(applied.files[0]!.error).toBeUndefined();
+    // Line 5 went back with a.ts, and b.ts's revert, worked out before that, did not write over it.
+    expect(read(a)).toBe(set(BASE, 30, "thirty\n"));
+
+    const back = await undoSessionAnswer({ sessionId: SESSION, projectPath: work, undoId: applied.undoId! });
+    expect(back.stale).toBeUndefined();
+    expect(read(b)).toBe(two);
   });
 
   test("writes nothing when what Undo needs cannot be saved first", async () => {

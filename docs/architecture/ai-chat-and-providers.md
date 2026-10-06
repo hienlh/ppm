@@ -759,11 +759,14 @@ open. A revert writes the base's lines back on disk — the "before", or the mar
 `sinceReview` file — and needs no record, because a reverted block is no longer a change; a
 file that is not plain UTF-8 or is over 64 MB is refused. Each answer is journalled under
 `<session dir>/undo/` (dropped after 24 h) with the session's records for every file it touched
-and, for a revert, the file's bytes before and after. `POST …/file-changes/undo { undoId }`
+and, for a revert, the file's bytes before and after — written before the first file is, so a
+revert with no journal writes nothing, and a file it cannot write is answered with why while
+the others still go. `POST …/file-changes/undo { undoId }`
 puts a revert's change back even after other blocks of the file were answered, wherever its
 lines are still as the revert left them (`reapply`, a three-way placement through `lineMap`),
 and the records only while nothing has answered the file since. One file it cannot put back
-makes the whole undo `stale`, so a multi-file answer never comes back half.
+makes the whole undo `stale`, and one it cannot write takes back the files written before it
+and keeps the journal, so the same Undo can be asked again.
 
 **The tab.** `use-session-review.ts` holds the state and `session-review-model.ts` the pure
 half (blocks per file, what each was answered, where focus goes next). Answers show at once
@@ -818,8 +821,10 @@ into hunks with no context, and a hunk goes back only where its lines are all st
 together. One a later change wrote over stays, named with the calls that did, which the
 confirmation turns into "Turn 3 changed it again". `apply` names every previewed file at the
 version it was previewed at and works everything out again; one file that moved makes the whole
-revert `stale`, and the browser shows the newer preview instead. A revert is journalled like a
-revert answer, so the same Undo puts it back. Answering one edit is per block: a block that
+revert `stale`, and the browser shows the newer preview instead. One that changes while the
+others are being written — a later turn still running — is left as it is and answered with
+why. A revert is journalled like a revert answer, before any file is written, so the same Undo
+puts it back. Answering one edit is per block: a block that
 holds two calls' lines goes back whole.
 
 Not covered, and said in the list (`shellChangesHint`, which knows the provider): files a

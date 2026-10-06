@@ -13,8 +13,9 @@
  *
  * A preview writes nothing. Applying works everything out again and refuses outright when a
  * file is no longer at the version the preview was shown at. A revert is journalled like a
- * revert answer, before any file is written, so the same Undo puts it back. A file that cannot
- * be written is answered with why, and the others still go.
+ * revert answer, before any file is written, so the same Undo puts it back. Each file is written
+ * only while it still holds the bytes its revert was worked out from: one written meanwhile — a
+ * later turn still running — is left as it is and answered with why, and the others still go.
  */
 import { readFile, stat } from "node:fs/promises";
 import { diffLines } from "diff";
@@ -350,6 +351,11 @@ export async function revertTurn(p: {
     for (const [n, plan] of writes.entries()) {
       const path = plan.file.path;
       try {
+        // Written since it was worked out: its lines were found in other bytes than these.
+        if (!sameState(await readState(path), plan.bytes)) {
+          leave(plan, "This file changed while the turn was being reverted, so it was left as it is.");
+          continue;
+        }
         await writeTarget(path, plan.target);
         written.push(n);
       } catch (e) {
