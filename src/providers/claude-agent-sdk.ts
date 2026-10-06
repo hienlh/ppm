@@ -36,7 +36,7 @@ import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from ".
 import { buildTurnUsage, formatTurnUsageLog, messageContextTokens, messageCacheTtl } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
-import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
+import { parseSessionMessage, mergeToolResultMessages, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
 import { readCompactions, applyCompactions } from "../services/compaction-savings.ts";
@@ -2472,19 +2472,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const messages = await getSessionMessages(sessionId);
       const parsed = messages.map((msg) => parseSessionMessage(msg));
 
-      // Merge tool_result user messages into the preceding assistant message
-      const merged: ChatMessage[] = [];
-      for (const msg of parsed) {
-        if (msg.events?.length && msg.events.every((e) => e.type === "tool_result")) {
-          // This is a tool_result-only message — append events to last assistant
-          const lastAssistant = [...merged].reverse().find((m) => m.role === "assistant");
-          if (lastAssistant?.events) {
-            lastAssistant.events.push(...msg.events);
-            continue;
-          }
-        }
-        merged.push(msg);
-      }
+      const merged = mergeToolResultMessages(parsed);
 
       // Nest child events under their parent Agent/Task tool_use's children array.
       // Cross-message: a backgrounded subagent's events land in later messages

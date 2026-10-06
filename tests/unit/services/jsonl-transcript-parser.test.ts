@@ -8,6 +8,7 @@ import {
   parseSessionMessage,
   nestChildEvents,
   nestChildEventsAcrossMessages,
+  mergeToolResultMessages,
   validateJsonlPath,
   parseJsonlTranscript,
   fullParseWindow,
@@ -120,6 +121,34 @@ describe("nestChildEvents", () => {
     const events: ChatEvent[] = [{ type: "text", content: "x" }];
     nestChildEvents(events);
     expect(events.length).toBe(1);
+  });
+});
+
+describe("mergeToolResultMessages", () => {
+  const record = (uuid: string, type: "user" | "assistant", content: unknown[]) =>
+    parseSessionMessage({ uuid, type, message: { content } });
+
+  test("calls made at once each keep their own result", () => {
+    // The SDK writes every block as a record: both calls, then both results after the second.
+    const merged = mergeToolResultMessages([
+      record("a1", "assistant", [{ type: "tool_use", id: "t1", name: "mcp__ppm-tabs__open_preview", input: { path: "r.html" } }]),
+      record("a2", "assistant", [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/x" } }]),
+      record("u1", "user", [{ type: "tool_result", content: "read", tool_use_id: "t2" }]),
+      record("u2", "user", [{ type: "tool_result", content: "opened", tool_use_id: "t1" }]),
+    ]);
+    expect(merged.map((m) => m.id)).toEqual(["a1", "a2"]);
+    expect(merged[0]!.events).toMatchObject([{ type: "tool_use", toolUseId: "t1" }, { type: "tool_result", toolUseId: "t1", output: "opened" }]);
+    expect(merged[1]!.events).toMatchObject([{ type: "tool_use", toolUseId: "t2" }, { type: "tool_result", toolUseId: "t2", output: "read" }]);
+  });
+
+  test("a result whose call is not in view goes to the last assistant message", () => {
+    const merged = mergeToolResultMessages([
+      record("a1", "assistant", [{ type: "text", text: "earlier" }]),
+      record("a2", "assistant", [{ type: "text", text: "later" }]),
+      record("u1", "user", [{ type: "tool_result", content: "orphan", tool_use_id: "gone" }]),
+    ]);
+    expect(merged.map((m) => m.events?.length)).toEqual([1, 2]);
+    expect(merged[1]!.events![1]).toMatchObject({ type: "tool_result", toolUseId: "gone" });
   });
 });
 

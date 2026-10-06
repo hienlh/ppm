@@ -53,6 +53,8 @@
 
 ### Fixed
 
+- **A tool call made alongside another one lost its result when the turn ended.** The card showed a tick and nothing in it. Each block of a reply is stored as its own message, so two calls made at once sit in two messages with both results after the second, and the history reload that ends every turn put both results under the second call. Each result now stays with the call that made it.
+
 - **Scrolling up in a long chat failed with "File too large: 542MB exceeds 256MB limit".** A session that had run for five days reached 543MB and 141 compactions, and "Load previous conversation" refused the whole file on every scroll up, although the part each scroll shows is about 3MB. Only that part is parsed now: the file is scanned as bytes, as far as the end of the part, to find where the part starts and ends. The 256MB bound applies to the part parsed rather than the file.
 
 - **A Codex patch that touched several files counted only the first, and a file it created counted +0.** The chip under the answer and the transcript's change list now name every file in the patch, live and in both rollout formats, and a created or deleted file counts its lines: Codex sends those as the file's content, not as a diff.

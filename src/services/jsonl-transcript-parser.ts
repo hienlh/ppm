@@ -201,6 +201,38 @@ export function nestChildEvents(events: ChatEvent[]): void {
 }
 
 /**
+ * Fold the SDK's tool_result-only user records into the assistant messages that made the
+ * calls. Each block of a reply is a record of its own, so two calls made at once are two
+ * assistant messages with both results after the second — and a card is paired with its
+ * result inside one message, so the first call's card showed no result once the history
+ * was reloaded, which happens at the end of every turn. Each result goes to the message
+ * holding its call; one whose call is not in view goes to the last assistant message.
+ */
+export function mergeToolResultMessages(parsed: ChatMessage[]): ChatMessage[] {
+  const merged: ChatMessage[] = [];
+  const callers = new Map<string, ChatMessage>();
+  for (const msg of parsed) {
+    if (msg.events?.length && msg.events.every((e) => e.type === "tool_result")) {
+      const lastAssistant = [...merged].reverse().find((m) => m.role === "assistant");
+      if (lastAssistant?.events) {
+        for (const event of msg.events) {
+          const id = (event as { toolUseId?: string }).toolUseId;
+          ((id && callers.get(id)) || lastAssistant).events!.push(event);
+        }
+        continue;
+      }
+    }
+    if (msg.role === "assistant") {
+      for (const event of msg.events ?? []) {
+        if (event.type === "tool_use" && event.toolUseId) callers.set(event.toolUseId, msg);
+      }
+    }
+    merged.push(msg);
+  }
+  return merged;
+}
+
+/**
  * Nest child events across message boundaries. A backgrounded subagent keeps
  * running after its turn ends, so its events land in later messages than the
  * Agent/Task tool_use that spawned it. Collects parents globally, moves each
@@ -363,18 +395,7 @@ export async function parseJsonlTranscript(
     parsed.push(parseSessionMessage(entry));
   }
 
-  // Merge tool_result-only user messages into preceding assistant
-  const merged: ChatMessage[] = [];
-  for (const msg of parsed) {
-    if (msg.events?.length && msg.events.every((e) => e.type === "tool_result")) {
-      const lastAssistant = [...merged].reverse().find((m) => m.role === "assistant");
-      if (lastAssistant?.events) {
-        lastAssistant.events.push(...msg.events);
-        continue;
-      }
-    }
-    merged.push(msg);
-  }
+  const merged = mergeToolResultMessages(parsed);
 
   // Nest across messages: a backgrounded subagent's events land in later
   // messages than the Agent tool_use that spawned it.
