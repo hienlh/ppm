@@ -10,6 +10,8 @@ import { setSessionAccount, getSessionTitle, setSessionTitle, getSessionProjectP
 import { deleteSessionBaselines, readBaseline } from "../../../src/services/session-file-baselines/session-file-baselines.service.ts";
 import { readHistory } from "../../../src/services/session-file-baselines/session-file-history.ts";
 import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
+import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
+import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -562,6 +564,25 @@ describe("ClaudeAgentSdkProvider", () => {
       }
     });
 
+    it("gives an ordinary chat the tab tools it was handed and opens tabs without asking, never in a design session", async () => {
+      const tabToolsMcp = { url: "http://127.0.0.1:8080/api/tab-tools-mcp", token: "tok-tabs" };
+      const turn = async (opts: Record<string, unknown>) => {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", opts)) { /* consume */ }
+        return mockQueryFn.mock.calls[0]![0].options;
+      };
+      const opts = await turn({ permissionMode: "default", tabToolsMcp });
+      expect(opts.mcpServers["ppm-tabs"]).toEqual({ type: "http", url: tabToolsMcp.url, headers: { Authorization: "Bearer tok-tabs" }, timeout: 60_000 });
+      const allow = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+      expect(await permissionHook(opts)({ tool_name: "mcp__ppm-tabs__open_preview", tool_input: { path: "a.html" } })).toEqual(allow);
+      expect(await permissionHook(opts)({ tool_name: "mcp__ppm-tabs__open_file", tool_input: { path: "a.ts" } })).toEqual(allow);
+      expect((await turn({ permissionMode: "default" })).mcpServers?.["ppm-tabs"]).toBeUndefined();
+      const design = await turn({ designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits", tabToolsMcp });
+      expect(design.mcpServers?.["ppm-tabs"]).toBeUndefined();
+    });
+
     describe("design session", () => {
       const designOpts = { designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits" };
 
@@ -980,6 +1001,27 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(opts.env.ANTHROPIC_API_KEY).toBe("sk-ant-env-key-fallback");
     });
 
+    it("turns the claude.ai Artifact tools off only while PPM's tab tools are on", async () => {
+      const envOf = async () => {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+        return mockQueryFn.mock.calls[0]![0].options.env as Record<string, string | undefined>;
+      };
+      const previous = process.env.CLAUDE_CODE_DISABLE_ARTIFACT;
+      delete process.env.CLAUDE_CODE_DISABLE_ARTIFACT;
+      try {
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
+        (configService as any).config.ai.tab_tools = true;
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBe("1");
+        (configService as any).config.ai.tab_tools = false;
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
+      } finally {
+        if (previous !== undefined) process.env.CLAUDE_CODE_DISABLE_ARTIFACT = previous;
+      }
+    });
+
     it("settings api_key takes priority even when env vars are set", async () => {
       process.env.ANTHROPIC_API_KEY = "sk-ant-env-should-be-ignored";
       (configService as any).config.ai.providers.claude.api_key = "sk-ant-settings-wins";
@@ -1324,6 +1366,27 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(clis).toHaveLength(1);
       expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
       expect(events.find((e) => e.type === "done")).toBeTruthy();
+    });
+
+    it("starts with the tab tools under the token its chat will mint, so the chat's first turn takes it over", async () => {
+      (configService as any).config.ai.tab_tools = true;
+      setServerListenAddress(8125, "0.0.0.0");
+      try {
+        const clis = cliFactory();
+        await provider.prewarm({ projectPath: project });
+        const spare = clis[0]!.options;
+        const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+        expect(session.id).toBe(spare.sessionId);
+        expect(tabToolsMcpTokens.resolve(spare.mcpServers["ppm-tabs"].headers.Authorization.slice("Bearer ".length)))
+          .toEqual({ sessionId: session.id });
+        // What chatService.prepareSendOptions hands the session's turn.
+        await drain(provider.sendMessage(session.id, "hi", { tabToolsMcp: tabToolsMcpAccessFor(session.id)! }));
+        expect(clis).toHaveLength(1);
+        expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
+      } finally {
+        (configService as any).config.ai.tab_tools = undefined;
+        setServerListenAddress(0, "");
+      }
     });
 
     it("is spawned with the very options a cold first turn with the same picks uses", async () => {

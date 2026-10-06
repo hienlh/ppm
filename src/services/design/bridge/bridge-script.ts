@@ -75,11 +75,18 @@ ppm.start();
 
 export const BRIDGE_JS = assembleBridge(BRIDGE_FEATURES);
 
-// Inside a <script> element the HTML tokenizer ends the element at the first `</script`,
-// and `<!--` / `<script` switch it into escaped states. Fail at startup, not in a browser.
-if (/<\/script|<!--|<script/i.test(BRIDGE_JS)) {
-  throw new Error("The design bridge contains a sequence that would break out of its <script> element");
+/**
+ * Inside a <script> element the HTML tokenizer ends the element at the first `</script`,
+ * and `<!--` / `<script` switch it into escaped states. Called on every assembled bridge
+ * when its module loads, so a bad sequence fails at startup, not in a browser.
+ */
+export function assertInlineScript(js: string, name: string): void {
+  if (/<\/script|<!--|<script/i.test(js)) {
+    throw new Error(`The ${name} contains a sequence that would break out of its <script> element`);
+  }
 }
+
+assertInlineScript(BRIDGE_JS, "design bridge");
 
 const escapeAttr = (value: string): string =>
   value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -96,9 +103,10 @@ export interface BridgeTagInput {
 /**
  * The `<script>` element. Per-load values travel as attributes the core reads and removes,
  * so the script body is one constant and nothing request-derived is ever inside it.
+ * `script` is another assembly of the same core (the HTML file preview's).
  */
-export function bridgeTag(input: BridgeTagInput): string {
+export function bridgeTag(input: BridgeTagInput, script: string = BRIDGE_JS): string {
   return `<script data-ppm-bridge="1" data-nonce="${escapeAttr(input.nonce ?? "")}" data-gen="${escapeAttr(input.gen)}"`
     + ` data-css-gens="${escapeAttr(JSON.stringify(input.cssGens))}" data-file="${escapeAttr(input.file)}"`
-    + ` data-instrumented="${input.instrumented ? "1" : "0"}">${BRIDGE_JS}</script>`;
+    + ` data-instrumented="${input.instrumented ? "1" : "0"}">${script}</script>`;
 }

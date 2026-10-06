@@ -156,17 +156,38 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
   const isHtml = (ext === "html" || ext === "htm") && !isUntitled && inlineContent == null;
-  const [htmlMode, setHtmlMode] = useState<"edit" | "preview">("preview");
+  // The AI's open_file with a line asks for the code; any other open lands on the preview.
+  const aiView = metadata?.aiView as "code" | "preview" | undefined;
+  const [htmlMode, setHtmlMode] = useState<"edit" | "preview">(aiView === "code" ? "edit" : "preview");
   const [htmlRevision, setHtmlRevision] = useState(0);
-  const [htmlCodeOpened, setHtmlCodeOpened] = useState(false);
+  const [htmlCodeOpened, setHtmlCodeOpened] = useState(aiView === "code");
   const htmlPreviewVisible = isHtml && htmlMode === "preview";
   const isCsv = ext === "csv";
   // Explicit language override (from language picker / New DB Query); falls back to file extension.
   const langOverride = metadata?.language as string | undefined;
   const effectiveLanguage = inlineLanguage ?? langOverride ?? getMonacoLanguage(filePath ?? "");
   const isSql = effectiveLanguage === "sql";
-  const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
+  const [mdMode, setMdMode] = useState<"edit" | "preview">(aiView === "code" ? "edit" : "preview");
   const [csvMode, setCsvMode] = useState<"table" | "raw">("table");
+
+  // Every open_file / open_preview call on a tab that is already open switches it to the view
+  // the tool asked for, and a preview loads the page again (`open-ai-tab.ts`). The stamp the
+  // tab was mounted with is already honoured by the initial state above.
+  const aiOpenAt = metadata?.aiOpenAt as number | undefined;
+  const seenAiOpenAt = useRef(aiOpenAt);
+  useEffect(() => {
+    if (aiOpenAt === undefined || aiOpenAt === seenAiOpenAt.current) return;
+    seenAiOpenAt.current = aiOpenAt;
+    if (aiView === "code") {
+      setHtmlCodeOpened(true);
+      setHtmlMode("edit");
+      setMdMode("edit");
+    } else if (aiView === "preview") {
+      setHtmlMode("preview");
+      setMdMode("preview");
+      setHtmlRevision((value) => value + 1);
+    }
+  }, [aiOpenAt, aiView]);
 
   // SQL file: connection picker + autocomplete + run in DB viewer
   const { connections, cachedTables, refreshTables, updateConnection } = useConnections();
@@ -577,6 +598,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     }
     editor.focus();
   }, [lineNumber, endLine]);
+  // The mount handler below is memoised on `isSql` alone, so it reads the target through this.
+  const revealTargetRef = useRef(revealTarget);
+  revealTargetRef.current = revealTarget;
 
   useEffect(() => {
     if (revealAt == null) return;
@@ -607,9 +631,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     monacoInstanceRef.current = monaco;
     setMounted({ editor, monaco });
     reserveLightbulbGutter(editor, monaco);
-    if (lineNumber && lineNumber > 0) {
-      setTimeout(() => revealTarget(), 100);
-    }
+    // The target as it is now: a tab can be asked for a line before its editor first mounts,
+    // as when the AI's open_file switches a page in preview to its code.
+    setTimeout(() => revealTargetRef.current(), 100);
     // Ctrl+S → Save As for untitled tabs
     if (isUntitled) {
       editor.addCommand(

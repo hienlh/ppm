@@ -6,6 +6,7 @@ import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expans
 import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { tabSessionId } from "@/lib/tab-session-id";
+import { answerTabOpen } from "@/lib/open-ai-tab";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
@@ -879,6 +880,14 @@ export function useChat(
     try {
       data = JSON.parse(event.data as string) as ChatWsServerMessage;
     } catch {
+      return;
+    }
+
+    // The AI asked, through a tab tool, for a tab on this device. The server is waiting for
+    // the answer, so it is never queued behind a replay.
+    if (data.type === "tab_open") {
+      void answerTabOpen(data, { sessionId: sessionIdRef.current ?? "", projectName: projectNameRef.current || undefined },
+        (message) => sendRef.current(message));
       return;
     }
 

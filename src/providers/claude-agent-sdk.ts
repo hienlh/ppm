@@ -7,7 +7,9 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { localServerBaseUrl } from "../services/server-listen-address.ts";
+import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
 import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
@@ -478,6 +480,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1", CLAUDE_CODE_ENABLE_TASKS: "1" }
       : {};
 
+    // PPM's own tab tools replace the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
+    // `ArtifactData`), whose pages live on claude.ai rather than in PPM.
+    const artifactEnv = configService.get("ai").tab_tools ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
+
     return {
       ...base,
       ANTHROPIC_API_KEY: resolvedApiKey,
@@ -485,6 +491,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ANTHROPIC_BASE_URL: resolvedBaseUrl,
       ANTHROPIC_AUTH_TOKEN: resolvedAuthToken,
       ...agentTeamsEnv,
+      ...artifactEnv,
     };
   }
 
@@ -921,23 +928,29 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       account = accountService.getWithTokens(accountId) ?? account;
     }
 
+    // The chat's turns will carry the tab tools too (`chatService.prepareSendOptions`); their
+    // token is minted below, once the spare has the session id it will be taken over with.
+    const base = configService.get("ai").tab_tools === true ? localServerBaseUrl() : null;
+    const tabTools = base ? { url: `${base}${TAB_TOOLS_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
       systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
-      mcpServers: this.resolveMcpServers(projectPath),
+      mcpServers: { ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools) },
       permissionMode,
       opts,
       providerConfig,
       stderr: () => {},
     });
-    this.warmSpares.offer(projectPath, spawnFingerprint(options), (sessionId, callbacks) => {
+    this.warmSpares.offer(projectPath, spawnFingerprint(withSessionTokenMasked(options)), (sessionId, callbacks) => {
       const { generator, controller } = createMessageChannel();
+      const access = tabTools ? tabToolsMcpAccessFor(sessionId) : null;
       const q = query({
         prompt: generator,
         options: {
           ...options,
+          ...(access && { mcpServers: { ...options.mcpServers, ...tabToolsMcpServers(access) } }),
           sessionId,
           stderr: callbacks.stderr,
           hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand }),
@@ -1040,6 +1053,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
     const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    const tabToolsMcp = opts?.designSession ? undefined : opts?.tabToolsMcp;
     const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
 
     /**
@@ -1105,6 +1119,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (toolName === "AskUserQuestion") return {};
 
       if (designCheckTool && toolName === designCheckTool) return preToolUseDecision("allow");
+      if (tabToolsMcp && CLAUDE_TAB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
 
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
@@ -1291,7 +1306,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
-      const mcpServers = { ...this.resolveMcpServers(effectiveCwd), ...designMcpServers(opts?.designSession ? opts.designMcp : undefined) };
+      const mcpServers = {
+        ...this.resolveMcpServers(effectiveCwd),
+        ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
+        ...tabToolsMcpServers(tabToolsMcp),
+      };
       const hasMcp = Object.keys(mcpServers).length > 0;
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
@@ -1373,7 +1392,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // A new session's first attempt takes over the CLI `prewarm` started for it, if that
       // is exactly the process it would have spawned; otherwise it spawns one as always.
       const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork
-        ? this.warmSpares.adopt(sessionId, spawnFingerprint(queryOptions), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
+        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
       const initialCtrl = spare?.controller ?? channel!.controller;

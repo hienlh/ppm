@@ -4,6 +4,10 @@ import {
   CODEX_DESIGN_MCP_SERVER, CODEX_DESIGN_MCP_TOKEN_ENV, DESIGN_CHECK_TOOL, DESIGN_CHECK_TOOL_TIMEOUT_MS,
   type DesignMcpAccess,
 } from "../../services/design/mcp/design-mcp-tool.ts";
+import {
+  CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, TAB_TOOLS_TIMEOUT_MS,
+  type TabToolsMcpAccess,
+} from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 
 /** Config overrides, keyed like `-c key=value` on codex's command line (dotted paths). */
 export type CodexConfigOverrides = Record<string, unknown>;
@@ -20,6 +24,8 @@ export interface ThreadParamsInput {
   developerInstructions?: string;
   /** A design session's `design_check` endpoint; added as one more MCP server. */
   designMcp?: DesignMcpAccess;
+  /** The tab tools (`open_file`, `open_preview`) while the user has them on; likewise. */
+  tabToolsMcp?: TabToolsMcpAccess;
 }
 
 /**
@@ -50,6 +56,29 @@ export function designMcpEnv(access: DesignMcpAccess | undefined): Record<string
 }
 
 /**
+ * The tab-tools MCP server, shaped and approved exactly like {@link designMcpConfig}: the
+ * tools only open a tab for the user to look at.
+ */
+export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexConfigOverrides {
+  if (!access) return {};
+  return {
+    [`mcp_servers.${CODEX_TAB_TOOLS_MCP_SERVER}`]: {
+      url: access.url,
+      bearer_token_env_var: CODEX_TAB_TOOLS_MCP_TOKEN_ENV,
+      enabled_tools: [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL],
+      default_tools_approval_mode: "approve",
+      startup_timeout_sec: 10,
+      tool_timeout_sec: Math.ceil(TAB_TOOLS_TIMEOUT_MS / 1000),
+    },
+  };
+}
+
+/** The environment the app-server needs for {@link tabToolsMcpConfig}; `{}` without the tools. */
+export function tabToolsMcpEnv(access: TabToolsMcpAccess | undefined): Record<string, string> {
+  return access ? { [CODEX_TAB_TOOLS_MCP_TOKEN_ENV]: access.token } : {};
+}
+
+/**
  * One builder for the params of every thread/start and thread/resume — the first connect
  * and the account-switch respawn used to assemble them separately, which is how a field
  * added to one silently goes missing from the other. `developerInstructions` is left out
@@ -57,7 +86,11 @@ export function designMcpEnv(access: DesignMcpAccess | undefined): Record<string
  */
 export function buildThreadParams(input: ThreadParamsInput): CodexThreadParams {
   const instructions = input.developerInstructions?.trim();
-  const config = { ...(input.configOverrides?.config ?? {}), ...designMcpConfig(input.designMcp) };
+  const config = {
+    ...(input.configOverrides?.config ?? {}),
+    ...designMcpConfig(input.designMcp),
+    ...tabToolsMcpConfig(input.tabToolsMcp),
+  };
   return {
     ...(Object.keys(config).length ? { config } : {}),
     cwd: input.cwd,

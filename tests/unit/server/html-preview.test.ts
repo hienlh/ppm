@@ -3,7 +3,10 @@ import { Hono } from "hono";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createHtmlPreviewRoutes } from "../../../src/server/routes/html-preview.ts";
+import { createHtmlPreviewRoutes, MAX_BRIDGED_HTML_BYTES } from "../../../src/server/routes/html-preview.ts";
+import { HTML_PREVIEW_BRIDGE_JS } from "../../../src/services/design/bridge/html-preview-bridge.ts";
+import { BRIDGE_JS } from "../../../src/services/design/bridge/bridge-script.ts";
+import { DESIGN_CDN_HOSTS } from "../../../src/shared/design-cdn-hosts.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { authMiddleware } from "../../../src/server/middleware/auth.ts";
 
@@ -148,5 +151,67 @@ describe("HTML preview capabilities", () => {
     expect((await create(secretFile)).status).toBe(403);
     expect((await create(join(root, "site", "app.js"))).status).toBe(400);
     expect((await create(join(root, "missing.html"))).status).toBe(404);
+  });
+  it("lets pages load scripts, styles, fonts and images from the design CDNs, but fetch only their own files", async () => {
+    const url = await createUrl();
+    const csp = (await request(url)).headers.get("content-security-policy")!;
+    const directive = (name: string) => csp.split("; ").find((d) => d.startsWith(`${name} `))!;
+    for (const name of ["script-src", "style-src", "font-src", "img-src"]) {
+      for (const host of DESIGN_CDN_HOSTS) expect(directive(name)).toContain(`https://${host}`);
+    }
+    expect(directive("script-src")).toContain("'unsafe-eval'");
+    expect(directive("connect-src")).toBe(`connect-src localhost${dirname(url)}/`);
+    expect(csp).toContain("default-src 'none'");
+  });
+  it("puts the preview bridge first in <head>, carrying the load's nonce, the page and its gen", async () => {
+    writeFileSync(join(root, "site", "nested", "page.html"), "<!doctype html><html><head><title>T</title></head><body>x</body></html>");
+    const base = dirname(await createUrl());
+    const nonce = "abcdefghijklmnop1234";
+    const body = await (await request(`${base}/nested/page.html?n=${nonce}`)).text();
+    const at = body.indexOf("<script data-ppm-bridge=\"1\"");
+    expect(at).toBe(body.indexOf("<head>") + "<head>".length);
+    expect(body.indexOf("<title>")).toBeGreaterThan(at);
+    expect(body).toContain(`data-nonce="${nonce}"`);
+    expect(body).toContain('data-file="nested/page.html"');
+    expect(body).toMatch(/data-gen="[0-9a-f]{16}"/);
+    expect(body).toContain(HTML_PREVIEW_BRIDGE_JS);
+    // A nonce of the wrong shape is never written into the page.
+    const forged = await (await request(`${base}/nested/page.html?n=%22%3E%3Cimg%20src%3Dx%3E`)).text();
+    expect(forged).toContain('data-nonce=""');
+    expect(forged).not.toContain("<img src=x>");
+  });
+  it("serves a page too large to bridge exactly as it is", async () => {
+    const big = Buffer.alloc(MAX_BRIDGED_HTML_BYTES + 1, 0x61);
+    writeFileSync(join(root, "site", "big.html"), big);
+    const base = dirname(await createUrl());
+    const response = await request(`${base}/big.html`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    const served = new Uint8Array(await response.arrayBuffer());
+    expect(served.length).toBe(big.length);
+    expect(Buffer.from(served).includes("data-ppm-bridge")).toBe(false);
+  });
+  it("serves a UTF-16 page exactly as it is, for the browser to read by its byte-order mark", async () => {
+    // What Windows PowerShell 5.1's Out-File and `gpresult /h` write.
+    const page = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("<html><head></head><body>héllo</body></html>", "utf16le")]);
+    writeFileSync(join(root, "site", "report.html"), page);
+    const base = dirname(await createUrl());
+    const response = await request(`${base}/report.html?n=abcdefghijklmnop1234`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(Buffer.from(await response.arrayBuffer()).equals(page)).toBe(true);
+  });
+});
+
+describe("HTML preview bridge", () => {
+  it("is the core and the self-check only, and parses as a script", () => {
+    expect(() => new Function("window", HTML_PREVIEW_BRIDGE_JS)).not.toThrow();
+    expect(HTML_PREVIEW_BRIDGE_JS).not.toMatch(/<\/script|<!--|<script/i);
+    // The self-check, but none of the canvas's editing, picking or link blocking.
+    expect(HTML_PREVIEW_BRIDGE_JS).toContain("check-run");
+    for (const feature of ["navigate-blocked", "picker-exit", "pins-rects", "tweak", "transform-commit"]) {
+      expect(BRIDGE_JS).toContain(feature);
+      expect(HTML_PREVIEW_BRIDGE_JS).not.toContain(feature);
+    }
   });
 });

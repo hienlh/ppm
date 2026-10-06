@@ -4,7 +4,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
@@ -25,6 +25,8 @@ import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirec
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
+import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
+import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -191,6 +193,8 @@ interface SessionEntry {
   turnRequestedAt?: { at: number; cold: boolean };
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
+  /** The socket whose message opened the latest turn: where the AI's tab tools open a tab. */
+  lastSender?: ChatWsSocket;
 }
 
 /** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
@@ -437,7 +441,30 @@ export { broadcastGlobalEvent } from "./global.ts";
 function evictClient(entry: SessionEntry, ws: ChatWsSocket): void {
   clearClientPing(entry, ws);
   entry.clients.delete(ws);
+  if (entry.lastSender === ws) entry.lastSender = undefined;
 }
+
+/**
+ * Hands an AI tab tool's request to the device that sent the turn's message or, when that
+ * one has gone (a locked phone, a closed laptop), to every device showing the chat; the
+ * first answer settles the call. Never buffered into `turnEvents`: a device that reconnects
+ * later must not open the tab again. Returns how many sockets it went to.
+ */
+function deliverTabOpen(sessionId: string, request: TabOpenRequest): number {
+  const entry = activeSessions.get(sessionId);
+  if (!entry) return 0;
+  const json = JSON.stringify(request);
+  const sendTo = (clients: Iterable<ChatWsSocket>): number => {
+    let sent = 0;
+    for (const client of [...clients]) {
+      try { client.send(json); sent++; } catch { evictClient(entry, client); }
+    }
+    return sent;
+  };
+  if (entry.lastSender && entry.clients.has(entry.lastSender) && sendTo([entry.lastSender]) > 0) return 1;
+  return sendTo(entry.clients);
+}
+setTabOpenDelivery(deliverTabOpen, resolveMigratedSession);
 
 /**
  * Forward an event to connected WS clients for a session (if any).
@@ -1280,6 +1307,14 @@ export const chatWebSocket = {
       return;
     }
 
+    // A device answering an AI tab tool (see deliverTabOpen). Settles only a call pending
+    // for this very session; anything else is dropped without a reply.
+    if (parsed.type === "tab_open_result") {
+      const result = parseTabOpenResult(parsed);
+      if (result) tabOpenBroker.settle(sessionId, result);
+      return;
+    }
+
     // Reject invalid references before creating entries, changing model or resolving approval.
     if (parsed.type === "message" && parsed.replyTo != null) {
       const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
@@ -1485,6 +1520,7 @@ export const chatWebSocket = {
 
       // Store user message for reconnect replay (turn_events includes only assistant events)
       entry.currentUserMessage = parsed.content;
+      entry.lastSender = ws;
       // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
       if (!entry.isStreamingActive || entry.phase === "idle") {
         entry.turnRequestedAt = { at: messageReceivedAt, cold: !entry.isStreamingActive };

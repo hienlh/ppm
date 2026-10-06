@@ -10,6 +10,9 @@ import type { McpHttpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-a
 import {
   CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
 } from "../services/design/mcp/design-mcp-tool.ts";
+import {
+  CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
+} from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -243,6 +246,38 @@ export function designMcpServers(access: DesignMcpAccess | undefined): Record<st
       timeout: DESIGN_CHECK_TOOL_TIMEOUT_MS,
     },
   };
+}
+
+/**
+ * The tab-tools MCP server (`open_file`, `open_preview`) as the SDK's `http` server config,
+ * while the user has the tools on; `{}` otherwise. The token travels in the header.
+ */
+export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_TAB_TOOLS_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: TAB_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/** They only open a tab for the user to look at, so they never ask first. */
+export const CLAUDE_TAB_TOOLS: readonly string[] = [CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL];
+
+/**
+ * Spawn options as `spawnFingerprint` should compare them: the tab-tools token blanked. A
+ * warm spare is started before its session exists, and its token is minted for the session
+ * id it is given then — the one the session's own turns mint — so the token says nothing
+ * the session id (which the fingerprint already leaves out) does not.
+ */
+export function withSessionTokenMasked<T extends Record<string, unknown>>(options: T): T {
+  const servers = options.mcpServers as Record<string, McpHttpServerConfig> | undefined;
+  const tabs = servers?.[CLAUDE_TAB_TOOLS_MCP_SERVER];
+  if (!servers || !tabs) return options;
+  return { ...options, mcpServers: { ...servers, [CLAUDE_TAB_TOOLS_MCP_SERVER]: { ...tabs, headers: { Authorization: "<session>" } } } };
 }
 
 /** Resolve per-call overrides against provider config. Per-call wins, else config, else omit. */

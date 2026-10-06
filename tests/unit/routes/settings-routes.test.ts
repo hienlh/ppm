@@ -190,6 +190,31 @@ describe("PUT /settings/ai", () => {
     }
   });
 
+  it("keeps tab tools off until turned on, and persists both values without touching providers", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect(configService.get("ai").tab_tools).toBeUndefined();
+    const providers = structuredClone(configService.get("ai").providers);
+    for (const enabled of [true, false]) {
+      const res = await put({ tab_tools: enabled });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.tab_tools).toBe(enabled);
+      expect(JSON.parse(getConfigValue("ai")!).tab_tools).toBe(enabled);
+      expect(configService.load().ai.tab_tools).toBe(enabled);
+      expect(configService.get("ai").providers).toEqual(providers);
+    }
+    // An unrelated update leaves it as it was.
+    expect((await put({ tab_tools: true })).status).toBe(200);
+    expect((await put({ share_provider_context: false })).status).toBe(200);
+    expect(configService.load().ai.tab_tools).toBe(true);
+    for (const value of ["true", 1, null, {}]) {
+      expect((await put({ tab_tools: value })).status).toBe(400);
+      expect(configService.get("ai").tab_tools).toBe(true);
+    }
+  });
+
   it("updates provider config and returns merged result", async () => {
     const app = createApp();
     const res = await app.request("/settings/ai", {

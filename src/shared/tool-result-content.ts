@@ -58,6 +58,11 @@ function formatBytes(bytes: number): string {
 /** A whole text block that is exactly a placeholder this module produced. */
 const PLACEHOLDER_BLOCK = /^\[image(?: · [\d.]+(?:B|KB|MB))?\]$/;
 
+/** Whether a text block is exactly the stand-in for an image this module produced. */
+export function isImagePlaceholderText(text: string): boolean {
+  return PLACEHOLDER_BLOCK.test(text);
+}
+
 /**
  * Whether a serialized tool result actually carried an image.
  *

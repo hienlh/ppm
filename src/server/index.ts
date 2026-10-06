@@ -195,6 +195,9 @@ app.get("/api/mcp-auth/callback", mcpAuthCallbackHandler);
 import { designMcpHandler } from "../services/design/mcp/design-mcp-endpoint.ts";
 import { setServerListenAddress } from "../services/server-listen-address.ts";
 app.all("/api/design-mcp", designMcpHandler);
+// Tab tools (`open_file`, `open_preview`): the same arrangement, for any chat session.
+import { tabToolsMcpHandler } from "../services/tab-tools-mcp/tab-tools-mcp-endpoint.ts";
+app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);

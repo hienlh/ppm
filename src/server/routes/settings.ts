@@ -183,6 +183,7 @@ settingsRoutes.put("/ai", async (c) => {
       default_provider?: string;
       new_chat_provider_mode?: NewChatProviderMode;
       share_provider_context?: boolean;
+      tab_tools?: boolean;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
@@ -197,6 +198,9 @@ settingsRoutes.put("/ai", async (c) => {
 
     if ("share_provider_context" in body && typeof body.share_provider_context !== "boolean") {
       return c.json(err("share_provider_context must be a boolean"), 400);
+    }
+    if ("tab_tools" in body && typeof body.tab_tools !== "boolean") {
+      return c.json(err("tab_tools must be a boolean"), 400);
     }
 
     // Validate each provider config
@@ -221,6 +225,7 @@ settingsRoutes.put("/ai", async (c) => {
       ...currentAi,
       new_chat_provider_mode: body.new_chat_provider_mode ?? currentAi.new_chat_provider_mode ?? "default",
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
+      ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
     if (body.providers) {

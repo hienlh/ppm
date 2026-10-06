@@ -113,6 +113,11 @@ export interface AIConfig {
   new_chat_provider_mode?: NewChatProviderMode;
   /** Share project rules and memory between providers. Unset defaults to true. */
   share_provider_context?: boolean;
+  /**
+   * Give chats the tools that open a file, or a page the AI made, in a PPM tab on the user's
+   * device, and turn Claude Code's claude.ai Artifact tools off. Unset defaults to false.
+   */
+  tab_tools?: boolean;
   providers: Record<string, AIProviderConfig>;
 }
 

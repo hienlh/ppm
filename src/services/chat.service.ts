@@ -21,6 +21,8 @@ import { isValidDesignSlug } from "./design/design-slug.ts";
 import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
 import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
 import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
+import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
@@ -119,6 +121,8 @@ class ChatService {
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
     this.invalidateSharedContext(providerId, sessionId);
     designMcpTokens.revoke(sessionId);
+    tabToolsMcpTokens.revoke(sessionId);
+    tabOpenBroker.forget(sessionId);
     return provider.deleteSession(sessionId);
   }
 
@@ -215,7 +219,11 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    const design = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // Like the design fields, the tab tools are only ever server-built.
+    const { tabToolsMcp: _tabTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // A design session checks its canvas with `design_check` instead.
+    const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession
+      ? tabToolsMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -235,7 +243,7 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, sharedContext };
+    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), sharedContext };
   }
 
   /**

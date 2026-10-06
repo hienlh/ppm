@@ -37,6 +37,12 @@ export interface SendMessageOpts {
    * `designInstructions`; absent when the process serves no HTTP (the CLI).
    */
   designMcp?: { url: string; token: string };
+  /**
+   * The tab-tools MCP endpoint (`open_file`, `open_preview`) for this session, present while
+   * the user has "Let the AI open tabs in PPM" on and never for a design session. Server-built
+   * like `designMcp`.
+   */
+  tabToolsMcp?: { url: string; token: string };
 }
 
 export interface AIProvider {

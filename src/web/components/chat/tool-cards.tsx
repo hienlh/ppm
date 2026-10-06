@@ -101,6 +101,8 @@ import { isImageExtension } from "../../../shared/image-extensions";
 import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
 import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
+import { TabToolCard } from "./tab-tool-card";
+import { tabToolCall } from "@/lib/tab-tool-call";
 import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
 import { useOpenAgentSession } from "./use-open-agent-session";
 import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
@@ -224,6 +226,15 @@ export function ToolCard({
 
   // Read partial output for streaming Bash/PowerShell tools
   const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
+
+  // The AI's tab tools get a card of their own, with an Open button beside the summary.
+  const tabCall = tool.type === "tool_use" ? tabToolCall(toolName, input) : null;
+  if (tabCall) {
+    return (
+      <TabToolCard call={tabCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
+        isError={isError} done={!!isDone} projectName={projectName} />
+    );
+  }
 
   // In chat, every Agent/Task card — named teammates included — is one line that opens the
   // live session window/sheet rather than expanding inline; `variant="window"` (the window's

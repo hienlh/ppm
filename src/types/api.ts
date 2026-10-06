@@ -1,4 +1,5 @@
 import type { ReplyReference } from "../shared/chat-reply.ts";
+import type { TabOpenRequest, TabOpenResult } from "../shared/tab-open-protocol.ts";
 /** Standard API response envelope — backend wraps all responses in this */
 export interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -35,7 +36,9 @@ export type ChatWsClientMessage =
   | { type: "kill_background_shell"; shellId: string }
   | { type: "ready" }
   /** Replay an in-progress turn after a downstream WebSocket content gap. */
-  | { type: "resync" };
+  | { type: "resync" }
+  /** A device's answer to `tab_open`. */
+  | TabOpenResult;
 
 /** A background command (SDK Bash run_in_background) tracked for the current session. */
 export interface BackgroundShell {
@@ -78,6 +81,8 @@ export type ChatWsServerMessage =
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }
   | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; message: string }
   | { type: "user_message"; content: string; imageCount?: number; timestamp?: string }
+  /** An AI tab tool asks this device to open a tab. */
+  | TabOpenRequest
   | { type: "title_updated"; title: string }
   | { type: "compact_status"; status: "compacting" | "done" }
   | { type: "ping"; streamSeq?: number };
