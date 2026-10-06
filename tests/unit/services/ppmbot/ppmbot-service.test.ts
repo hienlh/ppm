@@ -7,64 +7,21 @@ import { openTestDb, setDb } from "../../../../src/services/db.service.ts";
  * Full integration requires a running server — covered by e2e tests.
  */
 
-describe("PPMBot Service — pairing code generation", () => {
-  beforeEach(() => {
-    const testDb = openTestDb();
-    setDb(testDb);
-  });
-
-  it("should generate 6-character pairing codes with no ambiguous chars", () => {
-    // Test the code generation pattern (no I, O, 0, 1)
-    const ambiguous = /[IO01]/;
-    const validChars = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
-
-    // Generate multiple codes and verify pattern
-    for (let i = 0; i < 50; i++) {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      let code = "";
-      for (let j = 0; j < 6; j++) {
-        code += chars[Math.floor(Math.random() * chars.length)];
-      }
-      expect(code).toMatch(validChars);
-      expect(code).not.toMatch(ambiguous);
-    }
-  });
-});
-
 describe("PPMBot Service — DB pairing operations", () => {
   beforeEach(() => {
     const testDb = openTestDb();
     setDb(testDb);
   });
 
-  it("should create and approve pairing via DB helpers", async () => {
+  it("should connect a chat in one step via DB helpers", async () => {
     const {
-      createPairingRequest,
-      approvePairing,
+      upsertApprovedPairing,
       isPairedChat,
-      getPairingByCode,
-      getPairingByChatId,
       listPairedChats,
     } = await import("../../../../src/services/db.service.ts");
 
-    // Create pairing
-    createPairingRequest("chat-100", "user-200", "TestUser", "ABC123");
-
-    // Verify pending
-    const pending = getPairingByChatId("chat-100");
-    expect(pending).toBeTruthy();
-    expect(pending!.status).toBe("pending");
-
-    // Not yet approved
     expect(isPairedChat("chat-100")).toBe(false);
-
-    // Find by code
-    const byCode = getPairingByCode("ABC123");
-    expect(byCode).toBeTruthy();
-    expect(byCode!.telegram_chat_id).toBe("chat-100");
-
-    // Approve (approvePairing takes chatId, not code)
-    approvePairing("chat-100");
+    upsertApprovedPairing("chat-100", "user-200", "TestUser");
     expect(isPairedChat("chat-100")).toBe(true);
 
     // List
@@ -75,14 +32,12 @@ describe("PPMBot Service — DB pairing operations", () => {
 
   it("should revoke pairing", async () => {
     const {
-      createPairingRequest,
-      approvePairing,
+      upsertApprovedPairing,
       revokePairing,
       isPairedChat,
     } = await import("../../../../src/services/db.service.ts");
 
-    createPairingRequest("chat-200", "user-300", "TestUser2", "XYZ789");
-    approvePairing("chat-200");
+    upsertApprovedPairing("chat-200", "user-300", "TestUser2");
     expect(isPairedChat("chat-200")).toBe(true);
 
     revokePairing("chat-200");

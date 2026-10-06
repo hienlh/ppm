@@ -290,6 +290,8 @@ app.route("/api/loopback", loopbackRoutes);
 
 // API routes
 app.route("/api/settings", settingsRoutes);
+import { notificationRoutes } from "./routes/notifications.ts";
+app.route("/api/notifications", notificationRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
 app.route("/api/mcp-auth", mcpAuthRoutes);
 app.route("/api/settings/themes", settingsThemesRoutes);

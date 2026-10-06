@@ -22,7 +22,7 @@ import {
  * `set()` writes it.
  */
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
-  "device_name", "port", "host", "theme", "auth", "ai", "telegram", "clawbot", "query_audit", "session_trace", "tunnel",
+  "device_name", "port", "host", "theme", "auth", "ai", "telegram", "ntfy", "clawbot", "notifications", "query_audit", "session_trace", "tunnel",
 ];
 
 const log = createLogger("config");

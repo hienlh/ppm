@@ -97,9 +97,10 @@ ppm bot restart                                                   # Restart serv
 ppm bot help                                                      # Help
 ```
 
-**Settings UI (ppmbot-settings-section.tsx):**
-- Enable/disable PPMBot
-- Paired Telegram chats (approval management)
+**Settings UI (ppmbot-settings-section.tsx, Telegram part in ppmbot-telegram-section.tsx):**
+- PPMBot's own Telegram bot: token with the @BotFather steps, checked with Telegram (`getMe`) before it is kept
+- Turn on PPMBot (saved at once, `PUT /api/settings/clawbot { enabled }`), with whether it is running
+- Chats that can use PPMBot (Disconnect), Connect Telegram (single-use link + QR). The link is the only way in: PPMBot hands out no pairing codes, and a chat that writes to the bot without being connected is told once to connect it from Settings
 - Default project selection
 - System prompt customization
 - Task auto-refresh (poll interval, max history)
@@ -108,7 +109,14 @@ ppm bot help                                                      # Help
 **Legacy `clawbot` naming:** PPMBot replaced an earlier bot called ClawBot, but the config key and
 its REST surface were never renamed. `config.clawbot` (typed `PPMBotConfig`) and
 `GET|PUT /api/settings/clawbot` configure **PPMBot** — toggling `enabled` there starts or stops
-`ppmbotService`. The old `ClawBotService` / `ClawBotSessionService` / `ClawBotMemoryService` /
+`ppmbotService`. Its Telegram bot is `GET|PUT /api/settings/clawbot/telegram` (status, token) and
+`POST|DELETE /api/settings/clawbot/telegram/connect` (the one-time link).
+
+**Its own bot, not the notifications one:** PPMBot reads the bot in the `ppmbot_telegram` config row
+and answers the chats approved in `clawbot_paired_chats`; notifications send through `config.telegram`
+to the `telegram_notify_chats` row (`src/services/telegram-bots.ts`). They used to share both, so a
+chat connected for alerts could command PPMBot. An install that shared them is split once, on first
+read: alert chats are copied, and PPMBot keeps the shared token only if it was enabled. The old `ClawBotService` / `ClawBotSessionService` / `ClawBotMemoryService` /
 `ClawBotStreamerService` no longer exist; the implementation is `src/services/ppmbot/*`. Treat
 `clawbot` purely as a backward-compatible key name, not as a separate subsystem.
 

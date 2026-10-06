@@ -32,6 +32,7 @@ import { useFileIndexInvalidation } from "@/hooks/use-file-index-invalidation";
 import { useUiPreload } from "@/hooks/use-ui-preload";
 import { useGlobalEvents } from "@/hooks/use-global-events";
 import { useServerReload } from "@/hooks/use-server-reload";
+import { useNotificationClicks } from "@/hooks/use-notification-clicks";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { ComparePicker } from "@/components/editor/compare-picker";
 import { DbLoginDialogHost } from "@/components/database/db-login/db-login-dialog";
@@ -158,6 +159,9 @@ export function App() {
 
   // Auto-reload when server restarts (clears SW cache first)
   useServerReload();
+
+  // A click on a push notification opens its session in this window
+  useNotificationClicks(authState === "authenticated");
 
   // Extension WS bridge — connects to /ws/extensions for UI updates (only after auth)
   useExtensionWs(authState === "authenticated");

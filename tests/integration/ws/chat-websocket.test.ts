@@ -1,9 +1,9 @@
 import { encodeReply, decodeReply, type ReplyReference } from "../../../src/shared/chat-reply.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, spyOn } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { chatService } from "../../../src/services/chat.service.ts";
-import { getSessionEffort, getSessionThinking, getSessionModel } from "../../../src/services/db.service.ts";
+import { getSessionEffort, getSessionThinking, getSessionModel, clearSessionUnread, getSessionUnreadCount } from "../../../src/services/db.service.ts";
 import { THINKING_ADAPTIVE } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 
 const PORT = 19879; // Unique port — avoid conflict with supervisor-resilience (19876)
@@ -910,5 +910,63 @@ describe("Chat reply delivery", () => {
     expect(getSessionModel(session.id)).toBeNull();
     expect((await chatService.getMessages("mock", session.id))).toHaveLength(0);
     c1.close(); c2.close();
+  });
+});
+
+describe("Chat WebSocket — what a notification is held back by", () => {
+  /** The `stillUnseen` the chat handler hands the dispatcher, per notification type. */
+  async function captureNotifications() {
+    const { notificationService } = await import("../../../src/services/notification.service.ts");
+    const sent: Array<{ type: string; stillUnseen?: () => boolean }> = [];
+    const spy = spyOn(notificationService, "broadcast").mockImplementation(async (type, _payload, opts) => {
+      sent.push({ type, stillUnseen: opts?.stillUnseen });
+    });
+    const next = async (type: string) => {
+      for (let i = 0; i < 200 && !sent.some((s) => s.type === type); i++) await Bun.sleep(5);
+      const found = sent.find((s) => s.type === type);
+      expect(found?.stillUnseen).toBeFunction();
+      return found!.stillUnseen!;
+    };
+    return { next, restore: () => spy.mockRestore() };
+  }
+
+  it("sends a finished chat's notification only while the chat is still unread", async () => {
+    const notifications = await captureNotifications();
+    try {
+      const session = await chatService.createSession("mock", {});
+      const client = await connectWs(session.id);
+      await client.waitForType("session_state");
+      client.ws.send(JSON.stringify({ type: "message", content: "hello" }));
+      await client.waitForType("done");
+      const stillUnseen = await notifications.next("done");
+      expect(stillUnseen()).toBe(true);
+      // What opening the chat on any device does (POST /chat/sessions/:id/read).
+      clearSessionUnread(session.id);
+      expect(stillUnseen()).toBe(false);
+      client.close();
+    } finally {
+      notifications.restore();
+    }
+  });
+
+  it("drops an approval's notification once the approval is answered", async () => {
+    const notifications = await captureNotifications();
+    try {
+      const session = await chatService.createSession("mock", {});
+      const client = await connectWs(session.id);
+      await client.waitForType("session_state");
+      client.ws.send(JSON.stringify({ type: "message", content: "delete temp files" }));
+      const approval = await client.waitForType("approval_request");
+      const stillUnseen = await notifications.next("approval_request");
+      expect(stillUnseen()).toBe(true);
+      client.ws.send(JSON.stringify({ type: "approval_response", requestId: approval.requestId, approved: true }));
+      await client.waitForType("done");
+      // Nobody opened the chat, so it is still unread: answering is what cancels this one.
+      expect(getSessionUnreadCount(session.id)).toBeGreaterThan(0);
+      expect(stillUnseen()).toBe(false);
+      client.close();
+    } finally {
+      notifications.restore();
+    }
   });
 });

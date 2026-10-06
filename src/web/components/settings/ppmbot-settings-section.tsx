@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api-client";
-import { Trash2, CheckCircle, Clock, Send, Brain, RefreshCw } from "@/lib/icons";
+import { Trash2, Brain, RefreshCw } from "@/lib/icons";
 import { Separator } from "@/components/ui/separator";
+import { PPMBotTelegramSection } from "./ppmbot-telegram-section";
 
 interface PPMBotConfig {
   enabled: boolean;
@@ -16,27 +17,12 @@ interface PPMBotConfig {
   debounce_ms: number;
 }
 
-interface TelegramConfig {
-  bot_token: string;
-}
-
 interface MemoryRow {
   id: number;
   project: string;
   content: string;
   category: string;
   importance: number;
-}
-
-interface PairedChat {
-  id: number;
-  telegram_chat_id: string;
-  telegram_user_id: string | null;
-  display_name: string | null;
-  pairing_code: string | null;
-  status: "pending" | "approved";
-  created_at: number;
-  approved_at: number | null;
 }
 
 interface BotTaskRow {
@@ -56,33 +42,16 @@ export function PPMBotSettingsSection() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
 
-  const [tokenInput, setTokenInput] = useState("");
-  const [tokenConfigured, setTokenConfigured] = useState(false);
-  const [tokenSaving, setTokenSaving] = useState(false);
-
-  const [enabled, setEnabled] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [showToolCalls, setShowToolCalls] = useState(true);
   const [showThinking, setShowThinking] = useState(false);
   const [debounceMs, setDebounceMs] = useState(2000);
-
-  const [pairedChats, setPairedChats] = useState<PairedChat[]>([]);
-  const [approveCode, setApproveCode] = useState("");
-  const [approving, setApproving] = useState(false);
-  const [testing, setTesting] = useState(false);
 
   const [memories, setMemories] = useState<MemoryRow[]>([]);
   const [memoryProject, setMemoryProject] = useState("_global");
 
   const [tasks, setTasks] = useState<BotTaskRow[]>([]);
   const taskPollRef = useRef<ReturnType<typeof setInterval>>(undefined);
-
-  const fetchPairedChats = useCallback(async () => {
-    try {
-      const data = await api.get<PairedChat[]>("/api/settings/clawbot/paired");
-      setPairedChats(data);
-    } catch {}
-  }, []);
 
   const fetchMemories = useCallback(async (project = memoryProject) => {
     try {
@@ -108,46 +77,25 @@ export function PPMBotSettingsSection() {
   useEffect(() => {
     api.get<PPMBotConfig>("/api/settings/clawbot").then((data) => {
       setConfig(data);
-      setEnabled(data.enabled);
       setSystemPrompt(data.system_prompt);
       setShowToolCalls(data.show_tool_calls);
       setShowThinking(data.show_thinking);
       setDebounceMs(data.debounce_ms);
     }).catch(() => {});
-    api.get<TelegramConfig>("/api/settings/telegram").then((data) => {
-      setTokenConfigured(!!data.bot_token);
-    }).catch(() => {});
-    fetchPairedChats();
     fetchMemories("_global");
     fetchTasks();
 
     // Auto-refresh tasks every 10s
     taskPollRef.current = setInterval(fetchTasks, 10000);
     return () => { if (taskPollRef.current) clearInterval(taskPollRef.current); };
-  }, [fetchPairedChats, fetchMemories, fetchTasks]);
-
-  const saveToken = async () => {
-    if (!tokenInput.trim()) return;
-    setTokenSaving(true);
-    setStatus(null);
-    try {
-      await api.put<TelegramConfig>("/api/settings/telegram", { bot_token: tokenInput });
-      setTokenConfigured(true);
-      setTokenInput("");
-      setStatus({ type: "ok", msg: "Bot token saved" });
-    } catch (e) {
-      setStatus({ type: "err", msg: (e as Error).message });
-    } finally {
-      setTokenSaving(false);
-    }
-  };
+  }, [fetchMemories, fetchTasks]);
 
   const save = async () => {
     setSaving(true);
     setStatus(null);
     try {
+      // Not `enabled`: the switch above saves that by itself.
       const body: Partial<PPMBotConfig> = {
-        enabled,
         system_prompt: systemPrompt,
         show_tool_calls: showToolCalls,
         show_thinking: showThinking,
@@ -155,7 +103,7 @@ export function PPMBotSettingsSection() {
       };
       const data = await api.put<PPMBotConfig>("/api/settings/clawbot", body);
       setConfig(data);
-      setStatus({ type: "ok", msg: enabled ? "Saved — bot started" : "Saved — bot stopped" });
+      setStatus({ type: "ok", msg: "Saved" });
     } catch (e) {
       setStatus({ type: "err", msg: (e as Error).message });
     } finally {
@@ -163,47 +111,7 @@ export function PPMBotSettingsSection() {
     }
   };
 
-  const handleApprovePairing = async () => {
-    if (!approveCode.trim()) return;
-    setApproving(true);
-    try {
-      await api.post("/api/settings/clawbot/paired/approve", { code: approveCode.trim().toUpperCase() });
-      setApproveCode("");
-      await fetchPairedChats();
-      setStatus({ type: "ok", msg: "Device approved" });
-    } catch (e) {
-      setStatus({ type: "err", msg: (e as Error).message });
-    } finally {
-      setApproving(false);
-    }
-  };
-
-  const handleRevokePairing = async (chatId: string) => {
-    try {
-      await api.del(`/api/settings/clawbot/paired/${chatId}`);
-      await fetchPairedChats();
-      setStatus({ type: "ok", msg: "Device revoked" });
-    } catch (e) {
-      setStatus({ type: "err", msg: (e as Error).message });
-    }
-  };
-
-  const handleTestNotification = async () => {
-    setTesting(true);
-    setStatus(null);
-    try {
-      await api.post("/api/settings/telegram/test", {});
-      setStatus({ type: "ok", msg: "Test notification sent to all paired devices!" });
-    } catch (e) {
-      setStatus({ type: "err", msg: (e as Error).message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
   if (!config) return <p className="text-xs text-muted-foreground">Loading...</p>;
-
-  const approvedCount = pairedChats.filter((c) => c.status === "approved").length;
 
   const statusIcon: Record<string, string> = {
     pending: "⏳", running: "🔄", completed: "✅", failed: "❌", timeout: "⏱",
@@ -214,123 +122,7 @@ export function PPMBotSettingsSection() {
 
   return (
     <div className="space-y-4">
-      {/* Bot Token */}
-      <div className="space-y-1.5">
-        <label className="text-[11px] text-muted-foreground">Telegram Bot Token</label>
-        <div className="flex gap-1.5">
-          <Input
-            type="password"
-            placeholder={tokenConfigured ? "••••••  (saved)" : "123456:ABC-DEF..."}
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-            className="h-7 text-xs flex-1"
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs shrink-0 cursor-pointer"
-            disabled={tokenSaving || !tokenInput.trim()}
-            onClick={saveToken}
-          >
-            {tokenSaving ? "..." : "Save"}
-          </Button>
-        </div>
-        <p className="text-[10px] text-muted-foreground">
-          Create a bot via <b>@BotFather</b> on Telegram. Used for both chat and notifications.
-        </p>
-      </div>
-
-      {/* Enable/Disable */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-medium">Enable PPMBot</p>
-          <p className="text-[10px] text-muted-foreground">
-            AI coordinator on Telegram — delegates tasks to your projects
-          </p>
-        </div>
-        <Switch checked={enabled} onCheckedChange={setEnabled} />
-      </div>
-
-      {/* Paired Devices */}
-      <div className="space-y-2">
-        <p className="text-xs font-medium">Paired Devices</p>
-        <p className="text-[10px] text-muted-foreground">
-          Send any message to the bot on Telegram to get a pairing code. Enter it below to approve.
-          Notifications are sent to all approved devices.
-        </p>
-
-        <div className="flex gap-2">
-          <Input
-            placeholder="Enter pairing code (e.g. A3K7WR)"
-            value={approveCode}
-            onChange={(e) => setApproveCode(e.target.value.toUpperCase())}
-            className="h-8 text-xs font-mono tracking-wider uppercase"
-            maxLength={6}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs shrink-0 cursor-pointer"
-            disabled={approving || approveCode.length < 6}
-            onClick={handleApprovePairing}
-          >
-            {approving ? "..." : "Approve"}
-          </Button>
-        </div>
-
-        {pairedChats.length === 0 ? (
-          <p className="text-[10px] text-muted-foreground italic">No paired devices yet.</p>
-        ) : (
-          <div className="space-y-1">
-            {pairedChats.map((chat) => (
-              <div
-                key={chat.id}
-                className="flex items-center justify-between rounded-md border p-2"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  {chat.status === "approved" ? (
-                    <CheckCircle className="size-3.5 text-success shrink-0" />
-                  ) : (
-                    <Clock className="size-3.5 text-warning shrink-0" />
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-xs truncate">
-                      {chat.display_name || `Chat ${chat.telegram_chat_id}`}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {chat.status === "pending" && chat.pairing_code
-                        ? `Code: ${chat.pairing_code}`
-                        : chat.status}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-destructive hover:text-destructive cursor-pointer"
-                  onClick={() => handleRevokePairing(chat.telegram_chat_id)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Test notification button */}
-        {tokenConfigured && approvedCount > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs gap-1 w-full cursor-pointer"
-            disabled={testing}
-            onClick={handleTestNotification}
-          >
-            <Send className="size-3" />
-            {testing ? "Sending..." : "Test Notification"}
-          </Button>
-        )}
-      </div>
+      <PPMBotTelegramSection />
 
       <Separator />
 

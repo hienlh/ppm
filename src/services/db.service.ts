@@ -1740,6 +1740,14 @@ export function clearSessionUnread(sessionId: string): void {
   ).run(sessionId);
 }
 
+/** Unread count for one session; 0 when it has no row. A browser clears it the moment the session is on screen. */
+export function getSessionUnreadCount(sessionId: string): number {
+  const row = getDb().query(
+    "SELECT unread_count FROM session_metadata WHERE session_id = ?",
+  ).get(sessionId) as { unread_count: number } | null;
+  return row?.unread_count ?? 0;
+}
+
 /** Get all sessions with unread > 0 */
 export function getAllUnread(): UnreadEntry[] {
   const rows = getDb().query(
@@ -2605,48 +2613,24 @@ export function deletePPMBotMemoriesByTopic(
 // PPMBot pairing helpers
 // ---------------------------------------------------------------------------
 
-export function createPairingRequest(
-  chatId: string,
-  userId: string,
-  displayName: string,
-  code: string,
-): void {
+/** Approve a chat in one step — for the one-time connect link, which is its own proof of ownership. */
+export function upsertApprovedPairing(chatId: string, userId: string, displayName: string): void {
   getDb().query(
-    `INSERT INTO clawbot_paired_chats (telegram_chat_id, telegram_user_id, display_name, pairing_code, status)
-     VALUES (?, ?, ?, ?, 'pending')
+    `INSERT INTO clawbot_paired_chats (telegram_chat_id, telegram_user_id, display_name, pairing_code, status, approved_at)
+     VALUES (?, ?, ?, NULL, 'approved', unixepoch())
      ON CONFLICT(telegram_chat_id) DO UPDATE SET
        telegram_user_id = excluded.telegram_user_id,
        display_name = excluded.display_name,
-       pairing_code = excluded.pairing_code,
-       status = 'pending',
-       approved_at = NULL`,
-  ).run(chatId, userId, displayName, code);
-}
-
-export function approvePairing(chatId: string): void {
-  getDb().query(
-    `UPDATE clawbot_paired_chats
-     SET status = 'approved', pairing_code = NULL, approved_at = unixepoch()
-     WHERE telegram_chat_id = ? AND status = 'pending'`,
-  ).run(chatId);
+       pairing_code = NULL,
+       status = 'approved',
+       approved_at = unixepoch()`,
+  ).run(chatId, userId, displayName);
 }
 
 export function revokePairing(chatId: string): void {
   getDb().query(
     "UPDATE clawbot_paired_chats SET status = 'revoked' WHERE telegram_chat_id = ?",
   ).run(chatId);
-}
-
-export function getPairingByCode(code: string): PPMBotPairedChat | null {
-  return getDb().query(
-    "SELECT * FROM clawbot_paired_chats WHERE pairing_code = ? AND status = 'pending'",
-  ).get(code) as PPMBotPairedChat | null;
-}
-
-export function getPairingByChatId(chatId: string): PPMBotPairedChat | null {
-  return getDb().query(
-    "SELECT * FROM clawbot_paired_chats WHERE telegram_chat_id = ?",
-  ).get(chatId) as PPMBotPairedChat | null;
 }
 
 export function listPairedChats(): PPMBotPairedChat[] {

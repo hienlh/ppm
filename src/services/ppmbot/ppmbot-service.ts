@@ -5,8 +5,6 @@ import { configService } from "../config.service.ts";
 import { chatService } from "../chat.service.ts";
 import {
   isPairedChat,
-  getPairingByChatId,
-  createPairingRequest,
   getApprovedPairedChats,
   getRecentBotTasks,
   getRunningBotTasks,
@@ -20,8 +18,10 @@ import { streamToTelegram } from "./ppmbot-streamer.ts";
 import { escapeHtml } from "./ppmbot-formatter.ts";
 import { executeDelegation, getActiveDelegationCount } from "./ppmbot-delegation.ts";
 import type { TelegramUpdate, PPMBotCommand } from "../../types/ppmbot.ts";
-import type { PPMBotConfig, TelegramConfig, ProjectConfig, PermissionMode } from "../../types/config.ts";
+import type { PPMBotConfig, ProjectConfig, PermissionMode } from "../../types/config.ts";
 import type { SendMessageOpts } from "../../types/chat.ts";
+import { handleConnectMessage, ppmbotReading } from "../telegram-connect.service.ts";
+import { getPPMBotBot } from "../telegram-bots.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("ppmbot");
@@ -30,6 +30,8 @@ const CONTEXT_WINDOW_THRESHOLD = 80;
 
 class PPMBotService {
   private telegram: PPMBotTelegram | null = null;
+  /** The token `telegram` reads with. */
+  private botToken = "";
   private sessions = new PPMBotSessionManager();
   private memory = new PPMBotMemory();
   private running = false;
@@ -50,6 +52,9 @@ class PPMBotService {
   /** Message queue per chatId for concurrent messages */
   private messageQueue = new Map<string, string[]>();
 
+  /** The access refusal last logged per chatId, so a chat that keeps writing is logged once, not per message */
+  private refusals = new Map<string, string>();
+
   // ── Lifecycle ─────────────────────────────────────────────────
 
   async start(): Promise<void> {
@@ -59,18 +64,22 @@ class PPMBotService {
       return;
     }
 
-    const telegramConfig = configService.get("telegram") as TelegramConfig | undefined;
-    if (!telegramConfig?.bot_token) {
-      console.log("[ppmbot] No bot token configured");
+    // Its own bot, not the one notifications use: see `telegram-bots.ts`.
+    const bot = getPPMBotBot();
+    if (!bot.bot_token) {
+      log.warn("Enabled but no bot token configured — not starting");
       return;
     }
 
     try {
       ensureCoordinatorWorkspace();
 
-      this.telegram = new PPMBotTelegram(telegramConfig.bot_token);
+      this.telegram = new PPMBotTelegram(bot.bot_token);
+      this.botToken = bot.bot_token;
       this.running = true;
 
+      // Telegram allows one reader per bot: an open connect link's poller must step aside.
+      ppmbotReading(bot.bot_token);
       this.telegram.startPolling((update) => this.handleUpdate(update));
 
       // Task poller for delegation execution
@@ -86,9 +95,12 @@ class PPMBotService {
   }
 
   stop(): void {
+    const wasRunning = this.running;
     this.running = false;
     this.telegram?.stop();
     this.telegram = null;
+    this.botToken = "";
+    if (wasRunning) ppmbotReading(null);
 
     if (this.taskPoller) {
       clearInterval(this.taskPoller);
@@ -100,20 +112,13 @@ class PPMBotService {
     this.debouncedTexts.clear();
     this.processing.clear();
     this.messageQueue.clear();
+    this.refusals.clear();
 
     log.info("Stopped");
   }
 
   get isRunning(): boolean {
     return this.running;
-  }
-
-  /** Notify user on Telegram that their pairing was approved */
-  async notifyPairingApproved(chatId: string): Promise<void> {
-    await this.telegram?.sendMessage(
-      Number(chatId),
-      "✅ Pairing approved! You can now chat with PPMBot.\n\nSend /start to begin.",
-    );
   }
 
   // ── Update Routing ──────────────────────────────────────────────
@@ -125,29 +130,24 @@ class PPMBotService {
 
     const chatId = String(message.chat.id);
     const userId = message.from?.id ?? 0;
-    const displayName = message.from?.first_name ?? message.from?.username ?? "Unknown";
 
-    // Pairing-based access control
+    // A tapped connect link (`/start <token>`) connects the chat itself, so it comes before the access check.
+    const tg = this.telegram;
+    if (await handleConnectMessage(message, this.botToken, (id, html) => tg.sendMessage(Number(id), html))) return;
+
+    // Only a chat connected with a link from Settings → PPMBot may use PPMBot, as with Notifications:
+    // no code is handed out and nothing waits for approval. Told once, so a stranger writing on
+    // gets one answer rather than one per message.
     if (!isPairedChat(chatId)) {
-      const pairing = getPairingByChatId(chatId);
-      if (!pairing) {
-        const code = this.generatePairingCode();
-        createPairingRequest(chatId, String(userId), displayName, code);
+      if (this.logRefusal(chatId, "not-connected", `Message from chat ${chatId} (user ${userId}) dropped: not connected`)) {
         await this.telegram!.sendMessage(
           Number(chatId),
-          `🔐 Pairing required.\n\nYour pairing code: <code>${code}</code>\n\nEnter this code in PPM Settings → PPMBot → Pair Device to approve access.`,
+          "This chat is not connected to PPMBot. In PPM, open <b>Settings → PPMBot</b> and tap <b>Connect Telegram</b>.",
         );
-        return;
       }
-      if (pairing.status === "pending") {
-        await this.telegram!.sendMessage(
-          Number(chatId),
-          `⏳ Pairing pending approval.\n\nCode: <code>${pairing.pairing_code}</code>\nAsk the PPM owner to approve in Settings → PPMBot.`,
-        );
-        return;
-      }
-      if (pairing.status === "revoked") return;
+      return;
     }
+    this.refusals.delete(chatId);
 
     const command = PPMBotTelegram.parseCommand(message);
     if (command) {
@@ -500,10 +500,15 @@ I'll answer directly or delegate to your project's AI.`;
 
   // ── Helpers ─────────────────────────────────────────────────────
 
-  private generatePairingCode(): string {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const bytes = crypto.getRandomValues(new Uint8Array(6));
-    return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+  /** A refused chat at WARN the first time it is in `state`; each further message from it only at DEBUG. True the first time. */
+  private logRefusal(chatId: string, state: string, line: string): boolean {
+    if (this.refusals.get(chatId) === state) {
+      log.debug(line);
+      return false;
+    }
+    this.refusals.set(chatId, state);
+    log.warn(line);
+    return true;
   }
 
   private getConfig(): PPMBotConfig | undefined {

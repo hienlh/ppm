@@ -1,8 +1,20 @@
 import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
+import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 
 export interface TelegramConfig {
   bot_token: string;
+  /** The bot's @username, read from Telegram's getMe when the token is saved. Needed for t.me links. */
+  bot_username?: string;
+}
+
+/** An ntfy server and topic that notifications are published to. */
+export interface NtfyConfig {
+  /** Base URL, normalised: `https://ntfy.sh`. Empty when ntfy is not set up. */
+  server: string;
+  topic: string;
+  /** Access token (`tk_…`) for a server that requires sign-in; empty for an open topic. */
+  token: string;
 }
 
 export interface PPMBotConfig {
@@ -47,7 +59,9 @@ export interface PpmConfig {
   projects: ProjectConfig[];
   ai: AIConfig;
   telegram?: TelegramConfig;
+  ntfy?: NtfyConfig;
   clawbot?: PPMBotConfig;
+  notifications?: NotificationSettings;
   cloud_url?: string;
   query_audit: QueryAuditConfig;
   session_trace: SessionTraceConfig;
@@ -209,6 +223,8 @@ export const DEFAULT_CONFIG: PpmConfig = {
   telegram: {
     bot_token: "",
   },
+  ntfy: { server: "", topic: "", token: "" },
+  notifications: structuredClone(DEFAULT_NOTIFICATION_SETTINGS),
   clawbot: {
     enabled: false,
     default_provider: "claude",

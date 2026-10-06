@@ -2,6 +2,8 @@
 import { precacheAndRoute, cleanupOutdatedCaches } from "workbox-precaching";
 import { registerRoute } from "workbox-routing";
 import { CacheFirst } from "workbox-strategies";
+import { readWebPushPayload } from "../shared/web-push-payload";
+import { routeNotificationClick } from "./sw-notification-click";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -71,4 +73,37 @@ registerRoute(
 self.skipWaiting();
 self.addEventListener("activate", () => {
   void self.clients.claim();
+});
+
+/**
+ * Web Push: PPM's own notifications — a chat finished, a tool waiting for approval —
+ * sent by `web-push.service.ts` to the browsers turned on in Settings → Notifications.
+ *
+ * Every push shows a notification. The subscription is made with `userVisibleOnly`,
+ * which promises exactly that, and a browser that sees a silent push shows a generic
+ * "updated in the background" notice of its own; Safari revokes the subscription.
+ */
+self.addEventListener("push", (event) => {
+  let raw: unknown = null;
+  try {
+    raw = event.data?.json();
+  } catch {
+    raw = { body: event.data?.text() };
+  }
+  const push = readWebPushPayload(raw);
+  // `renotify` is not in TypeScript's lib, and a browser rejects it without a tag.
+  const options: NotificationOptions & { renotify?: boolean } = {
+    body: push.body,
+    icon: "/icon-192.svg",
+    data: push,
+    ...(push.tag && { tag: push.tag, renotify: true }),
+  };
+  event.waitUntil(self.registration.showNotification(push.title, options));
+});
+
+// Into the PPM window already open, when there is one — see `sw-notification-click.ts`.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const push = readWebPushPayload(event.notification.data);
+  event.waitUntil(routeNotificationClick(push, self.clients, self.location.origin));
 });

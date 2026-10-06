@@ -4,7 +4,8 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { describeApprovalInput } from "../../services/notification-format.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
@@ -123,6 +124,8 @@ const CLEANUP_TIMEOUT_MS = 5 * 60_000;
  */
 const MAX_WARM_IDLE_SESSIONS = 10;
 const MAX_TURN_EVENTS = 10_000; // memory safety cap
+/** How much of the final answer is kept for the notification that quotes it. */
+const FINAL_TEXT_KEEP = 1_000;
 /**
  * Share of the turn buffer nested-agent children may take. They are restored
  * from disk on reload anyway; this only keeps a chatty grandchild from evicting
@@ -151,6 +154,8 @@ interface SessionEntry {
   cleanupTimer?: ReturnType<typeof setTimeout>;
   pendingApprovalEvent?: { type: string; requestId: string; tool: string; input: unknown };
   turnEvents: unknown[];
+  /** The opening of the turn's last top-level text block — the answer a "Chat completed" notification quotes. */
+  finalText?: string;
   /** The user message that initiated the current turn (for reconnect replay) */
   currentUserMessage?: string;
   streamPromise?: Promise<void>;
@@ -412,14 +417,6 @@ registerMcpSignInSync({
     `Subprocess released: it could not see the new ${serverName} sign-in, the next turn starts a fresh one`,
   ),
 });
-
-/** Check if any frontend client is currently connected via WebSocket */
-export function hasActiveClient(): boolean {
-  for (const entry of activeSessions.values()) {
-    if (entry.clients.size > 0) return true;
-  }
-  return false;
-}
 
 /**
  * Sessions with a turn in flight, optionally narrowed to one project.
@@ -756,6 +753,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   entry.pendingApprovalEvent = undefined;
   entry.turnEvents = [];
   entry.nestedBuffered = 0;
+  entry.finalText = undefined;
   setPhase(sessionId, "connecting");
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -914,6 +912,16 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (evType === "thinking" && entry.phase === "streaming") setPhase(sessionId, "thinking");
       }
 
+      // A top-level tool call starts a new block, so only the text after the last one is the answer.
+      if (!ev.parentToolUseId) {
+        if (evType === "text" && typeof ev.content === "string") {
+          const text: string = (entry.finalText ?? "") + ev.content;
+          entry.finalText = text.length > FINAL_TEXT_KEEP ? text.slice(0, FINAL_TEXT_KEEP) : text;
+        } else if (evType === "tool_use") {
+          entry.finalText = undefined;
+        }
+      }
+
       // Log every event
       if (evType === "text") {
         logSessionEvent(sessionId, "TEXT", ev.content?.slice(0, 500) ?? "");
@@ -1052,6 +1060,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         incrementSessionUnread(sessionId, "done", doneSession?.title, entry.projectName || null);
         broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneSession?.title || null });
 
+        const finalText = entry.finalText;
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
@@ -1059,9 +1068,15 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           notificationService.broadcast("done", {
             title: "Chat completed",
             body: `${project} — ${sessionTitle}`,
-            project,
+            project: entry.projectName || "",
             sessionId,
+            providerId: entry.providerId,
             sessionTitle,
+            detail: finalText,
+            detailStyle: "quote",
+          }, {
+            // Any browser showing the session clears its unread mark at once.
+            stillUnseen: () => getSessionUnreadCount(sessionId) > 0,
           });
         }).catch(() => {});
       } else if (evType === "approval_request") {
@@ -1082,7 +1097,13 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           const body = isQuestion
             ? `${project} — ${sTitle}`
             : `${project} — ${ev.tool} needs permission`;
-          notificationService.broadcast(nType as any, { title, body, project, sessionId, sessionTitle: sTitle, tool: ev.tool });
+          notificationService.broadcast(nType, {
+            title, body, project: entry.projectName || "", sessionId, providerId: entry.providerId, sessionTitle: sTitle, tool: ev.tool,
+            ...describeApprovalInput(ev.tool, ev.input),
+          }, {
+            // Answered, or looked at, on any device since — either way it needs no alert.
+            stillUnseen: () => entry.pendingApprovalEvent?.requestId === ev.requestId && getSessionUnreadCount(sessionId) > 0,
+          });
         }).catch(() => {});
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking

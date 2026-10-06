@@ -216,7 +216,7 @@ class JiraDebugSessionService {
       // Broadcast WS event + notification
       this.broadcastStatusChange(resultId, result.issueKey, "done", session.id);
 
-      notificationService.broadcast("done", {
+      notificationService.broadcast("jira", {
         title: `Jira: ${result.issueKey}`,
         body: aiSummary.slice(0, 200),
         project: project.name,

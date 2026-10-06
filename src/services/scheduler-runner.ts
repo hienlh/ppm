@@ -126,25 +126,35 @@ export async function runScheduleOnce(schedule: Schedule, sessionId: string): Pr
   return result;
 }
 
-/** Telegram/push summary — broadcast() itself gates Telegram on no-active-browser. */
+/**
+ * Push/Telegram summary. Queued, not awaited to delivery: the dispatcher may hold it for the
+ * notification delay, and which channels are on is its call, not this run's.
+ */
 async function notifyRunFinished(schedule: Schedule, result: RunResult): Promise<void> {
   try {
-    const { configService } = await import("./config.service.ts");
-    const telegram = configService.get("telegram") as { bot_token?: string } | undefined;
-    if (!telegram?.bot_token) return;
     const { notificationService } = await import("./notification.service.ts");
     const duration = result.costUsd != null ? ` · $${result.costUsd.toFixed(4)}` : "";
     const body = result.status === "error"
       ? `Failed: ${(result.error ?? "unknown error").slice(0, 300)}`
       : `${result.output.slice(0, 500) || "(no output)"}${duration}`;
-    await notificationService.broadcast("done", {
+    void notificationService.broadcast("schedule", {
       title: `Schedule: ${schedule.name} — ${result.status}`,
       body,
-      project: schedule.project_path,
+      project: await projectNameFor(schedule.project_path),
       sessionId: schedule.session_id ?? "",
     });
   } catch (e) {
     // Notify failures must not poison the run record
     log.warn(`notify failed for ${schedule.id}: ${(e as Error).message}`);
+  }
+}
+
+/** A schedule stores its project's path; links address projects by name. "" when it is not a registered project. */
+async function projectNameFor(projectPath: string): Promise<string> {
+  try {
+    const { projectService } = await import("./project.service.ts");
+    return projectService.resolve(projectPath).name;
+  } catch {
+    return "";
   }
 }

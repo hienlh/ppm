@@ -1,65 +1,73 @@
 import { configService } from "./config.service.ts";
-import { tunnelService } from "./tunnel.service.ts";
-import { getLocalIp } from "../lib/network-utils.ts";
-import { getApprovedPairedChats } from "./db.service.ts";
+import { listNotifyChats } from "./telegram-bots.ts";
 import type { TelegramConfig } from "../types/config.ts";
 import type { NotificationPayload } from "./notification.service.ts";
+import { escapeTelegramHtml as escapeHtml, formatTelegramNotification } from "./notification-format.ts";
+import { notificationLink } from "./notification-link.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("telegram");
 
 const BOT_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{30,50}$/;
 
-/** Escape HTML special chars for Telegram HTML parse mode */
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
 class TelegramNotificationService {
-  /** Send notification to all approved paired chats. No-op if not configured. */
-  async send(payload: NotificationPayload): Promise<void> {
-    const config = configService.get("telegram") as TelegramConfig | undefined;
-    if (!config?.bot_token) return;
-    if (!BOT_TOKEN_RE.test(config.bot_token)) return;
+  /** Why the last send was skipped, so a setup left half done warns once, not on every notification. */
+  private lastSkip: string | null = null;
 
-    const approvedChats = getApprovedPairedChats();
-    if (approvedChats.length === 0) return;
+  /**
+   * Send a notification to every chat connected in Settings → Notifications. No-op if not configured.
+   * Resolves to what happened (`sent=2`, `skipped (no bot token)`) for the delivery log line.
+   */
+  async send(payload: NotificationPayload): Promise<string> {
+    const config = configService.get("telegram") as TelegramConfig | undefined;
+    // The channel is on by default, so no token is simply a PPM that never set Telegram up.
+    if (!config?.bot_token) return this.skipped("no bot token", false);
+    if (!BOT_TOKEN_RE.test(config.bot_token)) return this.skipped("malformed bot token", true);
+
+    const chats = listNotifyChats();
+    if (chats.length === 0) return this.skipped("no connected chats", true);
+    this.lastSkip = null;
 
     const deviceName = (configService.get("device_name") as string) || "PPM";
-    const deepLink = this.buildDeepLink(payload);
+    const text = formatTelegramNotification(payload, deviceName, await notificationLink(payload));
 
-    let text = `<b>${escapeHtml(deviceName)} — ${escapeHtml(payload.title)}</b>\n`;
-    text += escapeHtml(payload.body);
-    if (deepLink) {
-      text += `\n\n<a href="${deepLink}">Open in PPM</a>`;
-    }
-
-    // Send to all approved paired chats in parallel
-    await Promise.allSettled(
-      approvedChats.map((chat) =>
-        this.callApi(config.bot_token, chat.telegram_chat_id, text),
-      ),
+    const results = await Promise.allSettled(
+      chats.map((chat) => this.callApi(config.bot_token, chat.chatId, text)),
     );
+    const sent = results.filter((r) => r.status === "fulfilled" && r.value).length;
+    return sent === results.length ? `sent=${sent}` : `sent=${sent} failed=${results.length - sent}`;
   }
 
-  /** Send a test message to all approved paired chats. Returns { ok, error? } */
+  /** A setup problem warns the first time it is the reason; repeats, and a Telegram never set up, only at DEBUG. */
+  private skipped(reason: string, misconfigured: boolean): string {
+    const line = `Notification skipped: ${reason}`;
+    if (misconfigured && this.lastSkip !== reason) log.warn(line);
+    else log.debug(line);
+    this.lastSkip = reason;
+    return `skipped (${reason})`;
+  }
+
+  /** Send a test message to every connected chat. Returns { ok, error? } */
   async sendTest(botToken: string): Promise<{ ok: boolean; error?: string }> {
     if (!BOT_TOKEN_RE.test(botToken)) return { ok: false, error: "Invalid bot token format" };
 
-    const approvedChats = getApprovedPairedChats();
-    if (approvedChats.length === 0) {
-      return { ok: false, error: "No approved paired chats. Pair a device in PPMBot settings first." };
+    const chats = listNotifyChats();
+    if (chats.length === 0) {
+      return { ok: false, error: "No chat is connected. Tap Connect Telegram first." };
     }
 
     const deviceName = (configService.get("device_name") as string) || "PPM";
     const text = `<b>${escapeHtml(deviceName)} — Test</b>\nTelegram notifications are working!`;
 
     const results = await Promise.allSettled(
-      approvedChats.map(async (chat) => {
+      chats.map(async (chat) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10_000);
         try {
           const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: chat.telegram_chat_id, text, parse_mode: "HTML" }),
+            body: JSON.stringify({ chat_id: chat.chatId, text, parse_mode: "HTML" }),
             signal: controller.signal,
           });
           const json = (await res.json()) as { ok: boolean; description?: string };
@@ -77,27 +85,9 @@ class TelegramNotificationService {
     return { ok: true };
   }
 
-  private buildDeepLink(payload: NotificationPayload): string | null {
-    // Prefer tunnel URL (globally accessible), fallback to local IP
-    let baseUrl = tunnelService.getTunnelUrl();
-    if (!baseUrl) {
-      const localIp = getLocalIp();
-      const port = configService.get("port") ?? 8080;
-      if (localIp) {
-        baseUrl = `http://${localIp}:${port}`;
-      }
-    }
-    if (!baseUrl) return null;
-
-    const projectPath = payload.project
-      ? `/project/${encodeURIComponent(payload.project)}`
-      : "";
-    const query = payload.sessionId ? `?openChat=${payload.sessionId}` : "";
-    return `${baseUrl}${projectPath}${query}`;
-  }
-
-  private async callApi(token: string, chatId: string, text: string): Promise<void> {
-    if (!BOT_TOKEN_RE.test(token)) return;
+  /** True once Telegram accepted the message. Failures are logged here: the URL holds the token, so never it. */
+  private async callApi(token: string, chatId: string, text: string): Promise<boolean> {
+    if (!BOT_TOKEN_RE.test(token)) return false;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
 
@@ -115,10 +105,13 @@ class TelegramNotificationService {
       });
       if (!res.ok) {
         const errBody = await res.text();
-        console.error(`[telegram] sendMessage failed: ${res.status} ${errBody}`);
+        log.error(`sendMessage to chat ${chatId} failed: ${res.status} ${errBody}`);
+        return false;
       }
+      return true;
     } catch (e) {
-      console.error(`[telegram] send error: ${(e as Error).message}`);
+      log.error(`send to chat ${chatId} error: ${(e as Error).message}`);
+      return false;
     } finally {
       clearTimeout(timeout);
     }

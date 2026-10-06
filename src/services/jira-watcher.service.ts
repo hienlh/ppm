@@ -103,7 +103,7 @@ class JiraWatcherService {
           newResultIds.push(resultId);
 
           if (watcher.mode === "notify") {
-            notificationService.broadcast("done", {
+            notificationService.broadcast("jira", {
               title: `Jira: ${issue.key}`,
               body: issue.fields.summary,
               project: "", sessionId: "",

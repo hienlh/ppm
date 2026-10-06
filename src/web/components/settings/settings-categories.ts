@@ -96,7 +96,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 
   { id: "ppmbot", group: "integrations", label: "PPMBot", subtitle: "Telegram AI bot", icon: BotMessageSquare },
-  { id: "notifications", group: "integrations", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
+  { id: "notifications", group: "integrations", label: "Notifications", subtitle: "Push, Telegram & ntfy alerts", icon: BellRing },
   { id: "jira", group: "integrations", label: "Jira Watcher", subtitle: "Auto-debug Jira tickets", icon: Bug },
   { id: "extensions", group: "integrations", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
   { id: "proxy", group: "integrations", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
