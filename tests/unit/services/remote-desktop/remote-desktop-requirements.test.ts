@@ -85,13 +85,13 @@ describe("remoteDesktopReadiness", () => {
     }
   });
 
-  it("win32 checklist: ffmpeg with a winget terminal action and a client-side download link", async () => {
+  it("win32 checklist: ffmpeg with an automatic install action and a client-side download link", async () => {
     const r = await remoteDesktopReadiness("win32");
     expect(r.platformSupported).toBe(true);
     const ffmpeg = r.requirements.find((x) => x.id === "ffmpeg")!;
     expect(ffmpeg.gates).toBe("video");
     expect(ffmpeg.actions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "terminal", command: expect.stringContaining("winget") }),
+      expect.objectContaining({ kind: "install", label: "Install ffmpeg" }),
       expect.objectContaining({ kind: "link", url: expect.stringContaining("ffmpeg.org") }),
     ]));
     // videoReady tracks the ffmpeg row exactly

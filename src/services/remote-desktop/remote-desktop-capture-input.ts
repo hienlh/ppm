@@ -38,7 +38,7 @@ import { detectLinuxSession, type LinuxSession } from "./remote-desktop-linux-se
 export interface CaptureRect { x: number; y: number; width: number; height: number }
 
 export type CaptureInput =
-  | { kind: "gdigrab" }
+  | { kind: "gdigrab"; rect?: CaptureRect | null }
   | { kind: "avfoundation"; screen: string }
   | { kind: "x11grab"; display: string; rect: CaptureRect | null };
 
@@ -69,7 +69,10 @@ export function captureInputArgs(
   const mouse = drawMouse ? "1" : "0";
   switch (input.kind) {
     case "gdigrab":
-      return ["-f", "gdigrab", "-draw_mouse", mouse, "-framerate", fps, "-i", "desktop"];
+      return ["-f", "gdigrab", "-draw_mouse", mouse, "-framerate", fps,
+        ...(input.rect ? ["-offset_x", String(input.rect.x), "-offset_y", String(input.rect.y),
+          "-video_size", `${input.rect.width}x${input.rect.height}`] : []),
+        "-i", "desktop"];
     case "avfoundation":
       return ["-use_wallclock_as_timestamps", "1",
         "-f", "avfoundation", "-capture_cursor", mouse, "-pixel_format", "nv12",
@@ -112,7 +115,7 @@ export function captureVideoFilter(
  *  grabber actually works (ffmpeg built without it, no display) surfaces through ffmpeg's
  *  own exit + stderr tail in `startCapture`, the same way gdigrab failures do.
  *  `captureIndex` selects the display on backends that capture one at a time (avfoundation);
- *  gdigrab always grabs the whole virtual desktop, x11grab crops by `rect`.
+ *  gdigrab and x11grab crop by `rect`, in the host's global pixel coordinates.
  *
  *  `opts.session` is passed explicitly by tests so this stays a pure function of its
  *  arguments: it otherwise probes the host, and "is there an X server" is exactly the thing a
@@ -123,7 +126,7 @@ export function captureInputForPlatform(
   opts: { session?: LinuxSession | null; rect?: CaptureRect | null } = {},
 ): CaptureInput | null {
   switch (platform) {
-    case "win32": return { kind: "gdigrab" };
+    case "win32": return { kind: "gdigrab", ...(opts.rect ? { rect: opts.rect } : {}) };
     case "darwin": return { kind: "avfoundation", screen: avfoundationScreenName(captureIndex) };
     case "linux": {
       const session = "session" in opts ? opts.session : detectLinuxSession();

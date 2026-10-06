@@ -12,6 +12,7 @@ import { api } from "@/lib/api-client";
 
 export type RequirementAction =
   | { kind: "terminal"; label: string; command: string }
+  | { kind: "install"; label: string }
   | { kind: "link"; label: string; url: string }
   | { kind: "host"; label: string; action: "request" | "open-settings" };
 

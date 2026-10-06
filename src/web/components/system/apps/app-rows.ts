@@ -52,14 +52,19 @@ export function childIndex(processes: readonly ProcessInfo[]): Map<number, numbe
  * process being reparented and produce a parent chain that loops, and without the
  * guard this recurses until the stack goes.
  */
-export function subtreePids(roots: readonly number[], children: Map<number, number[]>): number[] {
+export function subtreePids(
+  roots: readonly number[],
+  children: Map<number, number[]>,
+  /** A pid the walk must not enter: the root of another app, which is counted there. */
+  stopAt: (pid: number) => boolean = () => false,
+): number[] {
   const seen = new Set<number>();
   const stack = [...roots];
   while (stack.length > 0) {
     const pid = stack.pop()!;
     if (seen.has(pid)) continue;
     seen.add(pid);
-    for (const child of children.get(pid) ?? []) stack.push(child);
+    for (const child of children.get(pid) ?? []) if (!stopAt(child)) stack.push(child);
   }
   return [...seen];
 }
@@ -87,9 +92,20 @@ export function buildAppRows(apps: readonly AppInfo[], processes: readonly Proce
   const byPid = new Map(processes.map((p) => [p.pid, p]));
   const children = childIndex(processes);
   const rows: AppRow[] = [];
+  // Which app each root belongs to. A subtree stops at another app's root: on Windows
+  // the shell (explorer.exe) is the parent of nearly everything launched from the
+  // taskbar, and without the stop "Windows Explorer" summed Chrome, VS Code and the
+  // terminals into itself — 297 processes and 23 GB — while they were counted again
+  // under their own rows. The same holds for an app that launches another anywhere.
+  const rootOwner = new Map<number, string>();
+  for (const app of apps) for (const pid of app.pids) rootOwner.set(pid, app.id);
 
   for (const app of apps) {
-    const members = subtreePids(app.pids, children)
+    const isOtherAppRoot = (pid: number) => {
+      const owner = rootOwner.get(pid);
+      return owner !== undefined && owner !== app.id;
+    };
+    const members = subtreePids(app.pids, children, isOtherAppRoot)
       .map((pid) => byPid.get(pid))
       .filter((p): p is ProcessInfo => p !== undefined);
     if (members.length === 0) continue;

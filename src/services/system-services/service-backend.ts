@@ -1,6 +1,6 @@
 /**
- * The service manager the Services routes talk to: launchd on macOS, systemd
- * everywhere else. Each collector keeps its own vocabulary; this is the one shape
+ * The service manager the Services routes talk to: launchd on macOS, the Service
+ * Control Manager on Windows, systemd everywhere else. Each collector keeps its own vocabulary; this is the one shape
  * the routes see, so a route never branches on the platform.
  */
 import type {
@@ -11,6 +11,7 @@ import {
 } from "./systemd-collector.ts";
 import { isPlausibleUnitName } from "./service-guard.ts";
 import { createLaunchdBackend } from "./launchd-collector.ts";
+import { createWindowsServicesBackend } from "./windows-services.ts";
 
 export interface ServiceBackend {
   manager: ServiceManager;
@@ -35,5 +36,7 @@ export function systemdBackend(deps: SystemdDeps = createSystemdServices()): Ser
 }
 
 export function createServiceBackend(platform: NodeJS.Platform = process.platform): ServiceBackend {
-  return platform === "darwin" ? createLaunchdBackend() : systemdBackend();
+  if (platform === "darwin") return createLaunchdBackend();
+  if (platform === "win32") return createWindowsServicesBackend();
+  return systemdBackend();
 }

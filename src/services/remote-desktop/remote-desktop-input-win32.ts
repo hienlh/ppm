@@ -11,7 +11,8 @@
  * `user32.dll`. Selected by `remote-desktop-input.ts` on `win32` only.
  */
 import { codeToVk, MODIFIER_VK_CODES } from "./remote-desktop-vk-map.ts";
-import { RemoteInputUnavailableError, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
+import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
+import { windowsVirtualScreen } from "./remote-desktop-displays.ts";
 
 const INPUT_MOUSE = 0;
 const INPUT_KEYBOARD = 1;
@@ -161,19 +162,44 @@ async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
   if (sent !== count) console.warn(`[remote-desktop] SendInput accepted ${sent}/${count} events`);
 }
 
+/** Map a captured monitor into SendInput's full virtual-desktop coordinate space. Both
+ * rectangles use physical pixels, including negative origins for monitors left/above primary. */
+export function windowsAbsolutePointer(
+  xFrac: number, yFrac: number, target: InputTargetRect | null, desktop: InputTargetRect,
+): { x: number; y: number } {
+  const clamp = (value: number, max: number) => Math.min(Math.max(value, 0), max);
+  if (!target || (target.x === desktop.x && target.y === desktop.y
+    && target.width === desktop.width && target.height === desktop.height)) {
+    return { x: Math.round(clamp(xFrac, 1) * 65535), y: Math.round(clamp(yFrac, 1) * 65535) };
+  }
+  if (desktop.width <= 0 || desktop.height <= 0 || target.width <= 0 || target.height <= 0) {
+    throw new RemoteInputUnavailableError("Cannot map pointer without display dimensions");
+  }
+  const axis = (fraction: number, origin: number, size: number, desktopOrigin: number, desktopSize: number) => {
+    // The last capture pixel is size - 1. Aim at its centre in the 65536-unit input grid,
+    // so rounding cannot place a right/bottom-edge click on the adjacent monitor.
+    const pixel = clamp(origin - desktopOrigin + Math.round(clamp(fraction, 1) * (size - 1)), desktopSize - 1);
+    return clamp(Math.round((pixel + 0.5) * 65536 / desktopSize), 65535);
+  };
+  return {
+    x: axis(xFrac, target.x, target.width, desktop.x, desktop.width),
+    y: axis(yFrac, target.y, target.height, desktop.y, desktop.height),
+  };
+}
+
 /** Move the cursor and, if this is a click, press/release the button — one absolute move
  *  per call so the button acts at the position the client actually clicked. `xFrac`/`yFrac`
  *  are 0..1 fractions of the capture (client already dropped devicePixelRatio; only the
- *  canvas-relative fraction is meaningful for host coordinates). The target rect is ignored:
- *  gdigrab captures the whole virtual desktop and `MOUSEEVENTF_VIRTUALDESK` maps onto it. */
+ *  canvas-relative fraction is meaningful for host coordinates). The capture target is mapped
+ *  into the virtual desktop used by `MOUSEEVENTF_VIRTUALDESK`. */
 async function injectPointer(
   xFrac: number,
   yFrac: number,
   button: "left" | "right" | null,
   down: boolean | null,
+  target: InputTargetRect | null = null,
 ): Promise<void> {
-  const xAbs = Math.round(Math.min(Math.max(xFrac, 0), 1) * 65535);
-  const yAbs = Math.round(Math.min(Math.max(yFrac, 0), 1) * 65535);
+  const { x: xAbs, y: yAbs } = windowsAbsolutePointer(xFrac, yFrac, target, windowsVirtualScreen());
   let flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
   if (button === "left") flags |= down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
   else if (button === "right") flags |= down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;

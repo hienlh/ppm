@@ -5,9 +5,14 @@
 
 export type ServiceScope = "system" | "user";
 
-/** systemd on Linux, launchd on macOS. It decides what the page calls a row (a unit or
- *  a job) and how a few fields read; every field below says what it holds under each. */
-export type ServiceManager = "systemd" | "launchd";
+/** systemd on Linux, launchd on macOS, the Service Control Manager ("scm") on Windows.
+ *  It decides what the page calls a row (a unit, a job or a service) and how a few
+ *  fields read. Under scm every service is in the `system` scope; `activeState` is the
+ *  SCM state lower-cased ("running", "stopped", "start pending"), `subState` the last
+ *  exit code of a stopped service that failed, `unitFileState` the startup type
+ *  ("automatic", "automatic (delayed)", "manual", "disabled"), `enabled` means it starts
+ *  at boot, and `fragmentPath` is the service's command line. */
+export type ServiceManager = "systemd" | "launchd" | "scm";
 
 /** Start/Stop/Restart are Mission Center's menu; Enable/Disable its details switch. */
 export type ServiceAction = "start" | "stop" | "restart" | "enable" | "disable";

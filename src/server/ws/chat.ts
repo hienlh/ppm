@@ -3,7 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
@@ -22,16 +22,58 @@ import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/backg
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
+import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
+import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
 function sessionProviderConfig(sessionId: string) {
   const ai = configService.get("ai");
   const pid = activeSessions.get(sessionId)?.providerId
-    ?? chatService.getSession(sessionId)?.providerId
-    ?? getSessionProvider(sessionId)
+    ?? resolveStoredProvider(sessionId)
     ?? ai.default_provider ?? "claude";
   return ai.providers[pid];
+}
+
+/**
+ * Which provider owns this session, stored answer first.
+ *
+ * `chatService.getSession` finds a session by scanning every provider's in-memory
+ * map and returning the first hit, which is a guess: a provider that merely *tried*
+ * to resume the id keeps an entry for it, and that entry then outranks the recorded
+ * owner for as long as the process lives. That is how a claude session, once resumed
+ * as codex by a NULL `provider_id`, stayed codex across reconnects and browser
+ * reloads even after the row was corrected — only a restart cleared it.
+ *
+ * `session_metadata.provider_id` is written deliberately at creation, resume and
+ * fork, so it is the authority; the scan stays as the fallback for a session created
+ * in-process before the row exists.
+ *
+ * Between the two, a claude transcript on disk settles an empty row — the unread upsert
+ * creates rows with no provider, and the scan can name codex for a claude id it merely
+ * tried to resume. The answer is persisted so routes and restarts agree with it.
+ */
+function resolveStoredProvider(sessionId: string): string | undefined {
+  const stored = getSessionProvider(sessionId);
+  if (stored) return stored;
+  if (claudeTranscriptExists(sessionId)) {
+    try { setSessionProvider(sessionId, "claude"); } catch { /* non-fatal */ }
+    return "claude";
+  }
+  return chatService.getSession(sessionId)?.providerId;
+}
+
+/**
+ * Adopt the tab's provider when nothing is stored. `session_metadata` rows are written
+ * by whichever upsert runs first, and the account claim's leaves `provider_id` NULL —
+ * after which the global default decides, so a claude session on a codex-default install
+ * resumes as codex and every message dies with "transcript was not found". Persisting the
+ * hint fixes the session for good, including the paths (routes, restarts) that never see
+ * this socket. Only a provider this server has registered is accepted.
+ */
+function adoptProviderHint(sessionId: string, hint: string | undefined): void {
+  if (!hint || !providerRegistry.get(hint) || getSessionProvider(sessionId)) return;
+  try { setSessionProvider(sessionId, hint); } catch { /* non-fatal */ }
 }
 
 /** Resolve the model shown in session_state: per-session override, else provider default. */
@@ -87,7 +129,7 @@ const BUFFERABLE_TYPES = new Set([
 ]);
 
 type ChatWsSocket = {
-  data: { type: string; sessionId: string; projectName?: string };
+  data: { type: string; sessionId: string; projectName?: string; providerHint?: string };
   send: (data: string) => void;
   ping?: (data?: string | ArrayBuffer) => void;
 };
@@ -321,6 +363,17 @@ function broadcastBackgroundRegistry(sessionId: string): void {
 
 /** Tracks active sessions — persists even when FE disconnects */
 const activeSessions = new Map<string, SessionEntry>();
+registerMemoryGauge("chat.activeSessions", () => activeSessions.size);
+registerMemoryGauge("chat.turnEvents", () => {
+  let n = 0;
+  for (const e of activeSessions.values()) n += e.turnEvents.length;
+  return n;
+});
+registerMemoryGauge("chat.clients", () => {
+  let n = 0;
+  for (const e of activeSessions.values()) n += e.clients.size;
+  return n;
+});
 
 registerMcpSignInSync({
   sessions: () => activeSessions.entries(),
@@ -1088,9 +1141,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
  */
 export const chatWebSocket = {
   open(ws: ChatWsSocket) {
-    const { sessionId, projectName } = ws.data;
+    const { sessionId, projectName, providerHint } = ws.data;
     const session = chatService.getSession(sessionId);
-    const providerId = session?.providerId ?? getSessionProvider(sessionId) ?? providerRegistry.getDefault().id;
+    adoptProviderHint(sessionId, providerHint);
+    const providerId = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
 
     let projectPath: string | undefined;
     if (projectName) {
@@ -1102,6 +1156,10 @@ export const chatWebSocket = {
 
     const existing = activeSessions.get(sessionId);
     if (existing) {
+      // A message that arrived before `open` may have created this entry under a
+      // provider guessed before the hint was stored. Nothing has run on it while it is
+      // idle, so it can still follow the session's real owner.
+      if (existing.phase === "idle" && existing.providerId !== providerId) existing.providerId = providerId;
       // FE reconnecting to existing session — clear cleanup timer
       if (existing.cleanupTimer) {
         clearTimeout(existing.cleanupTimer);
@@ -1225,9 +1283,12 @@ export const chatWebSocket = {
 
     // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
     if (!entry) {
-      const { projectName: pn } = ws.data;
-      const session = chatService.getSession(sessionId);
-      const pid = session?.providerId ?? getSessionProvider(sessionId) ?? providerRegistry.getDefault().id;
+      const { projectName: pn, providerHint } = ws.data;
+      // Same order as open(): a message can beat it here (the Bun race above), and
+      // without the hint a new claude session on a codex-default install would run
+      // its first turn through codex.
+      adoptProviderHint(sessionId, providerHint);
+      const pid = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
       if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
       const newEntry: SessionEntry = {

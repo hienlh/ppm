@@ -21,6 +21,8 @@ import {
   relayStatus, startMediamtxInstall, uninstallMediamtx,
 } from "../../services/remote-desktop/mediamtx-install.service.ts";
 
+import { ffmpegInstaller } from "../../services/remote-desktop/ffmpeg-install.ts";
+
 export const remoteDesktopRoutes = new Hono();
 
 function assertSessionAllowed(c: Context): Response | null {
@@ -71,6 +73,23 @@ remoteDesktopRoutes.get("/capabilities", async (c) => {
     authRequired: configService.get("auth").enabled,
     ...readiness,
   }));
+});
+
+remoteDesktopRoutes.get("/requirements/ffmpeg/install", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  return c.json(ok(ffmpegInstaller.getStatus()));
+});
+
+remoteDesktopRoutes.post("/requirements/ffmpeg/install", (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  try {
+    const status = ffmpegInstaller.start();
+    return c.json(ok(status), status.state === "installing" ? 202 : 200);
+  } catch (error) {
+    return c.json(err(error instanceof Error ? error.message : String(error)), 400);
+  }
 });
 
 // Same guards as /session: these pop dialogs / open panes on the host, which is host control too.
