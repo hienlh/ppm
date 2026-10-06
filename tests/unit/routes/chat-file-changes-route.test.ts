@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { Hono } from "hono";
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chatFileChangesRoutes } from "../../../src/server/routes/chat-file-changes.ts";
@@ -154,6 +154,21 @@ describe("POST /chat/sessions/:id/file-changes", () => {
       { path: join(project, "tracked.ts"), status: "modified", baseline: "head", additions: 1, deletions: 0, version: expect.any(String), blocks: [oneBlock], base },
       { path: join(project, "untracked.ts"), status: "added", baseline: "head", additions: 1, deletions: 0, version: expect.any(String), blocks: [oneBlock], base },
     ]);
+  });
+
+  // A file symlink needs Developer Mode on Windows.
+  it.skipIf(process.platform === "win32")("does not take a symbolic link's blob at HEAD for the file the link names", async () => {
+    const agents = join(project, "AGENTS.md");
+    const claude = join(project, "CLAUDE.md");
+    git("init", "-q");
+    writeFileSync(agents, "agents\n");
+    symlinkSync("AGENTS.md", claude);
+    git("add", ".");
+    git("commit", "-qm", "init");
+    // HEAD holds only the name "AGENTS.md" for CLAUDE.md: that is not what the file held.
+    expect((await changes(SESSION, [claude])).body.data.files).toEqual([]);
+    await answer(SESSION, "revert", [{ path: claude, version: await versionOf(claude) }]);
+    expect(readFileSync(agents, "utf8")).toBe("agents\n");
   });
 
   it("does not list a path outside the project that the session never touched", async () => {
@@ -591,6 +606,35 @@ describe("POST /chat/sessions/:id/file-changes/answer — revert", () => {
     expect(readFileSync(a, "utf8")).toBe("two\n");
   });
 
+  it.skipIf(process.platform === "win32")("never writes through a symbolic link, nor takes away the file one names", async () => {
+    // The session ran `ln -sf AGENTS.md CLAUDE.md` over a CLAUDE.md of its own…
+    const agents = join(project, "AGENTS.md");
+    const claude = join(project, "CLAUDE.md");
+    writeFileSync(agents, "agents\n");
+    recordBaseline(SESSION, claude, "claude\n");
+    symlinkSync("AGENTS.md", claude);
+    // …and `ln -s` to a file outside the project, where nothing was.
+    const elsewhere = mkdtempSync(resolve(tmpdir(), "ppm-file-changes-elsewhere-"));
+    const data = join(elsewhere, "data.csv");
+    const link = join(project, "data.csv");
+    writeFileSync(data, "a,b\n");
+    recordBaseline(SESSION, link, null);
+    symlinkSync(data, link);
+    try {
+      const files = (await changes(SESSION)).body.data.files.map((f: any) => ({ path: f.path, version: f.version }));
+      expect(files.map((f: any) => f.path).sort()).toEqual([claude, link].sort());
+
+      const res = await answer(SESSION, "revert", files);
+      expect(res.body.data.files.map((f: any) => f.error)).toEqual([expect.stringContaining("symbolic link"), expect.stringContaining("symbolic link")]);
+      expect(res.body.data.undoId).toBeUndefined();
+      expect(readFileSync(agents, "utf8")).toBe("agents\n");
+      expect(readFileSync(data, "utf8")).toBe("a,b\n");
+      expect([lstatSync(claude).isSymbolicLink(), lstatSync(link).isSymbolicLink()]).toEqual([true, true]);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
   it("deletes a file the session created once its last block is reverted", async () => {
     const a = join(project, "created.ts");
     recordBaseline(SESSION, a, null);
@@ -764,6 +808,28 @@ describe("POST /chat/sessions/:id/file-changes/undo", () => {
     expect(back.body.data.stale).toBeUndefined();
     expect(readFileSync(a, "utf8")).toBe("two\n");
     expect(readFileSync(made, "utf8")).toBe("made\n");
+  });
+
+  it.skipIf(process.platform === "win32")("does not undo through a symbolic link put where a reverted file was", async () => {
+    const a = join(project, "a.ts");
+    recordBaseline(SESSION, a, "one\n");
+    writeFileSync(a, "two\n");
+    const res = await answer(SESSION, "revert", [{ path: a, version: (await listed(SESSION, a)).version }]);
+    expect(readFileSync(a, "utf8")).toBe("one\n");
+    // A link now stands there, naming a file that holds what the revert left.
+    const elsewhere = mkdtempSync(resolve(tmpdir(), "ppm-file-changes-elsewhere-"));
+    const other = join(elsewhere, "other.ts");
+    writeFileSync(other, "one\n");
+    rmSync(a);
+    symlinkSync(other, a);
+    try {
+      const back = await undo(SESSION, res.body.data.undoId);
+      expect(back.status).toBe(500);
+      expect(back.body.error).toContain("symbolic link");
+      expect(readFileSync(other, "utf8")).toBe("one\n");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
   });
 
   it("undoes a keep while nothing has answered the file since", async () => {

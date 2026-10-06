@@ -30,7 +30,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { assertReadPermitted } from "../fs-ops/fs-ops-read-write.service.ts";
 import { realPathOrSelf } from "../fs-ops/fs-real-path.ts";
@@ -111,6 +111,8 @@ const targetOf = (state: State): Target => (state === null ? { exists: false } :
 const textOf = (side: Compared["before"]): string => (side.exists ? side.text ?? "" : "");
 
 const NOT_UTF8 = "This file is not plain UTF-8 text, so it can only be reverted by hand.";
+
+const IS_LINK = "This is a symbolic link, so it can only be reverted by hand.";
 
 /** Text that decoding may have mangled: a revert would write the replacement characters back. */
 const lossy = (text: string): boolean => text.includes("\uFFFD");
@@ -213,11 +215,17 @@ async function revertTarget(compared: Compared, path: string, keys: string[] | u
   return base.text !== undefined ? NOT_UTF8 : "There is no copy of this file from before to put back.";
 }
 
-/** Write `target` over `path` (through a symlink, to the file it names), behind the same guards as reading it. */
+/**
+ * Write `target` over `path`, behind the same guards as reading it. A symbolic link is refused
+ * either way: what stood there before may have been another file (`ln -sf AGENTS.md CLAUDE.md`),
+ * so writing through it could overwrite the file it names, and a link taken away could not come
+ * back by Undo, which keeps bytes rather than links.
+ */
 export async function writeTarget(path: string, target: Target): Promise<void> {
   const real = await realPathOrSelf(path);
   assertReadPermitted(path, real);
   await assertNotPpmSubtreeDeep(path);
+  if ((await lstat(path).catch(() => null))?.isSymbolicLink()) throw new Error(IS_LINK);
   if (!target.exists) {
     await unlink(real).catch((e) => { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; });
     return;

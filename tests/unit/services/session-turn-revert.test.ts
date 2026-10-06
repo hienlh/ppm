@@ -4,7 +4,7 @@
  * once the disk moved on, and undone by the same journal a revert answer uses.
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, linkSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -321,6 +321,32 @@ describe("revertTurn", () => {
     const back = await undoSessionAnswer({ sessionId: SESSION, projectPath: work, undoId: applied.undoId! });
     expect(back.stale).toBeUndefined();
     expect([read(a), read(created)]).toEqual([one, "new\n"]);
+  });
+
+  // A file symlink needs Developer Mode on Windows.
+  test.skipIf(process.platform === "win32")("never takes away the file a symbolic link the turn made names, nor writes through one", async () => {
+    const data = join(work, "elsewhere", "data.csv");
+    mkdirSync(join(work, "elsewhere"));
+    writeFileSync(data, "a,b\n");
+    const link = join(work, "data.csv");
+    await observeFile(SESSION, link, "toolu_1", "before");
+    symlinkSync(data, link);
+    await observeFile(SESSION, link, "toolu_1", "after");
+    const agents = join(work, "AGENTS.md");
+    const claude = join(work, "CLAUDE.md");
+    writeFileSync(agents, BASE);
+    symlinkSync("AGENTS.md", claude);
+    await call(claude, "toolu_1", set(BASE, 5, "five\n"));
+
+    const { preview, applied } = await revertNow(["toolu_1"]);
+    expect(preview.files.map((f) => f.action)).toEqual(["edit", "delete"]);
+    expect(applied.files).toEqual([
+      expect.objectContaining({ path: resolve(claude), action: "none", error: expect.stringContaining("symbolic link") }),
+      expect.objectContaining({ path: resolve(link), action: "none", error: expect.stringContaining("symbolic link") }),
+    ]);
+    expect(applied.undoId).toBeUndefined();
+    expect([read(data), read(agents)]).toEqual(["a,b\n", set(BASE, 5, "five\n")]);
+    expect([lstatSync(link).isSymbolicLink(), lstatSync(claude).isSymbolicLink()]).toEqual([true, true]);
   });
 
   test("says why a file cannot be reverted by lines", async () => {

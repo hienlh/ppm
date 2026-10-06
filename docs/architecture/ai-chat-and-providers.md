@@ -692,8 +692,9 @@ status, line counts, a `version` = size:mtime of the file on disk, its blocks by
 kept ones flagged, and `base`, a hash of the text the blocks were cut against) and
 `GET /chat/sessions/:id/file-changes/diff?path=` (the same plus both sides), in
 `src/server/routes/chat-file-changes.ts` over `session-file-changes.service.ts`. A file with
-no record falls back to git HEAD only if it is **inside the project** and named in `paths` —
-which is how a session from before baselines still gets a review — and every read goes
+no record falls back to git HEAD only if it is **inside the project**, named in `paths` and a
+regular file at HEAD (a symbolic link's blob is only the name it points to) — which is how a
+session from before baselines still gets a review — and every read goes
 through the generic file routes' `assertReadPermitted`. Edited versions and forks read their
 parents' records too (`getBranchRow` chain), since files are not rewound when one is made.
 Files whose two sides are equal are left out. Shapes are in `src/shared/session-file-changes.ts`.
@@ -757,7 +758,8 @@ once the base moves; a file left with every block kept is marked reviewed, exact
 bar's checkbox does, so a later agent edit comes back as `sinceReview` with only its new blocks
 open. A revert writes the base's lines back on disk — the "before", or the marked state for a
 `sinceReview` file — and needs no record, because a reverted block is no longer a change; a
-file that is not plain UTF-8 or is over 64 MB is refused. Each answer is journalled under
+file that is not plain UTF-8 or is over 64 MB is refused, and so is a symbolic link, never
+written through nor taken away (Undo keeps bytes, not links). Each answer is journalled under
 `<session dir>/undo/` (dropped after 24 h) with the session's records for every file it touched
 and, for a revert, the file's bytes before and after — written before the first file is, so a
 revert with no journal writes nothing, and a file it cannot write is answered with why while

@@ -120,17 +120,29 @@ function repoTop(dir: string, cache: RepoCache): Promise<string | null> {
   return found;
 }
 
-/** The file at git HEAD in whatever repository holds it; null when no repository does. */
+/**
+ * The bytes HEAD holds at `rel`: null when it holds nothing there, undefined when what it holds
+ * is no file's content — a symbolic link's blob is only the name it points to, so it is no
+ * "before" for the file that name reaches.
+ */
+async function headBlob(top: string, rel: string): Promise<Uint8Array | null | undefined> {
+  const git = simpleGit(top);
+  const listed = await git.raw(["ls-tree", "-z", "HEAD", "--", rel]).catch(() => "");
+  const entry = listed.split("\0").find((line) => line.slice(line.indexOf("\t") + 1) === rel);
+  if (!entry) return null;
+  if (!/^100(644|755) blob /.test(entry)) return undefined;
+  return git.showBuffer([`HEAD:${rel}`]).catch(() => null);
+}
+
+/** The file at git HEAD in whatever repository holds it; null when no repository does, or HEAD holds no file there. */
 async function readHead(path: string, cache: RepoCache): Promise<Side | null> {
   const top = await repoTop(dirname(path), cache);
   if (!top) return null;
   const rel = relative(top, path).split(sep).join("/");
   if (!rel || rel.startsWith("../")) return null;
-  try {
-    return sideFromBytes(await simpleGit(top).showBuffer([`HEAD:${rel}`]));
-  } catch {
-    return { exists: false };
-  }
+  const bytes = await headBlob(top, rel);
+  if (bytes === undefined) return null;
+  return bytes ? sideFromBytes(bytes) : { exists: false };
 }
 
 /** The file's bytes at git HEAD, for putting back a file that has no text to diff; null when no repository has it. */
@@ -139,7 +151,7 @@ export async function headBytes(path: string): Promise<Uint8Array | null> {
   if (!top) return null;
   const rel = relative(top, path).split(sep).join("/");
   if (!rel || rel.startsWith("../")) return null;
-  return simpleGit(top).showBuffer([`HEAD:${rel}`]).catch(() => null);
+  return (await headBlob(top, rel)) ?? null;
 }
 
 function isInside(root: string, path: string): boolean {
