@@ -1,5 +1,5 @@
 /**
- * Reading `ppm.log` back by level — what `ppm logs --level`, the bug report and the public
+ * Reading `ppm.log` back by level — what `ppm logs --level`, `ppm report` and the
  * `/api/logs/recent` tail rely on. A multi-line record (a stack trace, a dumped tool output)
  * must travel with its first line, or a DEBUG record leaks out through its continuation lines.
  */

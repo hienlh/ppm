@@ -20,12 +20,15 @@ import {
   WrapText,
   Zap,
   Cpu,
+  ScrollText,
+  Bug,
 } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
 import { openRemoteAccess } from "@/components/settings/remote-access/remote-access-tab-store";
 import { openPortForwarding } from "@/components/tunnels/open-port-forwarding";
 import { useOpenSystemMonitor } from "@/components/system/use-open-system-monitor";
+import { openLogs } from "@/components/logs/open-logs";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -331,6 +334,22 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         keywords: "task manager activity monitor cpu memory ram disk network gpu processes services apps performance resources",
         action: () => {
           openSystemMonitor();
+          onClose();
+        },
+      },
+      {
+        id: "logs", label: "Logs", icon: ScrollText, group: "action",
+        keywords: "logs server errors warnings debug tail ppm.log browser console cloudflared",
+        action: () => {
+          openLogs();
+          onClose();
+        },
+      },
+      {
+        id: "report-bug", label: "Report a Bug", icon: Bug, group: "action",
+        keywords: "report bug issue github feedback problem crash",
+        action: () => {
+          openLogs({ view: "report" });
           onClose();
         },
       },

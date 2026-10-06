@@ -47,7 +47,7 @@ export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-moni
  * iframe whose parent is the main window, and a pop-out would make the iframe's parent the
  * picture-in-picture window instead.
  */
-export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "design"]);
+export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "design", "logs"]);
 
 /**
  * Prefix of the reserved panel IDs that host tabs detached into a floating window.
@@ -252,6 +252,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // One machine to watch: on a phone a second open focuses the first, as the desktop window does.
     case "system-monitor":
       return "system-monitor";
+    // One set of logs: on a phone a second open focuses the first, as the desktop window does.
+    case "logs":
+      return "logs";
     case "group":
       return `group:${metadata?.groupId ?? "unknown"}`;
     // One tab per design: the chat, the canvas and its history all belong to the design.

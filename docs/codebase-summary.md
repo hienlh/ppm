@@ -85,6 +85,7 @@ src/
 │   ├── extension-rpc.ts         # RPC channel (request/response/events)
 │   ├── extension-host-worker.ts # Worker-side extension loading
 │   ├── contribution-registry.ts # Central registry for commands, views, config
+│   ├── logs/                    # Logs window backend: every log as one list (log-store), live tail, AI-sorted issues, report drafts, GitHub labels + duplicate search
 │   ├── slash-discovery/         # Modular slash command discovery engine
 │   │   ├── types.ts             # DefinitionSource, SkillRoot, SlashItem, DiscoveryResult types
 │   │   ├── definition-source.ts # Priority ranking + scope mapping
@@ -285,6 +286,7 @@ src/
 │           │   ├── sql-object/      # SQL tab (`db-sql`): an object's CREATE / SELECT / INSERT, read-only Monaco
 │           │   ├── impexp/          # Import/Export tab (`db-impexp`)
 │           │   └── query/           # Query tab (`db-query`): scripts, Messages + Result N, Stop, History
+│           ├── logs/                # Logs window (a tab below md): Logs / Issues / Report sub-tabs over one feed; replaced the Report Bug popup
 │           ├── projects/            # Project management (339 LOC, 2 files)
 │           ├── settings/            # Settings as its own window kind (tab below md)
 │           │   ├── settings-body.tsx # Shared shell: rail + pane, layout from @container
@@ -293,8 +295,7 @@ src/
 │           │   └── accounts/        # Multi-account management (add, delete, enable, export, import, rotation, token test)
 │           ├── terminal/            # xterm.js wrapper (143 LOC, 2 files)
 │           ├── shared/              # Shared components (2 files)
-│           │   ├── markdown-renderer.tsx # Render Markdown with syntax highlighting
-│           │   └── bug-report-popup.tsx  # Global bug report popup
+│           │   └── markdown-renderer.tsx # Render Markdown with syntax highlighting
 │           ├── sqlite/              # A .db opened from a file tree or the editor
 │           │   └── sqlite-viewer.tsx # Its tables in a list + the data tab's TableView, on /api/db/connections/file
 │           └── ui/                  # Radix + shadcn primitives (14 files)

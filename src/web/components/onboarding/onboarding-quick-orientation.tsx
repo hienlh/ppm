@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Bell, Cloud, FolderTree, Settings, Bug, Search } from "@/lib/icons";
+import { Bell, Cloud, FolderTree, Settings, ScrollText, Search } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { BUILTIN_SIDEBAR_TABS } from "@/lib/sidebar-tabs/tab-registry";
@@ -27,7 +27,7 @@ const utilities = [
   { title: "Cloud & Share", icon: Cloud, body: "Find sharing and remote-access options for this PPM instance." },
   { title: "File Explorer", icon: FolderTree, body: "Browse the host computer, beyond the selected project." },
   { title: "Settings", icon: Settings, body: "Configure AI, appearance and preferences; reopen guided tours." },
-  { title: "Report Bug", icon: Bug, body: "Open the bug-report form when something does not work." },
+  { title: "Logs", icon: ScrollText, body: "Read what PPM logged, see what AI made of recent errors, and report a bug with the lines that show it." },
 ];
 
 /** Optional reference: it never changes tour progress or executes a palette command. */
@@ -72,7 +72,7 @@ export function OnboardingQuickOrientation({ onClose, onTryPalette }: { onClose:
         <div className="space-y-3">{utilities.filter((item) => !mobile || item.title !== "Notifications").map(({ title, icon: Icon, body }) => <div key={title} className="flex gap-3">
           <Icon className="size-4 shrink-0 text-primary mt-1" /><p className="text-sm text-text-secondary"><strong className="font-medium text-foreground">{title}</strong> — {body}</p>
         </div>)}</div>
-        {mobile && <p className="text-sm text-text-secondary">Mobile uses shorter labels: History, Ports and AI for the matching sections above; Files, Cloud and Bug for File Explorer, Cloud &amp; Share and Report Bug. The menu badge signals conversations needing attention.</p>}
+        {mobile && <p className="text-sm text-text-secondary">Mobile uses shorter labels: History, Ports and AI for the matching sections above; Files and Cloud for File Explorer and Cloud &amp; Share. The menu badge signals conversations needing attention.</p>}
         <p className="text-xs text-text-secondary">Jira, Remote Desktop and extension buttons appear when available. Button order can be customized.</p>
       </section>}
       </OnboardingStepTransition>

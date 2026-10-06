@@ -183,12 +183,14 @@ app.get("/api/info", (c) => c.json(ok({
   tunnel_active: !!tunnelService.getTunnelUrl(),
 })));
 
-// Public: recent logs for bug reports (last 30 lines).
+// Recent logs for bug reports (last 30 lines). Signed in only: it was public for the login
+// screen's Report Bug, which no longer reads it (nothing in PPM does), while the tail carries
+// every change request the access log records.
 //
-// Reads a bounded tail, never the file. This route sits *before*
-// authMiddleware, and `readFileSync` + `split("\n")` on the 276 MB ppm.log this
-// was found on cost 356 ms of blocked event loop and a 644 MB resident spike —
-// per call, unauthenticated, and growing with the log.
+// Reads a bounded tail, never the file: `readFileSync` + `split("\n")` on the 276 MB
+// ppm.log this was found on cost 356 ms of blocked event loop and a 644 MB resident
+// spike — per call, and growing with the log.
+app.use("/api/logs/recent", authMiddleware);
 app.get("/api/logs/recent", async (c) => {
   const { resolve } = await import("node:path");
   const { existsSync } = await import("node:fs");
@@ -321,6 +323,10 @@ app.route("/api/schedules", schedulesRoutes);
 // Session trace — browser logs in, a session's timeline out
 import { traceRoutes } from "./routes/trace.ts";
 app.route("/api/trace", traceRoutes);
+
+// Logs window — records, AI-sorted issues, bug report pieces (`/api/logs/recent` is above)
+import { logsRoutes } from "./routes/logs.ts";
+app.route("/api/logs", logsRoutes);
 
 // AI resources (skills / agents / commands) management
 import { aiResourcesRoutes } from "./routes/ai-resources.ts";

@@ -40,7 +40,6 @@ import { TabCloseConfirmHost } from "@/components/layout/tab-close-confirm-dialo
 import { StructureSaveHost } from "@/components/database/table-editor/structure-save-host";
 import { GridSaveHost } from "@/components/database/grid/grid-save-host";
 import { OPEN_NAVIGATION } from "@/components/database/db-sidebar-reveal";
-import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { NamedTunnelSetupPopup } from "@/components/tunnels/named-tunnel/named-tunnel-setup-popup";
 import { ImageOverlay } from "@/components/shared/image-overlay";
 import { DiagramOverlay } from "@/components/shared/diagram-overlay";
@@ -432,9 +431,6 @@ export function App() {
         <Suspense fallback={null}>
           <RemoteDesktopMobileSheet />
         </Suspense>
-
-        {/* Global bug report popup */}
-        <BugReportPopup />
 
         {/* Named-tunnel first-run setup popup — hidden unless auth is on, mode is
             still quick and the user has not dismissed it (or a cert needs renewal) */}

@@ -7,8 +7,8 @@
  *
  *   - `~/.ppm/ppm.log` at 276 MB: 264 ms to read + 92 ms to `split("\n")` =
  *     **356 ms** of blocked event loop and a 644 MB resident spike, to answer
- *     with the last 30 lines. The route doing it (`/api/logs/recent`) is
- *     registered *before* `authMiddleware`.
+ *     with the last 30 lines. The route doing it (`/api/logs/recent`) was
+ *     registered *before* `authMiddleware` then.
  *   - A 35 MB transcript: 34 ms to read as a string + 18 ms to walk it with
  *     `charCodeAt`, to arrive at a line count.
  *

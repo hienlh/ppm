@@ -108,9 +108,9 @@ export function applyResize(
  * Where a newly opened window goes: cascaded from the top-left by CASCADE_STEP per existing
  * window, wrapping before it would walk off the layer.
  */
-export function cascadeSpawnRect(existing: Rect[], bounds: Bounds): Rect {
-  const w = Math.min(PREFERRED.w, Math.max(MIN_SIZE.w, bounds.w - SPAWN_MARGIN * 2));
-  const h = Math.min(PREFERRED.h, Math.max(MIN_SIZE.h, bounds.h - SPAWN_MARGIN * 2));
+export function cascadeSpawnRect(existing: Rect[], bounds: Bounds, preferred: { w: number; h: number } = PREFERRED): Rect {
+  const w = Math.min(preferred.w, Math.max(MIN_SIZE.w, bounds.w - SPAWN_MARGIN * 2));
+  const h = Math.min(preferred.h, Math.max(MIN_SIZE.h, bounds.h - SPAWN_MARGIN * 2));
   const step = existing.length % MAX_WINDOWS;
   return clampRect(
     { x: SPAWN_MARGIN + step * CASCADE_STEP, y: SPAWN_MARGIN + step * CASCADE_STEP, w, h },

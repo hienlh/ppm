@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getPpmDir } from "../ppm-dir.ts";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 let cached: Database | undefined;
 
@@ -69,6 +69,19 @@ function migrate(db: Database): void {
         alias_id TEXT PRIMARY KEY,
         trace_id TEXT NOT NULL,
         ts INTEGER NOT NULL
+      );
+      PRAGMA user_version = 1;
+    `);
+  }
+
+  if (user_version < 2) {
+    // Which browser a device id is. A batch carries only the id; the request's User-Agent is
+    // what names it in Logs ("Chrome·Mac") and in a bug report's Environment.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS trace_devices (
+        device_id TEXT PRIMARY KEY,
+        user_agent TEXT NOT NULL,
+        last_seen INTEGER NOT NULL
       );
       PRAGMA user_version = ${SCHEMA_VERSION};
     `);

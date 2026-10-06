@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Bug, Cloud, FolderTree, MonitorSmartphone, Smartphone } from "@/lib/icons";
+import { Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
@@ -20,7 +20,9 @@ import { useJiraStore } from "@/stores/jira-store";
 import { useNotificationStore, selectProjectUnread } from "@/stores/notification-store";
 import { NotificationBellPopover } from "./notification-bell-popover";
 import { CloudSharePopover } from "./cloud-share-popover";
-import { openBugReportPopup } from "@/lib/report-bug";
+import { openLogs } from "@/components/logs/open-logs";
+import { useLogsBadgeCount } from "@/components/logs/use-logs-badge";
+import { useWindowStore } from "@/components/floating-window/window-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 
@@ -79,8 +81,10 @@ function NavItem({ icon: Icon, label, active, badge, featureBadge, onClick, drag
 }
 
 // Footer utility item: 32×32, 16px icon.
-function FooterUtil({ icon: Icon, label, onClick, active, featureBadge }: {
+function FooterUtil({ icon: Icon, label, onClick, active, featureBadge, alert }: {
   icon: React.ElementType; label: string; onClick?: () => void; active?: boolean; featureBadge?: FeatureBadgeId;
+  /** A count that wants attention, drawn red in the corner. */
+  alert?: number;
 }) {
   return (
     <button
@@ -95,6 +99,11 @@ function FooterUtil({ icon: Icon, label, onClick, active, featureBadge }: {
     >
       <Icon className="size-4" />
       <FeatureBadge id={featureBadge} variant="corner" />
+      {!!alert && (
+        <span aria-hidden className="absolute right-0.5 top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-error px-[3px] text-[9px] font-semibold leading-none text-white shadow-[0_0_0_1.5px_var(--rail)]">
+          {alert > 9 ? "9+" : alert}
+        </span>
+      )}
       <span className={HOVER_LABEL_CLASS}>
         {label}
       </span>
@@ -111,7 +120,6 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
-  const version = useSettingsStore((s) => s.version);
   const contributions = useExtensionStore((s) => s.contributions);
   const gitChangesCount = useGitStatusStore((s) =>
     activeProject?.name ? (s.counts.get(activeProject.name) ?? 0) : 0,
@@ -166,7 +174,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const { available: androidAvailable } = useAndroidAvailable();
   const { available: remoteDesktopAvailable } = useRemoteDesktopAvailable();
 
-  const handleReportBug = () => openBugReportPopup(version);
+  const likelyBugs = useLogsBadgeCount();
+  const logsOpen = useWindowStore((s) => Object.values(s.windows).some((w) => w.kind === "logs" && w.state !== "minimized"));
 
   // Rail tab click: collapsed → open on any tab; open → clicking the active tab closes it.
   const handleTabClick = (tabId: SidebarActiveTab) => {
@@ -236,7 +245,14 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
         {androidAvailable && (
           <FooterUtil icon={Smartphone} label="Android" featureBadge="android" onClick={openAndroid} />
         )}
-        <FooterUtil icon={Bug} label="Report Bug" onClick={handleReportBug} />
+        {/* Replaces Report Bug: a report is now made from the lines it is about. */}
+        <FooterUtil
+          icon={ScrollText}
+          label={likelyBugs ? `Logs · ${likelyBugs} likely ${likelyBugs === 1 ? "bug" : "bugs"}` : "Logs"}
+          alert={likelyBugs}
+          active={logsOpen}
+          onClick={() => openLogs()}
+        />
         <FooterUtil icon={Settings} label="Settings" onClick={() => openSettings()} />
       </div>
     </div>

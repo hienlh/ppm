@@ -1,7 +1,7 @@
 /**
- * The proxy writes one line per forwarded request, and bare `console.log` lands in ppm.log at
- * INFO, which the public `/api/logs/recent` serves. The account in that line must be its id: the
- * email is the person's address.
+ * The proxy writes one line per forwarded request, and a bare `console.log` lands in ppm.log at
+ * INFO, which bug reports read back. The account in that line must be its id: the email is the
+ * person's address.
  */
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as realSdk from "@anthropic-ai/claude-agent-sdk";

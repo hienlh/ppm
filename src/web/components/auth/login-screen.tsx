@@ -14,17 +14,31 @@ import {
 } from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
-import { openBugReportPopup } from "@/lib/report-bug";
 import { SupportDialog } from "@/components/auth/support-dialog";
-import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { ThemeModeMenu } from "@/components/shared/theme-mode-menu";
 import { cn } from "@/lib/utils";
+import { userAgentSummary } from "../../../shared/user-agent-label";
 
 interface LoginScreenProps {
   onSuccess: () => void;
 }
 
 const REPO_URL = "https://github.com/hienlh/ppm";
+
+/**
+ * A new GitHub issue holding only what this screen knows. Reporting a bug with its log lines
+ * happens in the Logs window, which needs signing in first.
+ */
+function newIssueUrl(version: string | null): string {
+  const body = [
+    "### What happened", "", "",
+    "### Steps to reproduce", "1. ", "",
+    "### Environment",
+    `- PPM: v${version ?? "unknown"}`,
+    `- Browser: ${userAgentSummary(navigator.userAgent)}`,
+  ].join("\n");
+  return `${REPO_URL}/issues/new?title=${encodeURIComponent("bug: ")}&body=${encodeURIComponent(body)}`;
+}
 
 // Decorative, one-off background layers (accent glow + faint dot grid). Both
 // derive from theme tokens so they invert with the mode -- the dot grid mixes
@@ -203,14 +217,15 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
 
         {/* Footer links */}
         <div className="flex items-center justify-center gap-5">
-          <button
-            type="button"
-            onClick={() => openBugReportPopup(version)}
+          <a
+            href={newIssueUrl(version)}
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-xs text-text-subtle can-hover:hover:text-foreground"
           >
             <Bug className="size-[18px] md:size-3.5" />
             <span className="max-md:sr-only">Report Bug</span>
-          </button>
+          </a>
           <a
             href={REPO_URL}
             target="_blank"
@@ -232,10 +247,6 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
       </div>
 
       <SupportDialog open={supportOpen} onOpenChange={setSupportOpen} />
-      {/* Self-contained popup listens for the open-bug-report window event that
-          the footer's Report Bug button dispatches — the app-level instance is
-          only mounted post-auth, so the login screen needs its own. */}
-      <BugReportPopup />
     </div>
   );
 }

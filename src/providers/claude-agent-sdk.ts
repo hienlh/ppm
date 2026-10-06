@@ -46,9 +46,10 @@ import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
 import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
 import { resolve, dirname } from "node:path";
-import { existsSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
 import { homedir, totalmem } from "node:os";
 import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
+import { getPpmDir } from "../services/ppm-dir.ts";
 import { createLogger } from "../services/logger.ts";
 
 const log = createLogger("sdk");
@@ -917,6 +918,71 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       includePartialMessages: true,
       stderr: p.stderr,
     };
+  }
+
+  /**
+   * One prompt, one text answer: no tools, no session on disk, no project. For PPM's own small
+   * jobs (sorting the log's errors, drafting a bug report), not for chats. It runs on the
+   * account the router would pick next and authenticates exactly as a turn does
+   * (`buildQueryEnv`), in a directory of its own with `settingSources: []`, so no project's
+   * CLAUDE.md, settings or `.env` reaches it.
+   */
+  async completeOnce(input: {
+    prompt: string;
+    systemPrompt: string;
+    model: string;
+    timeoutMs?: number;
+  }): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+    let account: AccountWithTokens | null = null;
+    if (accountSelector.isEnabled()) {
+      const picked = accountSelector.next();
+      if (!picked) throw new Error("No Claude account can take a request right now");
+      account = await accountService.ensureFreshToken(picked.id);
+      if (!account) throw new Error("The Claude account's sign-in has expired");
+    }
+    const providerConfig = this.getProviderConfig();
+    const cliExecutablePath = resolveCliExecutablePath((providerConfig as { cli_command?: string }).cli_command);
+    const cwd = resolve(getPpmDir(), "one-shot");
+    mkdirSync(cwd, { recursive: true });
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), input.timeoutMs ?? 90_000);
+    try {
+      const run = query({
+        prompt: input.prompt,
+        options: {
+          ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" as const }),
+          ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
+          cwd,
+          model: input.model,
+          systemPrompt: input.systemPrompt,
+          tools: [],
+          settingSources: [],
+          persistSession: false,
+          maxTurns: 1,
+          env: this.buildQueryEnv(undefined, account),
+          abortController,
+        },
+      });
+      for await (const message of run) {
+        if (message.type !== "result") continue;
+        if (message.subtype !== "success" || message.is_error) {
+          const detail = message.subtype === "success" ? message.result : message.subtype;
+          throw new Error(`Claude did not answer: ${String(detail).slice(0, 200)}`);
+        }
+        if (account) accountSelector.onSuccess(account.id);
+        return {
+          text: message.result,
+          inputTokens: (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0),
+          outputTokens: message.usage.output_tokens ?? 0,
+        };
+      }
+      throw new Error("Claude ended without an answer");
+    } catch (e) {
+      if (abortController.signal.aborted) throw new Error("Claude took too long to answer");
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

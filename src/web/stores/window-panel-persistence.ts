@@ -54,6 +54,7 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   // so it is still one WS session and one controller lease.
   android: true,
   "web-preview": true,
+  logs: false,
 };
 
 export function isPoppableTabType(type: unknown): type is TabType {

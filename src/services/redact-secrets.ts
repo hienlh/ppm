@@ -1,5 +1,5 @@
 /**
- * Shared secret redactor for text that leaves the server: the public
+ * Shared secret redactor for text that leaves the server: the
  * `/api/logs/recent` tail and process command lines in the metrics stream.
  *
  * Kept in one place so both consumers agree on what counts as a secret. Apply

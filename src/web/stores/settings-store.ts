@@ -90,6 +90,13 @@ interface SettingsState {
    *  view of the same machine you want is a property of who is looking. */
   sysmonCpuGraph: CpuGraphMode;
   sysmonCpuBottomGraph: CpuBottomGraph;
+  /** Logs: show times in UTC (what the files hold) instead of local time. Device-local. */
+  logsUtc: boolean;
+  /** Logs: wrap long lines on a desktop; a phone always wraps. Device-local, like word wrap. */
+  logsWrap: boolean;
+  /** Logs: the red dot on the Logs button when AI finds a likely PPM bug. Device-local, and
+   *  off means this device never asks for the count — which is also what starts an Auto run. */
+  logsBadge: boolean;
   /** User ticked "don't show again" on the remote-desktop warning that precedes every open
    *  (`remote-desktop-warning-gate.tsx`); once true the viewer connects straight away. */
   remoteDesktopWarningDismissed: boolean;
@@ -186,6 +193,9 @@ interface SettingsState {
   setSysmonKernelTimes: (on: boolean) => void;
   setSysmonCpuGraph: (mode: CpuGraphMode) => void;
   setSysmonCpuBottomGraph: (mode: CpuBottomGraph) => void;
+  setLogsUtc: (on: boolean) => void;
+  setLogsWrap: (on: boolean) => void;
+  setLogsBadge: (on: boolean) => void;
   setRemoteDesktopWarningDismissed: (dismissed: boolean) => void;
   dismissMcpSignIn: (serverNames: string[]) => void;
   undismissMcpSignIn: (serverName: string) => void;
@@ -236,6 +246,9 @@ interface PersistedSettings {
   sysmonKernelTimes?: boolean;
   sysmonCpuGraph?: CpuGraphMode;
   sysmonCpuBottomGraph?: CpuBottomGraph;
+  logsUtc?: boolean;
+  logsWrap?: boolean;
+  logsBadge?: boolean;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -446,6 +459,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sysmonKernelTimes: _initial.sysmonKernelTimes ?? true,
   sysmonCpuGraph: parseCpuGraphMode(_initial.sysmonCpuGraph),
   sysmonCpuBottomGraph: parseCpuBottomGraph(_initial.sysmonCpuBottomGraph),
+  logsUtc: _initial.logsUtc === true,
+  logsWrap: _initial.logsWrap === true,
+  logsBadge: _initial.logsBadge !== false,
   remoteDesktopWarningDismissed: _initial.remoteDesktopWarningDismissed ?? false,
   mcpSignInDismissed: sanitizeNameList(_initial.mcpSignInDismissed) ?? [],
   keepScreenAwake: _initial.keepScreenAwake ?? true,
@@ -656,6 +672,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setSysmonCpuBottomGraph: (mode) => {
     persistDevicePref({ sysmonCpuBottomGraph: mode });
     set({ sysmonCpuBottomGraph: mode });
+  },
+
+  setLogsUtc: (on) => {
+    persistDevicePref({ logsUtc: on });
+    set({ logsUtc: on });
+  },
+
+  setLogsWrap: (on) => {
+    persistDevicePref({ logsWrap: on });
+    set({ logsWrap: on });
+  },
+
+  setLogsBadge: (on) => {
+    persistDevicePref({ logsBadge: on });
+    set({ logsBadge: on });
   },
 
   setRemoteDesktopWarningDismissed: (dismissed) => {

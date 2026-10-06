@@ -206,8 +206,8 @@ Every HTTP request is logged once (`[http]`, with method, path, status and durat
 `INFO`, a read at `DEBUG`, a failure with the error message it returned), and so is every
 WebSocket opening and closing (`[ws]`). Secrets are redacted before a line is written, and file
 contents, chat text and tool output are never logged. The file rotates at 20 MB, keeping
-`ppm.log.1` … `ppm.log.3`. `GET /api/logs/recent` (used by the bug report) returns only `INFO` and
-above. A CLI command (`ppm db query`, `ppm config set`, …) does not write to `ppm.log`: its log
+`ppm.log.1` … `ppm.log.3`. `GET /api/logs/recent`, the old bug report's log tail, needs signing in
+and returns only `INFO` and above. A CLI command (`ppm db query`, `ppm config set`, …) does not write to `ppm.log`: its log
 lines go to stderr, so what it prints on stdout stays parseable.
 
 ---

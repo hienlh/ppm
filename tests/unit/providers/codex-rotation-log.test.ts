@@ -1,7 +1,7 @@
 /**
  * The line a Codex account rotation leaves in ppm.log. It names the account by id: a label is
  * the account's ChatGPT email unless somebody renamed it, and a WARN line also reaches the
- * public `/api/logs/recent` tail.
+ * Logs window's Issues tab and the bug reports drafted from it.
  */
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider.ts";

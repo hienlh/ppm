@@ -17,8 +17,8 @@ export interface KillHandlerDeps {
   collector: ProcessCollector;
   resolveProtected: (isAlive: (pid: number) => boolean, nameOf: (pid: number) => string | undefined) => ProtectedPids;
   execute: (pid: number, tree: boolean) => Promise<KillProcessResult>;
-  /** Audit line: pid + name + result ONLY. `~/.ppm/ppm.log`'s tail is served
-   *  unauthenticated by `/api/logs/recent`, so a command line must never land here. */
+  /** Audit line: pid + name + result ONLY. `~/.ppm/ppm.log` is read back into
+   *  bug reports, so a command line must never land here. */
   log: Logger;
 }
 

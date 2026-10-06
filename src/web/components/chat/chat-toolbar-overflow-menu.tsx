@@ -1,4 +1,4 @@
-import { BellOff, Bug, Circle, MoreHorizontal } from "@/lib/icons";
+import { BellOff, Bug, Circle, MoreHorizontal, ScrollText } from "@/lib/icons";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,10 +18,13 @@ export function ChatToolbarOverflowMenu({
   hasUnread,
   onToggleUnread,
   onOpenDebug,
+  onShowLogs,
 }: {
   hasUnread: boolean;
   onToggleUnread: () => void;
   onOpenDebug: () => void;
+  /** Opens Logs filtered to this chat's lines — where a bug in it is reported from. */
+  onShowLogs: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -50,6 +53,9 @@ export function ChatToolbarOverflowMenu({
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onOpenDebug} className="max-md:py-3">
           <Bug className="size-3.5" /> Session debug info
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onShowLogs} className="max-md:py-3">
+          <ScrollText className="size-3.5" /> Show logs for this chat
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

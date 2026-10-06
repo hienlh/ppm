@@ -26,8 +26,8 @@ export interface SignalHandlerDeps {
   execute: (pid: number, signal: ProcessSignal, tree: boolean) => Promise<SignalProcessResult>;
   /** Signals this host can deliver; anything else is a 400 before any re-query. */
   supported: readonly ProcessSignal[];
-  /** Audit line: pid + name + signal + result ONLY. `~/.ppm/ppm.log`'s tail is
-   *  served unauthenticated by `/api/logs/recent`, so no command line here. */
+  /** Audit line: pid + name + signal + result ONLY. `~/.ppm/ppm.log` is read
+   *  back into bug reports, so no command line here. */
   log: Logger;
 }
 

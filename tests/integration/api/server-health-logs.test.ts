@@ -88,6 +88,20 @@ describe("Logs endpoint", () => {
     expect(logs).toContain("[REDACTED]");
   });
 
+  it("GET /api/logs/recent needs signing in", async () => {
+    // Nothing in PPM reads it any more, and the tail carries every change request the access log records.
+    const auth = (configService as any).config.auth;
+    const saved = { ...auth };
+    Object.assign(auth, { enabled: true, token: "test-token-123" });
+    try {
+      expect((await req("/api/logs/recent")).status).toBe(401);
+      const res = await app.request(new Request("http://localhost/api/logs/recent", { headers: { Authorization: "Bearer test-token-123" } }));
+      expect(res.status).toBe(200);
+    } finally {
+      Object.assign(auth, saved);
+    }
+  });
+
   it("GET /api/logs/recent returns empty when no log file", async () => {
     // Temporarily remove log file
     const backup = readFileSync(LOG_FILE);

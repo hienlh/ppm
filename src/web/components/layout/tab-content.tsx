@@ -134,6 +134,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.WebPreviewTab,
     })),
   ),
+  logs: lazy(() =>
+    import("@/components/logs/logs-tab").then((m) => ({
+      default: m.LogsTab,
+    })),
+  ),
 };
 
 function LoadingFallback() {

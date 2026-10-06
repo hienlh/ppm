@@ -145,6 +145,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("design:")
         || type.startsWith("git:")
         || type.startsWith("agent-transcript:")
+        || type.startsWith("logs:")
         || type === "agent-activity"
       ) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));

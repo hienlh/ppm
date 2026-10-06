@@ -11,12 +11,10 @@ import { useChatPrewarm } from "@/hooks/use-chat-prewarm";
 import { useUsage } from "@/hooks/use-usage";
 import { useDesignSessionRedirect } from "@/hooks/use-design-session-redirect";
 import { useTabStore } from "@/stores/tab-store";
-import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useFileStore } from "@/stores/file-store";
 import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
-import { openBugReportPopup } from "@/lib/report-bug";
 import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
 import { MessageList } from "./message-list";
@@ -249,7 +247,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   useDesignSessionRedirect({ tabId, sessionId, designSlug, projectName, providerId });
   const updateTab = useTabStore((s) => s.updateTab);
-  const version = useSettingsStore((s) => s.version);
 
   // Usage runs independently — auto-refreshes on interval. Scoped to this session so the
   // account shown is the one bound to it, not whichever session ran most recently.
@@ -1387,7 +1384,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           onSelectAccount={!preparation.pending && !firstSendPending ? handleSelectAccount : undefined}
           onSelectSession={handleSelectSession}
           historyFilter={historyFilter}
-          onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}
           isConnected={isConnected}
           onReload={() => {
             if (!isConnected) reconnect();
@@ -1491,8 +1487,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           />
         )}
       </div>
-
-      {/* Bug report popup is now global — see BugReportPopup in app.tsx */}
     </div>
     </AgentSessionProvider>
   );

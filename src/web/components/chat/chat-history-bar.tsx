@@ -11,6 +11,7 @@ import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
 import { SessionDebugDialog } from "./session-debug-dialog";
 import { ChatToolbarOverflowMenu } from "./chat-toolbar-overflow-menu";
+import { openLogs } from "@/components/logs/open-logs";
 import { UsageDetailPanel } from "./usage-badge";
 import { CodexUsagePanel } from "./codex-usage-panel";
 import { TeamActivityPanel } from "./team-activity-panel";
@@ -60,7 +61,6 @@ interface ChatHistoryBarProps {
    * than switched into this chat, where it would have left design mode.
    */
   historyFilter?: string;
-  onBugReport?: () => void;
   isConnected?: boolean;
   onReload?: () => void;
   teamActivity?: TeamActivityState;
@@ -87,7 +87,7 @@ export function ChatHistoryBar({
   tabId,
   projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
-  onSelectSession, historyFilter, onBugReport, isConnected, onReload,
+  onSelectSession, historyFilter, isConnected, onReload,
   teamActivity, teamMessages, onTeamOpen,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
@@ -447,6 +447,7 @@ export function ChatHistoryBar({
             hasUnread={hasUnread}
             onToggleUnread={() => hasUnread ? clearForSession(sessionId) : markUnread(sessionId, projectName)}
             onOpenDebug={() => setDebugOpen(true)}
+            onShowLogs={() => openLogs({ chat: sessionId })}
           />
         )}
         </div>
