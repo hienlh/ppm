@@ -277,7 +277,7 @@ A **Design tab** puts a design chat beside a live, sandboxed canvas of what the 
 
 **The design session** is an ordinary chat session whose `session_metadata.design_slug` is fixed at creation (`POST /chat/sessions` with `designSlug`, accepted only on a provider with `supportsDesignInstructions` — Claude and Codex). `chatService.prepareSendOptions` rebuilds the instruction block from the stored slug on every turn, whoever sends it (WebSocket, `ppm chat send`, scheduler, bots): Claude gets it appended to the `claude_code` preset, Codex as `developerInstructions` (`design-instructions.ts`). The permission mode defaults exactly as for a new chat (the provider's configured default, normally `bypassPermissions`), because a design agent reads and searches the project constantly and a stricter default asked on every file. A user who picks `acceptEdits` for a design session gets the tighter design policy: project file reads and writes are approved, shell and every other tool ask (`design-tool-policy.ts` for Claude, `workspace-write` + `untrusted` for Codex). Every `done`, and every terminal background task, schedules a `turn` snapshot 2 s later (`design-turn-snapshot.ts`). The tab keeps the session in design mode: a fork is swapped in place, `/clear` starts the next session in the same tab, the embedded history lists only this design's sessions, and opening a design session from anywhere focuses its design tab (`openSessionInItsTab`, `tabSessionId()` in `src/web/lib/tab-session-id.ts`).
 
-**The user's design instructions** (Settings → Design, `design-settings-section.tsx`; `GET/PUT /api/settings/design`, `src/server/routes/design-settings.ts`) are one global text (config row `design.instructions`, 8 KB UTF-8 cap, `design-settings.service.ts`). `design-user-section.ts` appends them after PPM's block, quoted in a `<user_design_instructions>` block under a statement that PPM's rules win. `/name` and `$name` mentions (`src/shared/design-skill-mentions.ts`) are resolved per session against the skills that provider can load (`design-skill-sources.ts`: Claude's slash discovery for the project narrowed to `.claude`, `CLAUDE_CONFIG_DIR` and plugins, since the Skill tool cannot run a `.codex`/`.ppm` skill the composer also lists; Codex's `skills/list` for the session's cwd and account): Claude is told to invoke the canonical name with the Skill tool, Codex to use `$name` (Codex's own mention syntax, the same rewrite `provider-skill-sigil.ts` does in chat). A name found nowhere is "not a skill, read it as text", any mention adds the ask-before-installing rule, and an unreadable list (an empty codex answer counts) marks the names unchecked; listing has a 5 s timeout and a 60 s back-off after a failure so a broken codex cannot spawn an app-server per turn. The editor reuses the composer's `SlashCommandPicker` and `slash-trigger.ts`. When nothing named resolves and no `ui-ux-pro-max` is installed, the pane (and a hint in New Design) shows the upstream install commands (`design-skill-suggestion.ts`); PPM never installs a skill. Claude snapshots its system prompt at a session's first request and Codex reads developer instructions on connect, so a change reaches new design chats; the section is cached per session and text. e2e `tests/e2e/design-settings-e2e.mjs`.
+**The user's design instructions** (Settings → Design, `design-settings-section.tsx`; `GET/PUT /api/settings/design`, `src/server/routes/design-settings.ts`) are one global text (config row `design.instructions`, 8 KB UTF-8 cap, `design-settings.service.ts`). `design-user-section.ts` appends them after PPM's block, quoted in a `<user_design_instructions>` block under a statement that PPM's rules win. `/name` and `$name` mentions (`src/shared/design-skill-mentions.ts`) are resolved per session against the skills that provider can load (`design-skill-sources.ts`: Claude's slash discovery for the project narrowed to `.claude`, `CLAUDE_CONFIG_DIR` and plugins, since the Skill tool cannot run a `.codex`/`.ppm` skill the composer also lists; Codex's `skills/list` for the session's cwd and account): Claude is told to invoke the canonical name with the Skill tool, Codex to use `$name` (Codex's own mention syntax, the same rewrite `provider-skill-sigil.ts` does in chat). A name found nowhere is "not a skill, read it as text", any mention adds the ask-before-installing rule, and an unreadable list (an empty codex answer counts) marks the names unchecked; listing has a 5 s timeout and a 60 s back-off after a failure so a broken codex cannot spawn an app-server per turn. The editor reuses the composer's `SlashCommandPicker` and `slash-trigger.ts`. When nothing named resolves and no `ui-ux-pro-max` is installed, the pane offers to install it (a hint in New Design points there): `POST /api/settings/design/skill` runs `design-skill-install.service.ts`, which downloads the `ui-ux-pro-max-cli` tarball pinned by version (`design-skill-suggestion.ts`) and SHA-256 (`DESIGN_SKILL_PACKAGE`) and writes exactly what upstream's `uipro init --ai <claude|codex> --global` writes, for each configured design provider — Claude's skills folder (`$CLAUDE_CONFIG_DIR/skills`, else `~/.claude/skills`), Codex's `~/.agents/skills` — never replacing a folder that is already there. The pane then names `/ui-ux-pro-max` in the instructions, saved at once unless the draft has unsaved edits. The upstream commands stay behind "Install it yourself instead"; the skill's scripts need Python 3, which PPM reports and does not install. `tests/e2e/design-skill-install-e2e.ts` compares the result with upstream's file for file. Claude snapshots its system prompt at a session's first request and Codex reads developer instructions on connect, so a change reaches new design chats; the section is cached per session and text. e2e `tests/e2e/design-settings-e2e.mjs`.
 
 **The canvas** (`src/server/routes/design-preview.ts`):
 - `POST /api/design-preview` (authenticated) mints a token for one design and one purpose. A canvas token lives 30 min idle and 8 h at most, and is extended only by authenticated refreshes; within the last hour a refresh rotates it. Print and standalone tokens last 10 min and cannot be refreshed. Unauthenticated content reads never extend a token (`design-preview-tokens.ts`).
@@ -358,6 +358,32 @@ Shell (bash/zsh) receives SIGWINCH signal
 Terminal state updated
 ```
 
+A terminal with no layout is never fitted. That covers the dock's active tab while the dock is hidden, which on a phone is every restore because the dock comes back collapsed, and any tab parked off-screen. FitAddon would propose its 2x1 floor for such a terminal, and zsh with a themed prompt aborts on the next keystroke after being redrawn that narrow. The server also drops any size below 20x2 (`src/shared/terminal-size.ts`). Until the terminal is shown, the shell keeps its last real size, or 80x24.
+
+### Terminal selection to chat
+
+A selection in the terminal offers the editor's two actions, Add to current chat and Add to new
+chat, in a small bar under the selection's last row (over its first row when there is no room
+under it), as Cursor shows its Add to Chat. `terminal-selection-chat.tsx` draws it; `useTerminal`
+hands it the xterm instance. Either action adds the selection as a context chip
+(`sendToChat({ asContext })`, label "Terminal selection") and clears it, which takes the bar away.
+On a phone the selection is made in select mode and the buttons are 44px tall.
+
+Four details are load-bearing:
+
+- xterm reports a selection on mouseup, never during the drag, so the bar does not chase the
+  pointer. But it says nothing about a selection identical to the last one it reported, and its
+  `clearSelection()` — which it also runs when the user types with something selected — does
+  not forget that one, so selecting the same text again showed no bar. The component therefore
+  also reads the selection on the mouseup that ends a press in the terminal, in the document the
+  terminal is in at that moment (a tab can move into a picture-in-picture window).
+- `getSelectionPosition()` is documented as 1-based and returns 0-based columns and buffer rows,
+  the end column exclusive; the e2e measures the bar against the rows it selected.
+- The bar is a sibling of xterm's container, not a child: in select mode that container turns
+  every touch into a selection gesture, which would swallow a tap on the buttons.
+- It is positioned by hand on xterm's `onRender`, which a scroll, a resize and new output all end
+  in, and hidden while none of the selection is in view.
+
 ---
 
 ## Git Integration Flow
@@ -392,6 +418,71 @@ GitService.status() returns:
 UI updates: "src/index.ts" moves from "Unstaged" to "Staged"
 ```
 
+### Source Control, Review changes and Git Graph — one flow
+
+The three are views of one thing, the working tree and the commit about to be made, and they read
+and write it through the same routes, so they cannot disagree about a rename, a conflict or the
+message being written.
+
+- **What is changed**: `GET /git/changes` (`src/services/git-changes/git-changes.service.ts`)
+  answers the branch (upstream, ahead/behind), the operation stopped part way (`git-operation.ts`
+  reads the rebase/merge/cherry-pick/revert markers in `--absolute-git-dir`, which in a linked
+  worktree is `.git/worktrees/<name>`), and one row per file with its blocks on both sides —
+  staged (HEAD → index) and open (index → working tree) — without their lines. One
+  `git status --porcelain=v2` names the files (`porcelain-v2.ts`), then at most one `git diff` per
+  side covers all of them, cut back into files while it streams (`diff-sections.ts`); untracked
+  files go through a throwaway index, at most 400 of them and 4 MB each, beyond which a file is one
+  whole-file block. Every diff uses `PATCH_DIFF_ARGS`, so a block's id is the fingerprint the hunk
+  routes (`src/services/git-hunks/`) resolve a request by. It runs with `GIT_OPTIONAL_LOCKS=0`: it
+  runs on a poll, and a refreshed index would take the lock from under the user's own
+  `git commit`. `GET /git/changes/file?path=` adds the lines of one file. Shapes in
+  `src/shared/git-changes.ts`.
+- **Writes**: blocks and lines are staged, unstaged and discarded through the hunk routes. Undo
+  last commit, publish, pull and the stash are `src/services/git-workflow/git-workflow.service.ts`
+  (pull adds `--no-rebase` only when the repository configures no strategy; stash apply/pop use
+  `--index` and first check the hash of `stash@{n}`). After every POST on the git router a
+  middleware emits `git:changed` (`git-events.ts`), relayed on `/ws/global`, failed commands
+  included; Source Control, the Review tab, the Git Graph and the status bar's poller
+  (`useGitChangesPoller`) read again about 300 ms later.
+- **Discard Undo**: `src/services/git-discard-journal/` keeps what a discard threw away in
+  `<ppm dir>/git-discards/<repo key>/` — the reversed patch for a block (Undo only while the file
+  is still exactly what the discard left), the bytes for a whole file, written before the discard
+  runs (Undo only while every file is still what the discard left) — for a day, 100 per
+  repository, nothing over 20 MB.
+- **One commit message per repository**: `src/services/git-commit-draft.service.ts` keeps it in
+  `chat_drafts` (session id `git-commit`, keyed by the repository's real path, left alone by
+  `deleteOrphaned`), behind `GET/PUT /git/commit-draft`; a change goes out as `git:commit-draft`
+  with the sender's client id, so the sender ignores its own echo. Browser side
+  `src/web/stores/commit-draft-store.ts` (saved 300 ms after the last keystroke) and
+  `src/web/hooks/use-commit-draft.ts`.
+- **Source Control**: `src/web/components/git/git-status-panel.tsx` with `git-branch-row.tsx`,
+  `git-commit-composer.tsx`, `git-change-row.tsx` / `git-change-tree.tsx`,
+  `git-operation-banner.tsx`, `git-stash-section.tsx` and `git-confirm.tsx`; data from
+  `src/web/hooks/use-git-changes.ts`, and the decisions (checkbox state, sync button, hints) as
+  pure functions in `src/web/lib/git-changes-view.ts`.
+- **Review changes**: the `git-review` tab type, one per project and repository
+  (`src/web/components/git-review/`, `src/web/hooks/use-git-review.ts`, opened through
+  `src/web/lib/open-git-review.ts`). `src/web/lib/git-review-model.ts` puts staged blocks, open
+  blocks and the tab's own discards in one list by the one coordinate they share, the line in the
+  index version of the file. Code lines reuse the session review's `review-tokens.tsx`.
+- **Git Graph** (`packages/ext-git-graph/`): the working tree, the blocks and the draft come from
+  PPM's routes (`ppm-git.ts`), and so do the writes of the inspector and the toolbar: stage,
+  unstage, discard and its Undo, commit and Undo last commit, Fetch, Pull, Push, Sync and Publish,
+  stash save, apply, pop and drop, and Abort/Continue. The rest still runs git itself (`spawnGit` in
+  `extension.ts`, `reflog-view.ts`, `rebase-view.ts`) and sends no `git:changed`: the commit,
+  branch, tag and stash menus (checkout, merge, rebase and its Skip, cherry-pick, revert, reset,
+  creating, renaming and deleting branches and tags, a branch from a stash, deleting a remote
+  branch), the Reflog and Rebase views, worktrees, submodule updates, remotes and the user name.
+  Source Control and the Review tab see those when the file watcher reports a change to the working
+  tree, or at their next 5 s poll; the status bar at its next 10 s one. A write that bypasses the
+  routes is heard by nobody until then — the toolbar's Fetch once ran `git fetch` itself and left
+  the status bar on "synced" for up to 10 s. The webview's script is built from the
+  `webview-script-*.ts` modules into one `<script>`. Its file icons are the app's: the panel posts
+  `__ppm.fileIcons` with file names and `src/web/components/extensions/webview-file-icons.ts`
+  answers with each name's class and only the drawings those classes need, the light-theme ones
+  rewritten to `:root[data-ppm-theme="light"]`. Its 5 s poll also reads `for-each-ref` and
+  `stash list`, so a ref moved outside PPM triggers a full re-read.
+
 ---
 
 ## Frontend Performance Optimization (v0.9.86+)
@@ -410,7 +501,6 @@ UI updates: "src/index.ts" moves from "Unstaged" to "Staged"
 
 **3. Lazy Loading**
 - MarkdownRenderer lazy-loaded from 3 sites (reduces initial bundle)
-- CodeMirror on-demand in postgres-viewer
 - Mermaid diagram support loaded dynamically only when diagram syntax detected
 
 **4. Code Splitting (vite.config.ts)**
@@ -440,8 +530,8 @@ the **whole host filesystem** — not just registered project directories — th
 
 ### FS scope = auth boundary
 
-Every `/api/fs` route — including `docx-html`, `read`, `raw`, both SQLite doors — passes through
-one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching disk:
+Every `/api/fs` route — including `docx-html`, `read`, `raw` — and the database file door
+(`/api/db/connections/file/*`) pass through one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching disk:
 
 | Protection | Mechanism |
 |---|---|
@@ -449,7 +539,7 @@ one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching
 | Protected roots | `/`, drive roots (`C:\`), `$HOME` and the PPM dir itself refuse delete/rename/move as a source |
 | Download tokens | `/api/fs/download/token` issues a single-use, path-bound token; `/api/fs/raw` spends it on first use, rejects replay and any path mismatch |
 | Symlink safety | every op `lstat`s the entry itself (never follows to the target) so a link *to* a protected path can itself still be deleted, but nothing can read/write *through* one into the PPM dir |
-| SQL injection surface | the external-DB doors (`/api/fs/sqlite/*`) block `ATTACH`/`DETACH` by keyword scan (after stripping comments/string literals) before executing any query — the same class of guard the project-scoped `/sqlite` route also needed |
+| SQL injection surface | the database file door (`/api/db/connections/file/*`, a `.db` opened by its path) refuses `ATTACH`/`DETACH` by keyword scan (after stripping comments/string literals) before executing any query, for a file inside a project and one reached by absolute path alike |
 | No event-loop blocking | every op is `fs.promises`-based with bounded concurrency and a per-entry timeout — a dead network mount or sleeping USB drive cannot stall unrelated requests, which matters once scope is the whole disk instead of one project |
 
 ### API surface
@@ -462,7 +552,7 @@ one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching
 | POST | `/api/fs/copy` \| `/move` \| `/rename` \| `/touch` \| `/mkdir` | Mutations, collision (`EEXIST`)/self-nesting (`EINVAL`) reported for the client to resolve |
 | DELETE | `/api/fs/delete` \| `/rmdir` | `{permanent?}` — OS trash (Recycle Bin / Trash / gio) by default, permanent on request |
 | POST/GET | `/api/fs/download/token` / `/api/fs/raw` | Single-use, path-bound download |
-| GET/POST | `/api/fs/sqlite/{tables,schema,data,query}` | External `.db` viewer — same shape as the project-scoped `/sqlite` route, `path` absolute, PPM dir refused |
+| GET/POST | `/api/db/connections/file/*?path=&project=` | A `.db` opened from a file tree or the editor — the saved-connection routes under the id `file`, the file named and checked on every request. A path relative to `project` must stay inside it; an absolute one returns at most 1,000 rows of typed SQL; the PPM dir is refused, symlinks followed (`src/services/database/file-database.ts`) |
 
 `host-info.service.ts` orchestrates three OS-specific provider sets (`src/services/host-info/`)
 behind a 60s cache with in-flight de-duplication (concurrent `?refresh=true` calls share one
@@ -583,3 +673,75 @@ restored on reload (see Persistence below).
   tab-host window's titlebar keeps the tab title captured at pop-out time.
 - **Mobile.** Pop-out and PiP are hidden entirely below `md` (`useIsMobile()`) — never a scaled-down
   window.
+
+### Selected editor code as chat context
+
+`editor-selection-context.tsx` draws nothing. It registers a code-action provider for every
+language (`"*"`) that answers only for its own editor's model and, when the selection holds
+non-whitespace text, offers Add to current chat and Add to new chat. Monaco draws the lightbulb and
+the menu, so the two actions sit beside whatever a language server offers — under "More Actions…",
+Monaco's group for an action with no kind — and Ctrl+. reaches them too. Where the bulb goes is
+Monaco's decision: on the line at column 1 when its indentation has room, else on an empty or
+indented neighbouring line, else in the glyph margin left of the line numbers. Standalone Monaco
+turns the glyph margin off (`editor.api2.js`), and the gutter bulb is then drawn nowhere, which is
+why `code-editor.tsx` sets `glyphMargin: true`.
+
+That margin is one line height per glyph lane in use, so with the bulb as the only glyph it is a
+single 19px lane and the bulb fills it flush against the editor's edge. `monaco-lightbulb-gutter.ts`
+holds a second lane open with two empty glyph-margin widgets on line 1 (the width follows the line
+using the most lanes), and `globals.css` moves the bulb to the middle of the two. Moving it with CSS
+alone does not work: Monaco hit-tests the gutter by x, so a bulb drawn over the line-number column
+opens its menu and the same click selects that whole line, replacing the selection. Three details
+are load-bearing. The widgets sit at zIndex -1, because Monaco draws one glyph per lane and line,
+highest first, widgets winning ties — at 0 the left one hides the bulb on line 1. They are widgets,
+not `persistLane` decorations: a glyph decoration on the bulb's line makes Monaco give up the gutter
+and draw the bulb over the text. And `lineNumbersMinChars: 3` gives back the width of the extra lane,
+so the code starts where it did.
+
+The action's arguments are a snapshot taken when the bulb is shown: file path, line range and the
+model's text in that range, unsaved edits included. Markdown fences are sized past the longest
+backtick run. Every mounted editor registers the same command id (`ppm.selection.addToChat`);
+Monaco's registry stacks registrations, so closing one editor leaves the command to the others.
+`sendToChat` adds the snapshot to the last selected chat of the file's project as an attachment
+without replacing its draft (never to another project's chat: with none of its own open, it opens
+one), or opens a new chat with a context chip. Lazy-mounted chats receive `pendingContexts` in tab
+metadata; their composer consumes those once without replacing the existing draft. Neither action
+sends a turn.
+
+Monaco's own rules apply: the bulb waits for every code-action provider, so a slow language server
+delays it; any provider registering resets it until the cursor moves; and code actions are off in a
+read-only editor, so a database-cell preview has no bulb.
+
+### Fix with AI and Explain with AI on editor problems
+
+`editor-fix-with-ai.tsx` is built the same way: a code-action provider for `"*"` that answers only
+for its own editor's model and draws nothing. Monaco hands every provider the markers touching the
+range it asks about (`context.markers`); when one of them is an error or a warning, the provider
+offers two quick fixes, Fix with AI and Explain with AI, both flagged `isAI`. That flag is all
+Monaco needs for the rest:
+
+- a sparkle beside each in its menu, under Quick Fix after the language server's own fixes
+  (Monaco sorts AI actions last, and keeps the provider's order among them);
+- the first AI action as a one-click link in the problem's hover. Monaco shows one there, which is
+  why Fix is listed before Explain, and asks providers for quick fixes only — hence
+  `kind: "quickfix"` rather than no kind;
+- a sparkle for the bulb: `lightbulbSparkle` beside other fixes, `sparkleFilled` when every fix on
+  offer is AI. Monaco runs a *lone* AI action straight from the bulb instead of opening its menu;
+  with Explain beside Fix there is never a lone one, so the bulb always opens the menu, as VS Code's
+  does with Copilot's pair. Dropping either action brings that auto-run back.
+
+The requests are a snapshot taken when the actions are offered: each problem as
+`line:column severity: message source(code)` in file order, then the model's text from three lines
+above the first to three below the last, under "Fix this problem in …:" or "Explain this problem in
+…, without changing any files:" — said outright because the chat it lands in may edit files. Both
+go through one command (`ppm.problems.askAi`) carrying the text, to a new chat, sent from there
+(`sendToChat({ newTab, autoSend })`). The new tab has not rendered when the command runs, so
+`sendOnceMounted` keeps addressing it until its composer acks — idle and empty, the composer sends
+the text itself — and leaves the text as the draft after 10 s, so a slow first load costs a
+keypress rather than the request.
+
+Markers come from the language server (`ppm-lsp`) and from Monaco's own JSON and CSS validators.
+Monaco's TypeScript diagnostics are always off (`monaco-builtin-typescript.ts`), so a TypeScript
+file has problems to fix only with LSP on. The LSP code-action request carries the server's own
+diagnostics for the range (`LspDocument.diagnostics`, as published, `data` included): servers find
+their fixes from that list, and typescript-language-server answers an empty one with none.

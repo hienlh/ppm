@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { PpmConfig, ProjectConfig } from "../types/config.ts";
 import { DEFAULT_CONFIG, sanitizeConfig } from "../types/config.ts";
+import { createLogger } from "./logger.ts";
 import {
   getConfigValue,
   setConfigValue,
@@ -14,10 +15,30 @@ import {
   patchProjectSettingsJson,
 } from "./db.service.ts";
 
-/** Top-level config keys stored in the config table (not projects) */
+/**
+ * Top-level config keys stored in the config table (not projects), all rewritten by `save()`.
+ * Not `log_level`: `ppm config set log_level` writes that row from another process while the
+ * server runs, and the server's next save would put back the level it loaded at boot. Only
+ * `set()` writes it.
+ */
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
-  "device_name", "port", "host", "theme", "auth", "ai", "telegram", "clawbot", "query_audit", "session_trace", "tunnel",
+  "device_name", "port", "host", "theme", "auth", "ai", "telegram", "ntfy", "clawbot", "notifications", "query_audit", "session_trace", "tunnel",
 ];
+
+const log = createLogger("config");
+
+/**
+ * The dotted paths at which two config values differ — never the values: `auth.token`,
+ * `telegram.bot_token` and every `ai.providers.*.api_key` live in here.
+ */
+export function changedConfigPaths(before: unknown, after: unknown, prefix = ""): string[] {
+  const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  if (isPlain(before) && isPlain(after)) {
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    return [...keys].flatMap((k) => changedConfigPaths(before[k], after[k], prefix ? `${prefix}.${k}` : k));
+  }
+  return JSON.stringify(before) === JSON.stringify(after) ? [] : [prefix || "(value)"];
+}
 
 /** File filter config keys stored in the config table */
 export const FILE_CONFIG_KEYS = {
@@ -57,19 +78,22 @@ class ConfigService {
 
     if (Object.keys(dbConfig).length > 0 || dbProjects.length > 0) {
       this.config = this.assembleConfig(dbConfig, dbProjects);
-      console.log("[config] Loaded from SQLite");
+      log.info("Loaded from SQLite");
     } else {
-      console.log("[config] No config found, creating defaults");
+      log.info("No config found, creating defaults");
       this.config = this.createDefault();
     }
 
     // Auto-generate token if auth enabled but empty
     if (this.config.auth.enabled && !this.config.auth.token) {
+      log.warn("Auth is on with an empty access token — generated a new one; every device has to sign in again");
       this.config.auth.token = randomBytes(16).toString("hex");
       this.save();
     }
 
+    const beforeSanitize = structuredClone(this.config);
     if (sanitizeConfig(this.config)) {
+      log.warn(`Rewrote config fields that were missing or invalid: ${changedConfigPaths(beforeSanitize, this.config).join(", ")}`);
       this.save();
     }
 
@@ -101,9 +125,20 @@ class ConfigService {
     this.assertLoaded("set");
     this.config[key] = value;
     if (key === "projects") {
+      // Adding, editing and removing a project is logged where it happens (project.service).
       this.syncProjectsToDb(value as ProjectConfig[]);
     } else {
-      setConfigValue(String(key), JSON.stringify(value));
+      // Against the stored row, not `this.config`: callers often mutate the object they got
+      // from get() and pass the same one back, which would compare equal to itself.
+      const previous = getConfigValue(String(key));
+      const json = JSON.stringify(value);
+      setConfigValue(String(key), json);
+      if (previous !== json) {
+        let before: unknown;
+        try { before = previous === null ? undefined : JSON.parse(previous); } catch { before = undefined; }
+        const paths = changedConfigPaths(before, value, String(key));
+        if (paths.length > 0) log.info(`Changed ${paths.join(", ")}`);
+      }
     }
   }
 
@@ -173,7 +208,10 @@ class ConfigService {
       if (key in config && key !== "projects") {
         try {
           (config as any)[key] = JSON.parse(jsonValue);
-        } catch { /* keep default */ }
+        } catch {
+          // For `auth` the default is an empty token, which load() then replaces: a lockout.
+          log.error(`Stored config row '${key}' is not valid JSON — using the defaults for it`);
+        }
       }
     }
     // Projects from dedicated table

@@ -20,6 +20,9 @@ import { SERVICE_ACTIONS } from "../../types/system-services.ts";
 import { ServiceActionRefused } from "../../services/system-services/systemd-collector.ts";
 import { createServiceBackend, type ServiceBackend } from "../../services/system-services/service-backend.ts";
 import { crossOriginRefusal } from "./cross-origin-guard.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("SystemServices");
 
 const SCOPES: readonly string[] = ["system", "user"];
 const isScope = (value: string): value is ServiceScope => SCOPES.includes(value);
@@ -57,18 +60,20 @@ export function createSystemServiceRoutes(backend: ServiceBackend = createServic
 
     // Audit line: unit, scope, action and outcome only. No command lines and no
     // journal text — the tail of ~/.ppm/ppm.log is served unauthenticated.
-    const prefix = `[SystemServices] ${action} ${scope}/${unit}`;
+    const prefix = `${action} ${scope}/${unit}`;
     try {
       const result = await backend.action(unit, scope, action as ServiceAction);
-      console.log(`${prefix} -> done`);
+      // launchd's note says when the outcome is not what the action implies (a kept-alive
+      // job is already back, a stopped job was not running).
+      log.info(result.note ? `${prefix} -> done (${result.note})` : `${prefix} -> done`);
       return c.json(ok(result));
     } catch (e) {
       if (e instanceof ServiceActionRefused) {
-        console.log(`${prefix} -> refused: ${e.message}`);
+        log.warn(`${prefix} -> refused: ${e.message}`);
         return c.json(err(e.message), 403);
       }
       const message = (e as Error)?.message ?? "Action failed";
-      console.log(`${prefix} -> failed: ${message}`);
+      log.error(`${prefix} -> failed: ${message}`);
       return c.json(err(message), 500);
     }
   });

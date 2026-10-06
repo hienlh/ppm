@@ -33,6 +33,11 @@ import { readCompactions, applyCompactions } from "./compaction-savings.ts";
  *
  * The number that actually bounds memory is therefore the *file* size, at about
  * 4.3× transiently, which is what `FULL_PARSE_MAX_BYTES` below is for.
+ *
+ * The expand-compact route no longer goes through this bound: at 256MB it did
+ * the same thing again, to a session with 141 compactions in a 543MB file. It
+ * now reads only the segment it answers with and bounds that instead — see
+ * `compact-segment.ts`.
  */
 const MAX_FILE_SIZE = 256 * 1024 * 1024; // 256MB
 
@@ -196,6 +201,38 @@ export function nestChildEvents(events: ChatEvent[]): void {
 }
 
 /**
+ * Fold the SDK's tool_result-only user records into the assistant messages that made the
+ * calls. Each block of a reply is a record of its own, so two calls made at once are two
+ * assistant messages with both results after the second — and a card is paired with its
+ * result inside one message, so the first call's card showed no result once the history
+ * was reloaded, which happens at the end of every turn. Each result goes to the message
+ * holding its call; one whose call is not in view goes to the last assistant message.
+ */
+export function mergeToolResultMessages(parsed: ChatMessage[]): ChatMessage[] {
+  const merged: ChatMessage[] = [];
+  const callers = new Map<string, ChatMessage>();
+  for (const msg of parsed) {
+    if (msg.events?.length && msg.events.every((e) => e.type === "tool_result")) {
+      const lastAssistant = [...merged].reverse().find((m) => m.role === "assistant");
+      if (lastAssistant?.events) {
+        for (const event of msg.events) {
+          const id = (event as { toolUseId?: string }).toolUseId;
+          ((id && callers.get(id)) || lastAssistant).events!.push(event);
+        }
+        continue;
+      }
+    }
+    if (msg.role === "assistant") {
+      for (const event of msg.events ?? []) {
+        if (event.type === "tool_use" && event.toolUseId) callers.set(event.toolUseId, msg);
+      }
+    }
+    merged.push(msg);
+  }
+  return merged;
+}
+
+/**
  * Nest child events across message boundaries. A backgrounded subagent keeps
  * running after its turn ends, so its events land in later messages than the
  * Agent/Task tool_use that spawned it. Collects parents globally, moves each
@@ -266,10 +303,11 @@ export function fullParseWindow(filePath: string, maxBytes: number = FULL_PARSE_
  * Validate JSONL path — must be under ~/.claude/ (prevents arbitrary file reads).
  * Throws Error with descriptive message. Returns resolved realpath on success.
  *
- * `maxBytes` is a parameter only so a test can assert the boundary against a
- * one-byte-over fixture: a real 256MB transcript is not worth committing, and a
+ * `maxBytes` is a parameter so a test can assert the boundary against a
+ * one-byte-over fixture — a real 256MB transcript is not worth committing, and a
  * bound asserted nowhere is how this one came to say 50MB while rejecting at a
- * different number.
+ * different number — and so the expand-compact route, which bounds the segment
+ * it reads rather than the file, can lift it.
  */
 export function validateJsonlPath(inputPath: string, maxBytes = MAX_FILE_SIZE): string {
   if (!inputPath) throw new Error("jsonlPath is required");
@@ -318,7 +356,9 @@ export function validateJsonlPath(inputPath: string, maxBytes = MAX_FILE_SIZE): 
  *                    rather than everything before `beforeUuid`.
  * @param opts.fromByte  Start reading at this offset instead of at the start,
  *                    dropping the partial record it lands in. `fullParseWindow`
- *                    is what computes it; nothing else should.
+ *                    or `compactSegmentWindow` computes it; nothing else should.
+ * @param opts.toByte  Stop reading at this offset (exclusive, a line start), from
+ *                    `compactSegmentWindow`.
  * @param beforeUuid  If provided, stop parsing at the line with this uuid (exclusive).
  *                    Used for the expand-compact feature: Claude's compact summary references
  *                    the CURRENT session file (pre+summary+post), so we truncate at the
@@ -327,10 +367,10 @@ export function validateJsonlPath(inputPath: string, maxBytes = MAX_FILE_SIZE): 
 export async function parseJsonlTranscript(
   filePath: string,
   beforeUuid?: string,
-  opts?: { oneSegment?: boolean; fromByte?: number },
+  opts?: { oneSegment?: boolean; fromByte?: number; toByte?: number },
 ): Promise<ChatMessage[]> {
   const parsed: ChatMessage[] = [];
-  for await (const line of readLines(filePath, opts?.fromByte ?? 0)) {
+  for await (const line of readLines(filePath, opts?.fromByte ?? 0, opts?.toByte)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     let entry: any;
@@ -355,18 +395,7 @@ export async function parseJsonlTranscript(
     parsed.push(parseSessionMessage(entry));
   }
 
-  // Merge tool_result-only user messages into preceding assistant
-  const merged: ChatMessage[] = [];
-  for (const msg of parsed) {
-    if (msg.events?.length && msg.events.every((e) => e.type === "tool_result")) {
-      const lastAssistant = [...merged].reverse().find((m) => m.role === "assistant");
-      if (lastAssistant?.events) {
-        lastAssistant.events.push(...msg.events);
-        continue;
-      }
-    }
-    merged.push(msg);
-  }
+  const merged = mergeToolResultMessages(parsed);
 
   // Nest across messages: a backgrounded subagent's events land in later
   // messages than the Agent tool_use that spawned it.
@@ -381,7 +410,8 @@ export async function parseJsonlTranscript(
   // An expanded segment opens with its own compact summary, so it needs the same
   // divider the newest one gets — otherwise only the last compaction in a chat is
   // labelled and the earlier ones read as ordinary messages.
-  applyCompactions(merged, await readCompactions(filePath).catch(() => new Map()));
+  const window = { fromByte: opts?.fromByte, toByte: opts?.toByte };
+  applyCompactions(merged, await readCompactions(filePath, window).catch(() => new Map()));
 
   return merged.filter(
     (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),

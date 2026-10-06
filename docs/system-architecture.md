@@ -41,7 +41,7 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 │  │  │ (streaming  │ (simple-   │ (read/write │ (PTY/shell)     ││   │
 │  │  │  messages)  │  git)      │  files)     │ (Bun.spawn)     ││   │
 │  │  │ TableCache  │ DbService  │ DatabaseAdapterRegistry         ││   │
-│  │  │ (metadata)  │ (SQLite)   │ (SQLite, PostgreSQL adapters)   ││   │
+│  │  │ (metadata)  │ (SQLite)   │ (SQLite, PostgreSQL, MySQL)     ││   │
 │  │  └───────────────────────────────────────────────────────────┘│   │
 │  ├────────────────────────────────────────────────────────────────┤   │
 │  │  Providers (src/providers/)                                    │   │
@@ -150,14 +150,16 @@ GET    /api/project/:name/files/tree              → Directory tree
 GET    /api/project/:name/files/raw               → File content
 PUT    /api/project/:name/files/write             → Write file
 GET    /api/db/connections                        → List all connections
-POST   /api/db/connections                        → Create connection (SQLite/PostgreSQL)
+POST   /api/db/connections                        → Create connection (SQLite/PostgreSQL/MySQL/MariaDB)
 GET    /api/db/connections/:id                    → Get connection (sanitized)
-PUT    /api/db/connections/:id                    → Update connection (toggle readonly, UI-only)
+PUT    /api/db/connections/:id                    → Update connection
 DELETE /api/db/connections/:id                    → Delete connection
-GET    /api/db/connections/:id/tables             → List tables (with sync)
-GET    /api/db/connections/:id/tables/:table      → Get table schema + data
-POST   /api/db/connections/:id/query              → Execute query (readonly checked)
-PATCH  /api/db/connections/:id/cell               → Update cell value (single)
+GET    /api/db/connections/:id/objects            → Tables, views, functions (tree)
+POST   /api/db/connections/:id/grid               → One page of a table (SQL built on the server)
+POST   /api/db/connections/:id/changeset/apply    → Save grid edits in one transaction
+POST   /api/db/connections/:id/query/script       → Run a Query tab script (NDJSON stream)
+POST   /api/db/connections/:id/query              → Execute one query (CLI, agents)
+                                                    (full list: data-and-storage.md → Database Management)
 GET    /api/upgrade/status                        → Get current + available versions, install method
 POST   /api/upgrade/apply                         → Install new version, trigger supervisor self-replace
 GET    /api/project/:name/workspace               → Get saved workspace layout + metadata

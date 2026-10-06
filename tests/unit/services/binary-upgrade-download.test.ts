@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, spyOn } from "bun:test";
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync,
 } from "node:fs";
@@ -62,6 +62,22 @@ describe("headCheckAsset", () => {
   });
   it("false on 404", async () => {
     expect(await headCheckAsset(ASSET_URL, makeFetch({ head: 404 }))).toBe(false);
+  });
+  it("warns when the check itself failed, which the user only sees as 'not yet available'", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await headCheckAsset(ASSET_URL, makeFetch({ head: 404 }))).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+      expect(await headCheckAsset(ASSET_URL, makeFetch({ head: 403 }))).toBe(false);
+      const offline = (async () => { throw new Error("Unable to connect"); }) as unknown as FetchFn;
+      expect(await headCheckAsset(ASSET_URL, offline)).toBe(false);
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        `[upgrade] Release asset check ${ASSET_URL} failed: HTTP 403`,
+        `[upgrade] Release asset check ${ASSET_URL} failed: Unable to connect`,
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

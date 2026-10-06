@@ -18,6 +18,9 @@
  */
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("transcode");
 
 export interface FfmpegCapabilities {
   ffmpeg: string | null;
@@ -93,7 +96,10 @@ async function encoderWorks(ffmpeg: string, encoder: string): Promise<boolean> {
       { stdout: "ignore", stderr: "ignore", stdin: "ignore" },
     );
     // A hung driver must not stall the whole capability probe.
-    const timer = setTimeout(() => proc.kill(), 10_000);
+    const timer = setTimeout(() => {
+      log.warn(`ffmpeg ${encoder} test encode timed out after 10s; killed pid=${proc.pid}`);
+      proc.kill();
+    }, 10_000);
     const code = await proc.exited;
     clearTimeout(timer);
     return code === 0;
@@ -167,8 +173,12 @@ async function detect(): Promise<FfmpegCapabilities> {
  *  "Not installed" is never cached — the user may be running `brew install ffmpeg` right now. */
 export function getFfmpegCapabilities(): Promise<FfmpegCapabilities> {
   if (!cached) {
+    const startedAt = performance.now();
     cached = detect().then((caps) => {
+      const probed = `probed in ${Math.round(performance.now() - startedAt)} ms`;
       if (!caps.ffmpeg) cached = null;
+      else if (caps.encoder) log.info(`ffmpeg ${caps.ffmpeg}: H.264 encoder ${caps.encoder} (${probed})`);
+      else log.warn(`ffmpeg ${caps.ffmpeg} found but no working H.264 encoder (${probed})`);
       return caps;
     }).catch((e) => {
       cached = null; // let a later call retry after an unexpected failure
@@ -191,6 +201,7 @@ let cachedWorking: Promise<string[]> | null = null;
  */
 export function workingEncoders(): Promise<string[]> {
   if (!cachedWorking) {
+    const startedAt = performance.now();
     cachedWorking = (async () => {
       const { ffmpeg } = await getFfmpegCapabilities();
       if (!ffmpeg) return [];
@@ -203,6 +214,7 @@ export function workingEncoders(): Promise<string[]> {
       // An empty list means either no ffmpeg or no working encoder; both are conditions the
       // user can fix from the checklist, so neither is remembered.
       if (list.length === 0) cachedWorking = null;
+      else log.info(`working H.264 encoders: ${list.join(", ")} (probed in ${Math.round(performance.now() - startedAt)} ms)`);
       return list;
     }).catch((e) => {
       cachedWorking = null;

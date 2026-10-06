@@ -87,7 +87,9 @@ describe("getLastTurnCacheState", () => {
       stampLastRow("2026-08-31 16:28:33");
       expect(getLastTurnCacheState("s1")?.endedAtMs).toBe(Date.parse("2026-08-31T16:28:33Z"));
     } finally {
-      if (tz == null) delete process.env.TZ; else process.env.TZ = tz;
+      // Assigned back, never deleted: after a delete Bun ignores every later assignment, and every
+      // test file after this one would run in Asia/Saigon.
+      process.env.TZ = tz ?? "UTC";
     }
   });
 

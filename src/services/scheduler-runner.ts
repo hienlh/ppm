@@ -2,6 +2,9 @@
 import { chatService } from "./chat.service.ts";
 import { setScheduleSessionId } from "./scheduler-db.service.ts";
 import type { Schedule, RunResult } from "../types/scheduler.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("scheduler");
 
 const HEAD_CAP = 16 * 1024;
 const TAIL_CAP = 16 * 1024;
@@ -36,12 +39,14 @@ class BoundedBuffer {
 
 /** Resume the schedule's persistent session, or create one and persist its id. */
 export async function ensureScheduleSession(schedule: Schedule): Promise<string> {
+  let resumeError: string | null = null;
   if (schedule.session_id) {
     try {
       await chatService.resumeSession(schedule.provider_id, schedule.session_id);
       return schedule.session_id;
-    } catch {
+    } catch (e) {
       // Stale/deleted session — fall through and create a fresh one
+      resumeError = (e as Error).message;
     }
   }
   const session = await chatService.createSession(schedule.provider_id, {
@@ -49,6 +54,9 @@ export async function ensureScheduleSession(schedule: Schedule): Promise<string>
     title: `Schedule: ${schedule.name}`,
   });
   setScheduleSessionId(schedule.id, session.id);
+  // The schedule's earlier context is gone and its session id changed.
+  if (resumeError !== null) log.warn(`Schedule ${schedule.id}: resume of session ${schedule.session_id} failed (${resumeError}) — created new session ${session.id}`);
+  else log.info(`Schedule ${schedule.id}: created session ${session.id}`);
   return session.id;
 }
 
@@ -108,9 +116,9 @@ export async function runScheduleOnce(schedule: Schedule, sessionId: string): Pr
       });
       setScheduleSessionId(schedule.id, fresh.id);
       result.rotatedToSessionId = fresh.id;
-      console.log(`[scheduler] rotated session for schedule ${schedule.id} (ctx ${contextWindowPct}%)`);
+      log.info(`rotated session for schedule ${schedule.id} (ctx ${contextWindowPct}%)`);
     } catch (e) {
-      console.warn(`[scheduler] session rotation failed for ${schedule.id}: ${(e as Error).message}`);
+      log.warn(`session rotation failed for ${schedule.id}: ${(e as Error).message}`);
     }
   }
 
@@ -118,25 +126,35 @@ export async function runScheduleOnce(schedule: Schedule, sessionId: string): Pr
   return result;
 }
 
-/** Telegram/push summary — broadcast() itself gates Telegram on no-active-browser. */
+/**
+ * Push/Telegram summary. Queued, not awaited to delivery: the dispatcher may hold it for the
+ * notification delay, and which channels are on is its call, not this run's.
+ */
 async function notifyRunFinished(schedule: Schedule, result: RunResult): Promise<void> {
   try {
-    const { configService } = await import("./config.service.ts");
-    const telegram = configService.get("telegram") as { bot_token?: string } | undefined;
-    if (!telegram?.bot_token) return;
     const { notificationService } = await import("./notification.service.ts");
     const duration = result.costUsd != null ? ` · $${result.costUsd.toFixed(4)}` : "";
     const body = result.status === "error"
       ? `Failed: ${(result.error ?? "unknown error").slice(0, 300)}`
       : `${result.output.slice(0, 500) || "(no output)"}${duration}`;
-    await notificationService.broadcast("done", {
+    void notificationService.broadcast("schedule", {
       title: `Schedule: ${schedule.name} — ${result.status}`,
       body,
-      project: schedule.project_path,
+      project: await projectNameFor(schedule.project_path),
       sessionId: schedule.session_id ?? "",
     });
   } catch (e) {
     // Notify failures must not poison the run record
-    console.warn(`[scheduler] notify failed for ${schedule.id}: ${(e as Error).message}`);
+    log.warn(`notify failed for ${schedule.id}: ${(e as Error).message}`);
+  }
+}
+
+/** A schedule stores its project's path; links address projects by name. "" when it is not a registered project. */
+async function projectNameFor(projectPath: string): Promise<string> {
+  try {
+    const { projectService } = await import("./project.service.ts");
+    return projectService.resolve(projectPath).name;
+  } catch {
+    return "";
   }
 }

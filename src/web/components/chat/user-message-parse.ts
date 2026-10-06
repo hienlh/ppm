@@ -1,3 +1,4 @@
+import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
 /**
  * Parsing for stored user-message content.
  *
@@ -138,6 +139,7 @@ export function extractTerminalBlocks(text: string): { blocks: string[]; remaini
 }
 
 export interface ParsedUserMessage {
+  replyTo: ReplyReference | null;
   files: string[];
   /** Body text with the slash-command args folded in, for transcript display */
   text: string;
@@ -152,7 +154,8 @@ export interface ParsedUserMessage {
 
 /** Full decomposition of a stored user message, outermost wrapper first. */
 export function parseUserMessage(content: string): ParsedUserMessage {
-  const { idePath, cleanText: afterIde } = parseIdeOpenedFile(content);
+  const decoded = decodeReply(content);
+  const { idePath, cleanText: afterIde } = parseIdeOpenedFile(decoded.content);
   const { blocks, remainingText: afterBlocks } = extractTerminalBlocks(afterIde);
   const parsed = parseUserAttachments(afterBlocks);
   // Strip local-command-stdout/stderr tags but keep their content as plain text
@@ -162,7 +165,7 @@ export function parseUserMessage(content: string): ParsedUserMessage {
   const { command, cleanText } = parseCommandTags(noSysTags);
   const { agent, cleanText: body } = parseAgentTag(cleanText);
   const text = command?.args ? (body ? `${command.args}\n\n${body}` : command.args) : body;
-  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent };
+  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo };
 }
 
 /**

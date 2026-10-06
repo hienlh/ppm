@@ -29,6 +29,9 @@
 import { closeSync, openSync, writeSync } from "node:fs";
 import { ALL_EVDEV_CODES, codeToEvdev, MODIFIER_EVDEV_CODES } from "./remote-desktop-evdev-key-map.ts";
 import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 /** ioctl request numbers, verified against `linux/uinput.h` on x86-64 rather than derived by
  *  hand: `_IOW` encodes the struct size, so a wrong `sizeof` yields a silently different
@@ -72,6 +75,7 @@ let ffiModule: Ffi | null = null;
 let libc: Libc | null = null;
 let devices: Devices | null = null;
 let exitHookInstalled = false;
+let warnedUnavailable = false;
 
 function eventBuf(entries: Array<[type: number, code: number, value: number]>): Uint8Array {
   const buf = new Uint8Array(EVENT_SIZE * entries.length);
@@ -161,8 +165,22 @@ async function ensureDevices(): Promise<Devices> {
   if (devices) return devices;
   if (!ffiModule) ffiModule = await import("bun:ffi");
   const lib = await loadLibc();
-  const created = { pointer: createPointerDevice(lib, ffiModule), keyboard: createKeyboardDevice(lib, ffiModule) };
+  let created: Devices;
+  try {
+    created = { pointer: createPointerDevice(lib, ffiModule), keyboard: createKeyboardDevice(lib, ffiModule) };
+  } catch (e) {
+    // Retried on every input event, so said once until a creation succeeds.
+    if (!warnedUnavailable) {
+      warnedUnavailable = true;
+      const code = (e as NodeJS.ErrnoException)?.code;
+      log.warn(code ? `cannot open /dev/uinput: ${code}` : `cannot create uinput devices: ${(e as Error)?.message ?? e}`);
+    }
+    throw e;
+  }
+  warnedUnavailable = false;
   devices = created;
+  // Visible system-wide, in the compositor's device list and in system settings.
+  log.info("uinput devices created");
   if (!exitHookInstalled) {
     exitHookInstalled = true;
     // Without DEV_DESTROY the virtual devices outlive the process and pile up in the
@@ -191,6 +209,7 @@ function destroyDevices(): void {
     try { closeSync(fd); } catch { /* ditto */ }
   }
   devices = null;
+  log.info("uinput devices destroyed");
 }
 
 function emit(fd: number, entries: Array<[number, number, number]>): void {

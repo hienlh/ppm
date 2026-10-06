@@ -41,6 +41,9 @@ import { getFfmpegCapabilities, workingEncoders } from "../media-transcode/ffmpe
 import { connectToEmulator, type EmulatorChannel } from "./android-grpc.ts";
 import type { RunningEmulator } from "./emulator-discovery.ts";
 import { ANDROID_QUALITY_PRESETS, type AndroidQuality } from "../../shared/android-protocol.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("android");
 
 // The H.264 helpers above live under remote-desktop/ and are imported rather than moved: they
 // are pure, dependency-free bitstream utilities, and relocating them would touch nine files
@@ -254,19 +257,38 @@ class Encoder {
         for (const au of this.assembler.push(value)) this.onAccessUnit(au);
       }
     })().catch((e) => {
-      if (!this.stopped) this.onError(`encoder output failed: ${(e as Error).message}`);
+      if (this.stopped) return;
+      log.error(`encoder pid=${this.proc.pid} output failed: ${(e as Error).message}`);
+      this.onError(`encoder output failed: ${(e as Error).message}`);
     });
 
+    let lastStderr = "";
     const errReader = this.proc.stderr.getReader();
-    void (async () => {
+    const errPump = (async () => {
       for (;;) {
         const { done, value } = await errReader.read();
         if (done) return;
         if (!value) continue;
         const text = new TextDecoder().decode(value).trim();
+        if (text) lastStderr = text.split("\n").slice(-1)[0] ?? lastStderr;
         if (text && !this.stopped) this.onError(`encoder: ${text.split("\n").slice(-1)[0]}`);
       }
     })().catch(() => { /* closed with the process */ });
+
+    // Nothing else watches the process: a crashed ffmpeg left the pipeline feeding a dead encoder
+    // with every write error swallowed, and its stderr shown only to whoever was watching.
+    void this.proc.exited.then(async () => {
+      if (this.stopped) { log.debug(`encoder pid=${this.proc.pid} stopped`); return; }
+      await Promise.race([errPump, Bun.sleep(500)]);   // its last line is usually the reason
+      log.error(
+        `encoder pid=${this.proc.pid} exited unexpectedly code=${this.proc.exitCode} ` +
+        `signal=${this.proc.signalCode}: ${lastStderr || "(no stderr)"}`,
+      );
+    });
+  }
+
+  get pid(): number {
+    return this.proc.pid;
   }
 
   /** The `avc1.PPCCLL` string this encoder's real bitstream implies, null before its first
@@ -345,8 +367,9 @@ export async function startVideoPipeline(opts: VideoPipelineOptions): Promise<Ru
 
   const emitAu = (au: AccessUnit) => opts.onAccessUnit(au, performance.now() - startedAt);
 
-  /** Tear down the encoder and start one for the current source and rung. */
-  function respawnEncoder(src: FrameGeometry): FrameGeometry {
+  /** Tear down the encoder and start one for the current source and rung. `reason` is for the
+   *  log: the first frame, a new frame size (a rotation), or a quality change. */
+  function respawnEncoder(src: FrameGeometry, reason: "start" | "geometry" | "quality"): FrameGeometry {
     const out = fitLongEdge(src.width, src.height, preset.maxHeight);
     const previous = encoder;
     encoder = null;
@@ -362,10 +385,18 @@ export async function startVideoPipeline(opts: VideoPipelineOptions): Promise<Ru
         emitAu,
         (m) => { if (!stopped) opts.onError(m); },
       );
+      log.info(
+        `encoder started pid=${encoder.pid} avd=${opts.emulator.avdName} encoder=${encoderName} ` +
+        `src=${src.width}x${src.height} out=${out.width}x${out.height} fps=${preset.fps} ` +
+        `bitrate=${preset.bitrate} reason=${reason}`,
+      );
     } catch (e) {
       // Bun.spawn throws synchronously on a binary it cannot run, and this runs inside the gRPC
       // stream's frame handler, where a throw would escape as an uncaught exception.
-      if (!stopped) opts.onError(`could not start ffmpeg: ${(e as Error).message}`);
+      if (!stopped) {
+        log.error(`encoder spawn failed: ${(e as Error).message}`);
+        opts.onError(`could not start ffmpeg: ${(e as Error).message}`);
+      }
     }
     nextDue = 0;
     startPacer();                      // the rung may have changed the frame rate
@@ -415,8 +446,9 @@ export async function startVideoPipeline(opts: VideoPipelineOptions): Promise<Ru
 
     const rotation = rotationOf(img.format);
     if (!source || source.width !== width || source.height !== height || source.rotation !== rotation) {
+      const reason = source ? "geometry" : "start";
       source = { width, height, rotation };
-      geometry = respawnEncoder(source);
+      geometry = respawnEncoder(source, reason);
       opts.onGeometry(geometry);
     }
 
@@ -441,6 +473,8 @@ export async function startVideoPipeline(opts: VideoPipelineOptions): Promise<Ru
   call.on("error", (e: any) => {
     // code 1 is CANCELLED, which is how stop() ends the stream.
     if (!stopped && e?.code !== 1) {
+      // The emulator died or wedged: the picture stops for good, so this is not left to viewers.
+      log.error(`frame stream failed avd=${opts.emulator.avdName} grpc=${e?.code ?? "?"}: ${e?.details ?? e?.message ?? e}`);
       opts.onError(`frame stream failed: ${e?.details ?? e?.message ?? e}`);
     }
   });
@@ -479,7 +513,7 @@ export async function startVideoPipeline(opts: VideoPipelineOptions): Promise<Ru
       if (next === quality || stopped || !source) return;
       quality = next;
       preset = ANDROID_QUALITY_PRESETS[next];
-      geometry = respawnEncoder(source);
+      geometry = respawnEncoder(source, "quality");
       opts.onGeometry(geometry);
     },
 

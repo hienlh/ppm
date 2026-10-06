@@ -23,6 +23,8 @@ import { fetchSlashItems, getCachedSlashItems, subscribeSlashItems, SLASH_ITEMS_
 import { replaceSlashQuery, slashQueryBefore, stripSlashQuery } from "@/lib/slash-trigger";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
+import { ReplyCard } from "./reply-card";
+import type { ReplyReference } from "../../../shared/chat-reply";
 import { PromptCacheChip } from "./prompt-cache-chip";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
 
@@ -75,10 +77,16 @@ export interface ChatAttachment {
 export type MessagePriority = 'now' | 'next' | 'later';
 
 interface MessageInputProps {
+  pendingContexts?: Array<{ text: string; label?: string }>;
+  onContextsConsumed?: () => void;
   draftReady?: boolean;
+  replyTo?: ReplyReference | null;
+  onCancelReply?: () => void;
+  /** Explicit reply selection/cancel also saves the current DOM text and attachments. */
+  replyChangeSignal?: number;
   /** Tab id of the owning chat tab — addresses "Send to Chat" at this tab only. */
   tabId?: string;
-  onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => void;
+  onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => boolean | void;
   isStreaming?: boolean;
   onCancel?: () => void;
   disabled?: boolean;
@@ -103,6 +111,7 @@ interface MessageInputProps {
   onDisambiguate?: (matches: FileNode[]) => void;
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
+  initialAttachments?: Array<{ name: string; path: string }>;
   /** Bumping this counter clears the textarea (e.g. parent cancels an edit). */
   clearSignal?: number;
   /**
@@ -111,7 +120,7 @@ interface MessageInputProps {
    * reacts to a *changed* value, and the text of a failed send is often exactly the
    * draft the composer was already prefilled with.
    */
-  restore?: { text: string; nonce: number } | null;
+  restore?: { text: string; nonce: number; replace?: boolean } | null;
   /** Called on content change for draft auto-save */
   onContentChange?: (content: string, attachments?: Array<{ name: string; path: string }>) => void;
   /** Returns this session's user messages, oldest first — powers ArrowUp/Down recall */
@@ -147,6 +156,11 @@ interface MessageInputProps {
 
 export const MessageInput = memo(function MessageInput({
   tabId,
+  pendingContexts,
+  onContextsConsumed,
+  replyTo,
+  onCancelReply,
+  replyChangeSignal,
   draftReady = true,
   onSend,
   isStreaming,
@@ -163,6 +177,7 @@ export const MessageInput = memo(function MessageInput({
   externalPaths,
   onExternalPathsConsumed,
   initialValue,
+  initialAttachments,
   clearSignal,
   restore,
   onContentChange,
@@ -243,6 +258,8 @@ export const MessageInput = memo(function MessageInput({
       const { agent, text } = toComposerDraft(step.text);
       setAgentTag(agent);
       writeTextareas(text);
+      if (replyTo) onCancelReply?.();
+      onContentChange?.(text, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
       const ta = getVisibleTextarea();
       if (!ta) return true;
       ta.focus();
@@ -253,7 +270,7 @@ export const MessageInput = memo(function MessageInput({
       }
       return true;
     },
-    [getUserHistory, writeTextareas, getVisibleTextarea],
+    [getUserHistory, writeTextareas, getVisibleTextarea, replyTo, onCancelReply, onContentChange, attachments],
   );
 
   // Voice input. Two engines behind the same button: the browser's own
@@ -322,7 +339,7 @@ export const MessageInput = memo(function MessageInput({
       if (targetTabId ? targetTabId !== tabId : !ownsGlobalShortcut(getVisibleTextarea())) return;
       // Sent as-is only into an idle, empty composer: anything the user has typed or
       // attached is theirs, and the text joins it as a chip for them to send instead.
-      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !valueRef.current.trim() && attachments.length === 0;
+      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !replyTo && !valueRef.current.trim() && attachments.length === 0;
       window.dispatchEvent(new CustomEvent<SendToChatAck>(SEND_TO_CHAT_ACK_EVENT, { detail: { sent: send } }));
       if (send) {
         onSend(text, []);
@@ -341,7 +358,33 @@ export const MessageInput = memo(function MessageInput({
     };
     window.addEventListener(SEND_TO_CHAT_EVENT, handler);
     return () => window.removeEventListener(SEND_TO_CHAT_EVENT, handler);
-  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend]);
+  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend, replyTo]);
+
+  const consumedContextsRef = useRef<MessageInputProps["pendingContexts"]>(undefined);
+  useEffect(() => {
+    if (!pendingContexts?.length || consumedContextsRef.current === pendingContexts) return;
+    consumedContextsRef.current = pendingContexts;
+    setAttachments((previous) => [...previous, ...pendingContexts.map(({ text, label }) => ({
+      id: randomId(), name: label ?? "Selected code", file: new File([], "selected-code.txt"),
+      isImage: false, textContent: text, status: "ready" as const,
+    }))]);
+    onContextsConsumed?.();
+    getVisibleTextarea()?.focus();
+  }, [pendingContexts, onContextsConsumed, getVisibleTextarea]);
+
+  const draftAttachmentsApplied = useRef(false);
+  useEffect(() => {
+    if (!draftReady || draftAttachmentsApplied.current || initialAttachments === undefined) return;
+    draftAttachmentsApplied.current = true;
+    if (!initialAttachments?.length) return;
+    const restored: ChatAttachment[] = initialAttachments.map((attachment) => ({
+      id: randomId(), name: attachment.name, file: new File([], attachment.name),
+      serverPath: attachment.path, isImage: isImageFile(new File([], attachment.name)), status: "ready",
+    }));
+    // Joined, never skipped: code added to a chat that had not mounted yet arrives before its
+    // draft does, and a draft skipped here is saved back without its attachments.
+    setAttachments((previous) => [...restored, ...previous]);
+  }, [draftReady, initialAttachments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
   // A restored draft can land after the input is already on screen, so never
@@ -379,7 +422,13 @@ export const MessageInput = memo(function MessageInput({
 
   // Parent-driven clear (e.g. cancelling an edit) — skip initial mount (0).
   useEffect(() => {
-    if (clearSignal) writeTextareas("");
+    if (clearSignal) {
+      writeTextareas("");
+      draftAttachmentsApplied.current = false;
+      for (const attachment of attachments) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      setAttachments([]);
+      setAgentTag(null);
+    }
   }, [clearSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // An unsent message coming back. The send can fail up to ~45 s after Enter, by which
@@ -389,7 +438,7 @@ export const MessageInput = memo(function MessageInput({
   useEffect(() => {
     if (!restore?.nonce || !restore.text) return;
     const current = valueRef.current;
-    const next = current.trim() ? `${current}\n\n${restore.text}` : restore.text;
+    const next = !restore.replace && current.trim() ? `${current}\n\n${restore.text}` : restore.text;
     writeTextareas(next);
     onContentChange?.(next, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
     const timer = setTimeout(() => {
@@ -398,6 +447,12 @@ export const MessageInput = memo(function MessageInput({
     }, 50);
     return () => clearTimeout(timer);
   }, [restore?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!replyChangeSignal) return;
+    onContentChange?.(valueRef.current, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+    getVisibleTextarea()?.focus();
+  }, [replyChangeSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-focus on mount when requested
   useEffect(() => {
@@ -727,7 +782,7 @@ export const MessageInput = memo(function MessageInput({
       if (useWhisper) whisperVoice.cancel();
       else voice.stop();
     }
-    onSend(content, readyAttachments, isStreaming ? priority : undefined);
+    if (onSend(content, readyAttachments, isStreaming ? priority : undefined) === false) return;
     writeTextareas("");
     // Revoke preview URLs
     for (const att of attachments) {
@@ -946,6 +1001,9 @@ export const MessageInput = memo(function MessageInput({
           getVisibleTextarea()?.focus();
         }}
       >
+        {replyTo && <div className="px-2 md:px-4 pt-2">
+          <ReplyCard reply={replyTo} preview onCancel={onCancelReply} />
+        </div>}
         {/* Selected agent chip — composed into a delegation prompt on send */}
         {agentTag && (
           <div className="px-2 md:px-4 pt-2">

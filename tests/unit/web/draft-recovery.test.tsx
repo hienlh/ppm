@@ -102,3 +102,33 @@ it("a recovered local draft still wins over a fresher prepare draft after a relo
   expect(current.draft?.content).toBe("unsaved text");
   post.mockRestore();
 });
+
+
+it("restores a reply draft when switching away and back without a remount", async () => {
+  const { encodeReply } = await import("../../../src/shared/chat-reply");
+  const reply = { version: 1 as const, sessionId: "a", providerId: "codex", messageId: "m", role: "assistant" as const,
+    timestamp: "2026-10-01T00:00:00Z", quote: "source", truncated: false };
+  sessionStorage.setItem(`ppm-chat-draft:${JSON.stringify(["project", "tab-a", "a"])}`,
+    JSON.stringify({ content: encodeReply("draft a", reply), attachments: [] }));
+  view = await mount(<Harness session="a" />);
+  expect(current.draft?.replyTo).toEqual(reply);
+  await act(async () => { selectSession("b"); });
+  expect(current.draft).toBeNull();
+  await act(async () => { selectSession("a"); });
+  expect(current.draft?.content).toBe("draft a");
+  expect(current.draft?.replyTo).toEqual(reply);
+});
+
+it("a debounced save stays with the session that owned its reply", async () => {
+  const put = spyOn(api, "put").mockResolvedValue({});
+  const reply = { version: 1 as const, sessionId: "a", providerId: "codex", messageId: "m", role: "assistant" as const,
+    timestamp: "2026-10-01T00:00:00Z", quote: "source", truncated: false };
+  view = await mount(<Harness session="a" />);
+  await act(async () => { current.saveDraft("draft a", [], reply); selectSession("b"); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+  expect(put.mock.calls).toHaveLength(1);
+  expect(put.mock.calls[0]![0]).toContain("/drafts/a");
+  const { decodeReply } = await import("../../../src/shared/chat-reply");
+  expect(decodeReply((put.mock.calls[0]![1] as { content: string }).content).replyTo).toEqual(reply);
+  put.mockRestore();
+});

@@ -1,6 +1,12 @@
 import { getDb } from "./db.service.ts";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import type { JiraConfigRow, JiraConfig, JiraCredentials } from "../types/jira.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("jira");
+
+/** Configs whose token failed to decrypt — every poll asks again, so it is said once per config. */
+const undecryptable = new Set<number>();
 
 // ── Row → API mapper ──────────────────────────────────────────────────
 
@@ -75,9 +81,15 @@ export function getDecryptedCredentials(configId: number): JiraCredentials | nul
   if (!row) return null;
   try {
     const token = decrypt(row.api_token_encrypted);
+    undecryptable.delete(configId);
     return { baseUrl: row.base_url, email: row.email, token };
   } catch (e) {
-    console.warn(`[jira] Failed to decrypt token for config ${configId}:`, (e as Error).message);
+    const line = `Failed to decrypt token for config ${configId}: ${(e as Error).message}`;
+    if (undecryptable.has(configId)) log.debug(line);
+    else {
+      undecryptable.add(configId);
+      log.warn(`${line} — its watchers cannot poll until the token is saved again`);
+    }
     return null;
   }
 }

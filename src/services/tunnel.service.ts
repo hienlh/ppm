@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { existsSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { ensureCloudflared, getQuickTunnelArgs } from "./cloudflared.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("tunnel");
 
 const TUNNEL_URL_REGEX = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
 const decoder = new TextDecoder();
@@ -30,6 +33,16 @@ class TunnelService {
       { stderr: "pipe", stdout: "ignore", stdin: "ignore" },
     );
     this.childProcess = proc;
+    // Nothing else watches this child: if it dies, the cached URL stays and only this line
+    // says the public address is gone. A child stopTunnel() let go of is no news.
+    void proc.exited.then((code) => {
+      const signal = proc.signalCode ? `, signal=${proc.signalCode}` : "";
+      if (this.childProcess !== proc) {
+        log.debug(`Server-owned cloudflared (PID ${proc.pid}) exited code=${code}${signal}`);
+        return;
+      }
+      log.warn(`Server-owned cloudflared (PID ${proc.pid}) exited code=${code}${signal} — ${this.url ? `${this.url} is down` : "before it had a URL"}`);
+    });
 
     // Register cleanup handlers (remove old ones first to prevent leak)
     if (this.cleanupHandler) {
@@ -47,6 +60,7 @@ class TunnelService {
     const reader = proc.stderr.getReader();
     const url = await new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        log.warn(`Server-owned cloudflared (PID ${proc.pid}) gave no URL within 30s — left running`);
         reject(new Error("Tunnel timed out after 30s — no URL found"));
       }, 30_000);
 
@@ -83,6 +97,7 @@ class TunnelService {
 
     this.url = url;
     this.supervisorManaged = false; // this process owns the tunnel now
+    log.info(`Quick tunnel started by server: ${url} (PID ${proc.pid}, origin port ${port})`);
     this.persistToStatusFile();
     this.syncToCloud();
     return url;

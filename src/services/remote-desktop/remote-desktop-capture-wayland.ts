@@ -32,6 +32,9 @@ import { AccessUnitAssembler } from "./access-unit-assembler.ts";
 import { DEFAULT_FPS, type QualityPreset } from "../../shared/remote-desktop-quality.ts";
 import { startPortalScreenCast, type PortalScreenCast } from "./remote-desktop-portal.ts";
 import { linuxSessionEnv, type LinuxSession } from "./remote-desktop-linux-session.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 /** Which GStreamer elements this host actually has. Probed once — `gst-inspect-1.0` is ~40 ms
  *  and this sits on the session-start path. */
@@ -222,6 +225,12 @@ export async function startWaylandCapture(
     portal.stop();
     throw new CaptureUnavailableError("ffmpeg is needed to publish the Wayland stream to the relay");
   }
+  // Never the argv: on the relay path it carries the publish URL, whose path is the stream secret.
+  log.info(
+    `wayland capture started gst=${gst.pid} node=${portal.nodeId} ` +
+    `enc=${els.vapostproc && els.vah264enc ? "vah264enc" : "x264enc"} fps=${opts.preset?.fps ?? DEFAULT_FPS} ` +
+    `kbps=${bitrateKbps(opts.preset?.bitrate ?? "1M")} remux=${remux?.pid ?? "none"} reason=${opts.reason ?? "start"}`,
+  );
 
   let stopped = false;
   const stop = () => {
@@ -242,22 +251,32 @@ export async function startWaylandCapture(
   const remuxErr = remux ? new Response(remux.stderr).text().catch(() => "") : Promise.resolve("");
   let failure: Promise<{ code: number | null; reason?: string }> | null = null;
   gst.exited.then((code) => {
-    if (stopped) return;
+    if (stopped) { log.debug(`gst-launch pid=${gst.pid} stopped`); return; }
+    const unexpected = (text: string) =>
+      log.error(`gst-launch pid=${gst.pid} exited unexpectedly code=${gst.exitCode} signal=${gst.signalCode}: ${text || "(no stderr)"}`);
     failure = (async () => {
-      if (code === 0 || code === null) return { code };
+      // A clean exit is the portal or the compositor ending the stream: still the end of the
+      // session, so it is logged too — without holding up `onExit` for the stderr read.
+      if (code === 0 || code === null) { void gstErr.then((t) => unexpected(tail(t))); return { code }; }
       const reason = tail(await gstErr);
-      console.warn(`[remote-desktop] gst-launch exited ${code}: ${reason}`);
+      unexpected(reason);
       return { code, reason };
     })();
     stop();
   });
   remux?.exited.then((code) => {
-    if (stopped) return;
+    if (stopped) { log.debug(`relay remux pid=${remux.pid} stopped`); return; }
     failure = (async () => {
       // Any exit nobody asked for is a failure here, a clean one included: it means the relay
       // stopped taking the stream.
-      const reason = tail(await remuxErr) || `the relay publisher exited with code ${code}`;
-      console.warn(`[remote-desktop] relay remux exited ${code}: ${reason}`);
+      const stderr = tail(await remuxErr);
+      const reason = stderr || `the relay publisher exited with code ${code}`;
+      // ffmpeg names the URL it failed to push to, and that URL's path is the stream secret.
+      // Matched only when long: a real one is `randomStreamPath`'s 33 characters, and a short
+      // one would replace every occurrence of some ordinary letter.
+      const streamPath = publishUrl ? publishUrl.slice(publishUrl.lastIndexOf("/") + 1) : "";
+      const logged = streamPath.length >= 16 ? stderr.split(streamPath).join("[path]") : stderr;
+      log.error(`relay remux pid=${remux.pid} exited unexpectedly code=${remux.exitCode} signal=${remux.signalCode}: ${logged || "(no stderr)"}`);
       return { code, reason };
     })();
     stop();
@@ -284,12 +303,13 @@ export async function startWaylandCapture(
         await remux.stdin.flush();
       }
       await remux.stdin.end();
-    })().catch(() => {
+    })().catch((e) => {
       // The remux is gone, and its exit above is what reports it. Kill it anyway: a pump that
       // failed with the remux still running would leave gst blocked on a full pipe forever.
+      log.debug(`relay remux pump ended: ${(e as Error)?.message ?? e}`);
       try { remux.kill("SIGKILL"); } catch { /* already gone */ }
     });
-    return { cachedSps: () => null, stop, isStopped: () => stopped };
+    return { pid: gst.pid, cachedSps: () => null, stop, isStopped: () => stopped };
   }
 
   const assembler = new AccessUnitAssembler();
@@ -305,8 +325,8 @@ export async function startWaylandCapture(
       for (const au of assembler.push(value)) onAccessUnit(au);
     }
   })().catch((e) => {
-    console.error(`[remote-desktop] wayland capture pump failed: ${(e as Error).message}`);
+    log.error(`wayland capture pump failed: ${(e as Error).message}`);
   });
 
-  return { cachedSps: () => assembler.cachedSps(), stop, isStopped: () => stopped };
+  return { pid: gst.pid, cachedSps: () => assembler.cachedSps(), stop, isStopped: () => stopped };
 }

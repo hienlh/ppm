@@ -6,6 +6,10 @@ import {
   registerTunnel,
   MAX_PROBE_FAILURES,
 } from "./tunnel-spawn.ts";
+import { listeningLoopback } from "../../services/port-forward/forward-hop.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("preview");
 
 /**
  * Port forwarding API — starts per-port Cloudflare Quick Tunnels so the
@@ -44,9 +48,9 @@ portForwardingRoutes.post("/tunnel", async (c) => {
   }
 
   try {
-    const { process: proc, url } = await spawnTunnelProcess(port);
-    registerTunnel(port, proc, url);
-    console.log(`[preview] tunnel started for port ${port} → ${url}`);
+    const { process: proc, url, hop } = await spawnTunnelProcess(port);
+    registerTunnel(port, proc, url, hop);
+    log.info(`tunnel started for port ${port} → ${url}`);
     return c.json(ok({ port, url }));
   } catch (e: any) {
     return c.json(err(e.message || "Failed to start tunnel"), 500);
@@ -63,7 +67,7 @@ portForwardingRoutes.delete("/tunnel/:port{[0-9]+}", (c) => {
 
   try { tunnel.process.kill(); } catch {}
   activeTunnels.delete(port);
-  console.log(`[preview] tunnel stopped for port ${port}`);
+  log.info(`tunnel stopped for port ${port}`);
   return c.json(ok({ port }));
 });
 
@@ -102,18 +106,14 @@ async function cleanupGhostTunnels() {
     for (const [port, tunnel] of activeTunnels) {
       // Check if cloudflared process is still running
       if (!isProcessAlive(tunnel.process)) {
-        console.log(`[preview] ghost cleanup: port ${port} — process dead`);
+        log.warn(`ghost cleanup: port ${port} — cloudflared (PID ${tunnel.process.pid}) died unexpectedly`);
         activeTunnels.delete(port);
         continue;
       }
-      // Check if target port is still listening
-      try {
-        const conn = await Bun.connect({ hostname: "127.0.0.1", port, socket: {
-          data() {}, open(s) { s.end(); }, error() {}, close() {},
-        }});
-        conn.end();
-      } catch {
-        console.log(`[preview] ghost cleanup: port ${port} — port not listening`);
+      // Check if target port is still listening — on either loopback: a Vite on [::1] alone
+      // refused a 127.0.0.1-only probe, and its tunnel was torn down 30 s after it opened.
+      if (!(await listeningLoopback(port))) {
+        log.info(`ghost cleanup: port ${port} — port not listening`);
         try { tunnel.process.kill(); } catch {}
         activeTunnels.delete(port);
         continue;
@@ -127,18 +127,18 @@ async function cleanupGhostTunnels() {
       }
 
       tunnel.probeFailures++;
-      console.log(`[preview] tunnel probe failed for port ${port} (${tunnel.probeFailures}/${MAX_PROBE_FAILURES})`);
+      log.info(`tunnel probe failed for port ${port} (${tunnel.probeFailures}/${MAX_PROBE_FAILURES})`);
 
       if (tunnel.probeFailures >= MAX_PROBE_FAILURES) {
-        console.log(`[preview] tunnel URL expired for port ${port}, restarting...`);
+        log.info(`tunnel URL expired for port ${port}, restarting...`);
         try { tunnel.process.kill(); } catch {}
         activeTunnels.delete(port);
         try {
-          const { process: proc, url } = await spawnTunnelProcess(port);
-          registerTunnel(port, proc, url);
-          console.log(`[preview] tunnel restarted for port ${port} → ${url}`);
+          const { process: proc, url, hop } = await spawnTunnelProcess(port);
+          registerTunnel(port, proc, url, hop);
+          log.info(`tunnel restarted for port ${port} → ${url}`);
         } catch (e: any) {
-          console.warn(`[preview] tunnel restart failed for port ${port}: ${e.message}`);
+          log.error(`tunnel restart failed for port ${port}, its tunnel is gone: ${e.message}`);
         }
       }
     }

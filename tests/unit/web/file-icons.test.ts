@@ -11,6 +11,7 @@ import { describe, it, expect } from "bun:test";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { resolve, relative } from "node:path";
 import {
+  DB_ENGINE_ICONS,
   DEFAULT_FILE_ICON,
   DEFAULT_FOLDER_ICON,
   DEFAULT_FOLDER_OPEN_ICON,
@@ -25,7 +26,8 @@ import {
 } from "../../../src/web/lib/file-icons.generated.ts";
 // The pure half, deliberately importable without the component: `file-icons.tsx`
 // reaches `project-framework-store` and through it api-client and React.
-import { fileIconName, folderIconName } from "../../../src/web/lib/file-icon-name.ts";
+import { dbEngineIconName, fileIconName, folderIconName } from "../../../src/web/lib/file-icon-name.ts";
+import { DB_TYPES } from "../../../src/shared/db-types.ts";
 import { fileIconElement } from "../../../src/web/lib/file-icons.tsx";
 
 const css = readFileSync(
@@ -46,6 +48,7 @@ describe("the generated icon theme", () => {
       ...Object.values(FILENAME_ICONS),
       ...Object.values(FOLDER_ICONS),
       ...Object.values(FOLDER_OPEN_ICONS),
+      ...Object.values(DB_ENGINE_ICONS),
       ...FRAMEWORKS.flatMap((f) => [
         ...Object.values(FRAMEWORK_EXTENSION_ICONS[f]),
         ...Object.values(FRAMEWORK_FILENAME_ICONS[f]),
@@ -176,6 +179,20 @@ describe("resolving a name to an icon", () => {
     ]) {
       expect(fileIconName(name)).not.toBe(DEFAULT_FILE_ICON);
     }
+  });
+});
+
+describe("database engine logos", () => {
+  it("draws a logo of its own for every connection type PPM offers", () => {
+    const logos = DB_TYPES.map((t) => dbEngineIconName(t));
+    expect(logos.filter((l) => !classes.has(l))).toEqual([]);
+    expect(new Set(logos).size).toBe(DB_TYPES.length);
+    expect(logos).not.toContain(EXTENSION_ICONS.sql);
+  });
+
+  it("falls back to the generic SQL glyph for an engine it has no logo for", () => {
+    expect(dbEngineIconName("oracle")).toBe(EXTENSION_ICONS.sql!);
+    expect(dbEngineIconName("constructor")).toBe(EXTENSION_ICONS.sql!);
   });
 });
 

@@ -6,6 +6,9 @@ import { pickClaudeAccount } from "../../services/account-pick.service.ts";
 import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts";
 import { getAllAccountUsages, getUsageForAccount, refreshUsageForAccount, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("accounts");
 
 export const accountsRoutes = new Hono();
 
@@ -94,6 +97,7 @@ accountsRoutes.put("/settings", async (c) => {
     }
     accountSelector.setCooldownEnabled(body.cooldownEnabled);
   }
+  log.info(`rotation settings saved: strategy=${accountSelector.getStrategy()} maxRetry=${accountSelector.getMaxRetry()} cooldown=${accountSelector.isCooldownEnabled()}`);
   return c.json(ok({
     strategy: accountSelector.getStrategy(),
     maxRetry: accountSelector.getMaxRetry(),
@@ -159,7 +163,9 @@ accountsRoutes.get("/oauth/callback", async (c) => {
   const { code, state, error } = c.req.query();
   const successRedirect = `${getUiBase(c)}/#/settings/accounts`;
 
+  // The outcome travels in a redirect, which the access log keeps at DEBUG — so it is logged here.
   if (error || !code || !state) {
+    log.warn(`OAuth sign-in refused: ${error ? `provider error=${String(error).slice(0, 100)}` : "missing code or state"}`);
     return c.redirect(`${successRedirect}?error=${encodeURIComponent(error ?? "missing_params")}`);
   }
   try {
@@ -167,6 +173,7 @@ accountsRoutes.get("/oauth/callback", async (c) => {
     await refreshUsageForAccount(account.id);
     return c.redirect(`${successRedirect}?success=1`);
   } catch (e) {
+    log.error(`OAuth sign-in failed: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
     return c.redirect(`${successRedirect}?error=${encodeURIComponent((e as Error).message)}`);
   }
 });
@@ -394,8 +401,11 @@ accountsRoutes.patch("/:id", async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json<{ status?: string }>();
   try {
-    if (body.status === "disabled") accountService.setDisabled(id);
-    else if (body.status === "active") {
+    if (body.status === "disabled") {
+      accountService.setDisabled(id);
+      // The id is in the path but the new status only in the body, which the access log never reads.
+      log.info(`account ${id} disabled`);
+    } else if (body.status === "active") {
       const wasParked = accountService.list().find((a) => a.id === id)?.status === "disabled";
       // Enabling is where this machine claims the token, so prove it *before* the account
       // becomes selectable rather than after. postRefreshGrant is three 15s attempts with
@@ -426,6 +436,7 @@ accountsRoutes.patch("/:id", async (c) => {
         }
       }
       accountService.setEnabled(id);
+      log.info(`account ${id} enabled`);
     } else return c.json(err("status must be active or disabled"), 400);
   } catch (e) {
     return c.json(err((e as Error).message), 400);

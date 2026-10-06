@@ -105,19 +105,17 @@ describe("scheduler-runner", () => {
     expect(getSchedule(schedule.id)!.session_id).toBe("existing");
   });
 
-  it("notifies via broadcast only when telegram configured", async () => {
-    sendEvents = [doneEvent()];
-    await runScheduleOnce(makeSchedule(), "existing");
-    expect(broadcastMock).not.toHaveBeenCalled();
-
-    telegramConfig = { bot_token: "tok" };
+  it("hands every run to the dispatcher, Telegram configured or not", async () => {
+    // Push can be on with no bot at all; which channels fire is the dispatcher's call.
     sendEvents = [{ type: "text", content: "result text" }, doneEvent()];
     await runScheduleOnce(makeSchedule({ session_id: "existing" }), "existing");
     expect(broadcastMock).toHaveBeenCalledTimes(1);
-    const [type, payload] = broadcastMock.mock.calls[0] as unknown as [string, { title: string; body: string }];
-    expect(type).toBe("done");
+    const [type, payload] = broadcastMock.mock.calls[0] as unknown as [string, { title: string; body: string; project: string }];
+    expect(type).toBe("schedule");
     expect(payload.title).toContain("done");
     expect(payload.body).toContain("result text");
+    // /tmp/p is no registered project, and a path in a link opens the wrong one.
+    expect(payload.project).toBe("");
   });
 
   it("truncates output beyond 32KB keeping head and tail", async () => {

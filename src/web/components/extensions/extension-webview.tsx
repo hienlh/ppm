@@ -3,9 +3,24 @@ import { useExtensionStore } from "@/stores/extension-store";
 import { getAuthToken } from "@/lib/api-client";
 import { THEME_CHANGE_EVENT } from "@/theme/apply-theme";
 import { HOST_THEME_MESSAGE, injectHostTheme, readHostTheme } from "./webview-theme";
+import { externalLinkRequest } from "./webview-external-link";
+import { type IconRuleIndex, fileIconsAnswer, fileIconsRequest, indexIconRules } from "./webview-file-icons";
+import { iconStylesheet } from "@/lib/file-icons";
+import { useProjectFrameworkStore } from "@/stores/project-framework-store";
 import { commandRunsGit } from "@/lib/git-repo-scope";
 import { resolveGitRoot } from "@/stores/git-repo-store";
 import { Loader2 } from "@/lib/icons";
+
+/** The icon rules by class, read once from the stylesheet the app's own trees load. */
+let iconRules: Promise<IconRuleIndex> | null = null;
+function webviewIconRules(): Promise<IconRuleIndex> {
+  iconRules ??= iconStylesheet().then((sheet) => {
+    // Not kept when the stylesheet failed, so the next panel to ask tries again.
+    if (!sheet) iconRules = null;
+    return indexIconRules(sheet ? Array.from(sheet.cssRules) : []);
+  });
+  return iconRules;
+}
 
 /** Inject acquireVsCodeApi() shim so extension webviews can postMessage to parent */
 const VSCODE_API_SHIM = `<script>
@@ -89,7 +104,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Seeded with the theme so the panel's first paint is already the right one.
   // Deliberately not a dependency of this memo: srcDoc is what mounts the
   // iframe, so recomputing it on a theme change would reload the panel. Later
-  // changes are posted in below instead.
+  // changes are posted in below instead, and so is the theme at every load.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const html = useMemo(
     () => injectHostTheme(injectVscodeApiShim(rawHtml), readHostTheme(document.documentElement)),
@@ -202,6 +217,21 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     if (!resolvedPanelId) return;
     const handler = (event: MessageEvent) => {
       if (iframeRef.current && event.source === iframeRef.current.contentWindow) {
+        const link = externalLinkRequest(event.data);
+        if (link !== undefined) {
+          if (link) window.open(link, "_blank", "noopener,noreferrer");
+          return;
+        }
+        const iconNames = fileIconsRequest(event.data);
+        if (iconNames !== undefined) {
+          const frame = iframeRef.current.contentWindow;
+          if (iconNames.length) {
+            void webviewIconRules().then((index) => {
+              frame?.postMessage(fileIconsAnswer(iconNames, useProjectFrameworkStore.getState().framework, index), "*");
+            });
+          }
+          return;
+        }
         window.dispatchEvent(new CustomEvent("ext:webview:send", {
           detail: { panelId: resolvedPanelId, message: event.data },
         }));
@@ -224,15 +254,19 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     return () => window.removeEventListener("ext:webview:message", handler);
   }, [resolvedPanelId]);
 
-  // Forward theme changes to the iframe (see the srcDoc memo above)
-  useEffect(() => {
-    const handler = () => {
-      const { mode, css } = readHostTheme(document.documentElement);
-      iframeRef.current?.contentWindow?.postMessage({ command: HOST_THEME_MESSAGE, mode, css }, "*");
-    };
-    window.addEventListener(THEME_CHANGE_EVENT, handler);
-    return () => window.removeEventListener(THEME_CHANGE_EVENT, handler);
+  // Tell the iframe which theme is on (see the srcDoc memo above): on every
+  // change, and on every load. The tab pool moves a tab with appendChild — a
+  // split, a tab dragged to another panel, the switch between the desktop and
+  // phone layouts — and a moved iframe loads its document again from the same
+  // srcDoc, whose seed is the theme of the moment the HTML arrived.
+  const postTheme = useCallback(() => {
+    const { mode, css } = readHostTheme(document.documentElement);
+    iframeRef.current?.contentWindow?.postMessage({ command: HOST_THEME_MESSAGE, mode, css }, "*");
   }, []);
+  useEffect(() => {
+    window.addEventListener(THEME_CHANGE_EVENT, postTheme);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, postTheme);
+  }, [postTheme]);
 
   // Loading state — waiting for extension to create the panel AND deliver HTML.
   // We must wait for HTML before mounting the iframe because browsers don't
@@ -269,6 +303,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
         ref={iframeRef}
         key={resolvedPanelId}
         srcDoc={html}
+        onLoad={postTheme}
         sandbox="allow-scripts"
         className="w-full h-full border-0 bg-white dark:bg-bg"
         title={panel.title}

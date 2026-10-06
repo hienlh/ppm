@@ -53,7 +53,18 @@ describe("session-trace.db", () => {
     expect((db.query("PRAGMA auto_vacuum").get() as { auto_vacuum: number }).auto_vacuum).toBe(2);
     expect((db.query("PRAGMA synchronous").get() as { synchronous: number }).synchronous).toBe(1);
     expect((db.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
+  });
+
+  it("brings a version 1 file up to date without touching its rows", () => {
+    const db = getTraceDb();
+    appendBatch([row("kept")]);
+    db.exec("DROP TABLE trace_devices; PRAGMA user_version = 1;");
+    closeTraceDb();
+    const reopened = getTraceDb();
+    expect((reopened.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
+    expect(reopened.query("SELECT name FROM sqlite_master WHERE name = 'trace_devices'").get()).not.toBeNull();
+    expect(readEvents("kept").map((e) => e.seq)).toEqual([1]);
   });
 
   it("a second open is a no-op, and reopening keeps what was written", () => {

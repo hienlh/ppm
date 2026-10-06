@@ -2,6 +2,9 @@ import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import type { ExtensionManifest } from "../types/extension.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("ExtService");
 
 /** Parse a package.json object into an ExtensionManifest (or null if invalid) */
 export function parseManifest(pkg: Record<string, unknown>): ExtensionManifest | null {
@@ -30,10 +33,14 @@ export function parseManifest(pkg: Record<string, unknown>): ExtensionManifest |
 export function readManifestAt(dir: string): ExtensionManifest | null {
   const pkgPath = resolve(dir, "package.json");
   if (!existsSync(pkgPath)) return null;
+  // Null drops the extension out of discovery without a trace, so say why.
   try {
     const raw = JSON.parse(readFileSync(pkgPath, "utf-8"));
-    return parseManifest(raw);
-  } catch {
+    const manifest = parseManifest(raw);
+    if (!manifest) log.warn(`Invalid extension manifest ${dir}: package.json needs name, version and main`);
+    return manifest;
+  } catch (e) {
+    log.warn(`Invalid extension manifest ${dir}: ${(e as Error)?.message ?? e}`);
     return null;
   }
 }

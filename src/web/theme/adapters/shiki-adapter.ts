@@ -1,4 +1,4 @@
-import { createHighlighter, type Highlighter } from "shiki";
+import { createHighlighter, type Highlighter, type ThemedToken } from "shiki";
 import type { PpmTheme } from "../types";
 import { THEME_CHANGE_EVENT, getCurrentAppliedTheme } from "../apply-theme";
 
@@ -133,6 +133,60 @@ export async function highlightToHtml(code: string, lang?: string): Promise<stri
   const html = hl.codeToHtml(code, { lang: resolvedLang, theme: activeThemeName });
   cacheSet(cacheKey(code, resolvedLang), html);
   return html;
+}
+
+// Languages a grammar was asked for and none exists, so a file of that type is not asked about
+// again on every render.
+const missingLangs = new Set<string>();
+
+// Bounded like `htmlCache`: the session review asks for the same blocks on every redraw.
+const tokenCache = new Map<string, ThemedToken[][]>();
+
+function tokensFor(hl: Highlighter, code: string, lang: string): ThemedToken[][] {
+  const key = cacheKey(code, lang);
+  const cached = tokenCache.get(key);
+  if (cached) return cached;
+  const tokens = hl.codeToTokensBase(code, { lang: lang as never, theme: activeThemeName as never });
+  if (tokenCache.size >= HTML_CACHE_MAX) {
+    const oldest = tokenCache.keys().next().value;
+    if (oldest !== undefined) tokenCache.delete(oldest);
+  }
+  tokenCache.set(key, tokens);
+  return tokens;
+}
+
+/**
+ * Syntax tokens line by line, coloured by the active theme, for a renderer that lays marks of its
+ * own over the code (the session review's changed spans). Null while it cannot be done
+ * synchronously: a cold highlighter, or a language not loaded yet.
+ */
+export function tokensSync(code: string, lang?: string): ThemedToken[][] | null {
+  const resolvedLang = normalizeLang(lang) || "text";
+  if (!readyHighlighter) return null;
+  const usable = resolvedLang === "text" || missingLangs.has(resolvedLang) ? "text" : resolvedLang;
+  if (usable !== "text" && !loadedLangs.has(usable)) return null;
+  try {
+    return tokensFor(readyHighlighter, code, usable);
+  } catch {
+    return null;
+  }
+}
+
+/** `tokensSync`, after loading the highlighter and the language; plain text for an unknown one. */
+export async function highlightToTokens(code: string, lang?: string): Promise<ThemedToken[][]> {
+  const hl = await getHighlighter();
+  let resolvedLang = normalizeLang(lang) || "text";
+  if (missingLangs.has(resolvedLang)) resolvedLang = "text";
+  if (resolvedLang !== "text" && !loadedLangs.has(resolvedLang)) {
+    try {
+      await hl.loadLanguage(resolvedLang as never);
+      loadedLangs.add(resolvedLang);
+    } catch {
+      missingLangs.add(resolvedLang);
+      resolvedLang = "text";
+    }
+  }
+  return tokensFor(hl, code, resolvedLang);
 }
 
 export function getActiveShikiTheme(): string {

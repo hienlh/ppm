@@ -1,30 +1,32 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ElementType } from "react";
 import { createPortal } from "react-dom";
-import { Eye, Pin, PinOff, Trash2, ExternalLink } from "@/lib/icons";
+import { cn } from "@/lib/utils";
 
-interface ContextMenuProps {
-  position: { x: number; y: number };
-  isPinned: boolean;
-  onViewRow: () => void;
-  onViewCell?: () => void;
-  onPinRow: () => void;
-  onDeleteRow: () => void;
-  /** FK navigation: open referenced table filtered by this cell's value */
-  onOpenFkTable?: () => void;
-  /** Label for FK menu item, e.g. "Open users.id" */
-  fkLabel?: string;
-  onClose: () => void;
+export interface GridMenuItem {
+  label: string;
+  icon?: ElementType;
+  onSelect: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+  /** Drawn in the accent: an item that opens somewhere else. */
+  accent?: boolean;
+  /** The item's key, at the right. */
+  hint?: string;
 }
 
+export type GridMenuEntry = GridMenuItem | "separator";
+
 /**
- * Right-click / long-press context menu for grid rows.
- * Rendered via portal. Includes View JSON, Pin/Unpin, Delete with confirm.
+ * Right-click / long-press context menu for grid cells, rendered via portal: the items it is given,
+ * each closing the menu once chosen. Phase 04e gives it DBGate's full cell menu.
  */
-export function GlideContextMenu({
-  position, isPinned, onViewRow, onViewCell, onPinRow, onDeleteRow, onOpenFkTable, fkLabel, onClose,
-}: ContextMenuProps) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
+export function GlideContextMenu({ position, items, onClose }: {
+  position: { x: number; y: number };
+  items: readonly GridMenuEntry[];
+  onClose: () => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState(position);
 
   // Close on outside click
   useEffect(() => {
@@ -42,53 +44,41 @@ export function GlideContextMenu({
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  // Clamp to viewport
-  const menuWidth = 180;
-  const menuHeight = 130;
-  const left = Math.min(position.x, window.innerWidth - menuWidth - 8);
-  const top = Math.min(position.y, window.innerHeight - menuHeight - 8);
+  // Kept inside the window, measured before it is painted.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setPlace({
+      x: Math.max(8, Math.min(position.x, window.innerWidth - el.offsetWidth - 8)),
+      y: Math.max(8, Math.min(position.y, window.innerHeight - el.offsetHeight - 8)),
+    });
+  }, [position, items.length]);
 
   const portal = document.getElementById("portal");
   if (!portal) return null;
 
   return createPortal(
-    <div ref={ref} style={{ position: "fixed", left, top, zIndex: 10000 }}
-      className="w-[180px] bg-popover border border-border rounded-md shadow-lg text-xs overflow-hidden py-1">
-      <button type="button" onClick={() => { onViewRow(); onClose(); }}
-        className="w-full text-left px-3 py-1.5 hover:bg-muted flex items-center gap-2 text-foreground">
-        <Eye className="size-3" /> View as JSON
-      </button>
-      {onViewCell && (
-        <button type="button" onClick={() => { onViewCell(); onClose(); }}
-          className="w-full text-left px-3 py-1.5 hover:bg-muted flex items-center gap-2 text-foreground">
-          <Eye className="size-3" /> View Cell
-        </button>
-      )}
-      {onOpenFkTable && (
-        <button type="button" onClick={() => { onOpenFkTable(); onClose(); }}
-          className="w-full text-left px-3 py-1.5 hover:bg-muted flex items-center gap-2 text-primary">
-          <ExternalLink className="size-3" /> {fkLabel ?? "Open Referenced Table"}
-        </button>
-      )}
-      <button type="button" onClick={() => { onPinRow(); onClose(); }}
-        className="w-full text-left px-3 py-1.5 hover:bg-muted flex items-center gap-2 text-foreground">
-        {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-        {isPinned ? "Unpin Row" : "Pin Row"}
-      </button>
-      <div className="border-t border-border my-0.5" />
-      {confirmDelete ? (
-        <div className="px-3 py-1.5 flex items-center gap-2">
-          <button type="button" onClick={() => { onDeleteRow(); onClose(); }}
-            className="text-destructive font-medium hover:underline">Delete?</button>
-          <button type="button" onClick={() => setConfirmDelete(false)}
-            className="text-muted-foreground hover:underline">Cancel</button>
-        </div>
-      ) : (
-        <button type="button" onClick={() => setConfirmDelete(true)}
-          className="w-full text-left px-3 py-1.5 hover:bg-muted flex items-center gap-2 text-destructive">
-          <Trash2 className="size-3" /> Delete Row
-        </button>
-      )}
+    <div ref={ref} role="menu" style={{ position: "fixed", left: place.x, top: place.y, zIndex: 10000 }}
+      className="max-h-[calc(100dvh-16px)] min-w-[200px] overflow-y-auto rounded-md border border-border bg-popover py-1 text-xs shadow-lg">
+      {items.map((item, i) => {
+        if (item === "separator") return <div key={`sep-${i}`} role="separator" className="my-0.5 border-t border-border" />;
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.label} type="button" role="menuitem" disabled={item.disabled}
+            onClick={() => { onClose(); item.onSelect(); }}
+            className={cn(
+              "flex w-full items-center gap-2 px-3 py-1.5 text-left text-foreground select-none can-hover:hover:bg-muted max-md:min-h-11 disabled:pointer-events-none disabled:opacity-45",
+              item.destructive && "text-destructive",
+              item.accent && "text-primary",
+            )}
+          >
+            {Icon ? <Icon className="size-3 shrink-0" /> : <span className="size-3 shrink-0" aria-hidden />}
+            <span className="flex-1">{item.label}</span>
+            {item.hint && <kbd className="font-sans text-[10.5px] text-text-subtle">{item.hint}</kbd>}
+          </button>
+        );
+      })}
     </div>,
     portal,
   );

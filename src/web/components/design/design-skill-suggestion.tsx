@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Check, Copy, ExternalLink, Sparkles } from "@/lib/icons";
+import { Button } from "@/components/ui/button";
+import { Check, ChevronRight, Copy, Download, ExternalLink, Loader2, Sparkles } from "@/lib/icons";
 import { copyToClipboard } from "@/lib/clipboard";
+import { installDesignSkill, type DesignSkillInstallResponse } from "@/lib/design/api-design-settings";
 import { DESIGN_SKILL_SUGGESTION } from "../../../shared/design-skill-suggestion";
 
 /** One install recipe: the commands as shown upstream, copyable as a block. */
@@ -31,13 +33,35 @@ function CommandBlock({ label, lines }: { label: string; lines: readonly string[
   );
 }
 
+/** "Claude", "Claude and Codex", "A, B and C". */
+function listNames(names: readonly string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "";
+}
+
 /**
- * Shown when no installed skill would be used by a design session: names one design skill
- * and how to install it. PPM only shows the commands — installing software is the user's
- * call, so nothing here runs anything.
+ * Shown when no installed skill would be used by a design session: names one design skill and
+ * installs it on request. Pressing Install is the consent — nothing is fetched until then — and
+ * the server decides what goes where (`design-skill-install.service.ts`). The upstream commands
+ * stay one tap away for anyone who would rather run them, or when the host cannot reach npm.
  */
-export function DesignSkillSuggestionCard() {
+export function DesignSkillSuggestionCard({ providerNames, onInstalled }: {
+  /** The design providers it would be installed for, as Settings names them. */
+  providerNames: readonly string[];
+  onInstalled: (result: DesignSkillInstallResponse) => void | Promise<void>;
+}) {
   const s = DESIGN_SKILL_SUGGESTION;
+  const [installing, setInstalling] = useState(false);
+  const install = async () => {
+    setInstalling(true);
+    try {
+      await onInstalled(await installDesignSkill());
+    } catch (e) {
+      toast.error(`Could not install ${s.name}`, { description: (e as Error).message });
+    } finally {
+      setInstalling(false);
+    }
+  };
+  const forWhom = providerNames.length ? ` for ${listNames(providerNames)}` : "";
   return (
     <section aria-label="Suggested design skill" className="space-y-3 rounded-md border border-border bg-surface p-3">
       <div className="flex items-start gap-2">
@@ -45,18 +69,29 @@ export function DesignSkillSuggestionCard() {
         <div className="space-y-1">
           <p className="text-sm font-medium">No design skill installed</p>
           <p className="text-xs leading-relaxed text-text-subtle">
-            A design skill gives the AI a method to follow (palettes, type pairings, layout rules).
-            PPM does not install skills for you. One option is{" "}
+            A design skill gives the AI a method to follow (palettes, type pairings, layout rules). One option is{" "}
             <a href={s.repoUrl} target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-0.5 text-primary underline-offset-2 hover:underline">
               {s.name} <ExternalLink className="size-3" />
             </a>{" "}
-            ({s.license}). {s.requirement} After installing, name it in the instructions above,
-            e.g. <code>/{s.name}</code>.
+            ({s.license}). Install sets up version {s.version}{forWhom} and names it in the instructions
+            above. {s.requirement}
           </p>
         </div>
       </div>
-      {s.installs.map((install) => <CommandBlock key={install.label} label={install.label} lines={install.lines} />)}
+      <Button onClick={install} disabled={installing} className="min-h-11 w-full gap-1.5 px-4 text-xs md:min-h-8 md:w-auto">
+        {installing ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+        {installing ? "Installing…" : `Install ${s.name}`}
+      </Button>
+      <details className="group">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1 text-xs text-text-subtle hover:text-foreground md:min-h-8">
+          <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
+          Install it yourself instead
+        </summary>
+        <div className="space-y-3 pt-1">
+          {s.installs.map((install) => <CommandBlock key={install.label} label={install.label} lines={install.lines} />)}
+        </div>
+      </details>
     </section>
   );
 }
@@ -72,7 +107,7 @@ export function DesignSkillSuggestionHint({ onOpenSettings }: { onOpenSettings: 
           className="inline-flex min-h-11 items-center text-primary underline-offset-2 hover:underline md:min-h-0">
           Settings → Design
         </button>{" "}
-        suggests one you can install.
+        can install one for you.
       </span>
     </p>
   );

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterEach, spyOn } from "bun:test";
 import { PPMBotTelegram } from "../../../../src/services/ppmbot/ppmbot-telegram.ts";
 import type { TelegramMessage } from "../../../../src/types/ppmbot.ts";
 
@@ -74,5 +74,53 @@ describe("PPMBot Telegram — constructor", () => {
   it("should accept valid bot token", () => {
     const tg = new PPMBotTelegram("123456:ABCDEFghijklmnopqrstuvwxyz1234567890");
     expect(tg).toBeTruthy();
+  });
+});
+
+describe("PPMBot Telegram — getUpdates refusal log", () => {
+  const TOKEN = "123456:ABCDEFghijklmnopqrstuvwxyz1234567890";
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  it("logs a refusal once, then once a minute with a count, and says when polling works again", async () => {
+    let answer: unknown = { ok: false, error_code: 409, description: "Conflict: terminated by other getUpdates request" };
+    globalThis.fetch = (async () => new Response(JSON.stringify(answer))) as unknown as typeof fetch;
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    const now = spyOn(Date, "now").mockReturnValue(1_000_000);
+    const lines = (spy: typeof warn) => spy.mock.calls.map((c) => c.map(String).join(" "));
+    try {
+      const tg = new PPMBotTelegram(TOKEN);
+      const poll = () => (tg as unknown as { getUpdates(): Promise<unknown[]> }).getUpdates();
+
+      expect(await poll()).toEqual([]);
+      await poll();
+      await poll();
+      expect(lines(warn).filter((l) => l.includes("getUpdates refused"))).toEqual([
+        "[ppmbot] getUpdates refused: 409 Conflict: terminated by other getUpdates request",
+      ]);
+
+      now.mockReturnValue(1_000_000 + 60_000);
+      await poll();
+      expect(lines(warn).filter((l) => l.includes("getUpdates refused"))[1]).toContain("(2 more since the last line)");
+
+      answer = { ok: true, result: [] };
+      await poll();
+      expect(lines(info).some((l) => l.includes("getUpdates accepted again"))).toBe(true);
+
+      // A revoked token is an error, and a new refusal is logged at once.
+      answer = { ok: false, error_code: 401, description: "Unauthorized" };
+      await poll();
+      expect(lines(error).filter((l) => l.includes("getUpdates refused"))).toEqual(["[ppmbot] getUpdates refused: 401 Unauthorized"]);
+
+      // The token is in the request URL and must never reach a log line.
+      for (const l of [...lines(warn), ...lines(error), ...lines(info)]) expect(l).not.toContain(TOKEN.split(":")[1]!);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      info.mockRestore();
+      now.mockRestore();
+    }
   });
 });

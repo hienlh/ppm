@@ -4,6 +4,9 @@
  */
 import { contributionRegistry } from "../../services/contribution-registry.ts";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("ExtWS");
 
 type ExtWsSocket = {
   data: { type: string };
@@ -58,7 +61,7 @@ export function getExtClientCount(): number {
 
 function handleOpen(ws: ExtWsSocket): void {
   clients.add(ws);
-  console.log(`[ExtWS] Client connected (${clients.size} total)`);
+  log.debug(`Client connected (${clients.size} total)`);
 }
 
 async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<void> {
@@ -86,12 +89,12 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
       try {
         const { extensionService } = await import("../../services/extension.service.ts");
         if (extensionService["rpc"]) {
-          console.log(`[ExtWS] command:execute "${msg.command}"`);
+          log.debug(`command:execute "${msg.command}"`);
           const result = await extensionService["rpc"].sendRequest<{ ok: boolean; error?: string }>(
             "ext:command:execute", msg.command, ...(msg.args ?? []),
           );
           if (!result?.ok) {
-            console.error(`[ExtWS] command:execute failed: ${result?.error ?? "unknown"}`);
+            log.error(`command:execute failed: ${result?.error ?? "unknown"}`);
             broadcastExtMsg({
               type: "notification",
               id: `cmd-error-${Date.now()}`,
@@ -100,7 +103,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
             });
           }
         } else {
-          console.error(`[ExtWS] command:execute: extension host not ready`);
+          log.error(`command:execute: extension host not ready`);
           broadcastExtMsg({
             type: "notification",
             id: `cmd-error-${Date.now()}`,
@@ -109,7 +112,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
           });
         }
       } catch (e) {
-        console.error(`[ExtWS] command:execute error:`, e);
+        log.error(`command:execute error:`, e);
         broadcastExtMsg({
           type: "notification",
           id: `cmd-error-${Date.now()}`,
@@ -128,7 +131,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
             await extensionService["rpc"].sendRequest("ext:command:execute", msg.command);
           }
         } catch (e) {
-          console.error(`[ExtWS] tree:click command error:`, e);
+          log.error(`tree:click command error:`, e);
         }
       }
       break;
@@ -168,7 +171,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
           await extensionService["rpc"].sendRequest("ext:webview:message", msg.panelId, msg.message);
         }
       } catch (e) {
-        console.error(`[ExtWS] webview:message error:`, e);
+        log.error(`webview:message error:`, e);
       }
       break;
     }
@@ -180,7 +183,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
           await extensionService["rpc"].sendRequest("ext:webview:close", msg.panelId);
         }
       } catch (e) {
-        console.error(`[ExtWS] webview:close error:`, e);
+        log.error(`webview:close error:`, e);
       }
       break;
     }
@@ -198,7 +201,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
           }
         }
       } catch (e) {
-        console.error(`[ExtWS] tree:expand error:`, e);
+        log.error(`tree:expand error:`, e);
       }
       break;
     }
@@ -207,7 +210,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
 
 function handleClose(ws: ExtWsSocket): void {
   clients.delete(ws);
-  console.log(`[ExtWS] Client disconnected (${clients.size} remaining)`);
+  log.debug(`Client disconnected (${clients.size} remaining)`);
 }
 
 export const extensionWebSocket = {

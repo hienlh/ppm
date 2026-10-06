@@ -1,14 +1,15 @@
 import { Save, Undo2 } from "@/lib/icons";
 
 interface SaveBarProps {
+  /** Rows Save would write. */
   pendingCount: number;
   onSave: () => void;
   onDiscard: () => void;
 }
 
 /**
- * Floating save bar shown when there are pending cell edits.
- * Save with click or Mod+Enter. Discard with Escape.
+ * Save bar of a grid with no toolbar of its own (a query's result), shown while changes wait.
+ * Save with click or Mod+Enter.
  */
 export function GlideSaveBar({ pendingCount, onSave, onDiscard }: SaveBarProps) {
   if (pendingCount === 0) return null;
@@ -16,7 +17,7 @@ export function GlideSaveBar({ pendingCount, onSave, onDiscard }: SaveBarProps) 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 border-t border-warning/50 bg-warning/5 shrink-0 text-xs">
       <span className="text-warning font-medium">
-        {pendingCount} pending edit{pendingCount > 1 ? "s" : ""}
+        {pendingCount} changed row{pendingCount > 1 ? "s" : ""}
       </span>
       <div className="flex-1" />
       <button type="button" onClick={onDiscard}

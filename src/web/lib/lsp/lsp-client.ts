@@ -31,7 +31,7 @@ export interface LspMissingServer {
   /** Whether PPM can install this one on *this host* — a toolchain-based install needs that toolchain. */
   installable?: boolean;
   /** What the install would use, so the dialog can say what pressing the button does. */
-  installWith?: "bun" | "go" | "rustup";
+  installWith?: "bun" | "go" | "rustup" | "download" | "gem";
 }
 
 export type LspDocumentStatus =

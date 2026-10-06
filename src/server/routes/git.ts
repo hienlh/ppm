@@ -1,14 +1,28 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
-import { gitService } from "../../services/git.service.ts";
+import { gitService, remoteForLog } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
 import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
 import { assertRef } from "../../services/git-branch-diff/branch-diff-parse.ts";
 import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
+import { gitChangesService } from "../../services/git-changes/git-changes.service.ts";
+import { gitDiscardJournal } from "../../services/git-discard-journal/git-discard-journal.service.ts";
+import { gitCommitDraftService } from "../../services/git-commit-draft.service.ts";
+import { gitWorkflowService } from "../../services/git-workflow/git-workflow.service.ts";
+import { emitGitEvent } from "../../services/git-changes/git-events.ts";
 import { isInsideDir, realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
+import { createLogger } from "../../services/logger.ts";
 import { ok, err } from "../../types/api.ts";
 import type { CheckoutMode } from "../../types/git.ts";
+
+/**
+ * Commit, push, branch create/checkout/delete and merge are logged here rather than in
+ * `git.service`, because the CLI calls those service methods as well and has no log file — a
+ * line there would print in the terminal beside the CLI's own message. The rest of the git
+ * writes are logged by their services.
+ */
+const log = createLogger("git");
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -55,6 +69,25 @@ gitRoutes.use("*", async (c, next) => {
 });
 
 /**
+ * Every POST below writes to the repository, so tell every git surface —
+ * Source Control, the Review tab, the Git Graph — to read it again now rather
+ * than at its next poll. A failed command counts too: a merge that stops on a
+ * conflict answers with an error and has changed the tree all the same.
+ */
+gitRoutes.use("*", async (c, next) => {
+  await next();
+  if (c.req.method !== "POST") return;
+  const repo = c.get("projectPath");
+  gitChangesService.invalidate(repo);
+  emitGitEvent({ type: "git:changed", projectName: c.get("projectName"), repo });
+});
+
+/** The shared commit message changed: every surface showing it updates. */
+function broadcastCommitDraft(projectName: string, repo: string, draft: { message: string; updatedAt: string | null }, clientId: string | null): void {
+  emitGitEvent({ type: "git:commit-draft", projectName, repo, ...draft, clientId });
+}
+
+/**
  * The `ref`-ish query parameters, refused at the boundary rather than handed on.
  *
  * A revision reaches git as its own argv word, so the hazard is not a shell
@@ -98,6 +131,73 @@ gitRoutes.get("/status", async (c) => {
     return c.json(ok(status));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /git/changes — every changed file with its blocks, plus branch and merge state. */
+gitRoutes.get("/changes", async (c) => {
+  try {
+    return c.json(ok(await gitChangesService.getChanges(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /git/changes/file?path=&oldPath= — one file's blocks with their lines, both sides. */
+gitRoutes.get("/changes/file", async (c) => {
+  const path = c.req.query("path");
+  if (!path) return c.json(err("Missing: path"), 400);
+  try {
+    const detail = await gitChangesService.getFileChanges(c.get("projectPath"), path, c.req.query("oldPath") || undefined);
+    return c.json(ok(detail));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /git/commit-draft — the message being written for this repository. */
+gitRoutes.get("/commit-draft", (c) => {
+  try {
+    return c.json(ok(gitCommitDraftService.get(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * PUT /git/commit-draft { message, clientId? } — `clientId` comes back in the
+ * broadcast so the surface that typed it can ignore its own echo.
+ */
+gitRoutes.put("/commit-draft", async (c) => {
+  const body = await c.req.json<{ message?: unknown; clientId?: unknown }>().catch(() => ({} as { message?: unknown; clientId?: unknown }));
+  if (typeof body.message !== "string") return c.json(err("Missing: message"), 400);
+  try {
+    const repo = c.get("projectPath");
+    const draft = gitCommitDraftService.set(repo, body.message);
+    broadcastCommitDraft(c.get("projectName"), repo, draft, typeof body.clientId === "string" ? body.clientId : null);
+    return c.json(ok(draft));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /git/discards — discards that can still be undone, newest first. */
+gitRoutes.get("/discards", async (c) => {
+  try {
+    return c.json(ok(await gitDiscardJournal.list(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/discard/undo { id } — 409 when the file changed since and Undo would overwrite that. */
+gitRoutes.post("/discard/undo", async (c) => {
+  const { id } = await c.req.json<{ id?: unknown }>().catch(() => ({ id: undefined }));
+  if (typeof id !== "string" || !id) return c.json(err("Missing: id"), 400);
+  try {
+    return c.json(ok(await gitDiscardJournal.undo(c.get("projectPath"), id)));
+  } catch (e) {
+    return c.json(err((e as Error).message), 409);
   }
 });
 
@@ -298,27 +398,49 @@ gitRoutes.get("/pr-url", async (c) => {
   }
 });
 
-/** POST /git/fetch { remote? } */
+/** POST /git/fetch { remote?, prune? } — every remote when none is named */
 gitRoutes.post("/fetch", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ remote?: string }>().catch(() => ({ remote: undefined }));
+    const body = await c.req.json<{ remote?: string; prune?: boolean }>().catch(() => ({ remote: undefined, prune: undefined }));
     const { remote } = body;
-    await gitService.fetch(projectPath, remote);
+    // Its own argv word, so `--prune-tags` here would be a flag: with `prune`, it deletes every
+    // tag the remote does not have, and a tag has no reflog to bring it back from.
+    if (remote !== undefined && (typeof remote !== "string" || remote.startsWith("-"))) {
+      return c.json(err(`Invalid remote: "${String(remote)}"`), 400);
+    }
+    await gitService.fetch(projectPath, remote, body.prune === true);
     return c.json(ok({ fetched: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
 });
 
-/** POST /git/discard { files } — discard unstaged changes (checkout tracked, clean untracked) */
+/**
+ * POST /git/discard { files } — discard unstaged changes (checkout tracked, clean untracked).
+ * Answers with an `undo` record; a 500 carries one too when the discard failed part way.
+ */
 gitRoutes.post("/discard", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const { files } = await c.req.json<{ files: string[] }>();
     if (!files?.length) return c.json(err("Missing: files"), 400);
-    await gitService.discardChanges(projectPath, files);
-    return c.json(ok({ discarded: files }));
+    // The copy comes first: git keeps nothing of what it throws away.
+    const pending = await gitDiscardJournal.captureFiles(projectPath, files);
+    try {
+      await gitService.discardChanges(projectPath, files);
+    } catch (e) {
+      // It may have got part way (the tracked files go before the untracked
+      // ones): the answer carries the Undo for whatever it already threw away.
+      const undo = await gitDiscardJournal.failed(pending);
+      return c.json({ ...err((e as Error).message), undo }, 500);
+    }
+    // The discard happened, and the entry written before it can still undo it.
+    const undo = await gitDiscardJournal.commitFiles(pending).catch((e) => {
+      log.error(`could not note what the discard in ${projectPath} left; its Undo is the entry written before it:`, e);
+      return gitDiscardJournal.summarize(pending);
+    });
+    return c.json(ok({ discarded: files, undo }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -457,26 +579,48 @@ gitRoutes.post("/unstage-hunks", async (c) => {
   }
 });
 
-/** POST /git/discard-hunks { path, hunks: [{ hunk, id, lines? }] } — not recoverable */
+/**
+ * POST /git/discard-hunks { path, hunks: [{ hunk, id, lines? }] } — answers with
+ * an `undo` record, or `undo: null` if the copy could not be kept.
+ */
 gitRoutes.post("/discard-hunks", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const parsed = readHunkBody(await c.req.json());
     if (typeof parsed === "string") return c.json(err(parsed), 400);
-    await gitHunksService.discard(projectPath, parsed.filePath, parsed.hunks);
-    return c.json(ok({ discarded: parsed.filePath }));
+    const patch = await gitHunksService.discard(projectPath, parsed.filePath, parsed.hunks);
+    // The discard already happened; failing to keep a copy must not report it as failed.
+    const undo = await gitDiscardJournal.recordHunks(projectPath, parsed.filePath, patch).catch((e) => {
+      log.error(`could not keep an undo copy of the discarded hunks of ${parsed.filePath} in ${projectPath} — the discard cannot be undone:`, e);
+      return null;
+    });
+    return c.json(ok({ discarded: parsed.filePath, undo }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
 });
 
-/** POST /git/commit { message, amend? } */
+/**
+ * POST /git/commit { message, amend?, signoff? } — clears the shared commit message,
+ * unless it was written again while the commit ran: what was typed during the hooks
+ * is the next message. One that still holds what was committed, or that nobody
+ * saved to since (a box that committed before its last keystrokes were saved), goes.
+ */
 gitRoutes.post("/commit", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const { message, amend } = await c.req.json<{ message?: string; amend?: boolean }>();
+    const { message, amend, signoff } = await c.req.json<{ message?: string; amend?: boolean; signoff?: boolean }>();
     if (!amend && !message) return c.json(err("Missing: message"), 400);
-    const hash = await gitService.commit(projectPath, message ?? "", !!amend);
+    let draftBefore: string | null = null;
+    try { draftBefore = gitCommitDraftService.get(projectPath).message; } catch { /* the commit does not need it */ }
+    const hash = await gitService.commit(projectPath, message ?? "", !!amend, !!signoff);
+    log.info(`committed ${hash.slice(0, 7)} in ${projectPath} (amend=${!!amend}, signoff=${!!signoff})`);
+    try {
+      const draft = gitCommitDraftService.get(projectPath).message;
+      if (draft === draftBefore || draft.trim() === (message ?? "").trim()) {
+        broadcastCommitDraft(c.get("projectName"), projectPath, gitCommitDraftService.set(projectPath, ""), null);
+      }
+    } catch { /* the commit stands either way */ }
     return c.json(ok({ hash }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -488,24 +632,114 @@ gitRoutes.post("/push", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const { remote, branch } = await c.req.json<{ remote?: string; branch?: string }>();
+    const started = performance.now();
     await gitService.push(projectPath, remote, branch);
+    log.info(`pushed ${branch ?? "the current branch"} to ${remote ? remoteForLog(remote) : "its default remote"} in ${projectPath} (${Math.round(performance.now() - started)} ms)`);
     return c.json(ok({ pushed: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
 });
 
-/** POST /git/pull { remote?, branch? } */
+/** POST /git/pull { rebase? } — from the branch's upstream. */
 gitRoutes.post("/pull", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const { remote, branch } = await c.req.json<{ remote?: string; branch?: string }>();
-    await gitService.pull(projectPath, remote, branch);
+    const { rebase } = await c.req.json<{ rebase?: boolean }>();
+    await gitWorkflowService.pull(projectPath, { rebase });
     return c.json(ok({ pulled: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
 });
+
+/** POST /git/publish — push the current branch and make the remote branch its upstream. */
+gitRoutes.post("/publish", async (c) => {
+  try {
+    return c.json(ok(await gitWorkflowService.publish(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * POST /git/commit/undo { hash } — soft-reset the commit `hash` names, while it
+ * is still the last one, and put its message back in the shared message box,
+ * unless something is already being written there. 400 without a hash; 409 when
+ * it is no longer the last commit, was pushed, is the root commit, or a
+ * merge/rebase is under way.
+ */
+gitRoutes.post("/commit/undo", async (c) => {
+  const projectPath = c.get("projectPath");
+  const { hash } = await c.req.json<{ hash?: unknown }>().catch(() => ({ hash: undefined }));
+  if (typeof hash !== "string" || !hash) return c.json(err("Missing: hash"), 400);
+  let undone: { hash: string; message: string };
+  try {
+    undone = await gitWorkflowService.undoLastCommit(projectPath, hash);
+  } catch (e) {
+    return c.json(err((e as Error).message), 409);
+  }
+  let draft = gitCommitDraftService.get(projectPath);
+  if (!draft.message.trim()) {
+    draft = gitCommitDraftService.set(projectPath, undone.message);
+    broadcastCommitDraft(c.get("projectName"), projectPath, draft, null);
+  }
+  return c.json(ok({ ...undone, draft }));
+});
+
+/**
+ * POST /git/operation/{abort,continue} — finish or abandon the merge, rebase,
+ * cherry-pick, revert or `am` that stopped on a conflict. 409 when there is
+ * none, or when continuing with conflicts left.
+ */
+gitRoutes.post("/operation/:action{abort|continue}", async (c) => {
+  try {
+    const action = c.req.param("action") as "abort" | "continue";
+    return c.json(ok({ kind: await gitWorkflowService.operation(c.get("projectPath"), action) }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 409);
+  }
+});
+
+/** GET /git/stashes */
+gitRoutes.get("/stashes", async (c) => {
+  try {
+    return c.json(ok(await gitWorkflowService.listStashes(c.get("projectPath"))));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * POST /git/stash { message?, includeUntracked? } — answers with the stash it
+ * made, or `stashed: false, stash: null` when git found nothing it could save.
+ */
+gitRoutes.post("/stash", async (c) => {
+  try {
+    const body = await c.req.json<{ message?: unknown; includeUntracked?: unknown }>().catch(() => ({} as { message?: unknown; includeUntracked?: unknown }));
+    const stash = await gitWorkflowService.stash(c.get("projectPath"), {
+      message: typeof body.message === "string" ? body.message : undefined,
+      includeUntracked: body.includeUntracked === true,
+    });
+    return c.json(ok({ stashed: !!stash, stash }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/stash/{apply,pop,drop} { index, hash } — refused if `stash@{index}` is no longer `hash`. */
+for (const action of ["apply", "pop", "drop"] as const) {
+  gitRoutes.post(`/stash/${action}`, async (c) => {
+    const body = await c.req.json<{ index?: unknown; hash?: unknown }>().catch(() => ({} as { index?: unknown; hash?: unknown }));
+    if (typeof body.index !== "number" || typeof body.hash !== "string") return c.json(err("Missing: index, hash"), 400);
+    try {
+      const result = await gitWorkflowService.stashAction(c.get("projectPath"), action, body.index, body.hash);
+      return c.json(ok({ [action]: true, ...result }));
+    } catch (e) {
+      return c.json(err((e as Error).message), 500);
+    }
+  });
+}
 
 /** POST /git/branch/create { name, from? } */
 gitRoutes.post("/branch/create", async (c) => {
@@ -519,6 +753,7 @@ gitRoutes.post("/branch/create", async (c) => {
       assertRef(name, "name"),
       from ? assertRef(from, "from") : undefined,
     );
+    log.info(`created and checked out branch ${name} from ${from ?? "HEAD"} in ${projectPath}`);
     return c.json(ok({ created: name }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -545,6 +780,7 @@ gitRoutes.post("/checkout", async (c) => {
       return c.json(err(`Unknown checkout mode: "${mode}"`), 400);
     }
     await gitService.checkout(projectPath, assertRef(ref, "ref"), mode);
+    log.info(`checked out ${ref} (mode=${mode ?? "checkout"}) in ${projectPath}`);
     return c.json(ok({ checkedOut: ref }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -558,6 +794,7 @@ gitRoutes.post("/branch/delete", async (c) => {
     const { name, force } = await c.req.json<{ name: string; force?: boolean }>();
     if (!name) return c.json(err("Missing: name"), 400);
     await gitService.deleteBranch(projectPath, name, force);
+    log.info(`deleted branch ${name} force=${!!force} in ${projectPath}`);
     return c.json(ok({ deleted: name }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -571,6 +808,7 @@ gitRoutes.post("/merge", async (c) => {
     const { source } = await c.req.json<{ source: string }>();
     if (!source) return c.json(err("Missing: source"), 400);
     await gitService.merge(projectPath, source);
+    log.info(`merged ${source} into HEAD in ${projectPath}`);
     return c.json(ok({ merged: source }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

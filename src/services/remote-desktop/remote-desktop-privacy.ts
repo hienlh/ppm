@@ -33,6 +33,9 @@
  */
 import { detectLinuxSession } from "./remote-desktop-linux-session.ts";
 import { getX11, type X11Connection } from "./remote-desktop-x11.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 /** `XGrabKeyboard`/`XGrabPointer` return codes we care about. */
 const GRAB_SUCCESS = 0;
@@ -95,11 +98,13 @@ export interface PrivacyHandle {
  *  privacy mode as on while half the host is still usable, which is worse than refusing. */
 function grabInput(x11: X11Connection): boolean {
   const kb = x11.x11.XGrabKeyboard(x11.dpy, x11.root, 0, GRAB_MODE_ASYNC, GRAB_MODE_ASYNC, CURRENT_TIME);
-  if (kb !== GRAB_SUCCESS) return false;
+  // X's own status codes: 1 AlreadyGrabbed (a screen locker, an open menu), 3 NotViewable, 4 Frozen.
+  if (kb !== GRAB_SUCCESS) { log.warn(`privacy grab refused kb=${kb} ptr=-`); return false; }
   const pt = x11.x11.XGrabPointer(
     x11.dpy, x11.root, 0, POINTER_EVENT_MASK, GRAB_MODE_ASYNC, GRAB_MODE_ASYNC, NONE, NONE, CURRENT_TIME,
   );
   if (pt !== GRAB_SUCCESS) {
+    log.warn(`privacy grab refused kb=${kb} ptr=${pt}`);
     x11.x11.XUngrabKeyboard(x11.dpy, CURRENT_TIME);
     x11.x11.XFlush(x11.dpy);
     return false;
@@ -142,6 +147,7 @@ export async function engagePrivacy(): Promise<PrivacyHandle | null> {
   };
   blanked = force(DPMS_MODE_OFF);
   if (blanked) blankTimer = setInterval(() => force(DPMS_MODE_OFF), BLANK_REASSERT_MS);
+  log.info(`privacy engaged blanked=${blanked}`);
 
   let released = false;
   return {
@@ -158,6 +164,7 @@ export async function engagePrivacy(): Promise<PrivacyHandle | null> {
         x11.x11.XUngrabPointer(x11.dpy, CURRENT_TIME);
         x11.x11.XFlush(x11.dpy);
       } catch { /* the server may already be gone; the grabs died with the connection */ }
+      log.info("privacy released");
     },
   };
 }

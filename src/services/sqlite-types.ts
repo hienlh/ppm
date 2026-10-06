@@ -13,6 +13,8 @@ export interface ColumnInfo {
   pk: boolean;
   dflt_value: string | null;
   fk: { table: string; column: string } | null;
+  /** The table's rowid itself (INTEGER PRIMARY KEY): a row inserted without it is given one. */
+  autoIncrement: boolean;
 }
 
 export interface QueryResult {

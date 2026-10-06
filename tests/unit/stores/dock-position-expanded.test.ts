@@ -27,8 +27,7 @@ installGlobal("localStorage", localStorageStub);
 afterAll(uninstallDom);
 
 // fetch stub — settings-store pushes UI prefs to the server (debounced); swallow it.
-(globalThis as unknown as { fetch: () => Promise<Response> }).fetch = () =>
-  Promise.resolve(new Response("{}", { status: 200 }));
+installGlobal("fetch", () => Promise.resolve(new Response("{}", { status: 200 })));
 
 // Import AFTER stubbing localStorage
 import { useSettingsStore } from "../../../src/web/stores/settings-store";

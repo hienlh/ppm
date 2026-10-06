@@ -6,7 +6,10 @@ import {
   assertNotProtected,
   resolvePath,
 } from "../fs-path-guard.service.ts";
+import { createLogger } from "../logger.ts";
 import { removeEntry, renameEntry } from "./fs-core-ops.ts";
+
+const log = createLogger("fs");
 
 /** Rename in place: the new name is joined onto the source's own directory. */
 export async function renamePath(path: string, newName: string): Promise<{ from: string; to: string }> {
@@ -23,6 +26,7 @@ export async function renamePath(path: string, newName: string): Promise<{ from:
   assertAllowed(dst);
   await assertNotPpmSubtreeDeep(dst);
   await renameEntry(src, dst);
+  log.info(`renamed ${src} → ${dst}`);
   return { from: src, to: dst };
 }
 
@@ -34,8 +38,9 @@ export async function deletePath(path: string): Promise<{ removed: string }> {
   // auth token and the stored provider credentials.
   await assertNotPpmSubtreeDeep(target);
   await assertNotProtected(target);
-  await lstat(target);
+  const st = await lstat(target);
   await removeEntry(target);
+  log.info(`deleted permanently ${target} (${st.isSymbolicLink() ? "symlink" : st.isDirectory() ? "directory" : "file"})`);
   return { removed: target };
 }
 

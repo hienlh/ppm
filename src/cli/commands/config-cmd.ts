@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import type { PpmConfig } from "../../types/config.ts";
 import { isSecretConfigKey, redactSecretConfigValue } from "../../services/config-secret-keys.ts";
+import { LOG_LEVELS, parseLogLevel } from "../../shared/log-levels.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -111,6 +112,15 @@ export function registerConfigCommands(program: Command): void {
         if (existing === undefined) {
           console.error(`${C.red}Error:${C.reset} Config key "${key}" not found`);
           process.exit(1);
+        }
+        // Stored anyway, an unknown level would quietly mean the default.
+        if (key === "log_level") {
+          const level = parseLogLevel(value);
+          if (level === null) {
+            console.error(`${C.red}Error:${C.reset} Unknown log level "${value}". Use one of: ${LOG_LEVELS.join(", ")}`);
+            process.exit(1);
+          }
+          value = level;
         }
 
         setNestedValue(all, key, value);

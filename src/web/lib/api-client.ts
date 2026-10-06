@@ -30,17 +30,54 @@ const pendingGets = new Map<string, { promise: Promise<unknown>; startedAt: numb
 const RESPONSE_TIMEOUT_MS = 30_000;
 
 /**
- * A request the server answered with a failure. The message is exactly what callers
- * have always matched on; `status` is there for the ones that must tell "this resource
- * is gone" (404) from any other failure whose wording happens to say "not found".
+ * A request the server answered with a failure: `{ ok: false }`, or a body that is not JSON.
+ *
+ * The message is the server's own, exactly what a plain `Error` carried before, so a caller that
+ * only shows `e.message` is unaffected. `status` is there for the ones that must tell "this
+ * resource is gone" (404) from any other failure whose wording happens to say "not found", and
+ * the whole body (null when it was not JSON) for callers that branch on more than the message — a
+ * `DB_DRIVER_MISSING` answer names the driver to offer for install.
  */
 export class ApiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  readonly body: unknown;
+
+  constructor(message: string, status: number, body: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.body = body;
   }
+
+  /** The body's machine-readable `code`, when it has one. */
+  get code(): string | undefined {
+    const code = (this.body as { code?: unknown } | null)?.code;
+    return typeof code === "string" ? code : undefined;
+  }
+}
+
+/**
+ * Asked when a database connection that keeps no password answered `428 DB_LOGIN_REQUIRED`, i.e.
+ * the server holds no login for it yet. Database Log In registers itself here: it resolves true
+ * once the server holds one, and the request goes again — it was refused before anything ran, so
+ * sending it twice is safe whatever its method. Resolving false (the dialog was closed) lets the
+ * 428 reach the caller as an `ApiError`, as it would with nothing registered.
+ */
+export type DbLoginHandler = (body: unknown) => Promise<boolean>;
+
+let dbLoginHandler: DbLoginHandler | null = null;
+
+export function setDbLoginHandler(handler: DbLoginHandler | null): void {
+  dbLoginHandler = handler;
+}
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+  /**
+   * false: a 428 is the caller's own to answer. The connection form's Test is one — it logs in
+   * with what the form holds, which no saved connection has yet.
+   */
+  dbLogin?: boolean;
 }
 
 /** `reason` is only guaranteed on newer engines; never propagate `undefined`. */
@@ -109,30 +146,36 @@ export class ApiClient {
     if (signal?.aborted) throw abortReason(signal);
 
     const controller = new AbortController();
-    const timer = setTimeout(
-      () =>
-        controller.abort(
-          new DOMException(
-            `No response after ${this.responseTimeoutMs}ms: ${path}`,
-            "TimeoutError",
-          ),
-        ),
-      this.responseTimeoutMs,
-    );
     const forwardAbort = () => controller.abort(abortReason(signal!));
     signal?.addEventListener("abort", forwardAbort, { once: true });
 
+    // Each send has its own clock — the first, and the one after a database login — and it
+    // stops once headers are in: the connection answered, and the body may legitimately be
+    // large and slow.
+    const send = async () => {
+      const timer = setTimeout(
+        () =>
+          controller.abort(
+            new DOMException(
+              `No response after ${this.responseTimeoutMs}ms: ${path}`,
+              "TimeoutError",
+            ),
+          ),
+        this.responseTimeoutMs,
+      );
+      try {
+        return await fetch(`${this.baseUrl}${path}`, {
+          headers: this.headers(),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
     try {
-      const res = await fetch(`${this.baseUrl}${path}`, {
-        headers: this.headers(),
-        signal: controller.signal,
-      });
-      // Headers are in, so the connection answered — stop the clock before
-      // reading the body, which may legitimately be large and slow.
-      clearTimeout(timer);
-      return await this.handleResponse<T>(res);
+      return await this.settle<T>(await send(), send);
     } finally {
-      clearTimeout(timer);
       signal?.removeEventListener("abort", forwardAbort);
     }
   }
@@ -142,41 +185,64 @@ export class ApiClient {
    * mid-flight can leave the server having done the work with nobody to tell. A
    * caller that would rather fail loudly than wait passes its own `signal`.
    */
-  async post<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+  async post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return this.send<T>("POST", path, body, options);
+  }
+
+  async put<T>(path: string, body?: unknown): Promise<T> {
+    return this.send<T>("PUT", path, body);
+  }
+
+  async patch<T>(path: string, body?: unknown): Promise<T> {
+    return this.send<T>("PATCH", path, body);
+  }
+
+  async del(path: string, body?: unknown): Promise<void> {
+    await this.send<void>("DELETE", path, body);
+  }
+
+  /**
+   * A POST answered with a stream rather than one `{ok, data}` envelope: the response itself, its
+   * body still to be read, once its status says the request was taken. A refusal comes back as
+   * JSON and is thrown as `post` throws it — a database login asked for and given first included.
+   */
+  async postStream(path: string, body: unknown, options?: RequestOptions): Promise<Response> {
+    const send = () => fetch(`${this.baseUrl}${path}`, {
       method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    });
+    const res = await this.withDbLogin(await send(), send, options);
+    if (res.ok && res.body) {
+      warnOnAuditFailure(res);
+      return res;
+    }
+    await this.handleResponse<unknown>(res);
+    throw new Error(res.ok ? "Empty response from server" : `Server error (HTTP ${res.status})`);
+  }
+
+  private async send<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    const send = () => fetch(`${this.baseUrl}${path}`, {
+      method,
       headers: this.headers(),
       body: body != null ? JSON.stringify(body) : undefined,
       signal: options?.signal,
     });
-    return this.handleResponse<T>(res);
+    return this.settle<T>(await send(), send, options);
   }
 
-  async put<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: "PUT",
-      headers: this.headers(),
-      body: body != null ? JSON.stringify(body) : undefined,
-    });
-    return this.handleResponse<T>(res);
+  private async settle<T>(res: Response, send: () => Promise<Response>, options?: RequestOptions): Promise<T> {
+    return this.handleResponse<T>(await this.withDbLogin(res, send, options));
   }
 
-  async patch<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: "PATCH",
-      headers: this.headers(),
-      body: body != null ? JSON.stringify(body) : undefined,
-    });
-    return this.handleResponse<T>(res);
-  }
-
-  async del(path: string, body?: unknown): Promise<void> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: "DELETE",
-      headers: this.headers(),
-      body: body != null ? JSON.stringify(body) : undefined,
-    });
-    await this.handleResponse<void>(res);
+  /** The response, or — when it asks for a database login and one is given — the same request again. */
+  private async withDbLogin(res: Response, send: () => Promise<Response>, options?: RequestOptions): Promise<Response> {
+    if (res.status === 428 && options?.dbLogin !== false && dbLoginHandler) {
+      const body: unknown = await res.clone().json().catch(() => null);
+      if ((body as { code?: unknown } | null)?.code === "DB_LOGIN_REQUIRED" && await dbLoginHandler(body)) return send();
+    }
+    return res;
   }
 
   private async handleResponse<T>(res: Response): Promise<T> {
@@ -197,11 +263,11 @@ export class ApiClient {
     try {
       json = await res.json();
     } catch {
-      throw new ApiError(res.ok ? "Empty response from server" : `Server error (HTTP ${res.status})`, res.status);
+      throw new ApiError(res.ok ? "Empty response from server" : `Server error (HTTP ${res.status})`, res.status, null);
     }
 
     if (json.ok === false) {
-      throw new ApiError(json.error ?? `HTTP ${res.status}`, res.status);
+      throw new ApiError(json.error ?? `HTTP ${res.status}`, res.status, json);
     }
 
     return json.data as T;

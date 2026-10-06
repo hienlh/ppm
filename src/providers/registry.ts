@@ -4,6 +4,9 @@ import { ClaudeAgentSdkProvider } from "./claude-agent-sdk.ts";
 import { configService } from "../services/config.service.ts";
 import { nextProbeDelayMs, type ProviderProbeStatus } from "./provider-probe.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
+import { createLogger } from "../services/logger.ts";
+
+const log = createLogger("registry");
 
 export interface ProviderInfo {
   id: string;
@@ -84,12 +87,12 @@ export async function bootstrapProviders(): Promise<void> {
           },
         });
       }
-      console.log("[registry] Cursor provider registered (cursor-agent found)");
+      log.info("Cursor provider registered (cursor-agent found)");
     } else {
-      console.log("[registry] Cursor provider skipped (cursor-agent not found)");
+      log.info("Cursor provider skipped (cursor-agent not found)");
     }
   } catch (e) {
-    console.warn("[registry] Failed to load Cursor provider:", (e as Error).message);
+    log.warn("Failed to load Cursor provider:", (e as Error).message);
   }
 
   await probeCodexProvider();
@@ -174,13 +177,15 @@ async function probeCodexProvider(): Promise<ProviderProbeStatus> {
       if (result.ok) {
         providerRegistry.register(codex);
         ensureCodexConfigEntry();
-        console.log("[registry] Codex provider registered (@openai/codex found)");
+        log.info("Codex provider registered (@openai/codex found)");
         status = { id: "codex", registered: true, attempts, lastProbeAt };
       } else {
         status = { id: "codex", registered: false, attempts, lastProbeAt, reason: result.reason };
         if (result.retryable) status.nextProbeAt = scheduleCodexRetry(attempts);
-        console.log(
-          `[registry] Codex provider unavailable: ${result.reason}` +
+        // Retryable = codex should be here and is hidden until a later probe answers (degraded).
+        // Not retryable = this host cannot run it at all, which is a plain fact about the host.
+        (result.retryable ? log.warn : log.info)(
+          `Codex provider unavailable: ${result.reason}` +
           (status.nextProbeAt ? ` — retrying at ${status.nextProbeAt}` : ""),
         );
       }
@@ -189,7 +194,7 @@ async function probeCodexProvider(): Promise<ProviderProbeStatus> {
       // retrying, since the alternative is silence until the next restart.
       status = { id: "codex", registered: false, attempts, lastProbeAt, reason: (e as Error).message };
       status.nextProbeAt = scheduleCodexRetry(attempts);
-      console.warn("[registry] Failed to load Codex provider:", (e as Error).message);
+      log.warn("Failed to load Codex provider:", (e as Error).message);
     }
     probeStatuses.set("codex", status);
     return status;

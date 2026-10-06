@@ -12,6 +12,8 @@
 export const SECRET_CONFIG_KEYS: readonly string[] = [
   "tunnel.namedTunnelToken",
   "auth.token",
+  "telegram.bot_token",
+  "ntfy.token",
 ];
 
 /** Marker shown in place of a redacted secret value. Never the empty string, so a caller can tell "masked" apart from "absent". */

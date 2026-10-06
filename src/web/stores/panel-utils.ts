@@ -1,4 +1,5 @@
 import { randomId } from "@/lib/utils";
+import { dbTabId, upgradeDbTab } from "@/lib/db-tabs";
 import type { Tab, TabType } from "./tab-store";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-moni
  * iframe whose parent is the main window, and a pop-out would make the iframe's parent the
  * picture-in-picture window instead.
  */
-export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "design"]);
+export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "design", "logs"]);
 
 /**
  * Prefix of the reserved panel IDs that host tabs detached into a floating window.
@@ -210,12 +211,20 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     }
     case "terminal":
       return `terminal:${metadata?.terminalIndex ?? 1}`;
+    // One tab per table's data, structure and object SQL, as DBGate keys them; a query tab each.
     case "database":
-      return `database:${metadata?.connectionId ?? "default"}:${metadata?.tableName ?? ""}`;
+    case "db-structure":
+    case "db-sql":
+    case "db-query":
+      return dbTabId(type, metadata);
+    // Every Import/Export is a tab of its own, as in DBGate.
+    case "db-impexp":
+      return `db-impexp:${typeof metadata?.impexpId === "string" && metadata.impexpId ? metadata.impexpId : randomId()}`;
+    // One edit tab per saved connection; every "New connection" is a tab of its own, as in DBGate.
+    case "db-connection":
+      return `db-connection:${metadata?.connectionId ?? `new-${randomId()}`}`;
     case "sqlite":
       return `sqlite:${metadata?.filePath ?? "default"}`;
-    case "postgres":
-      return `postgres:${metadata?.connectionId ?? "default"}:${metadata?.tableName ?? ""}`;
     case "extension": {
       const vt = String(metadata?.viewType ?? "unknown").replace(/\.view$/, "");
       return `extension:${vt}`;
@@ -227,6 +236,12 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // someone changed them.
     case "branch-review":
       return `branch-review:${metadata?.projectName ?? "unknown"}`;
+    // One review per chat session: reopening it from the changes bar focuses it.
+    case "session-review":
+      return `session-review:${metadata?.projectName ?? "unknown"}:${metadata?.sessionId ?? "unknown"}`;
+    // One per project: it follows the repository Source Control has chosen.
+    case "git-review":
+      return `git-review:${metadata?.projectName ?? "unknown"}`;
     case "conflict-editor":
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":
@@ -237,11 +252,17 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // One machine to watch: on a phone a second open focuses the first, as the desktop window does.
     case "system-monitor":
       return "system-monitor";
+    // One set of logs: on a phone a second open focuses the first, as the desktop window does.
+    case "logs":
+      return "logs";
     case "group":
       return `group:${metadata?.groupId ?? "unknown"}`;
     // One tab per design: the chat, the canvas and its history all belong to the design.
     case "design":
       return `design:${metadata?.designSlug ?? "unknown"}`;
+    // One tab per forwarded page: forwarding the same port again focuses it.
+    case "web-preview":
+      return `web-preview:${metadata?.url ?? "unknown"}`;
     default:
       return `${type}:${randomId()}`;
   }
@@ -279,7 +300,41 @@ export function migratePortsToTunnels(layout: PanelLayout): PanelLayout {
   return { ...layout, panels, dockPanel };
 }
 
-/** Migrate old random tab IDs to deterministic IDs */
+/**
+ * A panel's tabs as they open since the database tabs split into data, Structure, SQL and Query
+ * (`upgradeDbTab`): an old query tab becomes a Query tab, the old Postgres and SQLite viewers'
+ * tabs on a saved connection become the new ones, and what cannot be opened any more is dropped.
+ * Two old tabs that land on one id — one table open in the old viewer and in a data tab — keep
+ * the first. Window panels go through this too, from `loadWindowPanels`.
+ */
+export function upgradePanelTabs(panel: Panel): Panel {
+  const ids = new Map<string, string | null>();
+  const tabs: Tab[] = [];
+  for (const tab of panel.tabs) {
+    const next = upgradeDbTab(tab);
+    if (next !== tab) ids.set(tab.id, next?.id ?? null);
+    if (next && !tabs.some((t) => t.id === next.id)) tabs.push(next);
+  }
+  if (ids.size === 0) return panel;
+  const kept = new Set(tabs.map((t) => t.id));
+  const remap = (id: string) => (ids.has(id) ? ids.get(id) ?? null : id);
+  const tabHistory = panel.tabHistory.map(remap).filter((id): id is string => id !== null && kept.has(id));
+  const active = panel.activeTabId ? remap(panel.activeTabId) : null;
+  const activeTabId = active && kept.has(active) ? active : (tabHistory[tabHistory.length - 1] ?? tabs[tabs.length - 1]?.id ?? null);
+  return { ...panel, tabs, tabHistory, activeTabId };
+}
+
+export function migrateDbTabs(layout: PanelLayout): PanelLayout {
+  const panels: Record<string, Panel> = {};
+  for (const [id, p] of Object.entries(layout.panels)) panels[id] = upgradePanelTabs(p);
+  return { ...layout, panels };
+}
+
+/**
+ * Migrate old random tab IDs to deterministic IDs, and a table tab saved under the key it had
+ * before it named its database and schema — so opening that table again finds it. The `@panel`
+ * suffix a tab opened in a second panel carries is kept.
+ */
 export function migrateTabIds(layout: PanelLayout): PanelLayout {
   const migrated = { ...layout, panels: { ...layout.panels } };
   for (const [panelId, panel] of Object.entries(migrated.panels)) {
@@ -287,6 +342,11 @@ export function migrateTabIds(layout: PanelLayout): PanelLayout {
       if (tab.id.startsWith("tab-")) {
         const newId = deriveTabId(tab.type, tab.metadata);
         return { ...tab, id: newId };
+      }
+      if (tab.type === "database") {
+        const at = tab.id.indexOf("@");
+        const derived = deriveTabId(tab.type, tab.metadata);
+        if ((at < 0 ? tab.id : tab.id.slice(0, at)) !== derived) return { ...tab, id: at < 0 ? derived : `${derived}${tab.id.slice(at)}` };
       }
       return tab;
     });
@@ -327,14 +387,15 @@ export function loadPanelLayout(projectName: string): PanelLayout | null {
     if (raw) {
       const layout = JSON.parse(raw) as PanelLayout;
       // migratePortsToTunnels MUST run before migrateTabIds so no legacy "ports"
-      // tab reaches deriveTabId's default branch (random id → render crash).
-      return migrateDockDefaults(migrateTabIds(migratePortsToTunnels(layout)));
+      // tab reaches deriveTabId's default branch (random id → render crash), and
+      // migrateDbTabs before it too, so no removed "postgres" tab reaches it either.
+      return migrateDockDefaults(migrateTabIds(migrateDbTabs(migratePortsToTunnels(layout))));
     }
   } catch { /* ignore */ }
 
   // Migrate from old tab-store format
   const migrated = migrateOldTabStore(projectName);
-  return migrated ? migrateDockDefaults(migratePortsToTunnels(migrated)) : null;
+  return migrated ? migrateDockDefaults(migrateDbTabs(migratePortsToTunnels(migrated))) : null;
 }
 
 /**

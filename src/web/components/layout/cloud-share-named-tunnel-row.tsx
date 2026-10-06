@@ -27,8 +27,8 @@ interface TunnelEntry {
  * connector serving the very page the button lives on, so the user never sees
  * the replacement URL. A temporary link is offered as an ADDITION instead —
  * a second quick tunnel onto the same port, for one-off sharing without handing
- * out the permanent hostname. Turning the domain off entirely stays in the
- * Tunnel Manager, where it can warn about exactly this.
+ * out the permanent hostname. Turning the domain off entirely stays in
+ * Settings → Remote Access → Public link, where it can warn about exactly this.
  */
 export function CloudShareNamedTunnelRow({ onStatus, publicPort, onTempUrl }: Props) {
   const [status, setStatus] = useState<NamedTunnelStatus | null>(null);

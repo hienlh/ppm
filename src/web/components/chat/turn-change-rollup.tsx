@@ -7,21 +7,29 @@
  */
 import { useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { useTurnReview } from "@/hooks/use-turn-review";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
-import { MessageActionBar } from "./message-action-bar";
+import type { SessionTurn } from "@/lib/session-turns";
+import { turnReviewLabel } from "@/lib/turn-review";
+import { RotateCcw } from "@/lib/icons";
+import { ActionButton, MessageActionBar } from "./message-action-bar";
 import { TurnChangePill, changeTotals } from "./turn-change-pill";
 import { TurnChangeTray } from "./turn-change-tray";
 import { TurnChangeSheet } from "./turn-change-sheet";
 
-export function TurnChangeRollup({ timestamp, content, changes, onJumpToEdit }: {
+export function TurnChangeRollup({ timestamp, content, changes, turn, onJumpToEdit, onReply }: {
+  onReply?: () => void;
   timestamp: string;
   content: string;
   changes?: TurnFileChange[];
+  /** The turn this answer closes: what "Revert turn" puts back. */
+  turn?: SessionTurn;
   onJumpToEdit?: (editRef: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const isMobile = useIsMobile();
   const pillRef = useRef<HTMLButtonElement>(null);
+  const review = useTurnReview({ changes, turn });
 
   // Without this, closing drops focus to <body> and the next Tab restarts from the
   // top of a very long transcript.
@@ -36,11 +44,13 @@ export function TurnChangeRollup({ timestamp, content, changes, onJumpToEdit }: 
       content={content}
       className="-mt-1.5"
     >
+      {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
       {changes && changes.length > 0 && (
         <TurnChangePill
           ref={pillRef}
           count={changes.length}
           totals={changeTotals(changes)}
+          status={turnReviewLabel(review.summary)}
           open={open}
           onToggle={() => (open ? close() : setOpen(true))}
         />
@@ -61,13 +71,14 @@ export function TurnChangeRollup({ timestamp, content, changes, onJumpToEdit }: 
       {isMobile ? (
         <TurnChangeSheet
           changes={changes}
-          totals={changeTotals(changes)}
+          turn={turn}
+          review={review}
           open={open}
           onClose={close}
           onJump={onJumpToEdit ?? (() => {})}
         />
       ) : (
-        open && <TurnChangeTray changes={changes} onJump={jump} onClose={close} />
+        open && <TurnChangeTray changes={changes} turn={turn} review={review} onJump={jump} onClose={close} />
       )}
     </>
   );

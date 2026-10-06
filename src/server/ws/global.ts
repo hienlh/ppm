@@ -21,6 +21,11 @@ import { startWatching, stopWatching, onFileChange } from "../../services/file-w
 import { onIndexRebuilt, warmIndex } from "../../services/file-list-index.service.ts";
 import { configService } from "../../services/config.service.ts";
 import { onDesignEvent } from "../../services/design/design-events.ts";
+import { onGitEvent } from "../../services/git-changes/git-events.ts";
+import { subscribeLogs, unsubscribeLogs } from "../../services/logs/log-live.ts";
+import { tokenStillValid } from "../../services/agent-transcript/agent-transcript-hub-registry.ts";
+import { onIssuesChanged } from "../../services/logs/log-issues.ts";
+import { LOGS_ISSUES_CHANGED, LOGS_SUBSCRIBE, LOGS_UNSUBSCRIBE } from "../../shared/logs-api.ts";
 import { resolve } from "node:path";
 import {
   handleAgentActivitySubscribe, handleAgentActivityUnsubscribe,
@@ -101,6 +106,11 @@ onIndexRebuilt((projectPath, changed) => {
 // Design history/comment changes: `.design/` is not watched, so these are the only signal.
 // Services know the project path; browsers address projects by name, and a path no
 // registered project owns is dropped rather than broadcast.
+onGitEvent((event) => broadcastGlobalEvent(event));
+
+// The Logs window and the rail button's badge refetch the issues when this arrives.
+onIssuesChanged(() => broadcastGlobalEvent({ type: LOGS_ISSUES_CHANGED }));
+
 onDesignEvent((type, { projectPath, slug, requestId, screenshot }) => {
   const projectName = projectNameForPath(projectPath);
   if (!projectName) return;
@@ -130,11 +140,15 @@ export const globalWebSocket = {
     if (msg.type === "agent-activity:subscribe") return handleAgentActivitySubscribe(ws, msg as AgentActivitySubscribeMsg);
     if (msg.type === "agent-activity:unsubscribe") return handleAgentActivityUnsubscribe(ws, msg as AgentActivityUnsubscribeMsg);
     if (msg.type === "ping") return handleAgentTranscriptPing(ws);
+    // A Logs view that is open and following: new records are pushed while it is subscribed.
+    if (msg.type === LOGS_SUBSCRIBE) return subscribeLogs(ws, () => tokenStillValid(ws));
+    if (msg.type === LOGS_UNSUBSCRIBE) return unsubscribeLogs(ws);
   },
 
   close(ws: GlobalWsSocket) {
     releaseWatch(ws);
     handleAgentTranscriptClientClosed(ws);
+    unsubscribeLogs(ws);
     clients.delete(ws);
   },
 };

@@ -10,7 +10,7 @@ import {
   browserRows,
   parseBrowserBatch,
 } from "../../services/session-trace/browser-trace-ingest.ts";
-import { appendBatch, readSessionTimeline } from "../../services/session-trace/session-trace-store.ts";
+import { appendBatch, readSessionTimeline, recordTraceDevice } from "../../services/session-trace/session-trace-store.ts";
 
 const MAX_TIMELINE_ROWS = 20_000;
 
@@ -39,6 +39,9 @@ export function createTraceRoutes(limiter = new DeviceRateLimiter()): Hono {
 
     try {
       appendBatch(browserRows(batch));
+      // The Logs window names a device by its browser and OS ("Chrome·Mac"), not its random id.
+      const ua = c.req.header("user-agent");
+      if (ua) recordTraceDevice(batch.deviceId, ua);
     } catch (e) {
       // 503 rather than 500: the client keeps the batch and tries again later.
       console.warn(`[session-trace] browser batch not stored: ${(e as Error).message}`);

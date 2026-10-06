@@ -1,7 +1,7 @@
 import type { ChatEvent } from "../provider.interface.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { redactTruncate } from "./codex-redact.ts";
-import { diffToOldNew, changeToToolUse } from "./codex-patch.ts";
+import { changeToToolUse, fileUpdateChanges } from "./codex-patch.ts";
 import { parseSubagentActivity, subagentToolResult, subagentToolUse } from "./codex-subagent-thread.ts";
 
 /** ThreadItem variants that are NOT tool calls (text/metadata). Everything else
@@ -98,14 +98,9 @@ export function itemToToolUse(item: Item): ChatEvent {
       break;
     }
     case "fileChange": {
-      // Render like Claude's Edit/Write: first change → file_path + diff.
-      const changes = Array.isArray(item.changes) ? item.changes : [];
-      const ch = changes[0] as { path?: string; kind?: { type?: string }; diff?: string } | undefined;
-      if (ch) {
-        const { oldString, newString } = diffToOldNew(ch.diff ?? "");
-        const op = (ch.kind?.type as "add" | "update" | "delete") ?? "update";
-        return changeToToolUse({ path: ch.path ?? "", op, oldString, newString }, item.id);
-      }
+      // Render like Claude's Edit/Write: the first file on the card, every file under `files`.
+      const changes = fileUpdateChanges(item.changes);
+      if (changes[0]) return changeToToolUse(changes[0], item.id, changes);
       input = { changes: item.changes };
       break;
     }

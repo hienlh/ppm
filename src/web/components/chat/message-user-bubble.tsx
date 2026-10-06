@@ -6,6 +6,8 @@
  * which are *not* things the user typed and must not read as if they were, and
  * absolute file paths worth turning into something clickable.
  */
+import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import { ReplyCard } from "./reply-card";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileText,
@@ -26,13 +28,16 @@ import { AuthImageThumbnail, isImagePath } from "./message-media";
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
 
 /** User message bubble — full width, collapsible, with system tag badges */
-export function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
+export function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
   content: string;
   messageId?: string;
   timestamp: string;
   projectName?: string;
   onFork?: () => void;
   onEdit?: () => void;
+  onReply?: () => void;
+  onJumpToReply?: (reply: ReplyReference) => void;
+  replyAvailable?: (reply: ReplyReference) => boolean;
   isEditing?: boolean;
   sessionId?: string;
   providerId?: string;
@@ -40,7 +45,7 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
 }) {
-  const { files, text, tags, command, terminalBlocks, idePath, agent } = useMemo(
+  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo } = useMemo(
     () => parseUserMessage(content),
     [content],
   );
@@ -75,6 +80,7 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
         : "max-w-[80%] bg-accent-wash border-accent-wash-border text-text",
       isEditing && "ring-2 ring-primary/60 border-primary/40",
     )}>
+      {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable?.(replyTo) ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable?.(replyTo)} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
@@ -169,7 +175,8 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
     </div>
       {/* Action bar below the bubble — timestamp, copy, edit/fork (real user messages only) */}
       {!isSystemContext && (
-        <MessageActionBar timestamp={timestamp} content={content}>
+        <MessageActionBar timestamp={timestamp} content={decodeReply(content).content}>
+          {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
           {onEdit && (
             <ActionButton
               icon={<Pencil className="size-3.5" />}

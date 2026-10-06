@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, spyOn } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { configService } from "../../../src/services/config.service.ts";
 import { app } from "../../../src/server/index.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
@@ -272,6 +272,30 @@ describe("Chat REST API", () => {
       expect(json.data[0].content).toContain("summary of the oldest stretch");
       try { rmSync(TWO_COMPACTIONS, { force: true }); } catch { /* ignore */ }
     });
+
+    it("200 for a transcript over 256MB: the file is not what is bounded", async () => {
+      // A five-day session reached 543MB and every scroll up answered "File too
+      // large: 542MB exceeds 256MB limit" while its segments were ~3MB. Sparse:
+      // `truncateSync` grows the file past the old bound without writing it,
+      // and a read that touched the hole would have to wade through 300MB of
+      // zeros to get there.
+      const HUGE = resolve(TRANSCRIPT_DIR, "huge.jsonl");
+      writeFileSync(HUGE, [
+        JSON.stringify({ uuid: "pre1", type: "user", message: { content: "oldest question" } }),
+        JSON.stringify({ uuid: "compactA", type: "user", isCompactSummary: true, message: { content: "summary of the oldest stretch" } }),
+        JSON.stringify({ uuid: "mid1", type: "assistant", message: { content: [{ type: "text", text: "middle reply" }] } }),
+        JSON.stringify({ uuid: "compactB", type: "user", isCompactSummary: true, message: { content: "summary of everything so far" } }),
+      ].join("\n") + "\n");
+      truncateSync(HUGE, 300 * 1024 * 1024);
+      try {
+        const res = await req(`/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(HUGE)}&before=compactB`);
+        const json = await res.json() as any;
+        expect(res.status).toBe(200);
+        expect(json.data.map((m: any) => m.sdkUuid)).toEqual(["compactA", "mid1"]);
+      } finally {
+        rmSync(HUGE, { force: true });
+      }
+    });
   });
 });
 
@@ -351,6 +375,57 @@ describe("PUT /chat/sessions/:id/account — the user picking an account by hand
     });
     expect(res.status).toBe(200);
     expect(getSessionAccount(sessionId)).toBe(target.id);
+  });
+
+  it("lets the session's idle subprocess go, whichever provider it runs", async () => {
+    // A live subprocess keeps the account it was spawned with — Claude's CLI holds that
+    // account's token and follow-ups go straight into it — so without this the switch did
+    // nothing until the next restart. Only Codex used to get it.
+    const chatWs = await import("../../../src/server/ws/chat.ts");
+    const drop = spyOn(chatWs, "dropIdleSubprocess").mockImplementation(() => {});
+    try {
+      const { accountService } = require("../../../src/services/account.service.ts");
+      const target = accountService.add({
+        email: "switch-claude@example.com",
+        accessToken: "tok", refreshToken: "ref",
+        expiresAt: Math.floor(Date.now() / 1000) + 86400,
+      });
+      const sessionId = await newSession();
+
+      const res = await req(`/chat/sessions/${sessionId}/account`, {
+        method: "PUT",
+        body: JSON.stringify({ accountId: target.id }),
+      });
+      expect(res.status).toBe(200);
+      expect(drop).toHaveBeenCalledWith(sessionId, "account_switch", expect.any(String));
+    } finally {
+      drop.mockRestore();
+    }
+  });
+
+  it("keeps a subprocess that a background agent or shell is still running in", async () => {
+    const chatWs = await import("../../../src/server/ws/chat.ts");
+    const drop = spyOn(chatWs, "dropIdleSubprocess").mockImplementation(() => {});
+    const busy = spyOn(chatWs, "hasBackgroundWork").mockReturnValue(true);
+    try {
+      const { accountService } = require("../../../src/services/account.service.ts");
+      const target = accountService.add({
+        email: "switch-busy@example.com",
+        accessToken: "tok", refreshToken: "ref",
+        expiresAt: Math.floor(Date.now() / 1000) + 86400,
+      });
+      const sessionId = await newSession();
+
+      const res = await req(`/chat/sessions/${sessionId}/account`, {
+        method: "PUT",
+        body: JSON.stringify({ accountId: target.id }),
+      });
+      expect(res.status).toBe(200);
+      expect(drop).not.toHaveBeenCalled();
+    } finally {
+      drop.mockRestore();
+      busy.mockRestore();
+    }
   });
 
   it("refuses a disabled account and says so, rather than failing silently", async () => {

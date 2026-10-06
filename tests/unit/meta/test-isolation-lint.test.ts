@@ -20,7 +20,7 @@ function walk(dir: string, out: string[] = []): string[] {
     if (name === "node_modules" || name === "screenshots") continue;
     const path = join(dir, name);
     if (statSync(path).isDirectory()) walk(path, out);
-    else if (/\.(ts|mjs|js)$/.test(name)) out.push(path);
+    else if (/\.(tsx?|mjs|js)$/.test(name)) out.push(path);
   }
   return out;
 }
@@ -64,6 +64,44 @@ describe("PPM_HOME teardown discipline", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("the process's time zone", () => {
+  /**
+   * `bun test` runs every file in UTC without setting `TZ`, so a test that changes the zone finds
+   * `process.env.TZ` undefined and is tempted to put that back with a delete. In Bun that delete
+   * is not a restore: the zone stays whatever it last was, and every later assignment to `TZ` is
+   * ignored for the rest of the process. One file dating a zip in Asia/Ho_Chi_Minh moved every
+   * file after it to +07:00 for good, and the filter parser's zone tests — which set `TZ` per test
+   * — failed in a full run while passing on their own. Assign the value back (`?? "UTC"`).
+   */
+  test("no test deletes TZ", () => {
+    const offenders: string[] = [];
+    for (const file of FILES) {
+      readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+        if (deletesTz(line)) offenders.push(`${relative(TESTS_ROOT, file)}:${i + 1}`);
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("and the rule can tell the difference", () => {
+    // Put together, or the scan above would find these examples in this very file.
+    const del = "delete process" + ".env";
+    expect(deletesTz(`      if (saved === undefined) ${del}.TZ;`)).toBe(true);
+    expect(deletesTz(`${del}["TZ"];`)).toBe(true);
+    expect(deletesTz(`      process.env.TZ = saved ?? "UTC";`)).toBe(false);
+    expect(deletesTz(`${del}.TZ_NAME;`)).toBe(false);
+    // Prose, including this rule's own explanation.
+    expect(deletesTz(`   * after a \`${del}.TZ\` nothing moves the zone`)).toBe(false);
+  });
+});
+
+/** A line of code — not of a comment — that deletes `process.env.TZ`. */
+function deletesTz(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith("*") || trimmed.startsWith("//") || trimmed.startsWith("/*")) return false;
+  return /delete\s+process\.env(?:\.TZ\b|\[\s*["'`]TZ["'`]\s*\])/.test(line);
+}
 
 describe("e2e access to the real PPM directory", () => {
   /**

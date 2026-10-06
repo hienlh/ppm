@@ -1,5 +1,8 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("theme");
 
 /**
  * SSRF-hardened fetch for theme import. Only https, only public IPs, bounded
@@ -56,13 +59,19 @@ export function isBlockedIp(ip: string): boolean {
 async function assertHostAllowed(hostname: string): Promise<void> {
   // If hostname is already an IP literal, check directly.
   if (isIP(hostname)) {
-    if (isBlockedIp(hostname)) throw new Error("Blocked IP address");
+    if (isBlockedIp(hostname)) {
+      log.warn(`import refused ${hostname}: blocked address`);
+      throw new Error("Blocked IP address");
+    }
     return;
   }
   const results = await lookup(hostname, { all: true });
   if (results.length === 0) throw new Error("DNS resolution failed");
   for (const r of results) {
-    if (isBlockedIp(r.address)) throw new Error("Host resolves to a blocked IP");
+    if (isBlockedIp(r.address)) {
+      log.warn(`import refused ${hostname}: resolves to blocked address ${r.address}`);
+      throw new Error("Host resolves to a blocked IP");
+    }
   }
 }
 

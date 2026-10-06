@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHtmlPreviewHarness } from "./fixtures/html-preview-harness.mjs";
 import { until } from "./fixtures/design-mode-helpers.mjs";
 
 // Settings → Design in a real Chrome, at a desktop and a phone viewport, against the
 // disposable design-mode fixture server (isolated PPM_HOME and home folder, scripted
-// providers, no network): the install suggestion shows while no skill is named, typing `/`
+// providers): the install suggestion shows while no skill is named, typing `/`
 // lists the skill installed in the sandbox home, picking it inserts `/pretty-ui`, the
 // mention resolves for the design provider, Save persists it, and a reload shows it again.
+// Last, Install puts ui-ux-pro-max in the sandbox home (from the npm registry) and names it.
 // Run with Node + Bun and Playwright (PPM_PLAYWRIGHT_MODULE, PPM_PLAYWRIGHT_CHANNEL=chrome).
 
 const PROJECT = "design-settings-e2e";
@@ -83,7 +84,15 @@ try {
       if (!mobile) pass("the gear in the sidebar's Designs header opens Settings → Design");
       await dismissFirstSteps(page);
       await page.getByText("No design skill installed").waitFor();
-      assert.ok(await page.getByText("uipro init --ai claude --global").isVisible(), "the upstream install command is shown");
+      const install = page.getByRole("button", { name: "Install ui-ux-pro-max" });
+      assert.ok(await install.isVisible(), "the Install button is shown");
+      if (mobile) assert.ok((await install.boundingBox()).height >= 44, "Install is a 44px target");
+      assert.equal(await page.getByText("uipro init --ai claude --global").isVisible(), false, "the manual commands start folded");
+      const card = page.getByRole("region", { name: "Suggested design skill" });
+      await card.screenshot({ path: join(harness.artifacts, `design-skill-card-${width}.png`) });
+      await card.getByText("Install it yourself instead").click();
+      assert.ok(await page.getByText("uipro init --ai claude --global").isVisible(), "the manual commands unfold");
+      await card.screenshot({ path: join(harness.artifacts, `design-skill-card-open-${width}.png`) });
       pass("suggests a design skill while none is named");
 
       await box.click();
@@ -120,6 +129,40 @@ try {
     } catch (error) {
       await page.screenshot({ path: join(harness.artifacts, `failure-design-settings-${width}.png`), fullPage: true }).catch(() => {});
       throw new Error(`${width}px: ${error.message}`, { cause: error });
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Install, last: once ui-ux-pro-max is in the sandbox home, no viewport shows the suggestion.
+  // Downloads the pinned package from the npm registry.
+  {
+    const { width, height, mobile } = VIEWPORTS[VIEWPORTS.length - 1];
+    const reset = await fetch(`${harness.api}/api/settings/design`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instructions: "" }),
+    });
+    assert.equal(reset.status, 200);
+    const context = await harness.browser.newContext({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile });
+    const page = await context.newPage();
+    page.on("pageerror", (e) => diagnostics.push(`${width}px pageerror ${e.message}`));
+    const pass = (name) => { results.push({ name: `${width}px ${name}`, passed: true }); console.log(`PASS ${width}px ${name}`); };
+    try {
+      await page.goto(harness.web);
+      await openDesignSettings(page);
+      await dismissFirstSteps(page);
+      await page.getByRole("button", { name: "Install ui-ux-pro-max" }).click();
+      await page.locator("[data-sonner-toast]").filter({ hasText: "Installed ui-ux-pro-max" }).first().waitFor({ timeout: 60000 });
+      const skill = join(harness.sandbox, "home", ".claude", "skills", "ui-ux-pro-max", "SKILL.md");
+      assert.match(await readFile(skill, "utf8"), /^---\nname: ui-ux-pro-max\n/);
+      const stored = await (await fetch(`${harness.api}/api/settings/design`)).json();
+      assert.equal(stored.data.instructions, "Use /ui-ux-pro-max before designing.");
+      await until("the suggestion to go away", async () => !(await page.getByText("No design skill installed").count()));
+      await page.locator('li[data-mention="ui-ux-pro-max"]').waitFor();
+      pass("Install puts the skill in place and names it in the saved instructions");
+      await page.screenshot({ path: join(harness.artifacts, `design-settings-installed-${width}.png`), fullPage: true });
+    } catch (error) {
+      await page.screenshot({ path: join(harness.artifacts, `failure-design-skill-install-${width}.png`), fullPage: true }).catch(() => {});
+      throw new Error(`${width}px install: ${error.message}`, { cause: error });
     } finally {
       await context.close();
     }

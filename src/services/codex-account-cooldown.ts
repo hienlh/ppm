@@ -11,6 +11,9 @@
  * the next turn straight back to the account that just refused it, and a server restart
  * re-learns that on the first refusal anyway.
  */
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("codex");
 
 /** accountId → epoch ms at which the account is worth trying again. */
 const parkedUntil = new Map<string, number>();
@@ -30,6 +33,7 @@ export function markCodexAccountUsageLimited(accountId: string, resetAtMs?: numb
   const now = Date.now();
   const until = resetAtMs != null && resetAtMs > now ? resetAtMs : now + DEFAULT_PARK_MS;
   parkedUntil.set(accountId, until);
+  log.warn(`account ${accountId} parked for usage limit until ${new Date(until).toISOString()}${resetAtMs != null && resetAtMs > now ? "" : " (no reset time given — default 5h)"}`);
 }
 
 /** Whether the account is still sitting out. Lapsed entries are dropped as they are read. */

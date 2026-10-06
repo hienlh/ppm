@@ -9,6 +9,14 @@ import {
   IDENTITY_TRANSFORM, fittedMaxSize, rotateClockwise, rotateCounterClockwise, toCssTransform, type VideoTransform,
 } from "./video-transform";
 
+/** `HTMLMediaElement.readyState` levels. */
+const HAVE_METADATA = 1;
+const HAVE_FUTURE_DATA = 3;
+
+function clampSeek(t: number, duration: number | null): number {
+  return Math.max(0, duration ? Math.min(t, duration - 0.5) : t);
+}
+
 interface Props {
   filePath: string;
   projectName: string;
@@ -34,6 +42,8 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   // resuming and staying paused; derived from user actions, not `video.paused`, because
   // the element reports paused while a fresh stream is still loading.
   const wantPlayRef = useRef(true);
+  // Set while a drag holds a playing video still, so the release knows to play it again.
+  const resumeAfterScrubRef = useRef(false);
   // One id per mounted player: the server replaces (kills) this player's previous
   // ffmpeg job on every seek and stops it when told the player is gone.
   const [sessionId] = useState(newMediaSessionId);
@@ -60,6 +70,29 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   // New source (mount, other file, or transcode restart) → back to loading state.
   useEffect(() => { setElapsed(0); setWaiting(true); setError(null); }, [src]);
   useEffect(() => { setStart(0); setNativeDuration(null); setTransform(IDENTITY_TRANSFORM); }, [filePath, mode]);
+
+  const applyMetadata = (v: HTMLVideoElement) => {
+    // Re-apply user settings: a fresh load (seek restart, retry) resets the element.
+    v.playbackRate = speed;
+    v.volume = volume;
+    v.muted = muted;
+    if (!isTranscode && Number.isFinite(v.duration)) setNativeDuration(v.duration);
+    if (isTranscode && !wantPlayRef.current) v.pause();
+  };
+
+  // React sets `src` while it renders, before the element is in the page, and the browser
+  // starts loading right then — so a file already in its media cache fires `loadedmetadata`,
+  // `canplay` and `play` before React commits the element, and React drops events aimed at an
+  // element it has not committed. None of them fires again, which left the seek bar (drawn
+  // only once the duration is known) missing. Read what the element already knows instead;
+  // declared after the resets above so that it, not they, has the last word.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.readyState >= HAVE_METADATA) applyMetadata(v);
+    if (v.readyState >= HAVE_FUTURE_DATA) setWaiting(false);
+    setPlaying(!v.paused);
+  }, [src]);
 
   // Element properties survive src changes but not a remount; keep them in sync with state.
   useEffect(() => { const v = videoRef.current; if (v) { v.volume = volume; v.muted = muted; } }, [volume, muted]);
@@ -101,11 +134,34 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
     return () => ro.disconnect();
   }, []);
 
+  // A drag seeks as it goes, the way other players do, and holds a playing video still
+  // meanwhile: otherwise it plays on from each frame the drag reaches and the picture runs
+  // away from the thumb. A transcoded stream waits for the release — each seek there is a
+  // new ffmpeg job.
+  const scrubTo = useCallback((t: number) => {
+    setScrub(t);
+    const v = videoRef.current;
+    if (isTranscode || !v) return;
+    if (!v.paused) { resumeAfterScrubRef.current = true; v.pause(); }
+    v.currentTime = clampSeek(t, duration);
+  }, [duration, isTranscode]);
+
   const seekTo = useCallback((t: number) => {
     const v = videoRef.current;
-    const clamped = Math.max(0, duration ? Math.min(t, duration - 0.5) : t);
+    const clamped = clampSeek(t, duration);
     setScrub(null);
-    if (!isTranscode) { if (v) v.currentTime = clamped; return; }
+    if (!isTranscode) {
+      if (!v) return;
+      v.currentTime = clamped;
+      // `timeupdate` reports the new position only once the seek has decoded, and until
+      // then the thumb went back to where it had been.
+      setElapsed(clamped);
+      if (resumeAfterScrubRef.current) {
+        resumeAfterScrubRef.current = false;
+        void v.play().catch(() => {});
+      }
+      return;
+    }
     // Restarting ffmpeg for a sub-second nudge is wasteful.
     if (Math.abs(clamped - (start + (v?.currentTime ?? 0))) < 0.5) return;
     setStart(clamped);
@@ -160,17 +216,10 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
           playsInline
           preload={isTranscode ? "auto" : "metadata"}
           style={{ transform: toCssTransform(transform), maxWidth: fitted.maxWidth || undefined, maxHeight: fitted.maxHeight || undefined }}
-          onLoadedMetadata={(e) => {
-            // Re-apply user settings: a fresh load (seek restart, retry) resets the element.
-            const v = e.currentTarget;
-            v.playbackRate = speed;
-            v.volume = volume;
-            v.muted = muted;
-            if (!isTranscode && Number.isFinite(v.duration)) setNativeDuration(v.duration);
-            if (isTranscode && !wantPlayRef.current) v.pause();
-          }}
+          onLoadedMetadata={(e) => applyMetadata(e.currentTarget)}
           onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
+          // The button keeps saying what the release will do, not flicker for the drag.
+          onPause={() => { if (!resumeAfterScrubRef.current) setPlaying(false); }}
           onWaiting={() => setWaiting(true)}
           onPlaying={() => setWaiting(false)}
           onCanPlay={() => setWaiting(false)}
@@ -181,7 +230,11 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
             else setError("Transcoding failed. ffmpeg may have stopped or the file is corrupt.");
           }}
         />
-        {waiting && !error && <Loader2 className="absolute size-8 animate-spin text-white/80 pointer-events-none" />}
+        {/* Fades in only after 300 ms: a seek that decodes sooner would otherwise flash it
+            over the picture for a frame or two, on every release and every arrow key. */}
+        {waiting && !error && (
+          <Loader2 className="absolute size-8 animate-spin text-white/80 pointer-events-none transition-opacity delay-300 starting:opacity-0" />
+        )}
         {/* Overlay rather than a replacement tree: the <video> stays mounted so volume,
             mute and speed survive a retry. */}
         {error && (
@@ -206,7 +259,7 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
         transform={transform}
         fullscreen={fullscreen}
         onTogglePlay={actions.togglePlay}
-        onScrub={setScrub}
+        onScrub={scrubTo}
         onSeek={seekTo}
         onVolume={(v) => { setVolume(v); setMuted(v === 0); }}
         onToggleMute={actions.toggleMute}

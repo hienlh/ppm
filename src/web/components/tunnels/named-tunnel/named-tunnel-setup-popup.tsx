@@ -3,8 +3,8 @@
  * desktop, a bottom sheet on mobile (`docs/design-guidelines.md` — dialogs
  * must never be desktop-only). Closing (backdrop, swipe, X) only hides this
  * popup instance — it does not call `dismiss()` and does not cancel an
- * in-progress login; the Tunnel Manager section is the permanent re-entry
- * point, so nothing is lost.
+ * in-progress login; Settings → Remote Access → Public link is the permanent
+ * re-entry point, so nothing is lost.
  */
 import { useState } from "react";
 import { X } from "@/lib/icons";

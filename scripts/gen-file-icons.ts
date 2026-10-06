@@ -519,6 +519,27 @@ for (const name of Object.keys(folderIcons)) {
   if (!folderOpenIcons[name]) delete folderIcons[name];
 }
 
+/**
+ * Database engine logos, for the connection list rather than for any file.
+ *
+ * Taken by name because no mapping claims most of them — nothing is called
+ * `*.mysql` — and keyed by PPM's connection type (`src/shared/db-types.ts`).
+ * Postgres gets `pgsql` rather than `postgres`: the same elephant, but outlined,
+ * so it stays legible on a dark panel, and the `.pgsql` extension already ships it.
+ */
+const DB_ENGINE_ICON_SOURCES: Record<string, string> = {
+  postgres: "file-type-pgsql",
+  mysql: "file-type-mysql",
+  mariadb: "file-type-mariadb",
+  sqlite: "file-type-sqlite",
+};
+const dbEngineIcons: Record<string, string> = {};
+for (const [type, key] of Object.entries(DB_ENGINE_ICON_SOURCES)) {
+  const icon = takeIcon(key);
+  if (!icon) throw new Error(`database engine logo ${key} is not drawable`);
+  dbEngineIcons[type] = icon;
+}
+
 // ---------------------------------------------------------------------------
 // Emit
 // ---------------------------------------------------------------------------
@@ -598,6 +619,11 @@ export const FOLDER_OPEN_ICONS: Record<string, string> = {
 ${record(folderOpenIcons)}
 };
 
+/** A database connection's type → its engine's logo, for the connection list. */
+export const DB_ENGINE_ICONS: Record<string, string> = {
+${record(dbEngineIcons)}
+};
+
 export const DEFAULT_FILE_ICON = ${JSON.stringify(DEFAULT_FILE)};
 export const DEFAULT_FOLDER_ICON = ${JSON.stringify(DEFAULT_FOLDER)};
 export const DEFAULT_FOLDER_OPEN_ICON = ${JSON.stringify(DEFAULT_FOLDER_OPEN)};
@@ -619,6 +645,7 @@ export const ICON_NAMES: readonly string[] = ${JSON.stringify(names)};
 for (const table of [
   EXTENSION_ICONS,
   FILENAME_ICONS,
+  DB_ENGINE_ICONS,
   FOLDER_ICONS,
   FOLDER_OPEN_ICONS,
   ...Object.values(FRAMEWORK_EXTENSION_ICONS),

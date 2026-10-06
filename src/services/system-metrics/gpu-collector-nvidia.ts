@@ -7,6 +7,9 @@
 import type { GpuMetrics } from "../../types/system-metrics.ts";
 import type { Runner } from "../host-info/spawn-runner.ts";
 import { defaultRunner } from "../host-info/spawn-runner.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("SystemMetrics");
 
 export const NVIDIA_SMI_ARGV = [
   "nvidia-smi",
@@ -64,13 +67,20 @@ export function createNvidiaGpuCollector(run: Runner = defaultRunner): GpuCollec
       if (disabled) return [];
       try {
         const r = await run(NVIDIA_SMI_ARGV, SPAWN_TIMEOUT_MS);
-        if (r.code !== 0 || r.timedOut) throw new Error(r.stderr || `exit ${r.code}`);
+        if (r.code !== 0 || r.timedOut) throw new Error(r.timedOut ? "timed out" : r.stderr || `exit ${r.code}`);
         failures = 0;
         return parseNvidiaSmiCsv(r.stdout);
-      } catch {
+      } catch (e) {
         // ENOENT (no NVIDIA driver) throws synchronously from the spawn; a
         // present-but-broken nvidia-smi fails a few times, then is given up on.
-        if (++failures >= MAX_FAILURES) disabled = true;
+        if (++failures >= MAX_FAILURES) {
+          disabled = true;
+          // Only the broken case is news: no driver means no nvidia-smi, on most machines.
+          const reason = (e as Error)?.message ?? String(e);
+          if (!/ENOENT|Executable not found/i.test(reason)) {
+            log.warn(`nvidia-smi disabled after ${failures} failures: ${reason.replace(/\s+/g, " ").trim().slice(0, 300)}`);
+          }
+        }
         return [];
       }
     },

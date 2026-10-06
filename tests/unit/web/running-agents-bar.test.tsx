@@ -32,6 +32,14 @@ describe("buildRunningRows", () => {
     expect(keys).not.toContain("member:dev-p2"); // paused, not working — never added
   });
 
+  it("gives a named card one row, with the team poll's metadata, and no second row for the same teammate", () => {
+    const rows = buildRunningRows([{ cardId: "toolu_1", memberName: "dev-p1", lastWriteAt: 3, lastStep: "Bash: ls" }], members);
+    expect(rows).toEqual([{
+      key: "card:toolu_1", cardId: "toolu_1", memberName: "dev-p1", lastStep: "Bash: ls",
+      agentType: "ak-engineer:tester", startedAt: "2026-10-01T00:00:00.000Z", lastWriteAt: 3,
+    }]);
+  });
+
   it("is empty when the hub reports nothing and no teammate is working", () => {
     expect(buildRunningRows([], [{ name: "dev-p1", workState: "paused", sizeBytes: 1 }])).toEqual([]);
   });
@@ -67,7 +75,7 @@ describe("findCardLabel", () => {
 installDom();
 afterAll(uninstallDom);
 
-const { RunningAgentsBar } = await import("../../../src/web/components/chat/running-agents-bar");
+const { RunningAgentsBar, FOLD_FROM } = await import("../../../src/web/components/chat/running-agents-bar");
 const { setGlobalWsClient, notifyGlobalReady } = await import("../../../src/web/lib/global-ws-channel");
 const { useWindowStore } = await import("../../../src/web/components/floating-window/window-store");
 
@@ -164,6 +172,55 @@ describe("RunningAgentsBar", () => {
     await click(row);
     const windows = Object.values(useWindowStore.getState().windows);
     expect((windows[0]!.payload as any).source).toEqual({ kind: "member", teamName: "sess-1", memberName: "dev-p1" });
+  });
+
+  /** `count` named cards, as the hub reports a session fanning out to that many agents. */
+  function namedCards(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      cardId: `toolu_${i}`, memberName: `fix-${i}`, lastWriteAt: Date.now(), lastStep: `Step ${i}`,
+    }));
+  }
+
+  async function renderWithRunning(running: unknown[]) {
+    const { client, sent } = fakeClient();
+    setGlobalWsClient(client as never);
+    view = await renderBar();
+    await pushActivity(JSON.parse(sent[0]!).subId as string, running);
+    return view;
+  }
+
+  const header = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("agents running"));
+  const agentRows = () => view!.container.querySelectorAll('button[title^="Open"]');
+
+  it("keeps a few agents as a plain list, with no header", async () => {
+    await renderWithRunning(namedCards(FOLD_FROM - 1));
+    expect(header()).toBeUndefined();
+    expect(agentRows()).toHaveLength(FOLD_FROM - 1);
+  });
+
+  it("puts many agents under a header that folds them, in a list that scrolls instead of growing", async () => {
+    await renderWithRunning(namedCards(11));
+    const toggle = header()!;
+    expect(toggle.textContent).toContain("11 agents running");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const list = view!.container.querySelector(`[id="${toggle.getAttribute("aria-controls")}"]`)!;
+    expect(list.className).toContain("overflow-y-auto");
+    expect(list.className).toMatch(/\bmax-h-\d+\b/);
+    expect(list.querySelectorAll("button")).toHaveLength(11);
+    expect(agentRows()[0]!.textContent).toContain("fix-0");
+
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(agentRows()).toHaveLength(0);
+    await click(toggle);
+    expect(agentRows()).toHaveLength(11);
+  });
+
+  it("starts folded on a phone", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    await renderWithRunning(namedCards(FOLD_FROM));
+    expect(header()!.getAttribute("aria-expanded")).toBe("false");
+    expect(agentRows()).toHaveLength(0);
   });
 
   it("shows no row for a teammate the poll no longer reports as working", async () => {

@@ -38,22 +38,20 @@ export function buildRunningRows(
   const rows: RunningAgentRow[] = [];
 
   for (const entry of running) {
-    if (entry.cardId) {
-      rows.push({ key: `card:${entry.cardId}`, cardId: entry.cardId, lastStep: entry.lastStep, lastWriteAt: entry.lastWriteAt });
-      continue;
-    }
-    if (entry.memberName) {
-      seenMembers.add(entry.memberName);
-      const member = byMemberName.get(entry.memberName);
-      rows.push({
-        key: `member:${entry.memberName}`,
-        memberName: entry.memberName,
-        lastStep: entry.lastStep ?? (member ? currentStepOf(member) : undefined),
-        agentType: member?.agentType,
-        startedAt: member?.startedAt,
-        lastWriteAt: entry.lastWriteAt,
-      });
-    }
+    const { cardId, memberName } = entry;
+    if (!cardId && !memberName) continue;
+    // A named card is a teammate too: one row, keyed by the card.
+    if (memberName) seenMembers.add(memberName);
+    const member = memberName ? byMemberName.get(memberName) : undefined;
+    rows.push({
+      key: cardId ? `card:${cardId}` : `member:${memberName}`,
+      ...(cardId ? { cardId } : {}),
+      ...(memberName ? { memberName } : {}),
+      lastStep: entry.lastStep ?? (member ? currentStepOf(member) : undefined),
+      agentType: member?.agentType,
+      startedAt: member?.startedAt,
+      lastWriteAt: entry.lastWriteAt,
+    });
   }
 
   for (const member of teamMembers) {

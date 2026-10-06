@@ -30,7 +30,7 @@ function harness() {
     now: () => clock,
     resolveProtected: () => ({ pids: new Set([300]), roots: new Set([300]), selfPid: 300 }),
     execute: async (pid, tree) => { killed.push(pid); return { pid, tree, method: "signal", killed: [pid] }; },
-    log: () => {},
+    log: { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, isEnabled: () => false },
     exitHooks: false,
   });
   const hardware: HardwareInventory = {

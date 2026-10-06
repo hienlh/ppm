@@ -13,6 +13,9 @@ import {
   buildPromptFromAnthropicMessages, hasUnsupportedAnthropicBlocks, messageResponse, anthropicError,
   MessageStreamWriter, ANTHROPIC_SSE_HEADERS, type AnthropicMessagesBody,
 } from "./proxy-anthropic-format.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("proxy");
 
 /** Open the turn described by an Anthropic-format body. */
 function startTurn(providerId: string, body: AnthropicMessagesBody) {
@@ -44,8 +47,11 @@ async function runNonStreaming(providerId: string, body: AnthropicMessagesBody):
 async function runStreaming(providerId: string, body: AnthropicMessagesBody): Promise<Response> {
   // Started before the stream so a setup failure is still a JSON error the
   // client can read, rather than an SSE stream that opens and immediately dies.
+  const startedAt = Date.now();
   const { events, cleanup } = await startTurn(providerId, body);
   const model = body.model || providerId;
+  // A client that hangs up makes the next write throw, which lands in the catch below too.
+  let cancelled = false;
 
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -62,6 +68,9 @@ async function runStreaming(providerId: string, body: AnthropicMessagesBody): Pr
         }
         stream.close(usage);
       } catch (e) {
+        // The access log already wrote this request as a 200, so this is the only record of it.
+        if (cancelled) log.info(`${providerId} stream cancelled by the client after ${Date.now() - startedAt}ms`);
+        else log.error(`${providerId} stream failed after ${Date.now() - startedAt}ms: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
         // The stream already carries a 200, so the error has to ride inside it.
         stream.text(`\n\nError: ${(e as Error).message}`);
         stream.close(usage);
@@ -70,6 +79,7 @@ async function runStreaming(providerId: string, body: AnthropicMessagesBody): Pr
       }
     },
     async cancel() {
+      cancelled = true;
       await cleanup();
     },
   });
@@ -99,6 +109,6 @@ export async function forwardAgentMessages(
       ? await runStreaming(providerId, body)
       : await runNonStreaming(providerId, body);
   } catch (e) {
-    return turnFailureResponse(e, anthropicError);
+    return turnFailureResponse(e, anthropicError, providerId);
   }
 }

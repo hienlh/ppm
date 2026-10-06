@@ -46,7 +46,7 @@ function harness(
       return { pid, signal, tree, method: "signal", signalled: [pid] };
     },
     details,
-    log: () => {},
+    log: { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, isEnabled: () => false },
     exitHooks: false,
   });
   live.push(service);

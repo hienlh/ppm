@@ -230,6 +230,18 @@ export function installDom(url = "http://localhost/"): void {
   if ((w.document as unknown as { compatMode?: string }).compatMode === undefined) {
     Object.defineProperty(w.document, "compatMode", { value: "CSS1Compat", configurable: true });
   }
+  // A failed assertion prints what it received, and Bun's formatter walks a happy-dom node
+  // through every getter it has, out to the window and back: one `expect(el).toBeNull()` that
+  // failed printed 12 MB, and a file holding a few of them ran for minutes — a broken component
+  // read as a hung suite rather than a red test. A node prints as its markup instead.
+  Object.defineProperty((w as unknown as { Node: { prototype: object } }).Node.prototype, Symbol.for("nodejs.util.inspect.custom"), {
+    configurable: true,
+    value(this: Node) {
+      if (this.nodeType === 1) return (this as Element).outerHTML;
+      if (this.nodeType === 9) return `#document ${(this as Document).documentElement?.outerHTML ?? ""}`;
+      return `${this.nodeName} ${JSON.stringify(this.textContent)}`;
+    },
+  });
   // Read before anything is overwritten: Bun backs `os.cpus()` with
   // `globalThis.navigator.hardwareConcurrency`, and happy-dom's navigator
   // hardcodes 8. So installing a DOM quietly changed the core count that every

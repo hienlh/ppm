@@ -19,6 +19,9 @@ import {
   buildSchtasksQueryCommand,
 } from "./autostart-generator.ts";
 import { isIsolatedPpmHome } from "./ppm-dir.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("autostart");
 
 export interface AutoStartStatus {
   enabled: boolean;
@@ -239,17 +242,25 @@ async function enableLinux(config: AutoStartConfig, opts?: { skipStart?: boolean
 
   // Start (skip if supervisor is already running from direct spawn)
   if (!opts?.skipStart) {
-    Bun.spawnSync({
+    const start = Bun.spawnSync({
       cmd: ["systemctl", "--user", "start", "ppm.service"],
-      stdout: "ignore", stderr: "ignore",
+      stdout: "ignore", stderr: "pipe",
     });
+    // Without this the only symptom is `ppm start` saying the server did not come up.
+    if (start.exitCode !== 0) {
+      log.error(`systemctl --user start ppm.service failed (exit ${start.exitCode}): ${start.stderr.toString().trim().slice(0, 300)}`);
+    }
   }
 
   // Enable lingering so service runs at boot without login
-  Bun.spawnSync({
+  const linger = Bun.spawnSync({
     cmd: ["loginctl", "enable-linger", process.env.USER || ""],
-    stdout: "ignore", stderr: "ignore",
+    stdout: "ignore", stderr: "pipe",
   });
+  if (linger.exitCode !== 0) {
+    const reason = linger.stderr.toString().trim().slice(0, 200);
+    log.warn(`loginctl enable-linger failed (exit ${linger.exitCode}) — PPM will not start until ${process.env.USER || "this user"} logs in${reason ? `: ${reason}` : ""}`);
+  }
 
   saveMetadata({
     enabled: true,
@@ -394,10 +405,14 @@ function statusWindows(): AutoStartStatus {
 export async function enableAutoStart(config: AutoStartConfig, opts?: { skipStart?: boolean }): Promise<string> {
   if (isIsolatedPpmHome()) return skipIsolated("enable");
   const platform = process.platform;
-  if (platform === "darwin") return enableMacOS(config, opts);
-  if (platform === "linux") return enableLinux(config, opts);
-  if (platform === "win32") return enableWindows(config);
-  throw new Error(`Auto-start not supported on ${platform}`);
+  let servicePath: string;
+  if (platform === "darwin") servicePath = await enableMacOS(config, opts);
+  else if (platform === "linux") servicePath = await enableLinux(config, opts);
+  else if (platform === "win32") servicePath = await enableWindows(config);
+  else throw new Error(`Auto-start not supported on ${platform}`);
+  // Also reached from `ppm start` and the supervisor's stale-unit self-heal, not only the CLI.
+  log.info(`Autostart registered: ${platform} ${servicePath} (skipStart=${!!opts?.skipStart})`);
+  return servicePath;
 }
 
 /**
@@ -412,6 +427,7 @@ export async function disableAutoStart(): Promise<string> {
   else if (platform === "linux") await disableLinux();
   else if (platform === "win32") await disableWindows();
   else throw new Error(`Auto-start not supported on ${platform}`);
+  log.info(`Autostart removed: ${platform}`);
   return "Auto-start disabled. PPM will no longer start on boot.";
 }
 

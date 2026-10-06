@@ -23,6 +23,9 @@ import {
   completionResponse, openAiError,
   ChunkWriter, SSE_HEADERS, type OpenAiChatBody,
 } from "./proxy-openai-format.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("proxy");
 
 /**
  * Inline images written to a scratch directory, since a provider may take an
@@ -84,8 +87,11 @@ async function runNonStreaming(providerId: string, body: OpenAiChatBody): Promis
 async function runStreaming(providerId: string, body: OpenAiChatBody): Promise<Response> {
   // Started before the stream so a setup failure is still a JSON error the
   // client can read, rather than an SSE stream that opens and immediately dies.
+  const startedAt = Date.now();
   const { events, cleanup } = await startTurn(providerId, body);
   const model = body.model || providerId;
+  // A client that hangs up makes the next write throw, which lands in the catch below too.
+  let cancelled = false;
 
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -101,6 +107,9 @@ async function runStreaming(providerId: string, body: OpenAiChatBody): Promise<R
         }
         chunks.close();
       } catch (e) {
+        // The access log already wrote this request as a 200, so this is the only record of it.
+        if (cancelled) log.info(`${providerId} stream cancelled by the client after ${Date.now() - startedAt}ms`);
+        else log.error(`${providerId} stream failed after ${Date.now() - startedAt}ms: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
         // The stream already carries a 200, so the error has to ride inside it.
         chunks.text(`\n\nError: ${(e as Error).message}`);
         chunks.close();
@@ -109,6 +118,7 @@ async function runStreaming(providerId: string, body: OpenAiChatBody): Promise<R
       }
     },
     async cancel() {
+      cancelled = true;
       await cleanup();
     },
   });
@@ -140,7 +150,7 @@ export async function forwardAgentChatCompletions(
       ? await runStreaming(providerId, body)
       : await runNonStreaming(providerId, body);
   } catch (e) {
-    return turnFailureResponse(e, openAiError);
+    return turnFailureResponse(e, openAiError, providerId);
   }
 }
 

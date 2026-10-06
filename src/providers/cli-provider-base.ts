@@ -10,6 +10,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { parseNdjsonLines } from "../utils/ndjson-line-parser.ts";
 import { configService } from "../services/config.service.ts";
 import { withSharedContext } from "../shared/provider-context.ts";
+import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
+import { createLogger, type Logger } from "../services/logger.ts";
 
 /**
  * Abstract base class for CLI-spawning AI providers.
@@ -44,6 +46,11 @@ export abstract class CliProvider implements AIProvider {
   protected sessions = new Map<string, Session>();
   protected activeProcesses = new Map<string, ChildProcess>();
   private messageCount = new Map<string, number>();
+  private _log?: Logger;
+  /** Scoped by provider id ("[cursor]"). Lazy: a subclass's `id` is set after this constructor. */
+  private get log(): Logger {
+    return (this._log ??= createLogger(this.id));
+  }
 
   // --- Session lifecycle ---
 
@@ -132,6 +139,15 @@ export abstract class CliProvider implements AIProvider {
     const proc = this.spawnProcess(args, cwd);
     const processKey = sessionId;
     this.activeProcesses.set(processKey, proc);
+    // Never the argv: it carries the user's message (`-p <prompt>`).
+    const startedAt = Date.now();
+    this.log.info(`session=${sessionId} ${this.cliCommand} started pid=${proc.pid ?? "?"} cwd=${cwd} resume=${isResume}`);
+    // Kept for the exit line; the chunks themselves are only DEBUG.
+    let stderrTail = "";
+    proc.stderr?.on("data", (data: Buffer) => { stderrTail = (stderrTail + data.toString()).slice(-300); });
+    const ended = () =>
+      `session=${capturedSessionId || sessionId} ${this.cliCommand} pid=${proc.pid ?? "?"}`;
+    const tail = () => (stderrTail.trim() ? ` — stderr: ${stderrTail.trim()}` : "");
 
     try {
       for await (const raw of parseNdjsonLines(proc.stdout!)) {
@@ -166,12 +182,18 @@ export abstract class CliProvider implements AIProvider {
       }
 
       const exitCode = await waitForExit(proc);
+      // abortQuery, deleteSession and cleanupAll take the process out of the map before killing it.
+      const stopped = this.activeProcesses.get(capturedSessionId || processKey) !== proc;
+      const exit = `${ended()} exited code=${proc.exitCode} signal=${proc.signalCode} durationMs=${Date.now() - startedAt}`;
+      if (exitCode === 0 || stopped) this.log.info(`${exit}${stopped ? " (stopped)" : ""}`);
+      else this.log.error(`${exit}${tail()}`);
       yield {
         type: "done",
         sessionId: capturedSessionId || sessionId,
         resultSubtype: exitCode === 0 ? "success" : "error_during_execution",
       };
     } catch (err) {
+      this.log.error(`${ended()} failed: ${err instanceof Error ? err.message : String(err)}${tail()}`);
       yield {
         type: "error",
         message: err instanceof Error ? err.message : String(err),
@@ -191,7 +213,7 @@ export abstract class CliProvider implements AIProvider {
   abortQuery(sessionId: string): void {
     const proc = this.activeProcesses.get(sessionId);
     if (!proc) return;
-    console.log(`[${this.id}] Aborting session: ${sessionId}`);
+    this.log.info(`Aborting session: ${sessionId}`);
     proc.kill("SIGTERM");
     setTimeout(() => {
       try { proc.kill("SIGKILL"); } catch { /* already dead */ }
@@ -202,17 +224,18 @@ export abstract class CliProvider implements AIProvider {
   // --- Helpers ---
 
   protected spawnProcess(args: string[], cwd: string): ChildProcess {
-    console.log(`[${this.id}] spawn: ${this.cliCommand} ${args.join(" ")} (cwd=${cwd})`);
     const proc = spawn(this.cliCommand, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
+      env: { ...process.env, ...AI_CHAT_MARK },
     });
     proc.stdin?.end();
 
     proc.stderr?.on("data", (data: Buffer) => {
+      if (!this.log.isEnabled("debug")) return;
       const text = data.toString().trim();
-      if (text) console.error(`[${this.id}] stderr: ${text}`);
+      if (text) this.log.debug(`stderr: ${text}`);
     });
 
     return proc;
@@ -231,7 +254,7 @@ export abstract class CliProvider implements AIProvider {
   /** Kill all active processes (cleanup on server start) */
   cleanupAll(): void {
     for (const [sessionId, proc] of this.activeProcesses) {
-      console.log(`[${this.id}] cleanup: killing orphaned process for session ${sessionId}`);
+      this.log.info(`cleanup: killing orphaned process for session ${sessionId}`);
       try { proc.kill("SIGTERM"); } catch { /* ignore */ }
     }
     this.activeProcesses.clear();

@@ -25,10 +25,10 @@ import type { FC } from "react";
 // graph: nothing is fetched until the `<link>` below is appended.
 import ICON_CSS_URL from "@/styles/file-icons.generated.css?url";
 import { basename, cn } from "@/lib/utils";
-import { fileIconName, folderIconName } from "./file-icon-name";
+import { dbEngineIconName, fileIconName, folderIconName } from "./file-icon-name";
 import { useIconFramework } from "@/stores/project-framework-store";
 
-export { fileIconName, folderIconName };
+export { dbEngineIconName, fileIconName, folderIconName };
 
 /**
  * The artwork is fetched when something first asks for an icon, not before.
@@ -67,23 +67,40 @@ export { fileIconName, folderIconName };
  * fetch at the earliest moment anything wants an icon; it is idempotent and
  * touches no state, so a double invocation under StrictMode costs nothing.
  */
-let cssPending = false;
+let cssLink: HTMLLinkElement | null = null;
 let cssAttempts = 0;
 function requestIconCss(): void {
   // Two attempts, not one: a tab left open through a network blip would
   // otherwise show unstyled icons for the rest of its life. Not unlimited,
   // because every icon that mounts comes through here.
-  if (cssPending || cssAttempts >= 2 || typeof document === "undefined") return;
-  cssPending = true;
+  if (cssLink || cssAttempts >= 2 || typeof document === "undefined") return;
   cssAttempts++;
   const link = document.createElement("link");
   link.rel = "stylesheet";
   link.href = ICON_CSS_URL;
   link.addEventListener("error", () => {
     link.remove();
-    cssPending = false;
+    cssLink = null;
   });
+  cssLink = link;
   document.head.appendChild(link);
+}
+
+/**
+ * The icon stylesheet itself, once it has loaded, for a reader that needs the
+ * drawings rather than the class names: an extension panel is a document of its
+ * own that this stylesheet never reaches (`webview-file-icons.ts`). Starts the
+ * fetch if nothing has yet; null when it failed.
+ */
+export function iconStylesheet(): Promise<CSSStyleSheet | null> {
+  requestIconCss();
+  const link = cssLink;
+  if (!link) return Promise.resolve(null);
+  if (link.sheet) return Promise.resolve(link.sheet);
+  return new Promise((resolve) => {
+    link.addEventListener("load", () => resolve(link.sheet), { once: true });
+    link.addEventListener("error", () => resolve(null), { once: true });
+  });
 }
 
 export type FileIconKind = "file" | "directory";
@@ -128,6 +145,17 @@ export function FileIcon({ name, kind = "file", open, className }: FileIconProps
         `vsi-${icon}`,
         className,
       )}
+    />
+  );
+}
+
+/** A database engine's logo, from the same artwork — the connection list's badge. */
+export function DbEngineIcon({ type, className }: { type: string; className?: string }) {
+  requestIconCss();
+  return (
+    <span
+      aria-hidden="true"
+      className={cn("inline-block shrink-0 size-4 bg-center bg-no-repeat bg-contain", `vsi-${dbEngineIconName(type)}`, className)}
     />
   );
 }

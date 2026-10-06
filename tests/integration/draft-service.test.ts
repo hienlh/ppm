@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { decodeReply, encodeReply, type ReplyReference } from "../../src/shared/chat-reply.ts";
 import { Database } from "bun:sqlite";
 
 /**
@@ -95,6 +96,16 @@ describe("DraftService", () => {
       // Should be truncated to 50KB max
       expect(result?.content.length).toBeLessThanOrEqual(50 * 1024);
       expect(result?.content.length).toBe(50 * 1024);
+    });
+
+    it("preserves a large escaped reply snapshot while limiting only the draft body", () => {
+      const reply: ReplyReference = { version: 1, sessionId: "s", providerId: "codex", messageId: "m",
+        role: "assistant", timestamp: "2026-10-01T00:00:00Z", quote: "<".repeat(12_000), truncated: true };
+      draftService.upsert("/project/path", "s", encodeReply("x".repeat(60 * 1024), reply));
+      const stored = draftService.get("/project/path", "s")!;
+      const decoded = decodeReply(stored.content);
+      expect(decoded.content.length).toBe(50 * 1024);
+      expect(decoded.replyTo).toEqual(reply);
     });
 
     it("allows content exactly at 50KB limit", () => {
@@ -205,6 +216,13 @@ describe("DraftService", () => {
       const result = draftService.get("/project/path", "__new__");
       expect(result).not.toBeNull();
       expect(result?.content).toBe("unsaved content");
+    });
+
+    it("does not delete commit messages, which have no session", () => {
+      draftService.upsert("/repo/path", "git-commit", "Fix the thing");
+      draftService.deleteOrphaned();
+
+      expect(draftService.get("/repo/path", "git-commit")?.content).toBe("Fix the thing");
     });
 
     it("deletes tab-* session drafts if not in session_metadata", () => {

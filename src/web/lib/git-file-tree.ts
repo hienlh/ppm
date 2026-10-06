@@ -6,16 +6,16 @@
  */
 import type { GitFileChange } from "../../types/git";
 
-export interface TreeNode {
+export interface TreeNode<F extends { path: string } = GitFileChange> {
   name: string;
   fullPath: string;
-  file?: GitFileChange;
-  children: TreeNode[];
+  file?: F;
+  children: TreeNode<F>[];
 }
 
 /** Build a tree structure from flat file paths */
-export function buildTree(files: GitFileChange[]): TreeNode[] {
-  const root: TreeNode[] = [];
+export function buildTree<F extends { path: string } = GitFileChange>(files: F[]): TreeNode<F>[] {
+  const root: TreeNode<F>[] = [];
 
   for (const f of files) {
     const parts = f.path.split("/");
@@ -59,7 +59,7 @@ export function buildTree(files: GitFileChange[]): TreeNode[] {
  * folder-level stage and discard actions are run against; only `name` is
  * rewritten, and only for display.
  */
-export function compactTree(nodes: TreeNode[]): TreeNode[] {
+export function compactTree<F extends { path: string }>(nodes: TreeNode<F>[]): TreeNode<F>[] {
   return nodes.map((node) => {
     let current = node;
     // Stop at a directory that holds a file: `folder/ > file.ts` stays two rows,
@@ -73,8 +73,8 @@ export function compactTree(nodes: TreeNode[]): TreeNode[] {
 }
 
 /** Collect all file paths under a tree node (recursively) */
-export function collectFiles(node: TreeNode): GitFileChange[] {
-  const result: GitFileChange[] = [];
+export function collectFiles<F extends { path: string }>(node: TreeNode<F>): F[] {
+  const result: F[] = [];
   if (node.file) result.push(node.file);
   for (const child of node.children) {
     result.push(...collectFiles(child));

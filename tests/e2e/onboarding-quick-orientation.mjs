@@ -35,12 +35,12 @@ try {
     await page.getByRole("heading", { name: "Find your way around PPM" }).waitFor();
     await page.screenshot({ path: join(harness.artifacts, `${name}-palette-intro.png`), fullPage: true, animations: "disabled" });
     await page.getByRole("button", { name: width > 768 ? "Left rail" : "Navigation buttons", exact: true }).click();
-    for (const label of ["Chat History", "Teams", "Explorer", "Search", "Git", "Database", "Cloudflare Tunnels", "AI Resources", "File Explorer", "Settings", "Report Bug"]) {
+    for (const label of ["Chat History", "Teams", "Explorer", "Search", "Git", "Database", "Cloudflare Tunnels", "AI Resources", "File Explorer", "Settings", "Logs"]) {
       assert.ok(await page.getByRole("dialog").getByText(label, { exact: true }).count(), label);
     }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: join(harness.artifacts, `${name}-navigation.png`), fullPage: true, animations: "disabled" });
-    await page.getByRole("dialog").getByText("Report Bug", { exact: true }).scrollIntoViewIfNeeded();
+    await page.getByRole("dialog").getByText("Logs", { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(harness.artifacts, `${name}-utilities.png`), fullPage: true, animations: "disabled" });
     await page.getByRole("button", { name: "Back to what I was doing", exact: true }).click();
     await tour.getByRole("button", { name: "Start guided tour", exact: true }).click();

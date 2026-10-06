@@ -9,10 +9,29 @@ import { contributionRegistry } from "./contribution-registry.ts";
 import { broadcastExtMsg, requestFromBrowser } from "../server/ws/extensions.ts";
 import { getProjects } from "./db.service.ts";
 import { isSecretConfigKey, redactSecretConfigValue } from "./config-secret-keys.ts";
+import { createLogger } from "./logger.ts";
+
+/** Same scope as the extension host's own forwarded console: what an extension did or said. */
+const log = createLogger("ext");
 
 let requestIdCounter = 0;
 function nextRequestId(): string {
   return `req_${++requestIdCounter}_${Date.now()}`;
+}
+
+/** Per kind of refusal: when one was last logged at WARN and how many followed at DEBUG. An
+ *  extension retrying a refused call (every refresh of a view) is one WARN a minute. */
+const refusals = new Map<string, { at: number; suppressed: number }>();
+function logRefusal(kind: string, message: string): void {
+  const now = Date.now();
+  const last = refusals.get(kind);
+  if (last && now - last.at < 60_000) {
+    last.suppressed++;
+    log.debug(message);
+    return;
+  }
+  refusals.set(kind, { at: now, suppressed: 0 });
+  log.warn(last?.suppressed ? `${message} (+${last.suppressed} more refused since the last one logged)` : message);
 }
 
 /** Register all vscode-compat RPC handlers on the given RPC channel */
@@ -36,7 +55,10 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
   // --- window messages (forwarded to browser via WS bridge) ---
   rpc.onRequest("window:showMessage", async (params) => {
     const [level, message, items] = params as [string, string, string[]];
-    console.log(`[Ext:${level}] ${message}`);
+    // An error or warning toast is something the user was told went wrong; an info one is chatter.
+    if (level === "error") log.error(`notification: ${message}`);
+    else if (level === "warn") log.warn(`notification: ${message}`);
+    else log.debug(`notification: ${message}`);
     if (items.length > 0) {
       const requestId = nextRequestId();
       const action = await requestFromBrowser<string | null>(
@@ -176,8 +198,10 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     try {
       const { configService } = await import("./config.service.ts");
       configService.set(key as any, value);
+      // The key only: the value can be anything, a secret included.
+      log.info(`extension set config key=${key}`);
     } catch (e) {
-      console.error(`[Ext:config] update error for ${key}:`, e);
+      log.error(`config update error for ${key}:`, e);
     }
     return { ok: true };
   });
@@ -197,7 +221,10 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       const rel = relative(root, resolved);
       return !rel.startsWith("..") && !rel.startsWith("/");
     });
-    if (!isSafe) throw new Error(`Path outside allowed scope: ${filePath}`);
+    if (!isSafe) {
+      logRefusal("fs", `fs access denied path=${filePath}`);
+      throw new Error(`Path outside allowed scope: ${filePath}`);
+    }
     return resolved;
   }
 
@@ -268,6 +295,7 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     // Security: command allowlist
     const baseName = cmd.split("/").pop() || cmd;
     if (!ALLOWED_SPAWN_COMMANDS.has(baseName)) {
+      logRefusal("spawn", `spawn denied cmd=${baseName}`);
       throw new Error(`process:spawn: command "${cmd}" not allowed. Allowed: ${[...ALLOWED_SPAWN_COMMANDS].join(", ")}`);
     }
 
@@ -283,6 +311,7 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     }
 
     const timeout = options?.timeout ?? 30_000;
+    const startedAt = Date.now();
     const proc = Bun.spawn([cmd, ...args], {
       cwd: safeCwd,
       stdout: "pipe",
@@ -290,7 +319,12 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       env: safeEnv,
     });
 
-    const timer = setTimeout(() => { try { proc.kill(); } catch {} }, timeout);
+    // The binary's name only, never its arguments. A kill here otherwise reads as an
+    // ordinary non-zero exit.
+    const timer = setTimeout(() => {
+      log.warn(`spawn timed out after ${timeout}ms cmd=${baseName}`);
+      try { proc.kill(); } catch {}
+    }, timeout);
     try {
       const [stdout, stderr] = await Promise.all([
         new Response(proc.stdout).text(),
@@ -298,6 +332,7 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       ]);
       const exitCode = await proc.exited;
       clearTimeout(timer);
+      log.debug(`spawn cmd=${baseName} exit=${exitCode} ms=${Date.now() - startedAt}`);
       return { stdout, stderr, exitCode };
     } catch (e) {
       clearTimeout(timer);

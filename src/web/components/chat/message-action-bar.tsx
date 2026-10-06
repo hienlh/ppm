@@ -22,11 +22,13 @@ export function ActionButton({
   label,
   title,
   onClick,
+  touchTarget,
 }: {
   icon: ReactNode;
   label: string;
   title: string;
   onClick: () => void;
+  touchTarget?: boolean;
 }) {
   return (
     <button
@@ -34,7 +36,7 @@ export function ActionButton({
       onClick={onClick}
       title={title}
       aria-label={label}
-      className="inline-flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors"
+      className={cn("inline-flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors", touchTarget && "min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0")}
     >
       {icon}
       <span>{label}</span>

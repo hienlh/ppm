@@ -21,6 +21,9 @@ import type {
   TurnEngineDeps,
 } from "../../types/group-chat.ts";
 import type { GroupChatServerMessage } from "../../types/group-chat-ws.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("group-chat");
 
 type WsClient = { send: (data: string) => void };
 
@@ -143,6 +146,8 @@ class GroupChatService {
     };
     this.runtimes.set(group.id, runtime);
     setGroupStatus(group.id, "active");
+    const startedAt = Date.now();
+    log.info(`group=${group.id} burst started members=${members.length} provider=${providerId}`);
     // Emit the user's message now that the runtime exists (so it lands in the reconnect
     // buffer); persistent clients receive it live regardless of runtime lifetime.
     if (initialMessage) {
@@ -186,6 +191,7 @@ class GroupChatService {
       return runReplyBurst(group, members, deps, { cap: group.maxTurns });
     })()
       .then((res) => {
+        log.info(`group=${group.id} burst done reason=${res.reason} turns=${res.turns} costUsd=${res.costUsd} durationMs=${Date.now() - startedAt}`);
         this.emit(group.id, { type: "group_done", reason: res.reason, turns: res.turns, costUsd: res.costUsd });
         // A user-requested stop keeps the group paused for a later resume;
         // a natural burst end returns the group to idle to wait for the next message.
@@ -193,6 +199,8 @@ class GroupChatService {
         return res;
       })
       .catch((e) => {
+        // Detached: the error otherwise reaches only the sockets open on this group.
+        log.error(`group=${group.id} burst failed after ${Date.now() - startedAt}ms: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
         this.emit(group.id, { type: "error", message: (e as Error).message });
         setGroupStatus(group.id, "idle");
         return { reason: "stopped", turns: 0, costUsd: 0 } as BurstResult;
@@ -206,7 +214,9 @@ class GroupChatService {
         const queued = this.pendingMessage.get(group.id);
         if (queued) {
           this.pendingMessage.delete(group.id);
-          void this.runBurst(group, members, providerId);
+          this.runBurst(group, members, providerId).catch((e) => {
+            log.error(`group=${group.id} queued burst failed to start: ${(e as Error)?.message ?? e}`);
+          });
         }
       });
     runtime.loop = loop;
@@ -267,7 +277,7 @@ class GroupChatService {
       }
       // Not alive this run (new member / post-restart): archive any orphaned old file,
       // then create a fresh session so we never create-with-an-existing-id.
-      if (m.sessionId) await archiveAndDelete(m.sessionId, group.name).catch(() => {});
+      if (m.sessionId) await this.archiveSession(m.sessionId, group.name);
       const session = await backend.createSession({
         projectPath: group.projectPath,
         projectName: group.projectName,
@@ -284,7 +294,7 @@ class GroupChatService {
   private async archiveMembers(group: Group, members: GroupMember[]): Promise<void> {
     for (const m of members) {
       if (m.sessionId) {
-        await archiveAndDelete(m.sessionId, group.name).catch(() => {});
+        await this.archiveSession(m.sessionId, group.name);
         this.aliveSessions.delete(m.sessionId);
       }
     }
@@ -303,8 +313,21 @@ class GroupChatService {
   /** Archive + forget a single member's session (on member removal). */
   async archiveMemberSession(groupName: string, sessionId: string | null): Promise<void> {
     if (!sessionId || this.spawnStub) return;
-    await archiveAndDelete(sessionId, groupName).catch(() => {});
+    await this.archiveSession(sessionId, groupName);
     this.aliveSessions.delete(sessionId);
+  }
+
+  /** Best-effort, as before — but a transcript that could not be archived is now on record. */
+  private async archiveSession(sessionId: string, groupName: string): Promise<void> {
+    try {
+      const r = await archiveAndDelete(sessionId, groupName);
+      if (r.archived) return;
+      // No transcript at all is normal for a member that never spoke.
+      if (r.reason === "raw JSONL not found") log.debug(`no transcript to archive session=${sessionId}`);
+      else log.warn(`archive failed session=${sessionId} reason=${r.reason}`);
+    } catch (e) {
+      log.warn(`archive failed session=${sessionId} reason=${(e as Error)?.message ?? e}`);
+    }
   }
 
   /** Delete the ephemeral router session (no archive — its transcript is throwaway). */
@@ -312,7 +335,10 @@ class GroupChatService {
     try {
       const { chatService } = await import("../chat.service.ts");
       await chatService.deleteSession(providerId, sessionId);
-    } catch { /* best-effort cleanup */ }
+    } catch (e) {
+      // Best-effort, but a router session left behind shows up in the session list.
+      log.warn(`router session cleanup failed session=${sessionId}: ${(e as Error)?.message ?? e}`);
+    }
   }
 
   private backendCache: ChatBackend | null = null;

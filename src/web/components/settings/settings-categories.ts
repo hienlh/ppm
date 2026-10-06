@@ -19,11 +19,13 @@ import {
   CalendarClock,
   Keyboard,
   FolderSearch,
+  Database,
   DatabaseZap,
   LayoutGrid,
   Mic,
   Zap,
   Monitor,
+  MonitorSmartphone,
 } from "@/lib/icons";
 
 /**
@@ -37,6 +39,7 @@ export type SettingsCategoryId =
   | "appearance"
   | "language-servers"
   | "remote-desktop"
+  | "database-drivers"
   | "ai-provider"
   | "accounts"
   | "design"
@@ -46,6 +49,7 @@ export type SettingsCategoryId =
   | "jira"
   | "extensions"
   | "proxy"
+  | "remote-access"
   | "schedules"
   | "shortcuts"
   | "files"
@@ -84,6 +88,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "appearance", group: "core", label: "Appearance", subtitle: "Theme, tabs, explorer skin", icon: Palette },
   { id: "language-servers", group: "core", label: "Language Servers", subtitle: "Completions and go to definition, per language", icon: Zap },
   { id: "remote-desktop", group: "core", label: "Remote Desktop", subtitle: "WebRTC relay for streaming this host's screen", icon: Monitor },
+  { id: "database-drivers", group: "core", label: "Database Drivers", subtitle: "MySQL and MariaDB support, installed on request", icon: Database },
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },
@@ -91,16 +96,24 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 
   { id: "ppmbot", group: "integrations", label: "PPMBot", subtitle: "Telegram AI bot", icon: BotMessageSquare },
-  { id: "notifications", group: "integrations", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
+  { id: "notifications", group: "integrations", label: "Notifications", subtitle: "Push, Telegram & ntfy alerts", icon: BellRing },
   { id: "jira", group: "integrations", label: "Jira Watcher", subtitle: "Auto-debug Jira tickets", icon: Bug },
   { id: "extensions", group: "integrations", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
   { id: "proxy", group: "integrations", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
+  { id: "remote-access", group: "integrations", label: "Remote Access", subtitle: "Tailscale, public link", icon: MonitorSmartphone },
 
   { id: "schedules", group: "advanced", label: "Scheduled Agents", subtitle: "Run Claude on a cron schedule", icon: CalendarClock },
   { id: "shortcuts", group: "advanced", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { id: "files", group: "advanced", label: "File Filters", subtitle: "Exclude patterns, ignore files", icon: FolderSearch },
   { id: "query-audit", group: "advanced", label: "Query Audit Log", subtitle: "SQL history retention and size", icon: DatabaseZap },
 ];
+
+/**
+ * Dispatched on `window` with a category id as `detail` when something asks for a pane while
+ * Settings is already open. The host's payload or tab metadata only seeds the first render, so
+ * without this a link into an open Settings would raise it on whatever pane it was showing.
+ */
+export const SETTINGS_NAVIGATE_EVENT = "ppm:settings-navigate";
 
 /** The pane a window with no remembered category opens on. */
 export const DEFAULT_SETTINGS_CATEGORY: SettingsCategoryId = "general";

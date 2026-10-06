@@ -190,20 +190,30 @@ describe("audit logging from database routes", () => {
     expect(JSON.parse(logs[0]!.params_json!).pkValues).toEqual([1, 2]);
   });
 
-  it("records how many rows a partially failed bulk delete actually removed", async () => {
+  it("rolls a bulk delete back whole when one row cannot go, and says which statement it was", async () => {
     const id = await createConnection();
-    // Item 1 deletes cleanly, item 3 is referenced by a child row and fails.
+    // Item 1 deletes cleanly, item 3 is referenced by a child row and is refused.
     const res = await webRequest(`/db/connections/${id}/rows/delete`, {
       method: "POST",
       body: JSON.stringify({ table: "items", pkColumn: "id", pkValues: [1, 3] }),
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
+    const json = await res.json() as { error: string; data: { statementIndex: number; statementCount: number; sql: string } };
+    expect(json.error).toContain("Statement 2 of 2 failed");
+    expect(json.error).toContain("Nothing was saved");
+    expect(json.data).toMatchObject({ statementIndex: 1, statementCount: 2, sql: `DELETE FROM "items" WHERE "id" = 3` });
 
     const logs = listQueryLogs();
     expect(logs).toHaveLength(1);
     expect(logs[0]!.status).toBe("error");
-    expect(logs[0]!.row_count).toBe(1);
-    expect(logs[0]!.error).toContain("deleted 1 of 2 before failing");
+    expect(logs[0]!.error).toContain("Statement 2 of 2 failed");
+    // The first delete went back with the second: both rows are still there.
+    const db = new Database(targetDbPath, { readonly: true });
+    try {
+      expect(db.query("SELECT id FROM items WHERE id IN (1, 3) ORDER BY id").all()).toEqual([{ id: 1 }, { id: 3 }]);
+    } finally {
+      db.close();
+    }
   });
 
   it("records inserts with the executed statement", async () => {

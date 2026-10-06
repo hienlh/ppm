@@ -10,6 +10,9 @@ import {
   incrementAccountRequests,
   type AccountRow,
 } from "./db.service.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("accounts");
 
 export interface Account {
   id: string;
@@ -105,6 +108,8 @@ const KNOWN_TOKEN_FIELDS = new Set([
   "refresh_token_expires_in", "refresh_expires_in", "refresh_token_expires_at", "refresh_expires_at",
 ]);
 const loggedUnknownTokenFields = new Set<string>();
+/** Accounts whose tokens failed to decrypt, so a failure every caller hits again is logged once. */
+const undecryptableAccounts = new Set<string>();
 
 /**
  * Log response fields we do not consume, once per field name.
@@ -122,7 +127,7 @@ function noteUnknownTokenFields(data: Record<string, unknown>, context: string):
     const shown = typeof value === "string" && /token|secret|key/i.test(key)
       ? `<redacted len=${value.length}>`
       : JSON.stringify(value);
-    console.log(`[accounts] ${context} response carries unhandled field "${key}" = ${shown}`);
+    log.info(`${context} response carries unhandled field "${key}" = ${shown}`);
   }
 }
 
@@ -204,9 +209,14 @@ class AccountService {
     const row = getAccountById(id);
     if (!row) return null;
     try {
-      return this.toAccountWithTokens(row);
+      const acc = this.toAccountWithTokens(row);
+      undecryptableAccounts.delete(id);
+      return acc;
     } catch (e) {
-      console.error(`[accounts] Failed to decrypt tokens for ${row.label ?? id}:`, (e as Error).message);
+      // Asked again by every poll and every turn, with the same answer: ERROR once, then DEBUG.
+      const first = !undecryptableAccounts.has(id);
+      undecryptableAccounts.add(id);
+      log[first ? "error" : "debug"](`Failed to decrypt tokens for account ${id}:`, (e as Error).message);
       return null;
     }
   }
@@ -249,12 +259,13 @@ class AccountService {
     const nowS = Math.floor(Date.now() / 1000);
     if (acc.expiresAt - nowS > PREFLIGHT_REFRESH_BUFFER_S) return { account: acc, rejected: false }; // still fresh
     try {
-      console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s, buffer=${PREFLIGHT_REFRESH_BUFFER_S}s)`);
+      log.info(`Pre-flight refresh for ${id} (expires in ${acc.expiresAt - nowS}s, buffer=${PREFLIGHT_REFRESH_BUFFER_S}s)`);
       await this.refreshAccessToken(id, false, false, PREFLIGHT_REFRESH_BUFFER_S);
       return { account: this.getWithTokens(id), rejected: false };
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
-      console.error(`[accounts] Pre-flight refresh failed for ${id}: ${msg}`);
+      // WARN: the caller moves on to another account, and the refresh path already logged the cause.
+      log.warn(`Pre-flight refresh failed for ${id}: ${msg}`);
       return { account: null, rejected: /invalid_grant|invalid_request/.test(msg) };
     }
   }
@@ -304,6 +315,7 @@ class AccountService {
       }
       if (params.label) updateAccount(dup.id, { label: params.label });
       if (params.email) updateAccount(dup.id, { email: params.email });
+      log.info(`account re-authenticated id=${dup.id} (oauth)`);
       // After the email lands, or the first re-add of a row that had none logs a UUID.
       this.noteParkSurvivedReAdd(dup.id);
       return this.toAccount(getAccountById(dup.id)!);
@@ -328,6 +340,7 @@ class AccountService {
       reauth_required: 0,
       last_refresh_attempt_at: null,
     });
+    log.info(`account added id=${id} (oauth)`);
     return this.toAccount(getAccountById(id)!);
   }
 
@@ -368,8 +381,12 @@ class AccountService {
         if (res.status === 429) {
           return { valid: true, authMethod: "oauth_token" };
         }
+        // A server error says nothing about the token, though the caller reports it as invalid.
+        if (res.status >= 500) log.warn(`token verification error (oauth): HTTP ${res.status}`);
         return { valid: false };
-      } catch {
+      } catch (e) {
+        // A timeout or a network drop, which the caller reports as an invalid token.
+        log.warn(`token verification error (oauth): ${(e as Error).message}`);
         return { valid: false };
       }
     }
@@ -398,7 +415,9 @@ class AccountService {
         subscriptionType: info.subscriptionType,
         authMethod: info.authMethod ?? "api_key",
       };
-    } catch {
+    } catch (e) {
+      // No `claude` binary, or output that is not JSON — not a verdict on the key.
+      log.warn(`token verification error (api_key): ${(e as Error).message}`);
       return { valid: false };
     }
   }
@@ -422,6 +441,7 @@ class AccountService {
       });
       if (info.profileData) updateAccount(dup.id, { profile_json: JSON.stringify(info.profileData) });
       if (email) updateAccount(dup.id, { email });
+      log.info(`account token replaced id=${dup.id} (${info.authMethod ?? "manual"})`);
       this.noteParkSurvivedReAdd(dup.id);
       return this.toAccount(getAccountById(dup.id)!);
     }
@@ -463,6 +483,7 @@ class AccountService {
       reauth_required: 0,
       last_refresh_attempt_at: null,
     });
+    log.info(`account added id=${id} (${info.authMethod ?? "manual"})`);
     return this.toAccount(getAccountById(id)!);
   }
 
@@ -499,8 +520,8 @@ class AccountService {
   private noteParkSurvivedReAdd(id: string): void {
     const row = getAccountById(id);
     if (row?.status !== "disabled") return;
-    console.log(
-      `[accounts] Tokens updated for ${row.email ?? id} — account stays disabled; enable it in Settings`,
+    log.info(
+      `Tokens updated for ${id} — account stays disabled; enable it in Settings`,
     );
   }
 
@@ -715,7 +736,7 @@ class AccountService {
     // Dedup: if a refresh is already in progress for this account, wait for it instead of racing
     const pending = this.pendingRefreshes.get(accountId);
     if (pending) {
-      console.log(`[accounts] Refresh already in progress for ${accountId} — waiting for it`);
+      log.info(`Refresh already in progress for ${accountId} — waiting for it`);
       return pending;
     }
 
@@ -760,14 +781,14 @@ class AccountService {
         });
         // 429/5xx leave the refresh token intact — retrying is safe and cheaper than waiting a full cycle
         if (retryIn !== undefined && (res.status === 429 || res.status >= 500)) {
-          console.warn(`[accounts] Transient ${res.status} refreshing ${label} — retrying in ${retryIn}ms`);
+          log.warn(`Transient ${res.status} refreshing ${label} — retrying in ${retryIn}ms`);
           await Bun.sleep(retryIn);
           continue;
         }
         return res;
       } catch (e) {
         if (retryIn === undefined) throw e;
-        console.warn(`[accounts] Network error refreshing ${label} (${(e as Error).message}) — retrying in ${retryIn}ms`);
+        log.warn(`Network error refreshing ${label} (${(e as Error).message}) — retrying in ${retryIn}ms`);
         await Bun.sleep(retryIn);
       }
     }
@@ -785,14 +806,16 @@ class AccountService {
     // revoked server-side despite having a future expiresAt.
     const nowS = Math.floor(Date.now() / 1000);
     if (!force && account.expiresAt && account.expiresAt - nowS > freshThresholdS) {
-      console.log(`[accounts] Token for ${account.email ?? accountId} is already fresh (expires in ${account.expiresAt - nowS}s, threshold=${freshThresholdS}s) — skipping OAuth refresh`);
+      log.info(`Token for ${accountId} is already fresh (expires in ${account.expiresAt - nowS}s, threshold=${freshThresholdS}s) — skipping OAuth refresh`);
       return;
     }
     updateAccount(accountId, { last_refresh_attempt_at: nowS });
-    const res = await this.postRefreshGrant(account.refreshToken, account.email ?? accountId);
+    const res = await this.postRefreshGrant(account.refreshToken, accountId);
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
-      console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
+      // Logged below, once classified: a rejection another session already recovered from is
+      // not a failure at all, and only a rejected grant needs a fresh sign-in.
+      const detail = `${res.status} ${errorBody.slice(0, 300)}`;
       const rejected = errorBody.includes("invalid_grant") || errorBody.includes("invalid_request");
       if (rejected) {
         // Another session/process may have refreshed (and rotated) the token between our read
@@ -801,23 +824,28 @@ class AccountService {
         // whenever we refresh proactively, while the token is still valid.
         const recheckAccount = this.getWithTokens(accountId);
         if (recheckAccount?.expiresAt && recheckAccount.expiresAt !== account.expiresAt) {
-          console.log(`[accounts] Refresh failed with invalid_grant but DB token changed — another session refreshed it`);
+          log.debug(`Refresh for ${accountId} failed with invalid_grant but DB token changed — another session refreshed it`);
           return;
         }
         // Do NOT wipe the refresh token. On multi-device/multi-process setups the token is
         // usually rotated elsewhere, not truly dead; clearing it bricks the local copy
         // permanently with no recovery path (esp. for parked/disabled accounts). Preserve
         // it so re-enable / re-import / re-sync can restore access.
-        console.warn(`[accounts] Refresh token rejected for ${account.email ?? accountId} — preserving token for recovery (not clearing)`);
+        log.error(`account ${accountId} refresh token rejected — sign-in required (${detail}; token kept for recovery)`);
         // Anthropic ends the refresh-token family a fixed time after the grant, so a
         // rejection here is terminal: every subsequent attempt returns the same 400.
         // Recording it stops the retry loop that otherwise runs every few minutes for
         // days — one live install logged 17,510 of them — and gives the UI something to
         // show besides an account that still claims to be active.
         updateAccount(accountId, { reauth_required: 1 });
+      } else {
+        // 429/5xx after postRefreshGrant's retries, or another refusal: the grant itself stands.
+        log.warn(`Refresh failed for ${accountId}: ${detail}`);
       }
       if (disableOnFail) {
         this.setDisabled(accountId);
+        // Out of the rotation until someone enables it again.
+        log.warn(`account ${accountId} disabled after refresh failure (${res.status})`);
       }
       throw new Error(`Token refresh failed for account ${accountId}: ${res.status} ${errorBody}`);
     }
@@ -828,7 +856,7 @@ class AccountService {
     };
     noteUnknownTokenFields(data, "refresh_token");
     const refreshExpiresAt = readRefreshExpiry(data);
-    console.log(`[accounts] Token refreshed for ${account.email ?? accountId} (expires_in=${data.expires_in}s, new_refresh=${!!data.refresh_token}, refresh_expires_at=${refreshExpiresAt ?? "not reported"})`);
+    log.info(`Token refreshed for ${accountId} (expires_in=${data.expires_in}s, new_refresh=${!!data.refresh_token}, refresh_expires_at=${refreshExpiresAt ?? "not reported"})`);
     this.updateTokens(
       accountId,
       data.access_token,
@@ -854,8 +882,9 @@ class AccountService {
       if (!acc.expiresAt) continue;
       try {
         await this.refreshAccessToken(acc.id, false);
-      } catch {
+      } catch (e) {
         // Best-effort — skip accounts whose refresh token is already invalid
+        log.warn(`refresh before export failed for ${acc.id} — its current token goes into the backup: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
       }
     }
   }
@@ -881,6 +910,7 @@ class AccountService {
       }
       return { ...row, access_token: accessToken, refresh_token: "" };
     });
+    log.info(`exported ${rows.length} accounts (refresh tokens: ${includeRefreshToken ? "yes" : "no"})`);
     return encryptWithPassword(JSON.stringify(portable), password);
   }
 
@@ -929,7 +959,7 @@ class AccountService {
           // for an account this machine has taken out of the rotation buys nothing here
           // while invalidating the machine still using it. Enabling the account claims it.
           if (!parked) fullTransferIds.push(existing.id);
-          console.log(`[accounts] Updated ${row.email ?? existing.id} tokens from import`);
+          log.info(`Updated ${existing.id} tokens from import`);
         }
         continue; // skip if import doesn't have refresh token
       }
@@ -973,11 +1003,12 @@ class AccountService {
       try {
         await this.refreshAccessToken(id, false);
         refreshed++;
-        console.log(`[accounts] Post-import refresh OK for ${id} — this machine now owns the token`);
+        log.info(`Post-import refresh OK for ${id} — this machine now owns the token`);
       } catch (e) {
-        console.warn(`[accounts] Post-import refresh failed for ${id}:`, e);
+        log.warn(`Post-import refresh failed for ${id}:`, e);
       }
     }
+    log.info(`imported ${imported} of ${rows.length} accounts from backup (${refreshed} claimed by refresh)`);
     return { imported, refreshed };
   }
 
@@ -1019,7 +1050,7 @@ class AccountService {
         if (this.hasRefreshToken(acc.id)) continue;
         const expiredForS = nowS - acc.expiresAt;
         if (expiredForS > TEMP_EXPIRY_DAYS * 86400) {
-          console.log(`[accounts] Auto-deleting expired temporary account ${acc.email ?? acc.id} (expired ${Math.floor(expiredForS / 86400)}d ago)`);
+          log.info(`Auto-deleting expired temporary account ${acc.id} (expired ${Math.floor(expiredForS / 86400)}d ago)`);
           this.remove(acc.id);
         }
       }

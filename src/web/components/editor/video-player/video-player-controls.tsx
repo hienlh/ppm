@@ -13,7 +13,7 @@ interface Props {
   transform: VideoTransform;
   fullscreen: boolean;
   onTogglePlay: () => void;
-  /** Live value while the thumb is dragged (updates the clock only). */
+  /** Live value while the thumb is dragged. */
   onScrub: (t: number) => void;
   /** Final value when the drag ends. */
   onSeek: (t: number) => void;
@@ -25,6 +25,19 @@ interface Props {
   onFlipV: () => void;
   onResetTransform: () => void;
   onToggleFullscreen: () => void;
+}
+
+const SEEK_STEPS_PER_SECOND = 10;
+
+/**
+ * The seek slider's value, already on its step grid. A range input snaps its value to
+ * `step`, while React remembers the unsnapped number it rendered — so the `change` event
+ * the browser fires when a drag ends looked like a new value to React, and `onChange`
+ * reported the position from before the drag. That froze the bar and the clock there while
+ * the video played on from where the thumb was dropped.
+ */
+export function seekBarValue(position: number, duration: number): number {
+  return Math.floor(Math.min(position, duration) * SEEK_STEPS_PER_SECOND) / SEEK_STEPS_PER_SECOND;
 }
 
 /** Bottom bar: 44px targets, primary actions in thumb reach on phones. */
@@ -47,14 +60,17 @@ export function VideoPlayerControls(p: Props) {
           type="range"
           min={0}
           max={p.duration}
-          step={0.1}
-          value={Math.min(p.position, p.duration)}
+          step={1 / SEEK_STEPS_PER_SECOND}
+          value={seekBarValue(p.position, p.duration)}
           aria-label="Seek"
           className="flex-1 h-11 accent-primary cursor-pointer min-w-0"
           onChange={(e) => p.onScrub(Number(e.target.value))}
           onPointerUp={commit}
           onKeyUp={commit}
           onTouchEnd={commit}
+          // A drag the browser takes over for scrolling ends here, with no pointerup.
+          onPointerCancel={commit}
+          onTouchCancel={commit}
         />
       ) : <div className="flex-1" />}
 

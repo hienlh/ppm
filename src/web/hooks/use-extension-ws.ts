@@ -4,6 +4,7 @@ import { useExtensionStore } from "@/stores/extension-store";
 import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { getAuthToken } from "@/lib/api-client";
+import { openGitReview } from "@/lib/open-git-review";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
 
@@ -252,7 +253,19 @@ export function useExtensionWs(enabled = true) {
           }));
           break;
 
-        case "tab:open":
+        case "tab:open": {
+          // The Review tab is one per project and is only focused by openTab,
+          // so what it should show has to be written into it — the same path
+          // Source Control takes.
+          const meta = (msg as any).metadata as Record<string, unknown> | undefined;
+          if ((msg as any).tabType === "git-review" && typeof meta?.projectName === "string") {
+            openGitReview(
+              meta.projectName,
+              typeof meta.path === "string" ? meta.path : undefined,
+              typeof meta.repo === "string" ? meta.repo : undefined,
+            );
+            break;
+          }
           useTabStore.getState().openTab({
             type: (msg as any).tabType,
             title: (msg as any).title,
@@ -261,6 +274,7 @@ export function useExtensionWs(enabled = true) {
             metadata: (msg as any).metadata,
           });
           break;
+        }
 
         case "project:switch":
           useTabStore.getState().switchProject((msg as any).projectName);

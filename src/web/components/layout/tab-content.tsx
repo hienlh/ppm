@@ -20,18 +20,38 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
     })),
   ),
   database: lazy(() =>
-    import("@/components/database/database-viewer").then((m) => ({
-      default: m.DatabaseViewer,
+    import("@/components/database/table/table-tab").then((m) => ({
+      default: m.TableTab,
+    })),
+  ),
+  "db-structure": lazy(() =>
+    import("@/components/database/structure/structure-tab").then((m) => ({
+      default: m.StructureTab,
+    })),
+  ),
+  "db-sql": lazy(() =>
+    import("@/components/database/sql-object/sql-object-tab").then((m) => ({
+      default: m.SqlObjectTab,
+    })),
+  ),
+  "db-query": lazy(() =>
+    import("@/components/database/query/query-tab").then((m) => ({
+      default: m.QueryTab,
+    })),
+  ),
+  "db-impexp": lazy(() =>
+    import("@/components/database/impexp/impexp-tab").then((m) => ({
+      default: m.ImpExpTab,
+    })),
+  ),
+  "db-connection": lazy(() =>
+    import("@/components/database/connection-form/connection-form-tab").then((m) => ({
+      default: m.ConnectionFormTab,
     })),
   ),
   sqlite: lazy(() =>
     import("@/components/sqlite/sqlite-viewer").then((m) => ({
       default: m.SqliteViewer,
-    })),
-  ),
-  postgres: lazy(() =>
-    import("@/components/postgres/postgres-viewer").then((m) => ({
-      default: m.PostgresViewer,
     })),
   ),
   "git-diff": lazy(() =>
@@ -42,6 +62,16 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   "branch-review": lazy(() =>
     import("@/components/branch-review/branch-review-tab").then((m) => ({
       default: m.BranchReviewTab,
+    })),
+  ),
+  "session-review": lazy(() =>
+    import("@/components/session-review/session-review-tab").then((m) => ({
+      default: m.SessionReviewTab,
+    })),
+  ),
+  "git-review": lazy(() =>
+    import("@/components/git-review/git-review-tab").then((m) => ({
+      default: m.GitReviewTab,
     })),
   ),
   settings: lazy(() =>
@@ -97,6 +127,16 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   design: lazy(() =>
     import("@/components/design/design-tab").then((m) => ({
       default: m.DesignTab,
+    })),
+  ),
+  "web-preview": lazy(() =>
+    import("@/components/web-preview/web-preview-tab").then((m) => ({
+      default: m.WebPreviewTab,
+    })),
+  ),
+  logs: lazy(() =>
+    import("@/components/logs/logs-tab").then((m) => ({
+      default: m.LogsTab,
     })),
   ),
 };

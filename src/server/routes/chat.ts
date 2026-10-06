@@ -14,12 +14,15 @@ import { invalidateSdkCommands } from "../../services/slash-discovery/sdk-comman
 import { listSlashItemsForProvider } from "../../services/slash-items-for-provider.ts";
 import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts";
 import { chatPrepareRoutes } from "./chat-prepare.ts";
+import { chatFileChangesRoutes } from "./chat-file-changes.ts";
+import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
+import { parseCompactSegment } from "../../services/compact-segment.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
@@ -41,12 +44,16 @@ import { pageHistory, parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("chat");
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const chatRoutes = new Hono<Env>();
 
 chatRoutes.route("/prepare", chatPrepareRoutes);
+chatRoutes.route("/", chatFileChangesRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {
@@ -420,7 +427,7 @@ chatRoutes.post("/prewarm", async (c) => {
       accountId: typeof accountId === "string" ? accountId : undefined,
       opts,
     })
-    .catch((e) => console.warn(`[chat] prewarm failed: ${(e as Error).message}`));
+    .catch((e) => log.warn(`prewarm failed: ${(e as Error).message}`));
   return c.json(ok({ accepted: true }), 202);
 });
 
@@ -491,6 +498,7 @@ chatRoutes.delete("/sessions", async (c) => {
     );
 
     let deleted = 0;
+    let firstFailure: string | undefined;
     for (const s of toDelete) {
       try {
         await chatService.deleteSession(s.providerId ?? providerId, s.id);
@@ -500,13 +508,23 @@ chatRoutes.delete("/sessions", async (c) => {
         deleteSessionTitle(s.id);
         unpinSession(s.id);
         deleteBranchesFor(s.id);
+        deleteSessionBaselines(s.id);
         try { draftService.delete(projectPath, s.id); } catch { /* ignore */ }
         deleted++;
-      } catch { /* skip individual failures */ }
+      } catch (e) {
+        // Skipped, as before. One WARN per failure would repeat for every session a single fault
+        // reaches, so each is DEBUG and the summary below says how many and the first one.
+        const msg = (e as Error).message;
+        log.debug(`bulk delete session=${s.id} failed: ${msg}`);
+        firstFailure ??= `session=${s.id}: ${msg}`;
+      }
     }
     // Clean up any orphaned drafts left behind
     try { draftService.deleteOrphaned(); } catch { /* ignore */ }
 
+    const summary = `bulk-deleted ${deleted}/${toDelete.length} sessions older than ${olderThanDays}d provider=${providerId} project=${c.get("projectName")}`;
+    if (firstFailure) log.warn(`${summary} — ${toDelete.length - deleted} failed, first ${firstFailure}`);
+    else log.info(summary);
     return c.json(ok({ deleted, total: toDelete.length }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -532,6 +550,7 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     deleteSessionTitle(id);
     unpinSession(id);
     deleteBranchesFor(id);
+    deleteSessionBaselines(id);
     // Fire-and-forget draft cleanup
     try { draftService.delete(c.get("projectPath"), id); } catch { /* ignore */ }
     return c.json(ok({ deleted: id }));
@@ -582,22 +601,22 @@ chatRoutes.put("/sessions/:id/account", async (c) => {
   if (!bindPickedAccount(sessionId, providerId, body.accountId)) {
     return c.json(err(bindRefusalReason(providerId, body.accountId)), 400);
   }
-  // Codex binds an account by spawning its app-server with that account's CODEX_HOME, so a
-  // subprocess already running keeps serving the old account however the binding reads — the
-  // switch appeared to do nothing until something else happened to kill it. Dropping it while
-  // idle makes the next message respawn on the account the user just picked. Claude needs
-  // none of this: it reads the binding per turn, and there is nothing stale to clear.
-  if (providerId === "codex") {
-    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
-    // Never mid-turn. The answer being streamed would be lost, and the switch takes effect
-    // on the next message either way — which is exactly what the picker promises.
-    if (!listRunningSessions().some((s) => s.sessionId === sessionId)) {
-      dropIdleSubprocess(
-        sessionId,
-        "account_switch",
-        "Subprocess released: the session was moved to another Codex account",
-      );
-    }
+  // A subprocess already running keeps serving the account it was spawned with however the
+  // binding reads: Codex's app-server runs under that account's CODEX_HOME, and Claude's CLI
+  // holds that account's token in its environment while follow-ups are pushed straight into
+  // it, so the binding is only read when a subprocess starts. Either way the switch appeared
+  // to do nothing until something else happened to kill it. Dropping it while idle makes the
+  // next message respawn on the account the user just picked.
+  const { listRunningSessions, dropIdleSubprocess, hasBackgroundWork } = await import("../ws/chat.ts");
+  // Never mid-turn — the answer being streamed would be lost — and never under a background
+  // agent or shell, which dies with the subprocess. Either way the switch waits for the next
+  // subprocess instead.
+  if (!listRunningSessions().some((s) => s.sessionId === sessionId) && !hasBackgroundWork(sessionId)) {
+    dropIdleSubprocess(
+      sessionId,
+      "account_switch",
+      "Subprocess released: the session was moved to another account",
+    );
   }
   return c.json(ok({ accountId: body.accountId }));
 });
@@ -798,7 +817,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
             if (rootTitle) setSessionTitle(result.sessionId, rootTitle);
           }
         } catch (branchErr) {
-          console.warn(`[chat] recordBranch failed: ${(branchErr as Error).message}`);
+          log.warn(`recordBranch failed: ${(branchErr as Error).message}`);
         }
         const forkedSession = {
           id: result.sessionId,
@@ -815,7 +834,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         // Surface as 400 instead of silently creating an empty session — FE can show a toast
         // and let the user pick a different fork point.
         const msg = (forkErr as Error).message;
-        console.warn(`[chat] forkAtMessage failed: ${msg}`);
+        log.warn(`forkAtMessage failed: ${msg}`);
         return c.json(err(`Cannot fork at message: ${msg}`), 400);
       }
     } else {
@@ -1032,6 +1051,7 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     );
 
     const result = await stripTranscriptImagesFile(found.path, mode, { includeAttachments });
+    log.info(`session=${sessionId} stripped ${result.removed} images (${result.bytesFreed} B) mode=${mode} attachments=${includeAttachments}`);
     return c.json(ok({
       removed: result.removed,
       bytesFreed: result.bytesFreed,
@@ -1076,10 +1096,14 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
       const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"), beforeUuid);
       return c.json(ok(messages));
     }
-    const validated = validateJsonlPath(jsonlPath);
+    // No bound on the file. `parseCompactSegment` scans it as bytes, streamed, from
+    // the start to the `before` record (to the end when no record has that uuid),
+    // and parses only the segment it finds there, which is what it bounds. A 543MB
+    // transcript answered "File too large" to every scroll up while its segments were 3MB.
+    const validated = validateJsonlPath(jsonlPath, Number.POSITIVE_INFINITY);
     // One compaction segment per request: the client walks further back by
     // expanding the summary that arrives at the head of each one.
-    const messages = await parseJsonlTranscript(validated, beforeUuid, { oneSegment: true });
+    const messages = await parseCompactSegment(validated, beforeUuid);
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

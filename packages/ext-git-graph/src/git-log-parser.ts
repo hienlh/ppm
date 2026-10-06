@@ -29,7 +29,9 @@ function parseCommitBlock(block: string): GitVertex | null {
 
 function parseRefs(refString: string): RefData[] {
   if (!refString.trim()) return [];
-  return refString.split(",").map((r) => r.trim()).filter(Boolean).map((ref) => {
+  // `origin/HEAD` is the remote's pointer to its default branch and always sits on the
+  // same commit as that branch, so as a pill it only repeated the one beside it.
+  return refString.split(",").map((r) => r.trim()).filter((r) => r && !/^[^ ]+\/HEAD$/.test(r)).map((ref) => {
     if (ref.startsWith("HEAD -> ")) return { name: ref.replace("HEAD -> ", ""), type: "head" as const };
     if (ref.startsWith("tag: ")) return { name: ref.replace("tag: ", ""), type: "tag" as const };
     if (ref.includes("/")) return { name: ref, type: "remote" as const };

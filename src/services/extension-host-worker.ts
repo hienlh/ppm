@@ -19,6 +19,39 @@ const activeExtensions = new Map<string, {
 
 const rpc = new RpcChannel((msg) => postMessage(msg));
 
+/**
+ * This thread has a console of its own, which the main thread's routing into ppm.log never
+ * reaches. What the host, vscode-compat and every extension printed here used to land in the
+ * log raw — no timestamp, no level, no redaction (under the supervisor stdout IS ppm.log) — or
+ * nowhere at all under `bun dev:server`. Each call is formatted here and posted as a `log`
+ * event, which the main thread writes at its level under the `ext` scope. logger.ts is not
+ * loaded in this thread. A line that cannot be posted is dropped: logging must never throw
+ * into extension code.
+ */
+const MAX_FORWARDED_LOG_CHARS = 8192;
+for (const [method, level] of [["debug", "debug"], ["log", "info"], ["info", "info"], ["warn", "warn"], ["error", "error"]] as const) {
+  console[method] = (...args: unknown[]) => {
+    try {
+      const text = args.map(formatConsoleArg).join(" ");
+      rpc.sendEvent("log", {
+        level,
+        text: text.length > MAX_FORWARDED_LOG_CHARS ? `${text.slice(0, MAX_FORWARDED_LOG_CHARS)}… (${text.length} chars)` : text,
+      });
+    } catch { /* dropped rather than thrown at the caller */ }
+  };
+}
+
+/** Text only crosses to the main thread: an object may not survive structured cloning. */
+function formatConsoleArg(arg: unknown): string {
+  if (typeof arg === "string") return arg;
+  if (arg instanceof Error) return arg.stack ?? `${arg.name}: ${arg.message}`;
+  try {
+    return JSON.stringify(arg) ?? String(arg);
+  } catch {
+    return String(arg); // circular, BigInt
+  }
+}
+
 // Listen for messages from main process
 declare const self: Worker;
 self.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
@@ -29,7 +62,7 @@ self.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
 
 rpc.onRequest("ext:activate", async (params) => {
   const [extId, entryPath, extensionPath, storedState, baseUrl, authToken] = params as [string, string, string, Record<string, Record<string, string | null>>?, string?, string?];
-  console.log(`[ExtHost] activating ${extId} from ${entryPath}`);
+  console.debug(`[ExtHost] activating ${extId} from ${entryPath}`);
   if (activeExtensions.has(extId)) return { ok: true, already: true };
 
   // Expose server base URL and auth token so extensions can use fetch() with absolute URLs
@@ -70,11 +103,12 @@ rpc.onRequest("ext:activate", async (params) => {
       window: api.window as WindowService,
       commands: api.commands as CommandService,
     });
-    console.log(`[ExtHost] activated ${extId} (${activeExtensions.size} total)`);
+    console.debug(`[ExtHost] activated ${extId} (${activeExtensions.size} total)`);
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[ExtHost] Failed to activate ${extId}:`, msg);
+    // The main thread reports the failure with this same message.
+    console.debug(`[ExtHost] Failed to activate ${extId}:`, msg);
     return { ok: false, error: msg };
   }
 });
@@ -96,7 +130,8 @@ rpc.onRequest("ext:deactivate", async (params) => {
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[ExtHost] Failed to deactivate ${extId}:`, msg);
+    // The main thread reports the failure with this same message.
+    console.debug(`[ExtHost] Failed to deactivate ${extId}:`, msg);
     activeExtensions.delete(extId);
     return { ok: false, error: msg };
   }
@@ -104,12 +139,12 @@ rpc.onRequest("ext:deactivate", async (params) => {
 
 rpc.onRequest("ext:command:execute", async (params) => {
   const [command, ...args] = params as [string, ...unknown[]];
-  console.log(`[ExtHost] command:execute "${command}" (${activeExtensions.size} extensions active)`);
+  console.debug(`[ExtHost] command:execute "${command}" (${activeExtensions.size} extensions active)`);
   for (const [extId, ext] of activeExtensions) {
     if (ext.commands) {
       const hasLocal = (ext.commands as any).localHandlers?.has(command);
       if (!hasLocal) continue;
-      console.log(`[ExtHost] routing "${command}" → ${extId}`);
+      console.debug(`[ExtHost] routing "${command}" → ${extId}`);
       try {
         const result = await (ext.commands as any).executeCommand(command, ...args);
         return { ok: true, result };

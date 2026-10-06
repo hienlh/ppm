@@ -17,6 +17,7 @@ import type { ProcessCollector } from "./process-collector-types.ts";
 import { identityMatches, resolveLiveProcess } from "./kill-identity-resolver.ts";
 import { checkKillAllowed } from "./kill-guard.ts";
 import type { ProtectedPids } from "./ppm-protected-pids.ts";
+import type { Logger } from "../logger.ts";
 
 export interface SignalHandlerDeps {
   platform: MetricsPlatform;
@@ -25,9 +26,9 @@ export interface SignalHandlerDeps {
   execute: (pid: number, signal: ProcessSignal, tree: boolean) => Promise<SignalProcessResult>;
   /** Signals this host can deliver; anything else is a 400 before any re-query. */
   supported: readonly ProcessSignal[];
-  /** Audit line: pid + name + signal + result ONLY. `~/.ppm/ppm.log`'s tail is
-   *  served unauthenticated by `/api/logs/recent`, so no command line here. */
-  log: (line: string) => void;
+  /** Audit line: pid + name + signal + result ONLY. `~/.ppm/ppm.log` is read
+   *  back into bug reports, so no command line here. */
+  log: Logger;
 }
 
 export type SignalStatus = 200 | 400 | 403 | 404 | 409 | 500;
@@ -73,20 +74,20 @@ export async function handleSignalRequest(body: unknown, deps: SignalHandlerDeps
     ppidOf: maps.ppidOf,
     startedAtOf: maps.startedAtOf,
   });
-  const prefix = `[SystemMetrics] signal=${req.signal} pid=${live.pid} name=${live.name} tree=${tree}`;
+  const prefix = `signal=${req.signal} pid=${live.pid} name=${live.name} tree=${tree}`;
   if (!verdict.allowed) {
-    deps.log(`${prefix} → refused: ${verdict.reason}`);
+    deps.log.warn(`${prefix} → refused: ${verdict.reason}`);
     return { status: 403, body: err(verdict.reason ?? "Refused") };
   }
 
-  deps.log(`${prefix} → allowed`);
+  deps.log.debug(`${prefix} → allowed`);
   try {
     const result = await deps.execute(live.pid, req.signal, tree);
-    deps.log(`${prefix} → done (${result.signalled.length} signalled)`);
+    deps.log.info(`${prefix} → done (${result.signalled.length} signalled)`);
     return { status: 200, body: ok(result) };
   } catch (e) {
     const message = (e as Error)?.message ?? String(e);
-    deps.log(`${prefix} → failed: ${message}`);
+    deps.log.error(`${prefix} → failed: ${message}`);
     return { status: 500, body: err(`Failed to signal PID ${live.pid}: ${message}`) };
   }
 }

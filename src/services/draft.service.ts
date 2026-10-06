@@ -1,3 +1,4 @@
+import { decodeReply, encodeReply } from "../shared/chat-reply.ts";
 import { getDb } from "./db.service.ts";
 
 const MAX_CONTENT_LENGTH = 50 * 1024; // ~50K characters cap
@@ -19,7 +20,9 @@ class DraftService {
 
   upsert(projectPath: string, sessionId: string, content: string, attachments?: string): void {
     // Silent truncation at 50KB
-    const safeContent = content.length > MAX_CONTENT_LENGTH ? content.slice(0, MAX_CONTENT_LENGTH) : content;
+    const decoded = decodeReply(content);
+    const body = decoded.content.length > MAX_CONTENT_LENGTH ? decoded.content.slice(0, MAX_CONTENT_LENGTH) : decoded.content;
+    const safeContent = encodeReply(body, decoded.replyTo);
     getDb()
       .query(
         "INSERT INTO chat_drafts (project_path, session_id, content, attachments, updated_at) VALUES (?, ?, ?, ?, datetime('now')) ON CONFLICT(project_path, session_id) DO UPDATE SET content = excluded.content, attachments = excluded.attachments, updated_at = excluded.updated_at",
@@ -33,12 +36,16 @@ class DraftService {
       .run(projectPath, sessionId);
   }
 
-  /** Delete orphaned drafts whose session_id is not in session_metadata */
+  /**
+   * Delete orphaned drafts whose session_id is not in session_metadata.
+   * `git-commit` rows are commit messages (`git-commit-draft.service.ts`), not
+   * chat drafts, and have no session.
+   */
   deleteOrphaned(): number {
     const result = getDb()
       .query(
         `DELETE FROM chat_drafts
-         WHERE session_id != '__new__'
+         WHERE session_id NOT IN ('__new__', 'git-commit')
            AND session_id NOT IN (SELECT session_id FROM session_metadata)`,
       )
       .run();

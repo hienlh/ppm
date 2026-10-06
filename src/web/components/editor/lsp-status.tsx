@@ -237,7 +237,7 @@ function LspStatusBody({
 /**
  * What pressing Install will actually do.
  *
- * Worth saying, because the three are not the same promise: two of them leave the machine's own
+ * Worth saying, because the plans are not the same promise: all but one leave the machine's own
  * tools untouched, and the rustup one deliberately does not — a rust-analyzer belongs to a
  * toolchain, so PPM adds the component rather than keeping a copy that would be the wrong one
  * for a project pinning another toolchain.
@@ -250,13 +250,19 @@ function installNote(installWith: LspMissingServer["installWith"]): string {
     case "rustup":
       return "PPM asks rustup to add the component to the toolchain this project uses — the same"
         + " as running the command below yourself.";
+    case "download":
+      return "PPM downloads the server's own release, checks it against a pinned checksum and keeps"
+        + " it in its own folder. Nothing on your system changes.";
+    case "gem":
+      return "PPM installs the gem with the Ruby on this machine into its own folder, leaving your"
+        + " gems alone. It takes a minute or so.";
     default:
       return "PPM downloads it from npm into its own folder. Nothing you installed globally"
         + " changes, and this file picks it up without being reopened.";
   }
 }
 
-/** Why there is no button: either PPM has no toolchain to do it with, or it is a system package. */
+/** Why there is no button: PPM has no toolchain to do it with, or no build to download. */
 function cannotInstallNote(installWith: LspMissingServer["installWith"]): string {
   switch (installWith) {
     case "go":
@@ -265,9 +271,17 @@ function cannotInstallNote(installWith: LspMissingServer["installWith"]): string
     case "rustup":
       return "Install it, then reopen this file. PPM installs language servers but never toolchains,"
         + " and it cannot find rustup on this host.";
+    case "gem":
+      return "Install it, then reopen this file. PPM installs this one with the machine's Ruby, and"
+        + " it cannot use one on this host.";
+    case "download":
+      return "Install it, then reopen this file. Its project publishes no build for this machine,"
+        + " or there is no unzip here to unpack one.";
+    case "bun":
+      return "Install it, then reopen this file. PPM installs this one with bun, and it cannot find"
+        + " bun on this host.";
     default:
-      return "Install it, then reopen this file. This one comes from a system package manager,"
-        + " which PPM will not run on your behalf.";
+      return "Install it, then reopen this file.";
   }
 }
 

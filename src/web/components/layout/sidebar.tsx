@@ -10,7 +10,7 @@ import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
-import { TunnelManagerTab } from "@/components/tunnels/tunnel-manager-tab";
+import { PortForwardingPanel } from "@/components/tunnels/port-forwarding-panel";
 import { SessionHistoryList } from "@/components/chat/session-history-list";
 import { GroupList } from "@/components/group-chat/group-list";
 import { useGitChangesPoller } from "@/stores/git-status-store";
@@ -140,7 +140,7 @@ export const Sidebar = memo(function Sidebar() {
               <Suspense fallback={null}><DesignsSidebarPanel /></Suspense>
             )}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
-            {sidebarActiveTab === "tunnels" && <TunnelManagerTab />}
+            {sidebarActiveTab === "tunnels" && <PortForwardingPanel />}
             {sidebarActiveTab === "jira" && <JiraPanel />}
             {sidebarActiveTab === "ai-resources" && <AiResourcesPanel />}
             {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (

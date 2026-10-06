@@ -15,6 +15,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { CLANGD_ASSETS, CLANGD_VERSION, LUA_LS_ASSETS, LUA_LS_VERSION } from "./lsp-release-catalog.ts";
 
 export interface LanguageServerDefinition {
   /** Stable id, used in status reporting and as the marker owner. */
@@ -33,11 +34,9 @@ export interface LanguageServerDefinition {
   /** Shown verbatim when the command cannot be found. */
   installHint: string;
   /**
-   * How the Install button installs this server, when PPM can install it at all.
-   *
-   * Unset for a server that needs a system package manager — `clangd`, `lua-language-server`
-   * and `solargraph` mean pacman, apt, brew or a gem, i.e. a password and a choice PPM has no
-   * business making. Those keep a command to copy and no button.
+   * How the Install button installs this server, when PPM can install it at all. Never with a
+   * system package manager — that is a password and a choice PPM has no business making — so a
+   * server only some package manager carries keeps a command to copy and no button.
    */
   install?: LanguageServerInstall;
   /**
@@ -53,13 +52,14 @@ export interface LanguageServerDefinition {
 /**
  * What the Install button runs.
  *
- * `bun` and `go` both put the server inside PPM's own directory, so nothing the user installed
- * is touched and `rm -rf` is the uninstall. `rustup` is the exception and has to be: a
- * rust-analyzer belongs to a toolchain, and a private copy would be the wrong one as soon as a
- * project pins a different toolchain.
+ * `bun`, `go`, `gem` and `download` all put the server inside PPM's own directory, so nothing
+ * the user installed is touched and `rm -rf` is the uninstall. `rustup` is the exception and
+ * has to be: a rust-analyzer belongs to a toolchain, and a private copy would be the wrong one
+ * as soon as a project pins a different toolchain.
  *
- * PPM never installs the *toolchain*. `go` and `rustup` are offered only where the host
- * already has them — see `canInstall` in `lsp-install.ts`.
+ * PPM never installs the *toolchain*. `go`, `gem` and `rustup` are offered only where the host
+ * already has them, and `download` only where the project publishes a build for this host and
+ * there is a tool to unpack it — see `canInstall` in `lsp-install.ts`.
  */
 export type LanguageServerInstall =
   /** `bun add <packages>`; the first package provides `command`, the rest are what it needs. */
@@ -67,7 +67,36 @@ export type LanguageServerInstall =
   /** `go install <module>` with `GOBIN` pointed at PPM's own bin directory. */
   | { with: "go"; module: string }
   /** `rustup component add <component>`, in whichever toolchain the project selects. */
-  | { with: "rustup"; component: string };
+  | { with: "rustup"; component: string }
+  /**
+   * The server project's own release build for this host, unpacked whole into `<lsp dir>/<id>`.
+   * Needs no toolchain at all, only `tar` (or `unzip` for a zip off Windows) to unpack it.
+   */
+  | { with: "download"; version: string; assets: Record<string, ReleaseAsset> }
+  /**
+   * `gem install` into `<lsp dir>/ruby`, which is not on any gem path — so PPM's copy is run with
+   * `GEM_PATH` pointing there (`installedServerEnv`), or its binstub cannot find its own gems.
+   */
+  | { with: "gem"; gem: string };
+
+/** One downloadable build of a server, pinned by SHA-256 (`lsp-release-catalog.ts`). */
+export interface ReleaseAsset {
+  url: string;
+  /** Lowercase hex, matching the digest GitHub lists for the asset. */
+  sha256: string;
+  archive: "tar.gz" | "zip";
+  /** The server binary, relative to the unpacked archive, `/`-separated. */
+  binary: string;
+}
+
+/** The build of a download plan for this host, or null when the project publishes none. */
+export function releaseAssetFor(
+  plan: LanguageServerInstall,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): ReleaseAsset | null {
+  return plan.with === "download" ? plan.assets[`${platform}-${arch}`] ?? null : null;
+}
 
 /**
  * File extension to LSP language id.
@@ -217,6 +246,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["--background-index"],
     rootMarkers: ["compile_commands.json", "compile_flags.txt", ".clangd", "CMakeLists.txt", "Makefile"],
     installHint: "install clangd from your package manager (pacman -S clang, apt install clangd)",
+    install: { with: "download", version: CLANGD_VERSION, assets: CLANGD_ASSETS },
   },
   {
     id: "json",
@@ -286,6 +316,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: ["stdio"],
     rootMarkers: ["Gemfile", ".solargraph.yml"],
     installHint: "gem install solargraph",
+    install: { with: "gem", gem: "solargraph" },
   },
   {
     id: "lua",
@@ -295,6 +326,7 @@ export const LANGUAGE_SERVERS: LanguageServerDefinition[] = [
     args: [],
     rootMarkers: [".luarc.json"],
     installHint: "install lua-language-server from your package manager",
+    install: { with: "download", version: LUA_LS_VERSION, assets: LUA_LS_ASSETS },
   },
   {
     id: "vue",
@@ -474,19 +506,54 @@ export function installedServerEntry(definition: LanguageServerDefinition, insta
 }
 
 /**
- * Where a compiled server the Install button built would be — PPM's own `bin` directory.
+ * Where a server binary the Install button put in PPM's own directory would be.
  *
- * That is `GOBIN` for the install, so the binary is PPM's to find and to delete, and the
- * user's `~/go/bin` is left as they arranged it. A plain path: whether it exists is the
- * caller's `exists()`, the same as for every other candidate.
+ * `go`: PPM's own `bin` directory, which is `GOBIN` for the install, so the binary is PPM's to
+ * find and to delete and the user's `~/go/bin` is left as they arranged it. `download`: inside
+ * the unpacked release, `<installDir>/<id>`. `gem`: the binstub in `<installDir>/ruby/bin`. A
+ * plain path: whether it exists is the caller's `exists()`, the same as for every other candidate.
  */
 export function installedBinaryPath(
   definition: LanguageServerDefinition,
   installDir: string,
   platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
 ): string | null {
-  if (definition.install?.with !== "go") return null;
-  return path.join(installDir, "bin", platform === "win32" ? `${definition.command}.exe` : definition.command);
+  const plan = definition.install;
+  if (plan?.with === "go") {
+    return path.join(installDir, "bin", platform === "win32" ? `${definition.command}.exe` : definition.command);
+  }
+  if (plan?.with === "download") {
+    const asset = releaseAssetFor(plan, platform, arch);
+    return asset ? path.join(installDir, definition.id, ...asset.binary.split("/")) : null;
+  }
+  if (plan?.with === "gem") {
+    // RubyGems writes a `.bat` beside the Ruby script on Windows.
+    return path.join(gemInstallDir(installDir), "bin", platform === "win32" ? `${definition.command}.bat` : definition.command);
+  }
+  return null;
+}
+
+/** Where `gem install` puts a gem plan's gems and binstubs. */
+export function gemInstallDir(installDir: string): string {
+  return path.join(installDir, "ruby");
+}
+
+/**
+ * What PPM's own copy of a server needs added to its environment, beyond the one PPM runs in.
+ *
+ * Only a gem plan needs anything: its binstub asks RubyGems for the gem, and `<lsp dir>/ruby` is
+ * on no gem path — measured, the binstub exits with `Gem::GemNotFoundException` without this and
+ * prints its version with it. Prepended, so a `GEM_PATH` the user set still applies after it.
+ */
+export function installedServerEnv(
+  definition: LanguageServerDefinition,
+  installDir: string,
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> | undefined {
+  if (definition.install?.with !== "gem") return undefined;
+  const gemPath = [gemInstallDir(installDir), env.GEM_PATH].filter(Boolean).join(path.delimiter);
+  return { GEM_PATH: gemPath };
 }
 
 /** `typescript@5` → `typescript`, keeping a scoped package's own leading `@`. */

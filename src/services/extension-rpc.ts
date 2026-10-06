@@ -5,6 +5,23 @@ const RPC_TIMEOUT = 10_000; // 10s per request
 type RpcHandler = (params: unknown[]) => unknown | Promise<unknown>;
 
 /**
+ * The levels this channel logs at; a `Logger` from logger.ts fits. Not imported from there:
+ * this module also runs inside the extension host worker, which must not load logger.ts.
+ */
+export interface RpcLog {
+  debug(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+}
+
+/** The worker's default: its console, which the worker forwards to the main thread's log. */
+const consoleRpcLog: RpcLog = {
+  debug: (msg, ...rest) => console.debug(`[RPC] ${msg}`, ...rest),
+  warn: (msg, ...rest) => console.warn(`[RPC] ${msg}`, ...rest),
+  error: (msg, ...rest) => console.error(`[RPC] ${msg}`, ...rest),
+};
+
+/**
  * Typed RPC channel over Worker postMessage.
  * Used by both main process (ExtensionService) and worker (ExtensionHost).
  */
@@ -14,9 +31,13 @@ export class RpcChannel {
   private handlers = new Map<string, RpcHandler>();
   private eventHandlers = new Map<string, Set<(data: unknown) => void>>();
   private postFn: (msg: RpcMessage) => void;
+  private log: RpcLog;
+  /** Methods already reported as unhandled: API drift repeats on every call, the warning need not. */
+  private warnedUnhandled = new Set<string>();
 
-  constructor(postFn: (msg: RpcMessage) => void) {
+  constructor(postFn: (msg: RpcMessage) => void, log: RpcLog = consoleRpcLog) {
     this.postFn = postFn;
+    this.log = log;
   }
 
   /** Send a request and wait for response (with timeout) */
@@ -71,11 +92,19 @@ export class RpcChannel {
       const response: RpcResponse = { type: "response", id: msg.id };
       if (!handler) {
         response.error = `No handler for method: ${msg.method}`;
+        // A method the other side calls but this one never registered: vscode-compat and the
+        // host have drifted apart, and only the caller would ever hear of it.
+        if (this.warnedUnhandled.has(msg.method)) this.log.debug(`no handler for ${msg.method}`);
+        else {
+          this.warnedUnhandled.add(msg.method);
+          this.log.warn(`no handler for ${msg.method}`);
+        }
       } else {
         try {
           response.result = await handler(msg.params);
         } catch (e) {
           response.error = e instanceof Error ? e.message : String(e);
+          this.log.debug(`${msg.method} failed: ${response.error}`);
         }
       }
       this.postFn(response);
@@ -86,7 +115,7 @@ export class RpcChannel {
       const handlers = this.eventHandlers.get(msg.event);
       if (handlers) {
         for (const h of handlers) {
-          try { h(msg.data); } catch (e) { console.error(`[RPC] Event handler error (${msg.event}):`, e); }
+          try { h(msg.data); } catch (e) { this.log.error(`Event handler error (${msg.event}):`, e); }
         }
       }
     }

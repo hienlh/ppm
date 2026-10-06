@@ -21,12 +21,57 @@ import { isValidDesignSlug } from "./design/design-slug.ts";
 import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
 import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
 import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
+import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("chat");
+const designLog = createLogger("design");
 
 /** What a caller passes to send: the provider's options plus which door the run came through. */
 export type ChatSendOpts = SendMessageOpts & { origin?: TraceOrigin };
+
+/**
+ * What the "turn start" / "turn end" log lines need about one run, which can span many turns.
+ * Kept for those lines only — the session trace holds the turns themselves.
+ */
+interface TurnLog {
+  /** The id the run answers to now: a provider may migrate it mid-run. */
+  sessionId: string;
+  providerId: string;
+  origin: string;
+  /**
+   * When the running turn was asked for; null between turns. A follow-up sent mid-turn leaves
+   * it alone: the provider may fold it into the running turn, so it cannot be told apart from
+   * one that runs next, and that turn's end line goes without a duration rather than a wrong one.
+   */
+  startedAt: number | null;
+  /** Why PPM stopped the running turn. */
+  abortReason?: string;
+  /** The first error the running turn reported. */
+  firstError?: string;
+}
+
+function logTurnStart(sessionId: string, providerId: string, origin: TraceOrigin | undefined, stream: "new" | "live" | "none", opts: SendMessageOpts): void {
+  const images = (opts.images?.length ?? 0) + (opts.imagePaths?.length ?? 0);
+  log.info(`turn start session=${sessionId} provider=${providerId} origin=${origin ?? "unknown"} stream=${stream} model=${opts.model ?? "default"} images=${images}`);
+}
+
+/** Every turn of every provider and origin ends in this line, at the level its result deserves. */
+function logTurnEnd(turn: TurnLog, result: string, done?: { numTurns?: number; contextWindowPct?: number }): void {
+  const line = `turn end session=${turn.sessionId} provider=${turn.providerId} origin=${turn.origin} result=${result}`
+    + (result === "aborted" && turn.abortReason ? ` reason=${turn.abortReason}` : "")
+    + (done?.numTurns != null ? ` turns=${done.numTurns}` : "")
+    + (turn.startedAt !== null ? ` durationMs=${Date.now() - turn.startedAt}` : "")
+    + (done?.contextWindowPct != null ? ` ctx=${done.contextWindowPct}%` : "")
+    + (turn.firstError && result !== "aborted" ? ` error=${JSON.stringify(turn.firstError)}` : "");
+  if (result === "success" || result === "aborted") log.info(line);
+  else if (result === "error_max_turns" || result === "error_max_budget_usd" || result === "consumer_closed") log.warn(line);
+  else log.error(line);
+}
 
 /**
  * Events after which a design session's files may have settled: the end of a turn, and a
@@ -42,6 +87,8 @@ function endsDesignWork(event: ChatEvent): boolean {
 class ChatService {
   // Delivery hints only: a restart/eviction safely sends a fresh snapshot.
   private sharedSnapshots = new Map<string, string>();
+  /** Runs in flight, by every id they answer to — read only by the turn log lines. */
+  private turnLogs = new Map<string, TurnLog>();
 
   private rememberSharedContext(providerId: string, sessionId: string, context?: string): void {
     if (!context) return;
@@ -119,6 +166,8 @@ class ChatService {
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
     this.invalidateSharedContext(providerId, sessionId);
     designMcpTokens.revoke(sessionId);
+    tabToolsMcpTokens.revoke(sessionId);
+    tabOpenBroker.forget(sessionId);
     return provider.deleteSession(sessionId);
   }
 
@@ -135,21 +184,64 @@ class ChatService {
   ): AsyncIterable<ChatEvent> {
     const { origin, ...sendOpts } = opts ?? {};
     const run = new TraceRun({ sessionId, providerId, origin, message, opts: sendOpts });
+    // A run already streaming this session takes the message as a follow-up — the provider
+    // pushes it into that stream — and that run's events are the ones that end the turn.
+    const live = this.turnLogs.get(sessionId);
+    logTurnStart(sessionId, providerId, origin, live ? "live" : "new", sendOpts);
+    let turn: TurnLog | null = null;
+    if (!live) {
+      turn = { sessionId, providerId, origin: origin ?? "unknown", startedAt: Date.now() };
+      this.turnLogs.set(sessionId, turn);
+    } else if (live.startedAt === null) {
+      live.startedAt = Date.now();
+    }
     let outcome: "completed" | "consumer_closed" | "failed" = "consumer_closed";
     try {
-      yield* this.streamRun(run, providerId, sessionId, message, sendOpts);
+      yield* this.streamRun(run, turn, providerId, sessionId, message, sendOpts);
       outcome = "completed";
     } catch (e) {
       run.fail(e);
       outcome = "failed";
+      log.error(`session=${sessionId} provider=${providerId} origin=${origin ?? "unknown"} run failed:`, e);
       throw e;
     } finally {
       run.end(outcome);
+      if (turn) this.endTurnLog(turn, outcome);
     }
+  }
+
+  /** Follow one run's events for its turn log lines. Observes only, like the trace. */
+  private observeTurn(turn: TurnLog, event: ChatEvent): void {
+    if (event.type === "error") {
+      turn.firstError ??= String(event.message).slice(0, 200);
+      return;
+    }
+    const migratedTo = event.type === "session_migrated" ? event.newSessionId : event.type === "done" ? event.sessionId : undefined;
+    if (migratedTo && migratedTo !== turn.sessionId) {
+      // Follow-ups and aborts arrive under the new id from here on.
+      this.turnLogs.set(migratedTo, turn);
+      turn.sessionId = migratedTo;
+    }
+    if (event.type !== "done") return;
+    const sub = event.resultSubtype;
+    logTurnEnd(turn, turn.abortReason ? "aborted" : sub && sub !== "success" ? sub : turn.firstError ? "error" : "success", event);
+    turn.startedAt = null;
+    turn.abortReason = undefined;
+    turn.firstError = undefined;
+  }
+
+  /** The run is over: forget it, and close a turn it left open — one that never got its `done`. */
+  private endTurnLog(turn: TurnLog, outcome: "completed" | "consumer_closed" | "failed"): void {
+    for (const [id, t] of this.turnLogs) if (t === turn) this.turnLogs.delete(id);
+    // A failed run said how it ended in "run failed".
+    if (turn.startedAt === null || outcome === "failed") return;
+    // no_done: the provider returned mid-turn without saying how the turn went.
+    logTurnEnd(turn, turn.abortReason ? "aborted" : outcome === "consumer_closed" ? "consumer_closed" : turn.firstError ? "error" : "no_done");
   }
 
   private async *streamRun(
     run: TraceRun,
+    turn: TurnLog | null,
     providerId: string,
     sessionId: string,
     message: string,
@@ -159,6 +251,7 @@ class ChatService {
     if (!provider) {
       const event: ChatEvent = { type: "error", message: `Provider "${providerId}" not found` };
       run.observe(event);
+      if (turn) this.observeTurn(turn, event);
       yield event;
       return;
     }
@@ -182,7 +275,7 @@ class ChatService {
             const { setSessionMigratedTo } = await import("./db.service.ts");
             setSessionMigratedTo(event.oldSessionId, event.newSessionId);
           } catch (e) {
-            console.warn(`[chat] could not record session migration: ${(e as Error).message}`);
+            log.warn(`could not record session migration: ${(e as Error).message}`);
           }
         }
         const migratedId = event.type === "session_migrated" ? event.newSessionId : event.type === "done" ? event.sessionId : undefined;
@@ -199,6 +292,7 @@ class ChatService {
           scheduleTurnSnapshot(activeSessionId, this.getSession(activeSessionId)?.projectPath);
         }
         run.observe(event);
+        if (turn) this.observeTurn(turn, event);
         yield event;
       }
       finished = true;
@@ -215,7 +309,11 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    const design = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // Like the design fields, the tab tools are only ever server-built.
+    const { tabToolsMcp: _tabTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // A design session checks its canvas with `design_check` instead.
+    const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession
+      ? tabToolsMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -235,7 +333,7 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, sharedContext };
+    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), sharedContext };
   }
 
   /**
@@ -271,7 +369,7 @@ class ChatService {
       try {
         await ensureShowcaseDesign(projectPath, system.id);
       } catch (e) {
-        console.warn(`[design] could not prepare the showcase for ${system.id}: ${(e as Error).message}`);
+        designLog.warn(`could not prepare the showcase for ${system.id}: ${(e as Error).message}`);
       }
     }
     return {
@@ -300,9 +398,13 @@ class ChatService {
       sharedContext: prepared.sharedContext,
       contextVia: provider.supportsSharedContext ? "provider" : "message",
     });
+    // stream=none: no run of this process is streaming the session, so nothing will end the turn.
+    const live = this.turnLogs.get(sessionId);
+    logTurnStart(sessionId, providerId, origin, live ? "live" : "none", sendOpts);
     streaming.pushMessage(sessionId,
       provider.supportsSharedContext ? message : withSharedContext(message, prepared.sharedContext),
       { ...prepared, sharedContext: provider.supportsSharedContext ? prepared.sharedContext : undefined });
+    if (live && live.startedAt === null) live.startedAt = Date.now();
     this.rememberSharedContext(providerId, sessionId, prepared.sharedContext);
   }
 
@@ -313,6 +415,14 @@ class ChatService {
   abortQuery(providerId: string, sessionId: string, reason: string, origin?: TraceOrigin): void {
     const provider = providerRegistry.get(providerId);
     if (!provider?.abortQuery) return;
+    // Stopping a turn is news; tearing down an idle subprocess is said by whoever asked for it.
+    const turn = this.turnLogs.get(sessionId);
+    if (turn && turn.startedAt !== null) {
+      turn.abortReason ??= reason;
+      log.info(`session=${sessionId} abort reason=${reason} origin=${origin ?? "unknown"}`);
+    } else {
+      log.debug(`session=${sessionId} abort reason=${reason} origin=${origin ?? "unknown"} (no turn running)`);
+    }
     traceAbort(sessionId, providerId, reason, origin);
     provider.abortQuery(sessionId, reason);
   }

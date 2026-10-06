@@ -14,6 +14,9 @@ import {
 import { DEFAULT_CLI_REFERENCE } from "./cli-reference-default.ts";
 import type { PPMBotActiveSession, PPMBotSessionRow } from "../../types/ppmbot.ts";
 import type { PPMBotConfig, ProjectConfig } from "../../types/config.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("ppmbot");
 
 export const DEFAULT_COORDINATOR_IDENTITY = `# PPMBot — AI Project Coordinator
 
@@ -117,9 +120,9 @@ function ensureCliReference(cliRefPath: string): void {
   try {
     const content = generateCliReference();
     writeFileSync(cliRefPath, content);
-    console.log(`[ppmbot] Generated cli-reference.md (v${VERSION})`);
+    log.info(`Generated cli-reference.md (v${VERSION})`);
   } catch (err) {
-    console.warn(`[ppmbot] Failed to generate cli-reference.md:`, (err as Error).message);
+    log.warn(`Failed to generate cli-reference.md:`, (err as Error).message);
   }
 }
 
@@ -162,15 +165,15 @@ export class PPMBotSessionManager {
       return this.resumeFromDb(chatId, dbSession);
     }
 
-    return this.createCoordinatorSession(chatId);
+    return this.createCoordinatorSession(chatId, "new");
   }
 
-  /** Rotate coordinator session (context window near limit) */
-  async rotateCoordinatorSession(chatId: string): Promise<PPMBotActiveSession> {
+  /** Rotate coordinator session (context window near limit). `reason` is for the log line. */
+  async rotateCoordinatorSession(chatId: string, reason = "rotated"): Promise<PPMBotActiveSession> {
     const old = this.coordinatorSessions.get(chatId);
     if (old) deactivatePPMBotSession(old.sessionId);
     this.coordinatorSessions.delete(chatId);
-    return this.createCoordinatorSession(chatId);
+    return this.createCoordinatorSession(chatId, reason);
   }
 
   /**
@@ -212,7 +215,7 @@ export class PPMBotSessionManager {
     return cfg?.default_provider || configService.get("ai").default_provider;
   }
 
-  private async createCoordinatorSession(chatId: string): Promise<PPMBotActiveSession> {
+  private async createCoordinatorSession(chatId: string, reason: string): Promise<PPMBotActiveSession> {
     const project = this.getCoordinatorProject();
     const providerId = this.getDefaultProvider();
 
@@ -223,6 +226,7 @@ export class PPMBotSessionManager {
     });
 
     createPPMBotSession(chatId, session.id, providerId, project.name, project.path);
+    log.info(`Coordinator session ${session.id} created for chat ${chatId} (provider=${providerId}, reason=${reason})`);
 
     const active: PPMBotActiveSession = {
       telegramChatId: chatId,
@@ -241,10 +245,10 @@ export class PPMBotSessionManager {
 
     try {
       await chatService.resumeSession(dbSession.provider_id, dbSession.session_id);
-    } catch {
-      console.warn(`[ppmbot] Failed to resume session ${dbSession.session_id}, creating new`);
+    } catch (err) {
+      log.warn(`Failed to resume session ${dbSession.session_id} (${(err as Error).message}), creating new`);
       deactivatePPMBotSession(dbSession.session_id);
-      return this.createCoordinatorSession(chatId);
+      return this.createCoordinatorSession(chatId, `resume of ${dbSession.session_id} failed`);
     }
 
     touchPPMBotSession(dbSession.session_id);

@@ -43,6 +43,9 @@ import { createLaunchdLogReader, type LaunchdLogReader } from "./launchd-logs.ts
 import { launchdJobIndex, type LaunchdJobIndex } from "./launchd-job-index.ts";
 import { failureText, ServiceActionRefused } from "./systemd-collector.ts";
 import type { ServiceBackend } from "./service-backend.ts";
+import { createLogger } from "../logger.ts";
+
+const logger = createLogger("SystemServices");
 
 export const LAUNCHCTL_TIMEOUT_MS = 10_000;
 export const ACTION_TIMEOUT_MS = 20_000;
@@ -192,7 +195,15 @@ export function createLaunchdBackend(deps: LaunchdDeps = defaultLaunchdDeps()): 
 
     async details(label: string, scope: ServiceScope): Promise<ServiceDetails | null> {
       const { domain, job } = await locate(label, scope);
-      if (job.timedOut || job.code !== 0) return null;
+      if (job.timedOut || job.code !== 0) {
+        // "Could not find service" is the honest 404; anything else is launchctl failing
+        // behind the same "No job named X".
+        const why = launchctlFailureText(job);
+        if (job.timedOut || !/could not find service/i.test(why)) {
+          logger.warn(`launchctl print ${scope}/${label} failed: ${why.slice(0, 300)}`);
+        }
+        return null;
+      }
       const disabled = await deps.run(["launchctl", "print-disabled", domain], LAUNCHCTL_TIMEOUT_MS);
       const parsed = parseJobPrint(job.stdout);
       if (!parsed) return null;

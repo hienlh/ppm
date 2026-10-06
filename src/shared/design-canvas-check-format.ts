@@ -56,6 +56,29 @@ export function formatCanvasCheck(report: CanvasCheckReport, slug: string): stri
 }
 
 /**
+ * The `open_preview` tool's text for an HTML page it showed and checked. `displayPath` is the
+ * server's own name for the file, not the report's.
+ */
+export function formatPreviewCheck(report: CanvasCheckReport, displayPath: string): string {
+  const total = totalFindings(report);
+  const path = displayPath.replace(/[\u0000-\u001f\u007f`]/g, "").slice(0, 500);
+  const lines = [
+    `Opened ${path} in a PPM tab on the user's device and checked it at ${report.viewport.width}x${report.viewport.height} CSS px. `
+      + `Page size ${report.page.width}x${report.page.height}.`,
+  ];
+  if (total === 0) {
+    lines.push("No layout problems or runtime errors were found.");
+  } else {
+    lines.push(`${total} ${total === 1 ? "problem" : "problems"} found. Fix each one in the page's files, then call open_preview again.`, "", ...fenced(report));
+  }
+  if (report.screenshot) {
+    lines.push("", `A screenshot of the page (${report.screenshot.width}x${report.screenshot.height}) is attached.`);
+  }
+  if (report.screenshotNote) lines.push(`Screenshot: ${neutralizeFences(report.screenshotNote)}`);
+  return lines.join("\n");
+}
+
+/**
  * The follow-up message sent after a turn, or null when there is nothing to report. The
  * canvas shows one variant at a time, so with `variants` above 1 it says the others went
  * unchecked rather than let a clean report read as covering them.

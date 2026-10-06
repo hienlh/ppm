@@ -41,13 +41,19 @@ describe("POST /lsp/install", () => {
     expect(await res.text()).not.toContain("some-other-package");
   });
 
-  it("refuses a server PPM has no plan for, and says how to install it", async () => {
-    // clangd, Solargraph and lua-language-server come from a system package manager — a
-    // password prompt and a choice between pacman/apt/brew that PPM has no business making.
-    const res = await install({ serverId: "clangd" });
+  it("refuses a download on a host with nothing to unpack it, before downloading anything", async () => {
+    // clangd ships as a zip, which needs unzip or bsdtar here (tar on Windows). With none of
+    // them on PATH the button is not offered, and a request that comes anyway fetches nothing.
+    const path = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      const res = await install({ serverId: "clangd" });
 
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toContain("pacman -S clang");
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toMatch(/no build of clangd for this machine, or nothing here to unpack one/);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 
   it("refuses a toolchain install on a host with no toolchain, without running anything", async () => {
@@ -113,9 +119,22 @@ describe("GET /api/lsp/servers", () => {
 
     expect(npm).toHaveLength(3);
     for (const row of npm) expect(row.installable).toBe(true);
-    // And never for one that needs a system package manager.
-    const clangd = data.servers.find((s: { id: string }) => s.id === "clangd");
-    expect(clangd.installable).toBe(false);
+  });
+
+  it("offers a toolchain, gem or download install only where the host can carry it out", async () => {
+    // Taken away rather than stubbed, as above: with nothing on PATH there is no Go, rustup,
+    // gem, tar or unzip, and only the npm servers — bun is found by path — keep their button.
+    const path = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      const { data } = await (await app.request("/api/lsp/servers")).json();
+      const row = (id: string) => data.servers.find((s: { id: string }) => s.id === id);
+
+      for (const id of ["gopls", "rust-analyzer", "solargraph", "clangd", "lua"]) expect(row(id).installable).toBe(false);
+      expect(row("typescript").installable).toBe(true);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 });
 
@@ -139,8 +158,8 @@ describe("POST /api/lsp/uninstall", () => {
   });
 
   it("refuses a server PPM did not install", async () => {
-    // clangd comes from a system package manager, so it can never be in PPM's folder — whether
-    // this host has one on PATH or none at all, it is not PPM's to delete.
+    // This suite's PPM folder is a fresh temporary one, so no clangd is in it — whether this host
+    // has one on PATH or none at all, it is not PPM's to delete.
     const res = await uninstall({ serverId: "clangd" });
 
     expect(res.status).toBe(400);
@@ -162,19 +181,30 @@ describe("POST /api/lsp/uninstall", () => {
 
 describe("POST /api/lsp/install", () => {
   it("refuses exactly what the project-scoped route refuses", async () => {
-    for (const [body, pattern] of [
-      [{ serverId: "nonsense" }, /No such language server/],
-      [{ serverId: "clangd" }, /pacman -S clang/],
-      [{ packages: ["some-other-package"] }, /No such language server/],
-    ] as const) {
-      const res = await app.request("/api/lsp/install", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
+    // With nothing on PATH nothing can be downloaded, built or unpacked, whatever is asked for.
+    // No npm server here: bun is found by path, so one of those would really install.
+    const path = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      for (const body of [
+        { serverId: "nonsense" },
+        { serverId: "clangd" },
+        { serverId: "gopls" },
+        { packages: ["some-other-package"] },
+      ]) {
+        const scoped = await install(body);
+        const global = await app.request("/api/lsp/install", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
 
-      expect(res.status).toBe(400);
-      expect((await res.json()).error).toMatch(pattern);
+        expect(global.status).not.toBe(200);
+        expect(global.status).toBe(scoped.status);
+        expect((await global.json()).error).toBe((await scoped.json()).error);
+      }
+    } finally {
+      process.env.PATH = path;
     }
   });
 });

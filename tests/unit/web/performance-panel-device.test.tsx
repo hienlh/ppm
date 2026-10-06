@@ -15,17 +15,22 @@ import { describe, it, expect, mock, afterAll } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { MetricsHistoryPoint, SystemMetrics } from "../../../src/types/system-metrics";
 
-// `mock.module` replaces the module for the whole test process, not this file. Keep the real
-// hook to fall back to, and hand it back once this file is done, so a later file that mounts a
-// component reading `useIsMobile` gets the viewport rather than whatever this file set last.
-const realIsMobile = await import("../../../src/web/hooks/use-is-mobile");
-const { useIsMobile: realUseIsMobile, isMobileDevice: realIsMobileDevice } = realIsMobile;
-let mobile: boolean | null = false;
+// `undefined` once this file is done: `mock.module` outlives it, and left on the last case's
+// `true` it put every adaptive menu a later file mounted on the phone's bottom sheet. Later files
+// get the real hook instead — called, not restated: its rule read once per render never heard a
+// resize, so a phone's row form in a later file stayed open on a window grown past a phone's.
+// A copy, taken before the mock: `mock.module` replaces the module's exports in place.
+const realMobile = { ...(await import("../../../src/web/hooks/use-is-mobile.ts")) };
+let mobile: boolean | undefined = false;
 mock.module("@/hooks/use-is-mobile", () => ({
-  useIsMobile: () => mobile ?? realUseIsMobile(),
-  isMobileDevice: () => mobile ?? realIsMobileDevice(),
+  ...realMobile,
+  useIsMobile: () => {
+    const real = realMobile.useIsMobile();
+    return mobile ?? real;
+  },
+  isMobileDevice: () => mobile ?? realMobile.isMobileDevice(),
 }));
-afterAll(() => { mobile = null; });
+afterAll(() => { mobile = undefined; });
 mock.module("@/hooks/use-hardware-inventory", () => ({ useHardwareInventory: () => null }));
 
 const { PerformancePanel } = await import(

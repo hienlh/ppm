@@ -275,8 +275,8 @@ Add a new database connection
 
 **Options:**
 - `-n, --name <name>` — Connection name (unique)
-- `-t, --type <type>` — Database type: sqlite | postgres
-- `-c, --connection-string <url>` — PostgreSQL connection string
+- `-t, --type <type>` — Database type: postgres | mysql | mariadb | sqlite
+- `-c, --connection-string <url>` — Connection string (postgres://…, mysql://…, mariadb://…)
 - `-f, --file <path>` — SQLite file path (absolute)
 - `-g, --group <group>` — Group name
 - `--color <color>` — Tab color (hex, e.g. #3b82f6)
@@ -307,7 +307,7 @@ List tables in a database connection
 Show table schema (columns, types, constraints)
 
 **Options:**
-- `-s, --schema <schema>` — PostgreSQL schema name (default: `"public"`)
+- `-s, --schema <schema>` — Schema (PostgreSQL, default public) or database (MySQL, default from the connection)
 - `--json` — Output as JSON
 
 **Usage:** `ppm db schema [options] <name> <table>`
@@ -321,7 +321,7 @@ View table data (paginated)
 - `-l, --limit <limit>` — Rows per page (default: `"50"`)
 - `--order <column>` — Order by column
 - `--desc` — Descending order
-- `-s, --schema <schema>` — PostgreSQL schema name (default: `"public"`)
+- `-s, --schema <schema>` — Schema (PostgreSQL, default public) or database (MySQL, default from the connection)
 - `--json` — Output as JSON
 
 **Usage:** `ppm db data [options] <name> <table>`
@@ -334,6 +334,31 @@ Execute a SQL query against a saved connection
 - `--json` — Output as JSON
 
 **Usage:** `ppm db query [options] <name> <sql>`
+
+### `ppm db driver`
+
+Install or remove the drivers some connections need (MySQL / MariaDB, SSH tunnels)
+
+**Usage:** `ppm db driver [options] [command]`
+
+#### `ppm db driver list`
+
+List database drivers and whether each is installed
+
+**Options:**
+- `--json` — Output as JSON
+
+#### `ppm db driver install`
+
+Download and install a database driver (e.g. mysql)
+
+**Usage:** `ppm db driver install [options] <id>`
+
+#### `ppm db driver remove`
+
+Remove an installed database driver
+
+**Usage:** `ppm db driver remove [options] <id>`
 
 ### `ppm db run`
 

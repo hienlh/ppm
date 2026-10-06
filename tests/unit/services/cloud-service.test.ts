@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
@@ -527,5 +527,36 @@ describe("cloud.service", () => {
       expect(content).toContain("  "); // Two spaces
       expect(content.split("\n").length).toBeGreaterThan(1); // Multiple lines
     });
+  });
+});
+
+describe("heartbeat failures in the log", () => {
+  test("warns when heartbeats start failing and says when they recover, not on every beat", async () => {
+    saveCloudDevice({
+      device_id: "dev-log",
+      secret_key: "never-logged",
+      name: "test",
+      machine_id: "m1",
+      cloud_url: "https://cloud.invalid",
+      linked_at: new Date().toISOString(),
+    });
+    const realFetch = globalThis.fetch;
+    let status = 503;
+    globalThis.fetch = (async () => new Response(null, { status })) as unknown as typeof fetch;
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await sendHeartbeat("https://x.trycloudflare.com")).toBe(false);
+      expect(await sendHeartbeat("https://x.trycloudflare.com")).toBe(false);
+      status = 200;
+      expect(await sendHeartbeat("https://x.trycloudflare.com")).toBe(true);
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual(["[cloud] Cloud heartbeat failed: HTTP 503 (device dev-log)"]);
+      expect(info.mock.calls.map((c) => String(c[0]))).toContain("[cloud] Cloud heartbeat OK again (device dev-log)");
+    } finally {
+      globalThis.fetch = realFetch;
+      warn.mockRestore();
+      info.mockRestore();
+      removeCloudDevice();
+    }
   });
 });

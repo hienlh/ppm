@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, spyOn } from "bun:test";
 import { chatService } from "../../../src/services/chat.service.ts";
 
 describe("ChatService", () => {
@@ -96,5 +96,45 @@ describe("ChatService", () => {
     expect(messages.length).toBeGreaterThanOrEqual(2); // user + assistant
     expect(messages[0].role).toBe("user");
     expect(messages[0].content).toBe("test msg");
+  });
+
+  it("logs each turn's start and end, without the message, and an abort as its result", async () => {
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const lines = (spy: typeof info) => spy.mock.calls
+      .map((c) => String(c[0]).replace(/ durationMs=\d+/, ""))
+      .filter((l) => l.startsWith("[chat] "));
+    try {
+      const session = await chatService.createSession("mock", {});
+      let aborted = false;
+      for await (const event of chatService.sendMessage("mock", session.id, "a secret prompt", { origin: "ws" })) {
+        if (event.type === "text" && !aborted) {
+          aborted = true;
+          chatService.abortQuery("mock", session.id, "ws_cancel", "ws");
+        }
+      }
+      // Nothing is running any more: tearing down an idle subprocess is not a turn's news.
+      chatService.abortQuery("mock", session.id, "set_model", "ws");
+      expect(lines(info)).toEqual([
+        `[chat] turn start session=${session.id} provider=mock origin=ws stream=new model=default images=0`,
+        `[chat] session=${session.id} abort reason=ws_cancel origin=ws`,
+        `[chat] turn end session=${session.id} provider=mock origin=ws result=aborted reason=ws_cancel`,
+      ]);
+      expect(info.mock.calls.some((c) => c.map(String).join(" ").includes("a secret prompt"))).toBe(false);
+
+      info.mockClear();
+      for await (const _ of chatService.sendMessage("no-such-provider", "s1", "hi", { origin: "scheduler" })) {
+        // consume
+      }
+      expect(lines(info)).toEqual([
+        "[chat] turn start session=s1 provider=no-such-provider origin=scheduler stream=new model=default images=0",
+      ]);
+      expect(lines(error)).toEqual([
+        '[chat] turn end session=s1 provider=no-such-provider origin=scheduler result=error error="Provider \\"no-such-provider\\" not found"',
+      ]);
+    } finally {
+      info.mockRestore();
+      error.mockRestore();
+    }
   });
 });

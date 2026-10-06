@@ -1,5 +1,8 @@
 import type { GroupMember, GroupMessage } from "../../types/group-chat.ts";
 import { buildContextWindow, renderWindow, DEFAULT_WINDOW } from "./context-window.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("group-chat");
 
 /** Cheapest/fastest model for the lightweight next-speaker classification. */
 export const ROUTER_MODEL = "claude-haiku-4-5";
@@ -92,6 +95,15 @@ export function makeResponderRouter(
   opts: { model?: string } = {},
 ): (ctx: { history: GroupMessage[]; members: GroupMember[]; isUserTurn: boolean }) => Promise<string[]> {
   const model = opts.model ?? ROUTER_MODEL;
+  // One router per burst, asked before every turn: a router that cannot run fails every
+  // time, so only its first failure in the burst is a WARN.
+  let failures = 0;
+  const fallingBack = (err: unknown): string[] => {
+    (failures++ === 0 ? log.warn : log.debug)(
+      `router failed session=${sessionId}: ${String((err as Error)?.message ?? err).slice(0, 200)} — falling back`,
+    );
+    return [];
+  };
   return async ({ history, members, isUserTurn }) => {
     try {
       const prompt = buildRouterPrompt(history, members, isUserTurn);
@@ -99,12 +111,12 @@ export function makeResponderRouter(
       // oneMContext:false — the cheap router model needs no 1M window and may not support it.
       for await (const ev of backend.sendMessage(providerId, sessionId, prompt, { model, permissionMode: "bypassPermissions", oneMContext: false })) {
         if (ev.type === "text") text += ev.content ?? "";
-        else if (ev.type === "error") return [];
+        else if (ev.type === "error") return fallingBack(ev.message ?? "error event");
         else if (ev.type === "done") break;
       }
       return parseResponders(text, members);
-    } catch {
-      return [];
+    } catch (e) {
+      return fallingBack(e);
     }
   };
 }

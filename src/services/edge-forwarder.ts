@@ -20,6 +20,16 @@
  */
 import net from "node:net";
 import { resolveTargetPort, _resetTargetCache } from "./edge-target-resolver.ts";
+import { createLogger, installFileLogSink } from "./logger.ts";
+
+const log = createLogger("edge");
+
+/**
+ * How many times in a row the edge before this one died, as counted by the supervisor. From
+ * the second repeat on, the supervisor has already reported the dark port, so this process's
+ * own failure to bind is detail rather than news.
+ */
+export const EDGE_PRIOR_DEATHS_ENV = "PPM_EDGE_PRIOR_DEATHS";
 
 /** Delay between attempts while waiting for the server to come back. */
 const CONNECT_RETRY_MS = 250;
@@ -31,6 +41,37 @@ const CONNECT_RETRY_MS = 250;
 const CONNECT_WINDOW_MS = 5000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** At most one warning a minute about connections dropped for want of a server. */
+const DROP_WARN_INTERVAL_MS = 60_000;
+let droppedSinceWarning = 0;
+let droppedSinceServerSeen = 0;
+let lastDropWarningAt = 0;
+
+/**
+ * A client was dropped because no server answered in time: the public URL hangs and then
+ * fails, and nothing else in the log shows it. Warned about at most once a minute, with the
+ * count of the ones in between.
+ */
+function noteDroppedConnection(connectWindowMs: number): void {
+  droppedSinceWarning++;
+  droppedSinceServerSeen++;
+  const now = Date.now();
+  if (now - lastDropWarningAt < DROP_WARN_INTERVAL_MS) return;
+  const since = lastDropWarningAt ? "since the last warning" : "so far";
+  log.warn(`No server on .server-port=${resolveTargetPort() ?? "none"} within ${connectWindowMs}ms — dropped ${droppedSinceWarning} connection(s) ${since}`);
+  lastDropWarningAt = now;
+  droppedSinceWarning = 0;
+}
+
+/** The server answered again after connections were dropped: the outage is over. */
+function noteServerReachable(port: number): void {
+  if (droppedSinceServerSeen === 0) return;
+  log.info(`Server reachable again on port ${port} — ${droppedSinceServerSeen} connection(s) were dropped while it was not`);
+  droppedSinceServerSeen = 0;
+  droppedSinceWarning = 0;
+  lastDropWarningAt = 0;
+}
 
 /** Resolve once the socket is connected; reject on the first connect error. */
 function connectUpstream(port: number): Promise<net.Socket> {
@@ -107,6 +148,7 @@ async function handleConnection(
     if (port !== null) {
       try {
         upstream = await connectUpstream(port);
+        noteServerReachable(port);
         break;
       } catch {
         // Server not up yet (or moved mid-restart) — re-resolve and retry.
@@ -118,6 +160,7 @@ async function handleConnection(
 
   if (clientGone) return;
   if (!upstream) {
+    noteDroppedConnection(connectWindowMs);
     client.destroy();
     return;
   }
@@ -172,20 +215,24 @@ export function startEdgeForwarder(
 // Mirrors the `__serve__` guard in src/server/index.ts: the supervisor
 // re-invokes the binary as `<bin> __edge__ <publicPort> <host>`.
 if (process.argv.includes("__edge__")) {
+  // Lines go to ppm.log with a timestamp and level like every other process's. The
+  // supervisor hands the log over as stderr, so the stderr echo is skipped (see logger.ts).
+  installFileLogSink({ echo: "stderr" });
   const idx = process.argv.indexOf("__edge__");
   const publicPort = parseInt(process.argv[idx + 1] ?? "", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
 
   if (!Number.isInteger(publicPort) || publicPort <= 0 || publicPort > 65535) {
-    process.stderr.write(`[edge] Invalid public port: ${process.argv[idx + 1]}\n`);
+    log.fatal(`Invalid public port: ${process.argv[idx + 1]} — exiting`);
     process.exit(2);
   }
 
   try {
     await startEdgeForwarder({ publicPort, host });
-    process.stderr.write(`[edge] Listening on ${host}:${publicPort}\n`);
+    log.info(`Listening on ${host}:${publicPort}`);
   } catch (err) {
-    process.stderr.write(`[edge] Failed to bind ${host}:${publicPort}: ${err}\n`);
+    const repeat = Number(process.env[EDGE_PRIOR_DEATHS_ENV]) >= 2;
+    log[repeat ? "debug" : "fatal"](`Failed to bind ${host}:${publicPort}: ${err} — exiting`);
     process.exit(1);
   }
 }

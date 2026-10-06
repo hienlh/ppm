@@ -12,6 +12,9 @@ import type { DiffHunk } from "./unified-diff.ts";
 import {
   buildPatch, hunkFingerprint, parseUnifiedDiff, resolveRequestedHunks, selectionFromRequest,
 } from "./unified-diff.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("git");
 
 export type HunkScope = "worktree" | "index";
 
@@ -63,7 +66,7 @@ interface GitResult {
  * reads the same either way. Only text leaving for the browser is turned back
  * into UTF-8, by `toDisplay` below.
  */
-function runGit(
+export function runGit(
   projectPath: string,
   args: string[],
   options: { stdin?: Buffer; env?: Record<string, string> } = {},
@@ -95,8 +98,20 @@ function runGit(
   });
 }
 
+/**
+ * For a command given paths the caller named: each one is that file, never a
+ * pattern. Without it a file called `[ab].txt` is a glob that also matches
+ * `a.txt` and `b.txt`, and their hunks end up in one patch.
+ *
+ * Only for such commands. git hands the variable on to everything it runs
+ * internally, and some of that relies on pathspec magic: under it,
+ * `git stash push --include-untracked` saves an untracked file and then leaves
+ * it in the working tree.
+ */
+export const LITERAL_PATHSPECS = { GIT_LITERAL_PATHSPECS: "1" };
+
 /** Undo `runGit`'s latin1 decode, for text on its way to the browser. */
-function toDisplay(text: string): string {
+export function toDisplay(text: string): string {
   return Buffer.from(text, "latin1").toString("utf8");
 }
 
@@ -104,7 +119,7 @@ function toDisplay(text: string): string {
  * Reject a path that is absolute, escapes the repository, or could be read as
  * an option. Callers pass paths straight from the browser.
  */
-function assertSafeFilePath(filePath: string): string {
+export function assertSafeFilePath(filePath: string): string {
   if (!filePath || filePath.startsWith("-") || filePath.startsWith("/") || /[\x00-\x1f\x7f]/.test(filePath)) {
     throw new Error(`Invalid file path: "${filePath}"`);
   }
@@ -121,10 +136,27 @@ function assertSafeFilePath(filePath: string): string {
   return filePath;
 }
 
+/**
+ * The `git diff` invocation behind every patch that is later fed to `git apply`.
+ *
+ * Each flag pins something a user's config can otherwise change under us:
+ * - `--no-renames`: see `rawDiff`.
+ * - `--no-textconv`: `git diff` runs `.gitattributes` textconv filters by
+ *   default, and their output is for reading, not applying — a patch built from
+ *   it no longer matches the file.
+ * - `--src-prefix`/`--dst-prefix`: `diff.noprefix=true` drops the `a/` and `b/`
+ *   that `git apply` strips (`-p1`), so the patch would name the wrong path;
+ *   `diff.mnemonicPrefix` swaps them for `i/` and `w/`. The flags win over both.
+ */
+export const PATCH_DIFF_ARGS = [
+  "diff", "--no-color", "--no-ext-diff", "--no-renames", "--no-textconv",
+  "--src-prefix=a/", "--dst-prefix=b/",
+];
+
 class GitHunksService {
   /** Is the file untracked? Hunk staging needs it in the index first. */
   private async isUntracked(projectPath: string, filePath: string): Promise<boolean> {
-    const res = await runGit(projectPath, ["ls-files", "--error-unmatch", "--", filePath]);
+    const res = await runGit(projectPath, ["ls-files", "--error-unmatch", "--", filePath], { env: LITERAL_PATHSPECS });
     return res.exitCode !== 0;
   }
 
@@ -145,7 +177,7 @@ class GitHunksService {
   private async scratchIndexFor(projectPath: string, filePath: string): Promise<string | null> {
     if (!await this.isUntracked(projectPath, filePath)) return null;
     const dir = await mkdtemp(join(tmpdir(), "ppm-hunk-index-"));
-    const env = { GIT_INDEX_FILE: join(dir, "index") };
+    const env = { GIT_INDEX_FILE: join(dir, "index"), ...LITERAL_PATHSPECS };
     const added = await runGit(projectPath, ["add", "-N", "--", filePath], { env });
     if (added.exitCode !== 0) {
       await rm(dir, { recursive: true, force: true });
@@ -169,11 +201,11 @@ class GitHunksService {
   private async rawDiff(projectPath: string, filePath: string, scope: HunkScope): Promise<string> {
     const scratch = scope === "worktree" ? await this.scratchIndexFor(projectPath, filePath) : null;
     try {
-      const args = ["diff", "--no-color", "--no-ext-diff", "--no-renames"];
+      const args = [...PATCH_DIFF_ARGS];
       if (scope === "index") args.push("--cached");
       args.push("--", filePath);
       const res = await runGit(projectPath, args, {
-        env: scratch ? { GIT_INDEX_FILE: join(scratch, "index") } : undefined,
+        env: scratch ? { GIT_INDEX_FILE: join(scratch, "index"), ...LITERAL_PATHSPECS } : LITERAL_PATHSPECS,
       });
       if (res.exitCode !== 0) {
         throw new Error(res.stderr.trim() || `git diff exited with ${res.exitCode}`);
@@ -214,7 +246,7 @@ class GitHunksService {
     scope: HunkScope,
     requested: HunkRequest[],
     apply: { cached: boolean; reverse: boolean; refuseMoved?: boolean },
-  ): Promise<void> {
+  ): Promise<string> {
     assertSafeFilePath(filePath);
     if (requested.length === 0) throw new Error("No hunks were selected.");
 
@@ -246,32 +278,39 @@ class GitHunksService {
         `git could not apply the patch (exit ${res.exitCode}).`,
       );
     }
+    return patch;
   }
 
   /** Move the selected worktree changes into the index. */
   async stage(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<void> {
     await this.applySelection(projectPath, filePath, "worktree", hunks, { cached: true, reverse: false });
+    log.debug(`staged ${hunks.length} hunk(s) of ${filePath} in ${projectPath}`);
   }
 
   /** Take the selected staged changes back out of the index. */
   async unstage(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<void> {
     await this.applySelection(projectPath, filePath, "index", hunks, { cached: true, reverse: true });
+    log.debug(`unstaged ${hunks.length} hunk(s) of ${filePath} in ${projectPath}`);
   }
 
   /**
-   * Throw away the selected worktree changes. Not recoverable.
+   * Throw away the selected worktree changes, returning the patch that was
+   * reversed. git keeps no copy of them, so that patch is the only way back —
+   * the route hands it to `git-discard-journal` for an Undo.
    *
    * `refuseMoved` is what separates this from the other two: they can be undone
    * by staging or unstaging again, so following a hunk that shifted position is
    * a convenience. Here there is no reflog and no undo, so a hunk that is not
    * where the client saw it is refused rather than guessed at.
    */
-  async discard(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<void> {
-    await this.applySelection(projectPath, filePath, "worktree", hunks, {
+  async discard(projectPath: string, filePath: string, hunks: HunkRequest[]): Promise<string> {
+    const patch = await this.applySelection(projectPath, filePath, "worktree", hunks, {
       cached: false,
       reverse: true,
       refuseMoved: true,
     });
+    log.info(`discarded ${hunks.length} hunk(s) of ${filePath} in ${projectPath}`);
+    return patch;
   }
 }
 

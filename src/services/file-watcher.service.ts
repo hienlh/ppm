@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { WatchTree } from "./file-watcher/watch-tree.ts";
 import { inotifyAvailable } from "./file-watcher/linux-inotify.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("file-watcher");
 
 const DEBOUNCE_MS = 500;
 /**
@@ -60,7 +63,12 @@ function hostBudgets(): { perProject: number; total: number } {
   if (rawInotify) {
     try { maxUserWatches = Number(readFileSync("/proc/sys/fs/inotify/max_user_watches", "utf8").trim()) || 0; } catch {}
   }
-  return (budgets = watchBudgets(rawInotify, maxUserWatches));
+  budgets = watchBudgets(rawInotify, maxUserWatches);
+  log.info(
+    `watch backend=${rawInotify ? `inotify max_user_watches=${maxUserWatches || "unknown"}` : "fs.watch"} ` +
+    `budget perProject=${budgets.perProject} total=${budgets.total}`,
+  );
+  return budgets;
 }
 
 type ChangeCallback = (projectName: string, path: string) => void;
@@ -178,12 +186,12 @@ export function startWatching(projectName: string, projectPath: string): Promise
       // handles)" for a project nothing is watching.
       if (watchers.get(projectName) !== entry) return;
       const { dirs, watchers: handles, truncated } = entry.tree.stats();
-      console.log(
-        `[file-watcher] Started watching: ${projectName} (${dirs} dirs, ${handles} handles${truncated ? ", capped" : ""})`,
+      log.info(
+        `Started watching: ${projectName} (${dirs} dirs, ${handles} handles${truncated ? ", capped" : ""})`,
       );
       if (truncated) {
-        console.warn(
-          `[file-watcher] ${projectName} exceeded the ${maxDirs}-directory budget — ` +
+        log.warn(
+          `${projectName} exceeded the ${maxDirs}-directory budget — ` +
           `parts of the tree are not watched. Add build/cache directories to the ignore list.`,
         );
       }
@@ -196,7 +204,7 @@ export function startWatching(projectName: string, projectPath: string): Promise
       // its handles unclosed and letting the next `startWatching` build a second tree over
       // the same directories.
       if (watchers.get(projectName) === entry) watchers.delete(projectName);
-      console.warn(`[file-watcher] Failed to watch ${projectPath}: ${(e as Error).message}`);
+      log.error(`failed to watch ${projectName} (${projectPath}): ${(e as Error).message} — project unwatched`);
     });
   return entry.ready;
 }
@@ -210,6 +218,6 @@ export function stopWatching(projectName: string): void {
     if (entry.timer) clearTimeout(entry.timer);
     entry.tree.close();
     watchers.delete(projectName);
-    console.log(`[file-watcher] Stopped watching: ${projectName}`);
+    log.info(`Stopped watching: ${projectName}`);
   }
 }

@@ -4,8 +4,10 @@
  * Only the button lives here — the caller owns `open` so the tray can render *below*
  * the action bar instead of inside its flex row.
  */
+import { Check } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
+import type { turnReviewLabel } from "@/lib/turn-review";
 
 export function changeTotals(changes: TurnFileChange[]): { added: number; removed: number } {
   let added = 0;
@@ -17,9 +19,11 @@ export function changeTotals(changes: TurnFileChange[]): { added: number; remove
   return { added, removed };
 }
 
-export function TurnChangePill({ count, totals, open, onToggle, ref }: {
+export function TurnChangePill({ count, totals, status, open, onToggle, ref }: {
   count: number;
   totals: { added: number; removed: number };
+  /** How the turn's edits stand in the review; absent where the session cannot say. */
+  status?: ReturnType<typeof turnReviewLabel>;
   open: boolean;
   onToggle: () => void;
   /** Lets the caller restore focus here when the tray closes. */
@@ -35,7 +39,7 @@ export function TurnChangePill({ count, totals, open, onToggle, ref }: {
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        aria-label={`${label} changed this turn, ${totals.added} added, ${totals.removed} removed`}
+        aria-label={`${label} changed this turn, ${totals.added} added, ${totals.removed} removed${status ? `, ${status.text}` : ""}`}
         className={cn(
           // Borderless on purpose: the sibling Copy/Fork controls are ghost buttons, and
           // a bordered pill next to them reads as a heavy block, especially on mobile.
@@ -43,6 +47,7 @@ export function TurnChangePill({ count, totals, open, onToggle, ref }: {
           "inline-flex items-center gap-[7px] rounded-full font-mono text-[11.5px]",
           "px-3 min-h-11 md:min-h-0 md:px-[9px] md:py-[5px]",
           "text-text-secondary transition-colors hover:bg-surface hover:text-text-primary",
+          open && "bg-accent-wash text-text-primary",
         )}
       >
         <span aria-hidden className="size-[5px] shrink-0 rounded-full bg-primary" />
@@ -51,6 +56,19 @@ export function TurnChangePill({ count, totals, open, onToggle, ref }: {
           <span className="text-success">+{totals.added}</span>
           <span className="text-error">{"−"}{totals.removed}</span>
         </span>
+        {status && (
+          <span
+            data-testid="turn-review-status"
+            className={cn(
+              "inline-flex items-center gap-[5px] border-l border-border-soft pl-2 font-sans",
+              status.tone === "todo" ? "text-warning" : status.tone === "kept" ? "text-success" : "text-text-2",
+            )}
+          >
+            {status.tone === "todo" && <span aria-hidden className="size-1.5 rounded-full bg-current" />}
+            {status.tone === "kept" && <Check className="size-3" />}
+            {status.text}
+          </span>
+        )}
       </button>
     </>
   );

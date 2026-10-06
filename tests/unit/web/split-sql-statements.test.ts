@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { splitSqlStatements } from "../../../src/web/components/database/split-sql-statements";
+import { splitSqlStatementsWithLines as splitSqlStatements } from "../../../src/shared/split-sql-statements";
 
 const sqlOf = (text: string) => splitSqlStatements(text).map((s) => s.sql);
 
@@ -7,8 +7,8 @@ describe("splitSqlStatements", () => {
   it("splits plain statements and reports their start line", () => {
     const stmts = splitSqlStatements("SELECT 1;\nSELECT 2;");
     expect(stmts).toEqual([
-      { sql: "SELECT 1;", startLine: 1, endLine: 1 },
-      { sql: "SELECT 2;", startLine: 2, endLine: 2 },
+      { sql: "SELECT 1;", run: "SELECT 1;", startLine: 1, endLine: 1 },
+      { sql: "SELECT 2;", run: "SELECT 2;", startLine: 2, endLine: 2 },
     ]);
   });
 
@@ -33,7 +33,7 @@ describe("splitSqlStatements", () => {
 
   it("starts a statement at its first token, not at leading blanks or comments", () => {
     const stmts = splitSqlStatements("\n\n-- note\n/* block */\nSELECT 1;");
-    expect(stmts).toEqual([{ sql: "SELECT 1;", startLine: 5, endLine: 5 }]);
+    expect(stmts).toEqual([{ sql: "SELECT 1;", run: "SELECT 1;", startLine: 5, endLine: 5 }]);
   });
 
   it("ignores semicolons inside string literals and quoted identifiers", () => {
@@ -63,7 +63,7 @@ describe("splitSqlStatements", () => {
 
   it("keeps a trailing statement that has no semicolon", () => {
     const stmts = splitSqlStatements("SELECT 1;\nSELECT 2");
-    expect(stmts[1]).toEqual({ sql: "SELECT 2", startLine: 2, endLine: 2 });
+    expect(stmts[1]).toEqual({ sql: "SELECT 2", run: "SELECT 2", startLine: 2, endLine: 2 });
   });
 
   it("returns nothing for blank or comment-only input", () => {

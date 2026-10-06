@@ -1,121 +1,104 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
-import { Download } from "@/lib/icons";
-import { serializeCsv } from "@/lib/csv-parser";
-import { copyToClipboard } from "@/lib/clipboard";
+/**
+ * DBGate's Export ▾ on a table's data: every row the grid's filters and sort select — not only the
+ * rows loaded — in one of DBGate's quick-export formats, in its order. Export advanced... heads the
+ * list on a computer: the Import/Export tab on the grid's query.
+ *
+ * Two steps, so that a refusal is said rather than saved as the file: the server answers a ticket
+ * once the database has begun answering (`POST grid/export`), or why it would not; the browser
+ * then downloads the ticket's URL itself — no token, no Blob, the file goes to disk as it is read.
+ */
+import { useCallback, useRef, useState } from "react";
+import { toast } from "sonner";
+import { ArrowRightFromLine, ChevronDown } from "@/lib/icons";
+import { triggerDownload } from "@/lib/file-download";
+import { formatCombo } from "@/stores/keybindings-store";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  GRID_EXPORT_FORMATS, gridExportDownloadUrl, gridExportFileName, type GridExportFormat, type GridExportTicket,
+} from "../../../shared/db-grid-export";
+import { toolButtonClass } from "./db-tab-parts";
 
-interface ExportButtonProps {
-  columns: string[];
-  rows: Record<string, unknown>[];
-  filename?: string;
-  /** Optional: connection ID + table for server-side "Export All" */
-  exportAllUrl?: string;
+export interface GridExport {
+  /**
+   * Exports in `format`: settles once the download has begun, or once why it could not was said.
+   * Absent where only Export advanced... can say what to export — a query's result, its rows held
+   * in the browser and nowhere for a quick export to read them again from.
+   */
+  run?: (format: GridExportFormat) => Promise<void>;
+  /** One is being started; the menu waits for it. */
+  busy: boolean;
+  /** Nothing can be exported — every column is hidden — and why. */
+  unavailable?: string;
+  /** Opens Export advanced...; absent on a phone, which has no Import/Export tab. */
+  advanced?: () => void;
 }
 
-function downloadFile(name: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-export function ExportButton({ columns, rows, filename = "export", exportAllUrl }: ExportButtonProps) {
-  const [open, setOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
-          btnRef.current && !btnRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  const toggle = useCallback(() => setOpen((v) => !v), []);
-
-  const exportPageCsv = () => {
-    const csvRows = rows.map((r) => columns.map((c) => String(r[c] ?? "")));
-    const csv = serializeCsv(columns, csvRows);
-    downloadFile(`${filename}.csv`, csv, "text/csv");
-    setOpen(false);
-  };
-
-  const exportPageJson = () => {
-    const json = JSON.stringify(rows, null, 2);
-    downloadFile(`${filename}.json`, json, "application/json");
-    setOpen(false);
-  };
-
-  const handleCopy = async () => {
-    const header = columns.join("\t");
-    const body = rows.map((r) => columns.map((c) => String(r[c] ?? "")).join("\t")).join("\n");
-    await copyToClipboard(header + "\n" + body);
-    setOpen(false);
-  };
-
-  const exportAll = async (format: "csv" | "json") => {
-    if (!exportAllUrl) return;
-    setExporting(true);
+/**
+ * Export, started by `start` — which answers the download's ticket, or null when there is nothing
+ * to export — with a toast that follows it: the database can take a while to begin answering,
+ * a sorted table being read through before its first row.
+ */
+export function useGridExport(
+  start: (format: GridExportFormat) => Promise<GridExportTicket | null>, table: string, unavailable?: string, advanced?: () => void,
+): GridExport {
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const run = useCallback(async (format: GridExportFormat) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    const id = toast.loading(`Exporting ${gridExportFileName(table, format)}…`);
     try {
-      const res = await fetch(`${exportAllUrl}&format=${format}&limit=10000`);
-      const text = await res.text();
-      const mimeType = format === "csv" ? "text/csv" : "application/json";
-      downloadFile(`${filename}-all.${format}`, text, mimeType);
-    } catch { /* ignore */ }
-    setExporting(false);
-    setOpen(false);
-  };
+      const ticket = await start(format);
+      if (!ticket) {
+        toast.dismiss(id);
+        return;
+      }
+      triggerDownload(gridExportDownloadUrl(ticket.ticket), ticket.fileName);
+      toast.success(`Downloading ${ticket.fileName}`, { id });
+    } catch (e) {
+      toast.error("Export failed", { id, description: (e as Error).message });
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [start, table]);
+  return { run, busy, unavailable, advanced };
+}
 
-  if (columns.length === 0 || rows.length === 0) return null;
-
-  // Compute dropdown position from button
-  const rect = btnRef.current?.getBoundingClientRect();
-  const portal = document.getElementById("portal");
-
+/** The toolbar's Export ▾; `labelClassName` hides its label where the toolbar has no room. */
+export function ExportButton({ exporter, labelClassName }: { exporter: GridExport; labelClassName?: string }) {
   return (
-    <>
-      <button ref={btnRef} type="button" onClick={toggle}
-        className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors" title="Export">
-        <Download className="size-3.5" />
-      </button>
-
-      {open && portal && rect && createPortal(
-        <div ref={dropdownRef}
-          style={{ position: "fixed", left: Math.min(rect.left, window.innerWidth - 170), top: rect.bottom + 4, zIndex: 10000 }}
-          className="bg-popover border border-border rounded-md shadow-md py-1 min-w-[160px] text-xs">
-          <button onClick={handleCopy} className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors text-foreground">
-            Copy to Clipboard (TSV)
-          </button>
-          <button onClick={exportPageCsv} className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors text-foreground">
-            Export Page (CSV)
-          </button>
-          <button onClick={exportPageJson} className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors text-foreground">
-            Export Page (JSON)
-          </button>
-          {exportAllUrl && (
-            <>
-              <div className="border-t border-border my-1" />
-              <button onClick={() => exportAll("csv")} disabled={exporting}
-                className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors disabled:opacity-50 text-foreground">
-                {exporting ? "Exporting…" : "Export All (CSV)"}
-              </button>
-              <button onClick={() => exportAll("json")} disabled={exporting}
-                className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors disabled:opacity-50 text-foreground">
-                {exporting ? "Exporting…" : "Export All (JSON)"}
-              </button>
-            </>
-          )}
-        </div>,
-        portal,
-      )}
-    </>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button" disabled={!!exporter.unavailable} aria-label="Export"
+          title={exporter.unavailable ?? "Export every row the filters select"}
+          className={toolButtonClass}
+        >
+          <ArrowRightFromLine className="size-4 shrink-0" />
+          <span className={labelClassName}>Export</span>
+          <ChevronDown className="-ml-0.5 size-3 shrink-0" aria-hidden />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-56">
+        {exporter.advanced && (
+          <>
+            <DropdownMenuItem onSelect={exporter.advanced}>
+              Export advanced...
+              <DropdownMenuShortcut className="tracking-normal">{formatCombo("Mod+E")}</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            {exporter.run && <DropdownMenuSeparator />}
+          </>
+        )}
+        {exporter.run && GRID_EXPORT_FORMATS.map((f) => (
+          <DropdownMenuItem key={f.id} disabled={exporter.busy} onSelect={() => void exporter.run?.(f.id)}>
+            {f.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

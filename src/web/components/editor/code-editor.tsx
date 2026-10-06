@@ -26,17 +26,23 @@ import { HtmlPreviewToolbar } from "./html-preview-toolbar";
 import { EditorLanguagePicker } from "./editor-language-picker";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
-import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
-import { getStatementAtCursor, splitSqlStatements } from "../database/split-sql-statements";
+import { EditorSelectionContext } from "./editor-selection-context";
+import { EditorFixWithAi } from "./editor-fix-with-ai";
+import { createSqlCompletionProvider, type SchemaInfo } from "../database/sql-completion-provider";
+import { getStatementAtCursor, splitSqlStatementsWithLines } from "../../../shared/split-sql-statements";
+import { dialectNameOf, type DialectName } from "../../../shared/db-types";
 import { useConnections, type Connection } from "../database/use-connections";
 import { GlideDataGrid } from "../database/glide-data-grid";
 import type { GridColumnSchema } from "../database/glide-grid-types";
 import type { DbQueryResult } from "../database/use-database";
+import { openQueryTab } from "../database/explorer/open-db-tabs";
+import { queryResultRecords, type QueryRunResponse } from "../../../shared/db-grid";
 // Single source of truth: the explorer decides whether a double-click can open a file at
 // all from these very sets, so they must not be redeclared here.
 import { AUDIO_EXTS, IMAGE_EXTS, SQLITE_EXTS, VIDEO_EXTS } from "@/components/os-explorer/can-open-in-ppm";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
+import { reserveLightbulbGutter } from "@/lib/monaco-lightbulb-gutter";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -150,17 +156,38 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
   const isHtml = (ext === "html" || ext === "htm") && !isUntitled && inlineContent == null;
-  const [htmlMode, setHtmlMode] = useState<"edit" | "preview">("preview");
+  // The AI's open_file with a line asks for the code; any other open lands on the preview.
+  const aiView = metadata?.aiView as "code" | "preview" | undefined;
+  const [htmlMode, setHtmlMode] = useState<"edit" | "preview">(aiView === "code" ? "edit" : "preview");
   const [htmlRevision, setHtmlRevision] = useState(0);
-  const [htmlCodeOpened, setHtmlCodeOpened] = useState(false);
+  const [htmlCodeOpened, setHtmlCodeOpened] = useState(aiView === "code");
   const htmlPreviewVisible = isHtml && htmlMode === "preview";
   const isCsv = ext === "csv";
   // Explicit language override (from language picker / New DB Query); falls back to file extension.
   const langOverride = metadata?.language as string | undefined;
   const effectiveLanguage = inlineLanguage ?? langOverride ?? getMonacoLanguage(filePath ?? "");
   const isSql = effectiveLanguage === "sql";
-  const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
+  const [mdMode, setMdMode] = useState<"edit" | "preview">(aiView === "code" ? "edit" : "preview");
   const [csvMode, setCsvMode] = useState<"table" | "raw">("table");
+
+  // Every open_file / open_preview call on a tab that is already open switches it to the view
+  // the tool asked for, and a preview loads the page again (`open-ai-tab.ts`). The stamp the
+  // tab was mounted with is already honoured by the initial state above.
+  const aiOpenAt = metadata?.aiOpenAt as number | undefined;
+  const seenAiOpenAt = useRef(aiOpenAt);
+  useEffect(() => {
+    if (aiOpenAt === undefined || aiOpenAt === seenAiOpenAt.current) return;
+    seenAiOpenAt.current = aiOpenAt;
+    if (aiView === "code") {
+      setHtmlCodeOpened(true);
+      setHtmlMode("edit");
+      setMdMode("edit");
+    } else if (aiView === "preview") {
+      setHtmlMode("preview");
+      setMdMode("preview");
+      setHtmlRevision((value) => value + 1);
+    }
+  }, [aiOpenAt, aiView]);
 
   // SQL file: connection picker + autocomplete + run in DB viewer
   const { connections, cachedTables, refreshTables, updateConnection } = useConnections();
@@ -172,9 +199,12 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     return stored ? Number(stored) : null;
   });
   const monacoInstanceRef = useRef<typeof MonacoType | null>(null);
-  const completionDisposable = useRef<MonacoType.IDisposable | null>(null);
 
   const selectedSqlConn = useMemo(() => connections.find((c) => c.id === sqlConnId) ?? null, [connections, sqlConnId]);
+  // Where statements end depends on the engine (MySQL: backticks, # comments, DELIMITER). A ref,
+  // because the Run action and the lens provider are registered once and outlive a connection change.
+  const sqlDialectRef = useRef<DialectName>("postgres");
+  sqlDialectRef.current = selectedSqlConn ? dialectNameOf(selectedSqlConn.type) : "postgres";
 
   // Beautify for inline content (must be before early returns to maintain hook order)
   const canBeautifyInline = inlineContent != null && (inlineLanguage === "json" || inlineLanguage === "xml");
@@ -234,20 +264,18 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     };
   }, [isSql, sqlConnId, cachedTables]);
 
-  // Register/dispose completion provider when connection changes
+  // Register/dispose completion provider when connection changes. Not from onMount: the library
+  // calls it with the first render's props, so a schema that arrived first was never registered.
   useEffect(() => {
-    if (!monacoInstanceRef.current || !sqlSchemaInfo) return;
-    completionDisposable.current?.dispose();
-    clearCompletionCache();
-    completionDisposable.current = monacoInstanceRef.current.languages.registerCompletionItemProvider(
+    if (!mounted || !sqlSchemaInfo) return;
+    const completion = mounted.monaco.languages.registerCompletionItemProvider(
       "sql",
-      createSqlCompletionProvider(monacoInstanceRef.current, sqlSchemaInfo),
+      createSqlCompletionProvider(mounted.monaco, sqlSchemaInfo, () => sqlDialectRef.current, mounted.editor),
     );
-    return () => { completionDisposable.current?.dispose(); };
-  }, [sqlSchemaInfo]);
+    return () => completion.dispose();
+  }, [mounted, sqlSchemaInfo]);
 
   // Run SQL inline — execute query and show results in bottom panel
-  const openTab = useTabStore((s) => s.openTab);
   const [sqlResult, setSqlResult] = useState<DbQueryResult | null>(null);
   const [sqlError, setSqlError] = useState<string | null>(null);
   const [sqlLoading, setSqlLoading] = useState(false);
@@ -258,8 +286,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     setSqlError(null);
     setSqlResultSql(sqlText);
     try {
-      const result = await api.post<DbQueryResult>(`/api/db/connections/${selectedSqlConn.id}/query`, { sql: sqlText });
-      setSqlResult(result);
+      const result = await api.post<QueryRunResponse>(`/api/db/connections/${selectedSqlConn.id}/query`, { sql: sqlText });
+      setSqlResult(queryResultRecords(result));
     } catch (e) {
       setSqlError((e as Error).message);
       setSqlResult(null);
@@ -267,16 +295,14 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       setSqlLoading(false);
     }
   }, [selectedSqlConn]);
+  // The SQL goes on in a Query tab of its own; it is not run again there, since it just was here.
   const openSqlResultInTab = useCallback(() => {
     if (!selectedSqlConn || !sqlResultSql) return;
-    openTab({
-      type: "database",
-      title: `${selectedSqlConn.name} · Query`,
-      projectId: null,
-      closable: true,
-      metadata: { connectionId: selectedSqlConn.id, connectionName: selectedSqlConn.name, dbType: selectedSqlConn.type, initialSql: sqlResultSql },
-    });
-  }, [selectedSqlConn, openTab, sqlResultSql]);
+    openQueryTab({
+      target: { kind: "connection", connectionId: selectedSqlConn.id },
+      connectionName: selectedSqlConn.name, dbType: selectedSqlConn.type, connectionColor: selectedSqlConn.color,
+    }, sqlResultSql);
+  }, [selectedSqlConn, sqlResultSql]);
 
   const handleRunInDbViewer = useCallback(() => {
     if (!editorRef.current || !selectedSqlConn) return;
@@ -572,6 +598,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     }
     editor.focus();
   }, [lineNumber, endLine]);
+  // The mount handler below is memoised on `isSql` alone, so it reads the target through this.
+  const revealTargetRef = useRef(revealTarget);
+  revealTargetRef.current = revealTarget;
 
   useEffect(() => {
     if (revealAt == null) return;
@@ -601,9 +630,10 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     editorRef.current = editor;
     monacoInstanceRef.current = monaco;
     setMounted({ editor, monaco });
-    if (lineNumber && lineNumber > 0) {
-      setTimeout(() => revealTarget(), 100);
-    }
+    reserveLightbulbGutter(editor, monaco);
+    // The target as it is now: a tab can be asked for a line before its editor first mounts,
+    // as when the AI's open_file switches a page in preview to its code.
+    setTimeout(() => revealTargetRef.current(), 100);
     // Ctrl+S → Save As for untitled tabs
     if (isUntitled) {
       editor.addCommand(
@@ -625,14 +655,6 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
       () => useSettingsStore.getState().toggleInlineBlame(),
     );
-    // Register SQL completion if schema available
-    if (sqlSchemaInfo) {
-      completionDisposable.current?.dispose();
-      completionDisposable.current = monaco.languages.registerCompletionItemProvider(
-        "sql", createSqlCompletionProvider(monaco, sqlSchemaInfo),
-      );
-    }
-
     // Register CodeLens for inline Run buttons on .sql files (scoped to this editor's model)
     if (isSql) {
       // Ctrl/Cmd+Enter → run statement at cursor
@@ -643,7 +665,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         run: (ed) => {
           const pos = ed.getPosition();
           if (!pos) return;
-          const stmt = getStatementAtCursor(ed.getValue(), pos.lineNumber);
+          const stmt = getStatementAtCursor(ed.getValue(), pos.lineNumber, sqlDialectRef.current);
           if (stmt) runSqlRef.current(stmt);
         },
       });
@@ -678,7 +700,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             let txBlockStartLine = -1;
             let txBlockStmts: string[] = [];
 
-            for (const { sql, startLine } of splitSqlStatements(model.getValue())) {
+            for (const { sql, run, startLine } of splitSqlStatementsWithLines(model.getValue(), sqlDialectRef.current)) {
               const isTxStart = /^BEGIN(;|\s|$)/i.test(sql);
               const isTxEnd = /^(COMMIT|ROLLBACK|END)(;|\s|$)/i.test(sql);
 
@@ -690,7 +712,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
                 txBlockStmts.push(sql);
                 // Individual Run for non-tx-control statements inside block
                 if (!isTxEnd && !txPattern.test(sql)) {
-                  addLens(startLine, sql);
+                  addLens(startLine, run);
                 }
                 if (isTxEnd) {
                   // Complete block — add Run Transaction at BEGIN line
@@ -699,7 +721,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
                   txBlockStmts = [];
                 }
               } else {
-                addLens(startLine, sql);
+                addLens(startLine, run);
               }
             }
             // Unclosed transaction block — still offer Run Transaction
@@ -733,7 +755,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         codeLensDisposable.current.push(foldingProvider);
       }
     }
-  }, [sqlSchemaInfo, isSql]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isSql]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!inlineContent && !isUntitled && (!filePath || (!isExternalFile && !projectName))) {
     return (
@@ -911,6 +933,13 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       )}
 
       {/* Content area */}
+      {mounted && !htmlPreviewVisible && !(isCsv && csvMode === "table") && !(isMarkdown && mdMode === "preview") && (
+        <>
+          <EditorSelectionContext editor={mounted.editor} monaco={mounted.monaco} filePath={filePath ?? "Untitled"} projectName={projectName} />
+          {/* An untitled buffer is no file the AI could edit. */}
+          {filePath && <EditorFixWithAi editor={mounted.editor} monaco={mounted.monaco} filePath={filePath} projectName={projectName} />}
+        </>
+      )}
       {htmlPreviewVisible && filePath && (
         <HtmlPreview filePath={filePath} projectName={projectName} revision={htmlRevision} />
       )}
@@ -939,6 +968,14 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             onMount={handleEditorMount}
             theme={monacoTheme}
             options={{
+              // Off by default in standalone Monaco, and it is the only place the
+              // code-action lightbulb can go when the line has no room for it —
+              // without it that bulb is drawn nowhere.
+              glyphMargin: true,
+              // reserveLightbulbGutter() widens that margin by a lane so the bulb
+              // can sit centred; three digits instead of Monaco's five give the
+              // width back, so the code starts where it did.
+              lineNumbersMinChars: 3,
               fontSize: EDITOR_FONT_SIZE,
               fontFamily: EDITOR_FONT_FAMILY,
               fontLigatures: EDITOR_FONT_LIGATURES,
@@ -1010,8 +1047,6 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   );
 });
 
-const NOOP = () => {};
-
 /** Inline SQL result panel — shows query results below the editor */
 function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab }: {
   result: DbQueryResult | null;
@@ -1023,7 +1058,7 @@ function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab
 }) {
   const tableData = useMemo(() => (
     result?.changeType === "select" && result.rows.length > 0
-      ? { columns: result.columns, rows: result.rows, total: result.rows.length, limit: result.rows.length }
+      ? { columns: result.columns, rows: result.rows }
       : null
   ), [result]);
 
@@ -1085,10 +1120,9 @@ function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab
         )}
         {tableData && (
           <GlideDataGrid
-            columns={tableData.columns} rows={tableData.rows} total={tableData.total} limit={tableData.limit}
+            columns={tableData.columns} rows={tableData.rows}
             schema={querySchema} loading={false}
-            page={1} onPageChange={NOOP} onCellUpdate={NOOP} readOnly
-            orderBy={null} orderDir="ASC" onToggleSort={NOOP}
+            readOnly
             connectionName={connName}
           />
         )}

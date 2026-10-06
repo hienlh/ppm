@@ -6,9 +6,15 @@ import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
+import type { DbType } from "../shared/db-types.ts";
+import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("db");
+const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 54;
+export const CURRENT_SCHEMA_VERSION = 56;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -33,12 +39,28 @@ export function getDb(): Database {
   // and other isolated callers never reach this -- setDb() short-circuits above,
   // and PPM_HOME clears the guard.
   assertProdDbAccessAllowed(getDbPath());
-  const ppmDir = getPpmDir();
-  if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
-  db = new Database(getDbPath());
-  applyDbPragmas(db);
-  backupBeforeMigrations(db);
-  runMigrations(db);
+  const path = getDbPath();
+  let version = -1;
+  try {
+    const ppmDir = getPpmDir();
+    if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
+    db = new Database(path);
+    applyDbPragmas(db);
+    version = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+    if (version > CURRENT_SCHEMA_VERSION) {
+      log.warn(`${path} is at schema v${version}, newer than this version of PPM knows (v${CURRENT_SCHEMA_VERSION}) — was PPM downgraded?`);
+    }
+    backupBeforeMigrations(db);
+    const started = performance.now();
+    runMigrations(db);
+    const ms = Math.round(performance.now() - started);
+    if (version === 0) log.info(`Created ${path} (schema v${CURRENT_SCHEMA_VERSION})`);
+    else if (version < CURRENT_SCHEMA_VERSION) log.info(`Migrated ${path} from schema v${version} to v${CURRENT_SCHEMA_VERSION} in ${ms} ms`);
+  } catch (e) {
+    // Nothing runs without this file: config, projects, sessions and accounts all live in it.
+    log.fatal(`Cannot open the app database ${path}${version >= 0 ? ` (schema v${version}, this version expects v${CURRENT_SCHEMA_VERSION})` : ""}:`, e);
+    throw e;
+  }
   return db;
 }
 
@@ -61,9 +83,9 @@ function backupBeforeMigrations(database: Database): void {
   if (row.user_version === 0) return; // brand-new database — nothing to lose yet
   try {
     const result = backupDbSync("premigrate", { sourceDb: database, dbPath: getDbPath() });
-    console.log(`[db] Pre-migration snapshot: ${result.path} (${(result.bytes / 1_048_576).toFixed(1)} MB)`);
+    log.info(`Pre-migration snapshot: ${result.path} (${(result.bytes / 1_048_576).toFixed(1)} MB)`);
   } catch (e: any) {
-    console.error(`[db] Pre-migration snapshot FAILED (continuing): ${e?.message ?? e}`);
+    log.error(`Pre-migration snapshot FAILED (continuing): ${e?.message ?? e}`);
   }
 }
 
@@ -521,7 +543,8 @@ export function runMigrations(database: Database): void {
         }
       }
     } catch (e) {
-      console.warn(`[db] session_map migration warning: ${(e as Error).message}`);
+      // user_version still moves to 16 below, so these titles and pins are never retried.
+      log.error(`Migration v16 (session_map → SDK ids) failed, its rows were not migrated: ${(e as Error).message}`);
     }
     database.exec("PRAGMA user_version = 16");
   }
@@ -1223,6 +1246,76 @@ export function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE turn_usage ADD COLUMN compacted_at INTEGER"); } catch { /* column exists */ }
     database.exec(`PRAGMA user_version = 54;`);
   }
+
+  if (current < 55) {
+    // MySQL and MariaDB connections. The type is a CHECK constraint, which SQLite cannot alter.
+    allowConnectionTypes(database, ["sqlite", "postgres", "mysql", "mariadb"]);
+    database.exec(`PRAGMA user_version = 55;`);
+  }
+
+  if (current < 56) {
+    // "Available to the AI chat": off keeps `ppm db` run from a chat away from the connection.
+    // Every connection saved before this was available, so the default keeps it that way.
+    try { database.exec("ALTER TABLE connections ADD COLUMN ai_access INTEGER NOT NULL DEFAULT 1"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 56;`);
+  }
+}
+
+/**
+ * Rebuild `connections` so its type CHECK admits `types`, by SQLite's own
+ * recipe for changing a constraint: copy into a new table, drop the old one,
+ * rename the new one into its place.
+ *
+ * Foreign keys go off first, and *outside* the transaction because the pragma
+ * is a no-op inside one: with them on, `DROP TABLE connections` deletes every
+ * row of `connection_table_cache` through its `ON DELETE CASCADE` before the
+ * new table exists. The table's own recorded SQL is reused with only the CHECK
+ * replaced, so a column added by a later migration — or by a build that ran
+ * before this one — is carried over rather than dropped, and ids are copied
+ * as they are, so every cached row still points at its connection. The
+ * AUTOINCREMENT high-water mark is kept too: an id a deleted connection had
+ * is never handed out again, which matters to the query audit rows that still
+ * name it.
+ */
+function allowConnectionTypes(database: Database, types: readonly string[]): void {
+  const foreignKeysOn = () => (database.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys === 1;
+  const foreignKeys = foreignKeysOn();
+  database.exec("PRAGMA foreign_keys = OFF");
+  try {
+    // Still on means a caller holds a transaction, where the drop below would cascade.
+    if (foreignKeysOn()) throw new Error("Cannot rebuild the connections table inside a transaction");
+    // IMMEDIATE: a second process migrating at the same moment waits, then finds the work done.
+    database.transaction(() => {
+      const table = database.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'connections'").get() as { sql: string } | null;
+      if (!table) return;
+      const check = /CHECK\s*\(\s*type\s+IN\s*\([^)]*\)\s*\)/i;
+      const current = table.sql.match(check)?.[0];
+      const wanted = `CHECK(type IN (${types.map((t) => `'${t}'`).join(", ")}))`;
+      if (!current || current === wanted) return; // no type constraint, or already widened
+      const createNew = table.sql.replace(check, wanted).replace(/^CREATE TABLE\s+(["`]?)connections\1/i, "CREATE TABLE connections_new");
+      if (!createNew.startsWith("CREATE TABLE connections_new")) throw new Error("Unexpected definition of the connections table");
+
+      const seq = database.query("SELECT seq FROM sqlite_sequence WHERE name = 'connections'").get() as { seq: number } | null;
+      const before = (database.query("SELECT COUNT(*) AS n FROM connections").get() as { n: number }).n;
+      database.exec("DROP TABLE IF EXISTS connections_new");
+      database.exec(createNew);
+      database.exec("INSERT INTO connections_new SELECT * FROM connections");
+      const after = (database.query("SELECT COUNT(*) AS n FROM connections_new").get() as { n: number }).n;
+      if (after !== before) throw new Error(`Copied ${after} of ${before} connections`);
+      database.exec("DROP TABLE connections");
+      database.exec("ALTER TABLE connections_new RENAME TO connections");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_connections_type ON connections(type)");
+      database.exec("CREATE INDEX IF NOT EXISTS idx_connections_group ON connections(group_name)");
+      if (seq) {
+        // The copy restarted the counter at the highest id it copied.
+        const copied = (database.query("SELECT seq FROM sqlite_sequence WHERE name = 'connections'").get() as { seq: number } | null)?.seq ?? 0;
+        database.exec("DELETE FROM sqlite_sequence WHERE name = 'connections'");
+        database.query("INSERT INTO sqlite_sequence (name, seq) VALUES ('connections', ?)").run(Math.max(copied, seq.seq));
+      }
+    }).immediate();
+  } finally {
+    if (foreignKeys) database.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1647,6 +1740,14 @@ export function clearSessionUnread(sessionId: string): void {
   ).run(sessionId);
 }
 
+/** Unread count for one session; 0 when it has no row. A browser clears it the moment the session is on screen. */
+export function getSessionUnreadCount(sessionId: string): number {
+  const row = getDb().query(
+    "SELECT unread_count FROM session_metadata WHERE session_id = ?",
+  ).get(sessionId) as { unread_count: number } | null;
+  return row?.unread_count ?? 0;
+}
+
 /** Get all sessions with unread > 0 */
 export function getAllUnread(): UnreadEntry[] {
   const rows = getDb().query(
@@ -1852,13 +1953,15 @@ export function getLastTurnCacheState(sessionId: string): {
   contextTokens?: number;
   cacheTtlMs?: number;
   compactedAt?: number;
+  /** The account that cache was written on — Anthropic scopes a prompt cache per account. */
+  accountId?: string;
 } | null {
   const row = getDb().query(
-    `SELECT input_tokens, cache_read_tokens, cache_write_tokens, context_tokens, cache_ttl_ms, compacted_at, recorded_at
+    `SELECT input_tokens, cache_read_tokens, cache_write_tokens, context_tokens, cache_ttl_ms, compacted_at, account_id, recorded_at
        FROM turn_usage WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
   ).get(sessionId) as Pick<
     TurnUsageRow,
-    "input_tokens" | "cache_read_tokens" | "cache_write_tokens" | "context_tokens" | "cache_ttl_ms" | "compacted_at" | "recorded_at"
+    "input_tokens" | "cache_read_tokens" | "cache_write_tokens" | "context_tokens" | "cache_ttl_ms" | "compacted_at" | "account_id" | "recorded_at"
   > | null;
   if (!row?.recorded_at) return null;
 
@@ -1874,6 +1977,7 @@ export function getLastTurnCacheState(sessionId: string): {
     ...(row.context_tokens != null && { contextTokens: row.context_tokens }),
     ...(row.cache_ttl_ms != null && { cacheTtlMs: row.cache_ttl_ms }),
     ...(row.compacted_at != null && { compactedAt: row.compacted_at }),
+    ...(row.account_id != null && { accountId: row.account_id }),
   };
 }
 
@@ -1910,7 +2014,7 @@ export function insertProxyRequest(record: {
       record.status, record.durationMs ?? null,
     );
   } catch (e) {
-    console.error(`[proxy] failed to log proxy request:`, (e as Error).message);
+    proxyLog.error(`failed to log proxy request:`, (e as Error).message);
   }
 }
 
@@ -2061,22 +2165,22 @@ export function cleanupOldLimitSnapshots(): void {
 
 export interface ConnectionRow {
   id: number;
-  type: "sqlite" | "postgres";
+  type: DbType;
   name: string;
   connection_config: string;
   group_name: string | null;
   color: string | null;
   /** 1 = readonly (default), 0 = writable. UI-only toggle — CLI cannot change this. */
   readonly: number;
+  /** 1 = available to the AI chat (default), 0 = `ppm db` run from a chat neither lists nor opens it. */
+  ai_access: number;
   sort_order: number;
   created_at: string;
   updated_at: string;
 }
 
-/** Parsed config stored in connection_config JSON */
-export type ConnectionConfig =
-  | { type: "sqlite"; path: string }
-  | { type: "postgres"; connectionString: string };
+/** Parsed config stored in connection_config JSON: a file, or a URL plus the connection form's settings. */
+export type ConnectionConfig = StoredConnectionConfig;
 
 /** Encrypt a connection config object for storage */
 function encryptConfig(config: ConnectionConfig): string {
@@ -2085,11 +2189,20 @@ function encryptConfig(config: ConnectionConfig): string {
 
 /** Decrypt a stored connection_config string, with fallback for pre-migration plaintext */
 export function decryptConfig(encrypted: string): ConnectionConfig {
+  let decryptError: unknown;
   try {
     return JSON.parse(decrypt(encrypted));
-  } catch {
-    // Fallback: might be plaintext (pre-migration or test DB)
+  } catch (e) {
+    decryptError = e;
+  }
+  // Fallback: might be plaintext (pre-migration or test DB)
+  try {
     return JSON.parse(encrypted);
+  } catch (e) {
+    // Neither: the key it was encrypted with is gone or changed, which would otherwise surface
+    // as a bare JSON syntax error. Never the config or the ciphertext.
+    log.error(`A saved connection's config could not be decrypted: ${(decryptError as Error)?.message ?? decryptError}`);
+    throw e;
   }
 }
 
@@ -2124,7 +2237,7 @@ export function resolveConnection(nameOrId: string): ConnectionRow | null {
 }
 
 export function insertConnection(
-  type: "sqlite" | "postgres", name: string, config: ConnectionConfig,
+  type: DbType, name: string, config: ConnectionConfig,
   groupName?: string | null, color?: string | null,
 ): ConnectionRow {
   const maxOrder = (getDb().query("SELECT COALESCE(MAX(sort_order), -1) as m FROM connections").get() as { m: number }).m;
@@ -2132,6 +2245,14 @@ export function insertConnection(
     "INSERT INTO connections (type, name, connection_config, group_name, color, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(type, name, encryptConfig(config), groupName ?? null, color ?? null, maxOrder + 1);
   return getConnectionByName(name)!;
+}
+
+/** Move every connection in folder `from` into `to`, or out of any folder for null; the count moved. */
+export function moveConnectionGroup(from: string, to: string | null): number {
+  const result = getDb().query(
+    "UPDATE connections SET group_name = ?, updated_at = datetime('now') WHERE group_name = ?",
+  ).run(to, from);
+  return result.changes;
 }
 
 export function deleteConnection(nameOrId: string): boolean {
@@ -2142,7 +2263,8 @@ export function deleteConnection(nameOrId: string): boolean {
 }
 
 export function updateConnection(
-  id: number, updates: { name?: string; config?: ConnectionConfig; groupName?: string | null; color?: string | null; readonly?: number; sortOrder?: number },
+  id: number,
+  updates: { name?: string; config?: ConnectionConfig; groupName?: string | null; color?: string | null; readonly?: number; aiAccess?: number; sortOrder?: number },
 ): void {
   const sets: string[] = [];
   const vals: unknown[] = [];
@@ -2151,6 +2273,7 @@ export function updateConnection(
   if (updates.groupName !== undefined) { sets.push("group_name = ?"); vals.push(updates.groupName); }
   if (updates.color !== undefined) { sets.push("color = ?"); vals.push(updates.color); }
   if (updates.readonly !== undefined) { sets.push("readonly = ?"); vals.push(updates.readonly); }
+  if (updates.aiAccess !== undefined) { sets.push("ai_access = ?"); vals.push(updates.aiAccess); }
   if (updates.sortOrder !== undefined) { sets.push("sort_order = ?"); vals.push(updates.sortOrder); }
   if (sets.length === 0) return;
   sets.push("updated_at = datetime('now')");
@@ -2490,48 +2613,24 @@ export function deletePPMBotMemoriesByTopic(
 // PPMBot pairing helpers
 // ---------------------------------------------------------------------------
 
-export function createPairingRequest(
-  chatId: string,
-  userId: string,
-  displayName: string,
-  code: string,
-): void {
+/** Approve a chat in one step — for the one-time connect link, which is its own proof of ownership. */
+export function upsertApprovedPairing(chatId: string, userId: string, displayName: string): void {
   getDb().query(
-    `INSERT INTO clawbot_paired_chats (telegram_chat_id, telegram_user_id, display_name, pairing_code, status)
-     VALUES (?, ?, ?, ?, 'pending')
+    `INSERT INTO clawbot_paired_chats (telegram_chat_id, telegram_user_id, display_name, pairing_code, status, approved_at)
+     VALUES (?, ?, ?, NULL, 'approved', unixepoch())
      ON CONFLICT(telegram_chat_id) DO UPDATE SET
        telegram_user_id = excluded.telegram_user_id,
        display_name = excluded.display_name,
-       pairing_code = excluded.pairing_code,
-       status = 'pending',
-       approved_at = NULL`,
-  ).run(chatId, userId, displayName, code);
-}
-
-export function approvePairing(chatId: string): void {
-  getDb().query(
-    `UPDATE clawbot_paired_chats
-     SET status = 'approved', pairing_code = NULL, approved_at = unixepoch()
-     WHERE telegram_chat_id = ? AND status = 'pending'`,
-  ).run(chatId);
+       pairing_code = NULL,
+       status = 'approved',
+       approved_at = unixepoch()`,
+  ).run(chatId, userId, displayName);
 }
 
 export function revokePairing(chatId: string): void {
   getDb().query(
     "UPDATE clawbot_paired_chats SET status = 'revoked' WHERE telegram_chat_id = ?",
   ).run(chatId);
-}
-
-export function getPairingByCode(code: string): PPMBotPairedChat | null {
-  return getDb().query(
-    "SELECT * FROM clawbot_paired_chats WHERE pairing_code = ? AND status = 'pending'",
-  ).get(code) as PPMBotPairedChat | null;
-}
-
-export function getPairingByChatId(chatId: string): PPMBotPairedChat | null {
-  return getDb().query(
-    "SELECT * FROM clawbot_paired_chats WHERE telegram_chat_id = ?",
-  ).get(chatId) as PPMBotPairedChat | null;
 }
 
 export function listPairedChats(): PPMBotPairedChat[] {

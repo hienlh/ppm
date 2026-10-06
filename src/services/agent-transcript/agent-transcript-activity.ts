@@ -21,18 +21,25 @@ async function claudeActivity(owned: OwnedSession, now: number): Promise<AgentTr
   const subagentsDir = join(owned.claude!.sessionDir, "subagents");
   const groups = getCachedSubagentGroups(subagentsDir);
   const out: AgentTranscriptRunningEntry[] = [];
+  const inCard = new Set<string>();
 
   for (const [cardId, entries] of groups) {
     let newest = entries[0];
-    for (const e of entries) if (e.modifiedAt > newest!.modifiedAt) newest = e;
+    for (const e of entries) {
+      inCard.add(e.transcriptPath);
+      if (e.modifiedAt > newest!.modifiedAt) newest = e;
+    }
     if (!newest || now - newest.modifiedAt > ACTIVITY_WINDOW_MS) continue;
     const tail = await summarizeTranscriptTail(newest.transcriptPath);
-    out.push({ cardId, lastWriteAt: newest.modifiedAt, lastStep: lastStepLabel(tail) });
+    // entries[0] is the agent the card spawned; a name makes it a teammate as well.
+    const memberName = entries[0]!.name;
+    out.push({ cardId, ...(memberName ? { memberName } : {}), lastWriteAt: newest.modifiedAt, lastStep: lastStepLabel(tail) });
   }
 
-  // A team is itself a session: its members carry no toolUseId (they are not
-  // card-spawned), so they never appear in `groups` above and need their own pass.
+  // A named agent the session spawned has a card too, and was listed above —
+  // only a teammate with no card here needs this pass.
   for (const [memberName, entry] of getCachedTranscriptsByMember(subagentsDir)) {
+    if (inCard.has(entry.transcriptPath)) continue;
     if (!entry.sizeBytes || now - entry.modifiedAt > ACTIVITY_WINDOW_MS) continue;
     const tail = await summarizeTranscriptTail(entry.transcriptPath);
     out.push({ memberName, lastWriteAt: entry.modifiedAt, lastStep: lastStepLabel(tail) });

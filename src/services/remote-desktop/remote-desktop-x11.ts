@@ -32,6 +32,9 @@
  * reason to fail capture, so both load into `null` rather than throwing.
  */
 import { resetLinuxSession, type LinuxSession } from "./remote-desktop-linux-session.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 type Ffi = typeof import("bun:ffi");
 /** Xlib pointer/handle as bun:ffi hands it back. */
@@ -144,6 +147,10 @@ let connection: X11Connection | null = null;
  *  a wrong signature, and nothing to say so until it was called. */
 let errorCallbacks: { onError: Trampoline; onIoError: Trampoline; onIoExit: Trampoline } | null = null;
 let connectionLost = false;
+/** Displays whose `XOpenDisplay` failure has been logged. Every input event retries the open,
+ *  so without this one refused display would fill the log; a success clears its entry. */
+const refusedDisplays = new Set<string>();
+let warnedNoExitHandler = false;
 
 /** One `JSCallback`, whose `.ptr` is the address Xlib keeps for the process lifetime. */
 type Trampoline = InstanceType<Ffi["JSCallback"]>;
@@ -179,7 +186,11 @@ function installErrorHandlers(ffi: Ffi, x11: X11Lib): void {
  *  (no `$DISPLAY` server running, an auth cookie we cannot read). */
 export async function getX11(session: LinuxSession): Promise<X11Connection | null> {
   if (session.kind !== "x11") return null;
-  if (connectionLost) { connection = null; connectionLost = false; }
+  if (connectionLost) {
+    log.warn(`X11 connection to ${connection?.display ?? "?"} lost (I/O error); reopening`);
+    connection = null;
+    connectionLost = false;
+  }
   // Matched on the display, not merely on there being a connection. The session is re-probed
   // periodically now, so it can name a different display on a still-live server — a second
   // seat, a nested Xephyr, `:0` becoming `:1`. Handing back the old `Display*` then sends
@@ -196,10 +207,21 @@ export async function getX11(session: LinuxSession): Promise<X11Connection | nul
   if (!x11) return null;
   // Same library, second `dlopen`: null here means libX11 1.6, not a missing libX11.
   const x11Exit = tryDlopen<X11ExitLib>(ffi, ["libX11.so.6", "libX11.so"], X11_EXIT_SYMBOLS);
+  if (!x11Exit && !warnedNoExitHandler) {
+    warnedNoExitHandler = true;
+    log.warn("libX11 < 1.7: losing the X server will terminate PPM");
+  }
   installErrorHandlers(ffi, x11);
 
   const dpy = x11.XOpenDisplay(Buffer.from(`${session.display}\0`));
-  if (!dpy) return null;
+  if (!dpy) {
+    if (!refusedDisplays.has(session.display)) {
+      refusedDisplays.add(session.display);
+      log.warn(`XOpenDisplay(${session.display}) failed`);
+    }
+    return null;
+  }
+  refusedDisplays.delete(session.display);
 
   const xtst = tryDlopen<XtstLib>(ffi, ["libXtst.so.6", "libXtst.so"], XTST_SYMBOLS);
   const xrandr = tryDlopen<XrandrLib>(ffi, ["libXrandr.so.2", "libXrandr.so"], XRANDR_SYMBOLS);
@@ -232,6 +254,7 @@ export async function getX11(session: LinuxSession): Promise<X11Connection | nul
     hasXTest,
     display: session.display,
   };
+  log.info(`X11 connected display=${session.display} xtest=${hasXTest} xrandr=${!!xrandr} dpms=${!!dpms}`);
   return connection;
 }
 

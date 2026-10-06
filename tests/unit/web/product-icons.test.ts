@@ -67,6 +67,8 @@ describe("one icon set, enforced by the import path", () => {
           const name = raw.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]!.trim();
           if (!name) continue;
           if (name === "LucideIcon" || name === "LucideProps") continue;
+          // Not an icon: a glyph's path data, for the data grid's canvas header, where no component can go.
+          if (name === "glyphPaths") continue;
           if (!known.has(name)) unknown.add(name);
         }
       }

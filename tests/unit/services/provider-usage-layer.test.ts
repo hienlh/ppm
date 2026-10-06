@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { UsageInfo } from "../../../src/types/chat.ts";
 import type { ProviderUsageSource } from "../../../src/services/provider-usage/usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../../src/services/provider-usage/usage-source.ts";
@@ -120,6 +120,31 @@ describe("failures", () => {
     expect(await getOrFetchUsage(PROVIDER, "a1")).toEqual({});
     invalidateUsage(PROVIDER, "a1");
     expect(await getOrFetchUsage(PROVIDER, "a1")).toEqual({ totalCostUsd: 9 });
+  });
+});
+
+describe("logging a failing account", () => {
+  it("warns when it starts failing, not on every sweep that finds it still failing", async () => {
+    let attempt = 0;
+    registerUsageSource(makeSource({
+      async fetch() {
+        attempt++;
+        if (attempt <= 2) throw new Error("boom");
+        return { totalCostUsd: 1 };
+      },
+    }));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await refreshUsage(PROVIDER, "a1");
+      await refreshUsage(PROVIDER, "a1");
+      await refreshUsage(PROVIDER, "a1");
+      expect(warn.mock.calls.map((c) => c.join(" "))).toEqual([`[usage] ${PROVIDER}/a1: boom`]);
+      expect(info.mock.calls.map((c) => c.join(" "))).toContain(`[usage] ${PROVIDER}/a1: usage readable again`);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
   });
 });
 

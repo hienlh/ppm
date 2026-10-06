@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, spyOn } from "bun:test";
 import { EventEmitter } from "node:events";
 import { CodexJsonRpcClient, buildSpawnEnv, codexCommand } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
 import { resolveBunPath } from "../../../src/services/autostart-generator.ts";
@@ -29,6 +29,29 @@ describe("CodexJsonRpcClient framing", () => {
     c.attach(stdout as any);
     expect(() => feed(stdout, "{not json\n{\"method\":\"ok\"}\n")).not.toThrow();
     expect(seen).toEqual(["ok"]);
+  });
+});
+
+describe("CodexJsonRpcClient stderr", () => {
+  // codex writes Rust tracing to stderr, coloured. Its own level decides PPM's: a failed
+  // cache write is not a PPM ERROR, and INFO lines or `bun x` chatter stay at DEBUG.
+  it("logs codex's ERROR/WARN lines as WARN, without the colour codes, and nothing louder", () => {
+    const c = new CodexJsonRpcClient();
+    const stderr = new EventEmitter();
+    c.attach(new EventEmitter() as any, stderr as any);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      feed(stderr, "\x1b[2m2026-10-05T16:36:16.823192Z\x1b[0m \x1b[31mERROR\x1b[0m \x1b[2mcodex_models_manager::manager\x1b[0m: failed to write models cache\n");
+      feed(stderr, "2026-10-05T16:36:17.000001Z  INFO codex_core::thread: started\nResolving dependencies\n");
+      expect(error).not.toHaveBeenCalled();
+      expect(warn.mock.calls.map((a) => a.join(" "))).toEqual([
+        "[codex] stderr: 2026-10-05T16:36:16.823192Z ERROR codex_models_manager::manager: failed to write models cache",
+      ]);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
   });
 });
 
@@ -106,6 +129,10 @@ describe("buildSpawnEnv allowlist", () => {
     const env = buildSpawnEnv();
     expect(env.CODEX_HOME).toBe("/x/.codex");
     delete process.env.CODEX_HOME;
+  });
+
+  it("marks the process as an AI chat's, so `ppm db` in its shell keeps to the connections available to one", () => {
+    expect(buildSpawnEnv().PPM_AI_CHAT).toBe("1");
   });
 });
 

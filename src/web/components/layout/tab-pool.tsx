@@ -31,11 +31,17 @@ export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: R
   terminal: lazyWithPreload(() => import("@/components/terminal/terminal-tab").then((m) => ({ default: m.TerminalTab }))),
   chat: lazyWithPreload(() => import("@/components/chat/chat-tab").then((m) => ({ default: m.ChatTab }))),
   editor: lazyWithPreload(() => import("@/components/editor/code-editor").then((m) => ({ default: m.CodeEditor }))),
-  database: lazyWithPreload(() => import("@/components/database/database-viewer").then((m) => ({ default: m.DatabaseViewer }))),
+  database: lazyWithPreload(() => import("@/components/database/table/table-tab").then((m) => ({ default: m.TableTab }))),
+  "db-structure": lazyWithPreload(() => import("@/components/database/structure/structure-tab").then((m) => ({ default: m.StructureTab }))),
+  "db-sql": lazyWithPreload(() => import("@/components/database/sql-object/sql-object-tab").then((m) => ({ default: m.SqlObjectTab }))),
+  "db-query": lazyWithPreload(() => import("@/components/database/query/query-tab").then((m) => ({ default: m.QueryTab }))),
+  "db-impexp": lazyWithPreload(() => import("@/components/database/impexp/impexp-tab").then((m) => ({ default: m.ImpExpTab }))),
+  "db-connection": lazyWithPreload(() => import("@/components/database/connection-form/connection-form-tab").then((m) => ({ default: m.ConnectionFormTab }))),
   sqlite: lazyWithPreload(() => import("@/components/sqlite/sqlite-viewer").then((m) => ({ default: m.SqliteViewer }))),
-  postgres: lazyWithPreload(() => import("@/components/postgres/postgres-viewer").then((m) => ({ default: m.PostgresViewer }))),
   "git-diff": lazyWithPreload(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
   "branch-review": lazyWithPreload(() => import("@/components/branch-review/branch-review-tab").then((m) => ({ default: m.BranchReviewTab }))),
+  "session-review": lazyWithPreload(() => import("@/components/session-review/session-review-tab").then((m) => ({ default: m.SessionReviewTab }))),
+  "git-review": lazyWithPreload(() => import("@/components/git-review/git-review-tab").then((m) => ({ default: m.GitReviewTab }))),
   settings: lazyWithPreload(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
   extension: lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
   "extension-webview": lazyWithPreload(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
@@ -47,6 +53,8 @@ export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: R
   group: lazyWithPreload(() => import("@/components/group-chat/group-chat-tab").then((m) => ({ default: m.GroupChatTab }))),
   problems: lazyWithPreload(() => import("@/components/problems/problems-panel").then((m) => ({ default: m.ProblemsPanel }))),
   design: lazyWithPreload(() => import("@/components/design/design-tab").then((m) => ({ default: m.DesignTab }))),
+  "web-preview": lazyWithPreload(() => import("@/components/web-preview/web-preview-tab").then((m) => ({ default: m.WebPreviewTab }))),
+  logs: lazyWithPreload(() => import("@/components/logs/logs-tab").then((m) => ({ default: m.LogsTab }))),
 };
 
 /** The tabs opened most, loaded first by `preloadWhenIdle`. */

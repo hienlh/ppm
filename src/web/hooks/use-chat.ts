@@ -6,11 +6,14 @@ import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expans
 import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { tabSessionId } from "@/lib/tab-session-id";
+import { answerTabOpen } from "@/lib/open-ai-tab";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
+import type { TurnStop } from "../../shared/turn-stop";
+import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
@@ -64,6 +67,10 @@ export interface TurnSettings {
   thinking?: boolean;
 }
 
+export interface UseChatOptions {
+  onMessageRejected?: (rejected: { content: string; replyTo: ReplyReference | null; message: string }) => void;
+}
+
 interface UseChatReturn {
   messages: ChatMessage[];
   /** Messages flattened with pre-compact expansions prepended before their compact cards. */
@@ -101,6 +108,11 @@ interface UseChatReturn {
   promptCache: PromptCacheState | null;
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   mcpNeedsAuth: string[];
+  /**
+   * The error that ended the last turn, if one did. Kept apart from `messages`: it is not in
+   * the transcript, so every history reload would otherwise wipe it.
+   */
+  turnStop: TurnStop | null;
   statusMessage: string | null;
   sessionTitle: string | null;
   /**
@@ -136,7 +148,7 @@ interface UseChatReturn {
   backgroundShells: BackgroundShell[];
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
-  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] }) => void;
+  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -170,7 +182,12 @@ export function useChat(
    */
   onSessionMigrated?: (newSessionId: string) => void,
   onAttempt?: (event: ChatAttemptEvent) => void,
+  options?: UseChatOptions,
 ): UseChatReturn {
+  const rejectionObserverRef = useRef(options?.onMessageRejected);
+  rejectionObserverRef.current = options?.onMessageRejected;
+  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; wasIdle: boolean; streamingContent: string; streamingEvents: ChatEvent[]; finalizedId?: string; originalAssistantId?: string; sentAt: number }>>([]);
+  const sendOrdinalRef = useRef(0);
   const attemptObserverRef = useRef(onAttempt);
   attemptObserverRef.current = onAttempt;
   const attemptRef = useRef<ChatAttemptLifecycle | null>(null);
@@ -210,6 +227,7 @@ export function useChat(
   const [promptCache, setPromptCache] = useState<PromptCacheState | null>(null);
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
+  const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -872,6 +890,14 @@ export function useChat(
       return;
     }
 
+    // The AI asked, through a tab tool, for a tab on this device. The server is waiting for
+    // the answer, so it is never queued behind a replay.
+    if (data.type === "tab_open") {
+      void answerTabOpen(data, { sessionId: sessionIdRef.current ?? "", projectName: projectNameRef.current || undefined },
+        (message) => sendRef.current(message));
+      return;
+    }
+
     if (isReplayingRef.current) {
       queuedReplayMessagesRef.current.push(event);
       return;
@@ -910,6 +936,33 @@ export function useChat(
     // file:changed, session:unread_changed and jira:* are app-wide and now arrive
     // on the global bus (`use-global-events.ts`) instead of here — a chat socket is
     // not guaranteed to exist since chat tabs mount lazily.
+
+    if (data.type === "message_rejected") {
+      const rejected = data;
+      const index = typeof rejected.clientMessageId === "string"
+        ? pendingSendsRef.current.findIndex((pending) => pending.id === rejected.clientMessageId)
+        : pendingSendsRef.current.findLastIndex((pending) => pending.content === rejected.content
+          && JSON.stringify(pending.replyTo ?? null) === JSON.stringify(rejected.replyTo ?? null));
+      if (index !== -1) {
+        const [pending] = pendingSendsRef.current.splice(index, 1);
+        setMessages((prev) => prev.filter((m) => m.id !== pending!.id).map((m) =>
+          m.id === pending!.finalizedId && pending!.originalAssistantId ? { ...m, id: pending!.originalAssistantId } : m));
+        if (pending!.wasIdle && index === pendingSendsRef.current.length) {
+          attemptRef.current?.fail();
+          setPhase("idle");
+          phaseRef.current = "idle";
+        }
+        if (!pending!.wasIdle && phaseRef.current !== "idle" && !turnFinalizedRef.current) {
+          streamingContentRef.current = pending!.streamingContent + streamingContentRef.current;
+          streamingEventsRef.current = [...pending!.streamingEvents, ...streamingEventsRef.current];
+          if (streamingContentRef.current || streamingEventsRef.current.length) syncMessages();
+        }
+        const decoded = decodeReply(pending!.encoded);
+        rejectionObserverRef.current?.({ ...decoded, message: rejected.message });
+      }
+      if (!rejectionObserverRef.current) toast.error(rejected.message || "Message could not be sent");
+      return;
+    }
 
     // A user message sent from another device/tab of this session — render its
     // bubble. The sender never receives this echo (server excludes the sender),
@@ -957,6 +1010,11 @@ export function useChat(
       return;
     }
 
+    if ((data as any).type === "turn_stop") {
+      setTurnStop((data as any).stop ?? null);
+      return;
+    }
+
     // Handle compact status events
     if ((data as any).type === "compact_status") {
       const status = (data as any).status;
@@ -982,6 +1040,8 @@ export function useChat(
       const wasActive = phaseRef.current !== "idle";
       if (!wasActive && p !== "idle") turnFinalizedRef.current = false;
       if (p !== "idle") historyActivityRef.current++;
+      // A new turn is running, so the last one's stop no longer describes the session.
+      if (p !== "idle") setTurnStop(null);
       setPhase(p);
       phaseRef.current = p;
       setConnectingElapsed(p === "connecting" ? ((data as any).elapsed ?? 0) : 0);
@@ -1046,6 +1106,10 @@ export function useChat(
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
+      // The server reads it from the trace on every connect, so a reload or a reconnect still
+      // says how the last turn ended. A greeting without the field (a model switch) keeps it.
+      if (p !== "idle") setTurnStop(null);
+      else if ("turnStop" in state) setTurnStop((state.turnStop as TurnStop | null) ?? null);
       // The server is the only holder of when the cache was last written and how big the
       // replayed prefix was — neither is in the transcript, so a reload has to be told.
       setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
@@ -1155,7 +1219,7 @@ export function useChat(
 
     // Route content events through processStreamEvent
     processStreamEvent(data);
-  }, [processStreamEvent]);
+  }, [processStreamEvent, syncMessages]);
   handleMessageRef.current = handleMessage;
 
   // The provider rides along because the server has no other way to learn it for a
@@ -1209,6 +1273,7 @@ export function useChat(
       setLiveAccount(null);
     }
     prevSessionIdRef.current = sessionId ?? null;
+    pendingSendsRef.current = [];
 
     setPhase("idle");
     phaseRef.current = "idle";
@@ -1217,6 +1282,7 @@ export function useChat(
     setCompactStatus(null);
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
+    setTurnStop(null);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
     // Drop the previous session's version groups. Keeping them would let the
@@ -1355,16 +1421,21 @@ export function useChat(
   }), []);
 
   const sendMessage = useCallback(
-    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] }) => {
+    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => {
       // An attachment-only message is legitimate now that images travel with it: the
       // caller may have nothing to say beyond the picture.
       if (!content.trim() && !opts?.images?.length) return;
+      const encodedContent = encodeReply(content, opts?.replyTo);
       historyActivityRef.current++;
+      // Whatever ended the last turn, this message moves the session past it.
+      setTurnStop(null);
 
       const isFollowUp = phaseRef.current !== "idle";
       if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
       turnFinalizedRef.current = false;
 
+      const finalizedId = `final-${Date.now()}-${sendOrdinalRef.current + 1}`;
+      const originalAssistant = messagesRef.current.at(-1);
       if (isFollowUp) {
         // Cancel pending throttled sync before finalizing
         if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
@@ -1376,20 +1447,32 @@ export function useChat(
           if (last?.role === "assistant") {
             return [
               ...prev.slice(0, -1),
-              { ...last, id: `final-${Date.now()}`, content: finalContent || last.content, events: finalEvents.length > 0 ? finalEvents : last.events },
+              { ...last, id: finalizedId, content: finalContent || last.content, events: finalEvents.length > 0 ? finalEvents : last.events },
             ];
           }
           return prev;
         });
       }
 
+      const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}`;
+      pendingSendsRef.current = pendingSendsRef.current.filter((pending) => Date.now() - pending.sentAt < 60_000);
+      if (opts?.replyTo) pendingSendsRef.current.push({
+        id: optimisticId, content, encoded: encodedContent, replyTo: opts.replyTo, sentAt: Date.now(),
+        wasIdle: !isFollowUp, streamingContent: streamingContentRef.current,
+        streamingEvents: [...streamingEventsRef.current],
+        finalizedId: isFollowUp ? finalizedId : undefined,
+        originalAssistantId: originalAssistant?.role === "assistant" ? originalAssistant.id : undefined,
+      });
+      // Keep only recent unacknowledged sends; rejection is an immediate response.
+      if (pendingSendsRef.current.length > 20) pendingSendsRef.current.shift();
+
       // Add user message
       setMessages((prev) => [
         ...prev,
         {
-          id: `user-${Date.now()}`,
+          id: optimisticId,
           role: "user" as const,
-          content,
+          content: encodedContent,
           timestamp: new Date().toISOString(),
         },
       ]);
@@ -1410,11 +1493,13 @@ export function useChat(
 
       send(JSON.stringify({
         type: "message",
+        clientMessageId: optimisticId,
         content,
         permissionMode: opts?.permissionMode,
         priority: opts?.priority,
         images: opts?.images,
         imagePaths: opts?.imagePaths,
+        replyTo: opts?.replyTo,
         ...turnSettings(),
       }));
     },
@@ -1698,6 +1783,7 @@ export function useChat(
     compactStatus,
     promptCache,
     mcpNeedsAuth,
+    turnStop,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

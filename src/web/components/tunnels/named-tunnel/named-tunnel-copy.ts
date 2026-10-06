@@ -12,7 +12,7 @@ export const namedTunnelCopy = {
   },
   noDomain: {
     title: "No problem",
-    body: "PPM will keep using a temporary link (quick tunnel). You can turn this on later from Tunnel Manager.",
+    body: "PPM will keep using a temporary link (quick tunnel). You can set up your domain later in Settings → Remote Access → Public link.",
     close: "Close",
   },
   login: {
@@ -74,24 +74,5 @@ export const namedTunnelCopy = {
     retry: "Retry",
     relogin: "Sign in again",
     close: "Close",
-  },
-  section: {
-    title: "Named Tunnel",
-    modeQuick: "quick",
-    modeNamed: "named",
-    hostnameLabel: "Address",
-    tokenLabel: "Token",
-    setup: "Set up named tunnel",
-    retry: "Retry",
-    relogin: "Sign in again",
-    disable: "Switch back to quick tunnel",
-    disableConfirm: "Press again to confirm",
-    disableSelfCut:
-      "You are viewing PPM through this very domain — turning it off cuts this page immediately and you would never see the temporary link. Open PPM on your local network first, then turn it off.",
-    certInvalid: "Cloudflare sign-in needed",
-    certMismatch: "Certificate belongs to a different Cloudflare account — sign in again",
-    authDisabled: "Enable PPM authentication to use your own domain",
-    /** Small note next to the live-mode badge when the configured mode hasn't landed yet. */
-    configuredAs: (mode: "quick" | "named") => `configured: ${mode}`,
   },
 } as const;

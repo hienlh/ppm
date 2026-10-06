@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { formatBackupStamp } from "./db-backup-paths.ts";
 import { verifyBackupFile } from "./db-backup-sync.ts";
 import { readStatus } from "../supervisor-state.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("backup");
 
 /**
  * Restore a verified snapshot over the live database.
@@ -84,16 +87,25 @@ export function restoreDb(
   }
   for (const side of sidecars(dbPath)) rmSync(side, { force: true });
 
-  copyFileSync(backupPath, dbPath);
+  try {
+    copyFileSync(backupPath, dbPath);
+  } catch (e) {
+    // The live database is already moved aside, and the thrown message does not say where.
+    log.error(`copying ${backupPath} over ${dbPath} failed: ${(e as Error).message}; previous database kept at ${archivedTo ?? "(none)"}`);
+    throw e;
+  }
 
   const after = verifyBackupFile(dbPath);
   if (!after.ok) {
+    log.error(`restored ${dbPath} failed integrity_check (${after.detail}); previous database kept at ${archivedTo ?? "(none)"}`);
     throw new Error(
       `Restored file failed integrity_check (${after.detail}). Previous database preserved at ${archivedTo ?? "(none)"}.`,
     );
   }
 
-  return { restoredFrom: backupPath, dbPath, archivedTo, bytes: statSync(dbPath).size };
+  const bytes = statSync(dbPath).size;
+  log.info(`restored ${backupPath} over ${dbPath} (previous archived to ${archivedTo ?? "(none)"}, ${bytes} B, force=${!!opts.force})`);
+  return { restoredFrom: backupPath, dbPath, archivedTo, bytes };
 }
 
 /** Resolve a user-supplied backup argument: absolute/relative path, or a bare snapshot filename. */

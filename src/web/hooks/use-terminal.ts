@@ -11,6 +11,7 @@ import { getCurrentAppliedTheme, THEME_CHANGE_EVENT } from "@/theme/apply-theme"
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import type { PpmTheme } from "@/theme/types";
 import { TERMINAL_FONT_FAMILY } from "@/lib/editor-font";
+import { isUsableTerminalSize } from "../../shared/terminal-size";
 
 /** Current active PpmTheme → xterm ITheme (prefers the live applied theme). */
 function currentXtermTheme(): ITheme {
@@ -39,6 +40,8 @@ interface UseTerminalReturn {
   shellReady: boolean;
   sendData: (data: string) => void;
   getSelection: () => string;
+  /** The xterm instance once it is open, for what follows its selection or viewport; null before and after. */
+  terminal: Terminal | null;
   /** Read buffer from last command start to current cursor (for "Send to Chat"). */
   getLastCommandOutput: () => string;
   /** The prompt line the last command was typed on, empty until one is entered. */
@@ -76,6 +79,7 @@ export function useTerminal(
 ): UseTerminalReturn {
   const { sessionId, containerRef } = options;
   const termRef = useRef<Terminal | null>(null);
+  const [terminal, setTerminal] = useState<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -370,6 +374,14 @@ export function useTerminal(
     });
 
     const fitAddon = new FitAddon();
+    // Fit only into a container that has a size. FitAddon floors its proposal at 2x1, which is
+    // what a tab parked off-screen or in a project that is not shown gets, and the next
+    // sendResize would hand that to the shell (see isUsableTerminalSize for what zsh does then).
+    // Skipped, the terminal keeps its last real size, or xterm's 80x24, until it is shown.
+    const fit = () => {
+      const dims = fitAddon.proposeDimensions();
+      if (dims && isUsableTerminalSize(dims.cols, dims.rows)) fitAddon.fit();
+    };
     const webLinksAddon = new WebLinksAddon();
 
     term.loadAddon(fitAddon);
@@ -394,10 +406,11 @@ export function useTerminal(
       }
     }
 
-    fitAddon.fit();
+    fit();
 
     termRef.current = term;
     fitRef.current = fitAddon;
+    setTerminal(term);
 
     // A webfont that is still in flight is not in the stack yet: xterm measures
     // the cell and bakes the glyph atlas from ctx.font at open(), so a terminal
@@ -410,7 +423,7 @@ export function useTerminal(
       fontsSettled = true;
       try {
         term.options.fontFamily = TERMINAL_FONT_FAMILY;
-        fitAddon.fit();
+        fit();
       } catch {
         // A terminal disposed between the promise and here; nothing to redraw.
       }
@@ -459,7 +472,7 @@ export function useTerminal(
       if (fitTimer) clearTimeout(fitTimer);
       fitTimer = setTimeout(() => {
         try {
-          fitAddon.fit();
+          fit();
           sendResize();
         } catch {
           // Ignore fit errors during teardown
@@ -473,7 +486,7 @@ export function useTerminal(
     // its size changed.
     const unsubHostResize = onHostResize(container, () => {
       try {
-        fitAddon.fit();
+        fit();
         sendResize();
       } catch {
         // Ignore fit errors while the tab is detached or tearing down
@@ -524,9 +537,10 @@ export function useTerminal(
       wsRef.current = null;
       term.dispose();
       termRef.current = null;
+      setTerminal(null);
       fitRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting, exited, shellReady, sendData, getSelection, getLastCommandOutput, getLastCommand, getBufferUrls, restart };
+  return { connected, reconnecting, exited, shellReady, sendData, getSelection, terminal, getLastCommandOutput, getLastCommand, getBufferUrls, restart };
 }

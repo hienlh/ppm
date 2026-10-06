@@ -12,6 +12,7 @@ import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { WakeLockStatusBarItem } from "@/components/layout/wake-lock-indicator";
 import { countDockTabs } from "@/components/layout/dock-tabs";
 import { BranchPicker } from "@/components/git/branch-picker";
+import { DbRowsStatus } from "@/components/database/db-rows-status";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,8 @@ export const StatusBar = memo(function StatusBar() {
         <GitStatus />
         {/* Errors/warnings across every open file — VS Code's leftmost item. */}
         <ProblemsStatus />
+        {/* The table in front: DBGate's "Rows: N". */}
+        <DbRowsStatus />
         {left.map((item) => (
           <StatusBarEntry key={item.id} item={item} />
         ))}

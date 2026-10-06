@@ -18,7 +18,7 @@
  * These tests spawn for real (a missing name and a present one), because the
  * behaviour under test is Bun's and a stubbed spawn would assert nothing.
  */
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 import { defaultRunner } from "../../../../src/services/host-info/spawn-runner.ts";
 
 describe("a binary that is not on PATH", () => {
@@ -67,5 +67,22 @@ describe("a binary that is there still behaves as before", () => {
   test("a process that outlives its timeout is killed and reported", async () => {
     const result = await defaultRunner(["sh", "-c", "sleep 5"], 150);
     expect(result.timedOut).toBe(true);
+  });
+
+  test("a tool that keeps timing out is one WARN a minute, naming the binary and never its arguments", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (let i = 0; i < 3; i++) expect((await defaultRunner(["sleep", "5"], 100)).timedOut).toBe(true);
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("timed out"));
+      // At most one rather than exactly one: another file in this process may already have
+      // reported `sleep` within the minute.
+      expect(lines.length).toBeLessThanOrEqual(1);
+      for (const line of lines) {
+        expect(line.startsWith("[spawn] sleep timed out after 100 ms; killed")).toBe(true);
+        expect(line).not.toContain("sleep 5");
+      }
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

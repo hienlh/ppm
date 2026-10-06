@@ -1,7 +1,20 @@
 import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
+import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
+import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 
 export interface TelegramConfig {
   bot_token: string;
+  /** The bot's @username, read from Telegram's getMe when the token is saved. Needed for t.me links. */
+  bot_username?: string;
+}
+
+/** An ntfy server and topic that notifications are published to. */
+export interface NtfyConfig {
+  /** Base URL, normalised: `https://ntfy.sh`. Empty when ntfy is not set up. */
+  server: string;
+  topic: string;
+  /** Access token (`tk_…`) for a server that requires sign-in; empty for an open topic. */
+  token: string;
 }
 
 export interface PPMBotConfig {
@@ -46,12 +59,16 @@ export interface PpmConfig {
   projects: ProjectConfig[];
   ai: AIConfig;
   telegram?: TelegramConfig;
+  ntfy?: NtfyConfig;
   clawbot?: PPMBotConfig;
+  notifications?: NotificationSettings;
   cloud_url?: string;
   query_audit: QueryAuditConfig;
   session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
   android?: AndroidConfig;
+  /** Lowest level written to ppm.log. `PPM_LOG_LEVEL` overrides it; see `services/logger.ts`. */
+  log_level?: LogLevel;
 }
 
 /**
@@ -113,6 +130,11 @@ export interface AIConfig {
   new_chat_provider_mode?: NewChatProviderMode;
   /** Share project rules and memory between providers. Unset defaults to true. */
   share_provider_context?: boolean;
+  /**
+   * Give chats the tools that open a file, or a page the AI made, in a PPM tab on the user's
+   * device, and turn Claude Code's claude.ai Artifact tools off. Unset defaults to false.
+   */
+  tab_tools?: boolean;
   providers: Record<string, AIProviderConfig>;
 }
 
@@ -201,6 +223,8 @@ export const DEFAULT_CONFIG: PpmConfig = {
   telegram: {
     bot_token: "",
   },
+  ntfy: { server: "", topic: "", token: "" },
+  notifications: structuredClone(DEFAULT_NOTIFICATION_SETTINGS),
   clawbot: {
     enabled: false,
     default_provider: "claude",
@@ -214,6 +238,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
     enabled: true,
     mode: "quick",
   },
+  log_level: DEFAULT_LOG_LEVEL,
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;

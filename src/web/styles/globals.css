@@ -304,6 +304,18 @@ samp,
   }
 }
 
+/*
+ * A toast's close button is 20px: on a phone it takes taps around it, a 44px target. The inset
+ * counts from inside its 1px border, so 13px each way makes 18 + 26.
+ */
+@media screen and (max-width: 767px) {
+  [data-sonner-toast] [data-close-button]::after {
+    content: "";
+    position: absolute;
+    inset: -13px;
+  }
+}
+
 /* Prevent overscroll bounce on iOS */
 html,
 body {
@@ -529,4 +541,46 @@ html, body {
 .monaco-editor .ghost-text-decoration-preview,
 .monaco-editor .suggest-preview-text .ghost-text {
   font-family: "Monaspace Krypton", var(--font-mono) !important;
+}
+
+/*
+ * The lightbulb's menu measures its widest row and sets that as its width, with
+ * its 4px padding meant to sit outside it. Tailwind's `* { box-sizing:
+ * border-box }` puts the padding inside instead, so every menu came out 8px too
+ * narrow and its longest action ended in an ellipsis.
+ */
+.monaco-editor .action-widget {
+  box-sizing: content-box;
+}
+
+/*
+ * The lightbulb Monaco draws in the glyph margin when its line has no room for
+ * it. reserveLightbulbGutter() holds that margin at two lanes, and this moves the
+ * bulb from the left one to the middle of both — half its own width is half a
+ * lane. Only where the lanes are held: anywhere else the same shift would put
+ * the bulb over the line numbers, where a click on it selects the line.
+ */
+.monaco-editor.ppm-lightbulb-gutter .glyph-margin-widgets .cgmr[class*="codicon-gutter-lightbulb"] {
+  transform: translateX(50%);
+}
+
+/*
+ * The Query tab's editor (`sql-query-editor.tsx`). The statement Ctrl+Enter runs, once the script
+ * holds several, has its line numbers bold as DBGate draws them, with a bar beside them; a line an
+ * error of the last run points at is tinted until the next edit. The colour of a line number needs
+ * `!important` for the same reason as above: Monaco's `.line-numbers.active-line-number` is as
+ * specific and comes later.
+ */
+.monaco-editor .line-numbers.ppm-sql-current-statement {
+  font-weight: 700;
+  color: var(--text) !important;
+}
+.monaco-editor .ppm-sql-current-statement-bar {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.monaco-editor .ppm-sql-error-line {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+.monaco-editor .ppm-sql-error-bar {
+  box-shadow: inset 3px 0 0 var(--error);
 }

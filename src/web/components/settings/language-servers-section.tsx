@@ -32,7 +32,7 @@ interface ServerRow {
   installHint: string;
   /** Whether PPM can install this one *here* — a toolchain install needs that toolchain. */
   installable: boolean;
-  installWith?: "bun" | "go" | "rustup";
+  installWith?: "bun" | "go" | "rustup" | "download" | "gem";
   /** Where it was found. A server PPM did not put there is not PPM's to remove. */
   origin?: "project" | "rustup" | "path" | "ppm" | "bundled";
   removable: boolean;
@@ -233,7 +233,7 @@ function ServerRowItem({
           Install
         </Button>
       ) : (
-        // No toolchain here, or a system package manager: the command is all PPM can offer,
+        // No toolchain here, or no build for this machine: the command is all PPM can offer,
         // and a button that cannot work would be worse than none.
         <CopyHint hint={server.installHint} isMobile={isMobile} />
       )}
@@ -331,6 +331,12 @@ function removeNote(installWith: ServerRow["installWith"]): string {
         + " than a folder of PPM's. Installing it again is one press of the button.";
     case "go":
       return "Deletes the binary PPM built in its own folder. Anything in your own GOBIN is"
+        + " untouched.";
+    case "download":
+      return "Deletes the release PPM downloaded into its own folder. A copy you installed"
+        + " yourself is untouched.";
+    case "gem":
+      return "Deletes the gems PPM installed into its own folder. Your own Ruby and its gems are"
         + " untouched.";
     default:
       return "Runs bun remove in PPM's own folder. Nothing you installed yourself changes, and a"

@@ -7,6 +7,9 @@ import { dotDesignDir, lstatOrNull } from "../design-paths.ts";
 import { ensureDotDesign, writeFileAtomic } from "../design-fs.ts";
 import { readDesignFileSafe } from "../design-safe-walk.ts";
 import { DesignError } from "../design-error.ts";
+import { createLogger } from "../../logger.ts";
+
+const log = createLogger("design");
 
 /**
  * `designs/<slug>/.design/comments.json`: `{ version: 1, comments: [...] }`.
@@ -58,8 +61,10 @@ export async function readComments(designDir: string): Promise<DesignComment[]> 
   try {
     parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readDesignFileSafe(path, MAX_FILE_BYTES)));
   } catch (e) {
-    console.warn(`[design] ${path} is unreadable (${(e as Error).message}); keeping a .bak and starting empty`);
-    await copyFile(path, `${path}.bak`).catch((err: Error) => console.warn(`[design] could not back up ${path}: ${err.message}`));
+    // A JSON error quotes the token it stopped at, which is the file's own text.
+    log.warn(`${path} is unreadable (${(e as Error).message.replace(/(["']).*?\1/g, "$1…$1")}); keeping a .bak and starting empty`);
+    await copyFile(path, `${path}.bak`).catch((err: Error) =>
+      log.error(`could not back up ${path}: ${err.message}; the next comment saved replaces it, and its comments are lost`));
     return [];
   }
   const list = isRaw(parsed) && Array.isArray(parsed.comments) ? parsed.comments : [];

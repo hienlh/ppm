@@ -166,8 +166,8 @@ ppm db list
 ppm db add
   Add a new database connection
   -n, --name <name> — Connection name (unique) (required)
-  -t, --type <type> — Database type: sqlite | postgres (required)
-  -c, --connection-string <url> — PostgreSQL connection string
+  -t, --type <type> — Database type: postgres | mysql | mariadb | sqlite (required)
+  -c, --connection-string <url> — Connection string (postgres://…, mysql://…, mariadb://…)
   -f, --file <path> — SQLite file path (absolute)
   -g, --group <group> — Group name
   --color <color> — Tab color (hex, e.g. #3b82f6)
@@ -184,7 +184,7 @@ ppm db tables <name>
 
 ppm db schema <name> <table>
   Show table schema (columns, types, constraints)
-  -s, --schema <schema> — PostgreSQL schema name [default: public]
+  -s, --schema <schema> — Schema (PostgreSQL, default public) or database (MySQL, default from the connection)
   --json — Output as JSON
 
 ppm db data <name> <table>
@@ -193,12 +193,25 @@ ppm db data <name> <table>
   -l, --limit <limit> — Rows per page [default: 50]
   --order <column> — Order by column
   --desc — Descending order
-  -s, --schema <schema> — PostgreSQL schema name [default: public]
+  -s, --schema <schema> — Schema (PostgreSQL, default public) or database (MySQL, default from the connection)
   --json — Output as JSON
 
 ppm db query <name> <sql>
   Execute a SQL query against a saved connection
   --json — Output as JSON
+
+ppm db driver list
+  List database drivers and whether each is installed
+  --json — Output as JSON
+
+ppm db driver install <id>
+  Download and install a database driver (e.g. mysql)
+
+ppm db driver remove <id>
+  Remove an installed database driver
+
+ppm db run <name> <file>
+  Execute a SQL file against a saved connection
 \`\`\`
 ## ppm autostart — Auto-start on boot
 \`\`\`

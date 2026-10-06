@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
-import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone, Settings, Smartphone } from "@/lib/icons";
+import { useState, useEffect, useMemo, lazy, Suspense } from "react";
+import { X, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -10,14 +10,15 @@ import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
-import { TunnelManagerTab } from "@/components/tunnels/tunnel-manager-tab";
+import { PortForwardingPanel } from "@/components/tunnels/port-forwarding-panel";
 import { SessionHistoryList } from "@/components/chat/session-history-list";
 import { GroupList } from "@/components/group-chat/group-list";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { getAvailableTabs } from "@/lib/sidebar-tabs/tab-registry";
 import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
 import { MobileDrawerTabBar } from "@/components/layout/mobile-drawer-tab-bar";
-import { openBugReportPopup } from "@/lib/report-bug";
+import { openLogs } from "@/components/logs/open-logs";
+import { useLogsBadgeCount } from "@/components/logs/use-logs-badge";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { CloudSharePopover } from "@/components/layout/cloud-share-popover";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
@@ -47,16 +48,21 @@ interface FooterTileDef {
   icon: React.ElementType;
   label: string;
   badge?: FeatureBadgeId;
+  /** A count that wants attention, drawn red on the icon. */
+  alert?: number;
+  /** What that count is of, read out after the label ("likely bugs"). */
+  alertLabel?: string;
   onClick: () => void;
 }
 
 /** One utility tile in the drawer footer row — icon over a short single-line label, with an
  *  optional feature badge. Uniform size, and short labels ("Cloud", not "Cloud & Share") so
  *  every tile stays on one line at the narrowest phone width. */
-function FooterTile({ icon: Icon, label, badge, onClick }: FooterTileDef) {
+function FooterTile({ icon: Icon, label, badge, alert, alertLabel, onClick }: FooterTileDef) {
   return (
     <button
       onClick={onClick}
+      aria-label={alert ? `${label} · ${alert} ${alertLabel ?? ""}`.trimEnd() : undefined}
       className="group flex flex-col items-center justify-center gap-1 rounded-lg py-2.5 text-text-subtle hover:bg-surface-elevated hover:text-text-secondary transition-colors"
     >
       {/* The badge hangs off the icon, not the tile: a tile is a whole column wide, so a
@@ -64,6 +70,11 @@ function FooterTile({ icon: Icon, label, badge, onClick }: FooterTileDef) {
       <span className="relative flex items-center justify-center">
         <Icon className="size-4" />
         <FeatureBadge id={badge} variant="corner" className="-top-2 -right-3" />
+        {!!alert && (
+          <span aria-hidden className="absolute -right-2.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-error px-[3px] text-[9px] font-semibold leading-none text-white">
+            {alert > 9 ? "9+" : alert}
+          </span>
+        )}
       </span>
       <span className="text-[10px] leading-none">{label}</span>
     </button>
@@ -79,7 +90,6 @@ interface MobileDrawerProps {
 
 export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps) {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
-  const version = useSettingsStore((s) => s.version);
   const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
   const sidebarTabOrder = useSettingsStore((s) => s.sidebarTabOrder);
   const setSidebarTabOrder = useSettingsStore((s) => s.setSidebarTabOrder);
@@ -115,7 +125,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     return () => window.removeEventListener("open-cloud-share", open);
   }, []);
 
-  const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
+  const likelyBugs = useLogsBadgeCount();
 
   // Built as a list so the row's column count can follow the tile count. With a fixed column
   // count an optional tile (Remote, only on a capable host) pushes the last tile onto a second
@@ -132,7 +142,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     { icon: Cloud, label: "Cloud", onClick: () => setCloudOpen(true) },
     // Also not a sidebar tab — settings open as their own tab here, window on desktop.
     { icon: Settings, label: "Settings", onClick: () => { onClose(); openSettings(); } },
-    { icon: BugIcon, label: "Bug", onClick: handleReportBug },
+    // Replaces Report Bug: a report is now made from the lines it is about.
+    { icon: ScrollText, label: "Logs", alert: likelyBugs, alertLabel: likelyBugs === 1 ? "likely bug" : "likely bugs", onClick: () => { onClose(); openLogs(); } },
   ];
 
   const noProject = (
@@ -160,13 +171,15 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
         )}
       >
         {/* Header — logo + close */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+        {/* The close button is a 44px target; the header keeps its height and the X its place. */}
+        <div className="flex items-center justify-between px-4 py-1.5 border-b border-border shrink-0">
           <span className="text-sm font-bold text-primary tracking-tight">
             {activeProject?.name ?? "PPM"}
           </span>
           <button
             onClick={onClose}
-            className="flex items-center justify-center size-8 rounded-md hover:bg-surface-elevated transition-colors"
+            aria-label="Close drawer"
+            className="-mr-1.5 flex items-center justify-center size-11 rounded-md hover:bg-surface-elevated transition-colors"
           >
             <X className="size-4" />
           </button>
@@ -184,8 +197,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {isOpen && activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
           {isOpen && activeTab === "search" && <SearchPanel onNavigate={onClose} />}
           {isOpen && activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}
-          {activeTab === "database" && <DatabaseSidebar />}
-          {activeTab === "tunnels" && <TunnelManagerTab />}
+          {activeTab === "database" && <DatabaseSidebar onNavigate={onClose} />}
+          {activeTab === "tunnels" && <PortForwardingPanel onNavigate={onClose} />}
           {activeTab === "jira" && <JiraPanel />}
           {activeTab === "ai-resources" && <AiResourcesPanel />}
           {activeTab.startsWith("ext:") && <ExtensionTreeView viewId={activeTab.slice(4)} className="h-full" />}
@@ -200,7 +213,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
             onReorder={setSidebarTabOrder}
           />
 
-          {/* Footer: one row of utility tiles (opens explorer/remote/cloud/settings, report bug),
+          {/* Footer: one row of utility tiles (opens explorer/remote/cloud/settings/logs),
               then version/upgrade on its own line under a divider. */}
           <div className="border-t border-border px-3 py-2">
             <div
@@ -212,7 +225,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
               ))}
             </div>
             {/* Version / upgrade pinned at the very bottom, under a divider. */}
-            <div className="mt-2 pt-2 border-t border-border px-1 text-[11px]">
+            <div className="mt-2 border-t border-border px-1 text-[11px]">
               <UpgradeButton align="left" />
             </div>
           </div>

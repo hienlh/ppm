@@ -4,6 +4,7 @@ import {
   Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp,
 } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
+import { closeTabsAsked } from "@/stores/tab-close-confirm-store";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
@@ -142,14 +143,14 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   function closeOthers(tabId: string) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
     const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
-    for (const t of pTabs) { if (t.id !== tabId && t.closable) usePanelStore.getState().closeTab(t.id, pid); }
+    void closeTabsAsked(pTabs.filter((t) => t.id !== tabId && t.closable).map((t) => t.id), pid);
     setMenuTabId(null);
   }
   function closeRight(tabId: string) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
     const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
     const idx = pTabs.findIndex((t) => t.id === tabId);
-    for (let i = idx + 1; i < pTabs.length; i++) { if (pTabs[i]!.closable) usePanelStore.getState().closeTab(pTabs[i]!.id, pid); }
+    void closeTabsAsked(pTabs.slice(idx + 1).filter((t) => t.closable).map((t) => t.id), pid);
     setMenuTabId(null);
   }
 
@@ -426,7 +427,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           </>
         )}
         {menuTab?.closable && (
-          <button onClick={() => { usePanelStore.getState().closeTab(menuTabId!); setMenuTabId(null); }}
+          <button onClick={() => { void closeTabsAsked([menuTabId!]); setMenuTabId(null); }}
             className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
             <X className="size-4" /> Close
           </button>

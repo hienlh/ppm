@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api, projectUrl } from "@/lib/api-client";
+import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { getPrepare } from "@/lib/new-chat-prepare-client";
 
 export interface DraftAttachment {
@@ -10,6 +11,7 @@ export interface DraftAttachment {
 interface DraftState {
   content: string;
   attachments: DraftAttachment[];
+  replyTo: ReplyReference | null;
 }
 
 /**
@@ -31,19 +33,21 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
   const keyForSession = useCallback((id: string | null) =>
     `ppm-chat-draft:${JSON.stringify([projectName, tabId ?? null, id ?? "__new__"])}`, [projectName, tabId]);
   const localKey = keyForSession(sessionId);
-  const [recoveredDraft] = useState<DraftState | null>(() => {
+  const readLocalDraft = (key: string): DraftState | null => {
     try {
-      const value = JSON.parse(sessionStorage.getItem(localKey) ?? "null");
+      const value = JSON.parse(sessionStorage.getItem(key) ?? "null");
       if (typeof value?.content !== "string" || !Array.isArray(value.attachments)) return null;
-      return { content: value.content, attachments: value.attachments.filter(
+      return { ...decodeReply(value.content), attachments: value.attachments.filter(
         (a: DraftAttachment) => typeof a?.name === "string" && typeof a?.path === "string",
       ) };
     } catch { return null; }
-  });
+  };
+  const [recoveredDraft] = useState<DraftState | null>(() => readLocalDraft(localKey));
   const recoveryRef = useRef({ projectName, sessionId, draft: recoveredDraft });
   const localKeyRef = useRef(localKey);
   localKeyRef.current = localKey;
   const [draft, setDraft] = useState<DraftState | null>(recoveredDraft);
+  const [draftKey, setDraftKey] = useState(localKey);
   const [loading, setLoading] = useState(true);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const sessionRef = useRef(sessionId);
@@ -63,10 +67,14 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
     // StrictMode repeats mount effects. Keep the recovered value for both
     // runs, but never reuse it after navigating to another conversation.
     if (recoveryRef.current.projectName !== projectName || recoveryRef.current.sessionId !== sessionId) {
-      recoveryRef.current.draft = null;
+      recoveryRef.current = { projectName, sessionId, draft: readLocalDraft(localKey) };
     }
     const keepRecoveredDraft = recoveryRef.current.draft !== null;
     setLoading(true);
+    if (draftKey !== localKey) {
+      setDraft(recoveryRef.current.draft);
+      setDraftKey(localKey);
+    }
     // Releasing the gate only reveals the composer; a draft arriving afterwards
     // is still applied, and MessageInput refuses to overwrite typed text.
     const releaseTimer = setTimeout(() => {
@@ -87,7 +95,7 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
         if (data) {
           let attachments: DraftAttachment[] = [];
           try { attachments = JSON.parse(data.attachments); } catch { /* ignore */ }
-          setDraft({ content: data.content, attachments });
+          setDraft({ ...decodeReply(data.content), attachments });
         } else {
           setDraft(null);
         }
@@ -102,19 +110,21 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
 
   // Debounced save (1s)
   const save = useCallback(
-    (content: string, attachments?: DraftAttachment[]) => {
+    (content: string, attachments?: DraftAttachment[], replyTo?: ReplyReference | null) => {
+      const storedContent = encodeReply(content, replyTo);
       ++editRevision.current;
+      recoveryRef.current.draft = null;
       if (!projectName) return;
       try {
-        sessionStorage.setItem(localKeyRef.current, JSON.stringify({ content, attachments: attachments ?? [] }));
+        sessionStorage.setItem(localKeyRef.current, JSON.stringify({ content: storedContent, attachments: attachments ?? [] }));
       } catch { /* Storage may be unavailable; the server draft still applies. */ }
       if (timerRef.current) clearTimeout(timerRef.current);
+      const id = sessionRef.current ?? "__new__";
       timerRef.current = setTimeout(() => {
-        const id = sessionRef.current ?? "__new__";
         api
           .put(
             `${projectUrl(projectName)}/chat/drafts/${encodeURIComponent(id)}`,
-            { content, attachments: JSON.stringify(attachments ?? []) },
+            { content: storedContent, attachments: JSON.stringify(attachments ?? []) },
           )
           .catch(() => {});
       }, 1000);
@@ -125,10 +135,10 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
   /**
    * Drop a save that is still waiting on the debounce, without touching the server.
    *
-   * Called at Enter. The save runs against whatever session the tab is on when the
-   * timer fires — and the first send of a new tab swaps the tab onto its new session
-   * within that second, so a save left armed would write the message just sent as the
-   * new session's draft, to reappear in the composer on the next mount as if unsent.
+   * Called at Enter. The save is armed for the session the text was typed under, and the
+   * send clears that session's draft as soon as the message reaches a socket — usually
+   * inside that second — so a save left armed would land after the clear and write the
+   * message just sent back as the draft, to reappear in the composer as if unsent.
    */
   const cancelPendingSave = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -182,5 +192,5 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
     };
   }, []);
 
-  return { draft, draftLoading: loading, saveDraft: save, clearDraft: clear, cancelPendingSave, moveDraft };
+  return { draft: draftKey === localKey ? draft : null, draftLoading: loading || draftKey !== localKey, saveDraft: save, clearDraft: clear, cancelPendingSave, moveDraft };
 }

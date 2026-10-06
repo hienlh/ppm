@@ -1,3 +1,4 @@
+import { decodeReply } from "../shared/chat-reply.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
   query,
@@ -6,7 +7,12 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, designMcpServers, preToolUseDecision, READ_ONLY_TOOLS } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { localServerBaseUrl } from "../services/server-listen-address.ts";
+import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
+import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
+import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
@@ -32,7 +38,7 @@ import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from ".
 import { buildTurnUsage, formatTurnUsageLog, messageContextTokens, messageCacheTtl } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
-import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
+import { parseSessionMessage, mergeToolResultMessages, nestChildEventsAcrossMessages, parseJsonlTranscript, fullParseWindow } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
 import { readCompactions, applyCompactions } from "../services/compaction-savings.ts";
@@ -40,8 +46,15 @@ import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
 import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
 import { resolve, dirname } from "node:path";
-import { existsSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
 import { homedir, totalmem } from "node:os";
+import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
+import { getPpmDir } from "../services/ppm-dir.ts";
+import { createLogger } from "../services/logger.ts";
+
+const log = createLogger("sdk");
+const usageLog = createLogger("usage");
+const mcpControlLog = createLogger("mcp-control");
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
 
@@ -74,8 +87,8 @@ export function resolveCliExecutablePath(
   });
 
   if (!cliPath) {
-    console.error(
-      "[sdk] No Claude CLI found. This PPM binary needs a 'claude' executable. " +
+    log.error(
+      "No Claude CLI found. This PPM binary needs a 'claude' executable. " +
         "Install Claude Code (https://claude.ai/code), set PPM_CLAUDE_CLI=/path/to/claude, " +
         "or reinstall the PPM release archive (should contain cli/claude). " +
         "Searched: PATH, ~/.claude/local, ~/.local/bin, /usr/local/bin, /opt/homebrew/bin, <binary>/cli.",
@@ -241,6 +254,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * and this is the only place that knows what made it do so.
    */
   private teardownReasons = new Map<string, string>();
+  /** The API's last rate-limit status per account and limit, so only a change is logged. */
+  private rateLimitStatus = new Map<string, string>();
   /** CLIs started for chats that do not exist yet — see `prewarm`. */
   private readonly warmSpares = new WarmSpares<Query>();
   /** Hosts with less RAM keep no warm CLI: each one holds ~500 MB while it waits. */
@@ -289,7 +304,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         (!current.expiresAt || current.expiresAt - nowS > 60)
       ) {
         const label = current.label ?? current.email ?? "Unknown";
-        console.log(`[sdk] session=${sessionId} (${context}) adopting already-refreshed token for ${account.id} (${label}) — skipping redundant refresh`);
+        log.warn(`session=${sessionId} (${context}) auth recovery: adopting a token refreshed elsewhere account=${account.id}`);
         yield { type: "account_retry" as const, reason: "Token refreshed", accountId: current.id, accountLabel: label };
         return { account: current, newRetryCount: 1 };
       }
@@ -300,12 +315,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const refreshed = accountService.getWithTokens(account.id);
         if (refreshed) {
           const label = refreshed.label ?? refreshed.email ?? "Unknown";
-          console.log(`[sdk] session=${sessionId} (${context}) OAuth token refreshed for ${account.id} (${label}) — retrying`);
+          log.warn(`session=${sessionId} (${context}) auth recovery: OAuth token refreshed, retrying account=${account.id}`);
           yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshed.id, accountLabel: label };
           return { account: refreshed, newRetryCount: 1 };
         }
       } catch (err) {
-        console.error(`[sdk] session=${sessionId} (${context}) OAuth refresh failed:`, err);
+        log.warn(`session=${sessionId} (${context}) auth recovery: OAuth refresh failed account=${account.id}: ${(err as Error).message}`);
       }
       // Refresh failed — fall through to account switch
     }
@@ -316,15 +331,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const nextAcc = accountSelector.next();
       if (nextAcc && nextAcc.id !== account.id) {
         const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
-        console.log(`[sdk] session=${sessionId} (${context}) switching to account ${nextAcc.id} (${label}) after auth failure`);
+        log.warn(`session=${sessionId} (${context}) auth recovery: switching account=${nextAcc.id} from=${account.id}`);
         // The old binding cannot authenticate — move the session so later turns start here.
         accountSelector.bindSession(sessionId, nextAcc.id);
         yield { type: "account_retry" as const, reason: "Switching account", accountId: nextAcc.id, accountLabel: label };
         return { account: nextAcc, newRetryCount: authRetryCount + 1 };
       }
-      console.warn(`[sdk] session=${sessionId} (${context}) no alternate account available for switch`);
+      log.warn(`session=${sessionId} (${context}) no alternate account available for switch`);
     } else {
-      console.warn(`[sdk] session=${sessionId} (${context}) auth retry budget exhausted (${authRetryCount}/${maxRetries})`);
+      log.warn(`session=${sessionId} (${context}) auth retry budget exhausted (${authRetryCount}/${maxRetries})`);
     }
     return null;
   }
@@ -342,7 +357,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const nextAcc = accountSelector.next(excludeIds);
     if (nextAcc && nextAcc.id !== current?.id) {
       const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
-      console.warn(`[sdk] session=${sessionId} rate limited — switching to account ${nextAcc.id} (${label})`);
+      log.warn(`session=${sessionId} rate limited — switching to account ${nextAcc.id}`);
       // The bound account is rate limited — move the session rather than bounce back to it.
       accountSelector.bindSession(sessionId, nextAcc.id);
       yield { type: "account_retry" as const, reason: `Rate limited — switching account`, accountId: nextAcc.id, accountLabel: label };
@@ -410,7 +425,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // started here were invisible to the CLI and the VS Code extension even in the same
     // project. The value reaches the transcript verbatim; telemetry maps unknown ones to
     // "other", so naming ourselves beats borrowing another client's label.
-    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm" };
+    // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
+    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK };
 
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();
@@ -439,7 +455,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const shellBaseUrl = process.env.ANTHROPIC_BASE_URL ?? "";
     const isSelfProxy = shellBaseUrl.includes("/proxy");
     if (isSelfProxy && shellBaseUrl) {
-      console.warn(`[sdk] Ignoring self-referencing ANTHROPIC_BASE_URL from shell: ${shellBaseUrl}`);
+      log.warn(`Ignoring self-referencing ANTHROPIC_BASE_URL from shell: ${shellBaseUrl}`);
     }
     const resolvedBaseUrl = providerConfig.base_url
       || (isSelfProxy ? "" : shellBaseUrl)
@@ -449,28 +465,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     if (isSelfProxy && !settingsApiKey && !account && process.env.ANTHROPIC_API_KEY) {
       resolvedApiKey = "";
       resolvedOAuth = "";
-      console.warn(`[sdk] Clearing shell ANTHROPIC_API_KEY (paired with self-referencing proxy)`);
+      log.warn(`Clearing shell ANTHROPIC_API_KEY (paired with self-referencing proxy)`);
     }
     const resolvedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN ?? "";
 
     // Log resolved sources
     if (settingsApiKey) {
-      console.log(`[sdk] Auth from settings api_key (length=${settingsApiKey.length})`);
+      log.debug(`Auth from settings api_key (length=${settingsApiKey.length})`);
     } else if (account) {
-      console.log(`[sdk] Auth from PPM account (${account.accessToken.startsWith("sk-ant-oat") ? "OAuth" : "API key"})`);
+      log.debug(`Auth from PPM account (${account.accessToken.startsWith("sk-ant-oat") ? "OAuth" : "API key"})`);
     } else if (process.env.ANTHROPIC_API_KEY && !isSelfProxy) {
-      console.log(`[sdk] ANTHROPIC_API_KEY from shell env (length=${process.env.ANTHROPIC_API_KEY.length})`);
+      log.debug(`ANTHROPIC_API_KEY from shell env (length=${process.env.ANTHROPIC_API_KEY.length})`);
     }
     if (providerConfig.base_url) {
-      console.log(`[sdk] ANTHROPIC_BASE_URL from settings: ${providerConfig.base_url}`);
+      log.debug(`ANTHROPIC_BASE_URL from settings: ${providerConfig.base_url}`);
     } else if (shellBaseUrl && !isSelfProxy) {
-      console.log(`[sdk] ANTHROPIC_BASE_URL from shell env: ${shellBaseUrl}`);
+      log.debug(`ANTHROPIC_BASE_URL from shell env: ${shellBaseUrl}`);
     }
 
     // Enable experimental agent teams if toggled on in provider settings
     const agentTeamsEnv = providerConfig.agent_teams
       ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1", CLAUDE_CODE_ENABLE_TASKS: "1" }
       : {};
+
+    // PPM's own tab tools replace the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
+    // `ArtifactData`), whose pages live on claude.ai rather than in PPM.
+    const artifactEnv = configService.get("ai").tab_tools ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
 
     return {
       ...base,
@@ -479,6 +499,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ANTHROPIC_BASE_URL: resolvedBaseUrl,
       ANTHROPIC_AUTH_TOKEN: resolvedAuthToken,
       ...agentTeamsEnv,
+      ...artifactEnv,
     };
   }
 
@@ -599,7 +620,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const sessions: SessionInfo[] = sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (stripSharedContext(s.firstPrompt ?? "") || "Chat"),
+        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (decodeReply(stripSharedContext(s.firstPrompt ?? "")).content || "Chat"),
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
@@ -627,8 +648,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         }
       }
 
+      listFailureWarned.delete(dir);
       return sessions;
-    } catch {
+    } catch (e) {
+      // The sidebar loses every on-disk session until this recovers, and asks again on every
+      // refresh: the same failure is WARNed once per directory.
+      const msg = (e as Error).message;
+      const line = `listSessions failed dir=${dir ?? "(all)"} (returning ${this.activeSessions.size} live sessions): ${msg}`;
+      if (listFailureWarned.get(dir) === msg) log.debug(line);
+      else { listFailureWarned.set(dir, msg); log.warn(line); }
       return Array.from(this.activeSessions.values()).map((s) => ({
         id: s.id,
         providerId: s.providerId,
@@ -647,7 +675,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         return {
           id: info.sessionId,
           providerId: this.id,
-          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (stripSharedContext(info.firstPrompt ?? "") || "Chat"),
+          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (decodeReply(stripSharedContext(info.firstPrompt ?? "")).content || "Chat"),
           createdAt: new Date(info.lastModified).toISOString(),
           updatedAt: new Date(info.lastModified).toISOString(),
         };
@@ -756,7 +784,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   pushMessage(sessionId: string, content: string, opts?: import("./provider.interface.ts").SendMessageOpts): void {
     const ss = this.streamingSessions.get(sessionId);
     if (!ss) {
-      console.warn(`[sdk] pushMessage: no streaming session for ${sessionId}`);
+      // Returning is all this can do, and the message never reaches the model.
+      log.error(`session=${sessionId} follow-up dropped: no streaming session`);
       return;
     }
     const modelInput = withSharedContext(content, opts?.sharedContext);
@@ -771,7 +800,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // Track latest message for retry paths (fixes stale firstMsg bug)
     ss.lastUserContent = modelInput;
     ss.lastUserImages = opts?.images;
-    console.log(`[sdk] pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
+    log.debug(`pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
   }
 
   /** Close a streaming session — generator + query cleanup */
@@ -782,7 +811,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ss.query.close();
       this.streamingSessions.delete(sessionId);
       this.teardownReasons.set(sessionId, "stream_ended");
-      console.log(`[sdk] closeStreamingSession: session=${sessionId}`);
+      log.info(`closeStreamingSession: session=${sessionId}`);
     }
   }
 
@@ -892,6 +921,71 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   /**
+   * One prompt, one text answer: no tools, no session on disk, no project. For PPM's own small
+   * jobs (sorting the log's errors, drafting a bug report), not for chats. It runs on the
+   * account the router would pick next and authenticates exactly as a turn does
+   * (`buildQueryEnv`), in a directory of its own with `settingSources: []`, so no project's
+   * CLAUDE.md, settings or `.env` reaches it.
+   */
+  async completeOnce(input: {
+    prompt: string;
+    systemPrompt: string;
+    model: string;
+    timeoutMs?: number;
+  }): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+    let account: AccountWithTokens | null = null;
+    if (accountSelector.isEnabled()) {
+      const picked = accountSelector.next();
+      if (!picked) throw new Error("No Claude account can take a request right now");
+      account = await accountService.ensureFreshToken(picked.id);
+      if (!account) throw new Error("The Claude account's sign-in has expired");
+    }
+    const providerConfig = this.getProviderConfig();
+    const cliExecutablePath = resolveCliExecutablePath((providerConfig as { cli_command?: string }).cli_command);
+    const cwd = resolve(getPpmDir(), "one-shot");
+    mkdirSync(cwd, { recursive: true });
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), input.timeoutMs ?? 90_000);
+    try {
+      const run = query({
+        prompt: input.prompt,
+        options: {
+          ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" as const }),
+          ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
+          cwd,
+          model: input.model,
+          systemPrompt: input.systemPrompt,
+          tools: [],
+          settingSources: [],
+          persistSession: false,
+          maxTurns: 1,
+          env: this.buildQueryEnv(undefined, account),
+          abortController,
+        },
+      });
+      for await (const message of run) {
+        if (message.type !== "result") continue;
+        if (message.subtype !== "success" || message.is_error) {
+          const detail = message.subtype === "success" ? message.result : message.subtype;
+          throw new Error(`Claude did not answer: ${String(detail).slice(0, 200)}`);
+        }
+        if (account) accountSelector.onSuccess(account.id);
+        return {
+          text: message.result,
+          inputTokens: (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0),
+          outputTokens: message.usage.output_tokens ?? 0,
+        };
+      }
+      throw new Error("Claude ended without an answer");
+    } catch (e) {
+      if (abortController.signal.aborted) throw new Error("Claude took too long to answer");
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
    * Start the CLI the next chat created in `projectPath` will run on, so that chat's first
    * message does not wait ~1.4 s for it to boot (`claude-warm-spare.ts` has the numbers).
    * Given the settings the message will carry, the options are built exactly as
@@ -915,30 +1009,36 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       account = accountService.getWithTokens(accountId) ?? account;
     }
 
+    // The chat's turns will carry the tab tools too (`chatService.prepareSendOptions`); their
+    // token is minted below, once the spare has the session id it will be taken over with.
+    const base = configService.get("ai").tab_tools === true ? localServerBaseUrl() : null;
+    const tabTools = base ? { url: `${base}${TAB_TOOLS_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
       systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
-      mcpServers: this.resolveMcpServers(projectPath),
+      mcpServers: { ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools) },
       permissionMode,
       opts,
       providerConfig,
       stderr: () => {},
     });
-    this.warmSpares.offer(projectPath, spawnFingerprint(options), (sessionId, callbacks) => {
+    this.warmSpares.offer(projectPath, spawnFingerprint(withSessionTokenMasked(options)), (sessionId, callbacks) => {
       const { generator, controller } = createMessageChannel();
+      const access = tabTools ? tabToolsMcpAccessFor(sessionId) : null;
       const q = query({
         prompt: generator,
         options: {
           ...options,
+          ...(access && { mcpServers: { ...options.mcpServers, ...tabToolsMcpServers(access) } }),
           sessionId,
           stderr: callbacks.stderr,
-          ...(!isBypass && { hooks: { PreToolUse: [{ matcher: ".*", hooks: [callbacks.preToolUse] }] } }),
+          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand }),
           canUseTool: callbacks.canUseTool,
         } as any,
       });
-      console.log(`[sdk] session=${sessionId} warm CLI started for ${projectPath}`);
+      log.info(`session=${sessionId} warm CLI started for ${projectPath}`);
       return { query: q, controller };
     });
   }
@@ -955,7 +1055,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let sessionId = _sessionId;
     if (!UUID_RE.test(sessionId)) {
       const newId = crypto.randomUUID();
-      console.warn(`[sdk] session=${sessionId} is not a valid UUID — migrating to ${newId}`);
+      log.warn(`session=${sessionId} is not a valid UUID — migrating to ${newId}`);
       // Migrate internal maps
       const oldMeta = this.activeSessions.get(sessionId);
       if (oldMeta) {
@@ -992,7 +1092,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Track latest message for retry paths (fixes stale firstMsg bug)
       existingStream.lastUserContent = modelInput;
       existingStream.lastUserImages = opts?.images;
-      console.log(`[sdk] sendMessage follow-up: session=${sessionId} pushed to generator`);
+      log.debug(`sendMessage follow-up: session=${sessionId} pushed to generator`);
       return; // Events flow through first-message's consumer loop
     }
 
@@ -1002,7 +1102,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const meta = this.activeSessions.get(sessionId)!;
 
     if (meta.title === "New Chat") {
-      meta.title = message.slice(0, 50) + (message.length > 50 ? "..." : "");
+      const body = decodeReply(message).content;
+      meta.title = body.slice(0, 50) + (body.length > 50 ? "..." : "");
     }
 
     const count = this.messageCount.get(sessionId) ?? 0;
@@ -1033,6 +1134,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
     const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    const tabToolsMcp = opts?.designSession ? undefined : opts?.tabToolsMcp;
     const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
 
     /**
@@ -1061,7 +1163,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      * Tool permission for Write/Edit/Bash is handled by the PreToolUse hook below.
      */
     const canUseTool = async (toolName: string, input: unknown) => {
-      console.log(`[sdk] canUseTool called: tool=${toolName} permissionMode=${permissionMode}`);
+      log.debug(`canUseTool called: tool=${toolName} permissionMode=${permissionMode}`);
       if (toolName === "AskUserQuestion") {
         const result = await waitForApproval(toolName, input);
         if (result.approved && result.data) {
@@ -1089,7 +1191,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const preToolUseHook = async (hookInput: any) => {
       const toolName = hookInput?.tool_name as string | undefined;
       if (!toolName) return {};
-      console.log(`[sdk] preToolUseHook: tool=${toolName} permissionMode=${permissionMode} isBypass=${isBypass}`);
+      log.debug(`preToolUseHook: tool=${toolName} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
       // Bypass mode: allow everything
       if (isBypass) return {};
@@ -1098,6 +1200,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (toolName === "AskUserQuestion") return {};
 
       if (designCheckTool && toolName === designCheckTool) return preToolUseDecision("allow");
+      if (tabToolsMcp && CLAUDE_TAB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
 
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
@@ -1117,13 +1220,49 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return preToolUseDecision("deny", "User denied tool execution");
     };
 
-    // Hooks config: add our permission hook for non-bypass modes
-    const permissionHooks = isBypass ? undefined : {
-      PreToolUse: [{
-        matcher: ".*",  // Match all tools — our hook checks internally
-        hooks: [preToolUseHook],
-      }],
+    /**
+     * The project the session's review answers for (`chat-file-changes.ts` refuses a session of
+     * another), recorded once PPM is about to keep a write of it: a session started outside PPM
+     * and resumed here has no record of its own.
+     */
+    let projectRecorded = false;
+    const recordProject = () => {
+      if (projectRecorded || !meta.projectPath) return;
+      projectRecorded = true;
+      if (!getSessionProjectPath(sessionId)) setSessionMetadata(sessionId, undefined, meta.projectPath);
     };
+
+    /**
+     * Keeps the file as it was before this session first wrote it, for the session's review, and
+     * the states each call finds it in and leaves it in, which say what turn wrote what.
+     */
+    const fileWriteHook = async (hookInput: any) => {
+      const target = fileWriteTarget(hookInput?.tool_name, hookInput?.tool_input, hookInput?.cwd);
+      if (!target) return {};
+      const call = typeof hookInput?.tool_use_id === "string" ? hookInput.tool_use_id : "";
+      const event = hookInput?.hook_event_name;
+      if (event === "PostToolUse" || event === "PostToolUseFailure") {
+        if (call) await observeFile(sessionId, target, call, "after");
+        return {};
+      }
+      recordProject();
+      noteFileToolWrite(sessionId, target);
+      await captureBaseline(sessionId, target);
+      if (call) await observeFile(sessionId, target, call, "before");
+      return {};
+    };
+
+    /** The same for the files a shell command changes, found by `git status` before and after it. */
+    const shellCommandHook = async (hookInput: any) => {
+      const call = shellHookCall(hookInput);
+      if (call?.phase === "begin") {
+        recordProject();
+        await beginShellCommand({ sessionId, ...call });
+      } else if (call?.phase === "end") await endShellCommand({ sessionId, toolUseId: call.toolUseId });
+      return {};
+    };
+
+    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook });
 
     let assistantContent = "";
     let resultSubtype: string | undefined;
@@ -1186,9 +1325,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         while (true) {
           yield { type: "status_update" as const, phase: "routing" as const, message: "Selecting account..." };
           // Sticky: reuse the account this session is bound to so the transcript keeps
-          // hitting that account's prompt cache. Only an unusable binding falls through
-          // to a strategy pick, which then becomes the new binding.
-          account = accountSelector.forSession(sessionId, excludeIds);
+          // hitting that account's prompt cache. Only an unusable binding — or one whose
+          // cache has already lapsed, where staying saves nothing — falls through to a
+          // strategy pick, which then becomes the new binding.
+          account = accountSelector.forSession(sessionId, excludeIds, { cacheTtlMs: this.promptCacheTtlMs(sessionId) });
 
           if (!account) {
             const reason = accountSelector.lastFailReason;
@@ -1200,7 +1340,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             } else {
               hint = "All accounts are disabled or in cooldown. Check Settings → Accounts.";
             }
-            console.error(`[sdk] session=${sessionId} account auth failed (${reason}): ${hint}`);
+            log.error(`session=${sessionId} account auth failed (${reason}): ${hint}`);
             yield { type: "error" as const, message: `Authentication failed: ${hint}` };
             yield { type: "done" as const, sessionId, resultSubtype: "error_auth" };
             return;
@@ -1209,7 +1349,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const accountLabel = account.label ?? account.email ?? "Unknown";
           const nowS = Math.floor(Date.now() / 1000);
           const expiresIn = account.expiresAt ? account.expiresAt - nowS : null;
-          console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"}) token_expires_in=${expiresIn}s`);
+          log.info(`session=${sessionId} using account=${account.id} token_expires_in=${expiresIn}s`);
 
           // ensureFreshToken re-reads DB (picks up concurrent refreshes) and
           // only refreshes if truly needed — safe to call unconditionally.
@@ -1224,7 +1364,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           // Refresh failed — cooldown this account, try next
-          console.warn(`[sdk] session=${sessionId} pre-flight refresh failed for ${account.id} — trying next account`);
+          log.warn(`session=${sessionId} pre-flight refresh failed for ${account.id} — trying next account`);
           yield { type: "status_update" as const, phase: "switching" as const, message: `Token expired for ${accountLabel}, trying next account...`, accountLabel };
           accountSelector.onPreflightFail(account.id);
           excludeIds.add(account.id);
@@ -1243,25 +1383,24 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (!account) {
         const hasApiKey = !!(queryEnv.ANTHROPIC_API_KEY || queryEnv.CLAUDE_CODE_OAUTH_TOKEN);
         if (!hasApiKey) {
-          console.warn(`[sdk] session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
+          log.warn(`session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
         }
       }
-      console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
-
-      const mcpServers = { ...this.resolveMcpServers(effectiveCwd), ...designMcpServers(opts?.designSession ? opts.designMcp : undefined) };
-      const hasMcp = Object.keys(mcpServers).length > 0;
+      const mcpServers = {
+        ...this.resolveMcpServers(effectiveCwd),
+        ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
+        ...tabToolsMcpServers(tabToolsMcp),
+      };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
       let stderrBuffer = "";
       const stderrCallback = (chunk: string) => {
         stderrBuffer += chunk;
         if (stderrBuffer.length > 2048) stderrBuffer = stderrBuffer.slice(-2048);
+        // Per chunk, so DEBUG: a crash line carries the tail.
         const trimmed = chunk.trim();
-        if (trimmed) console.log(`[sdk] session=${sessionId} stderr: ${trimmed.slice(0, 500)}`);
+        if (trimmed) log.debug(`session=${sessionId} stderr: ${trimmed.slice(0, 500)}`);
       };
-      if (hasMcp) {
-        console.log(`[sdk] session=${sessionId} mcpServers: ${Object.keys(mcpServers).join(", ")}`);
-      }
 
       const queryOptions = this.buildQueryOptions({
         // First message: create session with this ID. Subsequent: resume by same ID.
@@ -1330,7 +1469,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // A new session's first attempt takes over the CLI `prewarm` started for it, if that
       // is exactly the process it would have spawned; otherwise it spawns one as always.
       const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork
-        ? this.warmSpares.adopt(sessionId, spawnFingerprint(queryOptions), { canUseTool, preToolUse: preToolUseHook, stderr: stderrCallback })
+        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
       const initialCtrl = spare?.controller ?? channel!.controller;
@@ -1344,15 +1483,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         prompt: channel!.generator,
         options: {
           ...queryOptions,
-          ...(permissionHooks && { hooks: permissionHooks }),
+          hooks: queryHooks,
           canUseTool,
         } as any,
       });
-      if (spare) console.log(`[sdk] session=${sessionId} took over the warm CLI started ${spare.ageMs} ms ago`);
+      // The query's one start line: a warm CLI and the MCP servers belong to it.
+      log.info(`query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`
+        + ` cli=${spare ? `warm ageMs=${spare.ageMs}` : "cold"}${crashRetryCount > 0 ? ` crashRetry=${crashRetryCount}` : ""} mcp=${Object.keys(mcpServers).join(",") || "none"}`);
       this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages });
       this.activeQueries.set(sessionId, initialQuery);
       let eventSource: AsyncIterable<any> = initialQuery;
-      console.log(`[sdk] session=${sessionId} query() created, waiting for first SDK event...`);
+      log.debug(`session=${sessionId} query() created, waiting for first SDK event...`);
 
       // Helper: close the CURRENT streaming session (not stale closure refs).
       // All retry paths must use this instead of closing captured variables directly.
@@ -1375,7 +1516,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const opts = { ...queryOptions, sessionId: undefined, resume: sessionId, env };
         const rq = query({
           prompt: generator,
-          options: { ...opts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+          options: { ...opts, hooks: queryHooks, canUseTool } as any,
         });
         this.streamingSessions.set(sessionId, { meta, query: rq, controller, lastUserContent: retry.lastUserContent, lastUserImages: retry.lastUserImages });
         this.activeQueries.set(sessionId, rq);
@@ -1385,6 +1526,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
+      /** A transcript that cannot be read fails every flush: WARNed once, DEBUG after. */
+      let toolResultFlushWarned = false;
 
       // Retry logic: if SDK returns error_during_execution with 0 turns on first event,
       // it's a transient subprocess failure — retry once before surfacing the error.
@@ -1428,11 +1571,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         sdkEventCount++;
         hadAnyEvents = true;
         if (sdkEventCount === 1) {
-          console.log(`[sdk] first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
+          log.debug(`session=${sessionId} first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
           // Detect immediate failure: first event is a result with error + 0 turns
           if ((msg as any).type === "result" && (msg as any).subtype === "error_during_execution" && ((msg as any).num_turns ?? 0) === 0 && retryCount < MAX_RETRIES) {
             retryCount++;
-            console.warn(`[sdk] transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
+            log.warn(`transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
             // Close current streaming session (uses streamingSessions, not stale closure refs)
             const retry1 = buildRetryMsg();
             closeCurrentStream();
@@ -1442,7 +1585,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId };
             const rq = query({
               prompt: retryGen,
-              options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+              options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
             });
             this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl, lastUserContent: retry1.lastUserContent, lastUserImages: retry1.lastUserImages });
             this.activeQueries.set(sessionId, rq);
@@ -1458,17 +1601,21 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           yield approvalEvents.shift()!;
         }
 
-        // Log all system events for debugging SDK lifecycle
+        // Log system events for debugging SDK lifecycle: the subtype only, never the message.
+        // thinking_tokens and status=requesting arrive at token rate, so not even at DEBUG.
         if (msg.type === "system") {
           const subtype = (msg as any).subtype ?? "none";
-          console.log(`[sdk] session=${sessionId} system: subtype=${subtype} ${JSON.stringify(msg).slice(0, 500)}`);
+          const sysStatus = subtype === "status" ? (msg as any).status : undefined;
+          if (subtype !== "thinking_tokens" && sysStatus !== "requesting") {
+            log.debug(`session=${sessionId} system subtype=${subtype}${sysStatus !== undefined ? ` status=${sysStatus}` : ""}`);
+          }
 
           if (subtype === "init") {
             const sdkSid = (msg as any).session_id;
             if (sdkSid && sdkSid !== sessionId) {
-              console.warn(`[sdk] session=${sessionId} SDK returned different session_id=${sdkSid} — JSONL may be orphaned`);
+              log.warn(`session=${sessionId} SDK returned different session_id=${sdkSid} — JSONL may be orphaned`);
             } else {
-              console.log(`[sdk] session=${sessionId} init: sdk_session_id=${sdkSid}`);
+              log.debug(`session=${sessionId} init: sdk_session_id=${sdkSid}`);
             }
             // Carry each MCP server's connection state so the host can offer a sign-in
             // for the ones reporting `needs-auth`.
@@ -1485,7 +1632,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (subtype === "status") {
             const status = (msg as any).status;
             if (status === "compacting") {
-              console.log(`[sdk] session=${sessionId} COMPACTING`);
+              log.info(`session=${sessionId} COMPACTING`);
               yield { type: "system" as const, subtype: "compacting" } as ChatEvent;
               continue;
             }
@@ -1494,7 +1641,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Detect compact boundary (compact finished, messages replaced in JSONL)
           if (subtype === "compact_boundary") {
             const meta = (msg as any).compact_metadata;
-            console.log(`[sdk] session=${sessionId} COMPACT_BOUNDARY trigger=${meta?.trigger} pre_tokens=${meta?.pre_tokens}`);
+            log.info(`session=${sessionId} COMPACT_BOUNDARY trigger=${meta?.trigger} pre_tokens=${meta?.pre_tokens}`);
             compactedAt = Date.now();
             yield { type: "system" as const, subtype: "compact_done" } as ChatEvent;
             continue;
@@ -1524,7 +1671,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
               const rq = query({
                 prompt: earlyAuthGen,
-                options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
               });
               this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl, lastUserContent: retry2.lastUserContent, lastUserImages: retry2.lastUserImages });
               this.activeQueries.set(sessionId, rq);
@@ -1532,7 +1679,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               continue retryLoop;
             }
             // No recovery possible — break immediately to avoid SDK internal 10x retry hang
-            console.warn(`[sdk] session=${sessionId} api_retry 401 with no recovery — tearing down streaming session`);
+            log.error(`session=${sessionId} turn failed: 401 with no auth recovery left (api_retry) authRetries=${authRetryCount} account=${account.id}`);
             yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
             break;
           }
@@ -1603,8 +1750,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 }
               }
             }
-          } catch {
-            // Session history unavailable — skip tool_results
+          } catch (e) {
+            // Session history unavailable — skip tool_results. Those cards never get a result.
+            const line = `session=${sessionId} tool_result flush failed pending=${pendingToolCount}: ${(e as Error).message}`;
+            if (toolResultFlushWarned) log.debug(line);
+            else { toolResultFlushWarned = true; log.warn(line); }
           }
           pendingToolCount = 0;
         }
@@ -1683,7 +1833,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const textContent = this.extractAssistantText(msg);
             if (textContent && /API Error:\s*401\b/i.test(textContent)) {
               assistantError = "authentication_failed";
-              console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
+              log.warn(`session=${sessionId} detected 401 in assistant text content — treating as auth error`);
             } else if (textContent && /hit your (?:[\w-]+\s+)*limit/i.test(textContent)) {
               // A hard usage/session limit carries a reset time ("...resets 10:10am").
               // Treat those as usage_limit (switch accounts, don't backoff-loop); only
@@ -1693,10 +1843,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 assistantError = "usage_limit";
                 usageLimitResetText = reset.text;
                 usageLimitResetAtMs = reset.atMs;
-                console.warn(`[sdk] session=${sessionId} detected usage/session limit (resets ${reset.text ?? "?"}) — will switch account, no backoff loop`);
+                log.warn(`session=${sessionId} detected usage/session limit (resets ${reset.text ?? "?"}) — will switch account, no backoff loop`);
               } else {
                 assistantError = "rate_limit";
-                console.warn(`[sdk] session=${sessionId} detected quota limit in assistant text content — treating as rate_limit`);
+                log.warn(`session=${sessionId} detected quota limit in assistant text content — treating as rate_limit`);
               }
             } else if (textContent && /API Error:\s*5\d{2}\b/i.test(textContent)) {
               // 5xx (e.g. 529 Overloaded) — match the explicit "API Error: 5xx" text only.
@@ -1705,7 +1855,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // isApiErrorMessage alone — that flag is also set for non-retryable 4xx errors
               // (e.g. billing/invalid_request), which must surface immediately, not retry.
               assistantError = "server_error";
-              console.warn(`[sdk] session=${sessionId} detected API 5xx server error — treating as server_error`);
+              log.warn(`session=${sessionId} detected API 5xx server error — treating as server_error`);
             }
           }
 
@@ -1716,13 +1866,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // as-is. See image-limit-detection.ts for why wording alone is not enough.
           if (isImageLimitRejection(msg)) {
             assistantError = "image_limit";
-            console.warn(`[sdk] session=${sessionId} API rejected an image in the replayed transcript — will strip and retry`);
+            log.warn(`session=${sessionId} API rejected an image in the replayed transcript — will strip and retry`);
           }
 
           if (assistantError) {
-            // Dump full SDK message for debugging
-            console.error(`[sdk] session=${sessionId} cwd=${effectiveCwd} assistant error: ${assistantError} (isFirst=${isFirstMessage} retry=${retryCount})`);
-            console.error(`[sdk] assistant message dump: ${JSON.stringify(msg).slice(0, 2000)}`);
+            // WARN: recovery is tried below, and the branch that gives up says so at ERROR.
+            log.warn(`session=${sessionId} assistant error=${assistantError} account=${account?.id ?? "none"} retry=${retryCount} isFirst=${isFirstMessage}`);
+            // The ids around the error, never the message: its content is the assistant's reply.
+            if (log.isEnabled("debug")) {
+              const m = (msg as any).message;
+              log.debug(`session=${sessionId} assistant error message: ${JSON.stringify({ id: m?.id, model: m?.model, stop_reason: m?.stop_reason, error: (msg as any).error, usage: m?.usage })}`);
+            }
 
             // OAuth token expired — refresh (and/or switch account) and retry
             if (assistantError === "authentication_failed" && account) {
@@ -1744,7 +1898,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                  options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
                 this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl, lastUserContent: retry3.lastUserContent, lastUserImages: retry3.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
@@ -1752,7 +1906,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 continue retryLoop;
               }
               // All recovery exhausted — tear down streaming session
-              console.warn(`[sdk] session=${sessionId} auth permanently failed after ${authRetryCount} attempts — tearing down streaming session`);
+              log.error(`session=${sessionId} turn failed: authentication failed after ${authRetryCount} recovery attempts account=${account.id}`);
               yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
               break;
             }
@@ -1768,7 +1922,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (nextAccount) {
                 account = nextAccount;
                 const label = nextAccount.label ?? nextAccount.email ?? "Unknown";
-                console.warn(`[sdk] session=${sessionId} usage limit — switching to fresh account ${nextAccount.id} (${label}), no backoff`);
+                log.warn(`session=${sessionId} usage limit — switching to fresh account ${nextAccount.id}, no backoff`);
                 // The bound account is exhausted until its reset — move the session.
                 accountSelector.bindSession(sessionId, nextAccount.id);
                 yield { type: "account_retry" as const, reason: `Usage limit reached — switching account`, accountId: nextAccount.id, accountLabel: label };
@@ -1781,7 +1935,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: ulRetryEnv };
                 const rq = query({
                   prompt: ulRetryGen,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                  options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
                 this.streamingSessions.set(sessionId, { meta, query: rq, controller: ulRetryCtrl, lastUserContent: retryU.lastUserContent, lastUserImages: retryU.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
@@ -1790,7 +1944,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
               // No fresh account left — stop. One clear error, no retry loop.
               const resetSuffix = usageLimitResetText ? ` Resets ${usageLimitResetText}.` : "";
-              console.warn(`[sdk] session=${sessionId} usage limit — no fresh account available, stopping`);
+              log.error(`session=${sessionId} turn failed: usage limit, no fresh account left accountsTried=${usageLimitedAccounts.size}`);
               yield { type: "error", message: `All accounts have hit their usage limit.${resetSuffix} Add another account in Settings → Accounts or wait for the reset.` };
               break;
             }
@@ -1800,7 +1954,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (assistantError === "server_error" && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
               const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
               rateLimitRetryCount++;
-              console.warn(`[sdk] session=${sessionId} server error — retrying same account in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+              log.warn(`session=${sessionId} server error — retrying same account in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
               yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
               await new Promise((r) => setTimeout(r, backoff));
               eventSource = rebuildQuery(account);
@@ -1826,13 +1980,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (rateLimitedAccounts.size <= 1 && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
                 const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
                 rateLimitRetryCount++;
-                console.warn(`[sdk] session=${sessionId} rate limited — single account, retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                log.warn(`session=${sessionId} rate limited — single account, retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
                 yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
                 await new Promise((r) => setTimeout(r, backoff));
                 eventSource = rebuildQuery(account);
                 continue retryLoop;
               }
-              console.warn(`[sdk] session=${sessionId} rate limited — all ${rateLimitedAccounts.size} account(s) exhausted, stopping`);
+              log.error(`session=${sessionId} turn failed: rate limited, all accounts exhausted accountsTried=${rateLimitedAccounts.size}`);
               yield { type: "error", message: "All accounts are rate limited right now. Add another account in Settings → Accounts, or wait for the limit to reset." };
               break;
             }
@@ -1861,16 +2015,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 // A refused rewrite says nothing about what is in the file, so escalating on
                 // it would delete more than the evidence justifies. Stop and report instead.
                 if (stripped.failed) break;
-                console.warn(`[sdk] session=${sessionId} strip pass ${stripPass}/${STRIP_PASSES.length} removed nothing (${stripped.reason})`);
+                log.warn(`session=${sessionId} strip pass ${stripPass}/${STRIP_PASSES.length} removed nothing (${stripped.reason})`);
               }
 
               if (!stripped || stripped.removed === 0) {
                 const reason = stripped?.reason || "no images left to remove";
-                console.warn(`[sdk] session=${sessionId} nothing left to strip (${reason}) — stopping`);
+                log.error(`session=${sessionId} turn failed: the API refused an image and nothing was left to strip (${reason})`);
                 yield { type: "error", message: `The API refused an image in this conversation, but nothing could be removed automatically (${reason}). Open Session debug to remove images yourself, start a new session, or use /compact to summarise the history away.` };
                 break;
               }
-              console.warn(`[sdk] session=${sessionId} stripped ${stripped.removed} image(s), ${(stripped.bytesFreed / 1048576).toFixed(2)}MB — retrying turn`);
+              log.warn(`session=${sessionId} stripped ${stripped.removed} image(s), ${(stripped.bytesFreed / 1048576).toFixed(2)}MB — retrying turn`);
               eventSource = rebuildQuery(account);
               continue retryLoop;
             }
@@ -1883,7 +2037,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               server_error: `Anthropic API server error. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.`,
               unknown: `API error in project "${effectiveCwd}". Debug:\n1. Run: \`cd ${effectiveCwd} && claude -p "hi"\`\n2. Check env: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause this\n3. Try: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" claude -p "hi"\`\n4. Refresh auth: \`claude login\``,
             };
-            const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
+            // A refusal also arrives as invalid_request, and the CLI's own text is the only place
+            // that says why and what to do next (rephrase in a new session, or change the model).
+            const refusalText = (msg as any).message?.stop_reason === "refusal" ? this.extractAssistantText(msg) : "";
+            const hint = refusalText || (errorHints[assistantError] ?? `API error: ${assistantError}`);
             yield { type: "error", message: hint };
             // Skip emitting the raw 401 error as text content — already shown as error event
             continue;
@@ -1931,6 +2088,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (rateLimitType && utilization != null) {
               updateFromSdkEvent(rateLimitType, utilization);
             }
+            // The API's own quota signal, said when it changes. A first `allowed` is no news.
+            const status = info.status as string | undefined;
+            const key = `${account?.id ?? "env"}:${rateLimitType ?? "unknown"}`;
+            const previous = this.rateLimitStatus.get(key);
+            if (status && status !== previous) {
+              this.rateLimitStatus.set(key, status);
+              if (previous !== undefined || status !== "allowed") {
+                // Seconds or milliseconds; an unreadable value is left out rather than thrown on.
+                const resetsAt = typeof info.resetsAt === "number" ? new Date(info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt) : undefined;
+                const line = `session=${sessionId} account=${account?.id ?? "none"} rate limit ${rateLimitType ?? "unknown"} status=${status}`
+                  + (utilization != null ? ` util=${utilization}` : "")
+                  + (resetsAt && !isNaN(resetsAt.getTime()) ? ` resetsAt=${resetsAt.toISOString()}` : "");
+                if (status === "allowed") log.info(line);
+                else log.warn(line);
+              }
+            }
           }
           continue;
         }
@@ -1954,13 +2127,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (rateLimitedAccounts.size <= 1 && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
                 const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
                 rateLimitRetryCount++;
-                console.warn(`[sdk] session=${sessionId} result 429 — single account, retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                log.warn(`session=${sessionId} result 429 — single account, retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
                 yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
                 await new Promise((r) => setTimeout(r, backoff));
                 eventSource = rebuildQuery(account);
                 continue retryLoop;
               }
-              console.warn(`[sdk] session=${sessionId} result 429 — all ${rateLimitedAccounts.size} account(s) exhausted, stopping`);
+              log.error(`session=${sessionId} turn failed: result 429, all accounts exhausted accountsTried=${rateLimitedAccounts.size}`);
               yield { type: "error", message: "All accounts are rate limited right now. Add another account in Settings → Accounts, or wait for the limit to reset." };
               continue;
             } else if (errCode === 401) {
@@ -1983,7 +2156,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen2,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                  options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
                 this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2, lastUserContent: retry6.lastUserContent, lastUserImages: retry6.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
@@ -2022,7 +2195,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   }
                 }
               }
-            } catch {}
+            } catch (e) {
+              const line = `session=${sessionId} tool_result flush failed pending=${pendingToolCount}: ${(e as Error).message}`;
+              if (toolResultFlushWarned) log.debug(line);
+              else { toolResultFlushWarned = true; log.warn(line); }
+            }
             pendingToolCount = 0;
           }
 
@@ -2042,7 +2219,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             && (result.num_turns ?? 0) === 0
             && !assistantContent
           ) {
-            console.log(`[sdk] session=${sessionId} ignoring empty task-notification result (no turn ran)`);
+            log.info(`session=${sessionId} ignoring empty task-notification result (no turn ran)`);
             continue;
           }
 
@@ -2058,7 +2235,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const errorsArr0 = Array.isArray(result.errors) ? result.errors : [];
             const abortDetail = errorsArr0.join(" ") + " " + (typeof result.error === "string" ? result.error : "");
             if (subtype === "error_during_execution" && /abort|request was aborted/i.test(abortDetail)) {
-              console.log(`[sdk] session=${sessionId} suppressing abort error (user-initiated cancel)`);
+              log.info(`session=${sessionId} suppressing abort error (user-initiated cancel)`);
               resultSubtype = subtype;
               resultNumTurns = result.num_turns as number | undefined;
               break;
@@ -2068,9 +2245,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const sdkDetail = errorsArr.length > 0
               ? errorsArr.join("\n")
               : (typeof result.error === "string" ? result.error : "");
-            // Log full result for debugging (truncated at 2000 chars)
-            console.error(`[sdk] result error: subtype=${subtype} turns=${result.num_turns ?? 0} detail=${sdkDetail || "(none)"}`);
-            console.error(`[sdk] result full dump: ${JSON.stringify(result).slice(0, 2000)}`);
+            log.error(`session=${sessionId} result error: subtype=${subtype} turns=${result.num_turns ?? 0} detail=${JSON.stringify((sdkDetail || "(none)").slice(0, 500))}`);
+            // Never the whole result: `result` is the reply and `permission_denials` holds tool inputs.
+            if (log.isEnabled("debug")) log.debug(`session=${sessionId} result: ${resultLogFields(result)}`);
             const errorMessages: Record<string, string> = {
               error_max_turns: "Agent reached maximum turn limit.",
               error_max_budget_usd: "Agent reached budget limit.",
@@ -2100,8 +2277,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if ((!subtype || subtype === "success") && (result.num_turns ?? 0) === 0 && !assistantContent) {
             // SDK success result has `result: string` containing final text
             const resultText = typeof result.result === "string" ? result.result : "";
-            console.warn(`[sdk] session=${sessionId} result success but 0 turns, no assistant content, result="${resultText.slice(0, 200)}"`);
-            console.warn(`[sdk] result dump: ${JSON.stringify(result).slice(0, 2000)}`);
+            log.error(`session=${sessionId} turn produced no response (0 turns) result=${JSON.stringify(resultText.slice(0, 200))}`);
+            if (log.isEnabled("debug")) log.debug(`session=${sessionId} result: ${resultLogFields(result)}`);
             const hint = resultText
               ? `Claude returned: "${resultText}"\nThis may indicate a session or connection issue. Try creating a new chat session.`
               : "Claude returned no response (0 turns). This usually means the API connection failed silently. Check that `claude` CLI works in your terminal, or try creating a new chat session.";
@@ -2150,7 +2327,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           });
           coldReasonForNextResult = undefined;
           if (turnUsage) {
-            console.log(`[usage] session=${sessionId} ${formatTurnUsageLog(turnUsage)}`);
+            usageLog.info(`session=${sessionId} ${formatTurnUsageLog(turnUsage)}`);
             try {
               insertTurnUsage({
                 sessionId,
@@ -2171,7 +2348,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               });
             } catch (err) {
               // Accounting must never break a turn that already succeeded.
-              console.warn(`[usage] session=${sessionId} failed to persist turn usage: ${(err as Error).message}`);
+              usageLog.warn(`session=${sessionId} failed to persist turn usage: ${(err as Error).message}`);
             }
           }
 
@@ -2223,28 +2400,30 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     } catch (crashErr) {
       const crashMsg = (crashErr as Error).message ?? String(crashErr);
       const stderrInfo = stderrBuffer.trim() ? ` stderr: ${stderrBuffer.trim().slice(-500)}` : "";
-      console.error(`[sdk] session=${sessionId} cwd=${meta.projectPath} error: ${crashMsg}${stderrInfo}`);
 
       // Clean up crashed subprocess before retry or error
       this.activeQueries.delete(sessionId);
       const ss = this.streamingSessions.get(sessionId);
       if (ss) { ss.controller.done(); ss.query.close(); this.streamingSessions.delete(sessionId); }
-      console.log(`[sdk] session=${sessionId} streaming session ended`);
+      log.debug(`session=${sessionId} streaming session ended`);
 
+      // Each case below logs itself: a cancel or a closed socket is not a failure.
       if (crashMsg.includes("abort") || crashMsg.includes("closed")) {
         // User-initiated abort or WS closed — nothing to report
+        log.info(`session=${sessionId} query closed: ${crashMsg}`);
       } else if (crashMsg.includes("exited with code") && crashRetryCount < MAX_CRASH_RETRIES) {
         // Subprocess crashed — auto-retry once before surfacing the error
         crashRetryCount++;
-        console.warn(`[sdk] session=${sessionId} subprocess crashed: ${crashMsg} — auto-retrying (attempt ${crashRetryCount}/${MAX_CRASH_RETRIES})${stderrInfo}`);
+        log.warn(`session=${sessionId} subprocess crashed: ${crashMsg} — auto-retrying (attempt ${crashRetryCount}/${MAX_CRASH_RETRIES})${stderrInfo}`);
         stderrBuffer = ""; // Reset for retry
         await new Promise((r) => setTimeout(r, 1000));
         continue crashRetryLoop;
       } else if (crashMsg.includes("exited with code")) {
-        console.warn(`[sdk] session=${sessionId} subprocess crashed after retry: ${crashMsg}${stderrInfo}`);
+        log.error(`session=${sessionId} CLI crashed after retry: ${crashMsg}${stderrInfo}`);
         const userHint = stderrInfo ? ` (${stderrBuffer.trim().slice(-200)})` : "";
         yield { type: "error", message: `SDK subprocess crashed.${userHint} Send another message to auto-recover.` };
       } else {
+        log.error(`session=${sessionId} cwd=${meta.projectPath} error: ${crashMsg}${stderrInfo}`);
         yield { type: "error", message: `SDK error: ${crashMsg}` };
       }
       break crashRetryLoop; // Exit after error handling (non-retryable)
@@ -2254,7 +2433,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     } catch (outerErr) {
       // Setup errors (account auth, env) — not retryable
       const msg = (outerErr as Error).message ?? String(outerErr);
-      console.error(`[sdk] session=${sessionId} setup error: ${msg}`);
+      log.error(`session=${sessionId} setup error: ${msg}`);
       yield { type: "error", message: `SDK error: ${msg}` };
     } finally {
       // Final cleanup — ensure no leaked streaming session
@@ -2319,7 +2498,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(Object.keys(mcpServers).length > 0 && { mcpServers }),
         stderr: (chunk: string) => {
           const line = chunk.trim();
-          if (line) console.log(`[mcp-control] stderr: ${line.slice(0, 300)}`);
+          if (line) mcpControlLog.debug(`stderr: ${line.slice(0, 300)}`);
         },
       } as any,
     });
@@ -2346,7 +2525,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     try {
       await ss.query.reconnectMcpServer(serverName);
     } catch (e) {
-      console.warn(`[sdk] session=${sessionId} reconnectMcpServer(${serverName}) failed: ${(e as Error).message}`);
+      log.warn(`session=${sessionId} reconnectMcpServer(${serverName}) failed: ${(e as Error).message}`);
     }
     try {
       const statuses: Array<{ name: string; status: string }> = await ss.query.mcpServerStatus();
@@ -2358,8 +2537,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   /** Abort and fully teardown the streaming session — user must resume to continue */
   abortQuery(sessionId: string, source = "unknown"): void {
-    // Capture stack to identify caller during debugging intermittent abort bugs
-    const stack = new Error().stack?.split("\n").slice(2, 5).join(" | ").replace(/\s+/g, " ") ?? "no-stack";
     const ss = this.streamingSessions.get(sessionId);
     if (ss) {
       // Signal generator to end, then close the query (kills bun subprocess)
@@ -2368,7 +2545,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       this.streamingSessions.delete(sessionId);
       this.activeQueries.delete(sessionId);
       this.teardownReasons.set(sessionId, source);
-      console.log(`[sdk] abortQuery: closed streaming session=${sessionId} source=${source} stack=${stack}`);
+      log.info(`abortQuery: closed streaming session=${sessionId} source=${source}`);
+      // Capture stack to identify caller during debugging intermittent abort bugs
+      if (log.isEnabled("debug")) {
+        const stack = new Error().stack?.split("\n").slice(2, 5).join(" | ").replace(/\s+/g, " ") ?? "no-stack";
+        log.debug(`abortQuery: session=${sessionId} stack=${stack}`);
+      }
       return;
     }
     // Non-streaming fallback
@@ -2376,7 +2558,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     if (q) {
       q.close();
       this.activeQueries.delete(sessionId);
-      console.log(`[sdk] abortQuery: closed non-streaming session=${sessionId} source=${source}`);
+      log.info(`abortQuery: closed non-streaming session=${sessionId} source=${source}`);
     }
   }
 
@@ -2411,7 +2593,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // the point is that most of it goes unread.
       const fromByte = fullParseWindow(file, opts?.maxBytes);
       if (fromByte > 0) {
-        console.warn(`[sdk] getFullMessages: ${sessionId} transcript is over the full-parse bound — indexing from byte ${fromByte} on, older segments stay out of the index`);
+        log.warn(`getFullMessages: ${sessionId} transcript is over the full-parse bound — indexing from byte ${fromByte} on, older segments stay out of the index`);
       }
       try {
         const fromFile = await parseJsonlTranscript(file, undefined, { fromByte });
@@ -2426,19 +2608,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const messages = await getSessionMessages(sessionId);
       const parsed = messages.map((msg) => parseSessionMessage(msg));
 
-      // Merge tool_result user messages into the preceding assistant message
-      const merged: ChatMessage[] = [];
-      for (const msg of parsed) {
-        if (msg.events?.length && msg.events.every((e) => e.type === "tool_result")) {
-          // This is a tool_result-only message — append events to last assistant
-          const lastAssistant = [...merged].reverse().find((m) => m.role === "assistant");
-          if (lastAssistant?.events) {
-            lastAssistant.events.push(...msg.events);
-            continue;
-          }
-        }
-        merged.push(msg);
-      }
+      const merged = mergeToolResultMessages(parsed);
 
       // Nest child events under their parent Agent/Task tool_use's children array.
       // Cross-message: a backgrounded subagent's events land in later messages
@@ -2464,7 +2634,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return merged.filter(
         (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),
       );
-    } catch {
+    } catch (e) {
+      // Returned as an empty chat, as before: this is the only place that says why.
+      log.error(`session=${sessionId} getMessages failed:`, e);
       return [];
     }
   }
@@ -2498,8 +2670,29 @@ async function listAllSdkSessions(
  * We extract title from queue-operation content or first user message.
  */
 // Cache findMissingSessions results to avoid thousands of sync FS reads per request
+/**
+ * A result message for a DEBUG line: ids, counts and usage. Never `result` (the reply's text)
+ * or `permission_denials` (the inputs of the tools that were refused).
+ */
+function resultLogFields(result: any): string {
+  return JSON.stringify({
+    subtype: result.subtype,
+    is_error: result.is_error,
+    num_turns: result.num_turns,
+    stop_reason: result.stop_reason,
+    duration_ms: result.duration_ms,
+    duration_api_ms: result.duration_api_ms,
+    total_cost_usd: result.total_cost_usd,
+    usage: result.usage,
+    session_id: result.session_id,
+    uuid: result.uuid,
+  });
+}
+
 const missingSessionsCache = new Map<string, { sessions: SessionInfo[]; ts: number }>();
 const MISSING_SESSIONS_TTL_MS = 60_000; // 60 seconds
+/** The listing failure last WARNed per directory, until a listing there succeeds again. */
+const listFailureWarned = new Map<string | undefined, string>();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 function findMissingSessions(

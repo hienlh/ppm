@@ -5,6 +5,9 @@ import {
   assertNotProtected,
   resolvePath,
 } from "../fs-path-guard.service.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("fs");
 
 /**
  * Move an entry to the OS trash. Every backend is an external program
@@ -107,18 +110,29 @@ export async function trashPath(
   const isDir = await isDirectoryTarget(target);
 
   const which = options?.which ?? defaultLookup;
-  const cmd =
-    process.platform === "win32" ? windowsCommand(target, isDir, which) : posixCommand(target, which);
+  // NO_TRASH answers 409, and the client then offers a permanent delete: the reason and the
+  // backend are only in these lines.
+  let cmd: string[];
+  try {
+    cmd = process.platform === "win32" ? windowsCommand(target, isDir, which) : posixCommand(target, which);
+  } catch (e) {
+    log.warn(`trash unavailable for ${target}: ${(e as Error).message}`);
+    throw e;
+  }
 
   const run = options?.run ?? spawnRunner;
   let result: { exitCode: number; stderr: string };
   try {
     result = await run(cmd);
   } catch (e) {
+    log.warn(`trash unavailable for ${target}: ${(e as Error).message} (backend ${cmd[0]})`);
     throw noTrash((e as Error).message);
   }
   if (result.exitCode !== 0) {
-    throw noTrash(result.stderr.trim() || `exit code ${result.exitCode}`);
+    const reason = result.stderr.trim() || `exit code ${result.exitCode}`;
+    log.warn(`trash unavailable for ${target}: ${reason.split("\n")[0]} (backend ${cmd[0]})`);
+    throw noTrash(reason);
   }
+  log.info(`moved ${target} to trash via ${cmd[0]}`);
   return { trashed: true, path: target };
 }

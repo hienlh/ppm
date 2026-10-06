@@ -2,6 +2,7 @@ import path from "node:path";
 import simpleGit, { type SimpleGit } from "simple-git";
 import { isBinaryContent } from "./binary-content.ts";
 import { FOR_EACH_REF_ARGS, parseForEachRef } from "./git-refs/for-each-ref.ts";
+import { createLogger } from "./logger.ts";
 import type {
   CheckoutMode,
   FileFullDiff,
@@ -14,6 +15,29 @@ import type {
   GitWorktree,
 } from "../types/git.ts";
 
+/**
+ * Only for what the CLI never calls. `ppm git commit`, `push`, `branch …` and `merge` reach
+ * this class too, and the CLI has no log file: a line here would print beside the CLI's own
+ * "Committed: …". Those operations are logged by their routes in `routes/git.ts` instead.
+ */
+const gitLog = createLogger("git");
+
+/**
+ * A remote for the log. A clone URL often carries `user:token@`, or a token as the user part
+ * alone (`https://ghp_…@github.com/…`), which `redactSecrets` keeps — so the whole userinfo
+ * goes. A remote's name, or an scp-style `git@host:path`, is not a URL and has no password.
+ */
+export function remoteForLog(remote: string): string {
+  try {
+    const url = new URL(remote);
+    if (!url.username && !url.password) return remote;
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return remote;
+  }
+}
 
 /**
  * `filePath` resolved inside `projectPath`, or null when it escapes.
@@ -256,24 +280,37 @@ class GitService {
     return diff;
   }
 
+  /**
+   * For commands given file names: each is that file, never a pattern. A file
+   * called `[ab].txt` is otherwise a glob, and staging or discarding it also
+   * stages or discards `a.txt`.
+   */
+  private literalGit(projectPath: string): SimpleGit {
+    return this.git(projectPath).env({ ...process.env, GIT_LITERAL_PATHSPECS: "1" });
+  }
+
   async stage(projectPath: string, files: string[]): Promise<void> {
-    await this.git(projectPath).add(files);
+    // After `--`, or a file called `--all` is git's flag of that name and stages the whole tree.
+    await this.literalGit(projectPath).add(["--", ...files]);
   }
 
   async unstage(projectPath: string, files: string[]): Promise<void> {
-    await this.git(projectPath).reset(["HEAD", "--", ...files]);
+    await this.literalGit(projectPath).reset(["HEAD", "--", ...files]);
   }
 
-  async commit(projectPath: string, message: string, amend = false): Promise<string> {
+  async commit(projectPath: string, message: string, amend = false, signoff = false): Promise<string> {
     if (amend) {
       const args = ["commit", "--amend"];
       if (message?.trim()) args.push("-m", message);
       else args.push("--no-edit");
+      if (signoff) args.push("--signoff");
       await this.git(projectPath).raw(args);
       return (await this.git(projectPath).revparse(["HEAD"])).trim();
     }
-    const result = await this.git(projectPath).commit(message);
-    return result.commit;
+    const result = await this.git(projectPath).commit(message, undefined, signoff ? { "--signoff": null } : undefined);
+    // Read off git's "[main <hash>]" line, which on a detached HEAD is
+    // "[detached HEAD <hash>]" — and simple-git then answers "HEAD <hash>".
+    return result.commit.slice(result.commit.lastIndexOf(" ") + 1);
   }
 
   async push(
@@ -457,9 +494,12 @@ class GitService {
     return { commits, branches, head };
   }
 
-  async fetch(projectPath: string, remote?: string): Promise<void> {
+  async fetch(projectPath: string, remote?: string, prune = false): Promise<void> {
     const args = remote ? [remote] : ["--all"];
+    if (prune) args.push("--prune");
+    const started = performance.now();
     await this.git(projectPath).fetch(args);
+    gitLog.info(`fetched ${remote ? remoteForLog(remote) : "--all"} prune=${prune} in ${projectPath} (${Math.round(performance.now() - started)} ms)`);
   }
 
   async discardChanges(projectPath: string, files: string[]): Promise<void> {
@@ -470,20 +510,30 @@ class GitService {
     const tracked = files.filter((f) => !untrackedSet.has(f));
     const untracked = files.filter((f) => untrackedSet.has(f));
 
+    const literal = this.literalGit(projectPath);
     if (tracked.length > 0) {
-      await git.checkout(["--", ...tracked]);
+      await literal.checkout(["--", ...tracked]);
     }
     if (untracked.length > 0) {
-      await git.clean("f", ["-e", "!.*", "--", ...untracked]);
+      try {
+        await literal.clean("f", ["-e", "!.*", "--", ...untracked]);
+      } catch (e) {
+        // The tracked half is already gone by now, and the error alone does not say so.
+        if (tracked.length > 0) gitLog.error(`discarded ${tracked.length} tracked file(s) in ${projectPath}, then removing ${untracked.length} untracked failed:`, e);
+        throw e;
+      }
     }
+    gitLog.info(`discarded ${tracked.length} tracked + ${untracked.length} untracked file(s) in ${projectPath}`);
   }
 
   async cherryPick(projectPath: string, hash: string): Promise<void> {
     await this.git(projectPath).raw(["cherry-pick", hash]);
+    gitLog.info(`cherry-picked ${hash.slice(0, 7)} in ${projectPath}`);
   }
 
   async revert(projectPath: string, hash: string): Promise<void> {
     await this.git(projectPath).raw(["revert", "--no-edit", hash]);
+    gitLog.info(`reverted ${hash.slice(0, 7)} in ${projectPath}`);
   }
 
   async createTag(
@@ -494,6 +544,7 @@ class GitService {
     const args = ["tag", name];
     if (hash) args.push(hash);
     await this.git(projectPath).raw(args);
+    gitLog.info(`tagged ${name} at ${hash ? hash.slice(0, 7) : "HEAD"} in ${projectPath}`);
   }
 
   async getCreatePrUrl(
@@ -609,6 +660,7 @@ class GitService {
       args.push(opts.branch);
     }
     await this.git(projectPath).raw(args);
+    gitLog.info(`worktree added ${targetPath} (branch=${opts.branch ?? "-"}, new=${opts.newBranch ?? "-"}) in ${projectPath}`);
   }
 
   /** Remove a worktree. Pass force=true to remove even with uncommitted changes. */
@@ -617,11 +669,13 @@ class GitService {
     if (force) args.push("-f");
     args.push(targetPath);
     await this.git(projectPath).raw(args);
+    gitLog.info(`worktree removed ${targetPath} force=${force} in ${projectPath}`);
   }
 
   /** Prune stale worktree metadata from .git/worktrees/. */
   async pruneWorktrees(projectPath: string): Promise<void> {
     await this.git(projectPath).raw(["worktree", "prune"]);
+    gitLog.info(`pruned stale worktree metadata in ${projectPath}`);
   }
 
   /** Clone a git repo into targetDir/repoName. Returns the full cloned path. */
@@ -629,7 +683,9 @@ class GitService {
     const repoName = name || this.parseRepoNameFromUrl(url);
     if (!repoName) throw new Error("Cannot determine repo name from URL");
     const fullPath = path.resolve(targetDir, repoName);
+    const started = performance.now();
     await simpleGit().clone(url, fullPath);
+    gitLog.info(`cloned ${remoteForLog(url)} into ${fullPath} in ${Math.round(performance.now() - started)} ms`);
     return fullPath;
   }
 

@@ -43,17 +43,27 @@ const MAP: Record<string, string | null> = {
   ChevronUpIcon: "chevron-up",
   ChevronsDown: "chevron-double-down",
   ChevronsDownUp: "chevron-down-up", // the *collapse* pair; `chevron-up-down` is expand
+  // DBGate's « and » at a data grid's corner, which hide and show the panel beside it.
+  ChevronsLeft: "chevron-double-left",
   ChevronsRight: "chevron-double-right",
   ChevronsUpDown: "chevron-up-down",
   ArrowDown: "arrow-down",
   ArrowLeft: "arrow-left",
   ArrowRight: "arrow-right",
   ArrowUp: "arrow-up",
+  // The form view's First and Last row.
+  ArrowPrevious: "arrow-previous",
+  ArrowNext: "arrow-next",
+  // "Opens in a tab of its own", as DBGate marks Structure, SQL and Data on a table's toolbar.
+  ArrowUpRight: "arrow-up-right",
   ArrowUpCircle: "arrow-circle-up",
   ArrowDownToLine: "arrow-download",
   ArrowUpFromLine: "arrow-upload",
+  // DBGate's Export on a table's toolbar, beside Fetch all's download arrow.
+  ArrowRightFromLine: "arrow-export-ltr",
   ArrowDownUp: "arrow-sort",
   ArrowUpDown: "arrow-sort",
+  ArrowLeftRight: "arrow-swap",
   ArrowDownAZ: "text-sort-ascending",
   Menu: "navigation",
   MoreHorizontal: "more-horizontal",
@@ -74,6 +84,9 @@ const MAP: Record<string, string | null> = {
   CircleCheckIcon: "checkmark-circle",
   Plus: "add",
   Minus: "subtract",
+  // A tree row that opens and closes, as DBGate draws a server with databases under it.
+  SquarePlus: "add-square",
+  SquareMinus: "subtract-square",
   Trash2: "delete",
   Copy: "copy",
   Pencil: "edit",
@@ -112,6 +125,8 @@ const MAP: Record<string, string | null> = {
   Activity: "pulse",
   Gauge: "gauge",
   Clock: "clock",
+  // A data grid's auto refresh, as DBGate marks it.
+  Timer: "timer",
   History: "history",
   CalendarClock: "calendar-clock",
   CalendarX2: "calendar-cancel",
@@ -145,6 +160,10 @@ const MAP: Record<string, string | null> = {
   ListTodo: "task-list-square-ltr",
   ListOrdered: "text-number-list-ltr",
   Table: "table",
+  // DBGate's Switch to table and Switch to form on a table's data, and a foreign key's "open the
+  // referenced row as a form" in its cell.
+  TableSimple: "table-simple",
+  Form: "form",
   Tag: "tag",
   Tags: "tag-multiple",
   Paperclip: "attach",
@@ -186,9 +205,14 @@ const MAP: Record<string, string | null> = {
   TerminalSquare: "window-console",
   SquareTerminal: "window-console",
   Code: "code",
+  // The Query tab's Format, DBGate's "Format code": the SQL laid out and indented again.
+  IndentIncrease: "text-indent-increase-ltr",
   Bug: "bug",
   GitBranch: "branch",
   GitCommitHorizontal: null, // no commit glyph in Fluent
+  GitMerge: "merge",
+  Archive: "archive", // a git stash
+  CloudUpload: "cloud-arrow-up", // publish a branch
   Database: "database",
   DatabaseZap: "database-lightning",
   Puzzle: "puzzle-piece",
@@ -280,6 +304,8 @@ const MAP: Record<string, string | null> = {
   Lock: "lock-closed",
   Key: "key",
   KeyRound: "key",
+  // An auto-increment key, as DBGate marks one in a table's columns.
+  Hash: "number-symbol",
   ShieldAlert: "shield-error",
   ShieldCheck: "shield-checkmark",
   ShieldOff: "shield-dismiss",
@@ -383,6 +409,14 @@ for (const name of glyphNames) {
 lines.push(`};
 
 export const ICON_VIEW_BOX = ${JSON.stringify(viewBox)};
+
+/**
+ * A glyph's path data by Fluent name (\`key\`, \`link\`), for drawing it where a component cannot
+ * go: a data grid's canvas header.
+ */
+export function glyphPaths(name: string): readonly string[] | undefined {
+  return D[name];
+}
 
 /** Which names this module draws with Fluent, for the coverage test. */
 export const FLUENT_NAMES: readonly string[] = ${JSON.stringify(Object.keys(resolved).sort())};

@@ -36,13 +36,18 @@ function buildTheme(): Partial<Theme> {
   const textSecondary = cssVar("--color-text-secondary");
   const textSubtle = cssVar("--color-text-subtle");
   const fontSans = cssVar("--font-sans") || "Geist, system-ui, sans-serif";
+  // The header of the column holding the current cell, and of the one under the pointer. Its title
+  // keeps the ink it has on the plain header, so this is a tint and not the accent: on the accent a
+  // nullable column's name measured 1.0–1.6:1 and the sort arrow, drawn in the accent, vanished. A
+  // whole selected column is still filled with the accent, and its title drawn in `accentFg`.
+  const headerTint = flattenColor(withAlpha(primary, 0.08), muted);
 
   return {
     bgCell: bg,
     bgCellMedium: muted,
     bgHeader: muted,
-    bgHeaderHasFocus: accent,
-    bgHeaderHovered: accent,
+    bgHeaderHasFocus: headerTint,
+    bgHeaderHovered: headerTint,
     bgBubble: accent,
     bgBubbleSelected: primary,
     textDark: fg,
@@ -66,6 +71,48 @@ function buildTheme(): Partial<Theme> {
     cellVerticalPadding: 4,
     headerIconSize: 16,
   };
+}
+
+/**
+ * What the grid draws pending changes with, as DBGate does: an edited cell yellow with a bar at its
+ * left, a new row green, a row to be deleted red and struck through. Washes of the theme's own
+ * status colours, made opaque over the cell background as canvas fills must be.
+ */
+export interface GridChangeColors {
+  edited: string;
+  editedBar: string;
+  inserted: string;
+  /** A new row's number. */
+  insertedMark: string;
+  deleted: string;
+  deletedText: string;
+  deletedStrike: string;
+  /** A deleted row's number. */
+  deletedMark: string;
+}
+
+function buildChangeColors(): GridChangeColors {
+  const bg = cssVar("--color-background");
+  const warning = cssVar("--color-warning");
+  const success = cssVar("--color-success");
+  const error = cssVar("--color-error");
+  // A colour that is not #rrggbb cannot be washed out here, and drawn whole it would bury the text.
+  const wash = (color: string, alpha: number) => (/^#[0-9a-f]{6}$/i.test(color) ? flattenColor(withAlpha(color, alpha), bg) : bg);
+  return {
+    edited: wash(warning, 0.17),
+    editedBar: warning,
+    inserted: wash(success, 0.14),
+    insertedMark: success,
+    deleted: wash(error, 0.13),
+    deletedText: cssVar("--color-text-subtle"),
+    deletedStrike: withAlpha(error, 0.7),
+    deletedMark: error,
+  };
+}
+
+/** The change colours of `theme`, built again whenever the grid's theme is. */
+export function useGridChangeColors(theme: Partial<Theme>): GridChangeColors {
+  return useMemo(() => buildChangeColors(), [theme]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /**

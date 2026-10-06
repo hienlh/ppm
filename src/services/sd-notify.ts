@@ -10,6 +10,10 @@
  * transport in Node/Bun (not supported by node:dgram). The binary ships with
  * systemd itself, so availability matches systemd availability.
  */
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("sd-notify");
+
 export async function sdNotify(state: string): Promise<void> {
   if (!process.env.NOTIFY_SOCKET) return; // not running under systemd
   try {
@@ -18,10 +22,15 @@ export async function sdNotify(state: string): Promise<void> {
       stdio: ["ignore", "ignore", "ignore"],
       env: process.env,
     });
-    await proc.exited;
-  } catch {
+    const code = await proc.exited;
+    // A lost READY=1 ends with systemd killing the unit at TimeoutStartSec, and nothing
+    // else in ppm.log would say why.
+    if (code !== 0) log.warn(`sd_notify ${state} failed (exit ${code}) — systemd may time the unit out`);
+    else log.debug(`sd_notify ${state} sent`);
+  } catch (e) {
     // best-effort: if systemd-notify is missing, startup still proceeds
     // (Type=notify units without READY=1 will time out, but that's already
     // the failure mode — this helper doesn't make it worse).
+    log.warn(`sd_notify ${state} failed (${e instanceof Error ? e.message : e}) — systemd may time the unit out`);
   }
 }

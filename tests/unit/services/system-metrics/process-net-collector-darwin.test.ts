@@ -5,8 +5,16 @@ import {
   NETTOP_ARGV,
 } from "../../../../src/services/system-metrics/process-net-collector-darwin.ts";
 import type { RunResult } from "../../../../src/services/host-info/spawn-runner.ts";
+import type { Logger } from "../../../../src/services/logger.ts";
 
 const ok = (stdout: string): RunResult => ({ stdout, stderr: "", code: 0, timedOut: false });
+
+function recordingLog() {
+  const lines: { level: string; text: string }[] = [];
+  const at = (level: string) => (...args: unknown[]) => { lines.push({ level, text: args.map(String).join(" ") }); };
+  const log: Logger = { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error"), fatal: at("fatal"), isEnabled: () => true };
+  return { log, lines };
+}
 
 // Shape with the leading timestamp column some macOS releases emit. UNVERIFIED
 // against real hardware — this is the documented `-L 1 -J` CSV layout.
@@ -53,38 +61,53 @@ describe("parseNettopCsv", () => {
 describe("createDarwinProcessNetCollector", () => {
   test("runs nettop in one-shot raw CSV mode and logs its cost exactly once", async () => {
     const calls: string[][] = [];
-    const logs: string[] = [];
+    const { log, lines } = recordingLog();
     const c = createDarwinProcessNetCollector(async (argv) => {
       calls.push(argv);
       return ok("Safari.7,1,2,\n");
-    }, (m) => logs.push(m));
+    }, log);
     expect((await c.collect())!.get(7)).toEqual({ inBytes: 1, outBytes: 2 });
     await c.collect();
     expect(calls[0]).toEqual(NETTOP_ARGV);
     // -n: without it each sample sends a DNS query for every remote address.
     expect(NETTOP_ARGV).toEqual(["nettop", "-n", "-P", "-x", "-L", "1", "-J", "bytes_in,bytes_out"]);
-    expect(logs).toHaveLength(1);
-    expect(logs[0]).toContain("nettop sample");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.level).toBe("info");
+    expect(lines[0]!.text).toContain("nettop sample");
   });
 
   test("a failing or missing nettop yields null — the Net column stays unmeasured — and is given up on", async () => {
     let calls = 0;
+    const { log, lines } = recordingLog();
     const c = createDarwinProcessNetCollector(async () => {
       calls++;
       throw new Error("ENOENT");
-    }, () => {});
+    }, log);
     expect(await c.collect()).toBeNull();
     expect(await c.collect()).toBeNull();
     expect(await c.collect()).toBeNull();
     expect(c.isDisabled()).toBe(true);
     await c.collect();
     expect(calls).toBe(3);
+    // A nettop that is not there is not news.
+    expect(lines).toEqual([]);
+  });
+
+  test("a nettop that is there but keeps failing is given up on with one WARN carrying its stderr", async () => {
+    const { log, lines } = recordingLog();
+    const c = createDarwinProcessNetCollector(
+      async () => ({ stdout: "", stderr: "nettop: sysctl\n  failed\n", code: 1, timedOut: false }),
+      log,
+    );
+    for (let i = 0; i < 4; i++) expect(await c.collect()).toBeNull();
+    expect(c.isDisabled()).toBe(true);
+    expect(lines).toEqual([{ level: "warn", text: "nettop disabled after 3 failures: nettop: sysctl failed" }]);
   });
 
   test("a timeout is a failure, not an empty sample", async () => {
     const c = createDarwinProcessNetCollector(
       async () => ({ stdout: "Safari.7,1,2,\n", stderr: "", code: null, timedOut: true }),
-      () => {},
+      recordingLog().log,
     );
     expect(await c.collect()).toBeNull();
   });

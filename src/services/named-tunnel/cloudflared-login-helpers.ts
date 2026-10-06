@@ -52,11 +52,13 @@ export function pinsMatch(cert: { zoneID: string; accountID: string }): boolean 
 }
 
 /** Rename an existing cert.pem aside so a stale/foreign cert can never block a fresh login. */
-export function renameCertAside(): void {
+/** Returns whether there was a cert to move. */
+export function renameCertAside(): boolean {
   const path = getOriginCertPath();
-  if (!existsSync(path)) return;
+  if (!existsSync(path)) return false;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   renameSync(path, `${path}.bak-${stamp}`);
+  return true;
 }
 
 /**

@@ -47,7 +47,9 @@ function lastActiveAt(tab: Tab): number {
  *  3. newest activation — the only ordering that compares across panels, and the
  *     answer when no chat is on screen at all.
  *
- * Chats of the given project always win over other projects' chats.
+ * Given a project, only its own chats are candidates: a project's code or output never lands
+ * in another project's conversation, and with none of its chats open the answer is null, so
+ * `sendToChat` opens one in that project.
  */
 export function resolveSelectedChatTabId(projectName?: string | null): string | null {
   const { panels, focusedPanelId } = usePanelStore.getState();
@@ -61,12 +63,10 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
         focusedPanel: p.id === focusedPanelId,
       })),
   );
-  if (chats.length === 0) return null;
-
-  const sameProject = projectName
+  const pool = projectName
     ? chats.filter((c) => c.tab.projectId === projectName || c.tab.metadata?.projectName === projectName)
-    : [];
-  const pool = sameProject.length > 0 ? sameProject : chats;
+    : chats;
+  if (pool.length === 0) return null;
 
   // Panel focus only separates chats that are BOTH on screen. For chats nobody has
   // in view, the panel it happens to live in says nothing about which one the user
@@ -97,10 +97,13 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
  * user happened to select last. Only a new tab may also carry an image (a data URL, e.g. a
  * canvas screenshot): the composer of a *live* tab has its own paste/drop path for that, and
  * bolting a second one onto the cross-tab event would duplicate it for no live caller.
+ *
+ * `autoSend` (with `newTab`) sends the text from the new chat instead, for an action whose
+ * whole point is to start a turn ("Fix with AI").
  */
 export function sendToChat(opts: {
   text: string; label?: string; projectName?: string | null; newTab?: boolean;
-  imageDataUrl?: string; imageName?: string;
+  imageDataUrl?: string; imageName?: string; asContext?: boolean; autoSend?: boolean;
 }): void {
   const { text, label, projectName } = opts;
   if (!text.trim()) return;
@@ -123,7 +126,21 @@ export function sendToChat(opts: {
     // Lazy-mounted tab: it has no listener yet, so leave the text in its metadata
     // for the composer to pick up on mount.
     const tab = Object.values(store.panels).flatMap((p) => p.tabs).find((t) => t.id === targetTabId);
-    store.updateTab(targetTabId, { metadata: { ...tab?.metadata, pendingMessage: text } });
+    store.updateTab(targetTabId, { metadata: { ...tab?.metadata, ...(opts.asContext
+      ? { pendingContexts: [...((tab?.metadata?.pendingContexts as Array<{ text: string; label?: string }>) ?? []), { text, label }] }
+      : { pendingMessage: text }) } });
+    return;
+  }
+
+  if (opts.newTab && opts.autoSend) {
+    const tabId = store.openTab({
+      type: "chat",
+      title: "Chat",
+      projectId: null,
+      metadata: projectName ? { projectName } : {},
+      closable: true,
+    });
+    void sendOnceMounted(tabId, text, label);
     return;
   }
 
@@ -133,9 +150,38 @@ export function sendToChat(opts: {
     projectId: null,
     metadata: {
       ...(projectName ? { projectName } : {}),
-      pendingMessage: text,
+      ...(opts.asContext ? { pendingContexts: [{ text, label }] } : { pendingMessage: text }),
       ...(opts.imageDataUrl ? { pendingAttachmentDataUrl: opts.imageDataUrl, pendingAttachmentName: opts.imageName } : {}),
     },
     closable: true,
   });
+}
+
+// Generous: the first chat a page opens has to fetch the chat chunk before its composer exists.
+const MOUNT_RETRY_MS = 10_000;
+const MOUNT_RETRY_INTERVAL_MS = 50;
+
+/**
+ * A tab opened by the same call has not rendered yet, so nothing answers the first events.
+ * Keep addressing it until its composer acks — idle and empty, it then sends the text itself —
+ * and leave the text as the draft if it never does, so a slow mount costs a keypress rather
+ * than the request.
+ */
+async function sendOnceMounted(tabId: string, text: string, label?: string): Promise<void> {
+  const deadline = Date.now() + MOUNT_RETRY_MS;
+  do {
+    let acked = false;
+    const onAck = () => { acked = true; };
+    window.addEventListener(SEND_TO_CHAT_ACK_EVENT, onAck);
+    window.dispatchEvent(
+      new CustomEvent<SendToChatDetail>(SEND_TO_CHAT_EVENT, { detail: { text, label, targetTabId: tabId, autoSend: true } }),
+    );
+    window.removeEventListener(SEND_TO_CHAT_ACK_EVENT, onAck);
+    if (acked) return;
+    await new Promise((resolve) => setTimeout(resolve, MOUNT_RETRY_INTERVAL_MS));
+  } while (Date.now() < deadline);
+
+  const store = usePanelStore.getState();
+  const tab = Object.values(store.panels).flatMap((p) => p.tabs).find((t) => t.id === tabId);
+  if (tab) store.updateTab(tabId, { metadata: { ...tab.metadata, pendingMessage: text } });
 }

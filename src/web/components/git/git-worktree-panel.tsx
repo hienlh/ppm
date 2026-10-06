@@ -57,11 +57,11 @@ export function GitWorktreePanel({ projectName, projectPath }: GitWorktreePanelP
     } finally {
       setLoading(false);
     }
-  }, [projectName]);
+  }, [projectName, gitUrl]);
 
-  // Fetch when first expanded
+  // Read at once, so the folded heading can say how many there are.
   useEffect(() => {
-    if (expanded) fetchWorktrees();
+    fetchWorktrees();
   }, [expanded, fetchWorktrees]);
 
   async function handleRemove(force = false) {
@@ -92,11 +92,11 @@ export function GitWorktreePanel({ projectName, projectPath }: GitWorktreePanelP
   }
 
   return (
-    <div className="border-t border-border">
+    <div>
       {/* Section header */}
       <button
         type="button"
-        className="flex items-center justify-between w-full px-3 py-2 hover:bg-muted/50 transition-colors"
+        className="flex h-11 md:h-8 items-center justify-between w-full px-2.5 text-text-3 hover:text-text-2 transition-colors"
         onClick={() => setExpanded((v) => !v)}
       >
         <div className="flex items-center gap-1.5">
@@ -105,11 +105,11 @@ export function GitWorktreePanel({ projectName, projectPath }: GitWorktreePanelP
           ) : (
             <ChevronRight className="size-3.5 text-muted-foreground" />
           )}
-          <span className="text-xs font-medium text-muted-foreground uppercase">
+          <span className="text-[10.5px] font-semibold uppercase tracking-[.07em]">
             Worktrees
           </span>
           {worktrees.length > 0 && (
-            <span className="text-[10px] bg-muted text-muted-foreground rounded px-1">
+            <span className="rounded-full bg-text/8 px-1.5 font-mono text-[10.5px] font-medium leading-[14px] text-text-2">
               {worktrees.length}
             </span>
           )}

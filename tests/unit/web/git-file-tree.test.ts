@@ -31,10 +31,13 @@ import { resolve } from "node:path";
 import { buildTree, compactTree, type TreeNode } from "../../../src/web/lib/git-file-tree";
 import type { GitFileChange } from "../../../src/types/git";
 
-const src = readFileSync(
-  resolve(import.meta.dir, "../../../src/web/components/git/git-status-panel.tsx"),
-  "utf8",
-);
+const read = (rel: string) => readFileSync(resolve(import.meta.dir, "../../../src/web", rel), "utf8");
+/** The folder rows and the rails. */
+const src = read("components/git/git-change-tree.tsx");
+/** The file row. */
+const rowSrc = read("components/git/git-change-row.tsx");
+/** The shared start-ellipsis the file row uses for its name and folder. */
+const ellipsisSrc = read("components/ui/start-ellipsis.tsx");
 
 const change = (path: string): GitFileChange =>
   ({ path, status: "M" }) as unknown as GitFileChange;
@@ -48,7 +51,7 @@ const treeOf = (paths: string[]) => compactTree(buildTree(paths.map(change)));
  */
 function region(from: string, to?: string): string {
   const i = src.indexOf(from);
-  if (i < 0) throw new Error(`no ${from} in the panel`);
+  if (i < 0) throw new Error(`no ${from} in the tree`);
   if (to === undefined) return src.slice(i); // last declaration in the file
   const j = src.indexOf(to, i + 1);
   if (j <= i) throw new Error(`no ${to} after ${from}`);
@@ -119,10 +122,10 @@ describe("a chain of single-child directories is one row", () => {
 });
 
 describe("names ellipsize from the start", () => {
-  // Both rows, checked separately: the two are written out independently, so a
-  // file-wide match is satisfied by whichever one still has it.
+  // Each is checked where it is written: a file-wide match would be satisfied
+  // by whichever row still has it.
   for (const [label, body] of [
-    ["the filename", region("function StartEllipsis", "export function GitStatusPanel")],
+    ["the shared component the file row uses", ellipsisSrc],
     ["the folder path", region("function TreeNodeView")],
   ] as const) {
     it(`${label} uses a right-to-left box with an isolate, not a plain truncate`, () => {
@@ -134,19 +137,25 @@ describe("names ellipsize from the start", () => {
     });
   }
 
+  it("puts both the file's name and its folder through it", () => {
+    expect(rowSrc).toMatch(/from "@\/components\/ui\/start-ellipsis"/);
+    expect(rowSrc).toContain("<StartEllipsis>{name}</StartEllipsis>");
+    expect(rowSrc).toContain("<StartEllipsis>{dir}</StartEllipsis>");
+  });
+
   it("does not reintroduce a split name pinned beside an ellipsized head", () => {
     // That was the first attempt: flex gives the head a fractional width while
     // the ellipsis lands on a whole character, so a ragged gap opened in the
     // middle of every truncated name.
     expect(src).not.toMatch(/splitFileName/);
+    expect(rowSrc).not.toMatch(/splitFileName/);
   });
 
   it("renders the filename at body size rather than as metadata", () => {
     // design-guidelines.md rule 6: text-xs is for labels, not for the thing the
-    // row is about. The status letter stays small and monospaced on purpose.
-    const fileRow = src.slice(src.indexOf("function FileRow"), src.indexOf("function TreeView"));
-    expect(fileRow).toMatch(/text-sm/);
-    expect(fileRow).not.toMatch(/text-xs font-mono truncate/);
+    // row is about. The folder line under it is the metadata.
+    expect(rowSrc).toMatch(/"flex min-w-0 text-sm md:text-\[13px\] font-medium"/);
+    expect(rowSrc).not.toMatch(/text-xs font-mono truncate/);
   });
 });
 
@@ -175,21 +184,26 @@ describe("the rails are drawn by the container, not per row", () => {
 });
 
 describe("a row is thumb-sized on a touch screen", () => {
-  /** Tailwind's spacing scale is 4px per unit; `text-sm` has a 20px line box. */
+  /** Tailwind's spacing scale is 4px per unit. */
   const REM_STEP = 4;
-  const LINE_BOX = 20;
   const MIN_TARGET = 44;
 
-  it("is 44px tall below md and compact where there is a pointer", () => {
-    // Computed rather than pinned to a class string. The previous version of
-    // this test asserted `py-2.5` under a comment that said 44px — 10 + 20 + 10
-    // is 40, so it pinned the shortfall it was written to prevent.
-    const rows = [...src.matchAll(/rounded(?: pl-1)? py-([\d.]+) md:py-1\b/g)];
+  it("is at least 44px tall below md and compact where there is a pointer", () => {
+    // Computed rather than pinned to a class string: an earlier version of this
+    // test asserted `py-2.5` under a comment that said 44px — 10 + 20 + 10 is
+    // 40, so it pinned the shortfall it was written to prevent.
+    const rows = [...`${rowSrc}\n${src}`.matchAll(/\bmin-h-(\d+) md:min-h-(\d+)\b/g)];
     expect(rows.length).toBeGreaterThanOrEqual(2); // the file row and the folder row
-    for (const [whole, pad] of rows) {
-      const height = Number(pad) * REM_STEP * 2 + LINE_BOX;
-      expect(height, `${whole} is ${height}px`).toBeGreaterThanOrEqual(MIN_TARGET);
+    for (const [whole, phone, desktop] of rows) {
+      expect(Number(phone) * REM_STEP, whole).toBeGreaterThanOrEqual(MIN_TARGET);
+      expect(Number(desktop)).toBeLessThan(Number(phone));
     }
-    expect(src).not.toMatch(/rounded pl-1 py-px/);
+  });
+
+  it("gives the checkbox the row's height and a 48px column on a phone", () => {
+    const parts = read("components/git/git-change-parts.tsx");
+    const cell = parts.slice(parts.indexOf("export function CheckCell"));
+    expect(cell).toMatch(/\bw-12 md:w-\[30px\]/);
+    expect(cell).toMatch(/self-stretch/);
   });
 });

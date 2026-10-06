@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { configService, FILE_CONFIG_KEYS } from "../../services/config.service.ts";
-import { getConfigValue, setConfigValue, listPairedChats, getPairingByCode, approvePairing, revokePairing, getPPMBotMemories, getDb } from "../../services/db.service.ts";
+import { getConfigValue, setConfigValue, listPairedChats, revokePairing, getPPMBotMemories, getDb } from "../../services/db.service.ts";
 import {
   validateAIProviderConfig,
   validateCodexContextConfig,
@@ -13,9 +13,16 @@ import {
   type ThemeConfig,
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
+import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
+import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
+import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("settings");
+const ppmbotLog = createLogger("ppmbot");
 
 export const settingsRoutes = new Hono();
 
@@ -68,6 +75,8 @@ settingsRoutes.put("/device-name", async (c) => {
       }
     } catch (e) {
       cloud_error = (e as Error).message;
+      // The response is a 200 that carries the error, so this is the only place it is recorded.
+      log.warn(`Device name saved, cloud sync failed: ${cloud_error.slice(0, 200)}`);
     }
 
     return c.json(ok({ device_name: trimmed, cloud_synced, cloud_error }));
@@ -127,17 +136,10 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   sidebarActiveTab: (v) => typeof v === "string",
   sidebarTabOrder: (v) => Array.isArray(v) && v.length <= 50 && v.every((t) => typeof t === "string"),
   jiraEnabled: (v) => typeof v === "boolean",
-  // Database sidebar tree expansion: { conns: number[], groups: string[], tables: string[] }
-  dbSidebarExpanded: (v) => {
-    if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-    const { conns, groups, tables } = v as Record<string, unknown>;
-    const strList = (x: unknown, max: number) =>
-      Array.isArray(x) && x.length <= max && x.every((s) => typeof s === "string" && s.length <= 300);
-    return (
-      Array.isArray(conns) && conns.length <= 200 && conns.every((n) => typeof n === "number") &&
-      strList(groups, 200) && strList(tables, 500)
-    );
-  },
+  // Database sidebar tree: open connections, expanded nodes, empty folders (see db-explorer-prefs)
+  dbExplorer: isDbExplorerPrefs,
+  // ⋯ Lookup in a table's filter row: the column that describes a row, per table (see db-lookup-prefs)
+  dbLookupDescriptions: isLookupDescriptions,
   // OS Explorer window chrome override — "auto" follows the host platform
   explorerSkin: (v) => v === "auto" || v === "windows" || v === "macos",
   // Project switcher prefs
@@ -188,6 +190,7 @@ settingsRoutes.put("/ai", async (c) => {
       default_provider?: string;
       new_chat_provider_mode?: NewChatProviderMode;
       share_provider_context?: boolean;
+      tab_tools?: boolean;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
@@ -202,6 +205,9 @@ settingsRoutes.put("/ai", async (c) => {
 
     if ("share_provider_context" in body && typeof body.share_provider_context !== "boolean") {
       return c.json(err("share_provider_context must be a boolean"), 400);
+    }
+    if ("tab_tools" in body && typeof body.tab_tools !== "boolean") {
+      return c.json(err("tab_tools must be a boolean"), 400);
     }
 
     // Validate each provider config
@@ -226,6 +232,7 @@ settingsRoutes.put("/ai", async (c) => {
       ...currentAi,
       new_chat_provider_mode: body.new_chat_provider_mode ?? currentAi.new_chat_provider_mode ?? "default",
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
+      ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
     if (body.providers) {
@@ -327,36 +334,62 @@ settingsRoutes.put("/keybindings", async (c) => {
   }
 });
 
-// ── Telegram (bot_token managed via PPMBot settings) ────────────────
+// ── Telegram ───────────────────────────────────────────────────────
+// Two bots: `/telegram` is the one Notifications send through, `/clawbot/telegram` (below)
+// is PPMBot's. See `services/telegram-bots.ts`.
 
-/** GET /settings/telegram — return current telegram config (masks bot_token) */
+/** The bot a PUT asked for, checked with Telegram (getMe) before it is kept. An empty token removes the bot. */
+async function checkedBot(
+  requested: string | undefined,
+  current: TelegramConfig,
+): Promise<{ bot: TelegramConfig } | { error: string; status: 400 | 502 }> {
+  const token = (requested ?? current.bot_token).trim();
+  if (!token) return { bot: { bot_token: "" } };
+  const { getBotIdentity } = await import("../../services/telegram-bot-api.ts");
+  const identity = await getBotIdentity(token);
+  if (!identity.ok) return { error: identity.message, status: identity.reason === "invalid" ? 400 : 502 };
+  return { bot: { bot_token: token, bot_username: identity.username } };
+}
+
+/** A bot as the browser may see it: the token is a password for the bot, so only its start. */
+function maskedBot(bot: TelegramConfig | undefined) {
+  return {
+    bot_token: bot?.bot_token ? `${bot.bot_token.slice(0, 6)}...` : "",
+    bot_username: bot?.bot_token ? bot.bot_username ?? null : null,
+  };
+}
+
+/** GET /settings/telegram — the notification bot (masks bot_token) */
 settingsRoutes.get("/telegram", (c) => {
-  const tg = configService.get("telegram") as TelegramConfig | undefined;
-  if (!tg) return c.json(ok({ bot_token: "" }));
-  return c.json(ok({
-    bot_token: tg.bot_token ? `${tg.bot_token.slice(0, 6)}...` : "",
-  }));
+  return c.json(ok(maskedBot(configService.get("telegram") as TelegramConfig | undefined)));
 });
 
-/** PUT /settings/telegram — save telegram bot_token */
+/**
+ * PUT /settings/telegram — save the notification bot's token.
+ *
+ * Telegram is asked whether the token is real before it is kept: a mistyped one used to
+ * save as "(saved)" and then fail in silence.
+ */
 settingsRoutes.put("/telegram", async (c) => {
   try {
     const body = await c.req.json<{ bot_token?: string }>();
     const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "" };
-    const updated: TelegramConfig = {
-      bot_token: body.bot_token ?? current.bot_token,
-    };
-    configService.set("telegram", updated);
+    const checked = await checkedBot(body.bot_token, current);
+    if ("error" in checked) return c.json(err(checked.error), checked.status);
+    configService.set("telegram", checked.bot);
     configService.save();
-    return c.json(ok({
-      bot_token: updated.bot_token ? `${updated.bot_token.slice(0, 6)}...` : "",
-    }));
+    if (checked.bot.bot_token !== current.bot_token) {
+      // An open connect link names the old bot.
+      const { notifyConnect } = await import("../../services/telegram-connect.service.ts");
+      notifyConnect.cancel();
+    }
+    return c.json(ok(maskedBot(checked.bot)));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
 });
 
-/** POST /settings/telegram/test — send a test notification to all approved paired chats */
+/** POST /settings/telegram/test — send a test notification to every connected chat */
 settingsRoutes.post("/telegram/test", async (c) => {
   try {
     const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "" };
@@ -393,6 +426,8 @@ settingsRoutes.put("/auth/password", async (c) => {
     const auth = configService.get("auth");
     configService.set("auth", { ...auth, token: trimmed });
     configService.save();
+    // Every other signed-in client has to sign in again. Never the value, nor its length.
+    log.info("Access password changed");
 
     return c.json(ok({ token: trimmed }));
   } catch (e) {
@@ -534,7 +569,10 @@ settingsRoutes.put("/clawbot", async (c) => {
       } else if (!updated.enabled && ppmbotService.isRunning) {
         ppmbotService.stop();
       }
-    } catch { /* PPMBot module not loaded yet — OK */ }
+    } catch (e) {
+      // The response still says the new state; the bot did not follow it.
+      ppmbotLog.error(`${updated.enabled ? "Start" : "Stop"} after settings change failed:`, e);
+    }
 
     return c.json(ok(updated));
   } catch (e) {
@@ -547,28 +585,83 @@ settingsRoutes.get("/clawbot/paired", (c) => {
   return c.json(ok(listPairedChats()));
 });
 
-/** POST /settings/clawbot/paired/approve — approve pairing by code */
-settingsRoutes.post("/clawbot/paired/approve", async (c) => {
+/** DELETE /settings/clawbot/paired/:chatId — revoke pairing */
+settingsRoutes.delete("/clawbot/paired/:chatId", (c) => {
+  revokePairing(c.req.param("chatId"));
+  return c.json(ok({ revoked: true }));
+});
+
+// ── PPMBot's Telegram bot ──────────────────────────────────────
+
+/** GET /settings/clawbot/telegram — PPMBot's bot, the chats that may use it, and an open connect link */
+settingsRoutes.get("/clawbot/telegram", async (c) => {
+  const { getPPMBotBot, sameBot } = await import("../../services/telegram-bots.ts");
+  const { ppmbotConnect } = await import("../../services/telegram-connect.service.ts");
+  const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
+  const bot = getPPMBotBot();
+  const notifyToken = (configService.get("telegram") as TelegramConfig | undefined)?.bot_token ?? "";
+  const rows = listPairedChats();
+  const nameOf = (row: (typeof rows)[number]) => row.display_name || `Chat ${row.telegram_chat_id}`;
+  const status: PPMBotTelegramStatus = {
+    configured: !!bot.bot_token,
+    // Tokens saved before PPM stored the bot's name get it now, the first time it is needed.
+    botUsername: bot.bot_token ? bot.bot_username ?? await ppmbotConnect.botUsername().catch(() => null) : null,
+    sharedWithNotifications: !!bot.bot_token && sameBot(bot.bot_token, notifyToken),
+    enabled: (configService.get("clawbot") as PPMBotConfig | undefined)?.enabled === true,
+    running: ppmbotService.isRunning,
+    chats: rows.filter((row) => row.status === "approved").map((row) => ({ chatId: row.telegram_chat_id, name: nameOf(row) })),
+    connect: ppmbotConnect.status(),
+  };
+  return c.json(ok(status));
+});
+
+/** PUT /settings/clawbot/telegram — PPMBot's bot token, checked with Telegram first. An empty token removes the bot. */
+settingsRoutes.put("/clawbot/telegram", async (c) => {
   try {
-    const { code } = await c.req.json<{ code: string }>();
-    const pairing = getPairingByCode(code);
-    if (!pairing) return c.json(err("Invalid pairing code"), 404);
-    approvePairing(pairing.telegram_chat_id);
-    // Notify user on Telegram
-    try {
-      const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
-      await ppmbotService.notifyPairingApproved(pairing.telegram_chat_id);
-    } catch { /* OK */ }
-    return c.json(ok({ approved: pairing.telegram_chat_id }));
+    const body = await c.req.json<{ bot_token?: string }>();
+    const { getPPMBotBot, setPPMBotBot } = await import("../../services/telegram-bots.ts");
+    const current = getPPMBotBot();
+    const checked = await checkedBot(body.bot_token, current);
+    if ("error" in checked) return c.json(err(checked.error), checked.status);
+    setPPMBotBot(checked.bot);
+
+    if (checked.bot.bot_token !== current.bot_token) {
+      // An open connect link names the old bot.
+      const { ppmbotConnect } = await import("../../services/telegram-connect.service.ts");
+      ppmbotConnect.cancel();
+      // PPMBot reads with the token it started with; without this, saving the token after
+      // switching PPMBot on left it stopped until the next restart.
+      try {
+        const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
+        if (ppmbotService.isRunning) ppmbotService.stop();
+        if ((configService.get("clawbot") as PPMBotConfig | undefined)?.enabled && checked.bot.bot_token) await ppmbotService.start();
+      } catch (e) {
+        // The response still says saved; PPMBot is not running with the new token.
+        ppmbotLog.error("Restart after token change failed:", e);
+      }
+    }
+    return c.json(ok(maskedBot(checked.bot)));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
 });
 
-/** DELETE /settings/clawbot/paired/:chatId — revoke pairing */
-settingsRoutes.delete("/clawbot/paired/:chatId", (c) => {
-  revokePairing(c.req.param("chatId"));
-  return c.json(ok({ revoked: true }));
+/** POST /settings/clawbot/telegram/connect — a one-time link that lets the chat opening it use PPMBot */
+settingsRoutes.post("/clawbot/telegram/connect", async (c) => {
+  const { ppmbotConnect, TelegramConnectError } = await import("../../services/telegram-connect.service.ts");
+  try {
+    return c.json(ok(await ppmbotConnect.start()));
+  } catch (e) {
+    if (e instanceof TelegramConnectError) return c.json(err(e.message), e.status);
+    throw e;
+  }
+});
+
+/** DELETE /settings/clawbot/telegram/connect — withdraw the open link */
+settingsRoutes.delete("/clawbot/telegram/connect", async (c) => {
+  const { ppmbotConnect } = await import("../../services/telegram-connect.service.ts");
+  ppmbotConnect.cancel();
+  return c.json(ok({ cancelled: true }));
 });
 
 /** GET /settings/clawbot/memories?project=xxx — list memories for a project */
@@ -647,6 +740,8 @@ settingsRoutes.get("/clawbot/tasks", (c) => {
     ).all(limit);
     return c.json(ok(rows));
   } catch (e) {
+    // Answered as an empty list, so the failure is recorded nowhere else.
+    log.error("Bot task list failed:", e);
     return c.json(ok([]));
   }
 });

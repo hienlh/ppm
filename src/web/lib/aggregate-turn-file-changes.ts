@@ -1,8 +1,9 @@
 /**
  * Aggregate the file mutations of a single assistant turn.
  *
- * Feeds the change tray (see turn-change-pill.tsx). Pure — no I/O, no React — so it
- * works identically on live-streamed events and on messages parsed back from a JSONL
+ * Feeds the change tray (see turn-change-pill.tsx), and through `sessionFileWrites` the
+ * session changes bar above the composer. Pure — no I/O, no React — so it works
+ * identically on live-streamed events and on messages parsed back from a JSONL
  * transcript.
  *
  * Note on diffs: Edit's `old_string`/`new_string` are disjoint *fragments* at unknown
@@ -103,6 +104,28 @@ function extractChange(tool: string, input: Record<string, unknown>, result?: st
   }
 }
 
+/**
+ * A codex patch that touched several files is one Edit/Write call whose `files` lists every
+ * file (`changeToToolUse` in codex-patch.ts); its own fields describe only the first, which
+ * the card shows.
+ */
+function patchFiles(tool: string, input: Record<string, unknown>): RawChange[] | null {
+  if ((tool !== "Edit" && tool !== "Write") || !Array.isArray(input.files)) return null;
+  const out: RawChange[] = [];
+  for (const f of input.files as unknown[]) {
+    if (!f || typeof f !== "object") continue;
+    const file = f as Record<string, unknown>;
+    const filePath = str(file.file_path);
+    if (!filePath) continue;
+    out.push({
+      filePath,
+      op: file.op === "add" ? "create" : "edit",
+      fragments: [{ oldStr: str(file.old_string), newStr: str(file.new_string) }],
+    });
+  }
+  return out.length > 0 ? out : null;
+}
+
 /** Index tool_result output by toolUseId, recursing into sub-agent children. */
 function collectResults(events: ChatEvent[] | undefined, out: Map<string, string>): void {
   if (!events) return;
@@ -134,40 +157,43 @@ function walk(
 
     const input = ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : null;
     if (!input) continue;
-    const raw = extractChange(ev.tool, input, ev.toolUseId ? results.get(ev.toolUseId) : undefined);
-    if (!raw) continue;
-
-    let entry = files.get(raw.filePath);
-    if (!entry) {
-      // Map insertion order gives first-touched ordering for free.
-      entry = {
-        filePath: raw.filePath,
-        op: raw.op,
-        editCount: 0,
-        linesAdded: 0,
-        linesRemoved: 0,
-        edits: [],
-        viaSubagent: false,
-      };
-      files.set(raw.filePath, entry);
-    }
-    if (OP_RANK[raw.op] > OP_RANK[entry.op]) entry.op = raw.op;
-    if (viaSubagent) entry.viaSubagent = true;
-
-    raw.fragments.forEach((frag, editIndex) => {
-      const { added, removed } = countLines(frag.oldStr, frag.newStr);
-      entry!.linesAdded += added;
-      entry!.linesRemoved += removed;
-      entry!.editCount += 1;
-      entry!.edits.push({
-        ...frag,
-        toolUseId: ev.toolUseId,
-        editIndex,
-        editRef: ev.toolUseId ? `${ev.toolUseId}-${editIndex}` : undefined,
-        viaSubagent,
-      });
-    });
+    const single = extractChange(ev.tool, input, ev.toolUseId ? results.get(ev.toolUseId) : undefined);
+    const raws = patchFiles(ev.tool, input) ?? (single ? [single] : []);
+    for (const raw of raws) addChange(files, raw, ev.toolUseId, viaSubagent);
   }
+}
+
+function addChange(files: Map<string, TurnFileChange>, raw: RawChange, toolUseId: string | undefined, viaSubagent: boolean): void {
+  let entry = files.get(raw.filePath);
+  if (!entry) {
+    // Map insertion order gives first-touched ordering for free.
+    entry = {
+      filePath: raw.filePath,
+      op: raw.op,
+      editCount: 0,
+      linesAdded: 0,
+      linesRemoved: 0,
+      edits: [],
+      viaSubagent: false,
+    };
+    files.set(raw.filePath, entry);
+  }
+  if (OP_RANK[raw.op] > OP_RANK[entry.op]) entry.op = raw.op;
+  if (viaSubagent) entry.viaSubagent = true;
+
+  raw.fragments.forEach((frag, editIndex) => {
+    const { added, removed } = countLines(frag.oldStr, frag.newStr);
+    entry!.linesAdded += added;
+    entry!.linesRemoved += removed;
+    entry!.editCount += 1;
+    entry!.edits.push({
+      ...frag,
+      toolUseId,
+      editIndex,
+      editRef: toolUseId ? `${toolUseId}-${editIndex}` : undefined,
+      viaSubagent,
+    });
+  });
 }
 
 /** Files mutated by one turn, in the order the turn first touched them. */
@@ -190,4 +216,70 @@ export function collectTurnMessages(messages: ChatMessage[], lastAssistantIndex:
     out.unshift(messages[i]!);
   }
   return out;
+}
+
+/** Tools that run a shell command: they name no file, but any of them can change files. */
+const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
+
+interface MessageFileWrites {
+  /** Files the message's tools write, first-touched first. */
+  paths: string[];
+  /** Ids of the calls that can change files (file tools, shell commands), and of every call with a result. */
+  writeIds: string[];
+  resultIds: string[];
+}
+
+/**
+ * Keyed by message object: the chat replaces a message whenever anything in it changes,
+ * so a finished message keeps its entry and only the one streaming is walked again.
+ */
+const fileWritesCache = new WeakMap<ChatMessage, MessageFileWrites>();
+
+function fileWritesOf(msg: ChatMessage): MessageFileWrites {
+  const cached = fileWritesCache.get(msg);
+  if (cached) return cached;
+  const paths = new Set<string>();
+  const writeIds: string[] = [];
+  const resultIds: string[] = [];
+  const visit = (events: ChatEvent[] | undefined) => {
+    for (const ev of events ?? []) {
+      if (ev.type === "tool_result" && ev.toolUseId) resultIds.push(ev.toolUseId);
+      if (ev.type !== "tool_use") continue;
+      if (ev.toolUseId && (ev as { result?: unknown }).result != null) resultIds.push(ev.toolUseId);
+      visit(ev.children);
+      if (SHELL_TOOLS.has(ev.tool) && ev.toolUseId) writeIds.push(ev.toolUseId);
+      if (!FILE_MUTATION_TOOLS.has(ev.tool)) continue;
+      const input = ev.input && typeof ev.input === "object" ? (ev.input as Record<string, unknown>) : null;
+      if (!input) continue;
+      const single = extractChange(ev.tool, input);
+      const raws = patchFiles(ev.tool, input) ?? (single ? [single] : []);
+      for (const raw of raws) paths.add(raw.filePath);
+      if (raws.length > 0 && ev.toolUseId) writeIds.push(ev.toolUseId);
+    }
+  };
+  visit(msg.events);
+  const found = { paths: [...paths], writeIds, resultIds };
+  fileWritesCache.set(msg, found);
+  return found;
+}
+
+/**
+ * Every file a session's tools wrote, and how many of the calls that can change files — those
+ * writes and every shell command — have finished. The session changes bar asks the server
+ * again whenever either moves: a write that has only been announced has not touched the disk
+ * yet, and a shell command's files are known only to the server.
+ */
+export function sessionFileWrites(messages: ChatMessage[]): { paths: string[]; settled: number } {
+  const paths = new Set<string>();
+  const writes = new Set<string>();
+  const results = new Set<string>();
+  for (const msg of messages) {
+    const found = fileWritesOf(msg);
+    for (const p of found.paths) paths.add(p);
+    for (const id of found.writeIds) writes.add(id);
+    for (const id of found.resultIds) results.add(id);
+  }
+  let settled = 0;
+  for (const id of writes) if (results.has(id)) settled++;
+  return { paths: [...paths], settled };
 }

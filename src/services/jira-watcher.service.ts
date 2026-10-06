@@ -5,6 +5,9 @@ import { jiraDebugService } from "./jira-debug-session.service.ts";
 import { getDb } from "./db.service.ts";
 import { notificationService } from "./notification.service.ts";
 import type { JiraWatcherRow, JiraIssue } from "../types/jira.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("jira");
 
 const INTERVAL_MIN = 30_000;   // 30s
 const INTERVAL_MAX = 3_600_000; // 60m
@@ -16,11 +19,13 @@ export function clampInterval(ms: number): number {
 
 class JiraWatcherService {
   private activeTimers = new Map<number, Timer>();
+  /** The poll failure last logged per watcher — see `pollFailed`. */
+  private pollFailures = new Map<number, string>();
 
   async startAll(): Promise<void> {
     const watchers = getAllEnabledWatchers();
     for (const w of watchers) this.startWatcher(w.id, w.interval_ms);
-    if (watchers.length) console.log(`[jira] Started ${watchers.length} watcher(s)`);
+    if (watchers.length) log.info(`Started ${watchers.length} watcher(s)`);
   }
 
   stopAll(): void {
@@ -33,15 +38,14 @@ class JiraWatcherService {
   startWatcher(id: number, intervalMs: number): void {
     if (this.activeTimers.has(id)) this.stopWatcher(id);
     const interval = clampInterval(intervalMs);
-    const timer = setInterval(() => this.pollWatcher(id).catch((e) =>
-      console.warn(`[jira] Poll error watcher ${id}:`, e.message),
-    ), interval);
+    const timer = setInterval(() => this.pollWatcher(id).catch((e) => this.pollFailed(id, e)), interval);
     this.activeTimers.set(id, timer);
   }
 
   stopWatcher(id: number): void {
     const timer = this.activeTimers.get(id);
     if (timer) { clearInterval(timer); this.activeTimers.delete(id); }
+    this.pollFailures.delete(id);
   }
 
   isRunning(id: number): boolean {
@@ -55,13 +59,17 @@ class JiraWatcherService {
     if (!watcher) return 0;
 
     const creds = getDecryptedCredentials(watcher.jira_config_id);
-    if (!creds) { console.warn(`[jira] No credentials for config ${watcher.jira_config_id}`); return 0; }
+    if (!creds) {
+      this.pollFailed(watcher.id, new Error(`No credentials for config ${watcher.jira_config_id}`), watcher.name);
+      return 0;
+    }
 
     // Check rate limit pause
     const rlState = getRateLimitState(creds.baseUrl);
     if (rlState.pausedUntil && Date.now() < rlState.pausedUntil) return 0;
 
     const isFirstPoll = !watcher.last_polled_at;
+    const startedAt = Date.now();
 
     try {
       // First auto-poll = baseline only: just set last_polled_at, skip inserts
@@ -69,7 +77,8 @@ class JiraWatcherService {
       if (isFirstPoll && source === "auto") {
         await searchIssues(creds, watcher.jql); // validate JQL works
         getDb().query("UPDATE jira_watchers SET last_polled_at = datetime('now') WHERE id = ?").run(watcherId);
-        console.log(`[jira] Watcher "${watcher.name}": baseline poll done (skipped inserts)`);
+        log.info(`Watcher "${watcher.name}": baseline poll done (skipped inserts)`);
+        this.pollSucceeded(watcher);
         return 0;
       }
 
@@ -86,7 +95,7 @@ class JiraWatcherService {
             "watcher", source,
           ));
         } catch (e: any) {
-          console.error(`[jira] insertResult FK error for watcher ${watcher.id}, issue ${issue.key}:`, e.message);
+          log.error(`insertResult FK error for watcher ${watcher.id}, issue ${issue.key}:`, e.message);
           throw e;
         }
         if (inserted && resultId) {
@@ -94,7 +103,7 @@ class JiraWatcherService {
           newResultIds.push(resultId);
 
           if (watcher.mode === "notify") {
-            notificationService.broadcast("done", {
+            notificationService.broadcast("jira", {
               title: `Jira: ${issue.key}`,
               body: issue.fields.summary,
               project: "", sessionId: "",
@@ -107,18 +116,21 @@ class JiraWatcherService {
       if (watcher.mode === "debug" && source === "auto" && newResultIds.length > 0 && newResultIds.length <= 5) {
         for (const rid of newResultIds) {
           try { jiraDebugService.enqueue(rid); } catch (e: any) {
-            console.warn(`[jira] enqueue debug error resultId=${rid}:`, e.message);
+            log.warn(`enqueue debug error resultId=${rid}:`, e.message);
           }
         }
       }
 
       // Update last_polled_at
       getDb().query("UPDATE jira_watchers SET last_polled_at = datetime('now') WHERE id = ?").run(watcherId);
-      if (newCount) console.log(`[jira] Watcher "${watcher.name}": ${newCount} new issue(s)`);
+      const polled = `Watcher "${watcher.name}" polled: ${response.issues.length} issue(s), ${newCount} new in ${Date.now() - startedAt}ms`;
+      if (newCount) log.info(polled);
+      else log.debug(polled);
+      this.pollSucceeded(watcher);
       return newCount;
     } catch (e) {
       if (e instanceof JiraApiError && e.status === 429) {
-        console.warn(`[jira] Rate limited — pausing watchers for config ${watcher.jira_config_id}`);
+        log.warn(`Rate limited — pausing watchers for config ${watcher.jira_config_id}`);
         this.pauseConfigWatchers(watcher.jira_config_id);
       }
       throw e;
@@ -126,6 +138,36 @@ class JiraWatcherService {
   }
 
   // ── Internal helpers ──────────────────────────────────────────────
+
+  /**
+   * A watcher polls every 30 s to 60 min, and one with bad credentials or a broken JQL fails the
+   * same way every time: a failure is logged when it changes, and repeats only at DEBUG. A refusal
+   * (4xx) lasts until someone fixes it, so it is an error; a network failure or timeout may pass.
+   */
+  private pollFailed(id: number, e: unknown, name?: string): void {
+    if (e instanceof JiraApiError && e.status === 429) return; // pollWatcher logged the pause
+    const msg = (e as Error).message;
+    if (this.pollFailures.get(id) === msg) {
+      log.debug(`Watcher ${id} poll still failing: ${msg}`);
+      return;
+    }
+    this.pollFailures.set(id, msg);
+    const line = `Watcher ${id} "${name ?? this.watcherName(id)}" poll failed: ${msg}`;
+    if (e instanceof JiraApiError && e.status >= 400 && e.status < 500) log.error(line);
+    else log.warn(line);
+  }
+
+  private pollSucceeded(watcher: JiraWatcherRow): void {
+    if (this.pollFailures.delete(watcher.id)) log.info(`Watcher ${watcher.id} "${watcher.name}" polls again`);
+  }
+
+  private watcherName(id: number): string {
+    try {
+      return (getDb().query("SELECT name FROM jira_watchers WHERE id = ?").get(id) as { name: string } | null)?.name ?? "?";
+    } catch {
+      return "?";
+    }
+  }
 
   buildPrompt(watcher: JiraWatcherRow, issue: JiraIssue): string {
     if (watcher.prompt_template) {

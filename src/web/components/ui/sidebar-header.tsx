@@ -11,7 +11,7 @@ export function SidebarHeader({ icon: Icon, title, children }: SidebarHeaderProp
   return (
     <div className="flex items-center gap-1 px-2 py-2 border-b border-border shrink-0">
       <Icon className="size-4 text-primary" />
-      <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary flex-1">{title}</span>
+      <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary flex-1 min-w-0 truncate">{title}</span>
       {children}
     </div>
   );

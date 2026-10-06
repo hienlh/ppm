@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { encodeReply, decodeReply, type ReplyReference } from "../../../src/shared/chat-reply.ts";
+import { providerRegistry } from "../../../src/providers/registry.ts";
+import { describe, it, expect, beforeAll, afterAll, spyOn } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { chatService } from "../../../src/services/chat.service.ts";
-import { getSessionEffort, getSessionThinking } from "../../../src/services/db.service.ts";
+import { getSessionEffort, getSessionThinking, getSessionModel, clearSessionUnread, getSessionUnreadCount } from "../../../src/services/db.service.ts";
 import { THINKING_ADAPTIVE } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 
 const PORT = 19879; // Unique port — avoid conflict with supervisor-resilience (19876)
@@ -851,5 +853,120 @@ describe("listRunningSessions", () => {
 
     await waitForType("done");
     close();
+  });
+});
+
+
+describe("Chat reply delivery", () => {
+  const reference = (sessionId: string): ReplyReference => ({ version: 1, sessionId, providerId: "mock", messageId: "original", role: "assistant", timestamp: "2026-10-01T00:00:00Z", quote: "quoted prior answer <tool> & 😊", truncated: false });
+  it("sends encoded reply to provider, echoes it and replays it on reconnect", async () => {
+    const session = await chatService.createSession("mock", {});
+    const c1 = await connectWs(session.id); const c2 = await connectWs(session.id);
+    await c1.waitForType("session_state"); await c2.waitForType("session_state");
+    const replyTo = reference(session.id);
+    c1.ws.send(JSON.stringify({ type: "message", content: "follow this", replyTo }));
+    const echo = await c2.waitForType("user_message");
+    expect(echo.content).toBe(encodeReply("follow this", replyTo));
+    await c1.waitForType("text");
+    const c3 = await connectWs(session.id);
+    const replay = await c3.waitForType("turn_events");
+    expect(replay.userMessage).toBe(echo.content);
+    await c1.waitForType("done");
+    const history = await chatService.getMessages("mock", session.id);
+    expect(decodeReply(history.find((m) => m.role === "user")!.content).replyTo).toEqual(replyTo);
+    c1.close(); c2.close(); c3.close();
+  });
+  it("pushes the encoded snapshot for now, next and later followups", async () => {
+    const session = await chatService.createSession("mock", {});
+    const client = await connectWs(session.id); await client.waitForType("session_state");
+    const provider = providerRegistry.get("mock")! as any;
+    const originalPush = provider.pushMessage;
+    const captured: Array<{ content: string; priority: string }> = [];
+    provider.pushMessage = async (_id: string, content: string, opts: any) => { captured.push({ content, priority: opts.priority }); };
+    try {
+      client.ws.send(JSON.stringify({ type: "message", content: "first" }));
+      await client.waitForType("text");
+      for (const priority of ["now", "next", "later"]) {
+        client.ws.send(JSON.stringify({ type: "message", content: priority, priority, replyTo: reference(session.id) }));
+        for (let i = 0; i < 100 && captured.length < ["now", "next", "later"].indexOf(priority) + 1; i++) await Bun.sleep(5);
+      }
+      expect(captured.map((v) => v.priority)).toEqual(["now", "next", "later"]);
+      for (const sent of captured) expect(decodeReply(sent.content)).toEqual({ content: sent.priority, replyTo: reference(session.id) });
+      await client.waitForType("done");
+    } finally { if (originalPush) provider.pushMessage = originalPush; else delete provider.pushMessage; client.close(); }
+  });
+  it("rejects wrong session/provider, malformed metadata and builtin replies before model changes or echo", async () => {
+    const session = await chatService.createSession("mock", {});
+    const c1 = await connectWs(session.id); const c2 = await connectWs(session.id);
+    await c1.waitForType("session_state"); await c2.waitForType("session_state");
+    const invalid = [{ ...reference(session.id), sessionId: "wrong" }, { ...reference(session.id), providerId: "claude" }, { ...reference(session.id), quote: "" }, reference(session.id)];
+    for (let index = 0; index < invalid.length; index++) {
+      const content = index === 3 ? "/version" : "question";
+      c1.ws.send(JSON.stringify({ type: "message", content, replyTo: invalid[index], model: "must-not-persist" }));
+      const rejected = await c1.waitForNthType("message_rejected", index + 1);
+      expect(rejected.content).toBe(content);
+    }
+    expect(c2.messages.filter((m) => m.type === "user_message")).toHaveLength(0);
+    expect(getSessionModel(session.id)).toBeNull();
+    expect((await chatService.getMessages("mock", session.id))).toHaveLength(0);
+    c1.close(); c2.close();
+  });
+});
+
+describe("Chat WebSocket — what a notification is held back by", () => {
+  /** The `stillUnseen` the chat handler hands the dispatcher, per notification type. */
+  async function captureNotifications() {
+    const { notificationService } = await import("../../../src/services/notification.service.ts");
+    const sent: Array<{ type: string; stillUnseen?: () => boolean }> = [];
+    const spy = spyOn(notificationService, "broadcast").mockImplementation(async (type, _payload, opts) => {
+      sent.push({ type, stillUnseen: opts?.stillUnseen });
+    });
+    const next = async (type: string) => {
+      for (let i = 0; i < 200 && !sent.some((s) => s.type === type); i++) await Bun.sleep(5);
+      const found = sent.find((s) => s.type === type);
+      expect(found?.stillUnseen).toBeFunction();
+      return found!.stillUnseen!;
+    };
+    return { next, restore: () => spy.mockRestore() };
+  }
+
+  it("sends a finished chat's notification only while the chat is still unread", async () => {
+    const notifications = await captureNotifications();
+    try {
+      const session = await chatService.createSession("mock", {});
+      const client = await connectWs(session.id);
+      await client.waitForType("session_state");
+      client.ws.send(JSON.stringify({ type: "message", content: "hello" }));
+      await client.waitForType("done");
+      const stillUnseen = await notifications.next("done");
+      expect(stillUnseen()).toBe(true);
+      // What opening the chat on any device does (POST /chat/sessions/:id/read).
+      clearSessionUnread(session.id);
+      expect(stillUnseen()).toBe(false);
+      client.close();
+    } finally {
+      notifications.restore();
+    }
+  });
+
+  it("drops an approval's notification once the approval is answered", async () => {
+    const notifications = await captureNotifications();
+    try {
+      const session = await chatService.createSession("mock", {});
+      const client = await connectWs(session.id);
+      await client.waitForType("session_state");
+      client.ws.send(JSON.stringify({ type: "message", content: "delete temp files" }));
+      const approval = await client.waitForType("approval_request");
+      const stillUnseen = await notifications.next("approval_request");
+      expect(stillUnseen()).toBe(true);
+      client.ws.send(JSON.stringify({ type: "approval_response", requestId: approval.requestId, approved: true }));
+      await client.waitForType("done");
+      // Nobody opened the chat, so it is still unread: answering is what cancels this one.
+      expect(getSessionUnreadCount(session.id)).toBeGreaterThan(0);
+      expect(stillUnseen()).toBe(false);
+      client.close();
+    } finally {
+      notifications.restore();
+    }
   });
 });

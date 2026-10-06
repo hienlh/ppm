@@ -6,6 +6,9 @@ import { forwardOpenAiViaSdk } from "./proxy-openai-bridge.ts";
 import { forwardAgentChatCompletions } from "./proxy-agent-bridge.ts";
 import { forwardAgentMessages } from "./proxy-agent-anthropic-bridge.ts";
 import { randomBytes } from "node:crypto";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("proxy");
 
 const PROXY_ENABLED_KEY = "proxy_enabled";
 const PROXY_AUTH_KEY = "proxy_auth_key";
@@ -28,13 +31,27 @@ function parseModel(body: string | null): string | undefined {
 
 class ProxyService {
   private requestCount = 0;
+  /** The no-account WARN repeats on every request a caller sends, so it is written once a minute. */
+  private noAccountWarnedAt = 0;
+  private noAccountSuppressed = 0;
+
+  private warnNoAccount(endpoint: string): void {
+    const now = Date.now();
+    if (now - this.noAccountWarnedAt < 60_000) { this.noAccountSuppressed++; return; }
+    const more = this.noAccountSuppressed ? ` (+${this.noAccountSuppressed} more since the last warning)` : "";
+    this.noAccountWarnedAt = now;
+    this.noAccountSuppressed = 0;
+    log.warn(`${endpoint} rejected: no active accounts (reason=${accountSelector.lastFailReason})${more}`);
+  }
 
   isEnabled(): boolean {
     return getConfigValue(PROXY_ENABLED_KEY) === "true";
   }
 
   setEnabled(enabled: boolean): void {
+    const was = this.isEnabled();
     setConfigValue(PROXY_ENABLED_KEY, String(enabled));
+    if (was !== enabled) log.info(`enabled=${enabled}`);
   }
 
   getAuthKey(): string | null {
@@ -45,12 +62,15 @@ class ProxyService {
   generateAuthKey(): string {
     const key = `ppm-proxy-${randomBytes(16).toString("hex")}`;
     setConfigValue(PROXY_AUTH_KEY, key);
+    log.info("auth key rotated (generated)"); // never the key itself
     return key;
   }
 
   /** Set a custom auth key */
   setAuthKey(key: string): void {
+    const changed = this.getAuthKey() !== key;
     setConfigValue(PROXY_AUTH_KEY, key);
+    if (changed) log.info("auth key rotated (custom)"); // never the key itself
   }
 
   getRequestCount(): number {
@@ -72,6 +92,7 @@ class ProxyService {
     // Pick account via rotation
     const account = accountSelector.next();
     if (!account) {
+      this.warnNoAccount(path);
       insertProxyRequest({
         endpoint: path, model: parseModel(body),
         callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
@@ -101,7 +122,7 @@ class ProxyService {
           endpoint: path, model: parsed.model, accountId: account.id, accountLabel: account.email ?? account.id,
           callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "success", durationMs,
         });
-        console.log(`[proxy] ${method} ${path} → ${account.email ?? account.id} (sdk) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
+        log.info(`${method} ${path} → ${account.id} (sdk) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
         return response;
       } catch (e) {
         insertProxyRequest({
@@ -109,7 +130,7 @@ class ProxyService {
           callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
           durationMs: Math.round(performance.now() - start),
         });
-        console.error(`[proxy] SDK bridge error:`, (e as Error).message);
+        log.error(`SDK bridge error:`, (e as Error).message);
         return new Response(
           JSON.stringify({ type: "error", error: { type: "api_error", message: (e as Error).message } }),
           { status: 502, headers: { "Content-Type": "application/json" } },
@@ -128,6 +149,7 @@ class ProxyService {
   async forwardOpenAi(body: string, caller?: ProxyCallerMeta): Promise<Response> {
     const account = accountSelector.next();
     if (!account) {
+      this.warnNoAccount("/v1/chat/completions");
       insertProxyRequest({
         endpoint: "/v1/chat/completions", model: parseModel(body),
         callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
@@ -154,7 +176,7 @@ class ProxyService {
         endpoint: "/v1/chat/completions", model: parsed.model, accountId: account.id, accountLabel: account.email ?? account.id,
         callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "success", durationMs,
       });
-      console.log(`[proxy] POST /v1/chat/completions → ${account.email ?? account.id} (openai) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
+      log.info(`POST /v1/chat/completions → ${account.id} (openai) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
       return response;
     } catch (e) {
       insertProxyRequest({
@@ -162,7 +184,7 @@ class ProxyService {
         callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
         durationMs: Math.round(performance.now() - start),
       });
-      console.error(`[proxy] OpenAI bridge error:`, (e as Error).message);
+      log.error(`OpenAI bridge error:`, (e as Error).message);
       return new Response(
         JSON.stringify({ error: { message: (e as Error).message, type: "server_error" } }),
         { status: 502, headers: { "Content-Type": "application/json" } },
@@ -200,7 +222,8 @@ class ProxyService {
       callerIp: caller?.callerIp, callerUa: caller?.callerUa,
       status: response.ok ? "success" : response.status === 429 ? "rate_limited" : "error", durationMs,
     });
-    console.log(`[proxy] POST ${endpoint} → ${response.status} ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
+    const level = response.status >= 500 ? "error" : response.status >= 400 ? "warn" : "info";
+    log[level](`POST ${endpoint} → ${response.status} ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
     return response;
   }
 
@@ -259,10 +282,10 @@ class ProxyService {
       if (upstream.status === 429) {
         accountSelector.onRateLimit(account.id);
         status = "rate_limited";
-        console.log(`[proxy] 429 — account ${accountLabel} rate limited`);
+        log.warn(`429 — account ${account.id} rate limited`);
       } else if (upstream.status === 401) {
         accountSelector.onAuthError(account.id);
-        console.log(`[proxy] 401 — account ${accountLabel} auth error`);
+        log.warn(`401 — account ${account.id} auth error`);
       } else if (upstream.status >= 200 && upstream.status < 300) {
         accountSelector.onSuccess(account.id);
         status = "success";
@@ -272,7 +295,7 @@ class ProxyService {
         endpoint: path, model: parseModel(body), accountId: account.id, accountLabel,
         callerIp: caller?.callerIp, callerUa: caller?.callerUa, status, durationMs,
       });
-      console.log(`[proxy] ${method} ${path} → ${accountLabel} (direct) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
+      log.info(`${method} ${path} → ${account.id} (direct) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
 
       const responseHeaders = new Headers();
       for (const key of ["content-type", "x-request-id", "request-id"]) {
@@ -288,7 +311,7 @@ class ProxyService {
         callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
         durationMs: Math.round(performance.now() - start),
       });
-      console.error(`[proxy] Error forwarding:`, (e as Error).message);
+      log.error(`Error forwarding:`, (e as Error).message);
       return new Response(
         JSON.stringify({ type: "error", error: { type: "api_error", message: (e as Error).message } }),
         { status: 502, headers: { "Content-Type": "application/json" } },

@@ -17,6 +17,9 @@ import { getKnownFolders } from "./host-known-folders.ts";
 import { getWindowsQuickAccessPinned } from "./pinned-windows-quick-access.ts";
 import { getLinuxPinned } from "./pinned-linux-bookmarks.ts";
 import { getMacosFinderFavoritesPinned } from "./pinned-macos-finder-favorites.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("host-info");
 
 const CACHE_TTL_MS = 60_000;
 const PROVIDER_TIMEOUT_MS = 5_000;
@@ -30,6 +33,9 @@ let lastBuildAt = 0;
 /** Shared by all callers while a build is running — concurrent calls (refresh or not)
  *  await the same build instead of each starting their own. */
 let inFlight: Promise<HostInfo> | null = null;
+/** The warnings the last log line reported, so a rebuild that hits the same ones again
+ *  (every minute, on a host with no GTK bookmarks file) says nothing new. */
+let lastLoggedWarnings = "";
 
 async function getPinnedByPlatform(
   platform: NodeJS.Platform,
@@ -155,6 +161,16 @@ export async function getHostInfo(
       const info = await buildHostInfo(process.platform, osHomedir(), osHostname(), overrides);
       lastBuildAt = Date.now();
       cached = { info, expiresAt: lastBuildAt + CACHE_TTL_MS };
+      // The response carries these to the browser and nowhere else: a provider that threw
+      // or timed out would otherwise leave no trace on the server.
+      // Sorted: the providers run at once, so the same warnings can arrive in another order.
+      const warningsKey = [...info.warnings].sort().join("\n");
+      if (warningsKey !== lastLoggedWarnings) {
+        lastLoggedWarnings = warningsKey;
+        if (info.warnings.length > 0) {
+          log.warn(`host info built with ${info.warnings.length} warnings: ${info.warnings.slice(0, 3).join("; ")}`);
+        }
+      }
       return info;
     } finally {
       inFlight = null;

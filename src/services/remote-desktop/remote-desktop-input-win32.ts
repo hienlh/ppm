@@ -13,6 +13,9 @@
 import { codeToVk, MODIFIER_VK_CODES } from "./remote-desktop-vk-map.ts";
 import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 import { windowsVirtualScreen } from "./remote-desktop-displays.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 const INPUT_MOUSE = 0;
 const INPUT_KEYBOARD = 1;
@@ -139,10 +142,11 @@ function ensureInteractiveStation(ffi: FfiModule, lib: User32Symbols): void {
   lib.SetProcessWindowStation(hwinsta);
 }
 
-function attachToInputDesktop(ffi: FfiModule, lib: User32Symbols): void {
+/** Whether this thread is now on the input desktop — for the log in `sendRaw` only. */
+function attachToInputDesktop(ffi: FfiModule, lib: User32Symbols): boolean {
   ensureInteractiveStation(ffi, lib);
   const hdesk = lib.OpenInputDesktop(0, false, INPUT_DESKTOP_ACCESS);
-  if (!hdesk) return; // couldn't open the input desktop (e.g. secure/lock desktop); leave thread as-is
+  if (!hdesk) return false; // couldn't open the input desktop (e.g. secure/lock desktop); leave thread as-is
   const ok = lib.SetThreadDesktop(hdesk);
   if (ok) {
     if (attachedDesktop && attachedDesktop !== hdesk) {
@@ -153,13 +157,23 @@ function attachToInputDesktop(ffi: FfiModule, lib: User32Symbols): void {
     // SetThreadDesktop fails if this thread owns windows/hooks — shouldn't for the server thread.
     try { lib.CloseDesktop(hdesk); } catch { /* ignore */ }
   }
+  return !!ok;
 }
+
+/** Whether the last send was blocked. While the secure or lock desktop is up every event fails
+ *  — about 60 a second from a moving pointer — so only a change of state is logged. */
+let inputBlocked = false;
 
 async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
   const { ffi, lib } = await loadUser32();
-  attachToInputDesktop(ffi, lib);
+  const attached = attachToInputDesktop(ffi, lib);
   const sent = lib.SendInput(count, ffi.ptr(buf), INPUT_STRUCT_SIZE);
-  if (sent !== count) console.warn(`[remote-desktop] SendInput accepted ${sent}/${count} events`);
+  const blocked = !attached || sent !== count;
+  if (blocked === inputBlocked) return;
+  inputBlocked = blocked;
+  if (!blocked) log.info("input reaches the input desktop again");
+  else if (!attached) log.warn("input blocked: cannot reach input desktop");
+  else log.warn(`input blocked: SendInput accepted ${sent}/${count} events`);
 }
 
 /** Map a captured monitor into SendInput's full virtual-desktop coordinate space. Both

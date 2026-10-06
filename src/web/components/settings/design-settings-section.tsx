@@ -5,11 +5,13 @@ import { Loader2 } from "@/lib/icons";
 import { useProjectStore } from "@/stores/project-store";
 import type { SlashItem } from "@/components/chat/slash-command-picker";
 import {
-  getDesignSettings, readSkillLists, saveDesignInstructions, type DesignSettings,
+  getDesignSettings, readSkillLists, saveDesignInstructions, type DesignSettings, type DesignSkillInstallResponse,
 } from "@/lib/design/api-design-settings";
 import { DesignSkillSuggestionCard } from "@/components/design/design-skill-suggestion";
 import { extractSkillMentions, utf8ByteLength } from "../../../shared/design-skill-mentions";
-import { needsDesignSkillSuggestion } from "../../../shared/design-skill-suggestion";
+import {
+  DESIGN_SKILL_SUGGESTION, needsDesignSkillSuggestion, withDesignSkillMention,
+} from "../../../shared/design-skill-suggestion";
 import { DesignInstructionsEditor } from "./design-instructions-editor";
 import { DesignSkillMentionStatus } from "./design-skill-mention-status";
 import { DesignAppsSettingsSection } from "./design-apps-settings-section";
@@ -42,6 +44,8 @@ export function DesignSettingsSection() {
   // The text last loaded or saved, so a reload for another project (which only changes
   // the skill lists) can tell an untouched draft from one the user is still editing.
   const savedRef = useRef<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +97,49 @@ export function DesignSettingsSection() {
     }
   };
 
+  /**
+   * After Install: name the skill in the instructions, which is what makes design chats use it.
+   * Saved straight away when nothing else is being edited; with unsaved edits in the box, the
+   * name joins them and Save stays the user's to press, so a half-written text is never stored.
+   * Read from refs: the install took a moment, and the box may have changed while it ran.
+   */
+  const onSkillInstalled = async ({ results, python }: DesignSkillInstallResponse) => {
+    const name = DESIGN_SKILL_SUGGESTION.name;
+    const current = draftRef.current;
+    const named = withDesignSkillMention(current);
+    let note = "Design chats started from now on will use it.";
+    if (named === null) {
+      note = `Name /${name} in the instructions to use it.`;
+    } else if (named !== current && current.trim() !== savedRef.current) {
+      setDraft(named);
+      note = `Added /${name} to the instructions. Press Save to use it.`;
+    } else if (named !== current) {
+      try {
+        const instructions = await saveDesignInstructions(named);
+        savedRef.current = instructions;
+        setDraft(instructions);
+        note = `Added /${name} to the instructions; design chats started from now on will use it.`;
+      } catch (e) {
+        setDraft(named);
+        note = `Added /${name} to the instructions, but saving failed (${(e as Error).message}). Press Save to try again.`;
+      }
+    }
+    const already = results.every((r) => !r.installed);
+    toast.success(already ? `${name} was already installed` : `Installed ${name}`, { description: note });
+    if (!python) {
+      toast.warning("Python 3 was not found on this machine", {
+        description: `${name}'s search scripts need it. The AI asks before installing anything.`,
+      });
+    }
+    // Fresh lists, so the card goes and the mention shows as resolved.
+    getDesignSettings(projectName, { fresh: true })
+      .then((next) => {
+        savedRef.current = next.instructions;
+        setSettings(next);
+      })
+      .catch(() => { /* the pane keeps what it has; reopening it reads the lists again */ });
+  };
+
   return (
     <div className="space-y-4">
       {projectName && (
@@ -126,7 +173,9 @@ export function DesignSettingsSection() {
       {!settings.providers.length && (
         <p className="text-xs text-text-subtle">No configured provider can run design chats. Enable Claude or Codex in AI Provider.</p>
       )}
-      {suggest && <DesignSkillSuggestionCard />}
+      {suggest && (
+        <DesignSkillSuggestionCard providerNames={settings.providers.map((p) => p.name)} onInstalled={onSkillInstalled} />
+      )}
     </div>
   );
 }

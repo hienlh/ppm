@@ -1,4 +1,7 @@
 /** Message types for Extension ↔ Webview communication */
+import type { SearchHit, SearchMode } from "./commit-search.ts";
+import type { CommitStat } from "./shortstat-parser.ts";
+import type { Submodule } from "./submodule-parser.ts";
 
 // --- Git data types ---
 
@@ -43,6 +46,10 @@ export interface Stash {
   hash: string;
   parentHash: string;
   message: string;
+  author: string;
+  authorEmail: string;
+  /** Unix seconds. */
+  date: number;
 }
 
 export interface Worktree {
@@ -93,6 +100,8 @@ export interface RepoInfo {
   stashes: Stash[];
   head: string;
   currentBranch: string;
+  /** Where a commit opens in a browser (`base + commitPath + hash`); null for a remote no browser can open. */
+  remoteWeb: { base: string; commitPath: string; label: string } | null;
 }
 
 export interface ActionResult {
@@ -100,11 +109,20 @@ export interface ActionResult {
   error?: string;
 }
 
-export interface UncommittedData {
-  staged: FileChange[];
-  unstaged: FileChange[];
-  conflicted: FileChange[];
-  mergeState?: MergeState;
+/**
+ * PPM's `GitChanges` (`src/shared/git-changes.ts`), passed through to the
+ * webview untouched. Not imported: this package does not reach into PPM's
+ * source tree, and the host never looks inside it beyond the branch state.
+ */
+export interface PpmGitChanges {
+  branch: { head: string | null; upstream: string | null; upstreamGone: boolean; ahead: number; behind: number; hasRemote: boolean };
+  [key: string]: unknown;
+}
+
+/** The commit message being written for the repository, shared with Source Control and the Review tab. */
+export interface CommitDraftData {
+  message: string;
+  updatedAt: string | null;
 }
 
 // --- Settings ---
@@ -143,7 +161,6 @@ export interface GitGraphSettings {
    * A narrow panel drops columns of its own accord regardless of these — they
    * say what to show when there is room for it.
    */
-  colRefs: boolean;
   colChanges: boolean;
   colAuthor: boolean;
   colDate: boolean;
@@ -162,7 +179,6 @@ export const DEFAULT_SETTINGS: GitGraphSettings = {
   issueLinkingRules: [{ pattern: "#(\\d+)", url: "" }],
   prCreation: null,
   autoFetchInterval: 0,
-  colRefs: true,
   colChanges: true,
   colAuthor: true,
   colDate: true,
@@ -173,17 +189,26 @@ export const DEFAULT_SETTINGS: GitGraphSettings = {
 
 export type ExtToWebview =
   | { command: "loadRepoInfo"; data: RepoInfo }
-  | { command: "loadCommits"; data: GitVertex[]; append: boolean }
+  /** `scope` is the branch the window was read for, or "all"; `skip`, how many commits precede it. */
+  | { command: "loadCommits"; data: GitVertex[]; append: boolean; skip: number; scope: string }
+  | { command: "loadCommitStats"; data: Record<string, CommitStat> }
   | { command: "commitDetails"; data: CommitDetail }
-  | { command: "loadUncommitted"; data: UncommittedData | null }
+  | { command: "loadSearchResults"; data: { mode: SearchMode; text: string; hits: SearchHit[] } }
   | { command: "loadSettings"; data: GitGraphSettings }
   | { command: "loadUserDetails"; data: { name: string; email: string } }
   | { command: "loadOwnerRepo"; data: { owner: string; repo: string } }
-  | { command: "refresh"; data: GitVertex[]; repoInfo: RepoInfo }
-  | { command: "actionResult"; action: string; args?: Record<string, unknown>; result: ActionResult }
+  /**
+   * `data` is what the write returned (a route's answer), for the toast that reports it.
+   * `reqId` is the request's own, echoed: two of one action can finish in either order.
+   */
+  | { command: "actionResult"; action: string; args?: Record<string, unknown>; result: ActionResult & { data?: unknown }; reqId?: number }
   | { command: "loadWorktrees"; data: Worktree[] }
   | { command: "loadStashes"; data: Stash[] }
-  | { command: "error"; message: string };
+  | { command: "loadSubmodules"; data: Submodule[] }
+  | { command: "loadChanges"; data: PpmGitChanges | null; error?: string }
+  | { command: "loadDraft"; data: CommitDraftData }
+  /** `failed` and `reqId` name the request this error answers, when one was waiting. */
+  | { command: "error"; message: string; failed?: string; reqId?: number };
 
 // --- Webview → Extension messages ---
 
@@ -192,7 +217,6 @@ export type WebviewToExt =
   | { command: "requestRepoInfo" }
   | { command: "requestCommits"; maxCommits?: number; skip?: number; branch?: string }
   | { command: "requestCommitDetails"; hash: string }
-  | { command: "requestUncommitted" }
   | { command: "openDiff"; filePath: string; hash: string; parentHash: string | null }
   | { command: "requestSettings" }
   | { command: "updateSetting"; key: string; value: unknown }
@@ -210,14 +234,27 @@ export type WebviewToExt =
   | { command: "openWorktree"; path: string }
   | { command: "openFile"; filePath: string }
   | { command: "openConflictFile"; filePath: string }
-  | { command: "openSourceControl" }
   | { command: "requestStashes" }
   | { command: "searchCommits"; mode: string; text: string }
   | { command: "openBlame"; filePath: string; hash?: string }
   | { command: "openFileHistory"; filePath: string }
   | { command: "openCompare"; ref1?: string; ref2?: string }
-  | { command: "openInteractiveRebase"; base?: string }
   | { command: "openReflog" }
   | { command: "requestSubmodules" }
   | { command: "updateSubmodule"; path: string }
-  | { command: "openSubmodule"; path: string };
+  | { command: "openSubmodule"; path: string }
+  | { command: "requestChanges" }
+  | { command: "requestStashDetails"; hash: string }
+  | { command: "saveDraft"; message: string }
+  | { command: "stageFiles"; paths: string[] }
+  | { command: "unstageFiles"; paths: string[] }
+  | { command: "discardFiles"; paths: string[] }
+  | { command: "undoDiscard"; id: string }
+  | { command: "commitStaged"; message: string; amend?: boolean; signoff?: boolean; push?: boolean }
+  | { command: "undoCommit"; hash: string }
+  | { command: "sync"; action: "fetch" | "pull" | "push" | "publish" | "sync" }
+  | { command: "stash"; message?: string; includeUntracked?: boolean }
+  /** By index and hash: PPM's route refuses when the index no longer holds that stash. */
+  | { command: "stashAction"; action: "apply" | "pop" | "drop"; index: number; hash: string }
+  | { command: "operation"; action: "abort" | "continue" }
+  | { command: "openReview"; path?: string };

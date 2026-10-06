@@ -16,7 +16,12 @@
  * (measured), and a read that blocks would hold the loop; a non-blocking read that finds nothing
  * is one syscall. The file watcher batches what it reports into 500 ms windows anyway.
  */
-import { dlopen, FFIType, ptr, type Pointer } from "bun:ffi";
+import { readFileSync } from "node:fs";
+import { constants } from "node:os";
+import { dlopen, FFIType, ptr, read as ffiRead, type Pointer } from "bun:ffi";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("file-watcher");
 
 const IN_NONBLOCK = 0o4000;
 const IN_CLOEXEC = 0o2000000;
@@ -55,9 +60,18 @@ interface Inotify {
   addWatch: (fd: number, path: Uint8Array, mask: number) => number;
   rmWatch: (fd: number, wd: number) => number;
   read: (fd: number, buf: Pointer, size: number) => number | bigint;
+  /** errno is per thread and the next libc call may overwrite it: read it straight after a failure. */
+  errno: () => number;
   buf: Uint8Array;
   bufPtr: Pointer;
 }
+
+function errnoName(code: number): string {
+  return Object.entries(constants.errno).find(([, value]) => value === code)?.[0] ?? `errno ${code}`;
+}
+
+/** errno values a failed `inotify_add_watch` has already logged: one line each per process. */
+const reportedWatchErrnos = new Set<number>();
 
 /** `undefined` until first asked for; `null` where inotify cannot be reached. */
 let inotify: Inotify | null | undefined;
@@ -105,20 +119,33 @@ function open(): Inotify | null {
       inotify_add_watch: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
       inotify_rm_watch: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
       read: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+      __errno_location: { args: [], returns: FFIType.ptr },
     });
+    const errno = () => {
+      const at = symbols.__errno_location();
+      return at ? ffiRead.i32(at, 0) : 0;
+    };
     const fd = symbols.inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-    if (fd < 0) return null; // out of inotify instances: the caller falls back to fs.watch
+    if (fd < 0) {
+      // Out of inotify instances (`max_user_instances`): the caller falls back to fs.watch,
+      // which costs a descriptor per watched *file*.
+      const code = errno();
+      log.warn(`inotify_init1 failed (${errnoName(code)}), falling back to fs.watch`);
+      return null;
+    }
     const buf = new Uint8Array(READ_BUFFER_BYTES);
     inotify = {
       fd,
       addWatch: (f, path, mask) => symbols.inotify_add_watch(f, ptr(path), mask),
       rmWatch: symbols.inotify_rm_watch,
       read: symbols.read,
+      errno,
       buf,
       bufPtr: ptr(buf),
     };
-  } catch {
+  } catch (e) {
     // No glibc (a musl build): the caller falls back to fs.watch.
+    log.debug(`raw inotify unavailable (${(e as Error).message}), using fs.watch`);
   }
   return inotify;
 }
@@ -137,7 +164,21 @@ export function watchDirectory(dir: string, listener: DirEventListener): DirWatc
   const lib = open();
   if (!lib) return null;
   const wd = lib.addWatch(lib.fd, encoder.encode(`${dir}\0`), WATCH_MASK);
-  if (wd < 0) return null;
+  if (wd < 0) {
+    // A directory that vanished, or is a file or a link by now, is the ordinary race of watching
+    // a live tree. Anything else truncates coverage — ENOSPC is `max_user_watches` spent, which
+    // otherwise looks exactly like that race.
+    const code = lib.errno();
+    if (code !== constants.errno.ENOENT && code !== constants.errno.ENOTDIR && !reportedWatchErrnos.has(code)) {
+      reportedWatchErrnos.add(code);
+      let limit = "";
+      if (code === constants.errno.ENOSPC) {
+        try { limit = ` (max_user_watches=${readFileSync("/proc/sys/fs/inotify/max_user_watches", "utf8").trim()})`; } catch { /* unreadable */ }
+      }
+      log.warn(`inotify_add_watch failed for ${dir}: ${errnoName(code)}${limit} — coverage truncated; further ${errnoName(code)} failures are not logged`);
+    }
+    return null;
+  }
   const registrations = listeners.get(wd) ?? new Set();
   listeners.set(wd, registrations);
   const registration = { listener };
@@ -228,11 +269,11 @@ function drain(): void {
     if (!registrations) continue;
     for (const { listener } of [...registrations]) {
       try { listener(kind, name); }
-      catch (e) { console.error(`[file-watcher] listener failed: ${(e as Error).message}`); }
+      catch (e) { log.error(`listener failed: ${(e as Error).message}`); }
     }
   }
   if (overflowed) {
-    console.warn("[file-watcher] inotify queue overflowed, rebuilding coverage");
+    log.warn("inotify queue overflowed, rebuilding coverage");
     for (const listener of [...overflowListeners]) listener();
   }
 }

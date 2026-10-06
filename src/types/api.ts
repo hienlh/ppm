@@ -1,3 +1,5 @@
+import type { ReplyReference } from "../shared/chat-reply.ts";
+import type { TabOpenRequest, TabOpenResult } from "../shared/tab-open-protocol.ts";
 /** Standard API response envelope — backend wraps all responses in this */
 export interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -23,7 +25,7 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
+  | { type: "message"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
   /** Uploaded paths for the same images, for providers that take a file not a payload. */
   imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean }
   | { type: "cancel" }
@@ -34,7 +36,9 @@ export type ChatWsClientMessage =
   | { type: "kill_background_shell"; shellId: string }
   | { type: "ready" }
   /** Replay an in-progress turn after a downstream WebSocket content gap. */
-  | { type: "resync" };
+  | { type: "resync" }
+  /** A device's answer to `tab_open`. */
+  | TabOpenResult;
 
 /** A background command (SDK Bash run_in_background) tracked for the current session. */
 export interface BackgroundShell {
@@ -73,9 +77,14 @@ export type ChatWsServerMessage =
   | { type: "error"; message: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
-  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; turnStop?: import("../shared/turn-stop").TurnStop | null }
+  /** The turn that just ended was ended by an error. Sent just before its `done`. */
+  | { type: "turn_stop"; stop: import("../shared/turn-stop").TurnStop }
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }
+  | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; message: string }
   | { type: "user_message"; content: string; imageCount?: number; timestamp?: string }
+  /** An AI tab tool asks this device to open a tab. */
+  | TabOpenRequest
   | { type: "title_updated"; title: string }
   | { type: "compact_status"; status: "compacting" | "done" }
   | { type: "ping"; streamSeq?: number };

@@ -190,6 +190,31 @@ describe("PUT /settings/ai", () => {
     }
   });
 
+  it("keeps tab tools off until turned on, and persists both values without touching providers", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect(configService.get("ai").tab_tools).toBeUndefined();
+    const providers = structuredClone(configService.get("ai").providers);
+    for (const enabled of [true, false]) {
+      const res = await put({ tab_tools: enabled });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.tab_tools).toBe(enabled);
+      expect(JSON.parse(getConfigValue("ai")!).tab_tools).toBe(enabled);
+      expect(configService.load().ai.tab_tools).toBe(enabled);
+      expect(configService.get("ai").providers).toEqual(providers);
+    }
+    // An unrelated update leaves it as it was.
+    expect((await put({ tab_tools: true })).status).toBe(200);
+    expect((await put({ share_provider_context: false })).status).toBe(200);
+    expect(configService.load().ai.tab_tools).toBe(true);
+    for (const value of ["true", 1, null, {}]) {
+      expect((await put({ tab_tools: value })).status).toBe(400);
+      expect(configService.get("ai").tab_tools).toBe(true);
+    }
+  });
+
   it("updates provider config and returns merged result", async () => {
     const app = createApp();
     const res = await app.request("/settings/ai", {
@@ -351,5 +376,24 @@ describe("PUT /settings/ai", () => {
     expect(json.ok).toBe(true);
     // Empty key should not be masked
     expect(json.data.providers.claude.api_key).toBeFalsy();
+  });
+});
+
+describe("PUT /settings/ui-prefs", () => {
+  beforeEach(resetConfig);
+
+  const put = (body: unknown) => createApp().request("/settings/ui-prefs", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  it("keeps the Description each table's lookup was customized to, and refuses a malformed one", async () => {
+    const res = await put({ dbLookupDescriptions: { "1:shop:public:plans": "name" } });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(getConfigValue("ui_prefs")!).dbLookupDescriptions).toEqual({ "1:shop:public:plans": "name" });
+
+    const bad = await put({ dbLookupDescriptions: { "1:shop:public:plans": "" } });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toBe('Invalid value for "dbLookupDescriptions"');
+    expect(JSON.parse(getConfigValue("ui_prefs")!).dbLookupDescriptions).toEqual({ "1:shop:public:plans": "name" });
   });
 });

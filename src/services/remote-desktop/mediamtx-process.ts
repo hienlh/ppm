@@ -12,6 +12,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { buildMediamtxConfig, randomStreamPath, rtspPublishUrl, whepUrl } from "./mediamtx-config.ts";
 import { findMediamtxBinary, mediamtxConfigPath } from "./mediamtx-paths.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("remote-desktop");
 
 export interface RelayHandle {
   /** Where ffmpeg pushes the H.264 it already encoded. */
@@ -130,13 +133,39 @@ export async function startRelay(opts: StartRelayOptions = {}): Promise<RelayHan
     handle.stop();
     const why = (await new Response(proc.stderr).text()).trim()
       || (await new Response(proc.stdout).text()).trim();
-    throw new Error(`the WebRTC relay did not start${why ? `: ${why.slice(0, 300)}` : ""}`);
+    // The only reader of this message is the session's log line, and MediaMTX prefixes what it
+    // says about a path with the path's name — this session's stream secret.
+    const shown = why.split(pathName).join("[path]");
+    throw new Error(`the WebRTC relay did not start${shown ? `: ${shown.slice(0, 300)}` : ""}`);
   }
+  log.info(`mediamtx relay started pid=${proc.pid} rtsp=${rtspPort} whep=${whepPort} ice=${iceUdpPort}`);
+
+  // Read for as long as the relay runs: it is what an unexpected exit is explained with, and a
+  // pipe nobody reads fills up and blocks a relay that has something to say. Only a tail is kept.
+  let output = "";
+  const keepTail = async (stream: ReadableStream<Uint8Array>) => {
+    const decoder = new TextDecoder();
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      output = (output + decoder.decode(value, { stream: true })).slice(-2_000);
+    }
+  };
+  const drained = Promise.all([keepTail(proc.stdout), keepTail(proc.stderr)]).catch(() => {});
 
   // A relay that dies mid-session must not look alive to the rest of the code. The config is
   // removed once more after the exit, in case `stop` found it still open: Windows cannot delete
   // an open file.
-  void proc.exited.then(() => { handle.stop(); removeConfig(); });
+  void proc.exited.then(async () => {
+    const requested = stopped;
+    handle.stop();
+    removeConfig();
+    if (requested) { log.debug(`mediamtx relay pid=${proc.pid} stopped`); return; }
+    await drained;
+    const tail = output.trim().split("\n").slice(-3).join(" | ").split(pathName).join("[path]");
+    log.error(`mediamtx relay pid=${proc.pid} exited unexpectedly code=${proc.exitCode} signal=${proc.signalCode}: ${tail || "(no output)"}`);
+  });
 
   return handle;
 }

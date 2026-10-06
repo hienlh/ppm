@@ -86,7 +86,7 @@ export function ConnectionImportExport({ onExport, onImport }: Props) {
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center justify-center size-5 rounded hover:bg-surface-elevated transition-colors text-text-subtle hover:text-foreground"
+        className="flex items-center justify-center size-5 rounded hover:bg-surface-elevated transition-colors text-text-subtle hover:text-foreground max-md:size-11 max-md:-my-3"
         title="Import / Export"
       >
         <MoreVertical className="size-3.5" />
@@ -96,17 +96,18 @@ export function ConnectionImportExport({ onExport, onImport }: Props) {
         <>
           <div className="fixed inset-0 z-40" onClick={close} />
           <div className="absolute right-0 top-full mt-1 z-50 w-44 bg-background border border-border rounded-md shadow-lg py-1 text-xs">
-            <button onClick={handleExportFile} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left">
+            <button onClick={handleExportFile} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left max-md:min-h-11">
               <Download className="size-3" /> Export to file
             </button>
-            <button onClick={handleExportClipboard} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left">
+            <button onClick={handleExportClipboard} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left max-md:min-h-11">
               <Clipboard className="size-3" /> Export to clipboard
             </button>
+            <p className="px-3 pt-0.5 pb-1 text-[11px] leading-snug text-text-subtle">Includes every saved password, in plain text.</p>
             <div className="border-t border-border my-1" />
-            <button onClick={handleImportFile} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left">
+            <button onClick={handleImportFile} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left max-md:min-h-11">
               <Upload className="size-3" /> Import from file
             </button>
-            <button onClick={handleImportClipboard} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left">
+            <button onClick={handleImportClipboard} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors text-left max-md:min-h-11">
               <ClipboardPaste className="size-3" /> Import from clipboard
             </button>
           </div>

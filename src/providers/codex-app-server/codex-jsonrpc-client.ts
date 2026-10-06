@@ -1,7 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { basename } from "node:path";
 import { resolveBunPath } from "../../services/autostart-generator.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./codex-protocol.ts";
+import { AI_CHAT_MARK } from "../../services/ai-chat-env.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("codex");
 
 export type NotificationHandler = (notif: JsonRpcNotification) => void;
 export type ServerRequestHandler = (req: ServerRequest) => void;
@@ -28,6 +33,10 @@ const ENV_PREFIX_ALLOWLIST = ["CODEX_", "XDG_", "RUST_"];
  */
 export const CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 
+/**
+ * The allowlisted part of PPM's environment, plus AI_CHAT_MARK: `ppm db` run by the model then
+ * keeps to the connections available to the AI chat.
+ */
 function buildSpawnEnv(): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -36,7 +45,7 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
       out[k] = v;
     }
   }
-  return out;
+  return { ...out, ...AI_CHAT_MARK };
 }
 
 /**
@@ -70,11 +79,19 @@ export class CodexJsonRpcClient {
   private serverReqHandler: ServerRequestHandler = () => {};
   private closeHandler: CloseHandler = () => {};
   private closed = false;
+  /** Set by close(): an exit after it was asked for, not a crash. */
+  private closing = false;
+  /** What the app-server is for — decides how loudly its start and exit are logged. */
+  private purpose: "chat" | "login" | "control" = "control";
+  /** The last stderr line logged, for the exit line (redacted). */
+  private lastStderr = "";
 
   /** Spawn the subprocess. Injectable streams allow unit testing without a real spawn.
    * `codexHome` selects which account's auth the app-server uses (CODEX_HOME); `env` adds
-   * variables this one session needs (a design session's MCP token). */
-  start(opts?: { cwd?: string; codexHome?: string; env?: Record<string, string> }): void {
+   * variables this one session needs (a design session's MCP token). `purpose` only sets
+   * the log level of its start and exit: a chat or a login is lifecycle at INFO, while
+   * the short-lived control spawns (usage sweep, model and skill lists, fork) are DEBUG. */
+  start(opts?: { cwd?: string; codexHome?: string; env?: Record<string, string>; purpose?: "chat" | "login" | "control" }): void {
     const env = { ...buildSpawnEnv(), ...(opts?.env ?? {}) };
     if (opts?.codexHome) env.CODEX_HOME = opts.codexHome;
     const [cmd, ...args] = codexCommand("app-server");
@@ -84,21 +101,38 @@ export class CodexJsonRpcClient {
       env,
       windowsHide: true,
     });
+    this.purpose = opts?.purpose ?? "control";
+    // CODEX_HOME is <ppm dir>/codex-accounts/<account id>, so its name is the account id.
+    this.lifecycleLog(
+      `app-server started pid=${this.proc.pid ?? "?"}${opts?.cwd ? ` cwd=${opts.cwd}` : ""} ` +
+      `account=${opts?.codexHome ? basename(opts.codexHome) : "ambient"} purpose=${this.purpose}`,
+    );
     this.attach(this.proc.stdout!, this.proc.stderr);
-    this.proc.on("close", (code) => this.handleClose(code));
+    this.proc.on("close", (code, signal) => this.handleClose(code, signal));
     this.proc.on("error", (err) => {
-      console.error(`[codex] subprocess error: ${redactTruncate(err.message, 200)}`);
-      this.handleClose(null);
+      log.error(`app-server pid=${this.proc?.pid ?? "?"} subprocess error: ${redactTruncate(err.message, 200)} pending=${this.pending.size}`);
+      this.handleClose(null, null, true);
     });
+  }
+
+  private lifecycleLog(message: string): void {
+    (this.purpose === "control" ? log.debug : log.info)(message);
   }
 
   /** Wire stream parsing — separated so tests can drive it with fake streams. */
   attach(stdout: NodeJS.ReadableStream, stderr?: NodeJS.ReadableStream | null): void {
     stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
     stderr?.on("data", (chunk: Buffer) => {
-      const s = chunk.toString().trim();
-      if (s && !/warning|trace-warnings|circular dependency/i.test(s)) {
-        console.error(`[codex] stderr: ${redactTruncate(s, 200)}`);
+      // codex's stderr is Rust tracing ("<time> ERROR codex_x::y: …", ANSI-coloured), so its
+      // own level decides ours: a failed cache write is not a PPM ERROR. An untagged line is
+      // `bun x` resolving the package unless it reads like a failure.
+      for (const line of chunk.toString().replace(/\x1b\[[0-9;]*m/g, "").split("\n")) {
+        const s = line.trim();
+        if (!s || /warning|trace-warnings|circular dependency/i.test(s)) continue;
+        const tag = /^(?:\S+\s+)?(ERROR|WARN|INFO|DEBUG|TRACE)\b/.exec(s)?.[1];
+        const loud = tag ? tag === "ERROR" || tag === "WARN" : /error|panic|fatal|fail/i.test(s);
+        this.lastStderr = redactTruncate(s, 200);
+        (loud ? log.warn : log.debug)(`stderr: ${this.lastStderr}`);
       }
     });
   }
@@ -202,14 +236,25 @@ export class CodexJsonRpcClient {
     } catch (e) {
       // stdin closed / EPIPE — subprocess is gone; ignore.
       if ((e as NodeJS.ErrnoException)?.code !== "EPIPE") {
-        console.error(`[codex] write failed: ${redactTruncate((e as Error)?.message, 120)}`);
+        log.error(`write failed: ${redactTruncate((e as Error)?.message, 120)}`);
       }
     }
   }
 
-  private handleClose(code: number | null): void {
+  /** `logged`: the caller already wrote the line that explains this close. */
+  private handleClose(code: number | null, signal: NodeJS.Signals | null = null, logged = false): void {
     if (this.closed) return;
     this.closed = true;
+    if (!logged) {
+      const pid = this.proc?.pid ?? "?";
+      if (this.closing) this.lifecycleLog(`app-server pid=${pid} exited code=${code} signal=${signal}`);
+      else {
+        log.error(
+          `app-server pid=${pid} exited unexpectedly code=${code} signal=${signal} pending=${this.pending.size}` +
+          (this.lastStderr ? ` — last stderr: ${this.lastStderr}` : ""),
+        );
+      }
+    }
     for (const [, entry] of this.pending) {
       entry.reject(new Error("codex subprocess exited"));
     }
@@ -225,6 +270,7 @@ export class CodexJsonRpcClient {
   get isClosed(): boolean { return this.closed; }
 
   close(): void {
+    this.closing = true;
     try { this.proc?.stdin?.end(); } catch { /* ignore */ }
     try { this.proc?.kill("SIGTERM"); } catch { /* ignore */ }
   }

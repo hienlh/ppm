@@ -54,7 +54,7 @@ export async function linkedStylesheetGens(design: DesignRef, htmlRel: string, h
 }
 
 /** `snippet` at the head insertion point, or after the doctype when the file is too big to parse. */
-function injectPlain(text: string, snippet: string): string {
+export function injectPlain(text: string, snippet: string): string {
   if (text.length <= INSTRUMENT_MAX_BYTES) {
     try {
       const at = analyzeHtml(text).headOffset;

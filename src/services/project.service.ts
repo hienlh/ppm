@@ -5,6 +5,9 @@ import { seedDefaultTags } from "./tag.service.ts";
 import { deleteAvatar } from "./avatar-storage.service.ts";
 import type { ProjectConfig } from "../types/config.ts";
 import type { ProjectInfo } from "../types/project.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("project");
 
 const MAX_SCAN_DEPTH = 3;
 
@@ -41,7 +44,11 @@ class ProjectService {
     const entry: ProjectConfig = { path: abs, name: projectName };
     configService.set("projects", [...projects, entry]);
     configService.save();
-    try { seedDefaultTags(abs); } catch { /* non-critical */ }
+    log.info(`Added "${projectName}" path=${abs}`);
+    try { seedDefaultTags(abs); } catch (e) {
+      // non-critical
+      log.warn(`Default tags not seeded for "${projectName}": ${(e as Error).message}`);
+    }
     return entry;
   }
 
@@ -86,6 +93,9 @@ class ProjectService {
     projects[idx] = updated;
     configService.set("projects", projects);
     configService.save();
+    log.info(`Updated "${currentName}"`
+      + (newName !== currentName ? ` → "${newName}"` : "")
+      + (newPath !== current.path ? ` path=${current.path} → ${newPath}` : ""));
     return updated;
   }
 
@@ -106,6 +116,7 @@ class ProjectService {
 
     configService.set("projects", filtered);
     configService.save();
+    log.info(`Removed "${removed?.name ?? nameOrPath}" path=${removed?.path ?? abs}`);
     // Best-effort: drop the avatar file after the config entry is gone.
     deleteAvatar(removed?.image);
   }

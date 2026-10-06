@@ -1,3 +1,4 @@
+import { decodeReply } from "../shared/chat-reply.ts";
 /**
  * Full-text content search over chat transcripts, backed by the FTS5 store in
  * `search-index-db.service.ts`.
@@ -48,11 +49,12 @@ export function toFtsQuery(raw: string): string {
  * an older, thinner indexer is re-read rather than left stamped as fresh.
  *
  * 2: `MESSAGE_TEXT_CAP`. Sessions indexed at 1 may hold multi-megabyte rows.
+ * 3: Exclude reply snapshots and their transport metadata.
  *
  * A bump makes *every* session stale at once, which is what `RECONCILE_BUDGET`
  * below is for — the whole corpus must not be re-read inside one search.
  */
-export const INDEXER_VERSION = 2;
+export const INDEXER_VERSION = 3;
 
 /** Per-event cap on indexed tool output. A single `Read`/`grep` result can be
  *  hundreds of KB; indexing all of it bloats the FTS store far more than it
@@ -136,7 +138,7 @@ function take(text: string | undefined, out: string[], budget: number): number {
 export function messageSearchText(msg: ChatMessage): string {
   const parts: string[] = [];
   let budget = MESSAGE_TEXT_CAP;
-  if (msg.content) budget = take(msg.content, parts, budget);
+  if (msg.content) budget = take(decodeReply(msg.content).content, parts, budget);
   collectEventText(msg.events, parts, budget);
   // Threading the budget is what stops the *collection*; the final slice is
   // what makes the cap exact, since the separators joined in below are not

@@ -17,6 +17,7 @@ import {
 } from "@/lib/icons";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { closeTabsAsked } from "@/stores/tab-close-confirm-store";
 import { DOCK_PANEL_ID, visibleTabs } from "@/stores/panel-utils";
 import { PanelBottom, Grid2x2 } from "@/lib/icons";
 import { useProjectStore } from "@/stores/project-store";
@@ -229,7 +230,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
 
     switch (action) {
       case "close":
-        panelState.closeTab(tab.id, effectivePanelId);
+        void closeTabsAsked([tab.id], effectivePanelId);
         break;
       case "move-to-dock":
         // Park the terminal in the dock (same live session — reparented, no restart).
@@ -245,15 +246,11 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         break;
       }
       case "close-others":
-        for (const t of pTabs) {
-          if (t.id !== tab.id && t.closable) panelState.closeTab(t.id, effectivePanelId);
-        }
+        void closeTabsAsked(pTabs.filter((t) => t.id !== tab.id && t.closable).map((t) => t.id), effectivePanelId);
         break;
       case "close-right": {
         const idx = pTabs.findIndex((t) => t.id === tab.id);
-        for (let i = idx + 1; i < pTabs.length; i++) {
-          if (pTabs[i]!.closable) panelState.closeTab(pTabs[i]!.id, effectivePanelId);
-        }
+        void closeTabsAsked(pTabs.slice(idx + 1).filter((t) => t.closable).map((t) => t.id), effectivePanelId);
         break;
       }
       case "copy-path": {
@@ -357,7 +354,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
                 usePanelStore.getState().setActiveTab(tab.id, effectivePanelId);
                 if (sessionId) useNotificationStore.getState().clearForSession(sessionId);
               }}
-              onClose={() => usePanelStore.getState().closeTab(tab.id, effectivePanelId)}
+              onClose={() => void closeTabsAsked([tab.id], effectivePanelId)}
               onDragStart={(e) => handleDragStart(e, tab.id)}
               onDragOver={(e) => handleDragOver(e, tab.id, i)}
               onDragEnd={handleDragEnd}

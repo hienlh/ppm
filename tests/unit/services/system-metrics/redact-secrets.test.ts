@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { redactSecrets } from "../../../../src/services/redact-secrets.ts";
+import { redactSecrets, redactForBugReport } from "../../../../src/services/redact-secrets.ts";
 import { sanitizeCommand, COMMAND_MAX_CHARS } from "../../../../src/services/system-metrics/process-rows-builder.ts";
 
 describe("redactSecrets", () => {
@@ -33,6 +33,28 @@ describe("redactSecrets", () => {
     expect(redactSecrets('psql "postgres://app:s3cret@db.internal:5432/x"')).toBe('psql "postgres://app:[REDACTED]@db.internal:5432/x"');
     expect(redactSecrets("https://user@host/")).toBe("https://user@host/");
     expect(redactSecrets("https://host:8080/path")).toBe("https://host:8080/path");
+  });
+
+  test("Telegram bot token keeps the bot id and drops the secret, in a URL or bare", () => {
+    const token = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0";
+    expect(redactSecrets(`fetch failed: https://api.telegram.org/bot${token}/getUpdates`))
+      .toBe("fetch failed: https://api.telegram.org/bot123456789:[REDACTED]/getUpdates");
+    expect(redactSecrets(`token ${token}`)).toBe("token 123456789:[REDACTED]");
+    expect(redactSecrets("[2026-10-06T03:06:13.123Z] [INFO] [http] GET /api/x 200 3ms")).toBe("[2026-10-06T03:06:13.123Z] [INFO] [http] GET /api/x 200 3ms");
+  });
+
+  test("an ntfy topic quoted in a refusal and a MediaMTX path name are cut out", () => {
+    expect(redactSecrets('This access token may not publish to "alerts-x7Kq9" on ntfy.sh (forbidden)'))
+      .toBe('This access token may not publish to "[topic]" on ntfy.sh (forbidden)');
+    expect(redactSecrets("rtsp://127.0.0.1:8554/s0123456789abcdef0123456789abcdef exited"))
+      .toBe("rtsp://127.0.0.1:8554/[stream] exited");
+    expect(redactSecrets("session 2f0c1d3e-4b5a-6789-abcd-ef0123456789")).toBe("session 2f0c1d3e-4b5a-6789-abcd-ef0123456789");
+  });
+
+  test("a bug report also drops a quick tunnel's hostname, which ppm.log keeps", () => {
+    const line = "[INFO] [tunnels] tunnel started for port 5173 → https://brave-otter-12ab.trycloudflare.com Bearer abc";
+    expect(redactForBugReport(line)).toBe("[INFO] [tunnels] tunnel started for port 5173 → https://[tunnel].trycloudflare.com Bearer [REDACTED]");
+    expect(redactSecrets(line)).toContain("brave-otter-12ab.trycloudflare.com");
   });
 
   test("leaves ordinary command lines alone", () => {

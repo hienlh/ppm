@@ -9,7 +9,7 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 - Execute commands via xterm.js terminal with full PTY support on macOS, Linux and Windows
 - Chat with multiple AI agents (Claude Agent SDK, OpenAI Codex, Cursor CLI) with file attachments, slash commands, skills, subagents and agent teams
 - View Git status, diffs, and commit graphs in real-time, and resolve conflicts inline
-- Query SQLite and PostgreSQL databases with an audit trail
+- Manage SQLite, PostgreSQL, MySQL and MariaDB databases — browse, edit, change structure, import/export and query — with an audit trail
 - Browse the whole host filesystem and monitor every process on the machine
 - Manage multiple projects via a project registry
 - Access the IDE from mobile, tablet, or desktop browsers — including through a Cloudflare tunnel
@@ -46,7 +46,7 @@ For the user-facing feature list, see the [README](../README.md). For per-releas
 - Monaco editor with diff viewer and inline merge-conflict resolution
 - Terminal — multiple PTY sessions per project plus a dock terminal on any folder
 - Git — status, diff, stage, commit, push/pull, branches, merge, rebase, stash, worktrees, commit graph
-- SQLite + PostgreSQL viewer with query editor, cell editing and a query audit log
+- Database manager (SQLite, PostgreSQL, MySQL, MariaDB) — connection tree, data grid with filters and one-transaction saves, structure editor, import/export jobs, multi-statement Query tab and a query audit log
 - System Monitor — CPU/RAM/disk/network/GPU charts and per-app process control
 - Floating windows, tab pop-out and Document Picture-in-Picture
 - VSCode-compatible extension system running in isolated Bun workers

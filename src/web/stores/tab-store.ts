@@ -7,10 +7,16 @@ export type TabType =
   | "chat"
   | "editor"
   | "database"
+  | "db-structure"
+  | "db-sql"
+  | "db-query"
+  | "db-impexp"
+  | "db-connection"
   | "sqlite"
-  | "postgres"
   | "git-diff"
   | "branch-review"
+  | "session-review"
+  | "git-review"
   | "settings"
   | "extension"
   | "extension-webview"
@@ -21,7 +27,9 @@ export type TabType =
   | "group"
   | "problems"
   | "design"
-  | "android";
+  | "android"
+  | "web-preview"
+  | "logs";
 
 export interface Tab {
   id: string;

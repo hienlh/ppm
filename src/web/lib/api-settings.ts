@@ -221,6 +221,7 @@ export interface AISettings {
   default_provider: string;
   new_chat_provider_mode?: "default" | "follow-focus";
   share_provider_context?: boolean;
+  tab_tools?: boolean;
   providers: Record<string, AIProviderSettings>;
 }
 

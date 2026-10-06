@@ -13,13 +13,13 @@
  * category cannot tear down and refetch the pane that was already there.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
-  DEFAULT_SETTINGS_CATEGORY, settingsCategory,
+  DEFAULT_SETTINGS_CATEGORY, SETTINGS_NAVIGATE_EVENT, isSettingsCategoryId, settingsCategory,
   type SettingsCategoryId,
 } from "./settings-categories";
 import { SettingsCategoryRail } from "./settings-category-rail";
@@ -52,6 +52,18 @@ export function SettingsBody({ initialCategory, onCategoryChange }: SettingsBody
     setShowList(false);
     onCategoryChange?.(id);
   }
+
+  // A link into Settings while it is open (`openSettings` focusing this window or tab).
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  useEffect(() => {
+    const onNavigate = (e: Event) => {
+      const id = (e as CustomEvent<unknown>).detail;
+      if (isSettingsCategoryId(id)) selectRef.current(id);
+    };
+    window.addEventListener(SETTINGS_NAVIGATE_EVENT, onNavigate);
+    return () => window.removeEventListener(SETTINGS_NAVIGATE_EVENT, onNavigate);
+  }, []);
 
   return (
     <div className="@container h-full w-full" data-testid="settings-window" data-category={active}>

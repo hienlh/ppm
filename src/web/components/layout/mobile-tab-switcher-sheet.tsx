@@ -14,6 +14,9 @@ import { getTabIcon } from "@/lib/tab-type-icons";
 import { buildTabSwitcherGroups, type TabSortMode } from "./tab-switcher-groups";
 import type { Tab } from "@/stores/tab-store";
 import { tabSessionId } from "@/lib/tab-session-id";
+import { isDbTabDirty } from "@/lib/db-tabs";
+import { tabUnsavedRows, useUnsavedGridRows } from "@/stores/unsaved-grid-rows-store";
+import { closeTabsAsked } from "@/stores/tab-close-confirm-store";
 import { cn } from "@/lib/utils";
 
 const SORT_STORAGE_KEY = "ppm:tab-sort-mode";
@@ -47,6 +50,7 @@ export function MobileTabSwitcherSheet({
   const [query, setQuery] = useState("");
   const notifications = useNotificationStore((s) => s.notifications);
   const streamingSessions = useStreamingStore((s) => s.sessions);
+  const unsavedRows = useUnsavedGridRows();
   const [sortMode, setSortMode] = useState<TabSortMode>(loadSortMode);
   const changeSort = useCallback((mode: TabSortMode) => {
     setSortMode(mode);
@@ -72,7 +76,7 @@ export function MobileTabSwitcherSheet({
 
   function close(tab: Tab, e: React.MouseEvent) {
     e.stopPropagation();
-    usePanelStore.getState().closeTab(tab.id, tabPanelMap[tab.id]);
+    void closeTabsAsked([tab.id], tabPanelMap[tab.id]);
   }
 
   function openPalette() {
@@ -201,6 +205,9 @@ export function MobileTabSwitcherSheet({
                     <span className={cn("flex-1 text-left text-sm font-medium truncate", isActive ? "text-primary" : "text-text-primary")}>
                       {tab.title}
                     </span>
+                    {(isDbTabDirty(tab.type, tab.metadata) || tabUnsavedRows(unsavedRows, tab.id) > 0) && (
+                      <span role="img" aria-label="Unsaved" title="Unsaved" className="size-[7px] shrink-0 rounded-full bg-text-2" />
+                    )}
                     {isActive && <span className="size-1.5 rounded-full bg-primary shrink-0" />}
                     {tab.closable && (
                       <span

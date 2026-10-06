@@ -41,7 +41,7 @@ export const BUILTIN_SIDEBAR_TABS: SidebarTabDef[] = [
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "database", label: "Database", icon: Database },
-  { id: "tunnels", label: "Cloudflare Tunnels", shortLabel: "Tunnels", icon: Globe },
+  { id: "tunnels", label: "Port Forwarding", shortLabel: "Ports", icon: Globe },
   { id: "ai-resources", label: "AI Resources", shortLabel: "AI", icon: Sparkles },
 ];
 

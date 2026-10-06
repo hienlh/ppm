@@ -25,212 +25,148 @@ the loop seeded from the bus (windowed + rolling summary).
 
 ---
 
-## Database Management (v2.0+)
+## Database Management
 
-### Architecture Overview
+PPM manages external databases — SQLite files, PostgreSQL, MySQL and MariaDB — with a DBGate-style UI: a connection tree, a data grid (filter row, multi-column sort, editing saved as one script), Form view / Cell data / References, a Structure editor, Import/Export jobs and a multi-statement Query tab.
 
-PPM now supports managing external databases (SQLite & PostgreSQL) through a unified adapter pattern:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Web UI (React)                               │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Database Sidebar                                         │   │
-│  │ • Connection List (with color badges)                    │   │
-│  │ • Create/Edit Connection Form                            │   │
-│  │ • Color Picker (WCAG contrast-aware)                     │   │
-│  │ • Query Execution UI                                     │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────┬───────────────────────────────────────────────┘
-                  │ HTTP REST / WebSocket
-┌─────────────────┴───────────────────────────────────────────────┐
-│                    PPM Server (Hono)                            │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ /api/db Routes                                           │   │
-│  │ • GET  /connections        → List all connections        │   │
-│  │ • POST /connections        → Create connection           │   │
-│  │ • GET  /connections/:id    → Get connection (sanitized)  │   │
-│  │ • PUT  /connections/:id    → Update (readonly toggle)    │   │
-│  │ • DELETE /connections/:id  → Remove connection           │   │
-│  │ • GET  /connections/:id/tables      → List + sync tables │   │
-│  │ • GET  /connections/:id/tables/:tbl → Schema + data      │   │
-│  │ • POST /connections/:id/query       → Execute query      │   │
-│  │ • PATCH /connections/:id/cell       → Update cell        │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Service Layer                                            │   │
-│  │ • DbService (connection CRUD, caching)                   │   │
-│  │ • TableCacheService (metadata cache, search)             │   │
-│  │ • DatabaseAdapterRegistry (extensible)                   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Adapters (Pluggable Pattern)                             │   │
-│  │ • SQLiteAdapter → Uses `bun:sqlite` for local files      │   │
-│  │ • PostgresAdapter → Uses postgres driver for servers     │   │
-│  │ • isReadOnlyQuery() → Safety check (CTE-safe regex)      │   │
-│  │ • readonly=1 by default (safe-by-default)               │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────┘
-        ↓↑
-   ┌────────────────────────────────────────────┐
-   │  External Databases                         │
-   │  • SQLite files (path: /path/to/db.db)      │
-   │  • PostgreSQL servers (connStr: postgres://)│
-   └────────────────────────────────────────────┘
-```
-
-### DatabaseAdapter Pattern (Extensible)
-
-**Interface** (`src/types/database.ts`):
-```typescript
-interface DatabaseAdapter {
-  testConnection(config: DbConnectionConfig): Promise<{ ok: boolean; error?: string }>;
-  getTables(config: DbConnectionConfig): Promise<DbTableInfo[]>;
-  getTableSchema(config: DbConnectionConfig, table: string, schema?: string): Promise<DbColumnInfo[]>;
-  getTableData(config: DbConnectionConfig, table: string, opts: {...}): Promise<DbPagedData>;
-  executeQuery(config: DbConnectionConfig, sql: string): Promise<DbQueryResult>;
-  updateCell(config: DbConnectionConfig, table: string, opts: {...}): Promise<void>;
-}
-```
-
-**Implementations:**
-1. **SQLiteAdapter** — Local file-based SQLite via `bun:sqlite`
-   - testConnection: Opens file, runs pragma check
-   - Supports: SELECT, INSERT, UPDATE, DELETE (if writable), CREATE TABLE
-
-2. **PostgresAdapter** — Remote PostgreSQL servers via postgres driver
-   - testConnection: Attempts connection with credentials
-   - Supports: Full SQL except DDL on readonly connections
-
-**Registry Pattern** (`src/services/database/adapter-registry.ts`):
-```typescript
-registerAdapter("sqlite", new SQLiteAdapter());
-registerAdapter("postgres", new PostgresAdapter());
-// Can be extended: registerAdapter("mysql", new MysqlAdapter());
-```
-
-### Security Design
-
-**Readonly by Default:**
-- All connections created with `readonly = true` in database
-- Default: read-only query execution (safe-by-default)
-- Web UI toggle: Switch to writable (admin decision only)
-- CLI: Cannot disable readonly via command-line (browser only)
-
-**Readonly Query Detection:**
-```typescript
-// isReadOnlyQuery() in src/services/database/readonly-check.ts
-// Checks for: SELECT, PRAGMA, EXPLAIN, WITH (CTE)
-// Rejects: INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, etc.
-// CTE-safe: Handles "WITH AS SELECT" (wraps CTE result check)
-```
-
-**Credential Handling:**
-- Connection credentials stored in SQLite `connections` table as `connection_config` JSON
-- **NEVER** returned in API responses (stripped by `sanitizeConn()` in routes)
-- Only used internally by adapters when executing queries
-- Frontend never sees passwords/connection strings
-
-**API Security:**
-- All `/api/db` requests require valid auth token (middleware checked)
-- Connection IDs are numeric (no enumeration risk)
-- Connection color is user-specific (cosmetic only, not sensitive)
-
-### Data Flow: Query Execution
+### Layers
 
 ```
-User opens Database tab
-    ↓
-DatabaseSidebar fetches: GET /api/db/connections
-    ↓
-ConnectionList displays (sanitized, no credentials)
-    ↓
-User clicks connection → GET /api/db/connections/:id/tables
-    ↓
-DbService.getConnections() reads from SQLite
-    ↓
-TableCacheService.syncTables() calls adapter.getTables()
-    ↓
-SQLiteAdapter/PostgresAdapter queries database
-    ↓
-Results cached in table_metadata table
-    ↓
-UI displays table list + schema
-    ↓
-User selects table → GET /api/db/connections/:id/tables/:table
-    ↓
-Adapter.getTableData() executes paginated query
-    ↓
-Results returned: { columns, rows, total, page, limit }
-    ↓
-UI renders table grid with pagination
-    ↓
-User executes custom query → POST /api/db/connections/:id/query
-    ↓
-isReadOnlyQuery() checks SQL (rejects writes if readonly=true)
-    ↓
-Adapter.executeQuery() runs SQL
-    ↓
-Results returned: { columns, rows, rowsAffected, changeType }
-    ↓
-UI displays results (read-only highlight if mutation was blocked)
+Browser — src/web/components/database/
+  connections-section/, explorer/, object-tree/   CONNECTIONS + TABLES, VIEWS, FUNCTIONS sidebar
+  table/, grid/                                   Glide data grid, filter row, Form view, Cell data, References
+  structure/, table-editor/, sql-object/          Structure tab, table editor, CREATE script tab
+  impexp/                                         Import/Export tab
+  query/                                          Query tab (Monaco, Messages + Result N, History)
+  connection-form/, db-login/                     connection tab, Database Log In dialog
+        │  REST under /api/db (PPM auth); the Query tab's runs stream NDJSON
+Routes — src/server/routes/database*.ts
+        │
+Services — src/services/database/
+  adapter-registry → sqlite-adapter / postgres-adapter / mysql-adapter
+  dialect-*.ts + grid-query-builder.ts            every grid SELECT is built on the server
+  changeset.service.ts, structure-edit.service.ts, ddl/   writes and DDL, one transaction each
+  impexp/                                         export and import jobs
+  query-script-runner.ts                          Query tab runs
+  drivers/                                        drivers installed from Settings
+        │
+postgres.service.ts (postgres.js) · mysql.service.ts (mysql2, installed on demand) · sqlite.service.ts (bun:sqlite)
 ```
 
-### Connection Storage
+### Routes (`/api/db`)
 
-**SQLite Schema** (in `~/.ppm/ppm.db`):
+| Area | Routes |
+|---|---|
+| Connections | `GET`/`POST /connections`, `GET`/`PUT`/`DELETE /connections/:id`, `GET /connections/:id/config`, `POST /connections/:id/duplicate`, `POST /connections/folder`, `GET /connections/export`, `POST /connections/import`, `POST /test`, `POST /connections/:id/test` |
+| Login | `POST /connections/:id/login`, `POST /connections/:id/disconnect` |
+| Tree | `GET /connections/:id/databases`, `/objects`, `/columns`, `/structure`, `/object-sql`, `/tables` (`?cached=1` reads PPM's own cache) |
+| Grid | `POST /connections/:id/grid`, `/grid/count`, `/grid/values`, `/grid/export`, `/grid/cell`; the export's file is `GET /grid-export/:ticket` |
+| Writes | `POST /connections/:id/changeset/preview`, `/changeset/apply` |
+| Structure | `POST /connections/:id/structure/preview`, `/structure/apply` |
+| Import/Export | `POST /connections/:id/impexp/export`, `/impexp/import`; `PUT /impexp/uploads`, `POST /impexp/uploads/:id/preview`, `DELETE /impexp/uploads/:id`, `GET /impexp/jobs/:id`, `POST /impexp/jobs/:id/stop`, `POST /impexp/jobs/:id/download` |
+| Query tab | `POST /connections/:id/query/script` (NDJSON), `POST /connections/:id/query/cancel`, `GET /connections/:id/history` |
+| Kept for the CLI, agents and SQL completion | `POST /connections/:id/query`, `GET /connections/:id/schema`, `/data`, `/export`, `PUT /connections/:id/cell`, the `/row` routes, `GET /search` |
+| Drivers | `GET /drivers`, `POST /drivers/:id/install`, `DELETE /drivers/:id`, `GET /ssh/agent` |
+
+- `?database=` targets another database on the same server (the tree's database nodes). It is refused with 400 for a connection that uses only its own database, and for a database not in the connection's **Allowed databases** list (ignoring case; the connection's own database is always allowed). The allowed-databases regular expression only filters the tree: the server never runs a pattern the user typed. None of this is a permission: SQL typed in a Query tab, or a MySQL table named with its database, reaches whatever the login can.
+- A database **file** that is not a saved connection is served at `/connections/file/…?path=&project=`: the data routes only, with the path checked again on every request. Typed SQL on such a file returns at most 1,000 rows.
+- Before a route runs, a middleware answers **424** when the engine's driver is not installed and **428** when the connection asks for its password and no login is held.
+
+### Dialects and the grid
+
+- `dialect-*.ts` quote identifiers, page, cast and compare per engine. `grid-query-builder.ts` turns the grid's request — columns, DBGate filter syntax per column, multi-column sort, page — into one parameterised `SELECT`. The browser never sends SQL for the grid.
+- Rows come 100 at a time and **Fetch all** asks for the rest. `/grid/count` shows the engine's own estimate first and an exact `COUNT(*)` only if it finishes within 10 s (5 minutes when the user asks for an exact count), so a large table opens without waiting on a count.
+- Dates and times travel as text, as the database prints them — no conversion to ISO / UTC on the way.
+- Columns come from the driver's result metadata, never from `Object.keys` of a row, so `SELECT 1 a, 2 a` shows both columns.
+
+### Writes: one changeset, one transaction
+
+- The grid collects edited cells, new rows and deleted rows into one changeset (with undo/redo). **Save** shows the script (`/changeset/preview`) and `/changeset/apply` runs every statement in **one transaction**. Rows are addressed by the table's whole primary key, multi-column keys included.
+- Deleting a row that other rows still reference offers **Delete references CASCADE**: the server walks the foreign keys (`listForeignKeys`) and deletes the referencing rows first, in the same transaction.
+
+### Readonly, enforced by the database
+
+A connection is readonly by default (`connections.readonly = 1`). Two layers:
+
+1. `isReadOnlyQuery()` refuses an obvious write before it is sent, and the audit log records it as `blocked`.
+2. The database refuses whatever gets past that check. PostgreSQL runs each statement inside `BEGIN READ ONLY`, always rolled back. MySQL / MariaDB sessions start with `SET SESSION TRANSACTION READ ONLY` and run statements inside `START TRANSACTION READ ONLY`. SQLite opens a `readonly` handle.
+
+The second layer is what stops writes hidden in a function call — `nextval`, `setval`, a function that writes — on every path, `ppm db query` included.
+
+### Structure editing
+
+The Structure tab edits a table model. `ddl/table-diff.ts` compares it with the catalog, and `ddl/ddl-<engine>.ts` turns the difference into a plan that is previewed (`/structure/preview`) and applied (`/structure/apply`). SQLite can `ALTER` very little, so `ddl/sqlite-recreate.ts` follows SQLite's documented 12-step rebuild (new table, copy, drop, rename, indexes and triggers again, `foreign_key_check`) inside one transaction. New tables go through the same path. The SQL object tab shows an object's `CREATE` script (`/object-sql`).
+
+### Import and Export
+
+- The grid's **Export ▾** streams the current view, filters and sort applied, as CSV, TSV, JSON, NDJSON, SQL `INSERT`s, XML or XLSX. A browser can only save a download it navigated to, and such a request carries no auth header, so the authenticated `POST /grid/export` answers with a ticket and the browser fetches `GET /grid-export/:ticket` — once, within 30 s.
+- The Import/Export tab runs **jobs** (`impexp/`): several tables at a time, per-format options, column mapping, then one file per table or, with **Create single file**, one XLSX workbook with a sheet per table — optionally zipped. Import reads uploaded CSV, JSON or JSON-lines files into new or existing tables. An export reads inside a READ ONLY transaction. A job is polled by id, can be stopped, and its file is fetched once.
+
+### Query tab
+
+- `POST /query/script` splits the script with `splitSqlScript` (it understands MySQL's `DELIMITER`) and runs it one statement at a time in a session of its own, so `SET`, temporary tables and `BEGIN` carry from one statement to the next. Each statement's result is sent as soon as it ends, as one NDJSON line (`start`, `running`, `statement`, `message`, `done`).
+- **Stop** (`/query/cancel` with the `runId` the browser chose) cancels only the running statement: postgres.js `cancel()` on PostgreSQL, `KILL QUERY` from another connection on MySQL / MariaDB. `bun:sqlite` cannot be interrupted mid-statement, so the runner yields between statements and Stop keeps the next one from starting.
+- A transaction the script leaves open is rolled back and reported. Results are cut at the tab's row limit on the server (closing the cursor, `sql_select_limit`, or `LIMIT N+1`), so the rest are never read.
+- History is read from the query audit log (`source = "editor"`); there is no separate store.
+
+### Connections and secrets
+
 ```sql
-CREATE TABLE accounts (
-  id TEXT PRIMARY KEY,
-  account_name TEXT NOT NULL,
-  encrypted_api_key TEXT NOT NULL,
-  priority INTEGER DEFAULT 0,
-  is_active INTEGER DEFAULT 0, -- 1 = active, 0 = inactive
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
+-- ~/.ppm/ppm.db (schema v56)
 CREATE TABLE connections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type TEXT NOT NULL, -- 'sqlite' | 'postgres'
-  name TEXT NOT NULL,
-  connection_config TEXT NOT NULL, -- JSON: { path, connectionString, ... }
-  readonly INTEGER DEFAULT 1, -- 1 = readonly, 0 = writable (UI-only toggle)
-  group_name TEXT,
-  color TEXT, -- Optional hex color (#3b82f6)
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  type TEXT NOT NULL CHECK(type IN ('sqlite', 'postgres', 'mysql', 'mariadb')),
+  name TEXT NOT NULL UNIQUE,
+  connection_config TEXT NOT NULL,       -- encrypted StoredConnectionConfig
+  group_name TEXT,                       -- folder in the CONNECTIONS tree
+  color TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT, updated_at TEXT,
+  readonly INTEGER NOT NULL DEFAULT 1,
+  ai_access INTEGER NOT NULL DEFAULT 1   -- 0: `ppm db` run from an AI chat does not see it
 );
 
-CREATE TABLE table_metadata (
+CREATE TABLE connection_table_cache (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
   table_name TEXT NOT NULL,
-  schema_name TEXT DEFAULT 'public',
-  row_count INTEGER,
-  last_synced TEXT,
-  UNIQUE(connection_id, table_name, schema_name)
+  schema_name TEXT NOT NULL DEFAULT 'public',
+  row_count INTEGER NOT NULL DEFAULT 0,
+  cached_at TEXT,
+  UNIQUE(connection_id, schema_name, table_name)
 );
 ```
 
-### CLI Support (ppm db)
+- `connection_config` is encrypted at rest and never sent to the browser, with one deliberate exception: **Export** (`GET /connections/export`) hands out every connection's config in plain text — database, SSH and SSL key passwords included — because Import recreates the connections from that file, and its menu says so. `GET /connections/:id/config` returns the form's fields with each secret replaced by a `has…` flag.
+- `StoredConnectionConfig` (`src/shared/db-connection-config.ts`) holds the URL or the host / port / user fields, `passwordMode` (`saved` or `ask`), `singleDatabase`, `allowedDatabases` (+ regex), `isolationLevel`, `queryTimeoutSec`, `ssh` and `ssl`.
+- **Ask for password**: the password is never stored. Database Log In holds the login in memory until **Disconnect**, which also closes the connection's pools.
+- **SSH tunnel**: password, key file or SSH agent. A host key is pinned on first use in PPM's own `known_hosts`. **SSL**: CA, client certificate and key files; `verify-full` checks the host name, an IP address included.
+- Migration 55 rebuilt `connections` to accept `mysql` / `mariadb`. Dropping the old table would have cascade-deleted `connection_table_cache`, so it runs with `PRAGMA foreign_keys = OFF` — set outside the transaction, where that pragma takes effect.
 
-**Commands** (`src/cli/commands/db-cmd.ts`):
+### Drivers installed on demand
+
+MySQL / MariaDB (`mysql2`) and SSH tunnels (`ssh2`) are not bundled. **Settings → Database Drivers** (or `ppm db driver install <id>`) installs the pinned version with its pinned lockfile (`db-driver-locks.generated.json`) into `<ppm dir>/db-drivers/<id>`, and `db-driver-loader.ts` imports it from there.
+
+### Query audit
+
+Every statement PPM runs on a user database is logged in `<ppm dir>/query-audit.db`, with its source (`editor`, `grid`, `cli`, `filter`, `structure`, `export`, `import`), actor (human or agent), operation and status (`ok`, `error`, `blocked`). How long it is kept follows Settings (`query_audit.retention_days`, `max_size_mb`).
+
+### CLI (`ppm db`)
+
 ```bash
-ppm db connections           # List all connections
-ppm db connect               # Add new connection (interactive)
-ppm db remove <name>         # Delete connection
-ppm db query <name> <sql>    # Execute query (respects readonly)
-ppm db run <name> <file>     # Execute SQL file (multi-statement, transactions)
-ppm db tables <name>         # List tables
-ppm db schema <name> <table> # Show table schema
-ppm db data <name> <table>   # Show table data (paginated)
+ppm db list                           # connections (hides ai_access = 0 inside an AI chat)
+ppm db add -n <name> -t <type> -c <url> | -f <file>
+ppm db remove <name>
+ppm db test <name>
+ppm db tables <name>
+ppm db schema <name> <table>
+ppm db data <name> <table>
+ppm db query <name> <sql>             # readonly enforced by the database
+ppm db run <name> <file>              # a multi-statement file
+ppm db driver list | install <id> | remove <id>
 ```
 
-**CLI Safety:**
-- Always respects readonly flag (cannot override via CLI)
-- Uses same adapter/validation as web UI
-- Table formatting for terminal output
+The CLI goes through the same adapters as the web UI, so readonly, the audit log and "ask for password" (a hidden prompt on the terminal) behave the same.
 
 ---
 

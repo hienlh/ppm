@@ -131,6 +131,35 @@ try {
 const file = await FileService.read(path).catch(() => null);
 ```
 
+### Logging
+Server code logs through `createLogger` from `src/services/logger.ts`; the scope becomes the
+`[scope]` of the line in `~/.ppm/ppm.log`:
+
+```typescript
+import { createLogger } from "../services/logger.ts";
+const log = createLogger("fs-ops");
+
+log.info(`Deleted ${count} entries in ${dir}`);
+log.error("Move failed:", err); // an Error keeps its stack
+if (log.isEnabled("debug")) log.debug(`event ${JSON.stringify(event)}`); // skip costly formatting
+```
+
+Pick the level by what happened, not by how important the module feels:
+
+| Level | For | Examples |
+|---|---|---|
+| `fatal` | the process is about to exit, or a core subsystem cannot run at all | port never freed, DB cannot open or migrate, too many uncaught errors |
+| `error` | something that was asked for did not happen | a write, a commit, a backup or a child process failed |
+| `warn` | unexpected but recovered | a fallback, a retry, a timeout, a refused credential, a slow request |
+| `info` | lifecycle and state changes, at a rate a person can read | started/stopped, created/deleted, installed, a job ran |
+| `debug` | per-event chatter, only worth having while diagnosing | stream deltas, protocol detail, "skipping" notes |
+
+`info` is the default threshold (`ppm config set log_level debug`, or `PPM_LOG_LEVEL=debug`, to see
+more). Bare `console.*` calls still work and are logged at their level (`console.debug` is DEBUG).
+Never log secrets, file contents, chat text or tool output. Requests and WebSocket open/close are
+logged centrally (`src/server/middleware/access-log.ts`, `src/server/index.ts`), so a route only
+logs what that line cannot say — a count, a pid, a failure it turned into a 200.
+
 ## Component Patterns
 
 ### React Components
@@ -280,7 +309,7 @@ try {
 
 Query audit logs every SQL statement to a separate database (`~/.ppm/query-audit.db`), recording source (editor, grid, cli, filter), actor (human vs agent), operation type, and sample result rows. **Critical:** audit failures must never break a user query.
 
-**Pattern** (`routes/database.ts`, `routes/sqlite.ts`):
+**Pattern** (`routes/database.ts`):
 ```typescript
 const startedAt = Date.now();
 // Build the audit shape once — the blocked, ok and error branches all reuse it.

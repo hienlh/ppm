@@ -7,7 +7,7 @@ import type { Rect } from "./window-geometry";
  * Single source of truth: the persistence layer filters this list instead of repeating it,
  * so a new kind can never be silently dropped on reload.
  */
-export const WINDOW_KINDS = ["explorer", "agent-session", "system-monitor", "tab-host", "remote-desktop", "settings"] as const;
+export const WINDOW_KINDS = ["explorer", "agent-session", "system-monitor", "tab-host", "remote-desktop", "settings", "logs"] as const;
 
 export type WindowKind = (typeof WINDOW_KINDS)[number];
 

@@ -15,6 +15,9 @@ import { ensureCloudflared } from "../cloudflared.service.ts";
 import { killProcessTree } from "../windows-process-tree.ts";
 import { broadcastGlobalEvent } from "../../server/ws/global.ts";
 import { verifyCertLive, pinsMatch, renameCertAside, pumpLoginStream } from "./cloudflared-login-helpers.ts";
+import { createLogger } from "../logger.ts";
+
+const log = createLogger("named-tunnel");
 
 export type LoginState = "idle" | "waiting" | "slow" | "success" | "timeout" | "cancelled" | "error";
 export interface LoginSnapshot { state: LoginState; url: string | null; message: string | null }
@@ -54,11 +57,19 @@ function clearTimers(): void {
 
 /** Move to a terminal state: clear timers, drop the process ref, broadcast. */
 function setTerminal(state: LoginState, message: string | null): void {
+  const pid = session.proc?.pid;
   clearTimers();
   session.proc = null;
   session.state = state;
   session.message = message;
   broadcastGlobalEvent({ type: "tunnel:login_state", state, message: message ?? undefined });
+  // The broadcast reaches only an open browser; this is the record of how the login ended.
+  const of = pid ? ` (PID ${pid})` : "";
+  const text = message ? `: ${message}` : "";
+  if (state === "timeout") log.warn(`Cloudflare login timed out after ${LOGIN_TIMEOUT_MS / 60_000}m — killed${of}`);
+  // With a process, cloudflared itself failed; without one, the check before starting it did.
+  else if (state === "error") log[pid ? "error" : "warn"](`Cloudflare login failed${of}${text}`);
+  else log.info(`Cloudflare login ${state}${of}${text}`);
 }
 
 /** Wraps `pumpLoginStream` with this module's session-singleton hooks. */
@@ -114,17 +125,19 @@ export async function startLogin(opts: { relogin?: boolean } = {}): Promise<Logi
       // can never pass the shortcut again as-is — move it aside now instead
       // of leaving a bad file to keep silently triggering the same
       // fallthrough on every future login attempt.
-      renameCertAside();
+      if (renameCertAside()) log.info(`cert.pem moved aside (${liveCheck === "invalid" ? "invalid" : "mismatch"})`);
     }
   } else {
     // Explicit ?relogin=1 — the user deliberately pressed "Sign in again",
     // so this renames unconditionally regardless of network reachability.
-    renameCertAside();
+    if (renameCertAside()) log.info("cert.pem moved aside (relogin)");
   }
 
   const bin = await ensureCloudflared();
   const proc = Bun.spawn([bin, ...loginArgs()], { stdout: "pipe", stderr: "pipe" });
   session = { state: "waiting", url: null, message: null, proc, slowTimer: null, killTimer: null, certPollTimer: null };
+  // Never the login URL: it carries the one-time callback token.
+  log.info(`Cloudflare login started (PID ${proc.pid}${relogin ? ", relogin" : ""})`);
 
   session.slowTimer = setTimeout(() => {
     if (session.proc !== proc) return;

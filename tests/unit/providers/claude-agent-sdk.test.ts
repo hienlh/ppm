@@ -1,12 +1,17 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach, mock, spyOn } from "bun:test";
-import { mkdirSync, rmSync, existsSync as fsExists } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, existsSync as fsExists } from "node:fs";
 import type { ChatEvent } from "../../../src/types/chat.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { accountService } from "../../../src/services/account.service.ts";
 import { accountSelector } from "../../../src/services/account-selector.service.ts";
-import { setSessionAccount, getSessionTitle, setSessionTitle } from "../../../src/services/db.service.ts";
+import { setSessionAccount, getSessionTitle, setSessionTitle, getSessionProjectPath } from "../../../src/services/db.service.ts";
+import { deleteSessionBaselines, readBaseline } from "../../../src/services/session-file-baselines/session-file-baselines.service.ts";
+import { readHistory } from "../../../src/services/session-file-baselines/session-file-history.ts";
+import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
+import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
+import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -51,6 +56,17 @@ function createMockQueryIterator(
 }
 
 // Mock the SDK module
+/** The permission hook a turn was spawned with: the one matching every tool, not the file-write hook. */
+function permissionHook(options: any): (input: unknown) => Promise<unknown> {
+  return options.hooks.PreToolUse.find((m: { matcher: string }) => m.matcher === ".*").hooks[0];
+}
+
+/** Every PreToolUse hook whose matcher names the tool, run together, as the CLI runs them. */
+function runPreToolUse(options: any, input: { tool_name: string }): Promise<unknown[]> {
+  const matching = options.hooks.PreToolUse.filter((m: { matcher: string }) => new RegExp(`^(?:${m.matcher})$`).test(input.tool_name));
+  return Promise.all(matching.flatMap((m: { hooks: ((i: unknown) => Promise<unknown>)[] }) => m.hooks.map((hook) => hook(input))));
+}
+
 let mockQueryFn: ReturnType<typeof mock>;
 
 mock.module("@anthropic-ai/claude-agent-sdk", () => {
@@ -122,6 +138,54 @@ describe("ClaudeAgentSdkProvider", () => {
 
       const done = events.find((e) => e.type === "done");
       expect(done).toBeTruthy();
+    });
+
+    it("says why the API refused a turn, not just that the request was invalid", async () => {
+      // A refusal comes back as a synthetic assistant message whose error is "invalid_request",
+      // and only the CLI's own text says what to do about it.
+      const cliText = "API Error: Opus 5.5's safeguards flagged this session (https://www.anthropic.com/legal/aup). Claude Code can't respond to your last message with Opus 5.5.\n\nTry rephrasing the request in a new session or change your model.";
+      const refusal = {
+        type: "assistant",
+        error: "invalid_request",
+        message: {
+          model: "<synthetic>",
+          role: "assistant",
+          stop_reason: "refusal",
+          stop_details: { type: "refusal", category: "cyber", explanation: "This request triggered restrictions on violative cyber content." },
+          content: [{ type: "text", text: cliText }],
+        },
+      };
+      mockQueryFn.mockReturnValue(createMockQueryIterator([refusal, { type: "result", subtype: "success", num_turns: 1 }]));
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) events.push(event);
+
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+      expect(errors).toEqual([cliText]);
+    });
+
+    it("keeps the generic hint for an invalid request that is not a refusal", async () => {
+      // Same error code and a text body, but no refusal: the body is the raw API error and the
+      // hint stays the one shown for every other invalid_request.
+      const invalid = {
+        type: "assistant",
+        error: "invalid_request",
+        message: {
+          model: "<synthetic>",
+          role: "assistant",
+          stop_reason: "stop_sequence",
+          content: [{ type: "text", text: "API Error: 400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"tool_use ids must be unique\"}}" }],
+        },
+      };
+      mockQueryFn.mockReturnValue(createMockQueryIterator([invalid, { type: "result", subtype: "success", num_turns: 1 }]));
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) events.push(event);
+
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+      expect(errors).toEqual(["Invalid request sent to the API."]);
     });
 
     /**
@@ -343,8 +407,180 @@ describe("ClaudeAgentSdkProvider", () => {
       const opts = mockQueryFn.mock.calls[0]![0].options;
       expect(opts.allowedTools).toEqual(["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch", "mcp__*"]);
       expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
-      const hook = opts.hooks.PreToolUse[0].hooks[0];
+      const hook = permissionHook(opts);
       expect(await hook({ tool_name: "Read", tool_input: { file_path: "/etc/hosts" } })).toEqual({});
+    });
+
+    it("keeps a file's state from before the session's first write, in bypass mode too", async () => {
+      const dir = `/tmp/ppm-baseline-hook-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        // Bypass mode spawns no permission hook: the file-write hook comes first, then the shell one.
+        expect(opts.hooks.PreToolUse.map((m: { matcher: string }) => m.matcher)).toEqual(["Write|Edit|MultiEdit|NotebookEdit", "Bash|PowerShell"]);
+        const fileWrite = opts.hooks.PreToolUse[0].hooks[0];
+        expect(await fileWrite({ tool_name: "Edit", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir })).toEqual({});
+        await Bun.write(`${dir}/a.ts`, "after\n");
+        await fileWrite({ tool_name: "Edit", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir });
+        expect(readBaseline(session.id, `${dir}/a.ts`)).toMatchObject({ existed: true, content: "before\n" });
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("records the project of a session started elsewhere once it keeps a write of it", async () => {
+      const dir = `/tmp/ppm-record-project-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      const sessions = [crypto.randomUUID(), crypto.randomUUID()];
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        /** A turn of a session resumed with no record, given the chat's project as the WS handler does. */
+        const turn = async (sessionId: string) => {
+          mockQueryFn.mockClear();
+          mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+          await provider.resumeSession(sessionId);
+          provider.ensureProjectPath(sessionId, dir);
+          for await (const _ of provider.sendMessage(sessionId, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+          expect(getSessionProjectPath(sessionId)).toBeNull();
+          return mockQueryFn.mock.calls[0]![0].options.hooks.PreToolUse;
+        };
+        const [byEdit, byShell] = sessions as [string, string];
+        // The review's routes answer for each in this project from then on, and only in this one.
+        await (await turn(byEdit))[0].hooks[0]({ hook_event_name: "PreToolUse", tool_name: "Edit", tool_use_id: "toolu_1", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir });
+        expect(getSessionProjectPath(byEdit)).toBe(dir);
+        await (await turn(byShell))[1].hooks[0]({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_2", tool_input: { command: "ls" }, cwd: dir });
+        expect(getSessionProjectPath(byShell)).toBe(dir);
+      } finally {
+        for (const id of sessions) deleteSessionBaselines(id);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps a file's state outside bypass mode only once its write is allowed", async () => {
+      const dir = `/tmp/ppm-baseline-gate-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        /** An Edit of a.ts through the hooks, answered once `meanwhile` has run with the prompt open. */
+        const edit = async (approved: boolean, meanwhile: () => Promise<unknown>) => {
+          const asked = new Set(pending.keys());
+          const verdicts = runPreToolUse(opts, {
+            hook_event_name: "PreToolUse", tool_name: "Edit", tool_use_id: `toolu_${approved}`, tool_input: { file_path: `${dir}/a.ts` }, cwd: dir,
+          } as { tool_name: string });
+          // Long enough for any hook that does not wait for the answer to have done its work.
+          await Bun.sleep(50);
+          const requestId = [...pending.keys()].find((k) => !asked.has(k));
+          expect(requestId).toBeTruthy();
+          await meanwhile();
+          provider.resolveApproval(requestId!, approved);
+          return verdicts;
+        };
+
+        expect(await edit(false, async () => {})).toContainEqual(preToolUseDecision("deny", "User denied tool execution"));
+        expect(readBaseline(session.id, `${dir}/a.ts`)).toBeNull();
+        expect(readHistory(session.id, `${dir}/a.ts`).entries).toEqual([]);
+
+        // Changed by hand while the prompt is open: that change is not the session's.
+        expect(await edit(true, () => Bun.write(`${dir}/a.ts`, "edited by hand\n"))).toContainEqual(preToolUseDecision("allow"));
+        expect(readBaseline(session.id, `${dir}/a.ts`)).toMatchObject({ existed: true, content: "edited by hand\n" });
+        expect(readHistory(session.id, `${dir}/a.ts`).entries.map((e) => [e.call, e.phase, e.text])).toEqual([
+          ["toolu_true", "before", "edited by hand\n"],
+        ]);
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("puts what each file tool call found and left in the session's history", async () => {
+      const dir = `/tmp/ppm-history-hook-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.ts`, "before\n");
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        const writes = (event: string) => opts.hooks[event].find((m: { matcher: string }) => m.matcher === "Write|Edit|MultiEdit|NotebookEdit").hooks[0];
+        const call = { tool_name: "Edit", tool_use_id: "toolu_edit", tool_input: { file_path: `${dir}/a.ts` }, cwd: dir };
+        expect(await writes("PreToolUse")({ ...call, hook_event_name: "PreToolUse" })).toEqual({});
+        await Bun.write(`${dir}/a.ts`, "after\n");
+        expect(await writes("PostToolUse")({ ...call, hook_event_name: "PostToolUse", tool_response: {} })).toEqual({});
+        expect(readHistory(session.id, `${dir}/a.ts`).entries.map((e) => [e.call, e.phase, e.text])).toEqual([
+          ["toolu_edit", "before", "before\n"],
+          ["toolu_edit", "after", "after\n"],
+        ]);
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps the state of a file a shell command changes, from the hooks around the command", async () => {
+      const dir = `/tmp/ppm-shell-hook-${crypto.randomUUID()}`;
+      mkdirSync(dir, { recursive: true });
+      let sessionId = "";
+      try {
+        await Bun.write(`${dir}/a.txt`, "before\n");
+        for (const args of [["init", "-q"], ["config", "core.autocrlf", "false"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]]) {
+          expect(Bun.spawnSync(["git", ...args], { cwd: dir }).exitCode).toBe(0);
+        }
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: dir });
+        sessionId = session.id;
+        for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+        const opts = mockQueryFn.mock.calls[0]![0].options;
+        const before = opts.hooks.PreToolUse.find((m: { matcher: string }) => m.matcher === "Bash|PowerShell").hooks[0];
+        const after = opts.hooks.PostToolUse[0].hooks[0];
+        const call = { tool_name: "Bash", tool_use_id: "toolu_shell", tool_input: { command: "printf 'x\\n' >> a.txt" }, cwd: dir };
+        expect(await before({ ...call, hook_event_name: "PreToolUse" })).toEqual({});
+        // What the command does, done here: the hooks only see the file move, not what moved it.
+        appendFileSync(`${dir}/a.txt`, "x\n");
+        expect(await after({ ...call, hook_event_name: "PostToolUse", tool_response: {} })).toEqual({});
+        expect(readBaseline(session.id, `${dir}/a.txt`)).toMatchObject({ existed: true, content: "before\n" });
+        expect(readHistory(session.id, `${dir}/a.txt`).entries.map((e) => [e.call, e.phase, e.text])).toEqual([
+          ["toolu_shell", "before", "before\n"],
+          ["toolu_shell", "after", "before\nx\n"],
+        ]);
+      } finally {
+        deleteSessionBaselines(sessionId);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("gives an ordinary chat the tab tools it was handed and opens tabs without asking, never in a design session", async () => {
+      const tabToolsMcp = { url: "http://127.0.0.1:8080/api/tab-tools-mcp", token: "tok-tabs" };
+      const turn = async (opts: Record<string, unknown>) => {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: "/tmp/my-project" });
+        for await (const _ of provider.sendMessage(session.id, "hi", opts)) { /* consume */ }
+        return mockQueryFn.mock.calls[0]![0].options;
+      };
+      const opts = await turn({ permissionMode: "default", tabToolsMcp });
+      expect(opts.mcpServers["ppm-tabs"]).toEqual({ type: "http", url: tabToolsMcp.url, headers: { Authorization: "Bearer tok-tabs" }, timeout: 60_000 });
+      const allow = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+      expect(await permissionHook(opts)({ tool_name: "mcp__ppm-tabs__open_preview", tool_input: { path: "a.html" } })).toEqual(allow);
+      expect(await permissionHook(opts)({ tool_name: "mcp__ppm-tabs__open_file", tool_input: { path: "a.ts" } })).toEqual(allow);
+      expect((await turn({ permissionMode: "default" })).mcpServers?.["ppm-tabs"]).toBeUndefined();
+      const design = await turn({ designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits", tabToolsMcp });
+      expect(design.mcpServers?.["ppm-tabs"]).toBeUndefined();
     });
 
     describe("design session", () => {
@@ -365,13 +601,13 @@ describe("ClaudeAgentSdkProvider", () => {
       });
 
       it("lets project file tools through the hook with a verdict the CLI honours", async () => {
-        const hook = (await startDesignTurn()).hooks.PreToolUse[0].hooks[0];
+        const hook = permissionHook(await startDesignTurn());
         expect(await hook({ tool_name: "Write", tool_input: { file_path: "designs/x/index.html" } }))
           .toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
       });
 
       it("asks for shell and for files outside the project, and a denial denies", async () => {
-        const hook = (await startDesignTurn()).hooks.PreToolUse[0].hooks[0];
+        const hook = permissionHook(await startDesignTurn());
         const pending = (provider as any).pendingApprovals as Map<string, unknown>;
         for (const input of [
           { tool_name: "Bash", tool_input: { command: "ls" } },
@@ -439,6 +675,22 @@ describe("ClaudeAgentSdkProvider", () => {
       const opts = mockQueryFn.mock.calls[0]![0].options;
       // sdk-cli/sdk-ts/sdk-py are exactly the labels those pickers filter out
       expect(opts.env.CLAUDE_CODE_ENTRYPOINT).toBe("ppm");
+    });
+
+    it("marks the chat's processes, so `ppm db` in the model's shell keeps to the connections available to the AI chat", async () => {
+      // PPM itself may run with the mark switched off; the chat's own must still be on.
+      const saved = process.env.PPM_AI_CHAT;
+      process.env.PPM_AI_CHAT = "0";
+      try {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+        expect(mockQueryFn.mock.calls[0]![0].options.env.PPM_AI_CHAT).toBe("1");
+      } finally {
+        if (saved === undefined) delete process.env.PPM_AI_CHAT;
+        else process.env.PPM_AI_CHAT = saved;
+      }
     });
 
     it("overrides an entrypoint inherited from the parent process", async () => {
@@ -747,6 +999,27 @@ describe("ClaudeAgentSdkProvider", () => {
 
       const opts = mockQueryFn.mock.calls[0]![0].options;
       expect(opts.env.ANTHROPIC_API_KEY).toBe("sk-ant-env-key-fallback");
+    });
+
+    it("turns the claude.ai Artifact tools off only while PPM's tab tools are on", async () => {
+      const envOf = async () => {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+        return mockQueryFn.mock.calls[0]![0].options.env as Record<string, string | undefined>;
+      };
+      const previous = process.env.CLAUDE_CODE_DISABLE_ARTIFACT;
+      delete process.env.CLAUDE_CODE_DISABLE_ARTIFACT;
+      try {
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
+        (configService as any).config.ai.tab_tools = true;
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBe("1");
+        (configService as any).config.ai.tab_tools = false;
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
+      } finally {
+        if (previous !== undefined) process.env.CLAUDE_CODE_DISABLE_ARTIFACT = previous;
+      }
     });
 
     it("settings api_key takes priority even when env vars are set", async () => {
@@ -1095,6 +1368,27 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(events.find((e) => e.type === "done")).toBeTruthy();
     });
 
+    it("starts with the tab tools under the token its chat will mint, so the chat's first turn takes it over", async () => {
+      (configService as any).config.ai.tab_tools = true;
+      setServerListenAddress(8125, "0.0.0.0");
+      try {
+        const clis = cliFactory();
+        await provider.prewarm({ projectPath: project });
+        const spare = clis[0]!.options;
+        const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+        expect(session.id).toBe(spare.sessionId);
+        expect(tabToolsMcpTokens.resolve(spare.mcpServers["ppm-tabs"].headers.Authorization.slice("Bearer ".length)))
+          .toEqual({ sessionId: session.id });
+        // What chatService.prepareSendOptions hands the session's turn.
+        await drain(provider.sendMessage(session.id, "hi", { tabToolsMcp: tabToolsMcpAccessFor(session.id)! }));
+        expect(clis).toHaveLength(1);
+        expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
+      } finally {
+        (configService as any).config.ai.tab_tools = undefined;
+        setServerListenAddress(0, "");
+      }
+    });
+
     it("is spawned with the very options a cold first turn with the same picks uses", async () => {
       const claude = (configService as any).config.ai.providers.claude;
       const saved = claude.system_prompt;
@@ -1142,7 +1436,7 @@ describe("ClaudeAgentSdkProvider", () => {
     it("asks the adopting turn for approval, in a mode that asks", async () => {
       let verdict: unknown;
       const clis = cliFactory(async (options) => {
-        verdict = await options.hooks.PreToolUse[0].hooks[0]({ tool_name: "Bash", tool_input: { command: "ls" } });
+        verdict = await permissionHook(options)({ tool_name: "Bash", tool_input: { command: "ls" } });
       });
       await provider.prewarm({ projectPath: project, opts: { permissionMode: "default" } });
       const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
@@ -1191,6 +1485,18 @@ describe("ClaudeAgentSdkProvider", () => {
         const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
         await drain(provider.sendMessage(session.id, "hi"));
         expect(clis).toHaveLength(1);
+      });
+
+      it("tells the router how long this chat's cache lives, so an idle binding can lapse", async () => {
+        cliFactory();
+        const ttl = spyOn(provider, "promptCacheTtlMs").mockReturnValue(1234);
+        try {
+          const session = await provider.createSession({ projectPath: project });
+          await drain(provider.sendMessage(session.id, "hi"));
+          expect(accountSelector.forSession).toHaveBeenCalledWith(session.id, expect.any(Set), { cacheTtlMs: 1234 });
+        } finally {
+          ttl.mockRestore();
+        }
       });
 
       it("starts nothing without a claimed account, since the turn's own pick cannot be foreseen", async () => {

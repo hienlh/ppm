@@ -130,3 +130,59 @@ export function readSessionTimeline(sessionId: string, limit = 5000): TraceEvent
 export function countTraceEvents(): number {
   return (getTraceDb().query("SELECT COUNT(*) AS count FROM session_events").get() as { count: number }).count;
 }
+
+/** What was last written per device, so a device sending every few seconds costs no write. */
+const deviceSeen = new Map<string, { ua: string; at: number }>();
+const DEVICE_REWRITE_MS = 60 * 60 * 1000;
+
+/** Remember which browser a device id is. Cheap to call on every batch. */
+export function recordTraceDevice(deviceId: string, userAgent: string, now = Date.now()): void {
+  const ua = userAgent.slice(0, 512);
+  const seen = deviceSeen.get(deviceId);
+  if (seen && seen.ua === ua && now - seen.at < DEVICE_REWRITE_MS) return;
+  getTraceDb()
+    .query(`INSERT INTO trace_devices (device_id, user_agent, last_seen) VALUES (?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET user_agent = excluded.user_agent, last_seen = excluded.last_seen`)
+    .run(deviceId, ua, now);
+  deviceSeen.set(deviceId, { ua, at: now });
+}
+
+/** Every device's user agent, by device id. */
+export function readTraceDevices(): Map<string, string> {
+  const rows = getTraceDb().query("SELECT device_id, user_agent FROM trace_devices").all() as { device_id: string; user_agent: string }[];
+  return new Map(rows.map((r) => [r.device_id, r.user_agent]));
+}
+
+/** One browser row, with the rowid the Logs reader uses as its id and its live-tail cursor. */
+export interface BrowserTraceRow {
+  rowid: number;
+  traceId: string;
+  ts: number;
+  refId: string | null;
+  type: string;
+  payloadJson: string;
+}
+
+/**
+ * Browser rows from `fromTs` on, oldest first — the newest `limit` of them when there are more,
+ * since those are what a reader came for; after `afterRowid`, in the order they were written.
+ */
+export function readBrowserRows(opts: { fromTs?: number; afterRowid?: number; limit?: number }): BrowserTraceRow[] {
+  const where = ["source = 'browser'"];
+  const args: number[] = [];
+  if (opts.fromTs !== undefined && opts.fromTs > 0) { where.push("ts >= ?"); args.push(opts.fromTs); }
+  if (opts.afterRowid !== undefined) { where.push("rowid > ?"); args.push(opts.afterRowid); }
+  const tail = opts.afterRowid !== undefined;
+  const rows = getTraceDb()
+    .query(`SELECT rowid, trace_id, ts, ref_id, type, payload_json FROM session_events
+      WHERE ${where.join(" AND ")} ORDER BY ${tail ? "rowid" : "ts DESC, rowid DESC"} LIMIT ?`)
+    .all(...args, Math.max(1, Math.floor(opts.limit ?? 50_000))) as { rowid: number; trace_id: string; ts: number; ref_id: string | null; type: string; payload_json: string }[];
+  if (!tail) rows.reverse();
+  return rows.map((r) => ({ rowid: r.rowid, traceId: r.trace_id, ts: r.ts, refId: r.ref_id, type: r.type, payloadJson: r.payload_json }));
+}
+
+/** The newest rowid in the table, where a live tail starts. */
+export function lastTraceRowid(): number {
+  const row = getTraceDb().query("SELECT MAX(rowid) AS id FROM session_events").get() as { id: number | null };
+  return row.id ?? 0;
+}

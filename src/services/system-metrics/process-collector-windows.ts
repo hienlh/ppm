@@ -12,6 +12,7 @@ import { createStickyColumns } from "./process-collector-types.ts";
 import { PowerShellSession, PsSessionDisabledError, PS_DISABLED_WARNING } from "./powershell-session.ts";
 import { parseWindowsTick, type WindowsCommandLine } from "./process-collector-windows-parse.ts";
 import { computeGpuPercents, memBytesToMB, type GpuUsageState } from "./gpu-process-usage-windows.ts";
+import { createLogger, type Logger } from "../logger.ts";
 
 /** `.ToUniversalTime()` here, not in JS: only .NET on this machine knows which
  *  DST rule applied at the instant each process started. */
@@ -49,7 +50,7 @@ export interface WindowsProcessCollectorOptions {
   now?: () => number;
   commandRefreshMs?: number;
   /** Seam for the one-shot startup timing line, so tests stay silent. */
-  log?: (message: string) => void;
+  log?: Logger;
 }
 
 export interface WindowsProcessCollector extends ProcessCollector {
@@ -60,7 +61,7 @@ export function createWindowsProcessCollector(opts: WindowsProcessCollectorOptio
   const session = opts.session ?? new PowerShellSession();
   const now = opts.now ?? Date.now;
   const refreshMs = opts.commandRefreshMs ?? COMMANDLINE_REFRESH_MS;
-  const log = opts.log ?? ((m: string) => console.log(m));
+  const log = opts.log ?? createLogger("SystemMetrics");
   const observeColumns = createStickyColumns();
   let commandByPid = new Map<number, WindowsCommandLine>();
   let lastCommandFetchAt = Number.NEGATIVE_INFINITY;
@@ -89,7 +90,7 @@ export function createWindowsProcessCollector(opts: WindowsProcessCollectorOptio
         logged = true;
         // One line, once: the round trip now also carries the two GPU classes,
         // and the 2 s tick budget is the thing that would break first.
-        log(`[system-metrics] windows tick round trip (incl. GPU pass): ${now() - startedRequestAt} ms`);
+        log.info(`windows tick round trip (incl. GPU pass): ${now() - startedRequestAt} ms`);
       }
 
       const parsed = parseWindowsTick(text);

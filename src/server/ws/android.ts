@@ -20,6 +20,9 @@ import {
   type AndroidSocket, type AndroidViewerSession,
 } from "../../services/android/android-session.ts";
 import { ANDROID_QUALITY_PRESETS, type AndroidQuality } from "../../shared/android-protocol.ts";
+import { createLogger } from "../../services/logger.ts";
+
+const log = createLogger("android");
 
 registerAndroidExitSweep();
 
@@ -56,24 +59,39 @@ function parseQuality(value: unknown): AndroidQuality {
 
 async function authenticateFirstMessage(ws: AndroidWs, text: string): Promise<void> {
   let parsed: Record<string, unknown>;
-  try { parsed = JSON.parse(text); } catch { ws.close(1008, "expected auth message"); return; }
+  try { parsed = JSON.parse(text); } catch {
+    log.warn("viewer rejected: first message is not JSON");
+    ws.close(1008, "expected auth message");
+    return;
+  }
 
   const nonce = parsed.type === "auth" ? parsed.nonce : undefined;
   const deviceId = typeof nonce === "string" ? consumeAndroidNonce(nonce) : null;
-  if (!deviceId) { ws.close(1008, "invalid or expired session nonce"); return; }
+  if (!deviceId) {
+    // Never the nonce itself: it is what hands over touch and keyboard control of the device.
+    log.warn("viewer rejected: invalid or expired nonce");
+    ws.close(1008, "invalid or expired session nonce");
+    return;
+  }
 
   const emulator = findRunningByDeviceId(deviceId);
-  if (!emulator) { ws.close(1011, "that emulator is no longer running"); return; }
+  if (!emulator) {
+    log.warn(`viewer rejected: device=${deviceId} not running`);
+    ws.close(1011, "that emulator is no longer running");
+    return;
+  }
 
   ws.data.authenticated = true;
+  const quality = parseQuality(parsed.quality);
   try {
     ws.data.session = await attachAndroidViewer(androidSocketFor(ws), {
       deviceId,
       emulator,
-      quality: parseQuality(parsed.quality),
+      quality,
     });
+    log.info(`viewer attached device=${deviceId} quality=${quality}`);
   } catch (e) {
-    console.error(`[android] failed to start a session: ${(e as Error).message}`);
+    log.error("failed to start a session:", e);
     ws.send(JSON.stringify({ type: "error", message: (e as Error).message, fatal: true }));
     ws.close(1011, "session failed to start");
   }
@@ -85,13 +103,20 @@ export const androidWebSocket = {
   },
 
   async message(ws: AndroidWs, msg: string | ArrayBuffer | Uint8Array) {
-    if (!guardOrClose(ws)) return;
-    const text = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
-    if (!ws.data.authenticated) {
-      await authenticateFirstMessage(ws, text);
-      return;
+    // The server drops this promise, so anything that escapes is an unhandled rejection — and
+    // three of those in a minute exit the whole server. The session catches its own messages;
+    // this is for the rest (a first message of `null` fails reading `.type`, for one).
+    try {
+      if (!guardOrClose(ws)) return;
+      const text = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
+      if (!ws.data.authenticated) {
+        await authenticateFirstMessage(ws, text);
+        return;
+      }
+      await ws.data.session?.handleClientMessage(text);
+    } catch (e) {
+      log.warn(`message handling failed: ${(e as Error)?.message ?? e}`);
     }
-    await ws.data.session?.handleClientMessage(text);
   },
 
   close(ws: AndroidWs) {

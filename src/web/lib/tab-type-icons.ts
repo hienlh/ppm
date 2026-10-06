@@ -7,7 +7,7 @@
  */
 import {
   Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Puzzle, Sparkles, Users, CircleX,
-  GitCommitHorizontal, Palette, Smartphone,
+  GitCommitHorizontal, Palette, Smartphone, Plug, Table, FolderTree, Code, SquareTerminal, ArrowLeftRight, Globe, ScrollText,
   type LucideIcon,
 } from "@/lib/icons";
 import type { ElementType } from "react";
@@ -21,11 +21,18 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   terminal: Terminal,
   chat: MessageSquare,
   editor: FileCode,
-  database: Database,
+  // DBGate's: one table's data, its structure and its SQL share a title and differ by icon.
+  database: Table,
+  "db-structure": FolderTree,
+  "db-sql": Code,
+  "db-query": SquareTerminal,
+  "db-impexp": ArrowLeftRight,
+  "db-connection": Plug,
   sqlite: Database,
-  postgres: Database,
   "git-diff": FileDiff,
   "branch-review": FileDiff,
+  "session-review": FileDiff,
+  "git-review": FileDiff,
   settings: Settings,
   extension: Puzzle,
   "extension-webview": Puzzle,
@@ -37,6 +44,8 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   problems: CircleX,
   design: Palette,
   android: Smartphone,
+  "web-preview": Globe,
+  logs: ScrollText,
 };
 
 /** Resolve the icon for a tab type, falling back to a generic glyph. */

@@ -9,6 +9,12 @@ import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDi
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
+import { createLogger } from "./logger.ts";
+
+const log = createLogger("ExtService");
+/** What the extension host thread prints — the host itself, vscode-compat and every extension —
+ *  forwarded from that thread's console (see extension-host-worker.ts). */
+const extLog = createLogger("ext");
 
 /**
  * Where the bundled `packages/ext-*` extensions live on disk.
@@ -77,7 +83,9 @@ class ExtensionService {
     if (this.worker && this.rpc) return { worker: this.worker, rpc: this.rpc };
 
     this.worker = new Worker(extensionHostWorkerSpec(), { type: "module" });
-    this.rpc = new RpcChannel((msg) => this.worker!.postMessage(msg));
+    const worker = this.worker;
+    this.rpc = new RpcChannel((msg) => this.worker!.postMessage(msg), createLogger("RPC"));
+    log.info("Extension host worker started");
 
     this.rpc.onRequest("storage:set", async (params) => {
       const [extId, scope, key, value] = params as [string, string, string, string | null];
@@ -90,14 +98,28 @@ class ExtensionService {
 
     this.rpc.onEvent("worker:ready", () => {
       this.workerReady = true;
-      console.log("[ExtService] Extension host worker ready");
+      log.debug("Extension host worker ready");
+    });
+
+    this.rpc.onEvent("log", (data) => {
+      const { level, text } = (data ?? {}) as { level?: unknown; text?: unknown };
+      if (typeof text !== "string") return;
+      if (level === "debug" || level === "warn" || level === "error") extLog[level](text);
+      else extLog.info(text);
     });
 
     this.worker.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
       this.rpc!.handleMessage(event.data);
     });
     this.worker.addEventListener("error", (event) => {
-      console.error("[ExtService] Worker error:", event.message);
+      log.error("Worker error:", event.message);
+    });
+    // The only sign the host thread is gone: an uncaught exception in any extension ends it
+    // (code 1), and `terminateWorker` is the one expected way out.
+    worker.addEventListener("close", (event) => {
+      const code = (event as Event & { code?: number }).code;
+      if (this.worker === worker) log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
+      else log.debug(`Extension host worker stopped code=${code}`);
     });
 
     return { worker: this.worker, rpc: this.rpc };
@@ -124,7 +146,10 @@ class ExtensionService {
     ensureExtensionsDir(resolve(getPpmDir(), "extensions"));
 
     // Discover bundled extensions from packages/ext-*
-    const bundled = await discoverBundledManifests(bundledExtensionsDir());
+    const bundledDir = bundledExtensionsDir();
+    // Every bundled extension would vanish without it, and nothing else says so.
+    if (!existsSync(bundledDir)) log.warn(`Bundled extensions dir not found: ${bundledDir}`);
+    const bundled = await discoverBundledManifests(bundledDir);
     for (const m of bundled) {
       this.extensionPaths.set(m.id, m._dir);
       this.bundledIds.add(m.id);
@@ -195,7 +220,7 @@ class ExtensionService {
     const authConfig = cfg.get("auth");
     const authToken = authConfig?.enabled ? authConfig.token : undefined;
 
-    console.log(`[ExtService] activating ${id} (entry: ${entryPath})`);
+    log.debug(`activating ${id} (entry: ${entryPath})`);
     const result = await rpc.sendRequest<{ ok: boolean; error?: string }>(
       "ext:activate", id, entryPath, extDir, storedState, baseUrl, authToken,
     );
@@ -208,20 +233,25 @@ class ExtensionService {
     this.activatedIds.add(id);
     if (manifest.contributes) contributionRegistry.register(id, manifest.contributes);
     this.broadcastContributions();
-    console.log(`[ExtService] activated ${id} successfully`);
+    log.info(`activated ${id} successfully`);
   }
 
   async deactivate(id: string): Promise<void> {
     if (!this.activatedIds.has(id)) return;
     if (this.rpc) {
-      try { await this.rpc.sendRequest("ext:deactivate", id); } catch (e) {
-        console.error(`[ExtService] Error deactivating ${id}:`, e);
+      try {
+        const result = await this.rpc.sendRequest<{ ok: boolean; error?: string }>("ext:deactivate", id);
+        // Its deactivate() threw. The host drops the extension all the same, so it is degraded
+        // rather than failed — but without this line it read as a clean "Deactivated".
+        if (result && !result.ok) log.warn(`deactivate ${id} reported error: ${result.error ?? "unknown"}`);
+      } catch (e) {
+        log.error(`Error deactivating ${id}:`, e);
       }
     }
     this.activatedIds.delete(id);
     contributionRegistry.unregister(id);
     this.broadcastContributions();
-    console.log(`[ExtService] Deactivated ${id}`);
+    log.info(`Deactivated ${id}`);
   }
 
   list(): ExtensionInfo[] {
@@ -256,6 +286,7 @@ class ExtensionService {
     const row = getExtensionById(id);
     if (!row) throw new Error(`Extension ${id} not found`);
     updateExtension(id, { enabled: enabled ? 1 : 0 });
+    log.info(`${enabled ? "Enabled" : "Disabled"} ${id}`);
     if (enabled && !this.activatedIds.has(id)) await this.activate(id);
     else if (!enabled && this.activatedIds.has(id)) await this.deactivate(id);
   }
@@ -265,7 +296,7 @@ class ExtensionService {
     // Auto-activate after dev-link (DB record is created with enabled=1)
     if (!this.activatedIds.has(manifest.id)) {
       try { await this.activate(manifest.id); } catch (e) {
-        console.error(`[ExtService] Auto-activate after dev-link failed:`, e);
+        log.error(`Auto-activate after dev-link failed:`, e);
       }
     }
     return manifest;
@@ -295,20 +326,24 @@ class ExtensionService {
     }
     // Clean up stale DB records for extensions no longer on disk
     const discoveredIds = new Set(manifests.map((m) => m.id));
+    let failed = 0;
     for (const row of getExtensions()) {
       if (!discoveredIds.has(row.id)) {
-        console.log(`[ExtService] startup: removing stale DB record for ${row.id}`);
+        log.info(`startup: removing stale DB record for ${row.id}`);
         deleteExtensionStorage(row.id);
         deleteExtension(row.id);
         continue;
       }
       if (row.enabled !== 1) continue;
-      console.log(`[ExtService] startup: activating ${row.id}...`);
+      log.debug(`startup: activating ${row.id}...`);
       try { await this.activate(row.id); } catch (e) {
+        failed++;
         this.activationErrors.set(row.id, e instanceof Error ? e.message : String(e));
-        console.error(`[ExtService] Failed to activate ${row.id} on startup:`, e);
+        log.error(`Failed to activate ${row.id} on startup:`, e);
       }
     }
+    const bundled = manifests.filter((m) => this.bundledIds.has(m.id)).length;
+    log.info(`startup: bundled=${bundled} user=${manifests.length - bundled} activated=${this.activatedIds.size} failed=${failed}`);
   }
 
   async shutdown(): Promise<void> {

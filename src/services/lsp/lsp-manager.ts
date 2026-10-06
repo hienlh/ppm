@@ -17,6 +17,7 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { resolveBunPath } from "../autostart-generator.ts";
+import { createLogger } from "../logger.ts";
 import { canInstall, lspInstallDir, rustupServerPath } from "./lsp-install.ts";
 import { LspSession, type LspSessionState } from "./lsp-session.ts";
 import {
@@ -26,11 +27,14 @@ import {
   candidateCommandPaths,
   installedBinaryPath,
   installedServerEntry,
+  installedServerEnv,
   lspLanguageForPath,
   serversSharingInstall,
   type LanguageServerDefinition,
   type LanguageServerInstall,
 } from "./server-registry.ts";
+
+const log = createLogger("lsp");
 
 /** How long a session with no subscribers is kept before being shut down. */
 const IDLE_GRACE_MS = 5 * 60 * 1000;
@@ -64,7 +68,7 @@ export interface LspUnavailable {
     installHint: string;
     installable: boolean;
     /** What the button would use, so the editor can say what pressing it does. */
-    installWith?: "bun" | "go" | "rustup";
+    installWith?: LanguageServerInstall["with"];
   };
   message: string;
 }
@@ -205,7 +209,7 @@ export class LspManager {
 
       this.claim(key);
       try {
-        const session = await this.startOrReuse(key, definition, resolved.command, rootPath);
+        const session = await this.startOrReuse(key, definition, resolved, rootPath);
         // Subscribe *then* trim, so the session this call is about to hand out is never the
         // one the cap takes away.
         if (!this.subscribe(key, subscriber)) {
@@ -239,7 +243,7 @@ export class LspManager {
   private async startOrReuse(
     key: string,
     definition: LanguageServerDefinition,
-    command: string[],
+    { command, env }: { command: string[]; env?: Record<string, string> },
     rootPath: string,
   ): Promise<LspSession> {
     const existing = this.entries.get(key);
@@ -262,6 +266,7 @@ export class LspManager {
     const promise = LspSession.start({
       definition,
       command,
+      env,
       rootPath,
       onNotification: (method, params) => {
         for (const listener of this.notificationListeners) listener(key, method, params);
@@ -284,6 +289,13 @@ export class LspManager {
         }
         this.entries.set(key, { session, subscribers: new Set(), idleTimer: null, lastUsed: ++this.useCounter });
         return session;
+      })
+      .catch((e: unknown) => {
+        // Here rather than in `acquire`: every tab waiting on this start gets the same rejection,
+        // and a reconnect re-opens all of them at once. The message can carry the server's stderr.
+        const message = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").slice(0, 400);
+        log.error(`failed to start ${definition.id} root=${rootPath}: ${message}`);
+        throw e;
       })
       .finally(() => this.starting.delete(key));
 
@@ -310,6 +322,7 @@ export class LspManager {
       if (this.entries.size <= this.maxSessions) return;
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       this.entries.delete(key);
+      log.info(`stopping ${entry.session.definition.id} root=${entry.session.rootPath}: session cap ${this.maxSessions} reached (${this.entries.size} running)`);
       void entry.session.dispose();
     }
   }
@@ -365,6 +378,10 @@ export class LspManager {
       const current = this.entries.get(key);
       if (!current || current.subscribers.size > 0) return;
       this.entries.delete(key);
+      log.info(
+        `stopping ${current.session.definition.id} root=${current.session.rootPath}: ` +
+        `idle ${Math.round(this.idleGraceMs / 1000)}s (${this.entries.size} running)`,
+      );
       void current.session.dispose();
     }, this.idleGraceMs);
     // A pending reap must not hold the process open at shutdown.
@@ -390,7 +407,7 @@ export class LspManager {
   private async resolveCommand(
     definition: LanguageServerDefinition,
     dirs: string[],
-  ): Promise<{ command: string[]; origin: ServerOrigin } | null> {
+  ): Promise<{ command: string[]; origin: ServerOrigin; env?: Record<string, string> } | null> {
     const candidates = candidateCommandPaths(definition.command, dirs);
     for (const candidate of candidates.slice(0, -1)) {
       if (await exists(candidate)) return { command: [candidate], origin: "project" };
@@ -409,10 +426,12 @@ export class LspManager {
     const onPath = Bun.which(definition.command);
     if (onPath) return { command: [onPath], origin: "path" };
 
-    // What the Install button built with the host's Go: a real binary in PPM's own directory,
-    // spawned as itself.
+    // What the Install button put in PPM's own directory as a real binary — built with the
+    // host's Go, unpacked from a release, or a gem's binstub — spawned as itself.
     const binary = installedBinaryPath(definition, this.installDir());
-    if (binary && (await exists(binary))) return { command: [binary], origin: "ppm" };
+    if (binary && (await exists(binary))) {
+      return { command: [binary], origin: "ppm", env: installedServerEnv(definition, this.installDir()) };
+    }
 
     // Both of PPM's npm copies are entry scripts rather than npm's `.bin` shims: that shim is
     // `#!/usr/bin/env node`, and someone who installed PPM with bun may have no node at all —
@@ -529,6 +548,7 @@ export class LspManager {
     for (const [key, entry] of doomed) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       this.entries.delete(key);
+      log.info(`stopping ${serverId} root=${entry.session.rootPath}: uninstalling it`);
     }
     await Promise.all(doomed.map(([, entry]) => entry.session.dispose()));
   }
@@ -542,6 +562,10 @@ export class LspManager {
    */
   killAllSync(): void {
     this.disposed = true;
+    if (this.entries.size > 0) {
+      const ids = [...this.entries.values()].map((entry) => entry.session.definition.id);
+      log.info(`killing ${ids.length} language server(s) at shutdown: ${ids.join(", ")}`);
+    }
     for (const entry of this.entries.values()) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       try {
