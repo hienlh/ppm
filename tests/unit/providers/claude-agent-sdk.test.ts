@@ -1487,6 +1487,18 @@ describe("ClaudeAgentSdkProvider", () => {
         expect(clis).toHaveLength(1);
       });
 
+      it("tells the router how long this chat's cache lives, so an idle binding can lapse", async () => {
+        cliFactory();
+        const ttl = spyOn(provider, "promptCacheTtlMs").mockReturnValue(1234);
+        try {
+          const session = await provider.createSession({ projectPath: project });
+          await drain(provider.sendMessage(session.id, "hi"));
+          expect(accountSelector.forSession).toHaveBeenCalledWith(session.id, expect.any(Set), { cacheTtlMs: 1234 });
+        } finally {
+          ttl.mockRestore();
+        }
+      });
+
       it("starts nothing without a claimed account, since the turn's own pick cannot be foreseen", async () => {
         cliFactory();
         await provider.prewarm({ projectPath: project });

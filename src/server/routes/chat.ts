@@ -588,22 +588,22 @@ chatRoutes.put("/sessions/:id/account", async (c) => {
   if (!bindPickedAccount(sessionId, providerId, body.accountId)) {
     return c.json(err(bindRefusalReason(providerId, body.accountId)), 400);
   }
-  // Codex binds an account by spawning its app-server with that account's CODEX_HOME, so a
-  // subprocess already running keeps serving the old account however the binding reads — the
-  // switch appeared to do nothing until something else happened to kill it. Dropping it while
-  // idle makes the next message respawn on the account the user just picked. Claude needs
-  // none of this: it reads the binding per turn, and there is nothing stale to clear.
-  if (providerId === "codex") {
-    const { listRunningSessions, dropIdleSubprocess } = await import("../ws/chat.ts");
-    // Never mid-turn. The answer being streamed would be lost, and the switch takes effect
-    // on the next message either way — which is exactly what the picker promises.
-    if (!listRunningSessions().some((s) => s.sessionId === sessionId)) {
-      dropIdleSubprocess(
-        sessionId,
-        "account_switch",
-        "Subprocess released: the session was moved to another Codex account",
-      );
-    }
+  // A subprocess already running keeps serving the account it was spawned with however the
+  // binding reads: Codex's app-server runs under that account's CODEX_HOME, and Claude's CLI
+  // holds that account's token in its environment while follow-ups are pushed straight into
+  // it, so the binding is only read when a subprocess starts. Either way the switch appeared
+  // to do nothing until something else happened to kill it. Dropping it while idle makes the
+  // next message respawn on the account the user just picked.
+  const { listRunningSessions, dropIdleSubprocess, hasBackgroundWork } = await import("../ws/chat.ts");
+  // Never mid-turn — the answer being streamed would be lost — and never under a background
+  // agent or shell, which dies with the subprocess. Either way the switch waits for the next
+  // subprocess instead.
+  if (!listRunningSessions().some((s) => s.sessionId === sessionId) && !hasBackgroundWork(sessionId)) {
+    dropIdleSubprocess(
+      sessionId,
+      "account_switch",
+      "Subprocess released: the session was moved to another account",
+    );
   }
   return c.json(ok({ accountId: body.accountId }));
 });

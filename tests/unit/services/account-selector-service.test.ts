@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
-import { openTestDb, setDb, closeDb, updateAccount, insertLimitSnapshot } from "../../../src/services/db.service.ts";
+import { openTestDb, setDb, closeDb, updateAccount, insertLimitSnapshot, insertTurnUsage, getDb, getSessionAccount } from "../../../src/services/db.service.ts";
 import { setKeyPath } from "../../../src/lib/account-crypto.ts";
 import { accountService } from "../../../src/services/account.service.ts";
-import { accountSelector } from "../../../src/services/account-selector.service.ts";
+import { accountSelector, AccountSelectorService } from "../../../src/services/account-selector.service.ts";
 
 const testKeyPath = resolve(tmpdir(), `ppm-test-selector-${Date.now()}.key`);
 setKeyPath(testKeyPath);
@@ -878,5 +878,125 @@ describe("AccountSelectorService — per-session binding", () => {
     accountSelector.bindSession("sess-1", a.id);
     expect(accountSelector.forSession("sess-1")!.id).toBe(a.id);
     expect(accountSelector.forSession("sess-1")!.id).toBe(a.id);
+  });
+});
+
+/** Three accounts in a fixed rotation order: priority decides it, not insertion timing. */
+function rotation(): [string, string, string] {
+  const ids = ["a@test.com", "b@test.com", "c@test.com"].map((email, i) => {
+    const acc = addAccount(email);
+    updateAccount(acc.id, { priority: 30 - i * 10 });
+    return acc.id;
+  });
+  return ids as [string, string, string];
+}
+
+describe("round-robin position", () => {
+  it("carries on after a restart instead of starting over at the first account", () => {
+    // The position was a counter in memory, so the first account served the first chat
+    // after every restart. A restart is a fresh selector over the same database.
+    const [a, b] = rotation();
+    expect(accountSelector.next()!.id).toBe(a);
+    expect(new AccountSelectorService().next()!.id).toBe(b);
+  });
+
+  it("gives the next account its turn when the last one drops out of the pool", () => {
+    // An index into the candidate list skipped b: after a, it pointed at the second of
+    // [b, c] once a crossed the 5-hour skip.
+    const [a, b] = rotation();
+    expect(accountSelector.next()!.id).toBe(a);
+    insertUsage(a, { fiveHour: 0.99, weekly: 0.2, weeklyResetsAt: hoursFromNow(100) });
+    expect(accountSelector.next()!.id).toBe(b);
+  });
+
+  it("wraps around to the first account", () => {
+    const [a, b, c] = rotation();
+    expect([1, 2, 3, 4].map(() => accountSelector.next()!.id)).toEqual([a, b, c, a]);
+  });
+
+  it("peek() names the account next() hands out, without moving the rotation", () => {
+    const [a, b] = rotation();
+    expect(accountSelector.next()!.id).toBe(a);
+    expect(accountSelector.peek()!.id).toBe(b);
+    expect(accountSelector.next()!.id).toBe(b);
+  });
+});
+
+/**
+ * The binding exists for the prompt cache, so it lapses with it. turn_usage is what a
+ * restart leaves behind, which makes it the record the check has to read.
+ */
+describe("AccountSelectorService — a binding lapses with its prompt cache", () => {
+  const HOUR = 3_600_000;
+
+  function lastTurn(sessionId: string, accountId: string, endedMsAgo: number, cacheTtlMs?: number) {
+    insertTurnUsage({
+      sessionId, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0,
+      coldStart: false, accountId, cacheTtlMs,
+    });
+    // SQLite's own clock format: UTC, no zone suffix.
+    const at = new Date(Date.now() - endedMsAgo).toISOString().replace("T", " ").slice(0, 19);
+    getDb().query("UPDATE turn_usage SET recorded_at = ? WHERE id = (SELECT MAX(id) FROM turn_usage)").run(at);
+  }
+
+  it("routes a session idle past its cache window like a new one", () => {
+    const [a, b] = rotation();
+    expect(accountSelector.next()!.id).toBe(a); // the rotation hands out b next
+    accountSelector.bindSession("sess-1", a);
+    lastTurn("sess-1", a, 2 * HOUR);
+
+    expect(accountSelector.forSession("sess-1", undefined, { cacheTtlMs: HOUR })!.id).toBe(b);
+    // The new account is the binding now, so the turns after this one stay on its cache.
+    expect(getSessionAccount("sess-1")).toBe(b);
+    expect(accountSelector.forSession("sess-1", undefined, { cacheTtlMs: HOUR })!.id).toBe(b);
+  });
+
+  it("keeps the account while its cache is still warm", () => {
+    const [a] = rotation();
+    expect(accountSelector.next()!.id).toBe(a);
+    accountSelector.bindSession("sess-1", a);
+    lastTurn("sess-1", a, 10 * 60_000);
+
+    expect(accountSelector.forSession("sess-1", undefined, { cacheTtlMs: HOUR })!.id).toBe(a);
+  });
+
+  it("goes by the window the last turn reported over the one the caller assumes", () => {
+    // An API-key turn reports five minutes; holding it for the subscription hour would
+    // guard a cache that is already gone.
+    const [a, b] = rotation();
+    expect(accountSelector.next()!.id).toBe(a);
+    accountSelector.bindSession("sess-1", a);
+    lastTurn("sess-1", a, 10 * 60_000, 5 * 60_000);
+
+    expect(accountSelector.forSession("sess-1", undefined, { cacheTtlMs: HOUR })!.id).toBe(b);
+  });
+
+  it("honours an account picked since the last turn, however long ago that turn was", () => {
+    // The usage panel moves a session by rewriting its binding; the next turn is the one the
+    // pick was made for, and routing it elsewhere would undo the button the user pressed.
+    const [a, , c] = rotation();
+    expect(accountSelector.next()!.id).toBe(a); // the rotation would hand out b, not c
+    lastTurn("sess-1", a, 5 * HOUR);
+    accountSelector.bindSession("sess-1", c);
+
+    expect(accountSelector.forSession("sess-1", undefined, { cacheTtlMs: HOUR })!.id).toBe(c);
+  });
+
+  it("holds the account a new chat's tab showed, which has cached nothing yet", () => {
+    const [a, b] = rotation();
+    expect(accountSelector.next()!.id).toBe(a);
+    accountSelector.bindSession("sess-1", a);
+
+    expect(accountSelector.forSession("sess-1", undefined, { cacheTtlMs: HOUR })!.id).toBe(a);
+    expect(accountSelector.peek()!.id).toBe(b); // the rotation did not move for it
+  });
+
+  it("holds the binding when no window is known at all", () => {
+    const [a] = rotation();
+    expect(accountSelector.next()!.id).toBe(a);
+    accountSelector.bindSession("sess-1", a);
+    lastTurn("sess-1", a, 5 * HOUR);
+
+    expect(accountSelector.forSession("sess-1")!.id).toBe(a);
   });
 });

@@ -60,6 +60,8 @@
 
 ### Fixed
 
+- **Account rotation sent most chats to one account.** A chat kept the account it started on for as long as it existed, so chats resumed days later all went back to it: five landed on one account in a single morning while another sat at 3%. A chat now keeps its account only while that account still holds the chat's prompt cache, which is all that staying saves, and is routed like a new chat once the cache has lapsed. Round-robin also started over at the first account after every restart, and skipped an account whenever another one dropped out of the list; it now carries on after the account it handed out last. And moving an idle Claude chat to another account in the usage panel now applies to its next message, as it already did for Codex, instead of waiting until something restarted the chat's process.
+
 - **A tool call made alongside another one lost its result when the turn ended.** The card showed a tick and nothing in it. Each block of a reply is stored as its own message, so two calls made at once sit in two messages with both results after the second, and the history reload that ends every turn put both results under the second call. Each result now stays with the call that made it.
 
 - **Scrolling up in a long chat failed with "File too large: 542MB exceeds 256MB limit".** A session that had run for five days reached 543MB and 141 compactions, and "Load previous conversation" refused the whole file on every scroll up, although the part each scroll shows is about 3MB. Only that part is parsed now: the file is scanned as bytes, as far as the end of the part, to find where the part starts and ends. The 256MB bound applies to the part parsed rather than the file.

@@ -1244,9 +1244,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         while (true) {
           yield { type: "status_update" as const, phase: "routing" as const, message: "Selecting account..." };
           // Sticky: reuse the account this session is bound to so the transcript keeps
-          // hitting that account's prompt cache. Only an unusable binding falls through
-          // to a strategy pick, which then becomes the new binding.
-          account = accountSelector.forSession(sessionId, excludeIds);
+          // hitting that account's prompt cache. Only an unusable binding — or one whose
+          // cache has already lapsed, where staying saves nothing — falls through to a
+          // strategy pick, which then becomes the new binding.
+          account = accountSelector.forSession(sessionId, excludeIds, { cacheTtlMs: this.promptCacheTtlMs(sessionId) });
 
           if (!account) {
             const reason = accountSelector.lastFailReason;

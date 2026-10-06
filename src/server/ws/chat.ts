@@ -260,6 +260,12 @@ export function dropIdleSubprocess(sessionId: string, reason: string, note: stri
   logSessionEvent(sessionId, "INFO", note);
 }
 
+/** Whether a background agent or shell the session started is still running in its subprocess. */
+export function hasBackgroundWork(sessionId: string): boolean {
+  if ((activeSessions.get(sessionId)?.backgroundToolUseIds?.size ?? 0) > 0) return true;
+  return backgroundShellRegistry.list(sessionId).some((sh) => sh.status !== "stopped");
+}
+
 /** Tear down the longest-idle subprocesses once too many sessions are holding one. */
 function enforceWarmIdleCap(): void {
   const warmIdle = listWarmIdleSessions();
@@ -392,8 +398,7 @@ registerMcpSignInSync({
   canDrop: (sessionId) => {
     const entry = activeSessions.get(sessionId);
     if (!entry || entry.isStreamingActive) return false;
-    if ((entry.backgroundToolUseIds?.size ?? 0) > 0) return false;
-    return !backgroundShellRegistry.list(sessionId).some((sh) => sh.status !== "stopped");
+    return !hasBackgroundWork(sessionId);
   },
   dropIdle: (sessionId, serverName) => dropIdleSubprocess(
     sessionId,

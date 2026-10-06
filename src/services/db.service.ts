@@ -1924,13 +1924,15 @@ export function getLastTurnCacheState(sessionId: string): {
   contextTokens?: number;
   cacheTtlMs?: number;
   compactedAt?: number;
+  /** The account that cache was written on — Anthropic scopes a prompt cache per account. */
+  accountId?: string;
 } | null {
   const row = getDb().query(
-    `SELECT input_tokens, cache_read_tokens, cache_write_tokens, context_tokens, cache_ttl_ms, compacted_at, recorded_at
+    `SELECT input_tokens, cache_read_tokens, cache_write_tokens, context_tokens, cache_ttl_ms, compacted_at, account_id, recorded_at
        FROM turn_usage WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
   ).get(sessionId) as Pick<
     TurnUsageRow,
-    "input_tokens" | "cache_read_tokens" | "cache_write_tokens" | "context_tokens" | "cache_ttl_ms" | "compacted_at" | "recorded_at"
+    "input_tokens" | "cache_read_tokens" | "cache_write_tokens" | "context_tokens" | "cache_ttl_ms" | "compacted_at" | "account_id" | "recorded_at"
   > | null;
   if (!row?.recorded_at) return null;
 
@@ -1946,6 +1948,7 @@ export function getLastTurnCacheState(sessionId: string): {
     ...(row.context_tokens != null && { contextTokens: row.context_tokens }),
     ...(row.cache_ttl_ms != null && { cacheTtlMs: row.cache_ttl_ms }),
     ...(row.compacted_at != null && { compactedAt: row.compacted_at }),
+    ...(row.account_id != null && { accountId: row.account_id }),
   };
 }
 

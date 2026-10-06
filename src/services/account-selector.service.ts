@@ -5,6 +5,7 @@ import {
   getLatestSnapshotForAccount,
   getSessionAccount,
   setSessionAccount,
+  getLastTurnCacheState,
 } from "./db.service.ts";
 
 export type AccountStrategy = "round-robin" | "fill-first" | "lowest-usage";
@@ -12,6 +13,8 @@ export type AccountStrategy = "round-robin" | "fill-first" | "lowest-usage";
 const STRATEGY_CONFIG_KEY = "account_strategy";
 const MAX_RETRY_CONFIG_KEY = "account_max_retry";
 const COOLDOWN_ENABLED_KEY = "account_cooldown_enabled";
+/** The account round-robin handed out last — stored, so a restart carries on after it. */
+const ROUND_ROBIN_LAST_KEY = "account_round_robin_last";
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
@@ -33,8 +36,7 @@ function atCap(util: number | null | undefined): boolean {
   return Math.round((util ?? 0) * 100) >= 100;
 }
 
-class AccountSelectorService {
-  private cursor = 0;
+export class AccountSelectorService {
   private retryCounts = new Map<string, number>();
   private _lastPickedId: string | null = null;
 
@@ -238,11 +240,19 @@ class AccountSelectorService {
    * Rotation is not abandoned, only relocated: a session with no binding yet still goes
    * through the configured strategy, so load still spreads — just per session rather than
    * per turn. `bindSession` moves a session when an account genuinely cannot serve it.
+   *
+   * The binding is worth exactly what the cache behind it is worth, so it lapses with that
+   * cache. A session idle past its window re-sends its transcript as a cache write on
+   * whichever account serves it next, and is routed like a new one. Holding it regardless
+   * is what kept chats started days earlier landing on the account they happened to start
+   * on — five of them resumed on one account in a single morning while another sat at 3%.
+   * `cacheTtlMs` is the window to assume when the last turn did not report one.
    */
-  forSession(sessionId: string, excludeIds?: Set<string>): AccountWithTokens | null {
+  forSession(sessionId: string, excludeIds?: Set<string>, opts?: { cacheTtlMs?: number }): AccountWithTokens | null {
     this.clearExpiredCooldowns();
     const boundId = getSessionAccount(sessionId);
-    if (boundId && !excludeIds?.has(boundId) && this.isUsable(boundId)) {
+    const lapsed = !!boundId && this.bindingOutlivedCache(sessionId, boundId, opts?.cacheTtlMs);
+    if (boundId && !lapsed && !excludeIds?.has(boundId) && this.isUsable(boundId)) {
       // Hold the binding while it has room, and also when nothing else does. In that second
       // case next() falls back to returning a near-capped account anyway, and round-robin
       // would hand back a different one each turn — paying a full cache write per turn to
@@ -258,7 +268,27 @@ class AccountSelectorService {
     }
     const picked = this.next(excludeIds);
     if (picked) this.bindSession(sessionId, picked.id);
+    if (lapsed && picked && picked.id !== boundId) {
+      console.log(`[accounts] session=${sessionId} prompt cache lapsed on ${boundId} — routed to ${picked.id}`);
+    }
     return picked;
+  }
+
+  /**
+   * Whether a session's binding has outlived the prompt cache it exists to protect.
+   *
+   * Two bindings hold whatever the clock says. One with no completed turn behind it has
+   * cached nothing yet: it is the account the tab showed before the first message. And one
+   * that differs from the account the last turn ran on was set since — picked in the usage
+   * panel, or forced by a switch — and the next turn is the one it was set for.
+   */
+  private bindingOutlivedCache(sessionId: string, boundId: string, fallbackTtlMs?: number): boolean {
+    const last = getLastTurnCacheState(sessionId);
+    if (!last) return false;
+    if (last.accountId && last.accountId !== boundId) return false;
+    const ttlMs = last.cacheTtlMs ?? fallbackTtlMs;
+    if (ttlMs == null) return false;
+    return Date.now() - last.endedAtMs >= ttlMs;
   }
 
   /** Move a session onto an account — used when a switch is forced (rate/usage limit, auth). */
@@ -298,10 +328,8 @@ class AccountSelectorService {
       const sorted = [...candidates].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
       pickedId = sorted[0]!.id;
     } else {
-      // Round-robin
-      this.cursor = this.cursor % candidates.length;
-      pickedId = candidates[this.cursor]!.id;
-      this.cursor = (this.cursor + 1) % candidates.length;
+      pickedId = this.pickRoundRobin(candidates);
+      setConfigValue(ROUND_ROBIN_LAST_KEY, pickedId);
     }
     this._lastPickedId = pickedId;
     const result = accountService.getWithTokens(pickedId);
@@ -339,10 +367,26 @@ class AccountSelectorService {
       const sorted = [...candidates].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
       pickedId = sorted[0]!.id;
     } else {
-      const idx = this.cursor % candidates.length;
-      pickedId = candidates[idx]!.id;
+      pickedId = this.pickRoundRobin(candidates);
     }
     return accountService.getWithTokens(pickedId);
+  }
+
+  /**
+   * The round-robin pick: the first candidate after the account handed out last.
+   *
+   * The position used to be an index held in memory, which failed in two ways. A restart —
+   * several a day on an install that is also being developed — set it back to zero, so the
+   * first account served the first chat after every one. And it indexed `candidates`, a
+   * list that shrinks whenever an account crosses the 5-hour skip or is excluded, so the
+   * index then pointed past the account whose turn it was. Keyed on an account id in the
+   * full account order and stored in the config table, it survives both.
+   */
+  private pickRoundRobin(candidates: { id: string }[]): string {
+    const order = accountService.list().map((a) => a.id);
+    const last = getConfigValue(ROUND_ROBIN_LAST_KEY);
+    const lastIdx = last ? order.indexOf(last) : -1;
+    return (candidates.find((a) => order.indexOf(a.id) > lastIdx) ?? candidates[0]!).id;
   }
 
   /**
