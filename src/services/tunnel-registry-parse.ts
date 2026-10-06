@@ -10,6 +10,8 @@
  */
 
 export type TunnelSource = "ppm" | "app" | "external";
+/** How a forward reaches the browser: a public trycloudflare URL, or the user's own tailnet. */
+export type TunnelVia = "cloudflare" | "tailscale";
 
 export interface TunnelEntry {
   pid: number;
@@ -26,6 +28,8 @@ export interface TunnelEntry {
   identity?: string;
   /** Named-tunnel reference (display only; never a token/credential). */
   runRef?: string | null;
+  /** Absent for every cloudflared process; "tailscale" for a forward over Tailscale Serve. */
+  via?: TunnelVia;
 }
 
 export interface ParsedCmdline {

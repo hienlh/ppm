@@ -129,6 +129,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.DesignTab,
     })),
   ),
+  "web-preview": lazy(() =>
+    import("@/components/web-preview/web-preview-tab").then((m) => ({
+      default: m.WebPreviewTab,
+    })),
+  ),
 };
 
 function LoadingFallback() {

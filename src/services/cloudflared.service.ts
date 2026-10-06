@@ -135,7 +135,12 @@ export function getCloudflaredPath(): string {
  * isolates PPM from whatever the user has configured.
  */
 export function getQuickTunnelArgs(port: number): string[] {
-  return ["--config", ensureQuickTunnelConfig(), "tunnel", "--url", `http://127.0.0.1:${port}`];
+  return getQuickTunnelArgsTo(`http://127.0.0.1:${port}`);
+}
+
+/** The same quick-tunnel argv aimed at any origin URL (a port forward points it at its hop). */
+export function getQuickTunnelArgsTo(originUrl: string): string[] {
+  return ["--config", ensureQuickTunnelConfig(), "tunnel", "--url", originUrl];
 }
 
 /** Create the empty quick-tunnel config if absent; returns its path. */

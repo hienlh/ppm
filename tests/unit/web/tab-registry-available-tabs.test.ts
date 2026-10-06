@@ -10,6 +10,11 @@ describe("getAvailableTabs", () => {
     expect(ids(getAvailableTabs({ jiraEnabled: true }))).not.toContain("settings");
   });
 
+  it("keeps Port Forwarding in the sidebar — only signing in to Tailscale or Cloudflare lives in Settings", () => {
+    const tunnels = getAvailableTabs({ jiraEnabled: true }).find((t) => t.id === "tunnels");
+    expect(tunnels?.label).toBe("Port Forwarding");
+  });
+
   it("omits Jira until it is enabled", () => {
     expect(ids(getAvailableTabs({ jiraEnabled: false }))).not.toContain("jira");
   });

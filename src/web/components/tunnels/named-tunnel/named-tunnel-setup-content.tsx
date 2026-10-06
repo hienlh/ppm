@@ -1,6 +1,6 @@
 /**
  * Step content switch — one card per step. Both the popup shell and the
- * Tunnel Manager section render this, so it never assumes it is inside a
+ * Public link pane in Settings render this, so it never assumes it is inside a
  * dialog or a sheet (no close button of its own; the shell owns dismissal).
  */
 import { Loader2, AlertCircle } from "@/lib/icons";

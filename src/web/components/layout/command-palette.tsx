@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Loader2,
   Globe,
+  MonitorSmartphone,
   Mic,
   Columns2,
   Cloud,
@@ -22,6 +23,8 @@ import {
 } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
+import { openRemoteAccess } from "@/components/settings/remote-access/remote-access-tab-store";
+import { openPortForwarding } from "@/components/tunnels/open-port-forwarding";
 import { useOpenSystemMonitor } from "@/components/system/use-open-system-monitor";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -142,8 +145,6 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const openIndexReader = useFileStore((s) => s.openIndexReader);
   const fileTree = useFileStore((s) => s.tree);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
-  const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
-  const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const getBinding = useKeybindingsStore((s) => s.getBinding);
   const extContributions = useExtensionStore((s) => s.contributions);
   const isMobile = useIsMobile();
@@ -246,7 +247,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "new-file", label: "New File", icon: FilePlus, action: () => { useTabStore.getState().openNewFile(); onClose(); }, keywords: "create untitled blank empty", group: "action", shortcut: formatShortcut(getBinding("new-file")) },
       { id: "new-db-query", label: "New DB Query", icon: Database, action: () => { void openNewQuery(); onClose(); }, keywords: "sql database query scratchpad new", group: "action" },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
-      { id: "tunnels", label: "Cloudflare Tunnels", icon: Globe, action: () => { if (sidebarCollapsed) toggleSidebar(); setSidebarActiveTab("tunnels"); onClose(); }, keywords: "web preview localhost port forward tunnel cloudflare url", group: "action" },
+      { id: "remote-access", label: "Remote Access", icon: MonitorSmartphone, action: () => { openRemoteAccess(); onClose(); }, keywords: "remote access tunnel cloudflare tailscale public link share url phone domain", group: "action" },
+      { id: "forward-port", label: "Forward a Port", icon: Globe, action: () => { openPortForwarding(); onClose(); }, keywords: "forward port forwarding localhost web preview tunnel cloudflare tailscale dev server url", group: "action" },
       { id: "cloud-share", label: "PPM Cloud & Share", icon: Cloud, action: () => { window.dispatchEvent(new CustomEvent("open-cloud-share")); onClose(); }, keywords: "cloud permanent link alias share phone remote device qr sign in login", group: "action" },
       { id: "new-db-connection", label: "New connection…", icon: Database, action: () => { openConnectionForm(); onClose(); }, keywords: "database connection postgres pg mysql mariadb sqlite add", group: "action" },
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
@@ -356,7 +358,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     });
 
     return [...builtIn, ...designCommands, ...dbPaletteCommands, ...extCmds];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled, designCommands, openSystemMonitor, dbPaletteCommands]);
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled, designCommands, openSystemMonitor, dbPaletteCommands]);
 
   // File commands — from index when ready, fallback to flattened tree
   const fileCommands = useMemo<CommandItem[]>(() => {

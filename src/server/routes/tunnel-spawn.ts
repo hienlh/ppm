@@ -5,7 +5,8 @@
  * and the new `/api/tunnels` registry routes reuse ONE spawn implementation and
  * ONE shared `activeTunnels` map (no duplicate spawn logic, no split-brain state).
  */
-import { ensureCloudflared, getQuickTunnelArgs } from "../../services/cloudflared.service.ts";
+import { ensureCloudflared, getQuickTunnelArgsTo } from "../../services/cloudflared.service.ts";
+import { startForwardHop, type ForwardHop } from "../../services/port-forward/forward-hop.ts";
 import { createLogger } from "../../services/logger.ts";
 
 const log = createLogger("tunnels");
@@ -20,6 +21,8 @@ export interface ActiveTunnel {
   pid: number;
   startedAt: number;
   probeFailures: number;
+  /** The hop cloudflared points at (see spawnTunnelProcess); stopped when cloudflared exits. */
+  hop?: ForwardHop;
 }
 
 export const MAX_PROBE_FAILURES = 2;
@@ -27,15 +30,36 @@ export const MAX_PROBE_FAILURES = 2;
 /** Active PPM-spawned tunnels keyed by port — exported for testing + registry. */
 export const activeTunnels = new Map<number, ActiveTunnel>();
 
-/** Spawn cloudflared quick tunnel for a port, extract URL from stderr. */
+// A Bun child outlives `process.exit` on Linux and macOS, which is how PPM leaves after a
+// fatal error. A cloudflared left behind would keep its public URL pointed at the hop's port
+// after the hop is gone, and so at whatever listens on that port next.
+process.on("exit", () => {
+  for (const tunnel of activeTunnels.values()) {
+    try { tunnel.process.kill(); } catch { /* already gone */ }
+  }
+});
+
+/**
+ * Spawn cloudflared quick tunnel for a port, extract URL from stderr.
+ *
+ * cloudflared reaches the dev server through a forward hop. Aimed at `127.0.0.1:<port>`
+ * directly it never showed a default Vite page: Vite 8 listens on `[::1]` only, and it
+ * answers the trycloudflare Host with "Blocked request" (see forward-hop.ts).
+ */
 export async function spawnTunnelProcess(
   port: number,
-): Promise<{ process: import("bun").Subprocess; url: string }> {
-  const bin = await ensureCloudflared();
-  const proc = Bun.spawn(
-    [bin, ...getQuickTunnelArgs(port)],
-    { stderr: "pipe", stdout: "ignore", stdin: "ignore" },
-  );
+  /** The cloudflared command as an argv prefix; tests run a stand-in through bun. */
+  cloudflared?: string[],
+): Promise<{ process: import("bun").Subprocess; url: string; hop: ForwardHop }> {
+  const argv = cloudflared ?? [await ensureCloudflared()];
+  const hop = startForwardHop(port);
+  let proc: ReturnType<typeof spawnCloudflared>;
+  try {
+    proc = spawnCloudflared(argv, `http://127.0.0.1:${hop.port}`);
+  } catch (error) {
+    hop.stop();
+    throw error;
+  }
 
   const reader = proc.stderr.getReader();
   const decoder = new TextDecoder();
@@ -71,15 +95,22 @@ export async function spawnTunnelProcess(
       }
     };
     read();
+  }).catch((error) => {
+    hop.stop();
+    throw error;
   });
+  hop.setPublicUrl(url);
 
-  return { process: proc, url };
+  return { process: proc, url, hop };
 }
 
+const spawnCloudflared = (argv: string[], originUrl: string) =>
+  Bun.spawn([...argv, ...getQuickTunnelArgsTo(originUrl)], { stderr: "pipe", stdout: "ignore", stdin: "ignore" });
+
 /** Register a spawned tunnel in the shared map with auto-cleanup on exit. */
-export function registerTunnel(port: number, proc: import("bun").Subprocess, url: string) {
+export function registerTunnel(port: number, proc: import("bun").Subprocess, url: string, hop?: ForwardHop) {
   activeTunnels.set(port, {
-    port, url, process: proc, pid: proc.pid, startedAt: Date.now(), probeFailures: 0,
+    port, url, process: proc, pid: proc.pid, startedAt: Date.now(), probeFailures: 0, hop,
   });
   const cleanup = () => {
     // Every stop path removes the entry before the child is gone, so one still registered
@@ -88,7 +119,7 @@ export function registerTunnel(port: number, proc: import("bun").Subprocess, url
     const exit = `cloudflared port=${port} pid=${proc.pid} exited code=${proc.exitCode}${proc.signalCode ? ` signal=${proc.signalCode}` : ""}`;
     if (unexpected) log.warn(`${exit} — ${url} is down`);
     else log.info(`${exit} (stopped by PPM)`);
-    activeTunnels.delete(port);
+    activeTunnels.delete(port); hop?.stop();
   };
   proc.exited.then(cleanup).catch(cleanup);
 }

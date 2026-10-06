@@ -389,8 +389,8 @@ src/
     `hostname-rules.ts` (one label above the zone, no apex/`www`), `cloudflare-zone-api.ts` /
     `cloudflare-dns-api.ts` (Cloudflare REST lookups for zone name + DNS collision precheck).
     Routes: `src/server/routes/named-tunnel.ts` (`/api/tunnel/named/*`; mutations 403 unless PPM auth
-    is enabled). UI: `src/web/components/tunnels/named-tunnel/` (first-run popup + permanent Tunnel
-    Manager section, sharing one step-reducer-driven flow).
+    is enabled). UI: `src/web/components/tunnels/named-tunnel/` (first-run popup + Settings → Remote
+    Access → Public link, sharing one step-reducer-driven flow).
   - **fs-credential-path-guard.ts** (ADDED) — Refuses `~/.cloudflared` (Cloudflare login cert)
     alongside the PPM dir on every fs read/write/transfer door, symlink-resolved
   - **config-secret-keys.ts** (ADDED) — Denylist + deep redaction for config-dump surfaces

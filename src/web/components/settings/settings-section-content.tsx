@@ -27,6 +27,7 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   jira: lazyWithPreload(() => import("./jira-watcher-section").then((m) => ({ default: m.JiraWatcherSection }))),
   extensions: lazyWithPreload(() => import("./extension-manager-section").then((m) => ({ default: m.ExtensionManagerSection }))),
   proxy: lazyWithPreload(() => import("./proxy-settings-section").then((m) => ({ default: m.ProxySettingsSection }))),
+  "remote-access": lazyWithPreload(() => import("./remote-access/remote-access-settings-section").then((m) => ({ default: m.RemoteAccessSettingsSection }))),
   schedules: lazyWithPreload(() => import("./schedules/schedules-settings-section").then((m) => ({ default: m.SchedulesSettingsSection }))),
   shortcuts: lazyWithPreload(() => import("./keyboard-shortcuts-section").then((m) => ({ default: m.KeyboardShortcutsSection }))),
   files: lazyWithPreload(() => import("./files-settings-section").then((m) => ({ default: m.FilesSettingsSection }))),

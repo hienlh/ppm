@@ -53,6 +53,7 @@ export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: R
   group: lazyWithPreload(() => import("@/components/group-chat/group-chat-tab").then((m) => ({ default: m.GroupChatTab }))),
   problems: lazyWithPreload(() => import("@/components/problems/problems-panel").then((m) => ({ default: m.ProblemsPanel }))),
   design: lazyWithPreload(() => import("@/components/design/design-tab").then((m) => ({ default: m.DesignTab }))),
+  "web-preview": lazyWithPreload(() => import("@/components/web-preview/web-preview-tab").then((m) => ({ default: m.WebPreviewTab }))),
 };
 
 /** The tabs opened most, loaded first by `preloadWhenIdle`. */

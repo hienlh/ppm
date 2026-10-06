@@ -252,8 +252,12 @@ already have on Cloudflare — see the next section.
 reachable. Always keep auth on when sharing. The session token is required on the WebSocket
 handshake too, not just on HTTP.
 
-Per-port forwarding for local dev servers is separate: the dock's Cloudflare Tunnels panel drives
-`/api/tunnels`, which spawns one quick tunnel per port.
+Per-port forwarding for local dev servers is separate: the sidebar's Port Forwarding panel drives
+`/api/tunnels`, which forwards each port over Cloudflare (one quick tunnel per port, no sign-in) or over
+Tailscale. Its Set up buttons open Settings → Remote Access, where Tailscale and Cloudflare are signed
+in to. A forwarded page opens in a PPM tab even when it sends `X-Frame-Options` or a CSP
+`frame-ancestors`: the tab tells the server the address PPM is open at, and the forward lets that
+address frame the page while every other site is still refused.
 
 ---
 
@@ -278,15 +282,15 @@ fresh link. Once logged in, PPM reads the zone from the new credential and propo
 the zone (no apex record, no `www`; Cloudflare's free certificate only covers one subdomain level,
 and anything deeper would serve a TLS error).
 
-The Tunnel Manager section (in the app, alongside the quick-tunnel controls) is where the flow lives
-permanently — the popup only covers first-run:
+Settings → Remote Access → Public link (beside the public link's on/off switch) is where the flow
+lives permanently — the popup only covers first-run:
 
-- **Disable** switches back to the quick tunnel. The named-tunnel configuration is kept (not deleted)
-  so re-enabling doesn't require logging in again.
-- **Re-login** ("Log in again") is what to use when the domain's zone changes, or whenever PPM
-  reports the Cloudflare credential looks stale (wrong account, unreadable file). It moves the
-  existing credential aside (`cert.pem` → `cert.pem.bak-<timestamp>`) rather than deleting it, then
-  starts a fresh login — never edit or delete `~/.cloudflared/cert.pem` by hand.
+- **Switch**, on the Temporary address row, goes back to the quick tunnel. The named-tunnel
+  configuration is kept (not deleted) so re-enabling doesn't require logging in again.
+- **Sign in again** takes the place of the address choices whenever PPM reports the Cloudflare
+  credential looks stale (wrong account, unreadable file), and is offered when a setup fails; it is
+  also what to use when the domain's zone changes. It moves the existing credential aside
+  (`cert.pem` → `cert.pem.bak-<timestamp>`) rather than deleting it, then starts a fresh login — never edit or delete `~/.cloudflared/cert.pem` by hand.
 
 ### Troubleshooting
 

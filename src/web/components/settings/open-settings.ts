@@ -19,7 +19,7 @@
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { useTabStore } from "@/stores/tab-store";
-import type { SettingsCategoryId } from "./settings-categories";
+import { SETTINGS_NAVIGATE_EVENT, type SettingsCategoryId } from "./settings-categories";
 import { resolveOpenSettingsAction } from "./resolve-open-settings-action";
 
 export function openSettings(category?: SettingsCategoryId): void {
@@ -28,15 +28,17 @@ export function openSettings(category?: SettingsCategoryId): void {
   const action = resolveOpenSettingsAction(isMobileDevice(), existing?.id ?? null, category);
 
   if (action.kind === "tab") {
-    useTabStore.getState().openTab(action.tab);
-    return;
-  }
-  if (action.kind === "focus") {
-    // Payload first: the body reads its category from the payload, so moving the pane before
-    // raising the window avoids a frame showing the previous one.
+    const tabs = useTabStore.getState();
+    const id = tabs.openTab(action.tab);
+    // An open Settings tab is focused as it is; the pane it mounts on next comes from here.
+    if (category && id) tabs.updateTab(id, { metadata: { category } });
+  } else if (action.kind === "focus") {
+    // Payload first: a reload puts the window back on this pane.
     if (action.category) windowStore.setPayload(action.id, { category: action.category });
     windowStore.focus(action.id);
-    return;
+  } else {
+    windowStore.open("settings", action.category ? { category: action.category } : undefined);
   }
-  windowStore.open("settings", action.category ? { category: action.category } : undefined);
+  // A Settings that is already mounted only reads its payload or metadata on its first render.
+  if (category) window.dispatchEvent(new CustomEvent(SETTINGS_NAVIGATE_EVENT, { detail: category }));
 }

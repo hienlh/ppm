@@ -25,6 +25,7 @@ import {
   Mic,
   Zap,
   Monitor,
+  MonitorSmartphone,
 } from "@/lib/icons";
 
 /**
@@ -48,6 +49,7 @@ export type SettingsCategoryId =
   | "jira"
   | "extensions"
   | "proxy"
+  | "remote-access"
   | "schedules"
   | "shortcuts"
   | "files"
@@ -98,12 +100,20 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "jira", group: "integrations", label: "Jira Watcher", subtitle: "Auto-debug Jira tickets", icon: Bug },
   { id: "extensions", group: "integrations", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
   { id: "proxy", group: "integrations", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
+  { id: "remote-access", group: "integrations", label: "Remote Access", subtitle: "Tailscale, public link", icon: MonitorSmartphone },
 
   { id: "schedules", group: "advanced", label: "Scheduled Agents", subtitle: "Run Claude on a cron schedule", icon: CalendarClock },
   { id: "shortcuts", group: "advanced", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { id: "files", group: "advanced", label: "File Filters", subtitle: "Exclude patterns, ignore files", icon: FolderSearch },
   { id: "query-audit", group: "advanced", label: "Query Audit Log", subtitle: "SQL history retention and size", icon: DatabaseZap },
 ];
+
+/**
+ * Dispatched on `window` with a category id as `detail` when something asks for a pane while
+ * Settings is already open. The host's payload or tab metadata only seeds the first render, so
+ * without this a link into an open Settings would raise it on whatever pane it was showing.
+ */
+export const SETTINGS_NAVIGATE_EVENT = "ppm:settings-navigate";
 
 /** The pane a window with no remembered category opens on. */
 export const DEFAULT_SETTINGS_CATEGORY: SettingsCategoryId = "general";

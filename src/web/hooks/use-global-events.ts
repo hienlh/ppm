@@ -141,6 +141,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
       if (
         type.startsWith("jira:")
         || type.startsWith("tunnel:")
+        || type.startsWith("tailscale:")
         || type.startsWith("design:")
         || type.startsWith("git:")
         || type.startsWith("agent-transcript:")

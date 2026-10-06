@@ -6,6 +6,7 @@ import {
   registerTunnel,
   MAX_PROBE_FAILURES,
 } from "./tunnel-spawn.ts";
+import { listeningLoopback } from "../../services/port-forward/forward-hop.ts";
 import { createLogger } from "../../services/logger.ts";
 
 const log = createLogger("preview");
@@ -47,9 +48,9 @@ portForwardingRoutes.post("/tunnel", async (c) => {
   }
 
   try {
-    const { process: proc, url } = await spawnTunnelProcess(port);
-    registerTunnel(port, proc, url);
-    console.log(`[preview] tunnel started for port ${port} → ${url}`);
+    const { process: proc, url, hop } = await spawnTunnelProcess(port);
+    registerTunnel(port, proc, url, hop);
+    log.info(`tunnel started for port ${port} → ${url}`);
     return c.json(ok({ port, url }));
   } catch (e: any) {
     return c.json(err(e.message || "Failed to start tunnel"), 500);
@@ -109,13 +110,9 @@ async function cleanupGhostTunnels() {
         activeTunnels.delete(port);
         continue;
       }
-      // Check if target port is still listening
-      try {
-        const conn = await Bun.connect({ hostname: "127.0.0.1", port, socket: {
-          data() {}, open(s) { s.end(); }, error() {}, close() {},
-        }});
-        conn.end();
-      } catch {
+      // Check if target port is still listening — on either loopback: a Vite on [::1] alone
+      // refused a 127.0.0.1-only probe, and its tunnel was torn down 30 s after it opened.
+      if (!(await listeningLoopback(port))) {
         log.info(`ghost cleanup: port ${port} — port not listening`);
         try { tunnel.process.kill(); } catch {}
         activeTunnels.delete(port);
@@ -137,9 +134,9 @@ async function cleanupGhostTunnels() {
         try { tunnel.process.kill(); } catch {}
         activeTunnels.delete(port);
         try {
-          const { process: proc, url } = await spawnTunnelProcess(port);
-          registerTunnel(port, proc, url);
-          console.log(`[preview] tunnel restarted for port ${port} → ${url}`);
+          const { process: proc, url, hop } = await spawnTunnelProcess(port);
+          registerTunnel(port, proc, url, hop);
+          log.info(`tunnel restarted for port ${port} → ${url}`);
         } catch (e: any) {
           log.error(`tunnel restart failed for port ${port}, its tunnel is gone: ${e.message}`);
         }

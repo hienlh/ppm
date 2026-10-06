@@ -10,7 +10,7 @@ import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
-import { TunnelManagerTab } from "@/components/tunnels/tunnel-manager-tab";
+import { PortForwardingPanel } from "@/components/tunnels/port-forwarding-panel";
 import { SessionHistoryList } from "@/components/chat/session-history-list";
 import { GroupList } from "@/components/group-chat/group-list";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
@@ -187,7 +187,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {isOpen && activeTab === "search" && <SearchPanel onNavigate={onClose} />}
           {isOpen && activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}
           {activeTab === "database" && <DatabaseSidebar onNavigate={onClose} />}
-          {activeTab === "tunnels" && <TunnelManagerTab />}
+          {activeTab === "tunnels" && <PortForwardingPanel onNavigate={onClose} />}
           {activeTab === "jira" && <JiraPanel />}
           {activeTab === "ai-resources" && <AiResourcesPanel />}
           {activeTab.startsWith("ext:") && <ExtensionTreeView viewId={activeTab.slice(4)} className="h-full" />}

@@ -19,7 +19,7 @@ const descriptions: Record<string, string> = {
   search: "Find words across your project's files.",
   git: "Review changed files and diffs before committing your work.",
   database: "Browse connected databases and open the query editor.",
-  tunnels: "Manage tunnels for accessing local services remotely.",
+  tunnels: "Open a dev server running on this machine from another device, over Tailscale or Cloudflare.",
   "ai-resources": "Find available AI skills, commands and agents.",
 };
 const utilities = [
@@ -72,7 +72,7 @@ export function OnboardingQuickOrientation({ onClose, onTryPalette }: { onClose:
         <div className="space-y-3">{utilities.filter((item) => !mobile || item.title !== "Notifications").map(({ title, icon: Icon, body }) => <div key={title} className="flex gap-3">
           <Icon className="size-4 shrink-0 text-primary mt-1" /><p className="text-sm text-text-secondary"><strong className="font-medium text-foreground">{title}</strong> — {body}</p>
         </div>)}</div>
-        {mobile && <p className="text-sm text-text-secondary">Mobile uses shorter labels: History, Tunnels and AI for the matching sections above; Files, Cloud and Bug for File Explorer, Cloud &amp; Share and Report Bug. The menu badge signals conversations needing attention.</p>}
+        {mobile && <p className="text-sm text-text-secondary">Mobile uses shorter labels: History, Ports and AI for the matching sections above; Files, Cloud and Bug for File Explorer, Cloud &amp; Share and Report Bug. The menu badge signals conversations needing attention.</p>}
         <p className="text-xs text-text-secondary">Jira, Remote Desktop and extension buttons appear when available. Button order can be customized.</p>
       </section>}
       </OnboardingStepTransition>

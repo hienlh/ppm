@@ -2,7 +2,7 @@
  * State + side effects for the named-tunnel setup flow. Wraps the pure
  * `reduceStep` machine with the actual API calls and the `tunnel:*` window
  * events re-dispatched by `use-global-events.ts`. Both the first-run popup and
- * the Tunnel Manager section call this hook — each gets its own instance, but
+ * the Public link pane in Settings call this hook — each gets its own instance, but
  * both react to the same window events, so they stay in sync without a shared
  * store.
  */

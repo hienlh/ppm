@@ -230,6 +230,7 @@ app.get("/api/mcp-auth/callback", mcpAuthCallbackHandler);
 // no PPM token. A per-session capability token in `Authorization` is its only credential.
 import { designMcpHandler } from "../services/design/mcp/design-mcp-endpoint.ts";
 import { setServerListenAddress } from "../services/server-listen-address.ts";
+import { ensureServiceOnStartup, setPpmPublicPort } from "../services/tailscale/tailscale-app-service.ts";
 app.all("/api/design-mcp", designMcpHandler);
 // Tab tools (`open_file`, `open_preview`): the same arrangement, for any chat session.
 import { tabToolsMcpHandler } from "../services/tab-tools-mcp/tab-tools-mcp-endpoint.ts";
@@ -297,6 +298,8 @@ app.route("/api/settings/design", designSettingsRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
 app.route("/api/tunnel/named", namedTunnelRoutes);
+import { tailscaleRoutes } from "./routes/tailscale.ts";
+app.route("/api/tailscale", tailscaleRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/chat", chatGlobalRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
@@ -1278,6 +1281,11 @@ if (process.argv.includes("__serve__")) {
   // Child processes calling back into this server (the design MCP endpoint) need the
   // port actually bound, which is not the configured one under the supervisor (port 0).
   setServerListenAddress(Number(server.port), host);
+
+  // The tailnet address (Settings → Remote Access → Tailscale) proxies to the port people reach PPM on.
+  // tailscaled keeps it across restarts; this only puts it back if it went missing.
+  setPpmPublicPort(port, Number(server.port));
+  void ensureServiceOnStartup().catch((e) => console.warn(`[tailscale] ${e}`));
 
   // Publish the port we actually bound so the edge forwarder knows where to
   // send traffic. Only meaningful when the supervisor spawned us with port 0
