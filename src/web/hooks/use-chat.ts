@@ -211,6 +211,9 @@ export function useChat(
   const loadingOlderRef = useRef(false);
   /** A refetch that answered while an older page was loading, to be re-run after it. */
   const refetchAfterOlderRef = useRef(false);
+  /** The refetch currently on its way, and whether another was asked for meanwhile. */
+  const refetchInFlightRef = useRef<AbortController | null>(null);
+  const refetchAgainRef = useRef(false);
   const applyHistoryWindow = useCallback((page?: { start?: number; userOrdinalOffset?: number; predecessorId?: string | null }) => {
     const start = page?.start ?? 0;
     historyStartRef.current = start;
@@ -1290,6 +1293,7 @@ export function useChat(
     // session's /messages fetch fails or the tab swaps to a draft.
     setVersionMap({});
     applyHistoryWindow();
+    refetchAgainRef.current = false;
     loadingOlderRef.current = false;
     setLoadingOlderHistory(false);
     streamingContentRef.current = "";
@@ -1637,8 +1641,19 @@ export function useChat(
 
   const refetchMessages = useCallback(() => {
     if (!sessionId || !projectName || phaseRef.current !== "idle") return;
+    // A refetch already on its way is let finish, and run once more after it, rather than
+    // aborted for a fresh one. Every `session_state` asks for one, and on a long transcript
+    // the answer takes longer than the gap between them (30 s against a few seconds,
+    // measured): abort-and-restart then never completed, re-asked forever, and the server —
+    // which cannot see an abort — kept every parse running at once until it ran out of memory.
+    const inFlight = historyRequestRef.current;
+    if (inFlight && !inFlight.signal.aborted && refetchInFlightRef.current === inFlight) {
+      refetchAgainRef.current = true;
+      return;
+    }
     historyRequestRef.current?.abort();
     const request = new AbortController();
+    refetchInFlightRef.current = request;
     historyRequestRef.current = request;
     const activity = historyActivityRef.current;
     // No setMessagesLoading(true) here — keep current messages visible while
@@ -1686,7 +1701,16 @@ export function useChat(
         }
         historyLoadedAtRef.current = Date.now();
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (refetchInFlightRef.current !== request) return;
+        refetchInFlightRef.current = null;
+        // Asked for again while this ran: once, now, with whatever changed meanwhile.
+        if (refetchAgainRef.current && !request.signal.aborted) {
+          refetchAgainRef.current = false;
+          refetchRef.current?.();
+        }
+      });
   }, [sessionId, providerId, projectName, applyHistoryWindow]);
 
   /** Fetch the page of history just older than what is loaded and prepend it. */

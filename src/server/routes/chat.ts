@@ -350,7 +350,26 @@ function recentHistory(key: string): ChatMessage[] | null {
   return hit.messages;
 }
 
-async function loadFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
+/**
+ * Parses of a session's history that are running now, so a request arriving mid-parse waits
+ * for that one instead of starting another. A client cannot cancel a parse — aborting the
+ * fetch leaves it running here — and a tab that re-asked every few seconds while a 30 MB
+ * transcript took 30 s to parse had a dozen of them going at once (368 requests in half an
+ * hour, measured), which is what took the server to 23 GB committed. Shared only while in
+ * flight: a request after it settles parses afresh, so a finished turn is never served stale.
+ */
+const historyInFlight = new Map<string, Promise<ChatMessage[]>>();
+
+function loadFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
+  const key = `${providerId}\0${id}`;
+  const running = historyInFlight.get(key);
+  if (running) return running;
+  const parse = parseFullHistory(providerId, id).finally(() => historyInFlight.delete(key));
+  historyInFlight.set(key, parse);
+  return parse;
+}
+
+async function parseFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
   const messages = await chatService.getMessages(providerId, id);
   // Forking re-timestamps the copied prefix (both the Claude SDK and codex
   // stamp the fork moment), so a version's inherited history would render as
