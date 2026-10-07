@@ -100,6 +100,8 @@
 
 ### Fixed
 
+- **A container started from a PPM terminal or chat could restart PPM and end every session.** Under systemd, every process PPM started inherited systemd's notify socket, and systemd believed what any of them told it. `podman run` reports its container's monitor as the service's main process, so PPM "ended" when the container did, and a private `dbus-daemon` reports the service as stopping when it exits. Only the supervisor holds the socket now; the server, the edge forwarder, cloudflared and everything they start no longer get it (#38).
+
 - **The running-agents bar listed every named agent twice, and grew over the chat.** An agent given a name was reported once as an Agent card and again as a teammate, so a session that fanned out to eleven agents showed 22 rows covering the whole conversation. Each agent is one row now, and from four agents on the list scrolls inside about three rows under an "N agents running" header that folds it away: open on a desktop, folded on a phone.
 
 - **Save closed a new database connection's form.** It now stays open, as DBGate's does, as that connection's form: a second Save updates the connection instead of adding another one, and Edit on the connection brings that tab forward when it is in the focused panel. Connect still closes it.

@@ -30,7 +30,7 @@ import { decideNamedProbeAction, publicHostnameIsOurs } from "./named-tunnel/nam
 import { isCloudflaredPid } from "./tunnel-registry.service.ts";
 import { getQuickTunnelArgs } from "./cloudflared.service.ts";
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
-import { sdNotify } from "./sd-notify.ts";
+import { sdNotify, withoutNotifySocket } from "./sd-notify.ts";
 import {
   killProcessTree, snapshotServerDescendants, reapTrackedDescendants,
   findPortListenerPid, isPpmProcess, collectProcessTree, terminateTree,
@@ -529,7 +529,7 @@ async function spawnEdge(publicPort: number, host: string, logFd: number): Promi
     stdio: ["ignore", "ignore", logFd] as ["ignore", "ignore", number],
     // Told that its stderr is ppm.log (Windows cannot work that out, see logger.ts), and how
     // many edges died before it, so a bind failure on every respawn is not logged as news.
-    env: { ...process.env, [STDIO_IS_LOG_ENV]: "1", [EDGE_PRIOR_DEATHS_ENV]: String(edgeDeathStreak) },
+    env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1", [EDGE_PRIOR_DEATHS_ENV]: String(edgeDeathStreak) },
   }));
   proc.unref();
   edgePid = proc.pid ?? null;
@@ -693,7 +693,7 @@ export async function spawnServer(
     cmd,
     stdio: ["ignore", logFd, logFd],
     // The child cannot work out on Windows that fd 1 is already the log, so it is told.
-    env: { ...process.env, [STDIO_IS_LOG_ENV]: "1" },
+    env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1" },
     // No visible console window. Critical on Windows after an upgrade: the new
     // supervisor is spawned consoleless (detached), so without this its console
     // children — and the Claude SDK grandchildren they spawn — pop blank windows.
@@ -1075,7 +1075,10 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     let attemptChild: Subprocess;
     try {
       attemptChild = await withProbeSpawnGate(() =>
-        Bun.spawn(buildCmd(attempt.args), { stderr: attemptLogFd, stdout: "ignore", stdin: "ignore" }));
+        // An explicit env: without one, Bun hands over the environment we started with.
+        Bun.spawn(buildCmd(attempt.args), {
+          stderr: attemptLogFd, stdout: "ignore", stdin: "ignore", env: withoutNotifySocket(process.env),
+        }));
       tunnelChild = attemptChild; // publish so restartTunnel/killStaleTunnel can reach the live child
     } finally {
       try { closeSync(attemptLogFd); } catch {} // cloudflared keeps its own via dup2
@@ -1642,6 +1645,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     const proc = await withProbeSpawnGate(() => nodeSpawn(cmd[0]!, cmd.slice(1), {
       detached: true,
       stdio: ["ignore", newLogFd, newLogFd] as any,
+      // The one child that keeps NOTIFY_SOCKET: it becomes the main process (MAINPID= below).
       env: { ...process.env, [STDIO_IS_LOG_ENV]: "1" } as NodeJS.ProcessEnv,
       windowsHide: true,
     }));

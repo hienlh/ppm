@@ -95,20 +95,30 @@ function cleanup() {
 }
 
 /** Spawn supervisor for testing — returns supervisor PID */
-async function spawnTestSupervisor(opts?: { share?: boolean }): Promise<number> {
+async function spawnTestSupervisor(opts?: { share?: boolean; env?: Record<string, string> }): Promise<number> {
   const supervisorScript = resolve(import.meta.dir, "../../src/services/supervisor.ts");
   const args = ["__supervise__", String(TEST_PORT), "127.0.0.1", "", "dev"];
   if (opts?.share) args.push("--share");
 
+  // Never the live unit's systemd variables, which a run from a PPM terminal inherits: with
+  // them the test supervisor notifies the live service, and its self-replace exits for systemd
+  // to restart it instead of spawning the replacement.
+  const { INVOCATION_ID: _invocation, NOTIFY_SOCKET: _socket, ...inherited } = process.env;
   const logFd = require("node:fs").openSync(LOG_FILE, "a");
   const child = Bun.spawn({
     cmd: [process.execPath, "run", supervisorScript, ...args],
     stdio: ["ignore", logFd, logFd],
-    env: { ...process.env, NODE_ENV: "test", PPM_HOME: PPM_DIR },
+    env: { ...inherited, NODE_ENV: "test", PPM_HOME: PPM_DIR, ...opts?.env },
   });
 
   supervisorPid = child.pid;
   return child.pid;
+}
+
+/** The environment a process was started with (Linux only). */
+function startEnv(pid: number): Record<string, string> {
+  const vars = readFileSync(`/proc/${pid}/environ`, "utf-8").split("\0").filter(Boolean);
+  return Object.fromEntries(vars.map((v) => [v.slice(0, v.indexOf("=")), v.slice(v.indexOf("=") + 1)]));
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────
@@ -308,6 +318,55 @@ describe("Supervisor Resilience", () => {
     // Should have at least 2 restart log entries with increasing delays
     expect(backoffMatches.length).toBeGreaterThanOrEqual(2);
   }, 45_000);
+
+  // hienlh/ppm#38. The unit runs with NotifyAccess=all, so systemd believes a notification from
+  // any process under it: a server holding the socket passed it to every session, and a
+  // `podman run` there handed the unit's main PID to conmon. A path nobody listens on.
+  const notifySocket = resolve(PPM_DIR, "notify.sock");
+
+  test.skipIf(process.platform !== "linux")("only the supervisor keeps systemd's notify socket", async () => {
+    const logStart = existsSync(LOG_FILE) ? readFileSync(LOG_FILE).length : 0;
+    const supPid = await spawnTestSupervisor({ env: { NOTIFY_SOCKET: notifySocket } });
+
+    const up = await waitFor(() => {
+      const s = readStatus();
+      return s?.supervisorPid === supPid && typeof s.pid === "number" && typeof s.edgePid === "number";
+    }, TEST_TIMEOUT);
+    expect(up).toBe(true);
+
+    const status = readStatus()!;
+    expect(startEnv(status.pid as number).NOTIFY_SOCKET).toBeUndefined();
+    expect(startEnv(status.edgePid as number).NOTIFY_SOCKET).toBeUndefined();
+    // The supervisor still notifies through it: READY=1 went out (and failed, as nobody listens).
+    expect(startEnv(supPid).NOTIFY_SOCKET).toBe(notifySocket);
+    expect(readFileSync(LOG_FILE).subarray(logStart).toString()).toContain("sd_notify READY=1 failed");
+  }, TEST_TIMEOUT);
+
+  test.skipIf(process.platform !== "linux")("a self-replaced supervisor keeps the socket, its server does not", async () => {
+    const logStart = existsSync(LOG_FILE) ? readFileSync(LOG_FILE).length : 0;
+    const oldPid = await spawnTestSupervisor({ env: { NOTIFY_SOCKET: notifySocket } });
+    const up = await waitFor(() => {
+      const s = readStatus();
+      return s?.supervisorPid === oldPid && typeof s.pid === "number";
+    }, TEST_TIMEOUT);
+    expect(up).toBe(true);
+
+    process.kill(oldPid, "SIGUSR1"); // self-replace, as an upgrade does
+    // The old supervisor names its replacement when it hands over, then exits.
+    const handoff = () =>
+      readFileSync(LOG_FILE).subarray(logStart).toString().match(/New supervisor detected \(PID: (\d+)\)/);
+    expect(await waitFor(() => !!handoff() && !isAlive(oldPid), TEST_TIMEOUT)).toBe(true);
+    const newPid = Number(handoff()![1]);
+    const serving = await waitFor(() => {
+      const s = readStatus();
+      return s?.supervisorPid === newPid && typeof s.pid === "number" && isAlive(s.pid);
+    }, TEST_TIMEOUT);
+    expect(serving).toBe(true);
+
+    // The replacement becomes the unit's main process (MAINPID=), so it must be able to notify.
+    expect(startEnv(newPid).NOTIFY_SOCKET).toBe(notifySocket);
+    expect(startEnv(readStatus()!.pid as number).NOTIFY_SOCKET).toBeUndefined();
+  }, 45_000);
 });
 
 // ─── Port recovery: zombie-socket fallback ──────────────────────────────
@@ -497,6 +556,13 @@ describeBase("Supervisor self-heal patterns", () => {
 
   test("SIGUSR2 spawns a server when there is none to bounce", () => {
     expect(supervisorCode).toContain("No server child to restart");
+  });
+
+  test("cloudflared is spawned without the notify socket (#38)", () => {
+    // Bun.spawn without env: hands over the environment the supervisor started with.
+    expect(supervisorCode).toMatch(
+      /Bun\.spawn\(buildCmd\(attempt\.args\), \{[^}]*env: withoutNotifySocket\(process\.env\)/,
+    );
   });
 
   test("self-replace detaches the new supervisor into its own session", () => {

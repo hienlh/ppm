@@ -34,3 +34,18 @@ export async function sdNotify(state: string): Promise<void> {
     log.warn(`sd_notify ${state} failed (${e instanceof Error ? e.message : e}) — systemd may time the unit out`);
   }
 }
+
+/**
+ * `env` without the notify socket, for a child that never notifies.
+ *
+ * The unit runs with `NotifyAccess=all` (the `systemd-notify` above is a child, not the main
+ * PID), so systemd believes a notification from any process under it. A child holding the
+ * socket hands it to everything it starts — every session and terminal — and some of those
+ * speak sd_notify: `podman run` sends `MAINPID=<conmon pid>`, so the service "ends" when the
+ * container does, and `dbus-daemon` sends `STOPPING=1` on exit. Either way systemd kills the
+ * whole unit (hienlh/ppm#38).
+ */
+export function withoutNotifySocket(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { NOTIFY_SOCKET: _, ...rest } = env;
+  return rest;
+}
