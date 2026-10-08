@@ -30,7 +30,8 @@ function allowFramingHere(): Promise<void> {
  */
 export function WebPreviewTab({ metadata }: { metadata?: Record<string, unknown> }) {
   const url = safePreviewUrl(metadata?.url, window.location.origin);
-  const isPrivate = metadata?.via === "tailscale";
+  // `local` is the AI's open_url on the host's own browser: no forward, so only this machine reaches it.
+  const isPrivate = metadata?.via === "tailscale" || metadata?.via === "local";
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [framingAsked, setFramingAsked] = useState(false);
@@ -58,7 +59,8 @@ export function WebPreviewTab({ metadata }: { metadata?: Record<string, unknown>
       <div role="toolbar" aria-label="Web preview"
         className="flex items-center gap-2 md:gap-1 shrink-0 h-12 md:h-8 px-2 border-t md:border-t-0 md:border-b border-border">
         <span className="flex items-center justify-center shrink-0 size-7 text-muted-foreground"
-          title={isPrivate ? "Private: only devices in your tailnet can open this address" : "Public: anyone with this link can open it"}>
+          title={metadata?.via === "local" ? "Private: only this machine can open this address"
+            : isPrivate ? "Private: only devices in your tailnet can open this address" : "Public: anyone with this link can open it"}>
           {isPrivate ? <Lock className="size-3.5" /> : <Globe className="size-3.5" />}
         </span>
         <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground select-all">{url}</span>
@@ -76,7 +78,8 @@ export function WebPreviewTab({ metadata }: { metadata?: Record<string, unknown>
           own cookies and storage; without allow-top-navigation it cannot navigate PPM away. */}
       {framingAsked ? (
         <iframe
-          key={reloadKey}
+          // The AI's open_url sets aiOpenAt on every call: a page it opens again reloads.
+          key={`${reloadKey}:${String(metadata?.aiOpenAt ?? "")}`}
           title={`Preview of ${url}`}
           src={url}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"

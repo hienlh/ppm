@@ -21,6 +21,7 @@
         "@xterm/addon-fit": "0.12.0-beta.285",
         "@xterm/addon-web-links": "0.13.0-beta.285",
         "@xterm/addon-webgl": "0.20.0-beta.284",
+        "@xterm/headless": "6.1.0-beta.285",
         "@xterm/xterm": "6.1.0-beta.285",
         "archiver": "^7.0.1",
         "class-variance-authority": "^0.7.1",
@@ -874,6 +875,8 @@
     "@xterm/addon-web-links": ["@xterm/addon-web-links@0.13.0-beta.285", "", { "peerDependencies": { "@xterm/xterm": "^6.1.0-beta.285" } }, "sha512-deEjcrV/LQFM031l6Jop2mVK79RJru6SlNCjtFXb0Ex5GwIcPZCGW4VdZYMU5toQ3mMDR6yrzWDsb9SFtDrMeA=="],
 
     "@xterm/addon-webgl": ["@xterm/addon-webgl@0.20.0-beta.284", "", { "peerDependencies": { "@xterm/xterm": "^6.1.0-beta.285" } }, "sha512-tzkUiEfdpHCY8mXCbuIaP9V67QDfBJvDr9jdxs5jjxNCIQvw+NCoKD97y5sUrQhrIlr7xrDGniPgPYThQ/1FWg=="],
+
+    "@xterm/headless": ["@xterm/headless@6.1.0-beta.285", "", {}, "sha512-NJud+XEUjKMT2LwPqcIh/gazktV+R2AHjEPMQsn/l6+53rgFusuifmJjVkWLwZ228YYsUaN5+lJELeExS26q4A=="],
 
     "@xterm/xterm": ["@xterm/xterm@6.1.0-beta.285", "", {}, "sha512-S3K58tepMkbpWRBzOGKd0In6AVvt9QPAnNs8DJ8rPUPODYtsCYWAtINHKYtC2OpXcE5EBKM35dl+Dgv03OoE/w=="],
 

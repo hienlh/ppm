@@ -219,10 +219,13 @@ try {
     await page.locator('[data-testid="settings-rail-tools"]').click();
     const toolSwitch = (label) => page.getByRole("switch", { name: new RegExp(label) });
     await toolSwitch("Change databases").waitFor({ timeout: 15000 });
-    const labels = ["Open files", "Show pages", "Read databases", "Open Query tabs", "Change databases"];
+    const labels = ["Open files", "Show pages", "Show running apps", "Read terminals", "Type commands", "Read databases", "Open Query tabs", "Change databases"];
     const states = Object.fromEntries(await Promise.all(labels.map(async (l) => [l, await toolSwitch(l).getAttribute("aria-checked")])));
-    // The tab tools follow the older single switch, off here; the database tools are on.
-    assert.deepEqual(states, { "Open files": "false", "Show pages": "false", "Read databases": "true", "Open Query tabs": "true", "Change databases": "true" });
+    // open_file and open_preview follow the older single switch, off here; every other tool starts on.
+    assert.deepEqual(states, {
+      "Open files": "false", "Show pages": "false", "Show running apps": "true", "Read terminals": "true", "Type commands": "true",
+      "Read databases": "true", "Open Query tabs": "true", "Change databases": "true",
+    });
     await toolSwitch("Change databases").click();
     await until("db_execute saved off", async () => (await api("/api/settings/ai")).data.ppm_tools?.db_execute === false);
     await until("switch shows off", async () => (await toolSwitch("Change databases").getAttribute("aria-checked")) === "false");

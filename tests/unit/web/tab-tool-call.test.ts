@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { previewProblemCount, tabToolCall, tabToolResultText } from "../../../src/web/lib/tab-tool-call";
+import { deviceToolCall, deviceToolOf, previewProblemCount, tabToolCall, tabToolResultText } from "../../../src/web/lib/tab-tool-call";
 import { formatPreviewCheck } from "../../../src/shared/design-canvas-check-format";
 import { CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CODEX_TAB_TOOLS_MCP_SERVER } from "../../../src/shared/tab-open-protocol";
 import { stringifyToolResultContent } from "../../../src/shared/tool-result-content";
@@ -81,5 +81,31 @@ describe("previewProblemCount", () => {
   test("other results have no count", () => {
     expect(previewProblemCount("Opened report.html in a PPM tab on the user's device, but it could not be checked: timeout.")).toBeNull();
     expect(previewProblemCount("No PPM window has this chat open, so nothing was shown.")).toBeNull();
+  });
+});
+
+describe("deviceToolCall", () => {
+  test("reads open_url, read_terminal and run_in_terminal under either provider's name", () => {
+    expect(deviceToolCall("mcp__ppm-tabs__open_url", { url: "http://localhost:5173/" })).toEqual({ tool: "open_url", url: "http://localhost:5173/" });
+    expect(deviceToolCall("mcp__ppm-tabs__read_terminal", {})).toEqual({ tool: "read_terminal" });
+    expect(deviceToolCall("mcp__ppm-tabs__read_terminal", { terminal: "3f2a9c1e", lines: 200 })).toEqual({ tool: "read_terminal", terminal: "3f2a9c1e", lines: 200 });
+    expect(deviceToolCall(`${CODEX_TAB_TOOLS_MCP_SERVER}:run_in_terminal`, { server: "ppm_tabs", tool: "run_in_terminal", arguments: { command: "sudo apt install ffmpeg", cwd: "tools" } }))
+      .toEqual({ tool: "run_in_terminal", command: "sudo apt install ffmpeg", cwd: "tools" });
+  });
+
+  test("is null for the file tools, other servers' tools and calls missing what they need", () => {
+    expect(deviceToolCall(CLAUDE_OPEN_FILE_TOOL, { path: "a.ts" })).toBeNull();
+    expect(deviceToolCall("mcp__other__open_url", { url: "http://localhost:1/" })).toBeNull();
+    expect(deviceToolCall("mcp__ppm-tabs__open_url", { url: " " })).toBeNull();
+    expect(deviceToolCall("mcp__ppm-tabs__run_in_terminal", {})).toBeNull();
+    expect(deviceToolCall("mcp__ppm-tabs__read_terminal", { lines: -1, terminal: 5 })).toEqual({ tool: "read_terminal" });
+    expect(tabToolCall("mcp__ppm-tabs__open_url", { path: "a.ts" })).toBeNull();
+  });
+
+  test("names the tool from its name alone, for the card's icon", () => {
+    expect(deviceToolOf("mcp__ppm-tabs__open_url")).toBe("open_url");
+    expect(deviceToolOf(`${CODEX_TAB_TOOLS_MCP_SERVER}:read_terminal`)).toBe("read_terminal");
+    expect(deviceToolOf(CLAUDE_OPEN_FILE_TOOL)).toBeNull();
+    expect(deviceToolOf("Bash")).toBeNull();
   });
 });

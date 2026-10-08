@@ -1,14 +1,16 @@
 import { DESIGN_CDN_HOSTS } from "../../shared/design-cdn-hosts.ts";
-import { OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL } from "../../shared/tab-open-protocol.ts";
+import {
+  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
+} from "../../shared/tab-open-protocol.ts";
 
 /**
- * The two tools the tab-tools MCP endpoint serves. The names each provider knows them by are
- * in `tab-open-protocol.ts`, because the chat's tool cards need them too.
+ * The tools the tab-tools MCP endpoint serves. The names each provider knows them by are in
+ * `tab-open-protocol.ts`, because the chat's tool cards need them too.
  */
 
 export {
-  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL,
-  CODEX_TAB_TOOLS_MCP_SERVER,
+  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
+  CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CODEX_TAB_TOOLS_MCP_SERVER,
 } from "../../shared/tab-open-protocol.ts";
 /** Environment variable the Codex app-server reads the bearer token from. */
 export const CODEX_TAB_TOOLS_MCP_TOKEN_ENV = "PPM_TAB_TOOLS_MCP_TOKEN";
@@ -20,7 +22,13 @@ export const OPEN_FILE_WAIT_MS = 8_000;
  * 15 s for the load, 1.5 s for the page's scripts and up to 15 s for the check itself.
  */
 export const OPEN_PREVIEW_WAIT_MS = 40_000;
-/** The providers' own timeout for a call; it must exceed the longest wait above. */
+/** Lines `read_terminal` reads from the end unless the call asks otherwise, and at most. */
+export const READ_TERMINAL_DEFAULT_LINES = 100;
+export const READ_TERMINAL_MAX_LINES = 1_000;
+/**
+ * The providers' own timeout for a call; it must exceed the longest wait above, and
+ * `open_url`'s Tailscale forward (up to 10 s) followed by its device's 8 s.
+ */
 export const TAB_TOOLS_TIMEOUT_MS = 60_000;
 
 /** How a provider reaches the endpoint for one session; built by `chatService` per turn. */
@@ -75,4 +83,68 @@ export const OPEN_PREVIEW_TOOL_DEFINITION = {
     additionalProperties: false,
   },
   annotations: { readOnlyHint: true, openWorldHint: false },
+};
+
+export const OPEN_URL_TOOL_DEFINITION = {
+  name: OPEN_URL_TOOL,
+  title: "Show a running web app in PPM",
+  description:
+    "Show a web server running on this machine, such as a dev server at http://localhost:5173, in a PPM tab on the "
+    + "device the user is chatting from. On a phone or another computer PPM reaches it through a private Tailscale "
+    + "forward when the host has Tailscale. Call it once the server is up, so the user watches the app while you "
+    + "work on it. Only this machine's own servers: give the user any other link in your reply. Nothing about the "
+    + "page comes back; check it with your own tools if you need to.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "The page on this machine, such as http://localhost:5173/admin, or just its port." },
+    },
+    required: ["url"],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+};
+
+export const READ_TERMINAL_TOOL_DEFINITION = {
+  name: READ_TERMINAL_TOOL,
+  title: "Read a PPM terminal",
+  description:
+    "Read what a terminal open in PPM printed, as its screen shows it: a dev server's log, a test run, the error "
+    + "the user is looking at. Use it when the user mentions their terminal, instead of asking them to paste from "
+    + "it. It reads the terminals started in this chat's project folder and the ones run_in_terminal opened. "
+    + "Without `terminal`, a single terminal comes back whole and several come back as a list, each with its id "
+    + "and last lines. PPM keeps the last 1 MB of each terminal's output.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      terminal: { type: "string", description: "A terminal's id, as read_terminal or run_in_terminal gave it." },
+      lines: {
+        type: "integer", minimum: 1, maximum: READ_TERMINAL_MAX_LINES,
+        description: `Lines to read, from the end (default ${READ_TERMINAL_DEFAULT_LINES}).`,
+      },
+    },
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: true, openWorldHint: false },
+};
+
+export const RUN_IN_TERMINAL_TOOL_DEFINITION = {
+  name: RUN_IN_TERMINAL_TOOL,
+  title: "Type a command into a PPM terminal",
+  description:
+    "Open a new terminal in PPM on the device the user is chatting from, with a shell command typed at its prompt. "
+    + "Nothing runs until the user presses Enter, so use it for what you should not or cannot run yourself: a "
+    + "command that needs sudo or a password, signs in interactively, or that the user wants to run themselves. "
+    + "Run everything else with your own shell tool. One line only: join steps with && or ;. The result names the "
+    + "terminal, so read_terminal can read what the command printed once the user has run it.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      command: { type: "string", description: "The command, on one line." },
+      cwd: { type: "string", description: "Folder the shell starts in: absolute, or relative to the project folder (default: the project folder)." },
+    },
+    required: ["command"],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 };
