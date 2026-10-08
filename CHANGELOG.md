@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.23.14] - 2026-10-08
+
+### Added
+
+- **Designs open in a floating window on a desktop**, canvas on the left and the chat in a column on the right whose width you can drag (280–440px, remembered). Closing the window closes the design; Settings → Design → *Open designs in a window* turns it off, and a phone still shows a design full screen.
+- **A window dock in the status bar.** Every floating window gets a chip, in the order you opened them: in front, behind or minimized at a glance, with a dot while an AI turn runs. Minimize now sends a window there instead of shrinking it to its title bar; when the bar is full, `+N` (or a right-click on the dock) lists every window with search, close and Minimize all.
+- **Windows snap to the right side**, from a title-bar button or by dragging a window past the right edge, and a double-click on the title bar maximizes it.
+
+### Changed
+
+- **A narrow chat stays readable.** Below about 420px wide the review bar, the history bar and the composer chips shrink to icons, with the names in their tooltips, and the chips stay on one line. The model chip shows "Opus 5.5" instead of a raw id like `claude-opus-5-5`.
+- **The running-agents bar is one line** however many agents run: their avatars, how many are running and done, and the first one's current step. Tap it for the list, or with one agent, for its session.
+
 ### Fixed
 
 - **Sending a chat message did nothing on a plain-HTTP address, such as a LAN IP.** Since 0.22.3 the message left the box and was never sent, with no error on screen: the send asked the browser for `crypto.randomUUID`, which a browser offers only on HTTPS or localhost. Dropping files into the OS File Explorer on such an address failed the same way. Both work there again; Tailscale, tunnel and localhost addresses were never affected.
