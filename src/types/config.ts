@@ -1,6 +1,7 @@
 import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
+import type { PpmToolSwitches } from "../shared/ppm-tools.ts";
 
 export interface TelegramConfig {
   bot_token: string;
@@ -131,10 +132,12 @@ export interface AIConfig {
   /** Share project rules and memory between providers. Unset defaults to true. */
   share_provider_context?: boolean;
   /**
-   * Give chats the tools that open a file, or a page the AI made, in a PPM tab on the user's
-   * device, and turn Claude Code's claude.ai Artifact tools off. Unset defaults to false.
+   * The one switch the tab tools had before `ppm_tools`: `open_file` and `open_preview` follow it
+   * until the user switches either in Settings → Tools. Unset defaults to false.
    */
   tab_tools?: boolean;
+  /** PPM's own AI tools, on or off one by one (`src/shared/ppm-tools.ts` has the defaults). */
+  ppm_tools?: PpmToolSwitches;
   providers: Record<string, AIProviderConfig>;
 }
 

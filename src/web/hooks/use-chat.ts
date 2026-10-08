@@ -15,6 +15,7 @@ import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { prefixTokens } from "../../shared/turn-usage";
+import { dbExecuteApprovalInput } from "../../shared/db-ai-tools";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
@@ -664,7 +665,9 @@ export function useChat(
       }
 
       case "approval_request": {
-        upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
+        const dbApproval = dbExecuteApprovalInput(ev.tool, ev.input);
+        // A database change already has its db_execute card in the turn; its approval is only the prompt.
+        if (!dbApproval) upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
         // During turn_events replay, session_state already set the correct
         // pendingApproval — skip re-setting it for historical (already-answered) events
         if (isReplayingRef.current) break;
@@ -681,7 +684,7 @@ export function useChat(
           const sid = sessionIdRef.current;
           const isQuestion = ev.tool === "AskUserQuestion";
           approvalToastRef.current = toast[isQuestion ? "info" : "warning"](
-            isQuestion ? "AI has a question" : `${ev.tool} needs permission`,
+            isQuestion ? "AI has a question" : dbApproval ? `AI wants to change ${dbApproval.connectionName}` : `${ev.tool} needs permission`,
             {
               description: projectNameRef.current || `Session ${sid.slice(0, 8)}`,
               duration: Infinity,

@@ -210,26 +210,6 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
         />
       </div>
 
-      <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
-        <div className={fieldGap}>
-          <Label htmlFor="ai-tab-tools" className={compact ? labelSize : undefined}>
-            Let the AI open tabs in PPM
-          </Label>
-          <p id="ai-tab-tools-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
-            The AI can open files in a PPM tab on your device, and show the pages, charts and reports
-            it makes, seeing their errors and a screenshot. Turns off Claude's claude.ai Artifact tool.
-            Applies to new chats.
-          </p>
-        </div>
-        <Switch
-          id="ai-tab-tools"
-          aria-describedby="ai-tab-tools-description"
-          checked={settings.tab_tools ?? false}
-          disabled={saving}
-          onCheckedChange={(checked) => handleSettingsSave({ tab_tools: checked })}
-        />
-      </div>
-
       {/* Provider tabs */}
       {providerTabs.length > 1 && (
         <div className="flex gap-0.5 border-b border-border/50 -mx-1 px-1">

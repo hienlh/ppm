@@ -7,7 +7,9 @@
  * Every line here is the editor's. The server counts the lines of the text it was sent, and the
  * statement at the cursor or a selection begins further down the editor than its line 1.
  */
-import type { QueryResultSet, QueryScriptEvent, QueryStatementResult } from "../../../../shared/db-query-script";
+import {
+  isReadonlyRefusalText, WRONG_PASSWORD, type QueryResultSet, type QueryScriptEvent, type QueryStatementResult,
+} from "../../../../shared/db-query-script";
 import type { DialectName } from "../../../../shared/db-types";
 import type { DbColumnInfo } from "../use-database";
 import type { GridColumnSchema } from "../glide-grid-types";
@@ -209,6 +211,14 @@ export function failQueryRun(run: QueryRun, error: string, now: number): QueryRu
     ...run, running: null, failed: true, done: true, durationMs: Math.max(0, Math.round(now - run.startedAt)),
     messages: [...run.messages, { id: run.messages.length, level: "error", text: error, time: now }],
   };
+}
+
+/**
+ * The run was refused because its connection is readonly — by PPM or by the database — or a run
+ * with write access was refused for a wrong password: "Run with write access (once)" can run it.
+ */
+export function refusedAsReadonly(run: QueryRun): boolean {
+  return run.done && run.messages.some((m) => m.level === "error" && (isReadonlyRefusalText(m.text) || m.text === WRONG_PASSWORD));
 }
 
 /** A line of Messages added after the run, about it: a result read again after a save. */

@@ -1,4 +1,5 @@
 import { CHECK_REQUEST_ID_RE, parseCanvasCheckReport, type CanvasCheckReport } from "./design-canvas-check";
+import type { DbQueryTabOpen, OPEN_QUERY_TOOL } from "./db-ai-tools";
 
 /**
  * How the AI's tab tools (`open_file`, `open_preview`) reach the user's device: over the chat
@@ -25,7 +26,7 @@ export const CLAUDE_OPEN_FILE_TOOL = `mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__${OPE
 export const CLAUDE_OPEN_PREVIEW_TOOL = `mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__${OPEN_PREVIEW_TOOL}`;
 export const CODEX_TAB_TOOLS_MCP_SERVER = "ppm_tabs";
 
-export interface TabOpenRequest {
+export interface TabOpenFileRequest {
   type: "tab_open";
   requestId: string;
   tool: TabTool;
@@ -37,6 +38,19 @@ export interface TabOpenRequest {
   /** An HTML page shown by `open_preview`: check it once it has loaded. */
   check?: { screenshot: boolean };
 }
+
+/** The database tools' `open_query`: a Query tab holding a script, which the user runs. */
+export interface TabOpenQueryRequest {
+  type: "tab_open";
+  requestId: string;
+  tool: typeof OPEN_QUERY_TOOL;
+  query: DbQueryTabOpen;
+}
+
+export type TabOpenRequest = TabOpenFileRequest | TabOpenQueryRequest;
+
+/** A request as a tool asks for it; the broker adds `type` and `requestId`. */
+export type TabOpenAsk = Omit<TabOpenFileRequest, "type" | "requestId"> | Omit<TabOpenQueryRequest, "type" | "requestId">;
 
 export interface TabOpenResult {
   type: "tab_open_result";

@@ -65,6 +65,7 @@ postgres.service.ts (postgres.js) · mysql.service.ts (mysql2, installed on dema
 | Structure | `POST /connections/:id/structure/preview`, `/structure/apply` |
 | Import/Export | `POST /connections/:id/impexp/export`, `/impexp/import`; `PUT /impexp/uploads`, `POST /impexp/uploads/:id/preview`, `DELETE /impexp/uploads/:id`, `GET /impexp/jobs/:id`, `POST /impexp/jobs/:id/stop`, `POST /impexp/jobs/:id/download` |
 | Query tab | `POST /connections/:id/query/script` (NDJSON), `POST /connections/:id/query/cancel`, `GET /connections/:id/history` |
+| AI chat | `POST /ai-approvals/:requestId` — the user's answer to a `db_execute`, with PPM's password |
 | Kept for the CLI, agents and SQL completion | `POST /connections/:id/query`, `GET /connections/:id/schema`, `/data`, `/export`, `PUT /connections/:id/cell`, the `/row` routes, `GET /search` |
 | Drivers | `GET /drivers`, `POST /drivers/:id/install`, `DELETE /drivers/:id`, `GET /ssh/agent` |
 
@@ -107,7 +108,8 @@ The Structure tab edits a table model. `ddl/table-diff.ts` compares it with the 
 - `POST /query/script` splits the script with `splitSqlScript` (it understands MySQL's `DELIMITER`) and runs it one statement at a time in a session of its own, so `SET`, temporary tables and `BEGIN` carry from one statement to the next. Each statement's result is sent as soon as it ends, as one NDJSON line (`start`, `running`, `statement`, `message`, `done`).
 - **Stop** (`/query/cancel` with the `runId` the browser chose) cancels only the running statement: postgres.js `cancel()` on PostgreSQL, `KILL QUERY` from another connection on MySQL / MariaDB. `bun:sqlite` cannot be interrupted mid-statement, so the runner yields between statements and Stop keeps the next one from starting.
 - A transaction the script leaves open is rolled back and reported. Results are cut at the tab's row limit on the server (closing the cursor, `sql_select_limit`, or `LIMIT N+1`), so the rest are never read.
-- History is read from the query audit log (`source = "editor"`); there is no separate store.
+- History is read from the query audit log (`source` `editor` or `ai`, the AI chat's database tools); there is no separate store.
+- **Run with write access (once)**: on a readonly connection, a run refused as a write can be sent again with `writeOnce: { password }` — PPM's password, typed in the tab — and runs on a writable session that one time. A wrong password is a 403; the run is audited with `writeOnce: true` in its params.
 
 ### Connections and secrets
 
@@ -123,7 +125,7 @@ CREATE TABLE connections (
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT, updated_at TEXT,
   readonly INTEGER NOT NULL DEFAULT 1,
-  ai_access INTEGER NOT NULL DEFAULT 1   -- 0: `ppm db` run from an AI chat does not see it
+  ai_access INTEGER NOT NULL DEFAULT 1   -- 0: the AI chat's database tools, and `ppm db` run from an AI chat, do not see it
 );
 
 CREATE TABLE connection_table_cache (
@@ -149,7 +151,11 @@ MySQL / MariaDB (`mysql2`) and SSH tunnels (`ssh2`) are not bundled. **Settings 
 
 ### Query audit
 
-Every statement PPM runs on a user database is logged in `<ppm dir>/query-audit.db`, with its source (`editor`, `grid`, `cli`, `filter`, `structure`, `export`, `import`), actor (human or agent), operation and status (`ok`, `error`, `blocked`). How long it is kept follows Settings (`query_audit.retention_days`, `max_size_mb`).
+Every statement PPM runs on a user database is logged in `<ppm dir>/query-audit.db`, with its source (`editor`, `grid`, `cli`, `filter`, `structure`, `export`, `import`, `ai`), actor (human or agent), operation and status (`ok`, `error`, `blocked`). How long it is kept follows Settings (`query_audit.retention_days`, `max_size_mb`).
+
+### AI chat tools
+
+An AI chat reaches the saved connections with *Available to the AI chat* on through three tools PPM serves itself — `db_query` (read-only), `open_query` (a Query tab with a script the user runs) and `db_execute` (a change, run once in one transaction after the user approves it with PPM's password) — without ever holding their credentials. See `docs/architecture/ai-chat-and-providers.md` → AI database tools.
 
 ### CLI (`ppm db`)
 

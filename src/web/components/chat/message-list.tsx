@@ -41,6 +41,8 @@ import { ChatWelcome } from "./chat-welcome";
 import { ChatScrollNav } from "./chat-scroll-nav";
 import type { VersionGroup } from "../../../types/api";
 import { QuestionCard } from "./question-card";
+import { DbExecuteApprovalCard } from "./db-execute-approval-card";
+import { dbExecuteApprovalInput } from "../../../shared/db-ai-tools";
 import type { Question } from "./question-card";
 import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 
@@ -198,6 +200,7 @@ export function MessageList({
   // The approval card + "thinking…" indicator ride at the end, inside the scrolled
   // content so stick-to-bottom keeps them in view.
   const hasTrailing = !!pendingApproval || isStreaming;
+  const dbApproval = pendingApproval ? dbExecuteApprovalInput(pendingApproval.tool, pendingApproval.input) : null;
 
   // Mirror the lib's scroll-element ref into state so effects/nav re-run when the
   // scroll container mounts late (it appears only after the loading screen).
@@ -626,7 +629,9 @@ export function MessageList({
               {pendingApproval && (
                 pendingApproval.tool === "AskUserQuestion"
                   ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
-                  : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
+                  : dbApproval
+                    ? <DbExecuteApprovalCard requestId={pendingApproval.requestId} input={dbApproval} />
+                    : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
               )}
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
             </div>
