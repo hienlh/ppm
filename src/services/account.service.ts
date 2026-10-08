@@ -79,6 +79,16 @@ const OAUTH_SCOPE = "org:create_api_key user:profile user:inference";
 const OAUTH_PLATFORM_REDIRECT = "https://platform.claude.com/oauth/code/callback";
 
 /**
+ * The pasted code names a sign-in link this process does not hold: links live in memory for ten
+ * minutes, die with a restart, and are spent by the sign-in they finish. Only a new link helps.
+ */
+export class OAuthLinkExpiredError extends Error {
+  constructor() {
+    super("This sign-in link has expired — links last 10 minutes and end when PPM restarts. Click Login with Claude to get a new one.");
+  }
+}
+
+/**
  * Anthropic invalidates the entire refresh-token family this long after the original
  * grant, whether or not the token kept rotating in between. Measured twice on a live
  * install: developers@ signed in 2026-08-11 and was rejected 2026-09-08 (28d 2h);
@@ -639,13 +649,26 @@ class AccountService {
     return { url: `${OAUTH_AUTH_URL}?${params}`, state };
   }
 
-  /** Exchange code from platform.claude.com callback */
-  async completeOAuthCodeFlow(code: string, state: string): Promise<Account> {
+  /**
+   * Exchange the code pasted from platform.claude.com's callback page, which reads
+   * `<code>#<state>`. That state names the link the code was issued for, and it wins over the
+   * dialog's: the dialog only remembers the newest link it opened, and a code from an earlier
+   * one paired with the newer verifier is refused as "Code challenge failed".
+   */
+  async completeOAuthCodeFlow(pasted: string, dialogState: string): Promise<Account> {
+    const [code = "", codeState] = pasted.split("#");
+    const state = codeState || dialogState;
     const pending = this.pendingStates.get(state);
-    if (!pending) throw new Error("Invalid or expired OAuth state");
+    if (!pending) throw new OAuthLinkExpiredError();
     this.pendingStates.delete(state);
 
-    const tokens = await this.exchangeCode(code, pending.verifier, OAUTH_PLATFORM_REDIRECT, state);
+    const tokens = await this.exchangeCode(code, pending.verifier, OAUTH_PLATFORM_REDIRECT, state)
+      .catch((e: unknown) => {
+        // A refused code does not spend the link: the right code, or approving the same tab
+        // again, can still finish it within its ten minutes.
+        this.pendingStates.set(state, pending);
+        throw e;
+      });
     const profileData = await this.fetchOAuthProfile(tokens.accessToken);
     const displayName = profileData?.account?.display_name || profileData?.account?.full_name;
     const orgName = profileData?.organization?.name;
