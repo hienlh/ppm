@@ -23,6 +23,7 @@ import { bindPickedAccount, bindRefusalReason } from "../../services/picked-acco
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { parseCompactSegment } from "../../services/compact-segment.ts";
+import { assertSessionInProject } from "../../services/agent-transcript/session-ownership.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
@@ -1103,6 +1104,21 @@ chatRoutes.get("/sessions/:id/tasks", async (c) => {
   }
 });
 
+/**
+ * The transcript a compact summary points at, when the path it names is not there.
+ *
+ * Claude Code builds that path from the cwd the session had when it compacted, so a session
+ * that had `cd`'d into a subdirectory names a project folder that was never created
+ * (`…-app-tools--runtime-checkout/<id>.jsonl`) while its transcript stayed in the folder of the
+ * project it started in, and every scroll to the top answered "File not found". The file name
+ * is still the session's own, so it is looked for in this project's folder, and only there.
+ */
+function compactTranscriptPath(jsonlPath: string, projectPath: string): string {
+  if (existsSync(jsonlPath)) return jsonlPath;
+  const owned = assertSessionInProject({ providerId: "claude", sessionId: basename(jsonlPath, ".jsonl"), projectPath });
+  return owned.ok && owned.claude ? `${owned.claude.sessionDir}.jsonl` : jsonlPath;
+}
+
 /** GET /chat/pre-compact-messages — read and parse a JSONL transcript file (for expand-compact feature) */
 chatRoutes.get("/pre-compact-messages", async (c) => {
   try {
@@ -1119,7 +1135,7 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     // the start to the `before` record (to the end when no record has that uuid),
     // and parses only the segment it finds there, which is what it bounds. A 543MB
     // transcript answered "File too large" to every scroll up while its segments were 3MB.
-    const validated = validateJsonlPath(jsonlPath, Number.POSITIVE_INFINITY);
+    const validated = validateJsonlPath(compactTranscriptPath(jsonlPath, c.get("projectPath")), Number.POSITIVE_INFINITY);
     // One compaction segment per request: the client walks further back by
     // expanding the summary that arrives at the head of each one.
     const messages = await parseCompactSegment(validated, beforeUuid);
