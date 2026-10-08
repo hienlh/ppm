@@ -26,6 +26,8 @@
 
 - **Login with Claude could refuse the code you pasted, and then refuse every retry.** The code Claude shows ends in `#` and the id of the sign-in link it came from. PPM dropped that part and paired the code with the newest link the dialog had opened, so a code from an earlier tab (a second Login with Claude, or a tab left open) failed with "Code challenge failed", and the link it had used was then spent, so every Connect after that said "Invalid or expired OAuth state". The code is now matched to its own link, a refused code no longer spends the link, and a link PPM no longer holds (older than 10 minutes, or from before a restart) takes the dialog back to Login with Claude with a message saying so.
 
+- **Scrolling up past a compaction showed "File not found" in a chat whose session had changed folder.** Claude Code names the transcript in a compaction summary after the folder the session was working in when it compacted, so a session that had `cd`'d into a subfolder pointed at a project folder that was never created. PPM now looks for the session's own transcript in the project's folder, and only there.
+
 ## [0.23.14] - 2026-10-08
 
 ### Added
