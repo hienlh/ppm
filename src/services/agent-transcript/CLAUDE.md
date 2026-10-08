@@ -1,0 +1,5 @@
+# `src/services/agent-transcript/`
+
+## Map
+
+- `src/services/agent-transcript/` — one hub per `(providerId, sessionId)` streaming an Agent card's or teammate's own transcript live over `/ws/global`, independent of the chat WebSocket and of whether the root turn is still running. `session-ownership.ts` proves the session belongs to the caller's project before any file is named; `agent-transcript-sources.ts` resolves a card/teammate to the exact file(s), including Codex descendants via `session_meta.parent_thread_id`; `agent-transcript-session-hub.ts` + `agent-transcript-hub.ts` are the per-session tail/page/cursor loop, `agent-transcript-session-hub-activity.ts` the separate "who is running" feed. Protocol in `src/shared/agent-transcript-protocol.ts`; UI entry points `src/web/components/chat/{agent-card-summary,agent-session-window-content,agent-session-sheet,running-agents-bar}.tsx` via `use-agent-session-stream.ts`/`use-agent-activity.ts`; docs `docs/architecture/ai-chat-and-providers.md` → Agent session transcripts
