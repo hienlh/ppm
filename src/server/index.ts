@@ -237,6 +237,11 @@ app.all("/api/design-mcp", designMcpHandler);
 // Tab tools (`open_file`, `open_preview`): the same arrangement, for any chat session.
 import { tabToolsMcpHandler } from "../services/tab-tools-mcp/tab-tools-mcp-endpoint.ts";
 app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
+// Database tools (`db_query`, `open_query`, `db_execute`): the same, for any chat session; a
+// write still waits for the user's approval, answered behind auth at `/api/db/ai-approvals`.
+import { dbToolsMcpHandler } from "../services/db-ai-tools/db-ai-tools-endpoint.ts";
+import { DB_TOOLS_MCP_PATH } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
+app.all(DB_TOOLS_MCP_PATH, dbToolsMcpHandler);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);

@@ -56,6 +56,19 @@ describe("chatService tab tools", () => {
     expect(await chatService.prepareSendOptions("stub-tabs", "t3", "hi")).not.toHaveProperty("tabToolsMcp");
   });
 
+  it("gives the tab tools while either one is on by its own switch, which wins over the older one", async () => {
+    const ai = (configService as any).config.ai;
+    try {
+      ai.ppm_tools = { open_preview: true };
+      expect((await chatService.prepareSendOptions("stub-tabs", "t5", "hi")).tabToolsMcp?.url).toBe("http://127.0.0.1:8124/api/tab-tools-mcp");
+      setTabTools(true);
+      ai.ppm_tools = { open_file: false, open_preview: false };
+      expect(await chatService.prepareSendOptions("stub-tabs", "t5", "hi")).not.toHaveProperty("tabToolsMcp");
+    } finally {
+      delete ai.ppm_tools;
+    }
+  });
+
   it("revokes the token when the chat is deleted", async () => {
     setTabTools(true);
     const { tabToolsMcp } = await chatService.prepareSendOptions("stub-tabs", "t4", "hi");

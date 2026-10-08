@@ -3,7 +3,7 @@
 // calls the real /api/tab-tools-mcp endpoint with the token the turn was handed, the server
 // asks this browser over the chat socket, and the browser opens the tab beside the chat, loads
 // and checks the page, and answers. Covers where the tab lands (desktop and phone), reloading a
-// tab that is already open, a line in code view, the card's Open button, the setting turned off
+// tab that is already open, a line in code view, the card's Open button, a tool switched off
 // and a chat with no browser. Needs internet for the dashboard's CDNs. No live credentials, no
 // real PPM data.
 //
@@ -252,15 +252,23 @@ try {
   }
 
   {
-    const res = await fetch(`${web}/api/settings/ai`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tab_tools: false }) });
+    // Settings → Tools, one switch per tool.
+    const put = (ppm_tools) => fetch(`${web}/api/settings/ai`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ppm_tools }) });
+    let res = await put({ open_preview: false });
     assert.ok(res.ok, await res.text());
-    const [call] = await turn(page, [{ tool: "open_preview", args: { path: "site/dashboard.html" } }], "setting is off now");
-    assert.equal(call.handed, false, "a turn started with the setting off is not given the tools");
+    const [one] = await turn(page, [{ tool: "open_preview", args: { path: "site/dashboard.html" } }], "show page is off now");
+    assert.equal(one.handed, true, "open_file is still on, so the turn still has the tab tools");
+    assert.equal(one.isError, true);
+    assert.match(one.text, /turned off open_preview in PPM's settings \(Settings → Tools\)/);
+    res = await put({ open_file: false });
+    assert.ok(res.ok, await res.text());
+    const [call] = await turn(page, [{ tool: "open_file", args: { path: "site/dashboard.html" } }], "both tab tools are off now");
+    assert.equal(call.handed, false, "a turn started with both off is not given the tools");
     assert.equal(call.isError, true);
-    assert.match(call.text, /turned off "Let the AI open tabs in PPM"/);
-    const back = await fetch(`${web}/api/settings/ai`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tab_tools: true }) });
+    assert.match(call.text, /turned off open_file in PPM's settings/);
+    const back = await put({ open_file: true, open_preview: true });
     assert.ok(back.ok);
-    record("setting off: the next turn has no tools, and a token kept from before is refused", { text: call.text });
+    record("a tool switched off is refused; with both off the next turn has no tools, and a token kept from before is refused", { text: call.text });
   }
 
   // Expected, and inside the previews: the broken page's own error, and Playwright's

@@ -36,6 +36,8 @@ import {
   Clock,
   Send,
   Users,
+  Database,
+  DatabaseZap,
 } from "@/lib/icons";
 import { ImagePlus } from "@/lib/icons";
 
@@ -62,6 +64,12 @@ function toolChip(
     return { Icon: Terminal, cls: "bg-error/15 text-error" };
   // A named teammate gets its own chip so it is not mistaken for a throwaway subagent.
   if (isAddressableAgent) return { Icon: Users, cls: "bg-accent-2/15 text-accent-2" };
+  const dbTool = dbToolOf(name);
+  if (dbTool) {
+    return dbTool === DB_EXECUTE_TOOL
+      ? { Icon: DatabaseZap, cls: "bg-warning/15 text-warning" }
+      : { Icon: Database, cls: "bg-info/15 text-info" };
+  }
   switch (name) {
     case "Read": case "Glob": case "LS":
       return { Icon: FileSearch, cls: "bg-accent-wash text-primary" };
@@ -103,6 +111,9 @@ import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
 import { TabToolCard } from "./tab-tool-card";
 import { tabToolCall } from "@/lib/tab-tool-call";
+import { DbToolSummary, DbToolDetails } from "./db-tool-card";
+import { dbToolCall, dbToolOf } from "@/lib/db-tool-call";
+import { DB_EXECUTE_TOOL } from "../../../shared/db-ai-tools";
 import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
 import { useOpenAgentSession } from "./use-open-agent-session";
 import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
@@ -366,6 +377,8 @@ export function ToolCard({
 /** Render one-line summary per tool type */
 function ToolSummary({ name, input }: { name: string; input: Record<string, unknown> }) {
   const s = (v: unknown) => String(v ?? "");
+  const dbCall = dbToolCall(name, input);
+  if (dbCall) return <DbToolSummary call={dbCall} />;
   switch (name) {
     case "Read":
     case "Write":
@@ -478,6 +491,9 @@ function ToolDetails({
       closable: true,
     });
   };
+
+  const dbCall = dbToolCall(name, input);
+  if (dbCall) return <DbToolDetails call={dbCall} />;
 
   switch (name) {
     case "Bash":
