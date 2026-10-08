@@ -5,9 +5,9 @@ import {
   type DesignMcpAccess,
 } from "../../services/design/mcp/design-mcp-tool.ts";
 import {
-  CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, TAB_TOOLS_TIMEOUT_MS,
-  type TabToolsMcpAccess,
+  CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import { TAB_TOOLS } from "../../shared/ppm-tools.ts";
 import {
   CODEX_DB_TOOLS_MCP_SERVER, CODEX_DB_TOOLS_MCP_TOKEN_ENV, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess,
 } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
@@ -62,7 +62,8 @@ export function designMcpEnv(access: DesignMcpAccess | undefined): Record<string
 
 /**
  * The tab-tools MCP server, shaped and approved exactly like {@link designMcpConfig}: the
- * tools only open a tab for the user to look at.
+ * tools open a tab for the user to look at, read the project's terminals, or type a command
+ * that runs only when the user presses Enter.
  */
 export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexConfigOverrides {
   if (!access) return {};
@@ -70,7 +71,7 @@ export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexC
     [`mcp_servers.${CODEX_TAB_TOOLS_MCP_SERVER}`]: {
       url: access.url,
       bearer_token_env_var: CODEX_TAB_TOOLS_MCP_TOKEN_ENV,
-      enabled_tools: [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL],
+      enabled_tools: [...TAB_TOOLS],
       default_tools_approval_mode: "approve",
       startup_timeout_sec: 10,
       tool_timeout_sec: Math.ceil(TAB_TOOLS_TIMEOUT_MS / 1000),

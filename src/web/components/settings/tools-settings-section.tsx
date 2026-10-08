@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 import { DB_TOOLS } from "../../../shared/db-ai-tools";
-import { ppmToolOn, TAB_TOOLS, type PpmTool } from "../../../shared/ppm-tools";
+import { ppmToolOn, TERMINAL_TOOLS, type PpmTool } from "../../../shared/ppm-tools";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -19,6 +19,18 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
   open_preview: {
     label: "Show pages",
     note: "Opens a page, chart or report it made in a PPM tab, and reads back its errors and a screenshot. While on, Claude's claude.ai Artifact tool is off.",
+  },
+  open_url: {
+    label: "Show running apps",
+    note: "Opens a web server running on this machine, such as a dev server, in a PPM tab. On another device it goes through a private Tailscale forward; it never makes a public link.",
+  },
+  read_terminal: {
+    label: "Read terminals",
+    note: "Reads what the terminals of the chat's project printed, so you need not paste an error into the chat.",
+  },
+  run_in_terminal: {
+    label: "Type commands",
+    note: "Opens a terminal with a command typed in, for one that needs your password or your eyes. Nothing runs until you press Enter.",
   },
   db_query: {
     label: "Read databases",
@@ -35,7 +47,8 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
-  { title: "Tabs", intro: "On the device you are chatting from.", tools: TAB_TOOLS },
+  { title: "Tabs", intro: "On the device you are chatting from.", tools: ["open_file", "open_preview", "open_url"] },
+  { title: "Terminal", intro: "PPM's own terminals, on the machine PPM runs on.", tools: TERMINAL_TOOLS },
   {
     title: "Database",
     intro: "On the connections with “Available to the AI chat” on. The AI never sees their passwords.",
