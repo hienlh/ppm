@@ -100,6 +100,8 @@
 
 ### Fixed
 
+- **Sending a chat message did nothing on a plain-HTTP address, such as a LAN IP.** Since 0.22.3 the message left the box and was never sent, with no error on screen: the send asked the browser for `crypto.randomUUID`, which a browser offers only on HTTPS or localhost. Dropping files into the OS File Explorer on such an address failed the same way. Both work there again; Tailscale, tunnel and localhost addresses were never affected.
+
 - **A container started from a PPM terminal or chat could restart PPM and end every session.** Under systemd, every process PPM started inherited systemd's notify socket, and systemd believed what any of them told it. `podman run` reports its container's monitor as the service's main process, so PPM "ended" when the container did, and a private `dbus-daemon` reports the service as stopping when it exits. Only the supervisor holds the socket now; the server, the edge forwarder, cloudflared and everything they start no longer get it (#38).
 
 - **The running-agents bar listed every named agent twice, and grew over the chat.** An agent given a name was reported once as an Agent card and again as a teammate, so a session that fanned out to eleven agents showed 22 rows covering the whole conversation. Each agent is one row now, and from four agents on the list scrolls inside about three rows under an "N agents running" header that folds it away: open on a desktop, folded on a phone.

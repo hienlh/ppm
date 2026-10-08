@@ -1,3 +1,5 @@
+import { randomId } from "@/lib/utils";
+
 /** Local dispatch evidence, deliberately independent of tour state and server turn IDs. */
 export interface ChatAttemptEvent {
   type: "started" | "succeeded" | "failed" | "session";
@@ -15,7 +17,7 @@ export class ChatAttemptLifecycle {
     // A follow-up can overlap an earlier done frame: never attribute it as success.
     this.fail();
     if (!idle || !connected) return;
-    this.attempt = { sessionId, attemptId: crypto.randomUUID() };
+    this.attempt = { sessionId, attemptId: randomId() };
     this.emit({ type: "started", ...this.attempt });
   }
 
