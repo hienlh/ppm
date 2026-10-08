@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
+import { resolveSessionDir } from "../../services/subagent-transcript-merger.ts";
 import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
@@ -324,30 +325,64 @@ chatRoutes.get("/sessions/:id/design", (c) => {
 });
 
 /**
- * The full parsed history of recently opened sessions, so the older pages a tab asks for
- * as it scrolls up are sliced from the parse its first page already paid for. Parsing is
- * the expensive part — minutes of CPU for a transcript in the hundreds of MB — and paying
- * it again per page would make scrolling up slower than the old load-everything was.
+ * The parsed history of recently read sessions, reused for as long as the transcript on disk
+ * is the one it was parsed from.
  *
- * Only older-page requests (`before`) read from here; a first page or a refetch always
- * parses afresh, since the transcript may have grown. Small and short-lived on purpose:
- * each entry is a whole session's messages.
+ * Re-reading a transcript is not only slow, it LEAKS on Windows: Bun keeps the memory of a
+ * large read committed after the strings are collected (measured on a 30 MB transcript:
+ * `Bun.file().text()` alone +12 MB a call, a full history read +40 MB, never returned —
+ * mimalloc's purge options change nothing). Every tab open, older page and post-turn refetch
+ * re-parsed, so a day of long chats took the server to 14 GB RSS / 59 GB committed and Bun
+ * aborted. Keyed by the transcript's size and mtime (and the fork root's, whose timestamps
+ * are overlaid), a session is now parsed once per change to its file instead of once per ask.
+ *
+ * Only Claude transcripts are stamped; anything unstamped is parsed per request as before,
+ * except an older page (`before`), which reuses the parse its first page made for a short while.
  */
-const HISTORY_CACHE_TTL_MS = 5 * 60_000;
-const HISTORY_CACHE_MAX = 3;
-const historyCache = new Map<string, { messages: ChatMessage[]; at: number }>();
+const HISTORY_CACHE_MAX = 6;
+const UNSTAMPED_TTL_MS = 5 * 60_000;
+const historyCache = new Map<string, { stamp: string | null; messages: ChatMessage[]; at: number }>();
 
-function rememberHistory(key: string, messages: ChatMessage[]): void {
+function rememberHistory(key: string, stamp: string | null, messages: ChatMessage[]): void {
   historyCache.delete(key);
-  historyCache.set(key, { messages, at: Date.now() });
+  historyCache.set(key, { stamp, messages, at: Date.now() });
   while (historyCache.size > HISTORY_CACHE_MAX) historyCache.delete(historyCache.keys().next().value!);
 }
 
-function recentHistory(key: string): ChatMessage[] | null {
+function cachedHistory(key: string, stamp: string | null, olderPage: boolean): ChatMessage[] | null {
   const hit = historyCache.get(key);
   if (!hit) return null;
-  if (Date.now() - hit.at > HISTORY_CACHE_TTL_MS) { historyCache.delete(key); return null; }
-  return hit.messages;
+  if (stamp !== null && hit.stamp === stamp) {
+    // Most recently used last, so the cap drops the session read longest ago.
+    historyCache.delete(key);
+    historyCache.set(key, hit);
+    return hit.messages;
+  }
+  if (stamp === null && olderPage && Date.now() - hit.at <= UNSTAMPED_TTL_MS) return hit.messages;
+  return null;
+}
+
+/** `size:mtime` of a Claude session's transcript, or null when it has none on disk. */
+function claudeTranscriptStamp(sessionId: string): string | null {
+  const dir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
+  if (!dir) return null;
+  try {
+    const s = statSync(`${dir}.jsonl`);
+    return `${s.size}:${s.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
+/** What the parsed history depends on on disk; null when that cannot be told. */
+function historyStamp(providerId: string, id: string): string | null {
+  if (providerId !== "claude") return null;
+  const own = claudeTranscriptStamp(id);
+  if (!own) return null;
+  const rootId = getRootId(id);
+  if (!rootId || rootId === id) return own;
+  const root = claudeTranscriptStamp(rootId);
+  return root ? `${own}|${root}` : null;
 }
 
 /**
@@ -398,10 +433,11 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     const providerId = c.req.query("providerId") ?? "claude";
     const query = parseHistoryPageQuery((name) => c.req.query(name));
     const cacheKey = `${providerId}\0${id}`;
-    let all = query.before !== undefined ? recentHistory(cacheKey) : null;
+    const stamp = historyStamp(providerId, id);
+    let all = cachedHistory(cacheKey, stamp, query.before !== undefined);
     if (!all) {
       all = await loadFullHistory(providerId, id);
-      if (query.limit !== undefined || query.from !== undefined) rememberHistory(cacheKey, all);
+      if (stamp !== null || query.limit !== undefined || query.from !== undefined) rememberHistory(cacheKey, stamp, all);
     }
     const page = pageHistory(all, query);
     // versionMap ships with the history so the `‹ n/m ›` switcher needs no
