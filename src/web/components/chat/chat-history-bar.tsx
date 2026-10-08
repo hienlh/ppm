@@ -327,19 +327,23 @@ export function ChatHistoryBar({
   return (
     <div className="border-b border-border/50">
       {/* Toolbar row — status chips scroll on the left, controls stay pinned right.
-          A narrow chat pane must never push the connection indicator out of view. */}
+          A narrow chat pane must never push the connection indicator out of view, and on
+          one (`@max-[420px]/chat`) the chips drop their words to their icons, keeping only
+          the usage figures, which are the one thing here that changes. */}
       <div className="flex items-center gap-1 px-2 py-1">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
           {/* History */}
           <button
             data-onboarding="chat-history"
             onClick={() => togglePanel("history")}
+            title="History"
+            aria-label="History"
             className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
               activePanel === "history" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
             }`}
           >
             <History className="size-3" />
-            <span>History</span>
+            <span className="@max-[420px]/chat:hidden">History</span>
           </button>
 
           {/* Active provider + AI Settings (combined) */}
@@ -352,7 +356,7 @@ export function ChatHistoryBar({
               title="AI Settings"
             >
               <ProviderBadge providerId={providerId} />
-              <span className="capitalize">{providerId}</span>
+              <span className="capitalize @max-[420px]/chat:hidden">{providerId}</span>
             </button>
           ) : (
             <button
@@ -373,7 +377,7 @@ export function ChatHistoryBar({
               className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-elevated ${
                 activePanel === "usage" ? "bg-primary/10" : ""
               } ${usageColor}`}
-              title="Usage limits"
+              title={accountLabel ? `Usage limits · ${accountLabel}` : "Usage limits"}
             >
               <Activity className="size-3" />
               {accountLabel && (
@@ -386,7 +390,7 @@ export function ChatHistoryBar({
                 // report; the tab's claimed account stands in, and it is the same one
                 // that message will run on.
                 <span
-                  className="text-text-secondary font-normal truncate max-w-[110px]"
+                  className="text-text-secondary font-normal truncate max-w-[110px] @max-[420px]/chat:hidden"
                   title={accountLabel}
                 >
                   [{accountLabel}]
@@ -411,7 +415,7 @@ export function ChatHistoryBar({
               title="Team activity"
             >
               <Users className="size-3" />
-              <span>Team</span>
+              <span className="@max-[420px]/chat:hidden">Team</span>
               {(teamActivity.unreadCount ?? 0) > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 size-2 bg-primary rounded-full animate-pulse" />
               )}

@@ -3,6 +3,7 @@ import { Check, Sparkles, Brain } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { modelDisplayName } from "@/lib/model-display-name";
 import { EFFORT_OPTIONS, chipLabel } from "./model-thinking-selector-helpers";
 
 interface ModelOption {
@@ -107,7 +108,7 @@ export function ModelThinkingSelector({
   }, [open, isMobile]);
 
   const current = models.find((m) => m.value === model);
-  const modelDisplay = current ? shortLabel(current.label) : model ? shortLabel(model) : "Model";
+  const modelDisplay = current ? shortLabel(current.label) : model ? modelDisplayName(model) : "Model";
   const effortValue = effort ?? DEFAULT_EFFORT;
   const showModelList = models.length > 0 || Boolean(modelStatus);
   const chipText = chipLabel(modelDisplay, effortValue);
@@ -163,7 +164,8 @@ export function ModelThinkingSelector({
   );
 
   return (
-    <div className="relative">
+    // `min-w-0` + `max-w-full`: in a narrow composer this is the chip that gives way.
+    <div className="relative min-w-0">
       <button
         type="button"
         disabled={disabled}
@@ -171,12 +173,12 @@ export function ModelThinkingSelector({
           e.stopPropagation();
           if (!disabled) setOpen((v) => !v);
         }}
-        className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-primary bg-accent-wash border border-accent-wash-border hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-default"
+        className="inline-flex max-w-full items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-primary bg-accent-wash border border-accent-wash-border hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-default"
         aria-label={`Model ${modelDisplay}, effort ${effortValue}${thinking ? ", thinking on" : ""}`}
         title={disabled ? "Can't change while running" : chipText}
       >
         <Sparkles className="h-3.5 w-3.5 shrink-0" />
-        <span className="max-w-[140px] truncate">{chipText}</span>
+        <span className="min-w-0 max-w-[140px] truncate">{chipText}</span>
         {thinking && <Brain className="h-3 w-3 shrink-0" />}
       </button>
 

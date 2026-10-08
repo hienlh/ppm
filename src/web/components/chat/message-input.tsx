@@ -1124,9 +1124,11 @@ export const MessageInput = memo(function MessageInput({
         {/* Desktop: chips row (permission + model) then a single input row
             (paperclip | textarea | mic | send) — design PPMWorkspace composer. */}
         <div className="hidden md:block">
-          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5">
+          {/* Wraps on a wide chat; on a narrow one (`@max-[420px]/chat`) stays one line, the
+              permission chip down to its icon and the model chip giving way first. */}
+          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5 @max-[420px]/chat:flex-nowrap">
             {/* Mode indicator chip */}
-            {!configurationPending && <div className="relative">
+            {!configurationPending && <div className="relative shrink-0">
               <ModeChip
                 mode={permissionMode ?? "bypassPermissions"}
                 onClick={() => setModeSelectorOpen((v) => !v)}
@@ -1237,11 +1239,12 @@ function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors"
+      className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors @max-[420px]/chat:px-[7px]"
       aria-label={`Permission mode: ${label}`}
+      title={`Permission mode: ${label}`}
     >
       <Icon className="size-3" />
-      <span className="max-w-[100px] truncate">{label}</span>
+      <span className="max-w-[100px] truncate @max-[420px]/chat:hidden">{label}</span>
     </button>
   );
 }
@@ -1267,12 +1270,12 @@ function PriorityToggle({ value, onChange }: { value: MessagePriority; onChange:
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); cycle(); }}
-      className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors"
+      className="inline-flex shrink-0 items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors @max-[420px]/chat:px-[7px]"
       aria-label={`Message priority: ${current.label}`}
       title={`Priority: ${current.label} (click to cycle)`}
     >
       <Icon className="size-3" />
-      <span>{current.label}</span>
+      <span className="@max-[420px]/chat:hidden">{current.label}</span>
     </button>
   );
 }

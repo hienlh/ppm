@@ -55,7 +55,7 @@ export function PromptCacheChip({ promptCache }: { promptCache: PromptCacheState
         <span
           // Same shape as `ModeChip` and `PriorityToggle` beside it; only the colour carries
           // the state, and only once the cache is gone — a countdown still running is not news.
-          className={`inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] border transition-colors ${
+          className={`inline-flex shrink-0 items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] border transition-colors ${
             cold
               ? "text-error border-error/40 bg-error/10"
               : "text-text-2 bg-panel-2 border-border-soft"

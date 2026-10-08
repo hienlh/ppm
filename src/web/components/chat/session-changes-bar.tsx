@@ -130,17 +130,21 @@ export function SessionChangesBar({ files, projectName, providerId, onReview, on
           <span className={cn("truncate font-medium", allReviewed ? "text-text-secondary" : "text-text-primary")}>{label}</span>
           {!allReviewed && <ChangeCounts added={totals.added} removed={totals.removed} className="shrink-0 font-mono text-[11px]" />}
           {!allReviewed && reviewed.length > 0 && (
-            <span className="shrink-0 text-[11px] text-text-subtle">· {reviewed.length} reviewed</span>
+            <span className="shrink-0 text-[11px] text-text-subtle @max-[420px]/chat:hidden">· {reviewed.length} reviewed</span>
           )}
         </button>
         {!isMobile && !allReviewed && onSetReviewed && (
           <button
             type="button"
             onClick={markAll}
-            className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
+            // On a narrow chat (`@max-[420px]/chat`) the words go and the icon stays, so the
+            // bar's own label — what changed — is the thing that keeps its room.
+            aria-label="Mark all reviewed"
+            title="Mark all reviewed"
+            className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs text-text-secondary transition-colors hover:bg-surface hover:text-text-primary @max-[420px]/chat:px-1.5"
           >
             <ListChecks className="size-3.5" />
-            Mark all reviewed
+            <span className="@max-[420px]/chat:hidden">Mark all reviewed</span>
           </button>
         )}
         {!allReviewed && (

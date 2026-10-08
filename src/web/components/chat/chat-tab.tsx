@@ -1265,7 +1265,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     <AgentSessionProvider value={agentSessionIdentity}>
     <div
       data-onboarding="chat"
-      className="flex flex-col h-full relative"
+      // `@container/chat`: the bars and the composer compact on the chat's own width, which a
+      // design window's chat column or a split panel decides — not on the viewport.
+      className="@container/chat flex flex-col h-full relative"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
