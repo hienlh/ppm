@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scrolling up past a compaction showed "File not found" in a chat whose session had changed folder.** Claude Code names the transcript in a compaction summary after the folder the session was working in when it compacted, so a session that had `cd`'d into a subfolder pointed at a project folder that was never created. PPM now looks for the session's own transcript in the project's folder, and only there.
+
 ## [0.23.14] - 2026-10-08
 
 ### Added
