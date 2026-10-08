@@ -24,3 +24,6 @@ spike-*
 
 # Throwaway spikes (remote-desktop-b, etc.) - not for commit
 spikes/
+
+# Design-mode canvases (designs/<slug>/) - local reference, not for commit
+designs/
