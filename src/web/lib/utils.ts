@@ -10,7 +10,10 @@ export function basename(filePath: string): string {
   return filePath.split(/[/\\]/).pop() ?? filePath;
 }
 
-/** crypto.randomUUID() fallback for non-secure contexts (HTTP) */
+/**
+ * A short random id: 8 characters, not a UUID. Works on plain HTTP, where `crypto.randomUUID`
+ * does not exist; `uuidV4()` in `device-id.ts` makes a real one.
+ */
 export function randomId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID().slice(0, 8);
