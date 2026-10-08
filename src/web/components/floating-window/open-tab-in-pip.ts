@@ -8,6 +8,7 @@
  */
 
 import { usePanelStore } from "@/stores/panel-store";
+import { NON_PIP_TAB_TYPES } from "@/stores/panel-utils";
 import { focusPipDocument } from "./pip/pip-focus-target";
 import { attachPipHost } from "./pip/pip-host";
 import { TITLEBAR_HEIGHT } from "./window-chrome-contract";
@@ -35,6 +36,8 @@ function discard(windowId: string): void {
  * before it — the one await inside is a React commit, which leaves the activation valid.
  */
 export async function openTabInPip(tabId: string, panelId: string): Promise<OpenTabInPipResult> {
+  const tab = usePanelStore.getState().panels[panelId]?.tabs.find((t) => t.id === tabId);
+  if (tab && NON_PIP_TAB_TYPES.has(tab.type)) return "cancelled";
   const windowId = usePanelStore.getState().popOutTab(tabId, panelId);
   if (!windowId) return "window-cap";
   markPipOnlyWindow(windowId);

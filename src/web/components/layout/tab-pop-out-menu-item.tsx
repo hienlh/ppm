@@ -15,7 +15,7 @@ import { isDocumentPipSupported } from "@/components/floating-window/pip/pip-sup
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { usePanelStore } from "@/stores/panel-store";
-import { NON_POPPABLE_TAB_TYPES } from "@/stores/panel-utils";
+import { NON_PIP_TAB_TYPES, NON_POPPABLE_TAB_TYPES } from "@/stores/panel-utils";
 import type { Tab } from "@/stores/tab-store";
 
 interface TabPopOutMenuItemProps {
@@ -42,7 +42,7 @@ export function TabPopOutMenuItem({ tab, panelId }: TabPopOutMenuItemProps) {
         <ExternalLink className="size-3.5 mr-2" />
         Open in window
       </ContextMenuItem>
-      {isDocumentPipSupported() && (
+      {isDocumentPipSupported() && !NON_PIP_TAB_TYPES.has(tab.type) && (
         <ContextMenuItem
           onClick={() => {
             // Nothing awaited before this call: it spends the click's activation on the PiP

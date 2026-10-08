@@ -10,7 +10,7 @@ import { installDom, uninstallDom } from "../../helpers/react-dom";
 installDom();
 afterAll(uninstallDom);
 
-const { deriveTabId, NON_POPPABLE_TAB_TYPES } = await import("../../../src/web/stores/panel-utils");
+const { deriveTabId, NON_PIP_TAB_TYPES, NON_POPPABLE_TAB_TYPES } = await import("../../../src/web/stores/panel-utils");
 const { isPoppableTabType } = await import("../../../src/web/stores/window-panel-persistence");
 const { TAB_TYPE_ICONS } = await import("../../../src/web/lib/tab-type-icons");
 const { buildUrl, parseUrlState, tabIdFromUrl, buildMetadataFromUrl } = await import("../../../src/web/hooks/use-url-sync");
@@ -23,9 +23,10 @@ describe("design tab registration", () => {
     expect(deriveTabId("design", { designSlug: "landing", sessionId: "s" })).toBe("design:landing");
   });
 
-  it("cannot be popped out: the bridge only trusts frames whose parent is the main window", () => {
-    expect(NON_POPPABLE_TAB_TYPES.has("design")).toBe(true);
-    expect(isPoppableTabType("design")).toBe(false);
+  it("floats in a window but never goes into picture-in-picture: the bridge only trusts frames whose parent is the main window", () => {
+    expect(NON_POPPABLE_TAB_TYPES.has("design")).toBe(false);
+    expect(isPoppableTabType("design")).toBe(true);
+    expect(NON_PIP_TAB_TYPES.has("design")).toBe(true);
   });
 
   it("has an icon and a lazily loaded component", () => {

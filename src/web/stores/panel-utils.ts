@@ -42,12 +42,17 @@ export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-moni
  * Single source for both enforcement points: the action that performs the detach, and the
  * context-menu item that offers it. Split across two files, adding a window kind meant
  * remembering both, and one of them was always the one that got forgotten.
- *
- * `design` is here for a different reason: its canvas accepts bridge messages only from an
- * iframe whose parent is the main window, and a pop-out would make the iframe's parent the
- * picture-in-picture window instead.
  */
-export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "design", "logs"]);
+export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "logs"]);
+
+/**
+ * Tab types that may float in a window but never move into picture-in-picture.
+ *
+ * A design canvas accepts bridge messages only from an iframe whose parent is the main
+ * window. A floating window keeps it in the main document; picture-in-picture would make the
+ * iframe's parent the PiP window instead.
+ */
+export const NON_PIP_TAB_TYPES = new Set<TabType>(["design"]);
 
 /**
  * Prefix of the reserved panel IDs that host tabs detached into a floating window.

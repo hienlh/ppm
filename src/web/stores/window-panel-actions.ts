@@ -23,7 +23,7 @@ import {
 import { persistDock } from "./dock-actions";
 import { loadWindowPanels, saveWindowPanels } from "./window-panel-persistence";
 import { useWindowStore } from "@/components/floating-window/window-store";
-import { MAX_WINDOWS } from "@/components/floating-window/window-geometry";
+import { MAX_WINDOWS, type Rect } from "@/components/floating-window/window-geometry";
 import type { PanelStore } from "./panel-store";
 
 type Set = StoreApi<PanelStore>["setState"];
@@ -89,12 +89,22 @@ export function hydrateWindowPanels(set: Set, get: Get): void {
   set({ panels: { ...loaded, ...get().panels } });
 }
 
+export interface PopOutOptions {
+  /**
+   * The window is the tab's home rather than a detour: closing it closes the tab instead of
+   * handing it back to the grid (a design opened from the sidebar; see `closeWindow`).
+   */
+  closeTabsOnClose?: boolean;
+  /** Where the window opens; a cascaded default otherwise. */
+  rect?: Rect;
+}
+
 /**
  * Detach a tab into a new floating window. Returns the window id, or null when the
  * request is rejected — in which case nothing is mutated and the caller reports it.
  */
 export function makePopOutTab(set: Set, get: Get) {
-  return function popOutTab(tabId: string, fromPanelId: string): string | null {
+  return function popOutTab(tabId: string, fromPanelId: string, options: PopOutOptions = {}): string | null {
     // The window layer is desktop-only; on mobile a detached tab would be invisible.
     if (get().isMobile()) return null;
 
@@ -107,7 +117,15 @@ export function makePopOutTab(set: Set, get: Get) {
     const windowStore = useWindowStore.getState();
     if (Object.keys(windowStore.windows).length >= MAX_WINDOWS) return null;
 
-    const windowId = windowStore.open("tab-host", { originPanelId: fromPanelId, title: tab.title });
+    const windowId = windowStore.open(
+      "tab-host",
+      {
+        originPanelId: fromPanelId,
+        title: tab.title,
+        ...(options.closeTabsOnClose ? { closeTabsOnClose: true } : {}),
+      },
+      options.rect,
+    );
     const panelId = windowPanelId(windowId);
     set((s) => ({ panels: { ...s.panels, [panelId]: createWindowPanel(windowId) } }));
 

@@ -53,3 +53,15 @@ describe("design view prefs", () => {
     expect(parseDesignViewPrefs(JSON.stringify(withChatPercent(prefs, 55)))).toEqual({ ...prefs, chatPercent: 55 });
   });
 });
+
+describe("the design window's chat column width", () => {
+  it("defaults, clamps and round-trips", async () => {
+    const m = await import("../../../src/web/lib/design/design-view-prefs");
+    expect(m.parseDesignViewPrefs(null).windowChatWidth).toBe(m.DEFAULT_WINDOW_CHAT_WIDTH);
+    expect(m.parseDesignViewPrefs(JSON.stringify({ windowChatWidth: 9999 })).windowChatWidth).toBe(m.MAX_WINDOW_CHAT_WIDTH);
+    expect(m.parseDesignViewPrefs(JSON.stringify({ windowChatWidth: 10 })).windowChatWidth).toBe(m.MIN_WINDOW_CHAT_WIDTH);
+    expect(m.parseDesignViewPrefs(JSON.stringify({ windowChatWidth: "wide" })).windowChatWidth).toBe(m.DEFAULT_WINDOW_CHAT_WIDTH);
+    const next = m.withWindowChatWidth(m.defaultDesignViewPrefs(), 333.4);
+    expect(m.parseDesignViewPrefs(JSON.stringify(next)).windowChatWidth).toBe(333);
+  });
+});

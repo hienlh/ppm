@@ -13,10 +13,11 @@
  * element that itself carries the attribute.
  */
 
-import { Minus, Plus, X } from "@/lib/icons";
+import { Minus, PanelRight, Plus, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
 import { PipCaptionButton } from "@/components/floating-window/pip/pip-caption-button";
+import { WindowTile, WindowTitleText } from "@/components/floating-window/window-title-identity";
 
 /** The traffic-light colours, plus the unfocused grey — the documented hardcoded hexes. */
 const LIGHTS = [
@@ -25,8 +26,12 @@ const LIGHTS = [
   { color: "#28C840", label: "Maximize window", Icon: Plus },
 ] as const;
 
+/** Same box as the PiP button's default, so the two right-hand buttons line up. */
+const SIDE_BUTTON =
+  "grid place-items-center size-6 rounded text-text-2 can-hover:hover:bg-surface-elevated can-hover:hover:text-text transition-colors";
+
 export function MacosWindowChrome({
-  id, title, focused, titlebarProps, onMinimize, onToggleMaximize, onClose,
+  id, kind, title, state, focused, titlebarProps, identity, onMinimize, onToggleMaximize, onToggleSnap, onClose,
 }: WindowChromeProps) {
   const { className, style, ...rest } = titlebarProps;
   const actions = [onClose, onMinimize, onToggleMaximize];
@@ -62,16 +67,17 @@ export function MacosWindowChrome({
       {/* A flex child, not an absolutely centred span: the title is boxed between the
           traffic lights and the caption button, so a long title truncates instead of
           painting over either of them. Centre is a few px off true middle — acceptable. */}
-      <span
-        className={cn(
-          "pointer-events-none flex-1 min-w-0 truncate text-center text-[13px] px-2",
-          focused ? "text-text" : "text-text-2",
-        )}
-      >
-        {title}
+      <span className="pointer-events-none flex flex-1 min-w-0 items-center justify-center gap-2 px-2">
+        {kind !== "explorer" && <WindowTile icon={identity.icon} tone={identity.tone} size="sm" />}
+        <WindowTitleText title={title} subtitle={identity.subtitle} busy={identity.busy} focused={focused} />
       </span>
-      <div className="flex items-center pr-2">
-        <PipCaptionButton id={id} />
+      <div className="flex items-center gap-0.5 pr-2">
+        {identity.allowPip && <PipCaptionButton id={id} />}
+        <button type="button" aria-label="Snap to the right"
+          title={state === "snapped" ? "Unsnap" : "Snap to the right"} aria-pressed={state === "snapped"}
+          className={cn(SIDE_BUTTON, state === "snapped" && "text-primary")} onClick={onToggleSnap}>
+          <PanelRight className="size-3.5" />
+        </button>
       </div>
     </div>
   );

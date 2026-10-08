@@ -97,3 +97,24 @@ describe("the remembered layout", () => {
     expect(parseDesignViewPrefs(JSON.stringify(next))).toEqual({ ...prefs, layout: "chat" });
   });
 });
+
+describe("a design in a floating window", () => {
+  it("puts the chat in its column beside the canvas whatever the width or the pinned layout", () => {
+    for (const override of ["auto", "split", "canvas", "chat"] as const) {
+      for (const autoSplit of [true, false]) {
+        const layout = resolve({ windowed: true, override, autoSplit, pane: "chat" });
+        expect(layout).toMatchObject({ windowed: true, windowChat: true, split: true, switcher: null });
+      }
+    }
+  });
+
+  it("shows the canvas alone when the chat column is closed or the canvas is expanded", () => {
+    expect(resolve({ windowed: true, windowChat: false })).toMatchObject({ split: false, pane: "canvas", windowChat: false });
+    expect(resolve({ windowed: true, expanded: true })).toMatchObject({ split: false, pane: "canvas", windowChat: false });
+  });
+
+  it("is never a window on a phone, and outside one keeps the ordinary rules", () => {
+    expect(resolve({ windowed: true, isPhone: true })).toMatchObject({ windowed: false, switcher: "phone" });
+    expect(resolve({})).toMatchObject({ windowed: false, windowChat: false, split: true });
+  });
+});

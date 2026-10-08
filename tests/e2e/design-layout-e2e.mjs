@@ -40,6 +40,8 @@ try {
       await projects.getState().fetchProjects();
       projects.getState().setActiveProject(projects.getState().projects.find((p) => p.name === name));
       (await import("/stores/tab-store.ts")).useTabStore.getState().switchProject(name);
+      // These checks are about the design *tab*; design windows have design-window-e2e.mjs.
+      (await import("/stores/settings-store.ts")).useSettingsStore.setState({ designWindows: false });
     }, PROJECT);
     const ctx = {
       harness, context, page, width: run.viewport.width, mobile: run.touch, projectName: PROJECT,

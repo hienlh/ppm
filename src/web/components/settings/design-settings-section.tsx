@@ -15,6 +15,7 @@ import {
 import { DesignInstructionsEditor } from "./design-instructions-editor";
 import { DesignSkillMentionStatus } from "./design-skill-mention-status";
 import { DesignAppsSettingsSection } from "./design-apps-settings-section";
+import { DesignWindowSetting } from "./design-window-setting";
 
 /** One picker list across providers; the first provider's copy of a shared name wins. */
 function mergeSkills(settings: DesignSettings): SlashItem[] {
@@ -142,6 +143,8 @@ export function DesignSettingsSection() {
 
   return (
     <div className="space-y-4">
+      <DesignWindowSetting />
+      <div className="h-px bg-border" />
       {projectName && (
         <>
           <DesignAppsSettingsSection projectName={projectName} />

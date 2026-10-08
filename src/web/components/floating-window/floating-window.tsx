@@ -16,12 +16,13 @@ import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { PortalContainerProvider } from "@/components/ui/portal-container-context";
-import { TITLEBAR_HEIGHT } from "./window-chrome-contract";
+import type { WindowChromeIdentity } from "./window-chrome-contract";
+import { closesItsTabs, closeWindow } from "./close-window";
 import { useWindowBodyElement } from "./use-window-body-element";
 import { WindowPipPlaceholder } from "./window-pip-placeholder";
 import { isPipOnlyWindow } from "./window-pip-registry";
 import { WindowSkinChrome } from "./window-skin-chrome";
-import { windowZIndex, type Bounds, type Rect } from "./window-geometry";
+import { displayedRect, windowZIndex, type Bounds, type Rect } from "./window-geometry";
 import { useWindowStore, type WindowRuntimeState } from "./window-store";
 import { useWindowDrag } from "./use-window-drag";
 import { useWindowKeyboard } from "./use-window-keyboard";
@@ -33,6 +34,8 @@ export interface FloatingWindowProps {
   /** Size of the layer container; a maximized window fills exactly this. */
   bounds: Bounds;
   title: string;
+  /** Glyph, colour, subtitle and busy state for the titlebar (see `useWindowMeta`). */
+  identity: WindowChromeIdentity;
   focused: boolean;
   /** Reads the layer's CSS scale so pointer deltas can be corrected. */
   getScale: () => number;
@@ -41,17 +44,18 @@ export interface FloatingWindowProps {
   children: ReactNode;
 }
 
-function applyRect(el: HTMLElement | null, rect: Rect, collapsed: boolean): void {
+function applyRect(el: HTMLElement | null, rect: Rect): void {
   if (!el) return;
   el.style.transform = `translate3d(${Math.round(rect.x)}px, ${Math.round(rect.y)}px, 0)`;
   el.style.width = `${Math.round(rect.w)}px`;
-  el.style.height = collapsed ? `${TITLEBAR_HEIGHT}px` : `${Math.round(rect.h)}px`;
+  el.style.height = `${Math.round(rect.h)}px`;
 }
 
 export function FloatingWindow({
   win,
   bounds,
   title,
+  identity,
   focused,
   getScale,
   onGestureActive,
@@ -61,8 +65,11 @@ export function FloatingWindow({
   const [gesturing, setGesturing] = useState(false);
 
   const maximized = win.state === "maximized";
+  const snapped = win.state === "snapped";
   const minimized = win.state === "minimized";
-  const rect: Rect = maximized ? { x: 0, y: 0, w: bounds.w, h: bounds.h } : win.rect;
+  // Only a normal window is moved and resized by hand; the others are placed by the layer.
+  const floating = win.state === "normal";
+  const rect: Rect = displayedRect(win.state, win.rect, bounds);
 
   const { body, pip } = useWindowBodyElement(win.id, rootRef, minimized);
 
@@ -74,8 +81,25 @@ export function FloatingWindow({
   boundsRef.current = bounds;
 
   useLayoutEffect(() => {
-    applyRect(rootRef.current, rectRef.current, minimized);
-  }, [rect.x, rect.y, rect.w, rect.h, minimized]);
+    applyRect(rootRef.current, rectRef.current);
+  }, [rect.x, rect.y, rect.w, rect.h]);
+
+  // Any pointer inside the window raises it, including clicks on its content. A native
+  // listener, not React's onPointerDownCapture: a tab-host window's content is rendered by the
+  // tab pool and moved in as a DOM node, so a React handler here never sees a click on it.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const raise = () => useWindowStore.getState().focus(win.id);
+    root.addEventListener("pointerdown", raise, true);
+    return () => root.removeEventListener("pointerdown", raise, true);
+  }, [win.id]);
+
+  // A window closed mid-drag never sees its gesture end, so it takes its snap preview along.
+  useLayoutEffect(() => () => {
+    const store = useWindowStore.getState();
+    if (store.snapPreviewId === win.id) store.setSnapPreview(null);
+  }, [win.id]);
 
   const setActive = useCallback(
     (active: boolean) => {
@@ -86,12 +110,12 @@ export function FloatingWindow({
   );
 
   const commitMove = useCallback((next: Rect, committed: boolean) => {
-    applyRect(rootRef.current, next, useWindowStore.getState().windows[win.id]?.state === "minimized");
+    applyRect(rootRef.current, next);
     if (committed) useWindowStore.getState().move(win.id, { x: next.x, y: next.y });
   }, [win.id]);
 
   const commitResize = useCallback((next: Rect, committed: boolean) => {
-    applyRect(rootRef.current, next, false);
+    applyRect(rootRef.current, next);
     if (committed) useWindowStore.getState().resize(win.id, next);
   }, [win.id]);
 
@@ -101,24 +125,34 @@ export function FloatingWindow({
     getScale,
     onGestureActive: setActive,
   };
-  const bindDrag = useWindowDrag({ ...shared, onChange: commitMove, disabled: maximized });
-  const bindResize = useWindowResize({ ...shared, onChange: commitResize, disabled: maximized || minimized });
+  const bindDrag = useWindowDrag({
+    ...shared,
+    onChange: commitMove,
+    disabled: !floating,
+    onSnapPreview: (armed) => useWindowStore.getState().setSnapPreview(armed ? win.id : null),
+    onSnap: () => useWindowStore.getState().setState(win.id, "snapped"),
+  });
+  const bindResize = useWindowResize({ ...shared, onChange: commitResize, disabled: !floating });
 
-  const close = useCallback(() => useWindowStore.getState().close(win.id), [win.id]);
+  const close = useCallback(() => closeWindow(win.id), [win.id]);
   const toggleMaximize = useCallback(() => {
     useWindowStore.getState().setState(win.id, maximized ? "normal" : "maximized");
   }, [win.id, maximized]);
-  const minimize = useCallback(() => {
-    useWindowStore.getState().setState(win.id, minimized ? "normal" : "minimized");
-  }, [win.id, minimized]);
+  const toggleSnap = useCallback(() => {
+    useWindowStore.getState().setState(win.id, snapped ? "normal" : "snapped");
+  }, [win.id, snapped]);
+  // Minimized windows live in the status bar's dock; the dock is what brings them back.
+  const minimize = useCallback(() => useWindowStore.getState().setState(win.id, "minimized"), [win.id]);
 
   const onKeyDown = useWindowKeyboard({
     getRect: () => rectRef.current,
     getBounds: () => boundsRef.current,
     onMove: (next) => useWindowStore.getState().move(win.id, { x: next.x, y: next.y }),
     onToggleMaximize: toggleMaximize,
-    onClose: close,
-    movable: !maximized,
+    // Escape is a canvas's "deselect" and the titlebar keeps focus after every drag, so it
+    // must not throw away a window whose closing closes the content itself (a design).
+    onClose: () => { if (!closesItsTabs(win)) close(); },
+    movable: floating,
   });
 
   const hiddenHost = Boolean(pip) && isPipOnlyWindow(win.id);
@@ -129,19 +163,20 @@ export function FloatingWindow({
       role="group"
       aria-roledescription="window"
       aria-label={title}
-      // Any pointer inside the window raises it, including clicks on its content.
-      onPointerDownCapture={() => useWindowStore.getState().focus(win.id)}
       style={{ zIndex: windowZIndex(win.rank) }}
       className={cn(
-        "absolute left-0 top-0 flex flex-col pointer-events-auto",
+        "@container/window absolute left-0 top-0 flex flex-col pointer-events-auto",
         "rounded-[8px] border border-border bg-panel overflow-visible",
+        // Placed by the layer against its edges: square corners, like a tiled window.
+        (maximized || snapped) && "rounded-none",
         focused ? "shadow-2xl shadow-black/40" : "shadow-lg shadow-black/20",
         // Transitions are for maximize/restore only; during a gesture they would lag the pointer.
         gesturing ? "transition-none" : "transition-[transform,width,height] duration-150 motion-reduce:transition-none",
         // A window opened only to carry a tab into PiP is never shown: the user asked for a
-        // PiP, not a window. `hidden` and not an unmount — the body must stay connected, or
-        // the PiP host has nowhere to put the tab back.
-        hiddenHost && "hidden",
+        // PiP, not a window. A minimized one waits in the status bar's dock. `hidden` and not
+        // an unmount either way: the body must stay connected (the PiP host puts the tab back
+        // into it) and the content keeps its state (a canvas, a terminal's scrollback).
+        (hiddenHost || minimized) && "hidden",
       )}
     >
       <WindowSkinChrome
@@ -150,9 +185,14 @@ export function FloatingWindow({
         title={title}
         state={win.state}
         focused={focused}
+        identity={identity}
         titlebarProps={{
           ...(bindDrag() as Record<string, unknown>),
           onKeyDown,
+          // Double-clicking the bar itself, not one of its buttons, maximizes or restores.
+          onDoubleClick: (e) => {
+            if (!(e.target as Element).closest("button")) toggleMaximize();
+          },
           tabIndex: 0,
           role: "toolbar",
           "aria-label": `${title} title bar`,
@@ -162,12 +202,13 @@ export function FloatingWindow({
         }}
         onMinimize={minimize}
         onToggleMaximize={toggleMaximize}
+        onToggleSnap={toggleSnap}
         onClose={close}
       />
 
       {pip && !hiddenHost && <WindowPipPlaceholder pip={pip} minimized={minimized} />}
 
-      {!maximized && !minimized && (
+      {floating && (
         <WindowResizeHandles bind={(handle) => bindResize(handle) as Record<string, unknown>} />
       )}
 

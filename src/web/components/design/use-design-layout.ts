@@ -12,12 +12,14 @@ import type { DesignLayoutControls } from "./design-tab-context";
  * `rootRef` goes on the tab's layout root. It is measured in a layout effect, so a tab that
  * opens narrow paints single-pane on its first frame instead of flashing a split.
  */
-export function useDesignLayout({ isPhone, isActive }: { isPhone: boolean; isActive: boolean }) {
+export function useDesignLayout({ isPhone, isActive, windowed = false }: { isPhone: boolean; isActive: boolean; windowed?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [override, setOverrideState] = useState<DesignLayoutOverride>(() => loadDesignViewPrefs().layout);
   const [pane, setPane] = useState<DesignPane>(() => initialDesignPane(override));
   const [autoSplit, setAutoSplit] = useState(true);
   const [expanded, setExpanded] = useState(false);
+  // A window opens with its chat column showing; closing it is a choice for this window only.
+  const [windowChat, setWindowChat] = useState(true);
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -44,12 +46,13 @@ export function useDesignLayout({ isPhone, isActive }: { isPhone: boolean; isAct
   const showChat = useCallback(() => {
     setExpanded(false);
     setPane("chat");
+    setWindowChat(true);
   }, []);
 
   const layout = useMemo<DesignLayoutControls>(() => ({
-    ...resolveDesignLayout({ override, isPhone, autoSplit, pane, expanded }),
-    setOverride, setPane, setExpanded,
-  }), [override, isPhone, autoSplit, pane, expanded, setOverride]);
+    ...resolveDesignLayout({ override, isPhone, autoSplit, pane, expanded, windowed, windowChat }),
+    setOverride, setPane, setExpanded, setWindowChat,
+  }), [override, isPhone, autoSplit, pane, expanded, windowed, windowChat, setOverride]);
 
   return { rootRef, layout, showChat };
 }

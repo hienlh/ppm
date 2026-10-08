@@ -1,6 +1,6 @@
 import type { ElementType, ReactNode } from "react";
 import {
-  Columns2, Download, History, Maximize2, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
+  Columns2, Download, History, Maximize2, MessageSquare, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
   Presentation, RefreshCw, Send, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
 import { toast } from "sonner";
@@ -133,9 +133,20 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     // Desktop only, as a menu of its own: a phone always shows one pane. Hidden while the
     // canvas is expanded, where hiding the canvas pane would take the expanded view with it.
     id: "layout", label: "Layout", icon: Columns2, placement: "bar",
-    isHidden: (ctx) => ctx.isMobile || ctx.layout.expanded,
+    isHidden: (ctx) => ctx.isMobile || ctx.layout.expanded || ctx.layout.windowed,
     renderBar: (ctx, className) => <DesignLayoutMenu key="layout" layout={ctx.layout} className={className} />,
     run: (ctx) => ctx.layout.setOverride("auto"),
+  },
+  {
+    // In a floating window the chat is a column on the right; this shows or hides it. Last in
+    // the bar so it sits next to the column it controls.
+    id: "chat", label: "Chat", icon: MessageSquare, placement: "bar",
+    isHidden: (ctx) => !ctx.layout.windowed,
+    isActive: (ctx) => ctx.layout.windowChat,
+    run: (ctx) => {
+      if (ctx.layout.expanded) ctx.layout.setExpanded(false);
+      ctx.layout.setWindowChat(!ctx.layout.windowChat);
+    },
   },
 ];
 

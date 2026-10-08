@@ -54,7 +54,6 @@ export function openLogs(nav?: LogsNavigation): void {
     const existing = Object.values(store.windows).find((w) => w.kind === "logs");
     if (existing) {
       if (nav?.view) store.setPayload(existing.id, { view: nav.view });
-      if (existing.state === "minimized") store.setState(existing.id, "normal");
       store.focus(existing.id);
     } else {
       const rect = cascadeSpawnRect(Object.values(store.windows).map((w) => w.rect), store.bounds, LOGS_WINDOW_SIZE);

@@ -15,10 +15,11 @@
  * `--x-radius`, `--x-font`) only resolve on an element that itself carries the attribute.
  */
 
-import { Minus, Square, Copy, X } from "@/lib/icons";
+import { Minus, Square, Copy, X, PanelRight } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
 import { PipCaptionButton } from "@/components/floating-window/pip/pip-caption-button";
+import { WindowTile, WindowTitleText } from "@/components/floating-window/window-title-identity";
 import { WindowsFolderIcon } from "./folder-icon-windows";
 
 /** Windows metric: 46px wide caption buttons, full titlebar height. */
@@ -28,7 +29,7 @@ const CAPTION_BUTTON =
 const CLOSE_BUTTON = cn(CAPTION_BUTTON, "can-hover:hover:!bg-[#c42b1c] can-hover:hover:!text-white");
 
 export function WindowsWindowChrome({
-  id, kind, title, state, focused, titlebarProps, onMinimize, onToggleMaximize, onClose,
+  id, kind, title, state, focused, titlebarProps, identity, onMinimize, onToggleMaximize, onToggleSnap, onClose,
 }: WindowChromeProps) {
   const { className, style, ...rest } = titlebarProps;
   return (
@@ -44,10 +45,18 @@ export function WindowsWindowChrome({
       )}
     >
       <div className="flex flex-1 min-w-0 items-center gap-2 px-2.5 cursor-default">
-        {kind === "explorer" && <WindowsFolderIcon className="size-4 shrink-0" />}
-        <span className={cn("truncate text-[12px]", focused ? "text-text" : "text-text-2")}>{title}</span>
+        {kind === "explorer"
+          ? <WindowsFolderIcon className="size-4 shrink-0" />
+          : <WindowTile icon={identity.icon} tone={identity.tone} />}
+        <WindowTitleText title={title} subtitle={identity.subtitle} busy={identity.busy} focused={focused} />
       </div>
-      <PipCaptionButton id={id} className={CAPTION_BUTTON} />
+      {identity.allowPip && <PipCaptionButton id={id} className={CAPTION_BUTTON} />}
+      <button type="button" aria-label="Snap to the right"
+        title={state === "snapped" ? "Unsnap" : "Snap to the right"}
+        aria-pressed={state === "snapped"}
+        className={cn(CAPTION_BUTTON, state === "snapped" && "text-primary")} onClick={onToggleSnap}>
+        <PanelRight className="size-3.5" />
+      </button>
       <button type="button" aria-label="Minimize window" className={CAPTION_BUTTON} onClick={onMinimize}>
         <Minus className="size-3.5" />
       </button>

@@ -49,7 +49,8 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   "ai-resource": true,
   group: true,
   problems: false,
-  design: false,
+  // A design opens in a window on a desktop, and comes back in one after a reload.
+  design: true,
   // A viewer in a floating window is an ordinary tab move: `ReparentingTab` keeps one mount,
   // so it is still one WS session and one controller lease.
   android: true,

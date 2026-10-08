@@ -8,7 +8,7 @@
 
 import { clampRect, type Bounds, type Rect } from "./window-geometry";
 import { WINDOW_KINDS } from "./window-store-types";
-import type { WindowKind, WindowRuntimeState, WindowVisualState } from "./window-store-types";
+import type { WindowKind, WindowRuntimeState, WindowShownState, WindowVisualState } from "./window-store-types";
 
 const STORAGE_KEY = "ppm-windows";
 
@@ -17,7 +17,10 @@ export interface PersistedWindow {
   id: string;
   kind: WindowKind;
   rect: Rect;
+  /** Open order; absent in a blob written before the dock existed. */
+  opened?: number;
   state: WindowVisualState;
+  restoreTo?: WindowShownState;
   payload?: Record<string, unknown>;
 }
 
@@ -29,7 +32,8 @@ export interface PersistedWindow {
  * renamed (`team-member`) simply matches nothing here and is dropped the same way.
  */
 const RESTORABLE_KINDS: readonly WindowKind[] = WINDOW_KINDS.filter((k) => k !== "agent-session");
-const STATES: WindowVisualState[] = ["normal", "maximized", "minimized"];
+const STATES: WindowVisualState[] = ["normal", "maximized", "snapped", "minimized"];
+const SHOWN_STATES: WindowShownState[] = ["normal", "maximized", "snapped"];
 
 function isRect(v: unknown): v is Rect {
   if (!v || typeof v !== "object") return false;
@@ -50,7 +54,11 @@ function isSerialisable(payload: unknown): payload is Record<string, unknown> | 
 
 function toPersisted(win: WindowRuntimeState): PersistedWindow | null {
   if (!isSerialisable(win.payload)) return null;
-  return { id: win.id, kind: win.kind, rect: win.rect, state: win.state, payload: win.payload };
+  return {
+    id: win.id, kind: win.kind, rect: win.rect, opened: win.opened, state: win.state,
+    ...(win.restoreTo ? { restoreTo: win.restoreTo } : {}),
+    payload: win.payload,
+  };
 }
 
 export function saveWindowRects(windows: WindowRuntimeState[]): void {
@@ -92,11 +100,16 @@ export function loadWindowRects(bounds: Bounds): PersistedWindow[] {
     const state = STATES.includes(w.state as WindowVisualState)
       ? (w.state as WindowVisualState)
       : "normal";
+    const restoreTo = SHOWN_STATES.includes(w.restoreTo as WindowShownState)
+      ? (w.restoreTo as WindowShownState)
+      : undefined;
     out.push({
       id: w.id,
       kind: w.kind as WindowKind,
       rect: clampRect(w.rect, bounds),
+      ...(typeof w.opened === "number" && Number.isFinite(w.opened) ? { opened: w.opened } : {}),
       state,
+      ...(state === "minimized" && restoreTo ? { restoreTo } : {}),
       payload: w.payload as Record<string, unknown> | undefined,
     });
   }

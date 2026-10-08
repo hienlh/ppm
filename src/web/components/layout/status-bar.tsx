@@ -13,6 +13,7 @@ import { WakeLockStatusBarItem } from "@/components/layout/wake-lock-indicator";
 import { countDockTabs } from "@/components/layout/dock-tabs";
 import { BranchPicker } from "@/components/git/branch-picker";
 import { DbRowsStatus } from "@/components/database/db-rows-status";
+import { WindowDock } from "@/components/floating-window/window-dock";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +46,8 @@ export const StatusBar = memo(function StatusBar() {
         {/* Native panel toggle — the sole dock toggle (sidebar/tab-bar toggles removed). */}
         <DockToggle />
       </div>
+      {/* The floating windows' taskbar; takes the free middle, renders nothing with no windows. */}
+      <WindowDock />
       {/* Never shrinks: squeezed, CPU/MEM was its only shrinkable item and wrapped onto two lines. */}
       <div className="flex items-center gap-3 shrink-0">
         {/* Screen-awake marker — only while a wake lock is actually held. */}

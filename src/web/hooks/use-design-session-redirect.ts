@@ -11,7 +11,8 @@ import { openDesignTab } from "@/lib/design/open-design-tab";
  * not know the session is a design one — would otherwise take it out of design mode: no
  * canvas, and a history the design tab no longer owns. Asking once per session here covers
  * all of them, including ones added later, instead of trusting each caller to route itself.
- * The design tab is opened first (in the same panel) so the panel is never left empty.
+ * The design tab is opened first, in the same panel and kept there even where designs open in
+ * windows (`inPlace`), so the panel is never left empty.
  */
 export function useDesignSessionRedirect(input: {
   tabId?: string;
@@ -30,7 +31,7 @@ export function useDesignSessionRedirect(input: {
       .then(({ designSlug: slug }) => {
         if (cancelled || !slug) return;
         const panelId = usePanelStore.getState().getPanelForTab(tabId)?.id;
-        openDesignTab({ projectName, slug, sessionId, providerId, panelId });
+        openDesignTab({ projectName, slug, sessionId, providerId, panelId, inPlace: true });
         usePanelStore.getState().closeTab(tabId, panelId);
       })
       .catch(() => { /* an unknown session stays a plain chat */ });

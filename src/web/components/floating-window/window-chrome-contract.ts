@@ -6,8 +6,22 @@
  * `titlebarProps` — a chrome that spreads it gets drag, focus and keyboard for free.
  */
 
-import type { ComponentType, HTMLAttributes } from "react";
+import type { ComponentType, ElementType, HTMLAttributes } from "react";
 import type { WindowKind, WindowVisualState } from "./window-store-types";
+
+/** What a titlebar says about its window beyond the title; see `useWindowMeta`. */
+export interface WindowChromeIdentity {
+  /** The window's own glyph, drawn on a tile tinted with `tone`. */
+  icon: ElementType;
+  /** A CSS colour (a theme token); designs get one of their own. */
+  tone: string;
+  /** Second, dimmer label after the title, e.g. "Design · ppm". */
+  subtitle?: string;
+  /** Something is running in the window (an AI turn); the titlebar says so. */
+  busy: boolean;
+  /** False for content that must not move into picture-in-picture (a design canvas). */
+  allowPip: boolean;
+}
 
 export interface WindowChromeProps {
   id: string;
@@ -22,8 +36,11 @@ export interface WindowChromeProps {
    * A chrome may append its own className/style; it must not drop these.
    */
   titlebarProps: HTMLAttributes<HTMLElement> & { tabIndex: number };
+  identity: WindowChromeIdentity;
   onMinimize: () => void;
   onToggleMaximize: () => void;
+  /** Snap to the right part of the layer, or back from it. */
+  onToggleSnap: () => void;
   onClose: () => void;
 }
 
@@ -34,5 +51,5 @@ export interface WindowChromeProps {
  */
 export type WindowChrome = ComponentType<WindowChromeProps>;
 
-/** Titlebar height the frame reserves when a window is collapsed (minimised). */
+/** Titlebar height; a picture-in-picture window takes it off the requested height. */
 export const TITLEBAR_HEIGHT = 36;

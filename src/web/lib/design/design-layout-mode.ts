@@ -51,6 +51,13 @@ export interface DesignLayoutInput {
   pane: DesignPane;
   /** The canvas covers the whole window. */
   expanded: boolean;
+  /**
+   * The design is in a floating window. The window has its own fixed arrangement — canvas
+   * left, chat in a column on the right — so neither the width nor the pinned layout apply.
+   */
+  windowed?: boolean;
+  /** In a window: the chat column is open. */
+  windowChat?: boolean;
 }
 
 export interface DesignLayout {
@@ -62,10 +69,18 @@ export interface DesignLayout {
   /** The layout menu's checked item, which follows what is on screen. */
   menuValue: DesignLayoutOverride;
   expanded: boolean;
+  /** Laid out as a window: canvas first, chat a fixed column after it, toggled from the toolbar. */
+  windowed: boolean;
+  /** In a window, whether the chat column is open (false outside a window). */
+  windowChat: boolean;
 }
 
 export function resolveDesignLayout(input: DesignLayoutInput): DesignLayout {
   const { override, isPhone, autoSplit, expanded } = input;
+  if (input.windowed && !isPhone) {
+    const chat = input.windowChat !== false && !expanded;
+    return { split: chat, pane: "canvas", switcher: null, menuValue: override, expanded, windowed: true, windowChat: chat };
+  }
   // An expanded canvas lives inside the canvas pane, so that pane has to be the visible one.
   const pane: DesignPane = expanded ? "canvas" : input.pane;
   // A phone ignores a pinned split: two panes do not fit, and the pin belongs to this device's
@@ -75,5 +90,5 @@ export function resolveDesignLayout(input: DesignLayoutInput): DesignLayout {
   // A pinned single pane still lets the user peek at the other pane; the menu then names the
   // pane actually shown, so it never claims "Canvas only" over a visible chat.
   const menuValue = override === "canvas" || override === "chat" ? pane : override;
-  return { split, pane, switcher, menuValue, expanded };
+  return { split, pane, switcher, menuValue, expanded, windowed: false, windowChat: false };
 }

@@ -263,7 +263,7 @@ A link may name one place in the file — `app.ts:120`, `app.ts:120-140`, `app.t
 
 ## Design mode
 
-A **Design tab** puts a design chat beside a live, sandboxed canvas of what the agent builds: a page or a slide deck (`kind` `page` or `slides`), made of plain HTML/CSS files the user can export or build in real code from a new chat. It opens from the sidebar's Designs section, the palette's "New Design…" (the dialog is hosted by `command-palette-design-commands.tsx`, since the palette is mounted on every layout) or the deep link `/project/<p>/design/<slug>`. The layout follows the tab's own width, not the viewport (`lib/design/design-layout-mode.ts`): a draggable chat/canvas split at 940px and up, one pane below 860px (the previous layout holds in between, so dragging a panel divider does not flicker), switched by a Canvas | Chat toggle in the toolbar. The toolbar's Layout menu pins Auto / Split / Canvas only / Chat only per device (`design-view-prefs.ts`), and Expand canvas lifts the canvas over the whole window (Esc or Exit full view to leave). Below `md` it is always one pane with a Canvas / Chat / More bar in the thumb zone. Every one of these is the same tree (`design-split-layout.tsx`) restyled by CSS, because moving the iframe reloads the design and unmounting the chat drops its socket; the one reload left is PPM's shell moving the whole tab into its mobile slot when the viewport crosses `md`. UI in `src/web/components/design/`, one tab per design, never popped out (`NON_POPPABLE_TAB_TYPES`: the bridge accepts messages only from an iframe whose parent is the main window).
+A **Design tab** puts a design chat beside a live, sandboxed canvas of what the agent builds: a page or a slide deck (`kind` `page` or `slides`), made of plain HTML/CSS files the user can export or build in real code from a new chat. It opens from the sidebar's Designs section, the palette's "New Design…" (the dialog is hosted by `command-palette-design-commands.tsx`, since the palette is mounted on every layout) or the deep link `/project/<p>/design/<slug>`. The layout follows the tab's own width, not the viewport (`lib/design/design-layout-mode.ts`): a draggable chat/canvas split at 940px and up, one pane below 860px (the previous layout holds in between, so dragging a panel divider does not flicker), switched by a Canvas | Chat toggle in the toolbar. The toolbar's Layout menu pins Auto / Split / Canvas only / Chat only per device (`design-view-prefs.ts`), and Expand canvas lifts the canvas over the whole window (Esc or Exit full view to leave). Below `md` it is always one pane with a Canvas / Chat / More bar in the thumb zone. Every one of these is the same tree (`design-split-layout.tsx`) restyled by CSS, because moving the iframe reloads the design and unmounting the chat drops its socket; the one reload left is PPM's shell moving the whole tab into its mobile slot when the viewport crosses `md`. UI in `src/web/components/design/`, one tab per design. On a desktop a design opens in a floating window of its own (Settings → Design → *Open designs in a window*, on by default; `openDesignTab` pops the new tab out with `closeTabsOnClose`, so closing the window closes the design instead of docking it back). Inside a window the layout is fixed rather than width-driven: canvas first and the chat a column on the right, shown or hidden by the toolbar's Chat button (`windowed` in `resolveDesignLayout`). The column's left edge drags (or takes the arrow keys) between 280 and 440px, 380 by default and never more than half the window, remembered per device as `windowChatWidth` in `design-view-prefs.ts`. A chat that narrow compacts by its own width rather than the viewport: `chat-tab.tsx` is `@container/chat`, and below 420px the changes bar, the history bar and the composer chips drop their words to icons (tooltips keep the names) and the chip row stays on one line, the model chip giving way first. A model id the provider's list has not labelled is shown by `modelDisplayName` (`claude-opus-5-5` → `Opus 5.5`). It never goes into picture-in-picture (`NON_PIP_TAB_TYPES`: the bridge accepts messages only from an iframe whose parent is the main window, and PiP would make the PiP window its parent). A design already in the grid stays there; a phone always opens it as a tab.
 
 **Storage** (`src/services/design/`, REST under `/api/project/:name/designs`, `src/server/routes/designs.ts` plus one sub-router per feature):
 - `designs/<slug>/` is the design: `index.html` (the entry), `design.json` (`title`, `kind`, `entry`, timestamps and the agent's `tweaks[]`; unknown fields are carried through) and whatever else the agent writes.
@@ -585,6 +585,24 @@ titlebar. The macOS skin boxes the title between the traffic lights and the PiP 
 child (so a long title truncates instead of overlapping either), and puts the PiP button at the
 titlebar's right end; the Windows skin puts it left of minimize.
 
+**States and the status-bar dock.** A window is `normal`, `maximized`, `snapped` (full height,
+the right 55% of the layer: the titlebar's snap button, or dragging the window's right edge 40px past
+the layer's, which shows a dashed preview first) or `minimized`. Only a `normal` window is dragged
+or resized by hand; double-clicking the titlebar toggles maximize. Minimizing takes the window off
+screen entirely (`hidden`, never unmounted, so a canvas or terminal keeps its state) and remembers
+what to come back as (`restoreTo`); `focus()` brings a minimized window back, so every opener that
+"focuses the existing window" also restores it. The layer stops above the 26px status bar, which
+holds the window dock (`window-dock.tsx`): one chip per window in open order (`opened`), tinted with
+a long accent bar in front, a short bar behind, dimmed when minimized, with a pulsing dot while an AI
+turn runs in it (`use-window-meta.ts`, which also feeds the titlebar's tile, subtitle and "Working"
+marker). Clicking the chip in front minimizes it, any other comes forward. Squeezed, chips drop
+their titles (the front one last), then fold into `+N` (`planDock`, `window-dock-layout.ts`); `+N`
+or a right-click on the dock opens the list of every window (`window-dock-list.tsx`: search, close,
+Minimize all). Closing goes through `closeWindow` (`close-window.ts`) everywhere; Escape on the
+titlebar skips a window whose closing would close its content (a design), since Escape is also a
+canvas's "deselect". A press anywhere in a window raises it through a native capture listener,
+because a tab-host window's content is the tab pool's React tree, not the frame's.
+
 **PiP is a capability of the frame, not of one kind.** `useWindowBodyElement`
 (`use-window-body-element.ts`) creates the single DOM element `FloatingWindow` portals a window's
 content into and publishes it as that window's PiP slot (`window-pip-registry.ts`, keyed by window
@@ -617,8 +635,11 @@ restored on reload (see Persistence below).
   send the next `openTab()` with no explicit panel into a window). `popOutTab`/`redockFromWindow`
   create and destroy the panel and its window together; every close path (titlebar ×, keyboard,
   reconcile) routes through `redockFromWindow`, which re-docks to the origin panel if it is still in
-  the grid, else the focused grid panel, else the first grid panel. All tab types pop out except
-  `system-monitor`, which already has its own window kind.
+  the grid, else the focused grid panel, else the first grid panel. The exception is a window
+  opened with `closeTabsOnClose` (a design opened from the sidebar): there `closeWindow` closes its
+  tabs, and the last one closing takes the window with it (`syncWindowPanel`). Every tab type pops
+  out except those that own a window kind of their own (`NON_POPPABLE_TAB_TYPES`), and a design
+  never goes into PiP (`NON_PIP_TAB_TYPES`).
 - **Straight to PiP.** The tab context menu offers a second route (`open-tab-in-pip.ts`): pop out,
   then adopt the new window's body into a PiP window in the same gesture. The window is real — PiP
   can only adopt an element already in the page, and it needs a home to restore into — but it is

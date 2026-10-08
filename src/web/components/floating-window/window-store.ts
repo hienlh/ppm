@@ -15,9 +15,10 @@ import {
   type Rect,
 } from "./window-geometry";
 import { loadWindowRects, saveWindowRects } from "./window-persistence";
-import type { WindowKind, WindowRuntimeState, WindowVisualState } from "./window-store-types";
+import { isPipOnlyWindow } from "./window-pip-registry";
+import type { WindowKind, WindowRuntimeState, WindowShownState, WindowVisualState } from "./window-store-types";
 
-export type { WindowKind, WindowRuntimeState, WindowVisualState };
+export type { WindowKind, WindowRuntimeState, WindowShownState, WindowVisualState };
 
 /** Fallback layer size used before the container has been measured. */
 const DEFAULT_BOUNDS: Bounds = { w: 1280, h: 800 };
@@ -31,10 +32,20 @@ interface WindowStore {
 
   open(kind: WindowKind, payload?: Record<string, unknown>, rect?: Rect): string;
   close(id: string): void;
+  /** Raise a window to the front, bringing it back from the dock if it was minimized. */
   focus(id: string): void;
   move(id: string, position: { x: number; y: number }): void;
   resize(id: string, rect: Rect): void;
+  /** Change how a window is shown. Minimizing remembers the state to come back to. */
   setState(id: string, state: WindowVisualState): void;
+  /** Bring a window back from the dock in the state it was minimized from, and raise it. */
+  restore(id: string): void;
+  /** A dock chip's click: the window in front minimizes, any other comes forward. */
+  activateFromDock(id: string): void;
+  minimizeAll(): void;
+  /** The window being dragged towards a snap, or null; drives the layer's snap preview. */
+  snapPreviewId: string | null;
+  setSnapPreview(id: string | null): void;
   /** Merge into a window's payload; persisted so a reload restores the latest state. */
   setPayload(id: string, payload: Record<string, unknown>): void;
   setBounds(bounds: Bounds): void;
@@ -58,6 +69,19 @@ function persist(windows: Record<string, WindowRuntimeState>): void {
   saveWindowRects(Object.values(windows));
 }
 
+/** The next open-order number: one past the newest window, so the dock appends it. */
+function nextOpened(windows: WindowRuntimeState[]): number {
+  return windows.reduce((max, w) => Math.max(max, w.opened + 1), 0);
+}
+
+/** `win` in `state`, remembering what a minimized window was showing as. */
+function withState(win: WindowRuntimeState, state: WindowVisualState): WindowRuntimeState {
+  if (win.state === state) return win;
+  if (state === "minimized") return { ...win, state, restoreTo: win.state as WindowShownState };
+  const { restoreTo: _dropped, ...rest } = win;
+  return { ...rest, state };
+}
+
 function newId(): string {
   return `win-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -66,6 +90,7 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
   windows: {},
   bounds: DEFAULT_BOUNDS,
   restored: false,
+  snapPreviewId: null,
 
   open: (kind, payload, rect) => {
     const { windows, bounds } = get();
@@ -75,7 +100,7 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
     // of silently dropping the request.
     if (ordered.length >= MAX_WINDOWS) {
       const oldest = ordered[0]!;
-      get().focus(oldest.id);
+      get().restore(oldest.id);
       return oldest.id;
     }
 
@@ -83,7 +108,7 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
     const spawn = rect ? clampRect(rect, bounds) : cascadeSpawnRect(ordered.map((w) => w.rect), bounds);
     const next = densify([
       ...ordered,
-      { id, kind, rect: spawn, rank: ordered.length, state: "normal" as const, payload },
+      { id, kind, rect: spawn, rank: ordered.length, opened: nextOpened(ordered), state: "normal" as const, payload },
     ]);
     set({ windows: next });
     persist(next);
@@ -100,10 +125,13 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
 
   focus: (id) => {
     const { windows } = get();
-    const target = windows[id];
-    if (!target) return;
+    const found = windows[id];
+    if (!found) return;
+    // Every opener that finds its window already open focuses it; one waiting in the dock
+    // has to come back on screen for that to mean anything.
+    const target = found.state === "minimized" ? withState(found, found.restoreTo ?? "normal") : found;
     const ordered = sortedByRank(windows);
-    if (ordered[ordered.length - 1]?.id === id) return; // already frontmost
+    if (target === found && ordered[ordered.length - 1]?.id === id) return; // already frontmost
     const next = densify([...ordered.filter((w) => w.id !== id), target]);
     set({ windows: next });
     persist(next); // stacking order is part of the restored layout
@@ -132,9 +160,30 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
     const { windows } = get();
     const win = windows[id];
     if (!win || win.state === state) return;
-    const next = { ...windows, [id]: { ...win, state } };
+    const next = { ...windows, [id]: withState(win, state) };
     set({ windows: next });
     persist(next);
+  },
+
+  restore: (id) => get().focus(id),
+
+  activateFromDock: (id) => {
+    const { windows } = get();
+    if (!windows[id]) return;
+    if (frontWindowId(windows) === id) get().setState(id, "minimized");
+    else get().restore(id);
+  },
+
+  minimizeAll: () => {
+    const { windows } = get();
+    const next: Record<string, WindowRuntimeState> = {};
+    for (const win of Object.values(windows)) next[win.id] = withState(win, "minimized");
+    set({ windows: next });
+    persist(next);
+  },
+
+  setSnapPreview: (id) => {
+    if (get().snapPreviewId !== id) set({ snapPreviewId: id });
   },
 
   setPayload: (id, payload) => {
@@ -178,7 +227,10 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
         kind: w.kind,
         rect: w.rect,
         rank,
+        // A blob from before open order was kept has none; stacking order stands in for it.
+        opened: w.opened ?? rank,
         state: w.state,
+        restoreTo: w.restoreTo,
         payload: w.payload,
       })),
     );
@@ -189,4 +241,19 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
 /** Windows in paint order (backmost first) — stable identity per store update. */
 export function windowsInRankOrder(windows: Record<string, WindowRuntimeState>): WindowRuntimeState[] {
   return sortedByRank(windows);
+}
+
+/**
+ * The window in front: the highest-ranked one still on screen. A minimized window keeps its
+ * rank so it comes back where it was in the stack, but it is never the one in front.
+ */
+export function frontWindowId(windows: Record<string, WindowRuntimeState>): string | null {
+  // A window that only carries a tab into picture-in-picture is never on screen either.
+  const shown = sortedByRank(windows).filter((w) => w.state !== "minimized" && !isPipOnlyWindow(w.id));
+  return shown[shown.length - 1]?.id ?? null;
+}
+
+/** Windows in the order they were opened — the order the dock lists them in. */
+export function windowsInOpenOrder(windows: Record<string, WindowRuntimeState>): WindowRuntimeState[] {
+  return Object.values(windows).sort((a, b) => a.opened - b.opened);
 }

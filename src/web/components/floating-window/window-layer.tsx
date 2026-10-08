@@ -13,9 +13,10 @@
 import { Suspense, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { FloatingWindow } from "./floating-window";
+import { useWindowMeta } from "./use-window-meta";
 import { WINDOW_CONTENT, windowTitle } from "./window-content-registry";
-import { Z_BASE, MAX_WINDOWS } from "./window-geometry";
-import { useWindowStore, windowsInRankOrder } from "./window-store";
+import { snapRect, Z_BASE, MAX_WINDOWS, type Bounds } from "./window-geometry";
+import { frontWindowId, useWindowStore, windowsInRankOrder, type WindowRuntimeState } from "./window-store";
 
 export function WindowLayer() {
   const isMobile = useIsMobile();
@@ -27,6 +28,7 @@ function DesktopWindowLayer() {
   const containerRef = useRef<HTMLDivElement>(null);
   const windows = useWindowStore((s) => s.windows);
   const bounds = useWindowStore((s) => s.bounds);
+  const snapPreview = useWindowStore((s) => s.snapPreviewId !== null);
   const [capturing, setCapturing] = useState(false);
 
   useLayoutEffect(() => {
@@ -56,29 +58,24 @@ function DesktopWindowLayer() {
   }, []);
 
   const ordered = windowsInRankOrder(windows);
-  const frontId = ordered[ordered.length - 1]?.id;
+  const frontId = frontWindowId(windows);
 
   return (
-    <div ref={containerRef} className="absolute inset-0 overflow-hidden pointer-events-none">
-      {ordered.map((win) => {
-        const Content = WINDOW_CONTENT[win.kind];
-        const title = windowTitle(win.kind, win.payload);
-        return (
-          <FloatingWindow
-            key={win.id}
-            win={win}
-            bounds={bounds}
-            title={title}
-            focused={win.id === frontId}
-            getScale={getScale}
-            onGestureActive={setCapturing}
-          >
-            <Suspense fallback={<div className="p-3 text-xs text-text-2">Loading…</div>}>
-              <Content id={win.id} payload={win.payload} />
-            </Suspense>
-          </FloatingWindow>
-        );
-      })}
+    // Stops at the status bar (26px) rather than covering it: the bar holds the window dock,
+    // and a maximized or snapped window must never hide the way back to the others.
+    <div ref={containerRef} className="absolute inset-x-0 top-0 bottom-[26px] overflow-hidden pointer-events-none">
+      {snapPreview && <SnapGhost bounds={bounds} />}
+
+      {ordered.map((win) => (
+        <LayerWindow
+          key={win.id}
+          win={win}
+          bounds={bounds}
+          focused={win.id === frontId}
+          getScale={getScale}
+          onGestureActive={setCapturing}
+        />
+      ))}
 
       {/* Transparent capture surface: iframes and editors swallow pointer events, which
           would stall a drag the moment the cursor crossed one. Stays inside the window
@@ -87,5 +84,44 @@ function DesktopWindowLayer() {
         <div className="absolute inset-0 pointer-events-auto" style={{ zIndex: Z_BASE + MAX_WINDOWS }} />
       )}
     </div>
+  );
+}
+
+/** One window with its titlebar identity resolved — a component so the meta hook has a home. */
+function LayerWindow({ win, bounds, focused, getScale, onGestureActive }: {
+  win: WindowRuntimeState;
+  bounds: Bounds;
+  focused: boolean;
+  getScale: () => number;
+  onGestureActive: (active: boolean) => void;
+}) {
+  const Content = WINDOW_CONTENT[win.kind];
+  const meta = useWindowMeta(win);
+  return (
+    <FloatingWindow
+      win={win}
+      bounds={bounds}
+      title={meta.title || windowTitle(win.kind, win.payload)}
+      identity={meta}
+      focused={focused}
+      getScale={getScale}
+      onGestureActive={onGestureActive}
+    >
+      <Suspense fallback={<div className="p-3 text-xs text-text-2">Loading…</div>}>
+        <Content id={win.id} payload={win.payload} />
+      </Suspense>
+    </FloatingWindow>
+  );
+}
+
+/** Where a window dragged off the right edge will land when it is let go. */
+function SnapGhost({ bounds }: { bounds: Bounds }) {
+  const r = snapRect(bounds);
+  return (
+    <div
+      aria-hidden="true"
+      className="absolute rounded border-2 border-dashed border-primary bg-accent-wash transition-opacity"
+      style={{ left: r.x, top: r.y, width: r.w, height: r.h, zIndex: Z_BASE }}
+    />
   );
 }

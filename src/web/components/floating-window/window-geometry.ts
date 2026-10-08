@@ -34,7 +34,10 @@ export const KEEP_VISIBLE = 48;
 /** Offset between consecutive spawns, matching desktop window managers. */
 export const CASCADE_STEP = 24;
 
-/** Hard cap on simultaneous windows so the z-band stays inside 30..38. */
+/**
+ * Hard cap on simultaneous windows so the z-band stays inside 30..38. Minimized windows
+ * count too: they come back without asking for a slot.
+ */
 export const MAX_WINDOWS = 8;
 
 /** Base z-index of the layer; strictly below the app's z-40 backdrops and z-50 popovers. */
@@ -131,6 +134,41 @@ export function portraitSpawnRect(existing: Rect[], bounds: Bounds): Rect {
     { x: bounds.w - SPAWN_MARGIN - w - step * CASCADE_STEP, y: SPAWN_MARGIN + step * CASCADE_STEP, w, h },
     bounds,
   );
+}
+
+/** Share of the layer a snapped window takes, measured from the right edge. */
+export const SNAP_FRACTION = 0.55;
+
+/**
+ * How far a window's right edge has to be dragged past the layer's right edge before
+ * releasing it snaps the window. Measured on the window, not the pointer, so grabbing the
+ * titlebar near its left end does not make the snap unreachable.
+ */
+export const SNAP_TRIGGER = 40;
+
+/** The rect of a window snapped to the right: full height, `SNAP_FRACTION` of the width. */
+export function snapRect(bounds: Bounds): Rect {
+  const w = Math.min(bounds.w, Math.max(MIN_SIZE.w, Math.round(bounds.w * SNAP_FRACTION)));
+  return { x: bounds.w - w, y: 0, w, h: bounds.h };
+}
+
+/**
+ * True when a drag that started at `start` has carried the window (`rect`, before clamping)
+ * far enough right to snap on release.
+ *
+ * Measured from wherever the right edge already was when it lies past the layer's: a window
+ * may rest hanging off the right side, and grabbing one there to pull it back in must move
+ * it, not snap it.
+ */
+export function wantsSnap(rect: Rect, start: Rect, bounds: Bounds): boolean {
+  return rect.x + rect.w > Math.max(start.x + start.w, bounds.w) + SNAP_TRIGGER;
+}
+
+/** Where a window in `state` is drawn; `rect` is the restore rect it keeps meanwhile. */
+export function displayedRect(state: string, rect: Rect, bounds: Bounds): Rect {
+  if (state === "maximized") return { x: 0, y: 0, w: bounds.w, h: bounds.h };
+  if (state === "snapped") return snapRect(bounds);
+  return rect;
 }
 
 /** Nudge step for arrow keys on a focused titlebar (Shift = fine-grained). */

@@ -26,6 +26,7 @@ import {
   hydrateWindowPanels,
   stripProjectFromWindowPanels,
   syncWindowPanel,
+  type PopOutOptions,
 } from "./window-panel-actions";
 import { saveWindowPanels } from "./window-panel-persistence";
 import { useWindowStore } from "@/components/floating-window/window-store";
@@ -188,13 +189,22 @@ export interface PanelStore {
    * request is rejected (mobile, a tab type that cannot detach, or the window cap),
    * in which case nothing changed and the caller reports it.
    */
-  popOutTab: (tabId: string, fromPanelId: string) => string | null;
+  popOutTab: (tabId: string, fromPanelId: string, options?: PopOutOptions) => string | null;
   /** Send a window's tabs back to the grid and drop its panel. Runs on window close. */
   redockFromWindow: (windowId: string, originPanelId?: string | null) => void;
 
   // Helpers
   getPanelForTab: (tabId: string) => Panel | undefined;
   isMobile: () => boolean;
+}
+
+/**
+ * A tab found already open inside a floating window is only "focused" if that window comes
+ * forward, out of the dock if need be — a minimized window is not on screen at all.
+ */
+function raiseWindowOf(panelId: string): void {
+  const windowId = windowIdFromPanelId(panelId);
+  if (windowId) useWindowStore.getState().focus(windowId);
 }
 
 function defaultLayout(): { panels: Record<string, Panel>; grid: string[][]; focusedPanelId: string } {
@@ -584,6 +594,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
                 [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
               },
             }));
+            raiseWindowOf(p.id);
             persist();
             return existing.id;
           }
@@ -607,6 +618,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
                 [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
               },
             }));
+            raiseWindowOf(p.id);
             persist();
             return existing.id;
           }

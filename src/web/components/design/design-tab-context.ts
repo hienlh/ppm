@@ -9,6 +9,8 @@ export interface DesignLayoutControls extends DesignLayout {
   /** Which pane a single-pane layout shows; not remembered. */
   setPane: (pane: DesignPane) => void;
   setExpanded: (expanded: boolean) => void;
+  /** In a floating window: open or close the chat column. */
+  setWindowChat: (open: boolean) => void;
 }
 
 /**

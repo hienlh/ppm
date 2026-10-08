@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { Loader2, Palette } from "@/lib/icons";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { usePanelStore } from "@/stores/panel-store";
+import { isWindowPanelId } from "@/stores/panel-utils";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useDesignSessionState } from "@/hooks/use-design-session-state";
@@ -49,7 +50,10 @@ function DesignTabBody({ tabId, metadata, design, refreshDesign }: {
   const isMobile = useIsMobile();
   const session = useDesignSessionState(tabId, metadata);
   const isActive = usePanelStore((s) => Object.values(s.panels).some((p) => p.activeTabId === tabId));
-  const { rootRef, layout, showChat } = useDesignLayout({ isPhone: isMobile, isActive });
+  // A design in a floating window lays itself out as one: canvas first, chat on the right.
+  const windowed = usePanelStore((s) =>
+    Object.values(s.panels).some((p) => isWindowPanelId(p.id) && p.tabs.some((t) => t.id === tabId)));
+  const { rootRef, layout, showChat } = useDesignLayout({ isPhone: isMobile, isActive, windowed });
   const isStreaming = useStreamingStore((s) => (session.sessionId ? s.sessions.has(session.sessionId) : false));
   const projectName = String(metadata.projectName);
 

@@ -31,7 +31,7 @@ const BOUNDS = { w: 1600, h: 900 };
 const RECT = { x: 10, y: 10, w: 400, h: 300 };
 
 function win(id: string, kind: WindowRuntimeState["kind"], rank = 0): WindowRuntimeState {
-  return { id, kind, rect: RECT, rank, state: "normal", payload: undefined };
+  return { id, kind, rect: RECT, rank, opened: rank, state: "normal", payload: undefined };
 }
 
 beforeEach(() => {

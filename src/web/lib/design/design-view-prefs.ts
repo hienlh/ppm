@@ -16,12 +16,21 @@ const STORAGE_KEY = "ppm-design-view-prefs";
 export const DEFAULT_CHAT_PERCENT = 38;
 export const MIN_CHAT_PERCENT = 20;
 export const MAX_CHAT_PERCENT = 70;
+/**
+ * The chat column's width in a design *window*, in px: a fixed column rather than a share,
+ * because a window is resized far more often than the column is, and the chat should not
+ * swell and shrink with it. It never takes more than half the window either (see the layout).
+ */
+export const DEFAULT_WINDOW_CHAT_WIDTH = 380;
+export const MIN_WINDOW_CHAT_WIDTH = 280;
+export const MAX_WINDOW_CHAT_WIDTH = 440;
 /** Designs whose frame is remembered; the least recently changed are forgotten first. */
 export const MAX_REMEMBERED_FRAMES = 50;
 
 export interface DesignViewPrefs {
   layout: DesignLayoutOverride;
   chatPercent: number;
+  windowChatWidth: number;
   /** `<project>/<slug>` → frame, oldest first. */
   frames: Record<string, DeviceFrameId>;
   /** `<project>/<slug>` → the variant file on screen, oldest first. Checked against the list on use. */
@@ -29,7 +38,7 @@ export interface DesignViewPrefs {
 }
 
 export function defaultDesignViewPrefs(): DesignViewPrefs {
-  return { layout: "auto", chatPercent: DEFAULT_CHAT_PERCENT, frames: {}, variants: {} };
+  return { layout: "auto", chatPercent: DEFAULT_CHAT_PERCENT, windowChatWidth: DEFAULT_WINDOW_CHAT_WIDTH, frames: {}, variants: {} };
 }
 
 /** Newest-last entries of a stored map, the ones failing `keep` dropped, at most MAX_REMEMBERED_FRAMES. */
@@ -48,6 +57,11 @@ export function clampChatPercent(value: unknown): number {
   return Math.min(MAX_CHAT_PERCENT, Math.max(MIN_CHAT_PERCENT, Math.round(value)));
 }
 
+export function clampWindowChatWidth(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_WINDOW_CHAT_WIDTH;
+  return Math.min(MAX_WINDOW_CHAT_WIDTH, Math.max(MIN_WINDOW_CHAT_WIDTH, Math.round(value)));
+}
+
 export function parseDesignViewPrefs(raw: string | null): DesignViewPrefs {
   if (!raw) return defaultDesignViewPrefs();
   let data: unknown;
@@ -61,6 +75,7 @@ export function parseDesignViewPrefs(raw: string | null): DesignViewPrefs {
   const layout = isDesignLayoutOverride(obj.layout) ? obj.layout : "auto";
   return {
     layout, chatPercent: clampChatPercent(obj.chatPercent),
+    windowChatWidth: clampWindowChatWidth(obj.windowChatWidth),
     frames: rememberedMap(obj.frames, isDeviceFrameId),
     variants: rememberedMap(obj.variants, isStoredVariant),
   };
@@ -91,6 +106,10 @@ export function withoutVariant(prefs: DesignViewPrefs, key: string): DesignViewP
 
 export function withChatPercent(prefs: DesignViewPrefs, percent: number): DesignViewPrefs {
   return { ...prefs, chatPercent: clampChatPercent(percent) };
+}
+
+export function withWindowChatWidth(prefs: DesignViewPrefs, width: number): DesignViewPrefs {
+  return { ...prefs, windowChatWidth: clampWindowChatWidth(width) };
 }
 
 export function withLayout(prefs: DesignViewPrefs, layout: DesignLayoutOverride): DesignViewPrefs {

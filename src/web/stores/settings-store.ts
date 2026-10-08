@@ -45,6 +45,11 @@ interface SettingsState {
   gitStatusViewMode: GitStatusViewMode;
   /** GitLens-style annotation after the cursor's line in the code editor. */
   inlineBlame: boolean;
+  /**
+   * Open a design in a floating window rather than a tab (desktop only; a phone always shows
+   * it full screen). On by default.
+   */
+  designWindows: boolean;
   wordWrap: boolean;
   /** Word wrap on a phone-sized viewport. Device-local — see `persistDevicePref`. */
   mobileWordWrap: boolean;
@@ -175,6 +180,7 @@ interface SettingsState {
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleInlineBlame: () => void;
+  setDesignWindows: (enabled: boolean) => void;
   toggleWordWrap: () => void;
   toggleMobileWordWrap: () => void;
   setLspEnabled: (enabled: boolean) => void;
@@ -215,6 +221,7 @@ interface PersistedSettings {
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
   inlineBlame?: boolean;
+  designWindows?: boolean;
   wordWrap?: boolean;
   mobileWordWrap?: boolean;
   lspEnabled?: boolean;
@@ -381,6 +388,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   const patch: Partial<PersistedSettings> = {};
   if (typeof data.wordWrap === "boolean") patch.wordWrap = data.wordWrap;
   if (typeof data.inlineBlame === "boolean") patch.inlineBlame = data.inlineBlame;
+  if (typeof data.designWindows === "boolean") patch.designWindows = data.designWindows;
   if (typeof data.tabWrap === "boolean") patch.tabWrap = data.tabWrap;
   if (typeof data.sidebarCollapsed === "boolean") patch.sidebarCollapsed = data.sidebarCollapsed;
   if (typeof data.sidebarWidth === "number" && data.sidebarWidth >= 200 && data.sidebarWidth <= 600) {
@@ -427,6 +435,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   inlineBlame: _initial.inlineBlame ?? false,
+  designWindows: _initial.designWindows ?? true,
   wordWrap: _initial.wordWrap ?? false,
   remoteDesktopQuality: parseQualityChoice(_initial.remoteDesktopQuality),
   remoteDesktopViewStyle: parseViewStyle(_initial.remoteDesktopViewStyle),
@@ -570,6 +579,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().inlineBlame;
     persistUiPref({ inlineBlame: next });
     set({ inlineBlame: next });
+  },
+
+  setDesignWindows: (enabled) => {
+    persistUiPref({ designWindows: enabled });
+    set({ designWindows: enabled });
   },
 
   toggleWordWrap: () => {
