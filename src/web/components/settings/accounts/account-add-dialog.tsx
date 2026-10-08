@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "@/lib/icons";
 import { addAccount, getOAuthUrl, exchangeOAuthCode } from "../../../lib/api-settings";
+import { ApiError } from "../../../lib/api-client";
 
 // ── Add Account Dialog ─────────────────────────────────────────────
 
@@ -63,9 +64,9 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess, signInAgainFor
     setOauthLoading(true);
     setAddError(null);
     try {
-      let code = oauthCode.trim();
-      if (code.includes("#")) code = code.split("#")[0] ?? code;
-      const acc = await exchangeOAuthCode(code, oauthState);
+      // Sent whole: the `#state` after the code names the link it came from, which may be an
+      // earlier one than `oauthState`.
+      const acc = await exchangeOAuthCode(oauthCode.trim(), oauthState);
       handleClose();
       // Signing in again on an account this machine parked carries the token in but
       // deliberately leaves it out of the rotation. A flat success over a toggle that is
@@ -74,6 +75,8 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess, signInAgainFor
         ? "Signed in. This account is still disabled — enable it to use it."
         : "Account connected via OAuth!");
     } catch (e) {
+      // The server no longer holds that link, so no code can finish it: back to Login with Claude.
+      if (e instanceof ApiError && e.status === 410) resetOAuth();
       setAddError((e as Error).message);
     }
     setOauthLoading(false);
