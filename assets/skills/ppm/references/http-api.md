@@ -184,6 +184,22 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/group-chat/:id/resume`
 - `DELETE /api/group-chat/:id`
 
+## /api/logs
+
+- `GET    /api/logs`
+- `GET    /api/logs/around`
+- `GET    /api/logs/issues`
+- `GET    /api/logs/issues/summary`
+- `POST   /api/logs/issues/analyze`
+- `POST   /api/logs/issues/auto`
+- `POST   /api/logs/issues/undismiss-all`
+- `POST   /api/logs/issues/:id/dismiss`
+- `POST   /api/logs/issues/:id/undismiss`
+- `POST   /api/logs/report/draft`
+- `GET    /api/logs/environment`
+- `GET    /api/logs/github/labels`
+- `GET    /api/logs/github/duplicates`
+
 ## /api/loopback
 
 - `POST   /api/loopback/callback`
@@ -207,6 +223,29 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/mcp-auth/flows/:id/confirm`
 - `DELETE /api/mcp-auth/flows/:id`
 - `GET    /api/mcp-auth/state`
+
+## /api/notifications
+
+- `GET    /api/notifications/device_name`
+- `GET    /api/notifications/settings`
+- `GET    /api/notifications/notifications`
+- `PUT    /api/notifications/settings`
+- `GET    /api/notifications/notifications`
+- `GET    /api/notifications/push`
+- `POST   /api/notifications/push/subscribe`
+- `POST   /api/notifications/push/unsubscribe`
+- `POST   /api/notifications/push/test`
+- `GET    /api/notifications/telegram`
+- `GET    /api/notifications/telegram`
+- `POST   /api/notifications/telegram/connect`
+- `DELETE /api/notifications/telegram/connect`
+- `DELETE /api/notifications/telegram/chats/:chatId`
+- `GET    /api/notifications/ntfy`
+- `GET    /api/notifications/ntfy`
+- `PUT    /api/notifications/ntfy`
+- `GET    /api/notifications/ntfy`
+- `DELETE /api/notifications/ntfy`
+- `POST   /api/notifications/ntfy/test`
 
 ## /api/preview
 
@@ -244,6 +283,8 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/remote-desktop/auth`
 - `GET    /api/remote-desktop/capabilities`
 - `GET    /api/remote-desktop/auth`
+- `GET    /api/remote-desktop/requirements/ffmpeg/install`
+- `POST   /api/remote-desktop/requirements/ffmpeg/install`
 - `POST   /api/remote-desktop/requirements/:id/:action`
 - `POST   /api/remote-desktop/session`
 - `POST   /api/remote-desktop/whep/:ticket`
@@ -300,8 +341,14 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PUT    /api/settings/clawbot`
 - `GET    /api/settings/clawbot`
 - `GET    /api/settings/clawbot/paired`
-- `POST   /api/settings/clawbot/paired/approve`
 - `DELETE /api/settings/clawbot/paired/:chatId`
+- `GET    /api/settings/clawbot/telegram`
+- `GET    /api/settings/telegram`
+- `GET    /api/settings/clawbot`
+- `PUT    /api/settings/clawbot/telegram`
+- `GET    /api/settings/clawbot`
+- `POST   /api/settings/clawbot/telegram/connect`
+- `DELETE /api/settings/clawbot/telegram/connect`
 - `GET    /api/settings/clawbot/memories`
 - `DELETE /api/settings/clawbot/memories/:id`
 - `GET    /api/settings/files`
@@ -313,6 +360,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/settings/design/projects`
 - `GET    /api/settings/design`
 - `PUT    /api/settings/design`
+- `POST   /api/settings/design/skill`
 
 ## /api/settings/mcp
 
@@ -354,6 +402,14 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/system/services/:scope/:unit/:action`
 - `GET    /api/system/host`
 
+## /api/tailscale
+
+- `GET    /api/tailscale/auth`
+- `GET    /api/tailscale/state`
+- `POST   /api/tailscale/login`
+- `POST   /api/tailscale/login/cancel`
+- `POST   /api/tailscale/service`
+
 ## /api/teams
 
 - `GET    /api/teams`
@@ -394,6 +450,8 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 ## /api/tunnels
 
 - `GET    /api/tunnels`
+- `GET    /api/tunnels/transports`
+- `POST   /api/tunnels/frame-ancestors`
 - `POST   /api/tunnels`
 - `DELETE /api/tunnels/:pid{[0-9]+}`
 
@@ -420,4 +478,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.12 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.13 -->

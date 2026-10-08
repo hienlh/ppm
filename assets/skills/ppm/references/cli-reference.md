@@ -685,6 +685,7 @@ View PPM daemon logs
 **Options:**
 - `-n, --tail <lines>` — Number of lines to show (default: `"50"`)
 - `-f, --follow` — Follow log output
+- `-l, --level <level>` — Only this level and above: debug, info, warn, error, fatal
 - `--clear` — Clear log file
 
 ## `ppm open`
@@ -806,7 +807,7 @@ Show recent runs for a schedule
 Manage and inspect discovered skills & commands
 
 **Options:**
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.12"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-prep"`)
 
 **Usage:** `ppm skills [options] [command]`
 
@@ -816,7 +817,7 @@ List all discovered skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.12"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-prep"`)
 
 ### `ppm skills search`
 
@@ -824,7 +825,7 @@ Fuzzy search skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.12"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-prep"`)
 
 **Usage:** `ppm skills search [options] <query>`
 
@@ -834,7 +835,7 @@ Show detailed info for a specific skill
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.12"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-prep"`)
 
 **Usage:** `ppm skills info [options] <name>`
 
