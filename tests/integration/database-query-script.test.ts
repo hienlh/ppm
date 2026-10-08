@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
 import { insertConnection, openTestDb, setDb, updateConnection } from "../../src/services/db.service.ts";
+import { configService } from "../../src/services/config.service.ts";
 import { _resetPpmDir } from "../../src/services/ppm-dir.ts";
 import { initAdapters } from "../../src/services/database/init-adapters.ts";
 import { postgresService, readonlyPostgresService } from "../../src/services/postgres.service.ts";
@@ -172,6 +173,32 @@ describe("query script on SQLite", () => {
     expect(read[0]!.resultSets[0]!.rows).toEqual([[3]]);
   });
 
+  it("runs a refused script once with write access for PPM's password, and the connection stays readonly", async () => {
+    const auth = configService.get("auth");
+    configService.set("auth", { ...auth, enabled: true, token: "ppm-pass" });
+    try {
+      const sql = "DELETE FROM items WHERE id = 1";
+      const wrong = await script(ro, { sql, writeOnce: { password: "nope" } });
+      expect(wrong.status).toBe(403);
+      expect(((await wrong.json()) as { error: string }).error).toBe("Wrong password");
+      expect(count()).toBe(3);
+      expect(listQueryLogs({ connectionId: ro })[0]).toMatchObject({ status: "blocked", error: "Wrong password", params_json: JSON.stringify({ writeOnce: true }) });
+
+      const [deleted] = resultsOf(await readEvents(await script(ro, { sql, writeOnce: { password: "ppm-pass" } })));
+      expect(deleted).toMatchObject({ rowsAffected: 1 });
+      expect(count()).toBe(2);
+      expect(listQueryLogs({ connectionId: ro })[0]).toMatchObject({ status: "ok", params_json: JSON.stringify({ writeOnce: true }) });
+
+      expect((await script(ro, { sql: "DELETE FROM items" })).status).toBe(403);
+      expect(count()).toBe(2);
+      // A writable connection needs no lift: the flag is ignored rather than recorded.
+      await readEvents(await script(rw, { sql: "SELECT 1", writeOnce: { password: "anything" } }));
+      expect(listQueryLogs({ connectionId: rw })[0]!.params_json).toBeNull();
+    } finally {
+      configService.set("auth", auth);
+    }
+  });
+
   it("explains a statement rather than running it", async () => {
     const [plan] = resultsOf(await readEvents(await script(rw, { sql: "DELETE FROM items WHERE id = 1", explain: true })));
     expect(plan!.resultSets[0]!.columns.map((c) => c.name)).toContain("detail");
@@ -232,6 +259,14 @@ describe("query script on SQLite", () => {
     const { data } = (await history.json()) as { data: QueryHistoryResponse };
     expect(data.items.map((i) => i.sql)).toEqual(["SELECT 6 AS from_file"]);
     expect(listQueryLogs({ connectionId: rw }).map((r) => r.sql)).toEqual(["SELECT 7 AS saved"]);
+  });
+
+  it("lists what the AI chat's database tools ran beside the Query tab's runs", async () => {
+    insertQueryLog({ connectionId: rw, connectionName: "rw", dbType: "sqlite", source: "ai", actor: "agent", operation: "select", sql: "SELECT 9 AS by_ai", status: "ok" });
+    await readEvents(await script(rw, { sql: "SELECT 10 AS by_hand" }));
+    const res = await app().request(`/db/connections/${rw}/history`);
+    const { data } = (await res.json()) as { data: QueryHistoryResponse };
+    expect(data.items.map((i) => [i.sql, i.byAgent])).toEqual([["SELECT 10 AS by_hand", false], ["SELECT 9 AS by_ai", true]]);
   });
 
   it("hands the history over a page at a time", async () => {

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **The AI can work on your saved databases without ever seeing their passwords.** Every connection with **Available to the AI chat** on (the default; it is in each connection's settings) is offered to Claude and Codex through three tools PPM serves itself, so the AI never holds a password, URL or key.
+  - **`db_query`** reads. Its SQL runs in a read-only transaction on every connection, readonly or not, so it cannot change anything, and the rows reach the AI marked as data, not instructions.
+  - **`open_query`** opens a Query tab beside the chat holding a script the AI wrote, on the right connection and database. Nothing runs until you press Run.
+  - **`db_execute`** changes data only once you approve it. A card in the chat shows the connection, the AI's reason and the exact SQL, and **Run once** runs it after you type PPM's password; you are notified as for any approval. It runs in one transaction: a statement that fails, or a number of rows changed other than the one the AI said to expect, rolls all of it back. A readonly connection can be changed this way too, for that one script. Declining, sending a message, pressing Stop or not answering within 10 minutes runs nothing.
+  - **Run with write access (once)**: a Query tab on a readonly connection whose script was refused as a write now offers to run it once with write access, after PPM's password — which is how a script the AI opened for you runs on a readonly connection.
+  - Everything the AI ran is in the query audit log as the AI's, and in the Query tab's History with the agent badge.
+  - PPM's password is the one you sign in with. It confirms that you, at the screen, want the change; it is not a secret from an agent running as your user, which could read PPM's own files.
+
+- **Settings → Tools turns each of PPM's own AI tools on or off.** One switch per tool — Open files, Show pages, Read databases, Open Query tabs and Change databases — for Claude and Codex alike, in place of the single "Let the AI open tabs in PPM" switch, whose choice the two tab tools keep until you switch either. The database tools start on. A new chat gets only the tools that are on; turning one off also stops it in chats already open, and with Change databases off the AI is told to hand you the script in a Query tab instead.
+
 ## [0.23.14] - 2026-10-08
 
 ### Added

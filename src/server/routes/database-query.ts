@@ -22,13 +22,14 @@ import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
 import { detectOperation, listQueryLogs, type QueryLogRow, type QueryOperation } from "../../services/query-audit/query-audit.service.ts";
 import { rowsToRecords } from "../../shared/db-grid.ts";
 import {
-  QUERY_HISTORY_PAGE, QUERY_SCRIPT_CONTENT_TYPE, queryRowLimit, type QueryCancelRequest, type QueryHistoryItem, type QueryHistoryResponse,
+  QUERY_HISTORY_PAGE, QUERY_SCRIPT_CONTENT_TYPE, queryRowLimit, WRONG_PASSWORD, type QueryCancelRequest, type QueryHistoryItem, type QueryHistoryResponse,
   type QueryScriptEvent, type QueryScriptRequest,
 } from "../../shared/db-query-script.ts";
 import { splitSqlScript, sqlCode } from "../../shared/split-sql-statements.ts";
 import type { DbQuerySession } from "../../types/database.ts";
 import { ok, err } from "../../types/api.ts";
 import { auditCaller, logQuery, logQueryAs } from "./query-audit-hook.ts";
+import { checkPpmPassword } from "../../services/ppm-password.ts";
 import { connAudit, connConfig, databaseParam, holdRequestOpen, requestDatabase, resolveTargetConn } from "./database-route-helpers.ts";
 
 export const databaseQueryRoutes = new Hono();
@@ -67,19 +68,26 @@ databaseQueryRoutes.post("/:id/query/script", async (c) => {
   if (statements.length === 0) return c.json(err("The script has no statements to run"), 400);
 
   const operation: QueryOperation = statements.length > 1 ? "script" : detectOperation(sqlCode(statements[0]!.sql, dialect).trim());
-  const params = { ...databaseParam(c), ...(explain ? { explain: true } : {}) };
+  // "Run with write access (once)": a readonly connection's run made writable, PPM's password typed again.
+  const writeOnce = !!body.writeOnce && !!conn.readonly && !isFileConnection(conn);
+  const params = { ...databaseParam(c), ...(explain ? { explain: true } : {}), ...(writeOnce ? { writeOnce: true } : {}) };
   const audit = {
     ...connAudit(conn), source: "editor" as const, operation, sql,
     ...(Object.keys(params).length > 0 ? { params } : {}),
   };
-  if (conn.readonly && !isReadOnlyQuery(sql, dialect)) {
+  if (writeOnce) {
+    if (!checkPpmPassword(body.writeOnce?.password)) {
+      logQuery(c, { ...audit, status: "blocked", error: WRONG_PASSWORD, durationMs: Date.now() - startedAt });
+      return c.json(err(WRONG_PASSWORD), 403);
+    }
+  } else if (conn.readonly && !isReadOnlyQuery(sql, dialect)) {
     logQuery(c, { ...audit, status: "blocked", error: READONLY_MESSAGE, durationMs: Date.now() - startedAt });
     return c.json(err(READONLY_MESSAGE), 403);
   }
 
   const key = runKey(conn, runId);
   if (runs.has(key)) return c.json(err("A run with this id is already in progress"), 409);
-  const config = connConfig(conn, requestDatabase(c));
+  const config = writeOnce ? { ...connConfig(conn, requestDatabase(c)), readonly: false } : connConfig(conn, requestDatabase(c));
   const run = new QueryScriptRun({
     sql, dialect, explain, maxRows: queryRowLimit(body.maxRows), continueOnError: body.continueOnError === true, timeoutMs: queryTimeoutMs(config),
   });
@@ -176,7 +184,8 @@ databaseQueryRoutes.get("/:id/history", (c) => {
   const search = c.req.query("search")?.trim() || undefined;
   const rows = listQueryLogs({
     ...(isFileConnection(conn) ? { fileConnection: conn.file.path } : { connectionId: conn.id }),
-    source: "editor",
+    // What an AI chat ran through PPM's database tools too, marked as an agent's.
+    source: ["editor", "ai"],
     search,
     limit: QUERY_HISTORY_PAGE,
     offset,

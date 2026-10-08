@@ -1,8 +1,9 @@
 import { resolve } from "node:path";
 import { configService } from "../config.service.ts";
 import { formatPreviewCheck } from "../../shared/design-canvas-check-format.ts";
-import { MAX_TAB_LINE, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
+import { MAX_TAB_LINE, type TabOpenAsk } from "../../shared/tab-open-protocol.ts";
 import { neutralizeFences } from "../../shared/untrusted-text.ts";
+import { isPpmTool, ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.ts";
 import { createMcpHttpHandler, imageBlock, textResult, type Json } from "../mcp-http-endpoint.ts";
 import { tabOpenBroker, type TabOpenOutcome } from "./tab-open-broker.ts";
 import { resolveTabTarget, type TabTarget, type TabTargetOutcome, type TabToolsBinding } from "./tab-target.ts";
@@ -18,7 +19,7 @@ import {
  * tab shows comes back except, for an HTML page, the check of how it rendered.
  */
 
-type Request = (sessionId: string, req: Omit<TabOpenRequest, "type" | "requestId">, waitMs: number) => Promise<TabOpenOutcome>;
+type Request = (sessionId: string, req: TabOpenAsk, waitMs: number) => Promise<TabOpenOutcome>;
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -38,7 +39,8 @@ export function createTabToolsMcpHandler(deps: {
   /** The session's project as it is now; relative paths resolve against it. */
   sessionProject: (sessionId: string) => Promise<Omit<TabToolsBinding, "sessionId">>;
   request: Request;
-  enabled: () => boolean;
+  /** Whether the user has this tool on (Settings → Tools). */
+  enabled: (tool: string) => boolean;
   resolveTarget?: (input: unknown, binding: TabToolsBinding) => Promise<TabTargetOutcome>;
 }) {
   const resolveTarget = deps.resolveTarget ?? resolveTabTarget;
@@ -82,11 +84,8 @@ export function createTabToolsMcpHandler(deps: {
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
     tools: [OPEN_FILE_TOOL_DEFINITION, OPEN_PREVIEW_TOOL_DEFINITION],
+    unavailable: (name) => (deps.enabled(name) ? null : ppmToolOffMessage(name)),
     callTool: async ({ sessionId }, name, rawArgs) => {
-      // A chat keeps the tools it started with, so turning the setting off is enforced here.
-      if (!deps.enabled()) {
-        return textResult("The user turned off \"Let the AI open tabs in PPM\" in PPM's settings, so nothing was shown.", true);
-      }
       const binding: TabToolsBinding = { sessionId, ...(await deps.sessionProject(sessionId)) };
       const args = isObj(rawArgs) ? rawArgs : {};
       const resolved = await resolveTarget(args.path, binding);
@@ -112,5 +111,5 @@ export const tabToolsMcpHandler = createTabToolsMcpHandler({
   resolveToken: (token) => tabToolsMcpTokens.resolve(token),
   sessionProject,
   request: (sessionId, req, waitMs) => tabOpenBroker.request(sessionId, req, waitMs),
-  enabled: () => configService.get("ai").tab_tools === true,
+  enabled: (tool) => isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool),
 });

@@ -5,9 +5,10 @@ import { truncateResult, capBytes, MAX_RESULT_BYTES } from "./result-truncate.ts
  * "filter" is SQL the grid's column filters build — a real query, but not one the user typed;
  * "structure" is DDL from the table editor's Save and the tree's table commands; "export" is the
  * read behind a file Export wrote, every row of it; "import" is one uploaded file written into a
- * table, with the table changes its Action made.
+ * table, with the table changes its Action made; "ai" is SQL an AI chat ran through PPM's
+ * database tools (`db_query`, and `db_execute` once the user approved it).
  */
-export type QuerySource = "editor" | "grid" | "cli" | "filter" | "structure" | "export" | "import";
+export type QuerySource = "editor" | "grid" | "cli" | "filter" | "structure" | "export" | "import" | "ai";
 export type QueryActor = "human" | "agent" | "cli";
 export type QueryOperation = "select" | "insert" | "update" | "delete" | "script" | "other";
 export type QueryStatus = "ok" | "error" | "blocked";
@@ -60,7 +61,8 @@ export interface QueryLogFilter {
   /** A database file's entries: they carry no connection id, only the file's path as the name. */
   fileConnection?: string;
   status?: QueryStatus;
-  source?: QuerySource;
+  /** One source, or any of several. */
+  source?: QuerySource | readonly QuerySource[];
   from?: string;
   to?: string;
   search?: string;
@@ -115,7 +117,8 @@ function buildWhere(filter: QueryLogFilter): { clause: string; params: unknown[]
   if (filter.connectionId != null) { conditions.push("connection_id = ?"); params.push(filter.connectionId); }
   if (filter.fileConnection != null) { conditions.push("connection_id IS NULL AND connection_name = ?"); params.push(filter.fileConnection); }
   if (filter.status) { conditions.push("status = ?"); params.push(filter.status); }
-  if (filter.source) { conditions.push("source = ?"); params.push(filter.source); }
+  if (typeof filter.source === "string") { conditions.push("source = ?"); params.push(filter.source); }
+  else if (filter.source?.length) { conditions.push(`source IN (${filter.source.map(() => "?").join(", ")})`); params.push(...filter.source); }
   if (filter.from) { conditions.push("created_at >= ?"); params.push(filter.from); }
   if (filter.to) { conditions.push("created_at <= ?"); params.push(filter.to); }
   if (filter.search) { conditions.push("sql LIKE ?"); params.push(`%${filter.search}%`); }

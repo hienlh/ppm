@@ -21,7 +21,7 @@ function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enab
   const tokens = createTabToolsMcpTokenStore();
   const calls: Array<{ sessionId: string; req: Record<string, unknown>; waitMs: number }> = [];
   const targets: unknown[] = [];
-  let enabled = opts.enabled ?? true;
+  let enabled: boolean | ((tool: string) => boolean) = opts.enabled ?? true;
   const handler = createTabToolsMcpHandler({
     resolveToken: (t) => tokens.resolve(t),
     sessionProject: async () => ({ projectPath: "/proj", projectName: "demo" }),
@@ -29,7 +29,7 @@ function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enab
       calls.push({ sessionId, req, waitMs });
       return opts.outcome ?? { ok: true, result: { type: "tab_open_result", requestId: "r".repeat(16), opened: true } };
     },
-    enabled: () => enabled,
+    enabled: (tool) => (typeof enabled === "function" ? enabled(tool) : enabled),
     resolveTarget: async (input, binding) => {
       expect(binding).toEqual({ sessionId: "s1", projectPath: "/proj", projectName: "demo" });
       targets.push(input);
@@ -43,7 +43,7 @@ function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enab
     app.request("http://localhost/api/tab-tools-mcp", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
   const call = async (name: string, args: unknown) =>
     (await (await rpc({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } })).json()).result;
-  return { tokens, token, calls, targets, rpc, call, setEnabled: (v: boolean) => { enabled = v; } };
+  return { tokens, token, calls, targets, rpc, call, setEnabled: (v: boolean | ((tool: string) => boolean)) => { enabled = v; } };
 }
 
 describe("tab tools MCP endpoint", () => {
@@ -171,6 +171,20 @@ describe("tab tools MCP endpoint", () => {
     expect(offResult.content[0].text).toContain("turned off");
     expect(off.targets).toEqual([]);
   });
+
+  it("lists only the tools the user has on, and refuses one turned off since the chat listed it", async () => {
+    const { rpc, call, calls, setEnabled } = setup();
+    setEnabled((tool) => tool === "open_file");
+    const list = await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["open_file"]);
+    expect(await call("open_preview", { path: "report.html" })).toEqual({
+      content: [{ type: "text", text: "The user turned off open_preview in PPM's settings (Settings → Tools), so it did nothing." }],
+      isError: true,
+    });
+    expect(calls).toEqual([]);
+    expect((await call("open_file", { path: "report.html" })).isError).toBeUndefined();
+    expect(calls).toHaveLength(1);
+  });
 });
 
 describe("tab tools MCP endpoint as the server mounts it", () => {
@@ -198,9 +212,13 @@ describe("tab tools MCP endpoint as the server mounts it", () => {
       // A real file goes as far as the session's devices; no window shows this chat.
       expect(await text(await open(`Bearer ${token}`, page))).toContain(`nothing was shown. The file is at ${page}`);
       ai.tab_tools = false;
-      expect(await text(await open(`Bearer ${token}`, page))).toContain("turned off");
+      expect(await text(await open(`Bearer ${token}`, page))).toContain("turned off open_file");
+      // A switch of its own (Settings → Tools) wins over the older one.
+      ai.ppm_tools = { open_file: true };
+      expect(await text(await open(`Bearer ${token}`, page))).toContain("nothing was shown");
     } finally {
       ai.tab_tools = previous;
+      delete ai.ppm_tools;
       tabToolsMcpTokens.revoke("tab-tools-wired");
       rmSync(secret, { force: true });
       rmSync(dir, { recursive: true, force: true });

@@ -1017,7 +1017,15 @@ describe("ClaudeAgentSdkProvider", () => {
         expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBe("1");
         (configService as any).config.ai.tab_tools = false;
         expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
+        // open_preview is what replaces the Artifact tools, by its own switch once it has one.
+        (configService as any).config.ai.ppm_tools = { open_preview: true };
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBe("1");
+        (configService as any).config.ai.tab_tools = true;
+        (configService as any).config.ai.ppm_tools = { open_preview: false };
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
       } finally {
+        delete (configService as any).config.ai.ppm_tools;
+        (configService as any).config.ai.tab_tools = false;
         if (previous !== undefined) process.env.CLAUDE_CODE_DISABLE_ARTIFACT = previous;
       }
     });

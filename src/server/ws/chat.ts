@@ -27,6 +27,8 @@ import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.t
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
+import { dbApprovalBroker, setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
+import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
 import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
 import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
@@ -503,6 +505,77 @@ function deliverTabOpen(sessionId: string, request: TabOpenRequest): number {
   return sendTo(entry.clients);
 }
 setTabOpenDelivery(deliverTabOpen, resolveMigratedSession);
+
+/**
+ * A request for the user's answer is pending — a provider's own approval or question, or a
+ * `db_execute` from PPM's database tools: held for devices that connect later
+ * (`session_state.pendingApproval`), marked unread on every device and sent as a notification.
+ */
+function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type: string; requestId: string; tool: string; input: unknown }): void {
+  entry.pendingApprovalEvent = ev;
+
+  const isQuestion = ev.tool === "AskUserQuestion";
+  const nType = isQuestion ? "question" : "approval_request";
+  // Persist unread to DB + broadcast to all tabs/devices
+  const approvalSession = chatService.getSession(sessionId);
+  incrementSessionUnread(sessionId, nType, approvalSession?.title, entry.projectName || null);
+  broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: nType, projectName: entry.projectName || "", sessionTitle: approvalSession?.title || null });
+
+  import("../../services/notification.service.ts").then(({ notificationService }) => {
+    const project = entry.projectName || "Project";
+    const session = chatService.getSession(sessionId);
+    const sTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
+    const title = isQuestion ? "AI has a question" : "Waiting for approval";
+    const db = dbExecuteApprovalInput(ev.tool, ev.input);
+    const body = isQuestion
+      ? `${project} — ${sTitle}`
+      : db ? `${project} — AI wants to change ${db.connectionName}` : `${project} — ${ev.tool} needs permission`;
+    notificationService.broadcast(nType, {
+      title, body, project: entry.projectName || "", sessionId, providerId: entry.providerId, sessionTitle: sTitle, tool: ev.tool,
+      ...describeApprovalInput(ev.tool, ev.input),
+    }, {
+      // Answered, or looked at, on any device since — either way it needs no alert.
+      stillUnseen: () => entry.pendingApprovalEvent?.requestId === ev.requestId && getSessionUnreadCount(sessionId) > 0,
+    });
+  }).catch(() => {});
+}
+
+/**
+ * PPM's database tools ask the user here to approve a `db_execute` (`db-approval-broker.ts`).
+ * Not buffered into the turn's replay: the tool call's own card already shows the SQL, and a
+ * device that connects later reads the approval from `session_state.pendingApproval`.
+ */
+function announceDbApproval(sessionId: string, event: DbApprovalEvent): boolean {
+  const entry = activeSessions.get(sessionId);
+  if (!entry) return false;
+  // A provider's own approval holds the session's one slot: this one waits behind it
+  // (`showWaitingDbApproval`) rather than taking that card off the user's screen.
+  if (entry.pendingApprovalEvent) return true;
+  holdApprovalRequest(sessionId, entry, event);
+  broadcast(sessionId, event);
+  return true;
+}
+
+/** A `db_execute` approval was answered, or given up on: every device drops its card. */
+function dbApprovalResolved(sessionId: string, requestId: string, approved: boolean): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry) return;
+  if (entry.pendingApprovalEvent?.requestId === requestId) entry.pendingApprovalEvent = undefined;
+  broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: null });
+  broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
+}
+setDbApprovalChat({ announce: announceDbApproval, resolved: dbApprovalResolved }, resolveMigratedSession);
+
+/**
+ * A provider's approval took the session's one pending slot while a `db_execute` approval was
+ * waiting, and has now been answered: the database approval is shown again.
+ */
+function showWaitingDbApproval(sessionId: string, entry: SessionEntry): void {
+  const waiting = dbApprovalBroker.pendingEvent(sessionId);
+  if (!waiting || entry.pendingApprovalEvent) return;
+  entry.pendingApprovalEvent = waiting;
+  broadcast(sessionId, waiting);
+}
 
 /**
  * Forward an event to connected WS clients for a session (if any).
@@ -1102,31 +1175,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           });
         }).catch(() => {});
       } else if (evType === "approval_request") {
-        entry.pendingApprovalEvent = ev;
-
-        const isQuestion = ev.tool === "AskUserQuestion";
-        const nType = isQuestion ? "question" : "approval_request";
-        // Persist unread to DB + broadcast to all tabs/devices
-        const approvalSession = chatService.getSession(sessionId);
-        incrementSessionUnread(sessionId, nType, approvalSession?.title, entry.projectName || null);
-        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: nType, projectName: entry.projectName || "", sessionTitle: approvalSession?.title || null });
-
-        import("../../services/notification.service.ts").then(({ notificationService }) => {
-          const project = entry.projectName || "Project";
-          const session = chatService.getSession(sessionId);
-          const sTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
-          const title = isQuestion ? "AI has a question" : "Waiting for approval";
-          const body = isQuestion
-            ? `${project} — ${sTitle}`
-            : `${project} — ${ev.tool} needs permission`;
-          notificationService.broadcast(nType, {
-            title, body, project: entry.projectName || "", sessionId, providerId: entry.providerId, sessionTitle: sTitle, tool: ev.tool,
-            ...describeApprovalInput(ev.tool, ev.input),
-          }, {
-            // Answered, or looked at, on any device since — either way it needs no alert.
-            stillUnseen: () => entry.pendingApprovalEvent?.requestId === ev.requestId && getSessionUnreadCount(sessionId) > 0,
-          });
-        }).catch(() => {});
+        holdApprovalRequest(sessionId, entry, ev);
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking
         const newId = ev.newSessionId as string;
@@ -1588,14 +1637,20 @@ export const chatWebSocket = {
       // unblock it, then the follow-up message flows through normally.
       if (entry.pendingApprovalEvent) {
         const pendingReqId = entry.pendingApprovalEvent.requestId;
-        chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
-        entry.pendingApprovalEvent = undefined;
-        broadcast(sessionId, {
-          type: "approval_resolved",
-          requestId: pendingReqId,
-          approved: false,
-          answers: null,
-        });
+        if (dbApprovalBroker.has(pendingReqId)) {
+          // PPM's own approval: settling it takes the card off every device (`dbApprovalResolved`).
+          dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
+        } else {
+          chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
+          entry.pendingApprovalEvent = undefined;
+          broadcast(sessionId, {
+            type: "approval_resolved",
+            requestId: pendingReqId,
+            approved: false,
+            answers: null,
+          });
+          dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
+        }
         logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
       }
 
@@ -1752,6 +1807,7 @@ export const chatWebSocket = {
       const phase = entry?.phase ?? "unknown";
       log.info(`session=${sessionId} WS cancel received from FE (phase=${phase})`);
       logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
+      dbApprovalBroker.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
       chatService.abortQuery(providerId, sessionId, "ws_cancel", "ws");
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
@@ -1802,6 +1858,8 @@ export const chatWebSocket = {
       }
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
+      // PPM's database approvals are answered over HTTP with PPM's password, never here.
+      if (dbApprovalBroker.has(parsed.requestId)) return;
       chatService.resolveApproval(providerId, sessionId, parsed.requestId, parsed.approved, (parsed as any).data, { origin: "ws" });
       if (entry) {
         entry.pendingApprovalEvent = undefined;
@@ -1829,6 +1887,7 @@ export const chatWebSocket = {
         });
         // Broadcast approval cleared to all clients
         broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
+        showWaitingDbApproval(sessionId, entry);
       }
     }
   },
