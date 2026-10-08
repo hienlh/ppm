@@ -23,6 +23,11 @@ import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
 import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
+import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools-tokens.ts";
+import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
+import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
+import { DB_TOOLS } from "../shared/db-ai-tools.ts";
+import { anyPpmToolOn, TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
@@ -168,6 +173,8 @@ class ChatService {
     designMcpTokens.revoke(sessionId);
     tabToolsMcpTokens.revoke(sessionId);
     tabOpenBroker.forget(sessionId);
+    dbToolsMcpTokens.revoke(sessionId);
+    dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     return provider.deleteSession(sessionId);
   }
 
@@ -309,11 +316,14 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    // Like the design fields, the tab tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
-    // A design session checks its canvas with `design_check` instead.
-    const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession
-      ? tabToolsMcpAccessFor(sessionId) : null;
+    // Like the design fields, the tab and database tools are only ever server-built.
+    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // A design session checks its canvas with `design_check` instead. A server is attached while
+    // one of its tools is on (Settings → Tools); it lists only those.
+    const ai = configService.get("ai");
+    const tabToolsMcp = !design.designSession && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
+    const dbToolsMcp = !design.designSession && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
+      ? dbToolsMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -333,7 +343,7 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), sharedContext };
+    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}), sharedContext };
   }
 
   /**

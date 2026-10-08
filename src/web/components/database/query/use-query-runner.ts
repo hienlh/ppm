@@ -34,6 +34,8 @@ export interface QueryRunRequest {
   kind: QueryRunKind;
   /** The editor's line of the text's line 1, less one. */
   lineOffset: number;
+  /** Run once with write access on a readonly connection: PPM's password, as the user typed it. */
+  writeOnce?: { password: string };
 }
 
 interface ActiveRun {
@@ -100,6 +102,7 @@ export function useQueryRunner(target: DbTarget | null, options: { maxRows: numb
       sql: request.sql, runId: active.runId, maxRows,
       ...(continueOnError ? { continueOnError: true } : {}),
       ...(request.kind === "explain" ? { explain: true } : {}),
+      ...(request.writeOnce ? { writeOnce: request.writeOnce } : {}),
     };
     try {
       const res = await api.postStream(targetUrl(target, "/query/script"), body, { signal: active.abort.signal });

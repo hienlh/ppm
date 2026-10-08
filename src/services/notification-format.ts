@@ -3,6 +3,7 @@
  * tested without a bot, a browser or a clock.
  */
 import type { NotificationPayload } from "./notification.service.ts";
+import { dbExecuteApprovalInput } from "../shared/db-ai-tools.ts";
 
 const DETAIL_MAX = 300;
 
@@ -55,6 +56,10 @@ export function formatPushNotification(payload: NotificationPayload, deviceName:
 export function describeApprovalInput(tool: string, input: unknown): Pick<NotificationPayload, "detail" | "detailStyle"> {
   if (!input || typeof input !== "object") return {};
   const i = input as Record<string, unknown>;
+
+  // A database change: the AI's reason, not the SQL, which may quote the rows it changes.
+  const db = dbExecuteApprovalInput(tool, input);
+  if (db) return db.reason ? { detail: db.reason, detailStyle: "quote" } : {};
 
   if (tool === "AskUserQuestion" && Array.isArray(i.questions)) {
     const questions = i.questions as Array<{ question?: unknown }>;

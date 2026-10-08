@@ -5,11 +5,13 @@ import { fsApi } from "@/lib/fs-api";
 import { basename } from "@/lib/utils";
 import { chooseAiTabPlacement, isTabForFile } from "./ai-tab-placement";
 import { latestPreviewLoad, previewKey, waitForPreviewLoad } from "./html-preview-loads";
+import { nextQueryNumber, queryTabMetadata, targetFields } from "./db-tabs";
 import type { TabOpenRequest, TabOpenResult, TabTool } from "../../shared/tab-open-protocol";
+import { OPEN_QUERY_TOOL, type DbQueryTabOpen } from "../../shared/db-ai-tools";
 
 /**
- * Opens the tab the AI asked for with `open_file` or `open_preview`, beside the chat that
- * asked (`ai-tab-placement.ts` decides where), and answers the server's `tab_open`. A tool
+ * Opens the tab the AI asked for with `open_file`, `open_preview` or `open_query`, beside the
+ * chat that asked (`ai-tab-placement.ts` decides where), and answers the server's `tab_open`. A tool
  * card's Open button goes through the same {@link openAiTab}, so a tab reopened from the
  * chat's history lands where the AI's own call put it.
  *
@@ -104,6 +106,44 @@ export function openAiTab(target: AiTabTarget, chat: AiTabChat): { tabId: string
 }
 
 /**
+ * Opens a Query tab holding the script `open_query` wrote, beside the chat. Nothing runs until
+ * the user presses Run. Every call opens a tab of its own, so a script never replaces SQL the
+ * user is editing in another one.
+ */
+export function openAiQueryTab(query: DbQueryTabOpen, chat: AiTabChat): string {
+  showChatWorkspace(chat.projectName);
+  const store = usePanelStore.getState();
+  const placement = chooseAiTabPlacement({
+    grid: store.grid,
+    panels: store.panels,
+    focusedPanelId: store.focusedPanelId,
+    mobile: store.isMobile(),
+    sessionId: chat.sessionId,
+    isTarget: () => false,
+  });
+  if (!placement || placement.kind !== "open") throw new Error("PPM has no panel to open the tab in");
+  const queryNumber = nextQueryNumber(Object.values(store.panels).flatMap((p) => p.tabs));
+  const target = { kind: "connection" as const, connectionId: query.connectionId, ...(query.database ? { database: query.database } : {}) };
+  const tabId = store.openTab({
+    type: "db-query",
+    title: `Query ${queryNumber}`,
+    // A saved connection's tab shows in every project's workspace, as one opened from the tree does.
+    projectId: null,
+    closable: true,
+    metadata: {
+      ...targetFields(target),
+      connectionName: query.connectionName,
+      dbType: query.dbType,
+      ...(query.connectionColor ? { connectionColor: query.connectionColor } : {}),
+      ...queryTabMetadata(query.sql, queryNumber),
+    },
+  }, placement.panelId);
+  if (!tabId) throw new Error("PPM could not open the tab");
+  if (placement.split) store.splitPanel("right", tabId, placement.panelId);
+  return tabId;
+}
+
+/**
  * Answers the server's `tab_open`: opens the tab and, for a page the AI made, waits for it to
  * load and settle and returns the check of how it rendered. Every outcome is answered — a
  * silent device would leave the AI waiting for the server's timeout.
@@ -113,6 +153,15 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
     const result: TabOpenResult = { type: "tab_open_result", requestId: req.requestId, ...answer };
     send(JSON.stringify(result));
   };
+  if (req.tool === OPEN_QUERY_TOOL) {
+    try {
+      openAiQueryTab(req.query, chat);
+      reply({ opened: true });
+    } catch (e) {
+      reply({ opened: false, error: errorText(e) });
+    }
+    return;
+  }
   let opened: ReturnType<typeof openAiTab>;
   try {
     opened = openAiTab({ tool: req.tool, filePath: req.filePath, projectName: req.projectName, line: req.line }, chat);
