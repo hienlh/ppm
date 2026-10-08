@@ -70,6 +70,12 @@ function toolChip(
       ? { Icon: DatabaseZap, cls: "bg-warning/15 text-warning" }
       : { Icon: Database, cls: "bg-info/15 text-info" };
   }
+  const deviceTool = deviceToolOf(name);
+  if (deviceTool) {
+    return deviceTool === OPEN_URL_TOOL
+      ? { Icon: Globe, cls: "bg-info/15 text-info" }
+      : { Icon: Terminal, cls: "bg-panel-2 text-text-2" };
+  }
   switch (name) {
     case "Read": case "Glob": case "LS":
       return { Icon: FileSearch, cls: "bg-accent-wash text-primary" };
@@ -110,10 +116,12 @@ import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
 import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
 import { TabToolCard } from "./tab-tool-card";
-import { tabToolCall } from "@/lib/tab-tool-call";
+import { DeviceToolDetails, DeviceToolSummary } from "./device-tool-card";
+import { deviceToolCall, deviceToolOf, tabToolCall } from "@/lib/tab-tool-call";
 import { DbToolSummary, DbToolDetails } from "./db-tool-card";
 import { dbToolCall, dbToolOf } from "@/lib/db-tool-call";
 import { DB_EXECUTE_TOOL } from "../../../shared/db-ai-tools";
+import { OPEN_URL_TOOL } from "../../../shared/tab-open-protocol";
 import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
 import { useOpenAgentSession } from "./use-open-agent-session";
 import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
@@ -379,6 +387,8 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
   const s = (v: unknown) => String(v ?? "");
   const dbCall = dbToolCall(name, input);
   if (dbCall) return <DbToolSummary call={dbCall} />;
+  const deviceCall = deviceToolCall(name, input);
+  if (deviceCall) return <DeviceToolSummary call={deviceCall} />;
   switch (name) {
     case "Read":
     case "Write":
@@ -494,6 +504,8 @@ function ToolDetails({
 
   const dbCall = dbToolCall(name, input);
   if (dbCall) return <DbToolDetails call={dbCall} />;
+  const deviceCall = deviceToolCall(name, input);
+  if (deviceCall) return <DeviceToolDetails call={deviceCall} />;
 
   switch (name) {
     case "Bash":

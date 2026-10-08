@@ -2,30 +2,35 @@ import { resolve } from "node:path";
 import { configService } from "../config.service.ts";
 import { formatPreviewCheck } from "../../shared/design-canvas-check-format.ts";
 import { MAX_TAB_LINE, type TabOpenAsk } from "../../shared/tab-open-protocol.ts";
-import { neutralizeFences } from "../../shared/untrusted-text.ts";
 import { isPpmTool, ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.ts";
+import { activeTunnels } from "../../server/routes/tunnel-spawn.ts";
 import { createMcpHttpHandler, imageBlock, textResult, type Json } from "../mcp-http-endpoint.ts";
-import { tabOpenBroker, type TabOpenOutcome } from "./tab-open-broker.ts";
+import { listeningLoopback } from "../port-forward/forward-hop.ts";
+import { listTailscaleForwards, startTailscaleForward } from "../port-forward/tailscale-forward.ts";
+import { localServerBaseUrl } from "../server-listen-address.ts";
+import { terminalService } from "../terminal.service.ts";
+import { createOpenUrlTool, type OpenUrlTool } from "./open-url-tool.ts";
+import { canonicalTabSession, deviceError, tabOpenBroker, type TabOpenOutcome } from "./tab-open-broker.ts";
 import { resolveTabTarget, type TabTarget, type TabTargetOutcome, type TabToolsBinding } from "./tab-target.ts";
 import { tabToolsMcpTokens, type TabToolsTokenBinding } from "./tab-tools-mcp-tokens.ts";
 import {
-  OPEN_FILE_TOOL, OPEN_FILE_TOOL_DEFINITION, OPEN_FILE_WAIT_MS, OPEN_PREVIEW_TOOL_DEFINITION, OPEN_PREVIEW_WAIT_MS,
+  OPEN_FILE_TOOL, OPEN_FILE_TOOL_DEFINITION, OPEN_FILE_WAIT_MS, OPEN_PREVIEW_TOOL, OPEN_PREVIEW_TOOL_DEFINITION,
+  OPEN_PREVIEW_WAIT_MS, OPEN_URL_TOOL, OPEN_URL_TOOL_DEFINITION, READ_TERMINAL_TOOL, READ_TERMINAL_TOOL_DEFINITION,
+  RUN_IN_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL_DEFINITION,
 } from "./tab-tools-mcp-tool.ts";
+import { createTerminalTools, type TerminalTools } from "./terminal-tools.ts";
 
 /**
- * `/api/tab-tools-mcp` — serves `open_file` and `open_preview` to one chat session's own
- * agent (the MCP plumbing is `mcp-http-endpoint.ts`). Its token can do exactly one thing:
- * open a tab on that session's devices, for a file the agent could already read. Nothing the
- * tab shows comes back except, for an HTML page, the check of how it rendered.
+ * `/api/tab-tools-mcp` — serves the tab tools to one chat session's own agent (the MCP plumbing
+ * is `mcp-http-endpoint.ts`): `open_file` and `open_preview` open a file the agent could already
+ * read, `open_url` a web server on the host, and `run_in_terminal` a terminal with a command
+ * typed in, all on that session's devices; `read_terminal` reads the terminals of the session's
+ * project. Nothing a tab shows comes back except, for an HTML page, the check of how it rendered.
  */
 
 type Request = (sessionId: string, req: TabOpenAsk, waitMs: number) => Promise<TabOpenOutcome>;
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
-
-/** What the device said went wrong; it may quote the page, which the page's scripts wrote. */
-const deviceError = (error: string | undefined): string =>
-  error ? neutralizeFences(error.replace(/[\u0000-\u001f\u007f]/g, " ")) : "it gave no reason";
 
 function failure(outcome: Extract<TabOpenOutcome, { ok: false }>, target: TabTarget): Json {
   if (outcome.reason === "no-device") {
@@ -41,6 +46,8 @@ export function createTabToolsMcpHandler(deps: {
   request: Request;
   /** Whether the user has this tool on (Settings → Tools). */
   enabled: (tool: string) => boolean;
+  terminal: TerminalTools;
+  openUrl: OpenUrlTool;
   resolveTarget?: (input: unknown, binding: TabToolsBinding) => Promise<TabTargetOutcome>;
 }) {
   const resolveTarget = deps.resolveTarget ?? resolveTabTarget;
@@ -83,14 +90,22 @@ export function createTabToolsMcpHandler(deps: {
     serverName: "ppm-tabs",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: [OPEN_FILE_TOOL_DEFINITION, OPEN_PREVIEW_TOOL_DEFINITION],
+    tools: [
+      OPEN_FILE_TOOL_DEFINITION, OPEN_PREVIEW_TOOL_DEFINITION, OPEN_URL_TOOL_DEFINITION,
+      READ_TERMINAL_TOOL_DEFINITION, RUN_IN_TERMINAL_TOOL_DEFINITION,
+    ],
     unavailable: (name) => (deps.enabled(name) ? null : ppmToolOffMessage(name)),
     callTool: async ({ sessionId }, name, rawArgs) => {
       const binding: TabToolsBinding = { sessionId, ...(await deps.sessionProject(sessionId)) };
       const args = isObj(rawArgs) ? rawArgs : {};
+      if (name === OPEN_URL_TOOL) return deps.openUrl(binding, args);
+      if (name === READ_TERMINAL_TOOL) return deps.terminal.read(binding, args);
+      if (name === RUN_IN_TERMINAL_TOOL) return deps.terminal.run(binding, args);
       const resolved = await resolveTarget(args.path, binding);
       if (!resolved.ok) return textResult(resolved.error, true);
-      return name === OPEN_FILE_TOOL ? openFile(binding, resolved.target, args) : openPreview(binding, resolved.target, args);
+      if (name === OPEN_FILE_TOOL) return openFile(binding, resolved.target, args);
+      if (name === OPEN_PREVIEW_TOOL) return openPreview(binding, resolved.target, args);
+      return textResult(`Unknown tool: ${name}`, true);
     },
   });
 }
@@ -107,9 +122,39 @@ async function sessionProject(sessionId: string): Promise<Omit<TabToolsBinding, 
   return { projectPath, projectName };
 }
 
+/** The ports PPM itself answers on: the configured one, and the server's own behind the supervisor. */
+function ppmPorts(): number[] {
+  const base = localServerBaseUrl();
+  return [configService.get("port"), base ? Number(new URL(base).port) : 0].filter((port) => Number.isInteger(port) && port > 0);
+}
+
+/** The forward the user already runs for a port: a private Tailscale one before a public quick tunnel. */
+export function existingForwardFor(
+  port: number,
+  tailscale: ReadonlyArray<{ port: number; url: string }> = listTailscaleForwards(),
+  quick: ReadonlyMap<number, { url: string }> = activeTunnels,
+): { url: string; via: "tailscale" | "cloudflare" } | null {
+  const forward = tailscale.find((f) => f.port === port);
+  if (forward) return { url: forward.url, via: "tailscale" };
+  const tunnel = quick.get(port);
+  return tunnel ? { url: tunnel.url, via: "cloudflare" } : null;
+}
+
+const request: Request = (sessionId, req, waitMs) => tabOpenBroker.request(sessionId, req, waitMs);
+const enabled = (tool: string): boolean => isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
+
 export const tabToolsMcpHandler = createTabToolsMcpHandler({
   resolveToken: (token) => tabToolsMcpTokens.resolve(token),
   sessionProject,
-  request: (sessionId, req, waitMs) => tabOpenBroker.request(sessionId, req, waitMs),
-  enabled: (tool) => isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool),
+  request,
+  enabled,
+  terminal: createTerminalTools({ terminals: terminalService, request, enabled, canonical: canonicalTabSession }),
+  openUrl: createOpenUrlTool({
+    request,
+    canonical: canonicalTabSession,
+    listening: async (port) => (await listeningLoopback(port)) !== null,
+    ownPorts: ppmPorts,
+    existingForward: (port) => existingForwardFor(port),
+    startPrivateForward: async (port) => (await startTailscaleForward(port)).url,
+  }),
 });
