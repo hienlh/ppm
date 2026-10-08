@@ -14,6 +14,7 @@
 
 import { fsApi, FsError } from "@/lib/fs-api";
 import { uploadFileXhr } from "@/lib/fs-upload-xhr";
+import { randomId } from "@/lib/utils";
 import { dirnameOf, joinPath } from "../format-file-meta";
 import { fsChanged } from "../explorer-store";
 import type { DroppedEntry } from "../upload/collect-dropped-entries";
@@ -94,7 +95,7 @@ export async function uploadEntries(
 ): Promise<void> {
   if (entries.length === 0) return;
 
-  const batchId = crypto.randomUUID();
+  const batchId = randomId();
   const store = useUploadStore.getState();
   store.addBatch(
     batchId,

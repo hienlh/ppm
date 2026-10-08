@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Sending a chat message did nothing on a plain-HTTP address, such as a LAN IP.** Since 0.22.3 the message left the box and was never sent, with no error on screen: the send asked the browser for `crypto.randomUUID`, which a browser offers only on HTTPS or localhost. Dropping files into the OS File Explorer on such an address failed the same way. Both work there again; Tailscale, tunnel and localhost addresses were never affected.
+
 ## [0.23.13] - 2026-10-08
 
 ### Added

@@ -24,6 +24,22 @@ describe("onboarding chat lifecycle evidence", () => {
       expect(events.map((event) => event.type)).toEqual(["started", "failed"]);
     }
   });
+  test("starts an attempt on a plain-HTTP page, where crypto.randomUUID does not exist", () => {
+    const own = Object.getOwnPropertyDescriptor(crypto, "randomUUID");
+    Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+    try {
+      const { events, lifecycle } = setup();
+      lifecycle.start("a", true, true);
+      lifecycle.finish(true);
+      lifecycle.start("a", true, true);
+      expect(events.map((event) => event.type)).toEqual(["started", "succeeded", "started"]);
+      expect(events[0]!.attemptId).toBeTruthy();
+      expect(events[2]!.attemptId).not.toBe(events[0]!.attemptId);
+    } finally {
+      if (own) Object.defineProperty(crypto, "randomUUID", own);
+      else delete (crypto as { randomUUID?: unknown }).randomUUID;
+    }
+  });
   test("old history and disconnected sends cannot become successes", () => {
     const { events, lifecycle } = setup();
     lifecycle.finish(true);
