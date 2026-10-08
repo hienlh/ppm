@@ -79,6 +79,16 @@ const OAUTH_SCOPE = "org:create_api_key user:profile user:inference";
 const OAUTH_PLATFORM_REDIRECT = "https://platform.claude.com/oauth/code/callback";
 
 /**
+ * The pasted code names a sign-in link this process does not hold: links live in memory for ten
+ * minutes, die with a restart, and are spent by the sign-in they finish. Only a new link helps.
+ */
+export class OAuthLinkExpiredError extends Error {
+  constructor() {
+    super("This sign-in link has expired — links last 10 minutes and end when PPM restarts. Click Login with Claude to get a new one.");
+  }
+}
+
+/**
  * Anthropic invalidates the entire refresh-token family this long after the original
  * grant, whether or not the token kept rotating in between. Measured twice on a live
  * install: developers@ signed in 2026-08-11 and was rejected 2026-09-08 (28d 2h);
@@ -639,26 +649,46 @@ class AccountService {
     return { url: `${OAUTH_AUTH_URL}?${params}`, state };
   }
 
-  /** Exchange code from platform.claude.com callback */
-  async completeOAuthCodeFlow(code: string, state: string): Promise<Account> {
+  /**
+   * Exchange the code pasted from platform.claude.com's callback page, which reads
+   * `<code>#<state>`. That state names the link the code was issued for, and it wins over the
+   * dialog's: the dialog only remembers the newest link it opened, and a code from an earlier
+   * one paired with the newer verifier is refused as "Code challenge failed".
+   */
+  async completeOAuthCodeFlow(pasted: string, dialogState: string): Promise<Account> {
+    // Swept here as well as when a link is opened: a link past its ten minutes has expired
+    // whether or not anyone has opened a newer one since.
+    this.cleanExpiredStates();
+    const [code = "", codeState] = pasted.split("#");
+    // Only the `#state` half: there is no code to exchange, so Claude is not asked.
+    if (!code) throw new Error("The pasted text has no code before the #. Copy the whole code Claude shows and paste it again.");
+    const state = codeState || dialogState;
     const pending = this.pendingStates.get(state);
-    if (!pending) throw new Error("Invalid or expired OAuth state");
+    if (!pending) throw new OAuthLinkExpiredError();
     this.pendingStates.delete(state);
 
-    const tokens = await this.exchangeCode(code, pending.verifier, OAUTH_PLATFORM_REDIRECT, state);
-    const profileData = await this.fetchOAuthProfile(tokens.accessToken);
-    const displayName = profileData?.account?.display_name || profileData?.account?.full_name;
-    const orgName = profileData?.organization?.name;
-    const label = displayName ? (orgName ? `${displayName} (${orgName})` : displayName) : undefined;
-    return this.add({
-      email: profileData?.account?.email ?? tokens.email,
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
-      refreshExpiresAt: tokens.refreshExpiresAt,
-      label,
-      profileData,
-    });
+    try {
+      const tokens = await this.exchangeCode(code, pending.verifier, OAUTH_PLATFORM_REDIRECT, state);
+      const profileData = await this.fetchOAuthProfile(tokens.accessToken);
+      const displayName = profileData?.account?.display_name || profileData?.account?.full_name;
+      const orgName = profileData?.organization?.name;
+      const label = displayName ? (orgName ? `${displayName} (${orgName})` : displayName) : undefined;
+      return this.add({
+        email: profileData?.account?.email ?? tokens.email,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+        refreshExpiresAt: tokens.refreshExpiresAt,
+        label,
+        profileData,
+      });
+    } catch (e) {
+      // Only a sign-in that finishes spends the link. After a refused code, or a failure past
+      // Claude's answer, the right code or approving the same tab again can still finish it
+      // within its ten minutes.
+      this.pendingStates.set(state, pending);
+      throw e;
+    }
   }
 
   async completeOAuthFlow(code: string, state: string, redirectUri: string): Promise<Account> {
@@ -701,7 +731,16 @@ class AccountService {
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`OAuth token exchange failed: ${res.status} ${text}`);
+      // The body is Claude's JSON, and the dialog shows this message as it is: the log keeps the
+      // body, and the user reads Claude's own reason in a sentence that says what to do next.
+      log.warn(`OAuth code exchange refused: ${res.status} ${text.slice(0, 300)}`);
+      let reason = `HTTP ${res.status}`;
+      try {
+        const data = JSON.parse(text) as { error?: unknown; error_description?: unknown };
+        const said = data.error_description || data.error;
+        if (typeof said === "string") reason = said.replace(/\.$/, "");
+      } catch { /* not JSON: the status is all there is */ }
+      throw new Error(`Claude did not accept this code: ${reason}. Paste the whole code again, or click Cancel and Login with Claude to start over.`);
     }
     const data = await res.json() as Record<string, unknown> & {
       access_token: string;

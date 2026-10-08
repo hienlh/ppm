@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { accountService } from "../../services/account.service.ts";
+import { accountService, OAuthLinkExpiredError } from "../../services/account.service.ts";
 import { accountSelector } from "../../services/account-selector.service.ts";
 import { pickClaudeAccount } from "../../services/account-pick.service.ts";
 import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts";
@@ -154,7 +154,8 @@ accountsRoutes.post("/oauth/exchange", async (c) => {
     await refreshUsageForAccount(account.id);
     return c.json(ok(account));
   } catch (e) {
-    return c.json(err((e as Error).message), 400);
+    // 410: the link is gone, so the dialog goes back to the step that opens a new one.
+    return c.json(err((e as Error).message), e instanceof OAuthLinkExpiredError ? 410 : 400);
   }
 });
 

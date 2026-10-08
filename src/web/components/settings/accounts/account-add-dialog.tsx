@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "@/lib/icons";
 import { addAccount, getOAuthUrl, exchangeOAuthCode } from "../../../lib/api-settings";
+import { ApiError } from "../../../lib/api-client";
 
 // ── Add Account Dialog ─────────────────────────────────────────────
 
@@ -13,10 +14,11 @@ interface AddAccountDialogProps {
   onOpenChange: (open: boolean) => void;
   onSuccess: (msg?: string) => void;
   /**
-   * The label of an account being signed in again. Only the wording changes: the add flow
-   * already updates an account it matches by email or profile id, clearing its re-auth flag.
+   * The account being signed in again. The add flow already updates an account it matches by
+   * email or profile id, clearing its re-auth flag; the id tells the dialog whether the sign-in
+   * landed on this account or on another one.
    */
-  signInAgainFor?: string;
+  signInAgainFor?: { id: string; label: string };
 }
 
 export function AddAccountDialog({ open, onOpenChange, onSuccess, signInAgainFor }: AddAccountDialogProps) {
@@ -63,17 +65,27 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess, signInAgainFor
     setOauthLoading(true);
     setAddError(null);
     try {
-      let code = oauthCode.trim();
-      if (code.includes("#")) code = code.split("#")[0] ?? code;
-      const acc = await exchangeOAuthCode(code, oauthState);
+      // Sent whole: the `#state` after the code names the link it came from, which may be an
+      // earlier one than `oauthState`.
+      const acc = await exchangeOAuthCode(oauthCode.trim(), oauthState);
       handleClose();
-      // Signing in again on an account this machine parked carries the token in but
-      // deliberately leaves it out of the rotation. A flat success over a toggle that is
-      // still off reads as a bug, and this is the only place the user finds out otherwise.
-      onSuccess(acc?.status === "disabled"
-        ? "Signed in. This account is still disabled — enable it to use it."
-        : "Account connected via OAuth!");
+      if (signInAgainFor && acc && acc.id !== signInAgainFor.id) {
+        // Claude signed in a different account than the one this dialog renews. That sign-in is
+        // kept — the code is spent by the time PPM learns whose it is — but it must not read as
+        // the renewal the user asked for.
+        const other = acc.email || acc.label || acc.id.slice(0, 8);
+        onSuccess(`Signed in to ${other}, not ${signInAgainFor.label}. ${signInAgainFor.label} is still signed out — click "Sign in again" on it to fix it.`);
+      } else {
+        // Signing in again on an account this machine parked carries the token in but
+        // deliberately leaves it out of the rotation. A flat success over a toggle that is
+        // still off reads as a bug, and this is the only place the user finds out otherwise.
+        onSuccess(acc?.status === "disabled"
+          ? "Signed in. This account is still disabled — enable it to use it."
+          : "Account connected via OAuth!");
+      }
     } catch (e) {
+      // The server no longer holds that link, so no code can finish it: back to Login with Claude.
+      if (e instanceof ApiError && e.status === 410) resetOAuth();
       setAddError((e as Error).message);
     }
     setOauthLoading(false);
@@ -105,7 +117,7 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess, signInAgainFor
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-sm">{signInAgainFor ? `Sign in again — ${signInAgainFor}` : "Add Claude Account"}</DialogTitle>
+          <DialogTitle className="text-sm">{signInAgainFor ? `Sign in again — ${signInAgainFor.label}` : "Add Claude Account"}</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
             {signInAgainFor
               ? "Log in with the same Claude account. PPM matches it by email and renews the existing card instead of adding a new one."
