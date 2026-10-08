@@ -15,6 +15,7 @@ import {
 import { ok, err } from "../../types/api.ts";
 import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
 import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
+import { isPpmTool, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
 import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
@@ -191,6 +192,7 @@ settingsRoutes.put("/ai", async (c) => {
       new_chat_provider_mode?: NewChatProviderMode;
       share_provider_context?: boolean;
       tab_tools?: boolean;
+      ppm_tools?: PpmToolSwitches;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
@@ -208,6 +210,13 @@ settingsRoutes.put("/ai", async (c) => {
     }
     if ("tab_tools" in body && typeof body.tab_tools !== "boolean") {
       return c.json(err("tab_tools must be a boolean"), 400);
+    }
+    if ("ppm_tools" in body) {
+      const tools = body.ppm_tools as unknown;
+      if (!tools || typeof tools !== "object" || Array.isArray(tools)
+          || !Object.entries(tools).every(([name, on]) => isPpmTool(name) && typeof on === "boolean")) {
+        return c.json(err("ppm_tools must map PPM's tool names to booleans"), 400);
+      }
     }
 
     // Validate each provider config
@@ -233,6 +242,8 @@ settingsRoutes.put("/ai", async (c) => {
       new_chat_provider_mode: body.new_chat_provider_mode ?? currentAi.new_chat_provider_mode ?? "default",
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
+      // One switch at a time: the tools the body does not name keep theirs.
+      ...(body.ppm_tools && { ppm_tools: { ...currentAi.ppm_tools, ...body.ppm_tools } }),
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
     if (body.providers) {

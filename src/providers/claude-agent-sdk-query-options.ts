@@ -11,8 +11,10 @@ import {
   CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
 } from "../services/design/mcp/design-mcp-tool.ts";
 import {
-  CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
+  CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import { TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -249,8 +251,9 @@ export function designMcpServers(access: DesignMcpAccess | undefined): Record<st
 }
 
 /**
- * The tab-tools MCP server (`open_file`, `open_preview`) as the SDK's `http` server config,
- * while the user has the tools on; `{}` otherwise. The token travels in the header.
+ * The tab-tools MCP server (`open_file`, `open_preview`, `open_url`, `read_terminal`,
+ * `run_in_terminal`) as the SDK's `http` server config, while the user has any of them on; `{}`
+ * otherwise. The token travels in the header.
  */
 export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
   if (!access) return {};
@@ -264,20 +267,49 @@ export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined)
   };
 }
 
-/** They only open a tab for the user to look at, so they never ask first. */
-export const CLAUDE_TAB_TOOLS: readonly string[] = [CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL];
+/**
+ * Never asked about before they run: they open a tab for the user to look at, read the
+ * project's terminals, or type a command that runs only when the user presses Enter.
+ */
+export const CLAUDE_TAB_TOOLS: readonly string[] = TAB_TOOLS.map((tool) => `mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__${tool}`);
 
 /**
- * Spawn options as `spawnFingerprint` should compare them: the tab-tools token blanked. A
- * warm spare is started before its session exists, and its token is minted for the session
+ * The database tools' MCP server (`db_query`, `open_query`, `db_execute`) as the SDK's `http`
+ * server config, while a saved connection is available to the AI chat; `{}` otherwise. The
+ * timeout outlasts the user's time to approve a change and the change's own run.
+ */
+export function dbToolsMcpServers(access: DbToolsMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_DB_TOOLS_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: DB_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/**
+ * Never asked about before they run: `db_query` only reads, `open_query` opens a tab, and
+ * `db_execute` asks the user itself — with the SQL and PPM's password, which a generic Allow
+ * prompt in front of it would only repeat without either.
+ */
+export const CLAUDE_DB_TOOLS: readonly string[] = DB_TOOLS.map((tool) => `mcp__${CLAUDE_DB_TOOLS_MCP_SERVER}__${tool}`);
+
+/**
+ * Spawn options as `spawnFingerprint` should compare them: the tab and database tools' tokens
+ * blanked. A warm spare is started before its session exists, and its token is minted for the session
  * id it is given then — the one the session's own turns mint — so the token says nothing
  * the session id (which the fingerprint already leaves out) does not.
  */
 export function withSessionTokenMasked<T extends Record<string, unknown>>(options: T): T {
   const servers = options.mcpServers as Record<string, McpHttpServerConfig> | undefined;
-  const tabs = servers?.[CLAUDE_TAB_TOOLS_MCP_SERVER];
-  if (!servers || !tabs) return options;
-  return { ...options, mcpServers: { ...servers, [CLAUDE_TAB_TOOLS_MCP_SERVER]: { ...tabs, headers: { Authorization: "<session>" } } } };
+  const names = [CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_DB_TOOLS_MCP_SERVER].filter((name) => servers?.[name]);
+  if (!servers || names.length === 0) return options;
+  const masked = { ...servers };
+  for (const name of names) masked[name] = { ...masked[name]!, headers: { Authorization: "<session>" } };
+  return { ...options, mcpServers: masked };
 }
 
 /** Resolve per-call overrides against provider config. Per-call wins, else config, else omit. */

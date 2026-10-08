@@ -72,6 +72,7 @@
     "@xterm/addon-fit": "0.12.0-beta.285",
     "@xterm/addon-web-links": "0.13.0-beta.285",
     "@xterm/addon-webgl": "0.20.0-beta.284",
+    "@xterm/headless": "6.1.0-beta.285",
     "@xterm/xterm": "6.1.0-beta.285",
     "archiver": "^7.0.1",
     "class-variance-authority": "^0.7.1",

@@ -215,6 +215,27 @@ describe("PUT /settings/ai", () => {
     }
   });
 
+  it("switches PPM's tools one at a time, and refuses tool names and values it does not know", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const res = await put({ ppm_tools: { db_execute: false } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.ppm_tools).toEqual({ db_execute: false });
+    expect((await put({ ppm_tools: { open_file: true } })).status).toBe(200);
+    expect(configService.load().ai.ppm_tools).toEqual({ db_execute: false, open_file: true });
+    for (const value of [{ Bash: false }, { db_query: "off" }, [], null, "db_query"]) {
+      expect((await put({ ppm_tools: value })).status).toBe(400);
+    }
+    // An own `__proto__` key, as JSON.parse makes one (an object literal would set the prototype).
+    const raw = await app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: '{"ppm_tools":{"__proto__":false}}',
+    });
+    expect(raw.status).toBe(400);
+    expect(configService.load().ai.ppm_tools).toEqual({ db_execute: false, open_file: true });
+  });
+
   it("updates provider config and returns merged result", async () => {
     const app = createApp();
     const res = await app.request("/settings/ai", {

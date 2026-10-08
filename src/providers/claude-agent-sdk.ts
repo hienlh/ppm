@@ -7,9 +7,14 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
+import { aiConnections } from "../services/db-ai-tools/db-ai-connections.ts";
+import { DB_TOOLS } from "../shared/db-ai-tools.ts";
+import { OPEN_PREVIEW_TOOL } from "../shared/tab-open-protocol.ts";
+import { anyPpmToolOn, ppmToolOn, TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
 import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
@@ -488,9 +493,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1", CLAUDE_CODE_ENABLE_TASKS: "1" }
       : {};
 
-    // PPM's own tab tools replace the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
+    // PPM's `open_preview` replaces the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
     // `ArtifactData`), whose pages live on claude.ai rather than in PPM.
-    const artifactEnv = configService.get("ai").tab_tools ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
+    const artifactEnv = ppmToolOn(configService.get("ai"), OPEN_PREVIEW_TOOL) ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
 
     return {
       ...base,
@@ -1011,14 +1016,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // The chat's turns will carry the tab tools too (`chatService.prepareSendOptions`); their
     // token is minted below, once the spare has the session id it will be taken over with.
-    const base = configService.get("ai").tab_tools === true ? localServerBaseUrl() : null;
+    const ai = configService.get("ai");
+    const base = anyPpmToolOn(ai, TAB_TOOLS) ? localServerBaseUrl() : null;
     const tabTools = base ? { url: `${base}${TAB_TOOLS_MCP_PATH}`, token: "" } : null;
+    // Likewise the database tools, while a saved connection is available to the AI chat.
+    const dbBase = anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0 ? localServerBaseUrl() : null;
+    const dbTools = dbBase ? { url: `${dbBase}${DB_TOOLS_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
       systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
-      mcpServers: { ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools) },
+      mcpServers: { ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools), ...dbToolsMcpServers(dbTools) },
       permissionMode,
       opts,
       providerConfig,
@@ -1027,11 +1036,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.warmSpares.offer(projectPath, spawnFingerprint(withSessionTokenMasked(options)), (sessionId, callbacks) => {
       const { generator, controller } = createMessageChannel();
       const access = tabTools ? tabToolsMcpAccessFor(sessionId) : null;
+      const dbAccess = dbTools ? dbToolsMcpAccessFor(sessionId) : null;
       const q = query({
         prompt: generator,
         options: {
           ...options,
-          ...(access && { mcpServers: { ...options.mcpServers, ...tabToolsMcpServers(access) } }),
+          ...((access || dbAccess) && { mcpServers: { ...options.mcpServers, ...tabToolsMcpServers(access), ...dbToolsMcpServers(dbAccess) } }),
           sessionId,
           stderr: callbacks.stderr,
           hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand }),
@@ -1135,6 +1145,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // `design_check` only reads the canvas, so a design session never asks before it runs.
     const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
     const tabToolsMcp = opts?.designSession ? undefined : opts?.tabToolsMcp;
+    const dbToolsMcp = opts?.designSession ? undefined : opts?.dbToolsMcp;
     const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
 
     /**
@@ -1201,6 +1212,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       if (designCheckTool && toolName === designCheckTool) return preToolUseDecision("allow");
       if (tabToolsMcp && CLAUDE_TAB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
+      if (dbToolsMcp && CLAUDE_DB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
 
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
@@ -1390,6 +1402,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...this.resolveMcpServers(effectiveCwd),
         ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
         ...tabToolsMcpServers(tabToolsMcp),
+        ...dbToolsMcpServers(dbToolsMcp),
       };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time

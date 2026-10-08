@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
-import { ArrowRightFromLine, ChevronDown, Gauge, GripHorizontal, History, IndentIncrease, MoreHorizontal, Play, Save, Square, TextSelect } from "@/lib/icons";
+import { ArrowRightFromLine, ChevronDown, Gauge, GripHorizontal, History, IndentIncrease, MoreHorizontal, Play, Save, ShieldAlert, Square, TextSelect } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { targetLabel } from "@/lib/db-tabs";
 import { formatCombo } from "@/stores/keybindings-store";
@@ -22,6 +22,7 @@ import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useAtMostWide } from "@/hooks/use-at-most-wide";
 import { useTabStore } from "@/stores/tab-store";
+import { getAuthToken } from "@/lib/api-client";
 import { unsavedGridRows } from "@/stores/unsaved-grid-rows-store";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { DEFAULT_QUERY_ROW_LIMIT, QUERY_ROW_LIMITS } from "../../../../shared/db-query-script";
@@ -37,10 +38,11 @@ import { openImpExpTab } from "../impexp/open-impexp-tab";
 import { useQueryRunner, type QueryRunRequest } from "./use-query-runner";
 import { useSqlSchemaInfo } from "./use-sql-schema-info";
 import { QueryTargetPicker } from "./query-target-picker";
-import { resultOfTab, shownResultTab, stopTitle, type QueryResultTab, type QueryRunKind } from "./query-run-state";
+import { refusedAsReadonly, resultOfTab, shownResultTab, stopTitle, type QueryResultTab, type QueryRunKind } from "./query-run-state";
 import { ResultTabs } from "./result-tabs";
 import { ResultView } from "./result-view";
 import { DiscardResultEditsDialog } from "./discard-result-edits-dialog";
+import { WriteOnceDialog } from "./write-once-dialog";
 import { HistoryPanel } from "./history-panel";
 import { queryFileTitle, savedFileOf, savedQueryTab } from "./query-file";
 import { useQueryFileSave } from "./use-query-file-save";
@@ -100,6 +102,9 @@ export function QueryTab({ metadata, tabId }: Props) {
     if (tabId && unsavedGridRows(tabId) > 0) setDiscardAsk(request);
     else void runner.start(request);
   }, [runner.running, runner.start, tabId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A run a readonly connection refused can run once with write access, for PPM's password.
+  const [writeOnceAsk, setWriteOnceAsk] = useState<QueryRunRequest | null>(null);
+  const offerWriteOnce = tab.readonly && !!run && !runner.running && refusedAsReadonly(run);
   const runSql = useCallback((r: SqlRun | null, kind?: QueryRunKind) => {
     if (r) start({ sql: r.sql, lineOffset: r.lineOffset, kind: kind ?? KIND_OF[r.from] });
   }, [start]);
@@ -297,14 +302,28 @@ export function QueryTab({ metadata, tabId }: Props) {
           >
             <GripHorizontal className="size-3 text-text-subtle/50" />
           </div>
-          <div className="min-h-0 flex-1 overflow-hidden border-t border-border md:border-t-0">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border md:border-t-0">
+            {offerWriteOnce && run && (
+              <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-warning/10 px-3 py-1.5 text-xs">
+                <ShieldAlert className="size-4 shrink-0 text-warning" />
+                <span className="min-w-0 flex-1">{tab.name} is readonly.</span>
+                <button
+                  type="button" onClick={() => setWriteOnceAsk({ sql: run.sql, kind: run.kind, lineOffset: run.lineOffset })}
+                  className="h-7 shrink-0 rounded border border-warning/50 px-2.5 font-medium text-warning can-hover:hover:bg-warning/15 max-md:h-11"
+                >
+                  Run with write access (once)
+                </button>
+              </div>
+            )}
             {runner.driverMissing ? (
               <DbTabState driver={runner.driverMissing} />
             ) : run ? (
-              <ResultTabs
-                run={run} shown={shown} onPick={pick} onShowLine={showLine}
-                onStop={() => void runner.stop()} stopping={runner.stopping} renderResult={renderResult}
-              />
+              <div className="min-h-0 flex-1">
+                <ResultTabs
+                  run={run} shown={shown} onPick={pick} onShowLine={showLine}
+                  onStop={() => void runner.stop()} stopping={runner.stopping} renderResult={renderResult}
+                />
+              </div>
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-1 p-4 text-center text-xs text-text-subtle">
                 <span>Run a statement to see its result</span>
@@ -368,6 +387,13 @@ export function QueryTab({ metadata, tabId }: Props) {
         </div>
       </BottomSheet>
 
+      {writeOnceAsk && (
+        <WriteOnceDialog
+          connectionName={tab.name} sql={writeOnceAsk.sql} passwordRequired={!!getAuthToken()}
+          onCancel={() => setWriteOnceAsk(null)}
+          onRun={(password) => { const request = writeOnceAsk; setWriteOnceAsk(null); start({ ...request, writeOnce: { password } }); }}
+        />
+      )}
       {discardAsk && (
         <DiscardResultEditsDialog
           onCancel={() => setDiscardAsk(null)}
