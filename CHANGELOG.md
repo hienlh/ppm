@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.13] - 2026-10-08
 
 ### Added
 
@@ -86,6 +86,18 @@
 
 - **Notifications through ntfy**, on ntfy.sh or a server of your own. Enter the server, a topic (PPM suggests one that is hard to guess) and, for a server that requires sign-in, an access token; PPM checks that the address answers as ntfy and that the server accepts the token before saving, and saving a different server in Settings drops the token saved for the old one instead of sending it to the new one. Every phone or computer subscribed to the topic gets the same text as push, with a tap that opens the session; an approval or a question goes out at ntfy's high priority. ntfy has its own switch, Send a test, a link to the topic and a short guide, including the `upstream-base-url` setting an iPhone needs to get instant alerts from a self-hosted server.
 
+- **The System Monitor's Apps page works on Windows.** It used to say "This host does not list desktop applications". An app is now what Task Manager's Apps group shows — a process owning a visible, titled, top-level window — read over Win32 and named by its executable's own description. The page is sorted by memory, biggest first.
+
+- **The System Monitor's Services page works on Windows.** It used to say the host had no service manager; it now reads the Service Control Manager, with startup type, exit code and pid on the list and this boot's Event Log entries behind each service. One long-lived PowerShell session answers every poll rather than a process per poll.
+
+- **Remote Desktop offers each Windows monitor separately.** Windows listed one display — the whole virtual desktop — so monitors of different sizes streamed as one oversized frame holding area no screen shows. Each monitor is now its own entry to capture and control.
+
+- **An Install ffmpeg button on Remote Desktop's Windows readiness screen.** The checklist used to offer only a `winget` command to type into a terminal. It now runs the install on the host, shows its progress and WinGet's own error, and the re-check picks up the result without restarting PPM.
+
+- **A long chat opens a page at a time.** Opening a chat tab used to parse and render every message since the last compaction, which on a long session is thousands of bubbles and, on the server, minutes of CPU for a transcript in the hundreds of megabytes. History now arrives in windows, and scrolling up asks for the next one.
+
+- **An opt-in server memory monitor, `PPM_MEM_DIAG=1`.** Off unless set. It appends memory use, what grew and a few gauges to `<ppm dir>/mem-diag.log` every 30 seconds, and writes a heap snapshot the first time the heap crosses 1, 2, 4 and 8 GB — for diagnosing a server whose memory climbs.
+
 ### Changed
 
 - **PPM's own public link moved from the sidebar's Tunnels panel to Settings → Remote Access, next to Tailscale; forwarding a port stays in the sidebar.** Remote Access has one sub-tab per way to reach PPM itself: Tailscale (the pane as it was) and Public link, which puts the on/off switch first, shows the link with Copy, Open and a QR code, and sets the two kinds of address side by side — a temporary trycloudflare.com one, or your own domain, set up right there. The sidebar panel, now Port Forwarding, opens with one row each for Tailscale and Cloudflare saying where it stands, and Set up (Manage once it is done) opens that service's sub-tab: signing in happens there, never in the panel. Below them it takes a port and a choice of Tailscale (your tailnet only) or Cloudflare (anyone with the link, no sign-in needed), and lists every forward with Open in a tab, Copy and Stop; a tunnel started outside PPM asks before it is stopped, and PPM's own link opens the Public link tab instead of offering Stop. Remote Access and Forward a Port in the command palette open them, on a phone too.
@@ -163,6 +175,16 @@
 - **On a phone, a long-press menu's sheet could be scrolled sideways by 4 px.**
 
 - **An extension panel such as the Git Graph came back in the old theme after its tab moved.** Change the theme, then split the panel, drag its tab elsewhere, or cross between the desktop and phone layouts, and the panel reloaded in the theme it had opened with and kept it until the next theme change. A panel is now told the current theme each time it loads; in Chrome the right theme was in place before the panel's first paint.
+
+- **A Claude chat could be resumed as Codex, answer "transcript was not found" and drop the message.** A session row written while marking a chat unread or claiming an account carried no provider, so every reader fell back to the install's default — which on a Codex-default install was the wrong one. The provider is recorded now.
+
+- **A long chat stopped loading its history and kept the server busy parsing.** Each state update asked the tab to refetch, and the refetch cancelled the one already on its way; on a transcript big enough that an answer takes longer than the gap between asks, none ever finished. Measured on an 85 MB transcript, it took 110 seconds a round and 368 requests piled up.
+
+- **Scrolling up in a long chat could drop the page just loaded, and lose an edit's place.** A refetch that answered after an older page had landed replaced the window with its own stale slice.
+
+- **Two Windows Store apps shared one row in the System Monitor**, because every Store app window is framed by one shared host process. End on either row killed both, and each counted the other's CPU and memory. Each app is its own row now, and a process is counted under one app only.
+
+- **A Windows service could be stopped through the API without the guard that protects critical services.** The guard and the no-op shortcuts read the last listing, which is empty until the page has been opened once and stale after any change — so a direct request could stop RPC or Audio, and a stop followed by a start answered "already running" without starting it.
 
 ## [0.23.12] - 2026-10-02
 
