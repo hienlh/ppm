@@ -95,11 +95,29 @@ function spawnBunPty(
     env: withoutAiChatMark(process.env as Record<string, string>),
   });
 
-  pty.onData(onData);
-  pty.onExit((e: { exitCode?: number; signal?: number | string } | undefined) =>
-    onExit(e?.exitCode ?? null, e?.signal ? String(e.signal) : null));
+  return bunPtyHandle(pty, onData, onExit);
+}
 
+/** What `spawnBunPty` uses of a bun-pty process. */
+export interface BunPtyProcess {
+  onData(listener: (data: string) => void): void;
+  onExit(listener: (e: { exitCode?: number; signal?: number | string } | undefined) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  readonly pid?: number;
+}
+
+/** A bun-pty process as a `PtyHandle`. */
+export function bunPtyHandle(pty: BunPtyProcess, onData: (text: string) => void, onExit: ExitHandler): PtyHandle {
   let _closed = false;
+  // bun-pty never reports a ConPTY whose shell exited as closed; Bun's native terminal does.
+  let exited = false;
+  pty.onData(onData);
+  pty.onExit((e) => {
+    exited = true;
+    onExit(e?.exitCode ?? null, e?.signal ? String(e.signal) : null);
+  });
   return {
     write: (data) => pty.write(data),
     resize: (c, r) => pty.resize(c, r),
@@ -108,7 +126,7 @@ function spawnBunPty(
       _closed = true;
       try { pty.kill(); } catch { /* already dead */ }
     },
-    get closed() { return _closed; },
+    get closed() { return _closed || exited; },
     pid: pty.pid,
   };
 }

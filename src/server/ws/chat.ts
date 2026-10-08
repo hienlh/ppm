@@ -577,6 +577,22 @@ function showWaitingDbApproval(sessionId: string, entry: SessionEntry): void {
   broadcast(sessionId, waiting);
 }
 
+/** What the AI hears when its `db_execute` is still waiting as the turn ends. */
+const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothing ran.";
+
+/**
+ * Empties the session's one approval slot. A `db_execute` approval waiting behind a provider's
+ * is shown in its place (`showWaitingDbApproval`), or, given a reason, cancelled first: the
+ * user moved on, or the turn its call belongs to is over. Every place that empties the slot,
+ * but a database approval's own answer (`dbApprovalResolved`), comes through here, so none can
+ * leave a database approval waiting for a card nobody sees.
+ */
+function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelDbApproval?: string): void {
+  if (cancelDbApproval) dbApprovalBroker.cancelSession(sessionId, cancelDbApproval);
+  entry.pendingApprovalEvent = undefined;
+  showWaitingDbApproval(sessionId, entry);
+}
+
 /**
  * Forward an event to connected WS clients for a session (if any).
  * Used by background processes (e.g. Jira debug) that run sessions server-side
@@ -839,7 +855,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   log.debug(`session=${sessionId} startSessionConsumer started (clients=${entry.clients.size})`);
 
   entry.isStreamingActive = true;
-  entry.pendingApprovalEvent = undefined;
+  clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
   entry.turnEvents = [];
   entry.nestedBuffered = 0;
   entry.finalText = undefined;
@@ -1227,7 +1243,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       if (evType === "done") {
         entry.turnEvents = [];
         entry.nestedBuffered = 0;
-        entry.pendingApprovalEvent = undefined;
+        clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
         // Clear stale compact status if turn ended without compact_boundary.
         // SDK may emit `status: compacting` without a matching boundary (deferred,
         // resolved, or errored); without this clear, UI shows stuck "Compacting…".
@@ -1267,7 +1283,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       broadcast(sessionId, { type: "compact_status", status: "done" });
     }
     setPhase(sessionId, "idle");
-    entry.pendingApprovalEvent = undefined;
+    clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
     // Cleanup bash output spies
     bashOutputSpy.stopAllForSession(sessionId);
     // SDK subprocess teardown kills its background children — reflect as stopped
@@ -1642,14 +1658,13 @@ export const chatWebSocket = {
           dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
         } else {
           chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
-          entry.pendingApprovalEvent = undefined;
           broadcast(sessionId, {
             type: "approval_resolved",
             requestId: pendingReqId,
             approved: false,
             answers: null,
           });
-          dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
+          clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
         }
         logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
       }
@@ -1719,7 +1734,7 @@ export const chatWebSocket = {
         }
         // Clear turn events for new turn display + transition phase
         entry.turnEvents = [];
-        entry.pendingApprovalEvent = undefined;
+        clearPendingApproval(sessionId, entry);
         setPhase(sessionId, "thinking");
         log.debug(`session=${sessionId} follow-up pushed to generator`);
       }
@@ -1853,7 +1868,7 @@ export const chatWebSocket = {
           return;
         }
         entry.turnEvents = [];
-        entry.pendingApprovalEvent = undefined;
+        clearPendingApproval(sessionId, entry);
         setPhase(sessionId, "thinking");
       }
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
@@ -1862,7 +1877,6 @@ export const chatWebSocket = {
       if (dbApprovalBroker.has(parsed.requestId)) return;
       chatService.resolveApproval(providerId, sessionId, parsed.requestId, parsed.approved, (parsed as any).data, { origin: "ws" });
       if (entry) {
-        entry.pendingApprovalEvent = undefined;
         // Enrich the buffered approval_request with response data so replayed
         // events render correctly (e.g. AskUserQuestion shows answered state)
         const respData = (parsed as any).data;
@@ -1887,7 +1901,8 @@ export const chatWebSocket = {
         });
         // Broadcast approval cleared to all clients
         broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
-        showWaitingDbApproval(sessionId, entry);
+        // After the broadcasts above, so a database approval shown next is not cleared with them.
+        clearPendingApproval(sessionId, entry);
       }
     }
   },

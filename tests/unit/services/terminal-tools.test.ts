@@ -34,6 +34,7 @@ function setup(opts: {
   onCreate?: (t: FakeTerminal) => void;
   /** Runs on every wait, with the clock already moved on: a shell printing while PPM waits. */
   onSleep?: (now: number) => void;
+  canonical?: (sessionId: string) => string;
 } = {}) {
   let clock = 1_000_000_000;
   let made = 0;
@@ -71,6 +72,7 @@ function setup(opts: {
       return opts.outcome ?? OPENED;
     },
     enabled: opts.enabled ?? (() => true),
+    ...(opts.canonical ? { canonical: opts.canonical } : {}),
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;
@@ -162,7 +164,7 @@ describe("read_terminal", () => {
 });
 
 describe("run_in_terminal", () => {
-  it("starts a shell in the project, asks the device to show it, and types the command once the prompt is drawn", async () => {
+  it("starts a shell in the project, asks the device to show it, and types the command once the shell has settled", async () => {
     const { tools, terms, requests, binding, text } = setup();
     const result = await tools.run(binding, { command: "  sudo apt install ffmpeg  " });
     const [t] = [...terms.values()];
@@ -189,12 +191,25 @@ describe("run_in_terminal", () => {
     const { tools, terms, requests, binding } = setup();
     for (const command of [
       "", "   ", 42, "echo a\nrm -rf ~", "echo a\rrm -rf ~", "ls\t-la", "printf '\x1b[2J'", "ls \x7f",
-      "echo safe‮#fr- mr", "echo​hi", "x".repeat(4001),
+      "echo safe\u202e#fr- mr", "echo\u200bhi", "x".repeat(4001),
+      // Tags, a variation selector, the grapheme joiner, interlinear annotation, the soft hyphen,
+      // isolates and a Hangul filler: each draws nothing in xterm.
+      "echo a\u{e0041}", "echo \u2764\ufe0f", "e\u034fcho", "echo \ufff9x\ufffay\ufffb", "rm -rf\u00ad /",
+      "echo \u2066x\u2069", "echo \u115f",
+      // Spaces and breaks other than the plain space.
+      "rm\u00a0-rf", "ls\u3000-la", "echo a\u2028rm -rf ~", "echo a\u2029b",
     ]) {
       expect((await tools.run(binding, { command })).isError).toBe(true);
     }
     expect(terms.size).toBe(0);
     expect(requests).toEqual([]);
+  });
+
+  it("types Vietnamese, emoji and combining accents as they are", async () => {
+    const { tools, terms, binding } = setup();
+    const commands = ["echo 'Xin chào thế giới'", "git commit -m 'sửa lỗi 🚀👍🏽'", "echo 'Vie\u0302\u0323t'"];
+    for (const command of commands) expect((await tools.run(binding, { command })).isError).toBeUndefined();
+    expect([...terms.values()].flatMap((t) => t.written)).toEqual(commands);
   });
 
   it("starts in the folder asked for, relative to the project or absolute, and only in a folder that exists", async () => {
@@ -247,11 +262,37 @@ describe("run_in_terminal", () => {
     expect(t.writtenAt[0]! - Date.parse(t.createdAt)).toBe(8_000);
   });
 
-  it("types nothing into a shell that exited before its prompt", async () => {
-    const { tools, terms, binding, text } = setup({ onCreate: (t) => { t.closed = true; } });
+  it("closes a shell that exited before it settled, and types nothing into it", async () => {
+    let shell: FakeTerminal | undefined;
+    const { tools, terms, binding, text } = setup({ onCreate: (t) => { shell = t; t.closed = true; } });
     const result = await tools.run(binding, { command: "ls" });
+    expect(result.isError).toBe(true);
     expect(text(result)).toContain("The shell exited before the command could be typed");
-    expect([...terms.values()][0]!.written).toEqual([]);
+    expect(shell!.written).toEqual([]);
+    expect(terms.size).toBe(0);
+  });
+
+  it("types nothing into a shell that settled on a question of its own, and leaves it to the user", async () => {
+    for (const question of [
+      "[oh-my-zsh] Would you like to update? [Y/n] ", "Proceed (y/n) ", "Overwrite? (yes/no) ", "zsh: correct 'sl' to 'ls' [nyae]? ", "Continue? ",
+    ]) {
+      const { tools, terms, binding, text } = setup({ onCreate: (t) => { t.buffer = `Last login: Wed Oct  8 09:12:44\r\n${question}`; } });
+      const result = await tools.run(binding, { command: "y", cwd: elsewhere });
+      const [shell] = [...terms.values()];
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe(
+        "The new terminal (00000001) is waiting on a question its shell asked as it started, so nothing was typed: "
+        + "the command's first key would have answered it. Ask the user to answer it there, then give them the command to run. "
+        + 'read_terminal with `terminal` "00000001" shows it.',
+      );
+      expect(shell!.written).toEqual([]);
+      // Still open, and this chat's to read although it started outside the project.
+      expect(text(await tools.read(binding, {}))).toContain(question.trim());
+    }
+    // A prompt that merely has brackets or a question mark earlier on is not a question.
+    const prompt = setup({ onCreate: (t) => { t.buffer = "Why not? Run it.\r\nthang@box ~/proj [main] $ "; } });
+    await prompt.tools.run(prompt.binding, { command: "ls" });
+    expect([...prompt.terms.values()][0]!.written).toEqual(["ls"]);
   });
 
   it("lets the chat that opened a terminal read it wherever it started, and no other chat", async () => {
@@ -260,6 +301,19 @@ describe("run_in_terminal", () => {
     const [t] = [...terms.values()];
     t!.buffer = "$ tail -f /var/log/syslog\r\nkernel: hello\r\n";
     expect(text(await tools.read(binding, {}))).toContain("kernel: hello");
+    expect((await tools.read({ ...binding, sessionId: "chat-other" }, {})).isError).toBe(true);
+  });
+
+  it("still reads the terminals it opened after its provider renamed the chat", async () => {
+    const renamed = new Map<string, string>();
+    const { tools, terms, binding, text } = setup({ canonical: (sessionId) => renamed.get(sessionId) ?? sessionId });
+    await tools.run(binding, { command: "tail -f /var/log/syslog", cwd: elsewhere });
+    [...terms.values()][0]!.buffer = "kernel: hello\r\n";
+    // Codex renames a new chat during its first turn.
+    renamed.set("chat-1", "codex-thread-9");
+    for (const sessionId of ["codex-thread-9", "chat-1"]) {
+      expect(text(await tools.read({ ...binding, sessionId }, {}))).toContain("kernel: hello");
+    }
     expect((await tools.read({ ...binding, sessionId: "chat-other" }, {})).isError).toBe(true);
   });
 });

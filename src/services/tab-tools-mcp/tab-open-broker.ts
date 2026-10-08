@@ -134,7 +134,10 @@ export function setTabOpenDelivery(fn: TabOpenDelivery | null, canonical?: (sess
   resolveSession = canonical ?? ((sessionId) => sessionId);
 }
 
+/** The chat a session id names now, after any rename its provider made. */
+export const canonicalTabSession = (sessionId: string): string => resolveSession(sessionId);
+
 export const tabOpenBroker = createTabOpenBroker({
   deliver: (sessionId, req) => delivery?.(sessionId, req) ?? 0,
-  canonical: (sessionId) => resolveSession(sessionId),
+  canonical: canonicalTabSession,
 });

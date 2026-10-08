@@ -10,7 +10,7 @@ import { listTailscaleForwards, startTailscaleForward } from "../port-forward/ta
 import { localServerBaseUrl } from "../server-listen-address.ts";
 import { terminalService } from "../terminal.service.ts";
 import { createOpenUrlTool, type OpenUrlTool } from "./open-url-tool.ts";
-import { deviceError, tabOpenBroker, type TabOpenOutcome } from "./tab-open-broker.ts";
+import { canonicalTabSession, deviceError, tabOpenBroker, type TabOpenOutcome } from "./tab-open-broker.ts";
 import { resolveTabTarget, type TabTarget, type TabTargetOutcome, type TabToolsBinding } from "./tab-target.ts";
 import { tabToolsMcpTokens, type TabToolsTokenBinding } from "./tab-tools-mcp-tokens.ts";
 import {
@@ -148,9 +148,10 @@ export const tabToolsMcpHandler = createTabToolsMcpHandler({
   sessionProject,
   request,
   enabled,
-  terminal: createTerminalTools({ terminals: terminalService, request, enabled }),
+  terminal: createTerminalTools({ terminals: terminalService, request, enabled, canonical: canonicalTabSession }),
   openUrl: createOpenUrlTool({
     request,
+    canonical: canonicalTabSession,
     listening: async (port) => (await listeningLoopback(port)) !== null,
     ownPorts: ppmPorts,
     existingForward: (port) => existingForwardFor(port),

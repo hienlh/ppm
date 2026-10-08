@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from "bun:test";
 import { Hono } from "hono";
 import { openTestDb, setDb, getConfigValue } from "../../../src/services/db.service.ts";
 import { settingsRoutes } from "../../../src/server/routes/settings.ts";
@@ -8,6 +8,18 @@ import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 function createApp() {
   return new Hono().route("/settings", settingsRoutes);
 }
+
+// Each test swaps in a fresh database (`setDb` closes the one before) and reloads config, which
+// turns auth back on with a new token. The files that run after this one in the same process get
+// a fresh database again and the config they had, auth off as `test-setup.ts` leaves it.
+let processConfig: unknown;
+beforeAll(() => {
+  processConfig = structuredClone((configService as any).config);
+});
+afterAll(() => {
+  setDb(openTestDb());
+  (configService as any).config = processConfig;
+});
 
 /** Set config to known defaults — uses in-memory DB to avoid corrupting prod */
 function resetConfig() {
