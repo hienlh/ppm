@@ -30,6 +30,39 @@ chatGlobalRoutes.get("/sessions/running", async (c) => {
   }
 });
 
+/**
+ * POST /chat/sessions/:id/release — let a tool outside PPM continue this session.
+ *
+ * A Claude session is one JSONL file, and two processes appending to it at once split its
+ * history into branches. PPM keeps an idle session's subprocess for up to an hour, and for as
+ * long as its tab is open, so a script resuming the session from outside had to fork it into
+ * a copy instead. Dropping the idle subprocess lets that script write into the session itself;
+ * PPM's next turn is rebuilt from disk.
+ *
+ * Refused with 409 mid-turn, where the answer being streamed would be lost, and while a
+ * background agent or shell is running in the subprocess, which would die with it.
+ */
+chatGlobalRoutes.post("/sessions/:id/release", async (c) => {
+  try {
+    const sessionId = c.req.param("id");
+    const { listRunningSessions, dropIdleSubprocess, hasBackgroundWork } = await import("../ws/chat.ts");
+    if (listRunningSessions().some((s) => s.sessionId === sessionId)) {
+      return c.json(err("Session is running — wait for the turn to finish"), 409);
+    }
+    if (hasBackgroundWork(sessionId)) {
+      return c.json(err("A background agent or shell is still running in this session"), 409);
+    }
+    dropIdleSubprocess(
+      sessionId,
+      "external_writer",
+      "Subprocess released: another tool is continuing this session, so the next turn is rebuilt from disk",
+    );
+    return c.json(ok({ sessionId }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** POST /chat/sessions/read — mark many sessions as read, in one request */
 chatGlobalRoutes.post("/sessions/read", async (c) => {
   try {
