@@ -3,17 +3,22 @@ import { useProjectStore } from "@/stores/project-store";
 import { absoluteProjectPath, relativeProjectPath } from "@/stores/file-store";
 import { fsApi } from "@/lib/fs-api";
 import { basename } from "@/lib/utils";
-import { chooseAiTabPlacement, isTabForFile } from "./ai-tab-placement";
+import { previewTitle } from "./web-preview-url";
+import { chooseAiTabPlacement, isTabForFile, type AiTabPlacement, type PlacementTab } from "./ai-tab-placement";
 import { latestPreviewLoad, previewKey, waitForPreviewLoad } from "./html-preview-loads";
 import { nextQueryNumber, queryTabMetadata, targetFields } from "./db-tabs";
-import type { TabOpenRequest, TabOpenResult, TabTool } from "../../shared/tab-open-protocol";
+import {
+  OPEN_URL_TOOL, RUN_IN_TERMINAL_TOOL, type TabOpenRequest, type TabOpenResult, type TabOpenTerminalRequest, type TabOpenUrlRequest,
+  type TabTool,
+} from "../../shared/tab-open-protocol";
 import { OPEN_QUERY_TOOL, type DbQueryTabOpen } from "../../shared/db-ai-tools";
 
 /**
- * Opens the tab the AI asked for with `open_file`, `open_preview` or `open_query`, beside the
- * chat that asked (`ai-tab-placement.ts` decides where), and answers the server's `tab_open`. A tool
- * card's Open button goes through the same {@link openAiTab}, so a tab reopened from the
- * chat's history lands where the AI's own call put it.
+ * Opens the tab the AI asked for with `open_file`, `open_preview`, `open_query` or `open_url`,
+ * beside the chat that asked (`ai-tab-placement.ts` decides where), or the terminal
+ * `run_in_terminal` started, in the dock; and answers the server's `tab_open`. A tool card's
+ * Open button goes through the same {@link openAiTab}, so a tab reopened from the chat's
+ * history lands where the AI's own call put it.
  *
  * The editor reads `aiView` and `aiOpenAt` from the tab's metadata: every call switches the
  * view the tool asked for and reloads a preview, also in a tab that was already open.
@@ -52,11 +57,8 @@ function showChatWorkspace(projectName: string | undefined): void {
   usePanelStore.getState().switchProject(projectName);
 }
 
-/**
- * Opens (or brings back) the file's tab. Returns the preview key the editor will load the
- * page under and the last load already seen there, so a caller can wait for the next one.
- */
-export function openAiTab(target: AiTabTarget, chat: AiTabChat): { tabId: string; previewKey: string; before: number } {
+/** Where a tab goes beside the chat, in the chat's workspace, which is brought up first. */
+function placeBesideChat(chat: AiTabChat, isTarget: (tab: PlacementTab) => boolean): AiTabPlacement {
   showChatWorkspace(chat.projectName);
   const store = usePanelStore.getState();
   const placement = chooseAiTabPlacement({
@@ -65,9 +67,32 @@ export function openAiTab(target: AiTabTarget, chat: AiTabChat): { tabId: string
     focusedPanelId: store.focusedPanelId,
     mobile: store.isMobile(),
     sessionId: chat.sessionId,
-    isTarget: (tab) => isTabForFile(tab, target.filePath, target.projectName),
+    isTarget,
   });
   if (!placement) throw new Error("PPM has no panel to open the tab in");
+  return placement;
+}
+
+/** Brings a tab that is already open to where the placement wants it: in front, moved or split out. */
+function showExistingTab(placement: Exclude<AiTabPlacement, { kind: "open" }>): void {
+  const store = usePanelStore.getState();
+  const fromPanelId = placement.kind === "focus" ? placement.panelId : placement.fromPanelId;
+  if (placement.kind === "focus") {
+    store.setActiveTab(placement.tabId, placement.panelId);
+  } else if (placement.toPanelId) {
+    store.moveTab(placement.tabId, fromPanelId, placement.toPanelId);
+  } else if (!store.splitPanel("right", placement.tabId, fromPanelId)) {
+    store.setActiveTab(placement.tabId, fromPanelId);
+  }
+}
+
+/**
+ * Opens (or brings back) the file's tab. Returns the preview key the editor will load the
+ * page under and the last load already seen there, so a caller can wait for the next one.
+ */
+export function openAiTab(target: AiTabTarget, chat: AiTabChat): { tabId: string; previewKey: string; before: number } {
+  const placement = placeBesideChat(chat, (tab) => isTabForFile(tab, target.filePath, target.projectName));
+  const store = usePanelStore.getState();
 
   const now = Date.now();
   const aiView = target.line ? "code" : target.tool === "open_preview" ? "preview" : undefined;
@@ -95,13 +120,7 @@ export function openAiTab(target: AiTabTarget, chat: AiTabChat): { tabId: string
   const key = previewKey(metadata.projectName as string | undefined, String(metadata.filePath ?? target.filePath));
   const before = latestPreviewLoad(key);
   store.updateTab(placement.tabId, { metadata });
-  if (placement.kind === "focus") {
-    store.setActiveTab(placement.tabId, placement.panelId);
-  } else if (placement.toPanelId) {
-    store.moveTab(placement.tabId, fromPanelId, placement.toPanelId);
-  } else if (!store.splitPanel("right", placement.tabId, fromPanelId)) {
-    store.setActiveTab(placement.tabId, fromPanelId);
-  }
+  showExistingTab(placement);
   return { tabId: placement.tabId, previewKey: key, before };
 }
 
@@ -111,17 +130,9 @@ export function openAiTab(target: AiTabTarget, chat: AiTabChat): { tabId: string
  * user is editing in another one.
  */
 export function openAiQueryTab(query: DbQueryTabOpen, chat: AiTabChat): string {
-  showChatWorkspace(chat.projectName);
+  const placement = placeBesideChat(chat, () => false);
+  if (placement.kind !== "open") throw new Error("PPM has no panel to open the tab in");
   const store = usePanelStore.getState();
-  const placement = chooseAiTabPlacement({
-    grid: store.grid,
-    panels: store.panels,
-    focusedPanelId: store.focusedPanelId,
-    mobile: store.isMobile(),
-    sessionId: chat.sessionId,
-    isTarget: () => false,
-  });
-  if (!placement || placement.kind !== "open") throw new Error("PPM has no panel to open the tab in");
   const queryNumber = nextQueryNumber(Object.values(store.panels).flatMap((p) => p.tabs));
   const target = { kind: "connection" as const, connectionId: query.connectionId, ...(query.database ? { database: query.database } : {}) };
   const tabId = store.openTab({
@@ -143,6 +154,54 @@ export function openAiQueryTab(query: DbQueryTabOpen, chat: AiTabChat): string {
   return tabId;
 }
 
+/** Whether this browser runs on the machine PPM runs on, where `localhost` is the host's own. */
+export function browserOnHost(hostname: string = window.location.hostname): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+}
+
+/**
+ * Opens the web server `open_url` asked for in a web-preview tab beside the chat, the tab Port
+ * Forwarding opens. A tab already showing that address is reused, and reloaded.
+ */
+export function openAiUrlTab(req: Pick<TabOpenUrlRequest, "url" | "port" | "via">, chat: AiTabChat): string {
+  if (req.via === "local" && !browserOnHost()) {
+    throw new Error(`this device is not the machine PPM runs on, so it cannot reach localhost:${req.port}`);
+  }
+  const placement = placeBesideChat(chat, (tab) => tab.type === "web-preview" && tab.metadata?.url === req.url);
+  const store = usePanelStore.getState();
+  const metadata = { url: req.url, port: req.port, via: req.via, aiOpenAt: Date.now() };
+  if (placement.kind === "open") {
+    const tabId = store.openTab(
+      { type: "web-preview", title: previewTitle(req.port, req.url), projectId: null, closable: true, metadata },
+      placement.panelId,
+    );
+    if (!tabId) throw new Error("PPM could not open the tab");
+    if (placement.split) store.splitPanel("right", tabId, placement.panelId);
+    return tabId;
+  }
+  store.updateTab(placement.tabId, { metadata });
+  showExistingTab(placement);
+  return placement.tabId;
+}
+
+/**
+ * Shows the terminal `run_in_terminal` started, in the dock, with the AI's command already typed
+ * at its prompt by the server. The tab attaches to that terminal rather than starting a shell.
+ */
+export function openAiTerminal(req: Pick<TabOpenTerminalRequest, "terminalId" | "projectName" | "cwd">, chat: AiTabChat): string {
+  showChatWorkspace(chat.projectName);
+  const tabId = usePanelStore.getState().openInDock({
+    type: "terminal",
+    title: basename(req.cwd) || req.cwd,
+    projectId: req.projectName,
+    closable: true,
+    metadata: { sessionId: req.terminalId, cwd: req.cwd, ...(req.projectName ? { projectName: req.projectName } : {}) },
+  });
+  // A terminal tab reattaches to the session its id last had before it reads its metadata.
+  try { localStorage.setItem(`ppm:terminal-session:${tabId}`, req.terminalId); } catch { /* storage blocked */ }
+  return tabId;
+}
+
 /**
  * Answers the server's `tab_open`: opens the tab and, for a page the AI made, waits for it to
  * load and settle and returns the check of how it rendered. Every outcome is answered — a
@@ -153,9 +212,11 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
     const result: TabOpenResult = { type: "tab_open_result", requestId: req.requestId, ...answer };
     send(JSON.stringify(result));
   };
-  if (req.tool === OPEN_QUERY_TOOL) {
+  if (req.tool === OPEN_QUERY_TOOL || req.tool === OPEN_URL_TOOL || req.tool === RUN_IN_TERMINAL_TOOL) {
     try {
-      openAiQueryTab(req.query, chat);
+      if (req.tool === OPEN_QUERY_TOOL) openAiQueryTab(req.query, chat);
+      else if (req.tool === OPEN_URL_TOOL) openAiUrlTab(req, chat);
+      else openAiTerminal(req, chat);
       reply({ opened: true });
     } catch (e) {
       reply({ opened: false, error: errorText(e) });

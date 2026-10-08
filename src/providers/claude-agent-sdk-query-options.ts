@@ -11,8 +11,9 @@ import {
   CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
 } from "../services/design/mcp/design-mcp-tool.ts";
 import {
-  CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
+  CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import { TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -250,8 +251,9 @@ export function designMcpServers(access: DesignMcpAccess | undefined): Record<st
 }
 
 /**
- * The tab-tools MCP server (`open_file`, `open_preview`) as the SDK's `http` server config,
- * while the user has the tools on; `{}` otherwise. The token travels in the header.
+ * The tab-tools MCP server (`open_file`, `open_preview`, `open_url`, `read_terminal`,
+ * `run_in_terminal`) as the SDK's `http` server config, while the user has any of them on; `{}`
+ * otherwise. The token travels in the header.
  */
 export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
   if (!access) return {};
@@ -265,8 +267,11 @@ export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined)
   };
 }
 
-/** They only open a tab for the user to look at, so they never ask first. */
-export const CLAUDE_TAB_TOOLS: readonly string[] = [CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL];
+/**
+ * Never asked about before they run: they open a tab for the user to look at, read the
+ * project's terminals, or type a command that runs only when the user presses Enter.
+ */
+export const CLAUDE_TAB_TOOLS: readonly string[] = TAB_TOOLS.map((tool) => `mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__${tool}`);
 
 /**
  * The database tools' MCP server (`db_query`, `open_query`, `db_execute`) as the SDK's `http`
