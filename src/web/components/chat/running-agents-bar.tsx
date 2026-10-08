@@ -1,27 +1,34 @@
 /**
- * Every agent that is really still working, pinned under the conversation.
+ * Every agent that is really still working, summarised in one line pinned under the
+ * conversation.
  *
- * Replaces `TeamWorkingBar`: that bar only ever knew about named teammates
- * polled over REST. This one also lists a backgrounded agent and one resumed
- * by SendMessage (which writes no new card at all) — anything the transcript
- * hub's `agent-activity` feed reports as recently written to disk, merged with
- * the team panel's richer per-member poll for agent type / elapsed time.
+ * Replaces `TeamWorkingBar`: that bar only ever knew about named teammates polled over
+ * REST. This one also lists a backgrounded agent and one resumed by SendMessage (which
+ * writes no new card at all) — anything the transcript hub's `agent-activity` feed
+ * reports as recently written to disk, merged with the team panel's richer per-member
+ * poll for agent type / elapsed time.
  *
- * Liveness is entirely disk-derived on the server, never from chat state in
- * memory, so a replayed old session shows nothing here even though its cards
- * are still in the transcript.
+ * Liveness is entirely disk-derived on the server, never from chat state in memory, so a
+ * replayed old session shows nothing here even though its cards are still in the
+ * transcript.
  *
- * From `FOLD_FROM` agents on, the list scrolls inside about three rows under an
- * "N agents running" header that folds it away — open on desktop, folded on a
- * phone. Unbounded, a session fanning out to a dozen agents pushed the
- * conversation off the screen.
+ * However many agents run, the bar is one line — avatars, "N agents running · N done"
+ * and the first agent's current step — that opens a list capped at three rows which
+ * scrolls inside itself, so a session fanning out to a dozen agents cannot push the
+ * conversation off the screen. With a single agent there is nothing to list: the line is
+ * that agent and opens its session directly. A finished agent stays on the list while
+ * one launched beside it still runs.
  */
-import { useId, useMemo, useState } from "react";
-import { Bot, ChevronRight, Users } from "@/lib/icons";
+import { useEffect, useId, useMemo, useState } from "react";
+import { Bot, ChevronRight, ChevronUp } from "@/lib/icons";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
-import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { TeamMemberActivity } from "@/hooks/use-team-activity-feed";
-import { buildRunningRows, findCardLabel } from "@/lib/running-agent-rows";
+import {
+  buildRunningRows,
+  findCardLabel,
+  finishedSiblingRows,
+  type RunningAgentRow,
+} from "@/lib/running-agent-rows";
 import { formatDuration, shortAgentType } from "./team-member-activity-format";
 import { useOpenAgentSession } from "./use-open-agent-session";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
@@ -40,88 +47,169 @@ interface RunningAgentsBarProps {
   teamMembers: TeamMemberActivity[];
 }
 
-/** From this many rows on, the list gets a header to fold it under and stops growing. */
-export const FOLD_FROM = 4;
+/** Avatars drawn before the rest collapse into "+N". */
+const MAX_AVATARS = 3;
+
+/** What a row shows, resolved once from the hub row and the chat's own card. */
+interface AgentView {
+  row: RunningAgentRow;
+  name: string;
+  prompt?: string;
+  step?: string;
+  elapsed?: string;
+}
 
 export function RunningAgentsBar({ projectName, providerId, sessionId, messages, teamName, teamMembers }: RunningAgentsBarProps) {
   const running = useAgentActivity({ projectName, providerId, sessionId });
   const openAgentSession = useOpenAgentSession();
-  const rows = useMemo(() => buildRunningRows(running, teamMembers), [running, teamMembers]);
-  // Touch needs the 44px minimum even at desktop width; a mouse keeps the tighter 36px row.
+  const runningRows = useMemo(() => buildRunningRows(running, teamMembers), [running, teamMembers]);
+  const doneRows = useMemo(() => finishedSiblingRows(messages, runningRows), [messages, runningRows]);
+  // Labels scan the whole transcript; the elapsed tick re-renders every second, so read them
+  // only when the transcript or the rows change.
+  const labels = useMemo(() => new Map(
+    [...runningRows, ...doneRows].filter((r) => r.cardId).map((r) => [r.cardId!, findCardLabel(messages, r.cardId!)]),
+  ), [messages, runningRows, doneRows]);
   const coarse = usePrefersCoarsePointer();
-  const rowHeight = coarse ? "min-h-[44px]" : "min-h-[36px]";
-  const isMobile = useIsMobile();
-  const [open, setOpen] = useState(!isMobile);
+  const [open, setOpen] = useState(false);
   const listId = useId();
+  useElapsedTick(runningRows.length > 0);
 
-  if (!sessionId || rows.length === 0) return null;
-  const foldable = rows.length >= FOLD_FROM;
+  const total = runningRows.length + doneRows.length;
+  const single = total === 1;
+  // A batch that shrinks to one agent, or ends, has no list left to keep open; the next
+  // batch starts collapsed rather than inheriting this one's state.
+  useEffect(() => { if (total <= 1) setOpen(false); }, [total]);
+
+  if (!sessionId || runningRows.length === 0) return null;
+
+  const view = (row: RunningAgentRow): AgentView => {
+    const label = row.cardId ? labels.get(row.cardId) : null;
+    const name = row.memberName ?? label?.handle ?? (label?.description || "Agent");
+    const startedAt = row.startedAt ?? label?.launchedAt;
+    return {
+      row,
+      name,
+      prompt: label?.description || undefined,
+      step: row.lastStep ?? shortAgentType(row.agentType),
+      elapsed: row.done || !startedAt ? undefined : formatDuration(startedAt),
+    };
+  };
+  const views = [...runningRows, ...doneRows].map(view);
+  const lead = views[0]!;
+
+  const openView = (v: AgentView) => openAgentSession({
+    projectName,
+    providerId,
+    sessionId,
+    source: v.row.cardId ? { kind: "card", cardId: v.row.cardId } : { kind: "member", teamName, memberName: v.row.memberName! },
+    title: `Session — ${v.name}`,
+    prompt: v.prompt,
+  });
+
+  const summaryCls = cn(
+    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-2 transition-colors md:px-3.5 can-hover:hover:bg-panel-2",
+    coarse ? "min-h-11" : "min-h-10",
+  );
 
   return (
-    <div className="shrink-0 border-t border-border bg-surface-elevated/60 px-2 py-1.5 space-y-1">
-      {foldable && (
+    <div className="shrink-0 border-t border-border bg-panel">
+      {single ? (
+        <button type="button" onClick={() => openView(lead)} className={summaryCls} title={`Open ${lead.name}'s session`}>
+          <LiveDot done={false} />
+          <span className="min-w-0 shrink truncate font-semibold text-text">{lead.name}</span>
+          {!!lead.step && <span className="hidden min-w-0 flex-1 truncate font-mono text-text-3 sm:block">{lead.step}</span>}
+          {!!lead.elapsed && <span className="ml-auto shrink-0 font-mono text-[11px] text-text-3">{lead.elapsed}</span>}
+          <ChevronRight className="size-3.5 shrink-0 text-text-3" />
+        </button>
+      ) : (
         <button
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          aria-controls={listId}
-          className={cn("flex w-full items-center gap-2 rounded px-1 text-left text-xs hover:bg-surface transition-colors", rowHeight)}
+          aria-controls={open ? listId : undefined}
+          className={summaryCls}
         >
-          <ChevronRight className={cn("size-3.5 shrink-0 text-text-subtle transition-transform", open && "rotate-90")} />
-          <span className="font-medium text-text-primary">{rows.length} agents running</span>
+          <LiveDot done={false} />
+          <AvatarStack count={total} />
+          <span className="flex-1 whitespace-nowrap font-semibold text-text sm:flex-none">
+            {runningRows.length} {runningRows.length === 1 ? "agent" : "agents"} running
+          </span>
+          {doneRows.length > 0 && <span className="whitespace-nowrap text-text-3">· {doneRows.length} done</span>}
+          <span className="hidden min-w-0 flex-1 truncate text-text-3 sm:block">
+            — <b className="font-medium text-text-2">{lead.name}</b>
+            {!!lead.step && <> · <span className="font-mono">{lead.step}</span></>}
+          </span>
+          <ChevronUp
+            className={cn("size-3.5 shrink-0 text-text-3 transition-transform motion-reduce:transition-none", open && "rotate-180")}
+          />
         </button>
       )}
-      {(!foldable || open) && (
-        <div
-          id={listId}
-          // Three rows (two at touch height) and most of the next, so the list visibly scrolls.
-          className={cn("space-y-1", foldable && "overflow-y-auto", foldable && (coarse ? "max-h-32" : "max-h-36"))}
-        >
-          {rows.map((row) => {
-            const label = row.cardId ? findCardLabel(messages, row.cardId) : null;
-            const name = row.memberName ?? label?.handle ?? null;
-            const description = label?.description || (row.cardId ? "Agent" : row.memberName!);
-            const elapsed = row.startedAt ? formatDuration(row.startedAt) : undefined;
-            const agentType = shortAgentType(row.agentType);
 
-            return (
+      {!single && open && (
+        // 44px rows: three of them and the list stops growing.
+        <ul id={listId} className="max-h-[140px] list-none overflow-y-auto overscroll-contain px-2 pb-2">
+          {views.map((v) => (
+            <li key={v.row.key}>
               <button
-                key={row.key}
                 type="button"
-                onClick={() => openAgentSession({
-                  projectName,
-                  providerId,
-                  sessionId,
-                  source: row.cardId ? { kind: "card", cardId: row.cardId } : { kind: "member", teamName, memberName: row.memberName! },
-                  title: name ? `Session — ${name}` : "Agent session",
-                  prompt: label?.description,
-                })}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded px-1 py-1.5 text-left text-xs hover:bg-surface transition-colors",
-                  rowHeight,
-                )}
-                title={name ? `Open ${name}'s session` : "Open agent session"}
+                onClick={() => openView(v)}
+                className="flex w-full min-h-11 items-center gap-2.5 rounded-xl px-2 py-1 text-left text-text transition-colors can-hover:hover:bg-panel-2"
+                title={`Open ${v.name}'s session`}
               >
-                <span className="relative flex size-2 shrink-0">
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-                </span>
-                {row.memberName
-                  ? <Users className="size-3.5 shrink-0 text-accent-2" />
-                  : <Bot className="size-3.5 shrink-0 text-primary" />}
-                <span className="font-medium text-text-primary shrink-0">{name ?? description}</span>
-                {!!agentType && <span className="text-text-3 shrink-0 hidden sm:inline">{agentType}</span>}
-                {!!row.lastStep && (
-                  <span className="flex-1 truncate text-text-subtle" title={row.lastStep}>
-                    {row.lastStep}
+                <LiveDot done={!!v.row.done} />
+                <span className="flex min-w-0 flex-1 flex-col gap-px">
+                  <span className={cn("truncate text-[13px] font-medium", v.row.done && "text-text-2")}>{v.name}</span>
+                  <span className={cn("truncate font-mono text-[11px]", v.row.failed ? "text-error" : "text-text-3")}>
+                    {v.row.failed ? "Failed" : v.row.done ? "Finished" : v.step ?? "Starting…"}
                   </span>
-                )}
-                {!!elapsed && <span className="ml-auto shrink-0 text-text-3 font-mono">{elapsed}</span>}
+                </span>
+                {!!v.elapsed && <span className="shrink-0 font-mono text-[11px] text-text-3">{v.elapsed}</span>}
               </button>
-            );
-          })}
-        </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
+}
+
+/** Pulsing dot while running; a still grey one once finished. */
+function LiveDot({ done }: { done: boolean }) {
+  return (
+    <span className="relative flex size-2 shrink-0">
+      {!done && <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-55 motion-reduce:animate-none" />}
+      <span className={cn("relative inline-flex size-2 rounded-full", done ? "bg-text-3" : "bg-success")} />
+    </span>
+  );
+}
+
+function AvatarStack({ count }: { count: number }) {
+  const shown = Math.min(count, MAX_AVATARS);
+  return (
+    <span className="flex shrink-0 items-center" aria-hidden="true">
+      {Array.from({ length: shown }, (_, i) => (
+        <span
+          key={i}
+          className="-ml-1.5 grid size-5 place-items-center rounded-full border-2 border-panel bg-accent-2/15 text-accent-2 first:ml-0"
+        >
+          <Bot className="size-3" />
+        </span>
+      ))}
+      {count > MAX_AVATARS && (
+        <span className="-ml-1.5 grid size-5 place-items-center rounded-full border-2 border-panel bg-panel-2 text-[10px] font-semibold text-text-2">
+          +{count - MAX_AVATARS}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Re-render once a second while something runs, so elapsed times keep counting. */
+function useElapsedTick(active: boolean): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [active]);
 }

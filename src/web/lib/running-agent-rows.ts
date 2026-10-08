@@ -9,6 +9,7 @@
 import type { ChatEvent, ChatMessage } from "../../types/chat";
 import type { TeamMemberActivity } from "../hooks/use-team-activity-feed";
 import type { AgentTranscriptRunningEntry } from "../../shared/agent-transcript-protocol";
+import { isAsyncAgentLaunchAck } from "../../shared/background-agent-status";
 
 export interface RunningAgentRow {
   key: string;
@@ -19,6 +20,9 @@ export interface RunningAgentRow {
   /** ISO timestamp — only known for a teammate the team panel has already polled. */
   startedAt?: string;
   lastWriteAt?: number;
+  /** A sibling that has finished, listed beside the agents of its batch still at work. */
+  done?: boolean;
+  failed?: boolean;
 }
 
 /**
@@ -78,11 +82,58 @@ function currentStepOf(member: TeamMemberActivity): string | undefined {
 export interface CardLabel {
   handle: string | null;
   description: string;
+  /** Timestamp of the message that launched the card — the nearest thing to a start time. */
+  launchedAt?: string;
 }
 
 function addressableName(input: unknown): string | null {
   const name = input && typeof input === "object" ? (input as Record<string, unknown>).name : undefined;
   return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+function isAgentCall(ev: ChatEvent): ev is Extract<ChatEvent, { type: "tool_use" }> {
+  return ev.type === "tool_use" && (ev.tool === "Agent" || ev.tool === "Task") && !!ev.toolUseId;
+}
+
+/**
+ * Agents that finished beside ones still running: the other `Agent`/`Task` calls of any
+ * message that launched a running card, so a fan-out reads "5 running · 1 done".
+ *
+ * The hub's feed is the only judge of who runs, so a sibling it does not report is done;
+ * the call itself only says whether it failed. Agents of a launch with nothing left
+ * running stay off the bar.
+ */
+export function finishedSiblingRows(messages: ChatMessage[], running: RunningAgentRow[]): RunningAgentRow[] {
+  const runningCards = new Set(running.map((r) => r.cardId).filter(Boolean));
+  if (runningCards.size === 0) return [];
+  const rows: RunningAgentRow[] = [];
+  const seen = new Set<string>();
+  for (const msg of messages) {
+    const calls = (msg.events ?? []).filter(isAgentCall);
+    if (!calls.some((c) => runningCards.has(c.toolUseId!))) continue;
+    for (const call of calls) {
+      const id = call.toolUseId!;
+      if (runningCards.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      rows.push({
+        key: `card:${id}`,
+        cardId: id,
+        ...(addressableName(call.input) ? { memberName: addressableName(call.input)! } : {}),
+        done: true,
+        failed: callFailed(msg.events!, call),
+      });
+    }
+  }
+  return rows;
+}
+
+function callFailed(events: ChatEvent[], call: Extract<ChatEvent, { type: "tool_use" }>): boolean {
+  if (call.bgStatus) return call.bgStatus !== "completed";
+  const result = events.find((e) => e.type === "tool_result" && e.toolUseId === call.toolUseId)
+    ?? (call as { result?: { output?: string; isError?: boolean } }).result;
+  if (!result) return false;
+  const r = result as { output?: unknown; isError?: boolean };
+  return !!r.isError && !isAsyncAgentLaunchAck(String(r.output ?? ""));
 }
 
 function findInEvents(events: ChatEvent[] | undefined, cardId: string): ChatEvent | undefined {
@@ -106,6 +157,7 @@ export function findCardLabel(messages: ChatMessage[], cardId: string): CardLabe
         handle: addressableName(input),
         description: typeof input.description === "string" ? input.description
           : typeof input.prompt === "string" ? input.prompt : "",
+        launchedAt: messages[i]!.timestamp,
       };
     }
   }

@@ -61,7 +61,10 @@ down.
 **Protocol.** `agent-transcript:subscribe`/`unsubscribe` carry one card's or
 teammate's steps; `agent-activity:subscribe`/`unsubscribe` carry the
 running-agents bar's "who is working right now" feed, independent of any
-window being open. A cursor is a byte offset per file the server itself
+window being open. The bar shows that feed as one line ("5 agents running ·
+1 done") that opens a list capped at three rows; with one agent the line opens
+that agent. "Done" counts the other `Agent` calls of a message that launched a
+running card, since the feed itself only reports who still runs. A cursor is a byte offset per file the server itself
 derived on an earlier response — never a client-named range — and
 reconnecting resumes from the client's last cursor with no gap and no
 duplicate, across however many backlog pages that takes. A `reset` flag tells

@@ -2,7 +2,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom";
-import { buildRunningRows, findCardLabel } from "../../../src/web/lib/running-agent-rows";
+import { buildRunningRows, findCardLabel, finishedSiblingRows } from "../../../src/web/lib/running-agent-rows";
 import type { TeamMemberActivity } from "../../../src/web/hooks/use-team-activity-feed";
 import type { ChatMessage } from "../../../src/types/chat";
 
@@ -45,6 +45,33 @@ describe("buildRunningRows", () => {
   });
 });
 
+describe("finishedSiblingRows", () => {
+  const launch: ChatMessage = {
+    id: "m1", role: "assistant", content: "", timestamp: "now",
+    events: [
+      { type: "tool_use", tool: "Agent", toolUseId: "run", input: { description: "still going" } },
+      { type: "tool_use", tool: "Agent", toolUseId: "ok", input: { description: "done" }, bgStatus: "completed" },
+      { type: "tool_use", tool: "Agent", toolUseId: "bad", input: { name: "dev-p9" }, bgStatus: "failed" },
+    ],
+  };
+  const other: ChatMessage = {
+    id: "m2", role: "assistant", content: "", timestamp: "now",
+    events: [{ type: "tool_use", tool: "Agent", toolUseId: "old", input: {}, bgStatus: "completed" }],
+  };
+
+  it("lists the agents launched beside a running card as finished, failed ones marked", () => {
+    const rows = finishedSiblingRows([launch, other], [{ key: "card:run", cardId: "run" }]);
+    expect(rows).toEqual([
+      { key: "card:ok", cardId: "ok", done: true, failed: false },
+      { key: "card:bad", cardId: "bad", memberName: "dev-p9", done: true, failed: true },
+    ]);
+  });
+
+  it("lists nothing once no card of the launch is running", () => {
+    expect(finishedSiblingRows([launch, other], [{ key: "member:x", memberName: "x" }])).toEqual([]);
+  });
+});
+
 describe("findCardLabel", () => {
   const messages: ChatMessage[] = [
     {
@@ -60,11 +87,11 @@ describe("findCardLabel", () => {
   ];
 
   it("reads the handle and description off a known top-level card", () => {
-    expect(findCardLabel(messages, "toolu_1")).toEqual({ handle: "dev-p1", description: "fix bug" });
+    expect(findCardLabel(messages, "toolu_1")).toEqual({ handle: "dev-p1", description: "fix bug", launchedAt: "now" });
   });
 
   it("finds a card nested under another Agent's kept children", () => {
-    expect(findCardLabel(messages, "toolu_3")).toEqual({ handle: null, description: "nested" });
+    expect(findCardLabel(messages, "toolu_3")).toEqual({ handle: null, description: "nested", launchedAt: "now" });
   });
 
   it("returns null for an id the chat has never seen", () => {
@@ -75,7 +102,7 @@ describe("findCardLabel", () => {
 installDom();
 afterAll(uninstallDom);
 
-const { RunningAgentsBar, FOLD_FROM } = await import("../../../src/web/components/chat/running-agents-bar");
+const { RunningAgentsBar } = await import("../../../src/web/components/chat/running-agents-bar");
 const { setGlobalWsClient, notifyGlobalReady } = await import("../../../src/web/lib/global-ws-channel");
 const { useWindowStore } = await import("../../../src/web/components/floating-window/window-store");
 
@@ -181,46 +208,54 @@ describe("RunningAgentsBar", () => {
     }));
   }
 
-  async function renderWithRunning(running: unknown[]) {
+  async function renderWithRunning(running: unknown[], messages: ChatMessage[] = []) {
     const { client, sent } = fakeClient();
     setGlobalWsClient(client as never);
-    view = await renderBar();
+    view = await renderBar({ messages });
     await pushActivity(JSON.parse(sent[0]!).subId as string, running);
     return view;
   }
 
-  const header = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("agents running"));
-  const agentRows = () => view!.container.querySelectorAll('button[title^="Open"]');
+  const summary = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("running"));
+  const agentRows = () => view!.container.querySelectorAll('li button[title^="Open"]');
 
-  it("keeps a few agents as a plain list, with no header", async () => {
-    await renderWithRunning(namedCards(FOLD_FROM - 1));
-    expect(header()).toBeUndefined();
-    expect(agentRows()).toHaveLength(FOLD_FROM - 1);
-  });
-
-  it("puts many agents under a header that folds them, in a list that scrolls instead of growing", async () => {
+  it("summarises several agents in one folded line that opens a list capped at three rows", async () => {
     await renderWithRunning(namedCards(11));
-    const toggle = header()!;
+    const toggle = summary()!;
     expect(toggle.textContent).toContain("11 agents running");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    const list = view!.container.querySelector(`[id="${toggle.getAttribute("aria-controls")}"]`)!;
-    expect(list.className).toContain("overflow-y-auto");
-    expect(list.className).toMatch(/\bmax-h-\d+\b/);
-    expect(list.querySelectorAll("button")).toHaveLength(11);
-    expect(agentRows()[0]!.textContent).toContain("fix-0");
-
-    await click(toggle);
+    expect(toggle.textContent).toContain("fix-0");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(agentRows()).toHaveLength(0);
+
     await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const list = view!.container.querySelector('[id="' + toggle.getAttribute("aria-controls") + '"]')!;
+    expect(list.className).toContain("overflow-y-auto");
+    expect(list.className).toContain("max-h-[140px]");
     expect(agentRows()).toHaveLength(11);
+
+    await click(agentRows()[3]!);
+    const windows = Object.values(useWindowStore.getState().windows);
+    expect((windows[0]!.payload as any).source).toEqual({ kind: "card", cardId: "toolu_3" });
   });
 
-  it("starts folded on a phone", async () => {
-    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
-    await renderWithRunning(namedCards(FOLD_FROM));
-    expect(header()!.getAttribute("aria-expanded")).toBe("false");
-    expect(agentRows()).toHaveLength(0);
+  it("counts a finished agent launched beside running ones, and lists it as finished", async () => {
+    const launch: ChatMessage = {
+      id: "m1", role: "assistant", content: "", timestamp: "now",
+      events: [
+        { type: "tool_use", tool: "Agent", toolUseId: "toolu_0", input: { name: "fix-0" } },
+        { type: "tool_use", tool: "Agent", toolUseId: "toolu_1", input: { name: "fix-1" } },
+        { type: "tool_use", tool: "Agent", toolUseId: "toolu_9", input: { description: "review docs" }, bgStatus: "completed" },
+      ],
+    };
+    await renderWithRunning(namedCards(2), [launch]);
+    const toggle = summary()!;
+    expect(toggle.textContent).toContain("2 agents running");
+    expect(toggle.textContent).toContain("1 done");
+
+    await click(toggle);
+    const finished = [...agentRows()].find((b) => b.textContent?.includes("review docs"))!;
+    expect(finished.textContent).toContain("Finished");
   });
 
   it("shows no row for a teammate the poll no longer reports as working", async () => {
