@@ -460,3 +460,50 @@ describe("PUT /chat/sessions/:id/account — the user picking an account by hand
     expect(res.status).toBe(400);
   });
 });
+
+describe("POST /api/chat/sessions/:id/release — a tool outside PPM continuing the session", () => {
+  const release = (sessionId: string) =>
+    app.request(new Request(`http://localhost/api/chat/sessions/${sessionId}/release`, { method: "POST" }));
+
+  it("lets the idle subprocess go, so the outside tool resumes the session instead of forking it", async () => {
+    const chatWs = await import("../../../src/server/ws/chat.ts");
+    const drop = spyOn(chatWs, "dropIdleSubprocess").mockImplementation(() => {});
+    try {
+      const res = await release("idle-session");
+      expect(res.status).toBe(200);
+      expect(drop).toHaveBeenCalledWith("idle-session", "external_writer", expect.any(String));
+    } finally {
+      drop.mockRestore();
+    }
+  });
+
+  it("refuses mid-turn, where the answer being streamed would be lost", async () => {
+    const chatWs = await import("../../../src/server/ws/chat.ts");
+    const drop = spyOn(chatWs, "dropIdleSubprocess").mockImplementation(() => {});
+    const running = spyOn(chatWs, "listRunningSessions").mockReturnValue([
+      { sessionId: "busy-session", phase: "streaming", projectName: "test" },
+    ]);
+    try {
+      const res = await release("busy-session");
+      expect(res.status).toBe(409);
+      expect(drop).not.toHaveBeenCalled();
+    } finally {
+      drop.mockRestore();
+      running.mockRestore();
+    }
+  });
+
+  it("refuses while a background agent or shell is running in the subprocess", async () => {
+    const chatWs = await import("../../../src/server/ws/chat.ts");
+    const drop = spyOn(chatWs, "dropIdleSubprocess").mockImplementation(() => {});
+    const busy = spyOn(chatWs, "hasBackgroundWork").mockReturnValue(true);
+    try {
+      const res = await release("background-session");
+      expect(res.status).toBe(409);
+      expect(drop).not.toHaveBeenCalled();
+    } finally {
+      drop.mockRestore();
+      busy.mockRestore();
+    }
+  });
+});
