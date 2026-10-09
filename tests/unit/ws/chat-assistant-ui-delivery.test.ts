@@ -1,7 +1,7 @@
 import { expect, it, spyOn } from "bun:test";
 import "../../test-setup.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
-import { chatWebSocket } from "../../../src/server/ws/chat.ts";
+import { chatSocketData, chatWebSocket } from "../../../src/server/ws/chat.ts";
 import { assistantUiBroker, ASSISTANT_UI_NO_DEVICE_MESSAGE } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
 import { tabOpenBroker } from "../../../src/services/tab-tools-mcp/tab-open-broker.ts";
 
@@ -256,4 +256,45 @@ it("forgets the previous tab when the next message comes from a tab that sends n
     turn.release();
     closeAll();
   }
+});
+
+it("keeps the chatting tab across a rename when the sockets are built from their upgrade URLs", async () => {
+  // As the browser connects (use-chat.ts) and the server reads it (src/server/index.ts): the tab's
+  // id rides the query, and a server that drops it leaves no socket recognisable as that tab.
+  const fromUrl = (sessionId: string) =>
+    chatSocketData(sessionId, "demo", new URL(`http://h/ws/project/demo/chat/${sessionId}?providerId=mock&clientId=${PHONE_TAB}`).searchParams);
+  const session = await chatService.createSession("mock", {});
+  const threadId = `thread-${session.id}`;
+  const turn = heldTurn([{ type: "session_migrated", oldSessionId: session.id, newSessionId: threadId }]);
+  const socket = (sessionId: string) => {
+    const messages: any[] = [];
+    return { data: fromUrl(sessionId), messages, send: (json: string) => messages.push(JSON.parse(json)) };
+  };
+  const first = socket(session.id);
+  const reopened = socket(threadId);
+  try {
+    expect(first.data).toMatchObject({ type: "chat", sessionId: session.id, providerHint: "mock", clientId: PHONE_TAB });
+    chatWebSocket.open(first as any);
+    await chatWebSocket.message(first as any, JSON.stringify({ type: "message", content: "what is open?" }));
+    await waitForText(first);
+    // The rename: the old socket closes, then the tab reopens under the thread id.
+    chatWebSocket.close(first as any);
+    chatWebSocket.open(reopened as any);
+
+    const call = assistantUiBroker.request(threadId, GET_STATE, 2000);
+    const ask = reopened.messages.find((m) => m.type === "assistant_ui");
+    expect(ask).toBeDefined();
+    await chatWebSocket.message(reopened as any, JSON.stringify({ type: "assistant_ui_result", requestId: ask.requestId, ok: true, data: { currentProject: "demo" } }));
+    expect((await call).ok).toBe(true);
+  } finally {
+    turn.release();
+    chatWebSocket.close(reopened as any);
+  }
+});
+
+it("reads no client id from a query that carries none or a malformed one", () => {
+  const read = (query: string) => chatSocketData("s", "demo", new URLSearchParams(query)).clientId;
+  expect(read("providerId=codex")).toBeUndefined();
+  expect(read("clientId=../../x")).toBeUndefined();
+  expect(read(`clientId=${LAPTOP_TAB}`)).toBe(LAPTOP_TAB);
 });

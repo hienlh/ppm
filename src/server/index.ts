@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { writeFileSync } from "node:fs";
 import { SERVER_PORT_FILE } from "../services/edge-target-resolver.ts";
-import { CHAT_CLIENT_ID_PARAM, chatClientIdFrom } from "../shared/chat-client-id.ts";
 import { configService } from "../services/config.service.ts";
 import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
@@ -28,7 +27,7 @@ import { mcpRoutes } from "./routes/mcp.ts";
 import { portForwardingRoutes } from "./routes/port-forwarding.ts";
 import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
-import { chatWebSocket } from "./ws/chat.ts";
+import { chatSocketData, chatWebSocket } from "./ws/chat.ts";
 import { extensionWebSocket } from "./ws/extensions.ts";
 import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
@@ -1115,16 +1114,7 @@ if (process.argv.includes("__serve__")) {
         }
 
         if (wsType === "chat") {
-          const sessionId = id;
-          // A hint only — the handler adopts it when the session has no stored
-          // provider, so a tab that knows it is a claude chat cannot be resumed
-          // as whatever the install's default provider happens to be.
-          const providerHint = url.searchParams.get("providerId") ?? undefined;
-          // Which tab this is, so a reconnect is recognised; a routing hint, never a credential.
-          const clientId = chatClientIdFrom(url.searchParams.get(CHAT_CLIENT_ID_PARAM));
-          const upgraded = server.upgrade(req, {
-            data: { type: "chat", sessionId, projectName, providerHint, clientId },
-          });
+          const upgraded = server.upgrade(req, { data: chatSocketData(id, projectName, url.searchParams) });
           if (upgraded) return undefined;
           return upgradeFailed(url);
         }

@@ -156,12 +156,7 @@ const failures = [];
  * the check's ordinary assertions run and pass, so the marker cannot outlive the bug.
  */
 const blocked = [];
-const KNOWN_BUGS = {
-  "ui-tools-after-rename":
-    "After session_migrated the browser re-opens its chat socket under the new id; closing the old one clears "
-    + "entry.lastSender (src/server/ws/chat.ts evictClient) and the new socket is never made the sender, so every "
-    + "strict UI tool call answers no-device (or times out mid-reconnect) until the user sends another message.",
-};
+const KNOWN_BUGS = {};
 function blockedBy(bug, id, viewport, observed) {
   blocked.push({ id, viewport, bug, description: KNOWN_BUGS[bug], observed });
   console.log(`BLOCKED-BY-BUG [${viewport}] ${id} ${bug}: ${observed.split("\n")[0].slice(0, 160)}`);
@@ -703,20 +698,16 @@ async function s8(dev) {
   assert.equal(t.assistant, true, "the renamed session still ran as an Assistant session");
   assert.equal(write.isError, false, write.text);
   assert.equal(qty(2), before + 1);
-  // The screen read in the renamed session's first turn.
-  if (state.isError && /^(no-device|timeout): /.test(state.text)) {
-    blockedBy("ui-tools-after-rename", "s8", dev.name, state.text);
-  } else {
-    assert.equal(state.isError, false, state.text);
-    assert.equal(parse(state).state.layout, dev.kind);
-  }
+  // The screen read in the renamed session's first turn: the tab's reopened socket is the chatting device.
+  assert.equal(state.isError, false, state.text);
+  assert.equal(parse(state).state.layout, dev.kind);
   const listed = (await api("/api/project/__assistant__/chat/sessions")).data.sessions.map((s) => s.id);
   assert.ok(listed.includes(t.sessionId), "listed under the Assistant by its new id");
   assert.ok(!(await api("/api/project/alpha/chat/sessions")).data.sessions.some((s) => s.id === t.sessionId || s.id === draftId));
   const [again] = await turn(dev, `s8-again-${dev.name}`, [{ mcp: "ui_get_state" }], "And once more", t.sessionId);
   assert.equal(again.isError, false, again.text);
   assert.equal((await turnOf(`s8-again-${dev.name}`)).assistant, true);
-  record("s8", dev.name, "session_migrated on the first turn: still an Assistant session; its card and write work in that turn, its UI tools from the next message on", { draftId, threadId: t.sessionId });
+  record("s8", dev.name, "session_migrated on the first turn: still an Assistant session; its UI tools, card and write work in that turn and the next", { draftId, threadId: t.sessionId });
 }
 
 /** 9. An image the agent writes is a link, and nothing fetches it. */

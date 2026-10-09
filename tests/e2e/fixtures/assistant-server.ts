@@ -365,7 +365,7 @@ providerRegistry.listAll = providerRegistry.list;
 providerRegistry.getDefault = (() => claude) as typeof providerRegistry.getDefault;
 
 const { app } = await import("../../../src/server/index");
-const { chatWebSocket } = await import("../../../src/server/ws/chat");
+const { chatSocketData, chatWebSocket } = await import("../../../src/server/ws/chat");
 const { globalWebSocket } = await import("../../../src/server/ws/global");
 const { terminalWebSocket } = await import("../../../src/server/ws/terminal");
 
@@ -400,7 +400,7 @@ async function testRoute(req: Request, path: string): Promise<Response> {
 
 type SocketData =
   | { type: "health" | "global" }
-  | { type: "chat"; sessionId: string; projectName: string; providerHint?: string }
+  | ReturnType<typeof chatSocketData>
   | { type: "terminal"; id: string; projectName: string; cwd?: string };
 const server = Bun.serve<SocketData>({
   hostname: "127.0.0.1", port,
@@ -414,7 +414,8 @@ const server = Bun.serve<SocketData>({
       // As `src/server/index.ts` routes them.
       const parts = url.pathname.split("/");
       const projectName = decodeURIComponent(parts[3] ?? "");
-      if (parts[4] === "chat") data = { type: "chat", sessionId: parts[5] ?? "", projectName, providerHint: url.searchParams.get("providerId") ?? undefined };
+      // The server's own reading of the query, `clientId` included: without it no socket is the chatting tab.
+      if (parts[4] === "chat") data = chatSocketData(parts[5] ?? "", projectName, url.searchParams);
       else if (parts[4] === "terminal") data = { type: "terminal", id: parts[5] ?? "", projectName, cwd: url.searchParams.get("cwd") ?? undefined };
     }
     if (data) return instance.upgrade(req, { data }) ? undefined : new Response("Upgrade failed", { status: 400 });

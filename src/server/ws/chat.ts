@@ -44,6 +44,7 @@ import { isAssistantSession } from "../../services/assistant/assistant-session.t
 import { assistantProviderDefaults } from "../../services/assistant/assistant-settings.service.ts";
 import type { TraceOrigin } from "../../shared/session-trace.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
+import { CHAT_CLIENT_ID_PARAM, chatClientIdFrom } from "../../shared/chat-client-id.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -183,6 +184,25 @@ type ChatWsSocket = {
   send: (data: string) => void;
   ping?: (data?: string | ArrayBuffer) => void;
 };
+
+/**
+ * What a chat socket carries, read from its upgrade URL (`/ws/project/<p>/chat/<id>?...`). The one
+ * place that query is read, so every server that upgrades chat sockets (`src/server/index.ts` and
+ * the e2e fixtures) agrees on it: a copy that forgot `clientId` left every socket without one, and
+ * the chatting tab was lost on every Codex rename however the browser reconnected.
+ */
+export function chatSocketData(sessionId: string, projectName: string, query: URLSearchParams) {
+  return {
+    type: "chat" as const,
+    sessionId,
+    projectName,
+    // A hint only: the handler adopts it when the session has no stored provider, so a tab that
+    // knows it is a claude chat cannot be resumed as whatever the install's default provider is.
+    providerHint: query.get("providerId") ?? undefined,
+    // Which tab this is, so a reconnect is recognised; a routing hint, never a credential.
+    clientId: chatClientIdFrom(query.get(CHAT_CLIENT_ID_PARAM)),
+  };
+}
 
 interface SessionEntry {
   providerId: string;
