@@ -856,6 +856,10 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           [panel.id]: { ...panel, tabs: panel.tabs.map((t) => (t.id === tabId ? { ...t, ...updates } : t)) },
         },
       }));
+      // A tab in a floating window is in no project's layout, so `persist` never writes it:
+      // without this, what a tab learns there (the session a new chat or the Assistant just
+      // created) is gone after a reload, which brings the window back on the stale tab.
+      if (isWindowPanelId(panel.id)) saveWindowPanels(get().panels);
       persist();
     },
 
