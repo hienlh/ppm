@@ -4,7 +4,7 @@
  * what it names. Anything the check cannot prove is left for the user to approve.
  */
 import { describe, expect, it } from "bun:test";
-import { assistantSqlSafety } from "../../../src/services/assistant-mcp/assistant-sql-safety.ts";
+import { assistantSqlSafety, deparsedPostgresSafety } from "../../../src/services/assistant-mcp/assistant-sql-safety.ts";
 
 const proven = (sql: string, dialect: "postgres" | "mysql" | "sqlite" = "postgres") => assistantSqlSafety(sql, dialect).proven;
 
@@ -65,5 +65,42 @@ describe("assistantSqlSafety", () => {
   it("says why", () => {
     const verdict = assistantSqlSafety("SELECT pg_terminate_backend(1)", "postgres");
     expect(verdict).toEqual({ proven: false, reason: expect.stringContaining("pg_terminate_backend()") });
+  });
+
+  it("does not prove a name spelled in Unicode escapes, which no lookup by name can match", () => {
+    expect(proven('SELECT * FROM U&"v\\0031"')).toBe(false);
+    expect(proven("SELECT U&'caf\\00e9' AS s")).toBe(true);
+  });
+
+  it("collects the functions called by a bare name, for the catalog's shadowing check", () => {
+    const called = new Set<string>();
+    expect(assistantSqlSafety("SELECT lower(a), pg_catalog.upper(b), count(*) FROM t", "postgres", called).proven).toBe(true);
+    expect([...called].sort()).toEqual(["count", "lower"]);
+  });
+});
+
+/** Captured from `pg_get_viewdef` on Postgres 15 with the search path pinned to pg_catalog. */
+describe("deparsedPostgresSafety", () => {
+  const ok = (text: string) => deparsedPostgresSafety(text).proven;
+
+  it("proves a definition calling only pg_catalog functions, reading quoted lower-case keywords as bare names", () => {
+    expect(ok(' SELECT "left"((t.name)::text, 2) AS "left",\n    "substring"((t.name)::text, 1, 2) AS "substring",\n    POSITION((\'a\'::text) IN (t.name)) AS "position",\n    ((t.name)::text || \'x\'::text) AS c,\n    EXTRACT(day FROM now()) AS "extract"\n   FROM public.t;')).toBe(true);
+    expect(ok(" SELECT t.id,\n    lower((t.name)::text) AS l,\n    count(*) OVER () AS count\n   FROM public.t;")).toBe(true);
+    expect(ok("SELECT ((owner = CURRENT_USER) AND (id > 0))")).toBe(true);
+  });
+
+  it("does not prove a user function, a shadowing one, a user operator, or a side effect a plan would hide", () => {
+    expect(ok(" SELECT t.id\n   FROM public.t\n  WHERE (t.id = public.evil(1));")).toBe(false);
+    expect(ok(" SELECT public.lower(t.name) AS l\n   FROM public.t;")).toBe(false);
+    expect(ok(" SELECT ((t.name)::text OPERATOR(public.@@@) 'x'::text) AS y\n   FROM public.t;")).toBe(false);
+    // A Values Scan and a Limit show none of these in EXPLAIN; the definition does.
+    expect(ok(" VALUES ((pg_backend_pid() + 1)), (2);")).toBe(false);
+    expect(ok(" SELECT t.id,\n    t.name\n   FROM public.t\n LIMIT pg_backend_pid();")).toBe(false);
+    expect(ok(" SELECT t.id\n   FROM public.t\n FOR UPDATE OF t;")).toBe(false);
+  });
+
+  it("does not read a name made of two quoted halves as the bare name they spell", () => {
+    expect(ok('SELECT "low""er"(x)')).toBe(false);
+    expect(ok('SELECT "Lower"(x)')).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import { dialectFor } from "../database/dialects.ts";
 import { runConnectionQuery } from "../database/run-connection-query.ts";
 import type { AuditCaller } from "../../server/routes/query-audit-hook.ts";
 import { assistantSqlSafety } from "./assistant-sql-safety.ts";
+import { assistantSqlReachSafety, connectionCatalogReader, type CatalogReader } from "./assistant-sql-reach-check.ts";
 import { clip, errorResult, jsonResult } from "./assistant-tool-output.ts";
 import type { QueryRunResponse } from "../../shared/db-grid.ts";
 import { noApprover, type AskApproval } from "./assistant-approval-broker.ts";
@@ -97,11 +98,12 @@ export const queryFailedResult = (conn: ConnectionRow, e: unknown): Json =>
   errorResult(`The query failed on "${conn.name}": ${clip((e as Error)?.message ?? String(e), 1_000)}`);
 
 /**
- * `db_query`. A query proven to read runs at once, on the read-only path whatever the
- * connection allows. Anything else goes to `runApprovedQuery`: shown to the user in full, run
- * only once they approve. Without an asker (no Assistant session to ask in) it is not run.
+ * `db_query`. A query proven to read — by its text, then by what the catalog says it reaches —
+ * runs at once, on the read-only path whatever the connection allows. Anything else goes to
+ * `runApprovedQuery`: shown to the user in full, run only once they approve. Without an asker
+ * (no Assistant session to ask in) it is not run. `read` replaces the catalog read, for tests.
  */
-export async function dbQuery(args: Args, caller: AuditCaller, ask?: AskApproval): Promise<Json> {
+export async function dbQuery(args: Args, caller: AuditCaller, ask?: AskApproval, read?: CatalogReader): Promise<Json> {
   const found = findAiConnection(args.connectionId);
   if (!found.ok) return errorResult(found.error);
   const { conn } = found;
@@ -109,7 +111,11 @@ export async function dbQuery(args: Args, caller: AuditCaller, ask?: AskApproval
   if (args.sql.length > MAX_SQL_CHARS) return errorResult(`\`sql\` is longer than ${MAX_SQL_CHARS} characters.`);
   const sql = args.sql;
 
-  const safety = assistantSqlSafety(sql, dialectFor(conn.type).name);
+  // Proven only when the text calls nothing off the safe list *and* nothing it reaches does.
+  const dialect = dialectFor(conn.type).name;
+  const called = new Set<string>();
+  const text = assistantSqlSafety(sql, dialect, called);
+  const safety = text.proven ? await assistantSqlReachSafety(sql, dialect, called, read ?? connectionCatalogReader(conn)) : text;
   if (!safety.proven) {
     return runApprovedQuery(conn, sql, safety.reason, caller, ask ?? noApprover);
   }
