@@ -6,6 +6,7 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 | Document | Covers |
 |---|---|
 | [AI Chat & Providers](architecture/ai-chat-and-providers.md) | Provider adapters, AI configuration, the persistent chat streaming session |
+| [PPM Assistant](architecture/ppm-assistant.md) | The chat that operates PPM itself: its virtual project and isolation, `/api/assistant-mcp`, chatting-device delivery, approvals, proving a SQL read |
 | [Extension System](architecture/extensions.md) | Manifest, lifecycle, RPC, worker isolation, contribution registry, dev workflow |
 | [Data & Storage](architecture/data-and-storage.md) | SQLite schema and access, database viewer, MCP server management, group-chat model |
 | [Workspace & UI](architecture/workspace-and-ui.md) | Workspace switching, editor, terminal, git, file service, Design mode, OS File Explorer, tab-host windows and Document PiP |

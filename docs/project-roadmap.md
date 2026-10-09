@@ -149,7 +149,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 |---------|----------|--------|-------------|
 | **Telegram Bot (PPMBot Coordinator)** | High | ✅ Done (v0.9.11) | Coordinator session per chat delegates project tasks to subagents. Persistent identity in `~/.ppm/bot/coordinator.md`. CLI-driven delegation via `ppm bot`. Cross-provider. |
 | **Hooks system** | High | — | Event hooks for PPM lifecycle (file save, git commit, chat message). Foundation for a Skills API and deeper extension integration. No implementation yet. |
-| **PPM Skills API** | Medium | ◐ Redirected | Shipped as an *external* surface instead: `ppm export skill` generates a Claude Code skill that drives PPM through its CLI, HTTP API and SQLite config DB. A stable *internal* AI-facing API is still unbuilt — decide whether it is still wanted before scheduling. |
+| **PPM Skills API** | Medium | ◐ Partial | External surface: `ppm export skill` generates a Claude Code skill that drives PPM through its CLI, HTTP API and SQLite config DB. Internal surface: the PPM Assistant's MCP endpoint (`/api/assistant-mcp`) gives an AI PPM's own tools — projects, chats, databases, the chatting device's screen and tabs, palette commands — with approval before any change ([PPM Assistant](architecture/ppm-assistant.md)). It serves Assistant sessions only; a general internal API for ordinary chats or third parties is still unbuilt. |
 | **Built-in Clawbot** | Medium | — | Lightweight in-process agent on the Messages API. Superseded in practice by the multi-provider registry + PPMBot; keep only if the "AI authors extensions" story is still a goal. |
 | **More providers** | Medium | ◐ Partial | Codex ✅, Cursor ✅. Gemini CLI and Tier-3 (any OpenAI-compatible API) not started — note PPM already *serves* an OpenAI-compatible endpoint via the proxy, it just does not *consume* one. |
 
@@ -174,7 +174,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 | **Workspace snapshots** | UX | Save/restore full state (open files, terminals, chat). Critical for mobile where browser kills tabs. |
 | **Ollama / local models** | AI | Run AI offline with local models. No API cost, privacy-first. |
 | **Project templates** | DX | `ppm init --template react/nest/go`. Community templates from Marketplace. |
-| **AI command palette** | AI | Natural language commands ("deploy production", "run tests"). |
+| **AI command palette** | AI | Largely covered by the PPM Assistant: asked in plain language, it lists and runs Command Palette commands on the chatting device (one registry shared with the palette and keybindings), asking first for any that change data. Not built: typing natural language into the palette itself. |
 | **Layout customization** | UX | User arranges panels freely. Save separate desktop vs mobile layouts. |
 | **Performance profiling** | DevTools | Flamegraph viewer, memory tracking, network waterfall. |
 | **Multi-user workspace** | Enterprise | Shared project access, role-based permissions, team features. |

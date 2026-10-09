@@ -373,3 +373,30 @@ append-mode descriptor it hands the server. `tests/unit/cli/windows-launch-log-r
 fails if either call site points the redirect back at `ppm.log`. `ppm.err.log` is still
 overwritten on each start. It only duplicates the supervisor's own lines plus a crash trace from
 the last run.
+
+## Proving that a query only reads
+
+**Question**: the PPM Assistant may run a SQL query without asking only when it cannot change
+anything. Is running it on the connection's read-only path enough?
+
+**No.** A read-only transaction (Postgres `BEGIN READ ONLY`, MySQL `START TRANSACTION READ ONLY`)
+still lets a function terminate a backend, reload the server's config, take an advisory lock,
+write through another connection (`dblink_exec`), sleep or set a variable, and a SQLite `PRAGMA`
+can set what it names. A query that only *looks* like a read can also call something its text
+does not show: a view, a row-level security policy, a domain check, a user function that shadows
+a built-in's name, or one Postgres runs for `t.name` when `t` has no such column.
+
+**Rejected: asking the planner.** `EXPLAIN (VERBOSE)` looks like a way to see everything a query
+calls, but planning runs code. On Postgres 15, `EXPLAIN` of a view filtering on a STABLE plpgsql
+function ran it, and an IMMUTABLE one with constant arguments was folded away: run, and gone from
+the plan. Its output also prints a user function bare when the search path finds it, and leaves
+out a Values Scan's rows and a LIMIT's expression.
+
+**Decision**: two checks, both conservative, and any doubt means asking the user — never running.
+The text must be a plain read calling only a short list of ordinary functions
+(`assistant-sql-safety.ts`); then one catalog read on the read-only path, with a 5 s server-side limit
+(and on Postgres the search path pinned to `pg_catalog`), lists what the query's words can reach, and each view
+definition, policy and expression found goes through the same text check
+(`assistant-sql-reach-postgres.ts`, `assistant-sql-reach-mysql.ts`). SQLite needs no catalog read.
+The list is deliberately short: an ordinary read that misses it costs one approval card, while a
+read wrongly proven runs unasked. Design: `docs/architecture/ppm-assistant.md` → Proving a read.

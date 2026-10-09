@@ -980,3 +980,14 @@ checks where the tab lands on a desktop and a phone, a tab that was already open
 a line in code view, the card's Open button, the setting turned off, and a chat with no browser.
 `PPM_TAB_TOOLS_WEB_DIR` reuses a scratch build. `tests/e2e/html-preview-cdn-check-e2e.mjs`
 covers the preview's CDN loads and its self-check on their own. Both need internet for the CDNs.
+
+## PPM Assistant
+
+A chat that works on PPM itself rather than on one project: it reads the chatting device's
+screen, chats, databases and open tabs, navigates tabs and projects, runs Command Palette
+commands and sends messages into working chats, on Claude and Codex. Sessions run in the
+reserved `__assistant__` project with their own settings and MCP servers and none of the user's
+agent setup; tools come from `/api/assistant-mcp`, screen operations go only to the device that
+sent the latest message, and anything that changes data asks on the session's single approval
+card. Reads run unasked only inside the registered projects, and a SQL query only once it is
+proven to read. Full design, limitations and verification: [PPM Assistant](ppm-assistant.md).
