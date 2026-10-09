@@ -6,6 +6,8 @@
 
 - **Scrolling up past a compaction showed "File not found" in a chat whose session had changed folder.** Claude Code names the transcript in a compaction summary after the folder the session was working in when it compacted, so a session that had `cd`'d into a subfolder pointed at a project folder that was never created. PPM now looks for the session's own transcript in the project's folder, and only there.
 
+- **Remote Desktop on Wayland showed a solid green or black picture on a host without a GPU encoder.** It happened on a fresh Ubuntu 24.04 with GNOME (#48). The software encoder splits each frame into slices, and PPM sent every slice to the browser as a frame of its own, which no browser can decode. Slices of one frame now travel together. The same fix repairs the Android viewer on a host without a hardware encoder, and makes Remote Desktop on an X11 host without one respond about a second sooner: it had avoided the split by encoding many frames at once, which held each frame back by about a second on a 24-thread machine.
+
 ## [0.23.14] - 2026-10-08
 
 ### Added
