@@ -6,7 +6,8 @@
 // label "Extra" must map to "xhigh" before reaching this layer).
 
 import { isAbsolute, resolve } from "node:path";
-import type { McpHttpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { McpHttpServerConfig, McpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { AssistantMcpServer } from "../shared/assistant-settings.ts";
 import {
   CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
 } from "../services/design/mcp/design-mcp-tool.ts";
@@ -271,20 +272,33 @@ export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined)
 }
 
 /**
- * The PPM Assistant's MCP server as the SDK's `http` server config, for an Assistant session
- * only; `{}` otherwise. Its timeout is long because a query may run for minutes and a change
- * waits for the user's approval inside the call. The token travels in the header.
+ * An Assistant session's whole MCP server list: the servers the user connected for the Assistant
+ * in Settings → PPM Assistant, then the PPM Assistant's own server as the SDK's `http` config,
+ * written last so nothing can stand in for it. `{}` for any other session. The own server's
+ * timeout is long because a query may run for minutes and a change waits for the user's approval
+ * inside the call; its token travels in the header. The user's servers carry no permission of
+ * their own: the Assistant policy asks before every one of their tools runs.
  */
-export function assistantMcpServers(access: AssistantMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
-  if (!access) return {};
-  return {
-    [CLAUDE_ASSISTANT_MCP_SERVER]: {
+export function assistantMcpServers(
+  access: AssistantMcpAccess | null | undefined,
+  servers: readonly AssistantMcpServer[] = [],
+): Record<string, McpServerConfig> {
+  const out: Record<string, McpServerConfig> = {};
+  for (const server of servers) {
+    if (!server.enabled || server.name === CLAUDE_ASSISTANT_MCP_SERVER) continue;
+    out[server.name] = server.transport === "stdio"
+      ? { type: "stdio", command: server.command, args: [...server.args], ...(Object.keys(server.env).length ? { env: { ...server.env } } : {}) }
+      : { type: "http", url: server.url, ...(Object.keys(server.headers).length ? { headers: { ...server.headers } } : {}) };
+  }
+  if (access) {
+    out[CLAUDE_ASSISTANT_MCP_SERVER] = {
       type: "http",
       url: access.url,
       headers: { Authorization: `Bearer ${access.token}` },
       timeout: ASSISTANT_MCP_TIMEOUT_MS,
-    },
-  };
+    } as McpHttpServerConfig;
+  }
+  return out;
 }
 
 /** They only open a tab for the user to look at, so they never ask first. */

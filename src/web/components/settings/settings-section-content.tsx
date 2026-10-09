@@ -20,6 +20,7 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   "database-drivers": lazyWithPreload(() => import("./database-drivers-section").then((m) => ({ default: m.DatabaseDriversSection }))),
   "ai-provider": lazyWithPreload(() => import("./ai-settings-section").then((m) => ({ default: m.AISettingsSection }))),
   accounts: lazyWithPreload(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
+  assistant: lazyWithPreload(() => import("./assistant-settings-section").then((m) => ({ default: m.AssistantSettingsSection }))),
   design: lazyWithPreload(() => import("./design-settings-section").then((m) => ({ default: m.DesignSettingsSection }))),
   voice: lazyWithPreload(() => import("./voice-settings-section").then((m) => ({ default: m.VoiceSettingsSection }))),
   ppmbot: lazyWithPreload(() => import("./ppmbot-settings-section").then((m) => ({ default: m.PPMBotSettingsSection }))),

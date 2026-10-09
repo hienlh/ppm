@@ -1,6 +1,7 @@
 import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
+import { DEFAULT_ASSISTANT_SETTINGS, type AssistantSettings } from "../shared/assistant-settings.ts";
 
 export interface TelegramConfig {
   bot_token: string;
@@ -67,6 +68,8 @@ export interface PpmConfig {
   session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
   android?: AndroidConfig;
+  /** Settings → PPM Assistant: the Assistant's own provider, model, instructions and MCP servers. */
+  assistant?: AssistantSettings;
   /** Lowest level written to ppm.log. `PPM_LOG_LEVEL` overrides it; see `services/logger.ts`. */
   log_level?: LogLevel;
 }
@@ -225,6 +228,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   },
   ntfy: { server: "", topic: "", token: "" },
   notifications: structuredClone(DEFAULT_NOTIFICATION_SETTINGS),
+  assistant: structuredClone(DEFAULT_ASSISTANT_SETTINGS),
   clawbot: {
     enabled: false,
     default_provider: "claude",

@@ -38,9 +38,9 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { assistantMcpEnv, buildThreadParams, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
-import { assertNoUserAssistantMcpServer } from "./codex-assistant-mcp-guard.ts";
-import type { AssistantMcpAccess } from "../../services/assistant-mcp/assistant-mcp-tools.ts";
+import { assistantMcpEnv, buildThreadParams, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams } from "./codex-thread-params.ts";
+import { planAssistantCodexMcp } from "./codex-assistant-mcp-guard.ts";
+import { codexMcpApproval, codexMcpApprovalResponse, type CodexMcpApproval } from "./codex-mcp-approval.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
@@ -148,6 +148,8 @@ interface PendingApproval {
   codexId: number | string;
   method: string;
   questions?: unknown;
+  /** Set for an MCP tool approval of an Assistant session, which is answered allow or deny. */
+  mcpApproval?: CodexMcpApproval;
 }
 
 interface LiveSession {
@@ -169,8 +171,9 @@ interface LiveSession {
   designMcp?: DesignMcpAccess;
   /** The tab tools' endpoint, when the user has them on; kept for the same reason. */
   tabToolsMcp?: TabToolsMcpAccess;
-  /** Set for a PPM Assistant session (web search off, its own tools); kept for the same reason. */
-  assistant?: { mcp?: AssistantMcpAccess };
+  /** Set for a PPM Assistant session (web search off, its own tools and servers, none of the
+   *  user's); kept for the same reason. */
+  assistant?: CodexAssistantSession;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -875,7 +878,7 @@ export class CodexAppServerProvider implements AIProvider {
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
-    if (live.assistant?.mcp) await assertNoUserAssistantMcpServer(client, live.cwd, (m) => log.warn(m));
+    if (live.assistant) await this.planAssistantMcp(live, client);
 
     const resumeBase = buildThreadParams({
       cwd: live.cwd,
@@ -958,7 +961,7 @@ export class CodexAppServerProvider implements AIProvider {
       requireInstructions: assistant,
       designMcp: opts?.designSession && !assistant ? opts.designMcp : undefined,
       tabToolsMcp: opts?.designSession || assistant ? undefined : opts?.tabToolsMcp,
-      assistant: assistant ? { mcp: opts?.assistantMcp } : undefined,
+      assistant: assistant ? { mcp: opts?.assistantMcp, servers: opts?.assistantMcpServers } : undefined,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -977,7 +980,7 @@ export class CodexAppServerProvider implements AIProvider {
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
-    if (live.assistant?.mcp) await assertNoUserAssistantMcpServer(client, live.cwd, (m) => log.warn(m));
+    if (live.assistant) await this.planAssistantMcp(live, client);
 
     const resumeBase = buildThreadParams({
       cwd, permission, model,
@@ -1165,8 +1168,33 @@ export class CodexAppServerProvider implements AIProvider {
     }
   }
 
+  /**
+   * Which of the user's own codex MCP servers to switch off for an Assistant session on this
+   * app-server, read from the config it loaded. Throws (and so refuses the session) on a name
+   * clash or a config that cannot be read.
+   */
+  private async planAssistantMcp(live: LiveSession, client: CodexJsonRpcClient): Promise<void> {
+    const assistant = live.assistant!;
+    assistant.disableUserServers = await planAssistantCodexMcp(client, live.cwd, {
+      ownServer: !!assistant.mcp,
+      privateNames: (assistant.servers ?? []).filter((s) => s.enabled).map((s) => s.name),
+    });
+    if (assistant.disableUserServers.length > 0) {
+      log.info(`assistant session: switched off ${assistant.disableUserServers.length} of the user's codex MCP server(s)`);
+    }
+  }
+
   private handleServerRequest(live: LiveSession, req: ServerRequest): void {
     const method = req.method;
+    // An Assistant session's MCP tools ask before every call: the question becomes an approval
+    // card, answered allow or deny. Any other session declines MCP elicitations as before.
+    const mcpApproval = live.assistant ? codexMcpApproval(method, req.params) : null;
+    if (mcpApproval) {
+      const ppmReqId = crypto.randomUUID();
+      live.pendingApprovals.set(ppmReqId, { codexId: req.id, method, mcpApproval });
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: mcpApproval.tool, input: redactTruncate(mcpApproval.input) });
+      return;
+    }
     if (isApprovalMethod(method)) {
       const ppmReqId = crypto.randomUUID();
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method });
@@ -1190,7 +1218,9 @@ export class CodexAppServerProvider implements AIProvider {
       const pending = live.pendingApprovals.get(requestId);
       if (!pending) continue;
       live.pendingApprovals.delete(requestId);
-      if (pending.method === "item/tool/requestUserInput") {
+      if (pending.mcpApproval) {
+        this.respondOnce(live, pending.codexId, codexMcpApprovalResponse(pending.mcpApproval, approved));
+      } else if (pending.method === "item/tool/requestUserInput") {
         this.respondOnce(live, pending.codexId, buildUserInputResponse(pending.questions, data));
       } else if (isApprovalMethod(pending.method)) {
         this.respondOnce(live, pending.codexId, decisionFor(pending.method as ApprovalMethod, approved));
@@ -1209,7 +1239,8 @@ export class CodexAppServerProvider implements AIProvider {
 
   private declinePending(live: LiveSession): void {
     for (const [, pending] of live.pendingApprovals) {
-      if (pending.method === "item/tool/requestUserInput") this.respondOnce(live, pending.codexId, { answers: {} });
+      if (pending.mcpApproval) this.respondOnce(live, pending.codexId, codexMcpApprovalResponse(pending.mcpApproval, false, true));
+      else if (pending.method === "item/tool/requestUserInput") this.respondOnce(live, pending.codexId, { answers: {} });
       else if (isApprovalMethod(pending.method)) this.respondOnce(live, pending.codexId, decisionFor(pending.method as ApprovalMethod, false, true));
       else this.respondOnce(live, pending.codexId, null, "session ended");
     }

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_ASSISTANT_SETTINGS } from "../../../src/shared/assistant-settings.ts";
+import { USER_INSTRUCTIONS_HEADING } from "../../../src/services/assistant/assistant-instructions.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
 import { configService } from "../../../src/services/config.service.ts";
@@ -38,6 +42,7 @@ describe("chatService for an Assistant session", () => {
   afterEach(() => {
     setTabTools(undefined);
     setServerListenAddress(0, "");
+    configService.set("assistant", structuredClone(DEFAULT_ASSISTANT_SETTINGS));
   });
 
   it("adds the server-built instructions and forces the default mode over any caller or stored mode", async () => {
@@ -116,6 +121,61 @@ describe("chatService for an Assistant session", () => {
     expect(opts).not.toHaveProperty("assistantSession");
     expect(opts).not.toHaveProperty("assistantMcp");
     expect(opts.permissionMode).toBe("acceptEdits");
+  });
+
+  it("starts with the Assistant's own model and effort unless the session chose one", async () => {
+    configService.set("assistant", { ...DEFAULT_ASSISTANT_SETTINGS, providers: { "stub-asst": { model: "asst-model", effort: "low" } } });
+    setSessionAssistant("d1");
+    const opts = await chatService.prepareSendOptions("stub-asst", "d1", "hi");
+    expect(opts.model).toBe("asst-model");
+    expect(opts.effort).toBe("low");
+    const chosen = await chatService.prepareSendOptions("stub-asst", "d1", "hi", { model: "picked", effort: "max" });
+    expect(chosen.model).toBe("picked");
+    expect(chosen.effort).toBe("max");
+    // An ordinary chat never takes them.
+    setSessionMetadata("o2", "proj", "/proj");
+    expect((await chatService.prepareSendOptions("stub-asst", "o2", "hi")).model).toBeUndefined();
+  });
+
+  it("adds the user's own instructions last, under their heading, and the enabled servers of its settings", async () => {
+    configService.set("assistant", {
+      ...DEFAULT_ASSISTANT_SETTINGS,
+      instructions: "Answer in Vietnamese.",
+      mcp_servers: [
+        { id: "1", name: "notes", enabled: true, transport: "stdio", command: "notes-mcp", args: [], env: { K: "v" } },
+        { id: "2", name: "off", enabled: false, transport: "http", url: "https://x.example", headers: {} },
+      ],
+    });
+    setSessionAssistant("d2");
+    const opts = await chatService.prepareSendOptions("stub-asst", "d2", "hi", {
+      assistantMcpServers: [{ id: "9", name: "forged", enabled: true, transport: "stdio", command: "evil", args: [], env: {} }],
+    });
+    expect(opts.assistantInstructions!.endsWith(`${USER_INSTRUCTIONS_HEADING}\n\nAnswer in Vietnamese.`)).toBe(true);
+    expect(opts.assistantInstructions).toContain("`notes`");
+    expect(opts.assistantMcpServers?.map((s) => s.name)).toEqual(["notes"]);
+    // Never from a caller, never on an ordinary chat.
+    setSessionMetadata("o3", "proj", "/proj");
+    expect(await chatService.prepareSendOptions("stub-asst", "o3", "hi", { assistantMcpServers: opts.assistantMcpServers }))
+      .not.toHaveProperty("assistantMcpServers");
+  });
+
+  it("carries none of the user's shared instructions or memories, whatever the sharing setting", async () => {
+    const project = mkdtempSync(join(tmpdir(), "ppm-shared-"));
+    try {
+      (configService as any).config.ai.share_provider_context = true;
+      mkdirSync(assistantWorkDir(), { recursive: true });
+      writeFileSync(join(assistantWorkDir(), "CLAUDE.md"), "ASSISTANT-DIR-MARKER");
+      writeFileSync(join(project, "CLAUDE.md"), "PROJECT-MARKER");
+      setSessionMetadata("d3", "__assistant__", assistantWorkDir());
+      const opts = await chatService.prepareSendOptions("stub-asst", "d3", "hi");
+      expect(opts.sharedContext ?? "").not.toContain("ASSISTANT-DIR-MARKER");
+      // The control: an ordinary chat in a project still gets its shared context.
+      setSessionMetadata("o4", "proj", project);
+      expect((await chatService.prepareSendOptions("stub-asst", "o4", "hi")).sharedContext).toContain("PROJECT-MARKER");
+    } finally {
+      rmSync(join(assistantWorkDir(), "CLAUDE.md"), { force: true });
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 
   it("marks sessions created in the virtual project, and never prewarms for it", async () => {

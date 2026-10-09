@@ -12,6 +12,7 @@ import {
   ASSISTANT_MCP_TIMEOUT_MS, CODEX_ASSISTANT_MCP_TOKEN_ENV, type AssistantMcpAccess,
 } from "../../services/assistant-mcp/assistant-mcp-tools.ts";
 import { ASSISTANT_TOOLS, CODEX_ASSISTANT_MCP_SERVER } from "../../shared/assistant-tool-names.ts";
+import type { AssistantMcpServer } from "../../shared/assistant-settings.ts";
 
 /** Config overrides, keyed like `-c key=value` on codex's command line (dotted paths). */
 export type CodexConfigOverrides = Record<string, unknown>;
@@ -30,8 +31,22 @@ export interface ThreadParamsInput {
   designMcp?: DesignMcpAccess;
   /** The tab tools (`open_file`, `open_preview`) while the user has them on; likewise. */
   tabToolsMcp?: TabToolsMcpAccess;
-  /** Set for a PPM Assistant session, with its own tools' endpoint when this server has one. */
-  assistant?: { mcp?: AssistantMcpAccess };
+  /** Set for a PPM Assistant session; see {@link CodexAssistantSession}. */
+  assistant?: CodexAssistantSession;
+}
+
+/** What a PPM Assistant session's app-server is configured with. */
+export interface CodexAssistantSession {
+  /** Its own tools' endpoint, when this server has one. */
+  mcp?: AssistantMcpAccess;
+  /** The servers the user connected for the Assistant in Settings → PPM Assistant. */
+  servers?: AssistantMcpServer[];
+  /**
+   * The user's own codex MCP servers, read from the config this app-server loaded
+   * (`planAssistantCodexMcp`): each is switched off for the session. Resolved per app-server,
+   * since every account has a CODEX_HOME, and so a config.toml, of its own.
+   */
+  disableUserServers?: string[];
 }
 
 /**
@@ -85,17 +100,59 @@ export function tabToolsMcpEnv(access: TabToolsMcpAccess | undefined): Record<st
 }
 
 /**
+ * The servers of Settings → PPM Assistant as codex config overrides. Every tool asks first
+ * (`default_tools_approval_mode: "prompt"`): codex brings the request to PPM as an elicitation,
+ * which an Assistant session shows as an approval card. Env and header values travel in the
+ * override like the rest of the server, over the app-server's stdin and never on a command line.
+ */
+export function assistantUserMcpConfig(servers: readonly AssistantMcpServer[] | undefined): CodexConfigOverrides {
+  const out: CodexConfigOverrides = {};
+  for (const server of servers ?? []) {
+    if (!server.enabled) continue;
+    out[`mcp_servers.${server.name}`] = server.transport === "stdio"
+      ? {
+        command: server.command,
+        args: [...server.args],
+        ...(Object.keys(server.env).length ? { env: { ...server.env } } : {}),
+        enabled: true,
+        default_tools_approval_mode: "prompt",
+      }
+      : {
+        url: server.url,
+        ...(Object.keys(server.headers).length ? { http_headers: { ...server.headers } } : {}),
+        enabled: true,
+        default_tools_approval_mode: "prompt",
+      };
+  }
+  return out;
+}
+
+/**
  * A PPM Assistant session's config overrides: codex's built-in web search off — it reaches out
  * with no approval card, and the Assistant reads content it did not write — and the
  * Assistant's tools. The tools only read, or ask inside the endpoint before changing anything,
  * so they are approved up front like the design and tab tools; the long timeout leaves room for
  * a slow query or an approval the user takes a while to answer. `{}` for any other session.
+ *
+ * The session is kept apart from the user's own codex setup: each of the user's MCP servers is
+ * switched off (`enabled = false`), and so are apps (ChatGPT connectors) and plugins, which bring
+ * tools of their own, and hooks, which run the user's commands around the agent's. The servers of
+ * Settings → PPM Assistant take their place. MCP tool approvals are asked as elicitations
+ * (`tool_call_mcp_elicitation`), answered by an approval card that offers no "always allow". All
+ * five keys are ones codex 0.161 recognises (it warns on an unknown one).
  */
 export function assistantSessionConfig(assistant: ThreadParamsInput["assistant"]): CodexConfigOverrides {
   if (!assistant) return {};
   const access = assistant.mcp;
+  const disabled = Object.fromEntries((assistant.disableUserServers ?? []).map((name) => [`mcp_servers.${name}.enabled`, false]));
   return {
     web_search: "disabled",
+    "features.apps": false,
+    "features.plugins": false,
+    "features.hooks": false,
+    "features.tool_call_mcp_elicitation": true,
+    ...disabled,
+    ...assistantUserMcpConfig(assistant.servers),
     ...(access ? {
       [`mcp_servers.${CODEX_ASSISTANT_MCP_SERVER}`]: {
         url: access.url,

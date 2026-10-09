@@ -302,6 +302,9 @@ app.route("/api/mcp-auth", mcpAuthRoutes);
 app.route("/api/settings/themes", settingsThemesRoutes);
 import { designSettingsRoutes } from "./routes/design-settings.ts";
 app.route("/api/settings/design", designSettingsRoutes);
+// Settings → PPM Assistant, kept apart from every other chat's settings.
+import { assistantSettingsRoutes } from "./routes/assistant-settings.ts";
+app.route("/api/assistant", assistantSettingsRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
 app.route("/api/tunnel/named", namedTunnelRoutes);

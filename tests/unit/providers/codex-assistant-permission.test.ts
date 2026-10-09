@@ -94,8 +94,11 @@ describe("Codex Assistant session", () => {
     const live = await internal.connect((await provider.createSession({})).id, ASSISTANT_OPTS);
     const start = params.find((p) => p.method === "thread/start")!.value;
     expect(start).toMatchObject({ sandbox: "read-only", approvalPolicy: "untrusted", developerInstructions: "# PPM Assistant" });
-    // No tab tools; codex's own web search off (the Assistant's tools come with an endpoint).
-    expect(start.config).toEqual({ web_search: "disabled" });
+    // No tab tools; codex's own web search, apps, plugins and hooks off (the Assistant's tools come
+    // with an endpoint), and MCP approvals asked as elicitations.
+    expect(start.config).toEqual({
+      web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, "features.tool_call_mcp_elicitation": true,
+    });
     expect(live.requireInstructions).toBe(true);
     expect(live.tabToolsMcp).toBeUndefined();
   });

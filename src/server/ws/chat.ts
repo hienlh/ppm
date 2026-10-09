@@ -41,6 +41,7 @@ import {
 } from "./chat-deliver-user-message.ts";
 import { setAssistantChatDelivery, TARGET_HAS_PENDING_APPROVAL, type DeliverResult } from "../../services/assistant-mcp/assistant-chat-send.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
+import { assistantProviderDefaults } from "../../services/assistant/assistant-settings.service.ts";
 import type { TraceOrigin } from "../../shared/session-trace.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
 
@@ -63,12 +64,22 @@ function lastTurnStop(sessionId: string): TurnStop | null {
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
-function sessionProviderConfig(sessionId: string) {
-  const ai = configService.get("ai");
-  const pid = activeSessions.get(sessionId)?.providerId
+function sessionProviderId(sessionId: string): string {
+  return activeSessions.get(sessionId)?.providerId
     ?? resolveStoredProvider(sessionId)
-    ?? ai.default_provider ?? "claude";
-  return ai.providers[pid];
+    ?? configService.get("ai").default_provider ?? "claude";
+}
+
+function sessionProviderConfig(sessionId: string) {
+  return configService.get("ai").providers[sessionProviderId(sessionId)];
+}
+
+/**
+ * The model and effort an Assistant session starts with, from Settings → PPM Assistant, which
+ * stand in for the chat defaults; `{}` for any other session.
+ */
+function assistantSessionDefaults(sessionId: string): { model?: string; effort?: string } {
+  return isAssistantSession(sessionId) ? assistantProviderDefaults(sessionProviderId(sessionId)) : {};
 }
 
 /**
@@ -114,12 +125,12 @@ function adoptProviderHint(sessionId: string, hint: string | undefined): void {
 
 /** Resolve the model shown in session_state: per-session override, else provider default. */
 function resolveSessionModel(sessionId: string): string | undefined {
-  return getSessionModel(sessionId) ?? sessionProviderConfig(sessionId)?.model;
+  return getSessionModel(sessionId) ?? assistantSessionDefaults(sessionId).model ?? sessionProviderConfig(sessionId)?.model;
 }
 
 /** Resolve the effort shown in session_state: per-session override, else provider default. */
 function resolveSessionEffort(sessionId: string): string | undefined {
-  return getSessionEffort(sessionId) ?? sessionProviderConfig(sessionId)?.effort;
+  return getSessionEffort(sessionId) ?? assistantSessionDefaults(sessionId).effort ?? sessionProviderConfig(sessionId)?.effort;
 }
 
 /** Whether thinking is effectively ON: per-session override wins, else provider config, else SDK default. */

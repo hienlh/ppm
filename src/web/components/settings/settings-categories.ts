@@ -26,6 +26,7 @@ import {
   Zap,
   Monitor,
   MonitorSmartphone,
+  Sparkles,
 } from "@/lib/icons";
 
 /**
@@ -42,6 +43,7 @@ export type SettingsCategoryId =
   | "database-drivers"
   | "ai-provider"
   | "accounts"
+  | "assistant"
   | "design"
   | "voice"
   | "ppmbot"
@@ -92,6 +94,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },
+  { id: "assistant", group: "ai", label: "PPM Assistant", subtitle: "Its own model, instructions, MCP servers", icon: Sparkles },
   { id: "design", group: "ai", label: "Design", subtitle: "Design instructions and skills", icon: LayoutGrid },
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 

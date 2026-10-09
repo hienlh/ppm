@@ -1,18 +1,20 @@
 /**
- * How each provider is handed the PPM Assistant's own tools. Claude takes an `http` MCP server
- * (covered with the rest of its Assistant policy in claude-assistant-policy-hook.test.ts); Codex
- * takes a config override approved up front, with the token in the app-server's environment,
- * runs with its built-in web search off, and refuses to start when the user's own codex config
- * already has a server under the Assistant's name.
+ * How each provider is handed the PPM Assistant's MCP servers: its own and the ones the user
+ * connected for it in Settings → PPM Assistant, and none of the user's others. Claude takes SDK
+ * server configs (its Assistant policy is covered in claude-assistant-policy-hook.test.ts); Codex
+ * takes config overrides — its own server approved up front with the token in the app-server's
+ * environment, the user's Assistant servers asking on every tool, each of the user's own codex
+ * servers switched off — runs with web search, apps, plugins and hooks off, and refuses to start on a
+ * name clash or a config it cannot read.
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import "../../test-setup.ts";
 import { assistantMcpServers } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import {
-  assistantMcpEnv, assistantSessionConfig, buildThreadParams,
+  assistantMcpEnv, assistantSessionConfig, assistantUserMcpConfig, buildThreadParams,
 } from "../../../src/providers/codex-app-server/codex-thread-params.ts";
 import {
-  AssistantMcpNameConflictError, assertNoUserAssistantMcpServer,
+  AssistantMcpConfigUnreadableError, AssistantMcpNameConflictError, planAssistantCodexMcp,
 } from "../../../src/providers/codex-app-server/codex-assistant-mcp-guard.ts";
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider.ts";
 import { CodexJsonRpcClient } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
@@ -21,8 +23,15 @@ import * as accounts from "../../../src/services/codex-account.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { ASSISTANT_TOOLS } from "../../../src/shared/assistant-tool-names.ts";
 import { CODEX_ASSISTANT_MCP_TOKEN_ENV } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
+import type { AssistantMcpServer } from "../../../src/shared/assistant-settings.ts";
 
 const ACCESS = { url: "http://127.0.0.1:8125/api/assistant-mcp", token: "tok-123" };
+const SERVERS: AssistantMcpServer[] = [
+  { id: "1", name: "github", enabled: true, transport: "stdio", command: "npx", args: ["gh-mcp"], env: { GH_TOKEN: "secret-gh" } },
+  { id: "2", name: "docs", enabled: true, transport: "http", url: "https://docs.example/mcp", headers: { "X-Key": "secret-docs" } },
+  { id: "3", name: "off", enabled: false, transport: "stdio", command: "x", args: [], env: {} },
+];
+const ISOLATION = { web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, "features.tool_call_mcp_elicitation": true };
 
 describe("Claude", () => {
   it("is an http server named ppm-assistant with a 12-minute timeout, the token in the header", () => {
@@ -32,12 +41,20 @@ describe("Claude", () => {
     expect(assistantMcpServers(null)).toEqual({});
     expect(assistantMcpServers(undefined)).toEqual({});
   });
+
+  it("adds the enabled servers of the Assistant's settings, its own written last", () => {
+    const servers = assistantMcpServers(ACCESS, SERVERS);
+    expect(Object.keys(servers)).toEqual(["github", "docs", "ppm-assistant"]);
+    expect(servers.github).toEqual({ type: "stdio", command: "npx", args: ["gh-mcp"], env: { GH_TOKEN: "secret-gh" } });
+    expect(servers.docs).toEqual({ type: "http", url: "https://docs.example/mcp", headers: { "X-Key": "secret-docs" } });
+    expect(Object.keys(assistantMcpServers(null, SERVERS))).toEqual(["github", "docs"]);
+  });
 });
 
 describe("Codex config", () => {
-  it("turns web search off and approves the Assistant's six tools up front, with a 720 s tool timeout", () => {
+  it("turns web search, apps, plugins and hooks off and approves the Assistant's tools up front, with a 720 s tool timeout", () => {
     expect(assistantSessionConfig({ mcp: ACCESS })).toEqual({
-      web_search: "disabled",
+      ...ISOLATION,
       "mcp_servers.ppm_assistant": {
         url: ACCESS.url,
         bearer_token_env_var: CODEX_ASSISTANT_MCP_TOKEN_ENV,
@@ -47,9 +64,19 @@ describe("Codex config", () => {
         tool_timeout_sec: 720,
       },
     });
-    // No endpoint: still no web search.
-    expect(assistantSessionConfig({})).toEqual({ web_search: "disabled" });
+    // No endpoint: still kept apart from the user's setup.
+    expect(assistantSessionConfig({})).toEqual(ISOLATION);
     expect(assistantSessionConfig(undefined)).toEqual({});
+  });
+
+  it("adds the Assistant's enabled servers, every tool asking, and switches the user's own off", () => {
+    expect(assistantUserMcpConfig(SERVERS)).toEqual({
+      "mcp_servers.github": { command: "npx", args: ["gh-mcp"], env: { GH_TOKEN: "secret-gh" }, enabled: true, default_tools_approval_mode: "prompt" },
+      "mcp_servers.docs": { url: "https://docs.example/mcp", http_headers: { "X-Key": "secret-docs" }, enabled: true, default_tools_approval_mode: "prompt" },
+    });
+    const config = assistantSessionConfig({ mcp: ACCESS, servers: SERVERS, disableUserServers: ["mine", "work"] });
+    expect(config).toMatchObject({ "mcp_servers.mine.enabled": false, "mcp_servers.work.enabled": false, "mcp_servers.github": { default_tools_approval_mode: "prompt" } });
+    expect(Object.keys(config)).not.toContain("mcp_servers.off");
   });
 
   it("keeps the token out of the config and in the app-server's environment", () => {
@@ -66,22 +93,27 @@ describe("Codex config", () => {
   });
 });
 
-describe("Codex user server under the Assistant's name", () => {
+describe("Codex user servers", () => {
   const reader = (answer: unknown | Error) => ({
     request: async () => { if (answer instanceof Error) throw answer; return answer as never; },
   });
+  const plan = (answer: unknown, opts = { ownServer: true, privateNames: ["github"] }) => planAssistantCodexMcp(reader(answer), "/w", opts);
 
-  it("refuses when the user's config defines one, and passes when it does not", async () => {
-    await expect(assertNoUserAssistantMcpServer(reader({ config: { mcp_servers: { ppm_assistant: { command: "evil" } } } }), "/w"))
-      .rejects.toBeInstanceOf(AssistantMcpNameConflictError);
-    await assertNoUserAssistantMcpServer(reader({ config: { mcp_servers: { other: { url: "http://x" } } } }), "/w");
-    await assertNoUserAssistantMcpServer(reader({ config: {} }), "/w");
+  it("lists every server of the user's config to switch off", async () => {
+    expect(await plan({ config: { mcp_servers: { mine: { command: "x" }, work: { url: "http://x" } } } })).toEqual(["mine", "work"]);
+    expect(await plan({ config: {} })).toEqual([]);
   });
 
-  it("lets a codex that cannot answer config/read through, saying so", async () => {
-    const warnings: string[] = [];
-    await assertNoUserAssistantMcpServer(reader(new Error("Method not found")), "/w", (m) => warnings.push(m));
-    expect(warnings[0]).toContain("config/read failed");
+  it("refuses when the user's config defines the Assistant's own server, or one of its settings' servers", async () => {
+    await expect(plan({ config: { mcp_servers: { ppm_assistant: { command: "evil" } } } })).rejects.toBeInstanceOf(AssistantMcpNameConflictError);
+    await expect(plan({ config: { mcp_servers: { github: { command: "gh" } } } })).rejects.toThrow('named "github"');
+    // Without its own endpoint, a user ppm_assistant is just switched off like the rest.
+    expect(await plan({ config: { mcp_servers: { ppm_assistant: {} } } }, { ownServer: false, privateNames: [] })).toEqual(["ppm_assistant"]);
+  });
+
+  it("refuses a codex that cannot answer config/read rather than run with the user's servers", async () => {
+    await expect(plan(new Error("Method not found"))).rejects.toBeInstanceOf(AssistantMcpConfigUnreadableError);
+    await expect(plan({ config: { mcp_servers: { "bad.name": {} } } })).rejects.toBeInstanceOf(AssistantMcpConfigUnreadableError);
   });
 });
 
@@ -125,6 +157,17 @@ describe("Codex Assistant session start", () => {
     const start = requests.find((r) => r.method === "thread/start")!.value;
     expect(start.config).toMatchObject({ web_search: "disabled", "mcp_servers.ppm_assistant": { url: ACCESS.url, default_tools_approval_mode: "approve" } });
     expect(requests.map((r) => r.method)).toEqual(["initialize", "config/read", "thread/start"]);
+  });
+
+  it("switches the user's own servers off and starts the Assistant's", async () => {
+    userServers = { mine: { command: "x" }, work: { url: "http://x" } };
+    await (provider as any).connect((await provider.createSession({})).id, { ...OPTS, assistantMcpServers: SERVERS.slice(0, 2) });
+    const start = requests.find((r) => r.method === "thread/start")!.value;
+    expect(start.config).toMatchObject({
+      "mcp_servers.mine.enabled": false, "mcp_servers.work.enabled": false,
+      "mcp_servers.github": { command: "npx", default_tools_approval_mode: "prompt" },
+      "mcp_servers.docs": { url: "https://docs.example/mcp", default_tools_approval_mode: "prompt" },
+    });
   });
 
   it("refuses to start when the user's codex config already has a ppm_assistant server", async () => {

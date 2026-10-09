@@ -16,7 +16,7 @@ import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../servic
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
-import { assistantToolDecision, CLAUDE_ASSISTANT_MCP_SERVER } from "../services/assistant/assistant-tool-policy.ts";
+import { assistantToolDecision } from "../services/assistant/assistant-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
@@ -865,6 +865,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     mcpServers: Record<string, unknown>;
     /** Load only `mcpServers`, ignoring every MCP config the CLI would find on its own. */
     strictMcpConfig?: boolean;
+    /**
+     * Load no settings file at all — no user or project settings, hooks, plugins, skills or
+     * CLAUDE.md — the way `completeOnce` runs. Authentication is unaffected: it comes from
+     * `env` (`buildQueryEnv`) and the CLI's credential store, neither of which is a setting.
+     */
+    isolated?: boolean;
     permissionMode: string;
     opts?: Pick<import("./provider.interface.ts").SendMessageOpts, "model" | "oneMContext" | "effort" | "thinkingBudget" | "maxTurns">;
     providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
@@ -903,7 +909,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ...(p.forkSession && { forkSession: true }),
       cwd: p.cwd,
       systemPrompt: p.systemPrompt,
-      settingSources: ["user", "project"],
+      settingSources: p.isolated ? [] : ["user", "project"],
       env: p.env,
       settings: { permissions: { allow: [], deny: [] } },
       allowedTools: p.allowedTools,
@@ -1135,10 +1141,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ? "default"
       : opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
-    const systemPromptOpt = buildSystemPromptOption(
-      providerConfig.system_prompt,
-      assistantPolicy ? opts?.assistantInstructions : opts?.designInstructions,
-    );
+    // The provider's "Additional Instructions" belong to ordinary chats: an Assistant session
+    // carries its own instructions, the user's part included, and nothing else.
+    const systemPromptOpt = assistantPolicy
+      ? buildSystemPromptOption(undefined, opts?.assistantInstructions)
+      : buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
     // A design session in acceptEdits auto-approves file tools only while they target the
     // project, and asks for everything else. Any other mode the user picks for a design
     // session behaves exactly as that mode does in an ordinary chat.
@@ -1417,18 +1424,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           log.warn(`session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
         }
       }
-      const userMcpServers = this.resolveMcpServers(effectiveCwd);
-      // The Assistant policy allows `mcp__ppm-assistant__*` unasked, so a user server under
-      // that name must never be what answers to it: PPM's own entry is written last, and the
-      // query runs with `strictMcpConfig` (below), so the CLI loads no server PPM did not pass —
-      // not from `.mcp.json`, user settings or a plugin.
-      if (assistantPolicy) delete userMcpServers[CLAUDE_ASSISTANT_MCP_SERVER];
-      const mcpServers = {
-        ...userMcpServers,
-        ...designMcpServers(opts?.designSession && !assistantPolicy ? opts.designMcp : undefined),
-        ...tabToolsMcpServers(tabToolsMcp),
-        ...assistantMcpServers(assistantPolicy ? opts?.assistantMcp : undefined),
-      };
+      // An Assistant session runs with the servers of Settings → PPM Assistant and its own, and
+      // none of the user's other servers: the query runs with `strictMcpConfig` and no setting
+      // sources (below), so the CLI loads no server PPM did not pass — not from `.mcp.json`,
+      // user settings or a plugin. The Assistant policy allows `mcp__ppm-assistant__*` unasked,
+      // and PPM's own entry is written last, so nothing else can answer to that name.
+      const mcpServers = assistantPolicy
+        ? assistantMcpServers(opts?.assistantMcp, opts?.assistantMcpServers)
+        : {
+          ...this.resolveMcpServers(effectiveCwd),
+          ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
+          ...tabToolsMcpServers(tabToolsMcp),
+        };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
       let stderrBuffer = "";
@@ -1451,6 +1458,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         allowedTools,
         mcpServers,
         strictMcpConfig: assistantPolicy,
+        isolated: assistantPolicy,
         permissionMode,
         opts,
         providerConfig,

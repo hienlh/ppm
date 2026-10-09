@@ -60,6 +60,12 @@ export interface SendMessageOpts {
    */
   assistantMcp?: { url: string; token: string };
   /**
+   * The MCP servers the user connected for the Assistant in Settings → PPM Assistant, the enabled
+   * ones, secrets included. Server-built for an Assistant session only, never taken from a caller;
+   * an Assistant session loads these and its own server, and none of the user's other servers.
+   */
+  assistantMcpServers?: import("../shared/assistant-settings.ts").AssistantMcpServer[];
+  /**
    * What the device that sent an Assistant session's message shows, as that device reported it.
    * Consumed by `chatService.prepareSendOptions`, which validates and cleans it into an entry of
    * the shared-context block, and never handed to a provider; ignored for any other session.

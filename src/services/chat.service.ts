@@ -27,7 +27,8 @@ import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
 import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
-import { ASSISTANT_APPROVAL_SECTION, ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { ASSISTANT_APPROVAL_SECTION, ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, assistantUserMcpSection, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { enabledAssistantMcpServers, getAssistantSettings } from "./assistant/assistant-settings.service.ts";
 import { assistantMcpAccessFor, assistantMcpTokens } from "./assistant-mcp/assistant-mcp-tokens.ts";
 import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
@@ -346,7 +347,9 @@ class ChatService {
     const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession && !design.assistantSession
       ? tabToolsMcpAccessFor(sessionId) : null;
     const key = `${providerId}:${sessionId}`;
-    const sharing = configService.get("ai").share_provider_context !== false;
+    // The user's shared instructions and memories belong to their own chats: an Assistant
+    // session is kept apart from them whatever the sharing setting says.
+    const sharing = configService.get("ai").share_provider_context !== false && !design.assistantSession;
     if (/^\s*\/(compact|clear|new)(\s|$)/i.test(message)) this.sharedSnapshots.forget(key);
     else if (!sharing) this.sharedSnapshots.forget(key, "shared");
     // Slash commands belong to the runtime parser. A context prefix would turn
@@ -397,16 +400,28 @@ class ChatService {
     const {
       designInstructions: _design, designSession: _designFlag, designMcp: _designMcp,
       assistantInstructions: _instructions, assistantSession: _flag, assistantMcp: _assistantMcp,
-      permissionMode: _mode, ...rest
+      assistantMcpServers: _servers, permissionMode: _mode, ...rest
     } = opts ?? {};
     // No endpoint (a process that serves no HTTP) means no tools, and instructions that
     // describe none.
     const assistantMcp = assistantMcpAccessFor(sessionId);
+    // Settings → PPM Assistant: the model and effort a session runs with when nothing chose one
+    // for it, the user's own instructions, and the MCP servers the user connected for it.
+    const settings = getAssistantSettings();
+    const defaults = settings.providers[providerId] ?? {};
+    const servers = enabledAssistantMcpServers();
+    const sections = [
+      ...(assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION] : []),
+      ...(servers.length > 0 ? [assistantUserMcpSection(servers.map((s) => s.name))] : []),
+    ];
     return {
       ...rest,
-      assistantInstructions: buildAssistantInstructions({ sections: assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION] : [] }),
+      ...(!rest.model && defaults.model ? { model: defaults.model } : {}),
+      ...(!rest.effort && defaults.effort ? { effort: defaults.effort } : {}),
+      assistantInstructions: buildAssistantInstructions({ sections, userInstructions: settings.instructions }),
       assistantSession: true,
       ...(assistantMcp ? { assistantMcp } : {}),
+      ...(servers.length > 0 ? { assistantMcpServers: servers } : {}),
       permissionMode: "default",
     };
   }
@@ -428,7 +443,8 @@ class ChatService {
   private async resolveDesignOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
     const {
       designInstructions: _instructions, designSession: _flag, designMcp: _mcp,
-      assistantInstructions: _assistant, assistantSession: _assistantFlag, assistantMcp: _assistantMcp, ...rest
+      assistantInstructions: _assistant, assistantSession: _assistantFlag, assistantMcp: _assistantMcp,
+      assistantMcpServers: _assistantServers, ...rest
     } = opts ?? {};
     const { getSessionDesignSlug, getSessionPermissionMode, getSessionProjectPath } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);

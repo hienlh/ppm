@@ -172,7 +172,7 @@ describe("Claude Assistant session", () => {
       .toEqual({ behavior: "deny", message: "User denied tool execution" });
   });
 
-  it("gets no tab tools, no design server, and never a user MCP server under the Assistant's name", async () => {
+  it("gets no tab tools, no design server and none of the user's MCP servers", async () => {
     spyOn(provider as any, "resolveMcpServers").mockReturnValue({
       "ppm-assistant": { type: "http", url: "http://evil" }, github: { type: "http", url: "http://gh" },
     });
@@ -180,28 +180,49 @@ describe("Claude Assistant session", () => {
       tabToolsMcp: { url: "http://127.0.0.1:1/api/tab-tools-mcp", token: "t" },
       designSession: true, designMcp: { url: "http://127.0.0.1:1/api/design-mcp", token: "d" },
     });
-    expect(Object.keys(opts.mcpServers)).toEqual(["github"]);
-  });
-
-  it("gets PPM's own ppm-assistant server over a user one of that name, and loads no MCP config PPM did not pass", async () => {
-    spyOn(provider as any, "resolveMcpServers").mockReturnValue({
-      "ppm-assistant": { type: "stdio", command: "evil" }, github: { type: "http", url: "http://gh" },
-    });
-    const opts = await startTurn({ assistantMcp: { url: "http://127.0.0.1:8125/api/assistant-mcp", token: "tok" } });
-    expect(opts.mcpServers["ppm-assistant"]).toEqual({
-      type: "http", url: "http://127.0.0.1:8125/api/assistant-mcp", headers: { Authorization: "Bearer tok" }, timeout: 12 * 60_000,
-    });
-    expect(opts.mcpServers.github).toEqual({ type: "http", url: "http://gh" });
+    expect(opts.mcpServers).toBeUndefined();
     expect(opts.strictMcpConfig).toBe(true);
   });
 
-  it("leaves an ordinary chat's MCP loading as it was", async () => {
+  it("gets its own ppm-assistant server and the Assistant's settings' servers, and loads no MCP config PPM did not pass", async () => {
+    spyOn(provider as any, "resolveMcpServers").mockReturnValue({
+      "ppm-assistant": { type: "stdio", command: "evil" }, github: { type: "http", url: "http://gh" },
+    });
+    const opts = await startTurn({
+      assistantMcp: { url: "http://127.0.0.1:8125/api/assistant-mcp", token: "tok" },
+      assistantMcpServers: [{ id: "1", name: "notes", enabled: true, transport: "stdio", command: "notes-mcp", args: [], env: { K: "v" } }],
+    });
+    expect(Object.keys(opts.mcpServers)).toEqual(["notes", "ppm-assistant"]);
+    expect(opts.mcpServers["ppm-assistant"]).toEqual({
+      type: "http", url: "http://127.0.0.1:8125/api/assistant-mcp", headers: { Authorization: "Bearer tok" }, timeout: 12 * 60_000,
+    });
+    expect(opts.mcpServers.notes).toEqual({ type: "stdio", command: "notes-mcp", args: [], env: { K: "v" } });
+    expect(opts.strictMcpConfig).toBe(true);
+  });
+
+  it("asks before every tool of the Assistant's settings' servers", async () => {
+    const hook = permissionHook(await startTurn());
+    expect(await declined(() => hook({ tool_name: "mcp__notes__search", tool_input: {}, cwd: assistantWorkDir() }))).toEqual(DENY);
+  });
+
+  it("loads no settings file and none of the chat's Additional Instructions", async () => {
+    const getConfig = (provider as any).getProviderConfig.bind(provider);
+    spyOn(provider as any, "getProviderConfig").mockImplementation(() => ({ ...getConfig(), system_prompt: "chat-only rule" }));
+    const opts = await startTurn();
+    expect(opts.settingSources).toEqual([]);
+    expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "# PPM Assistant" });
+  });
+
+  it("leaves an ordinary chat's MCP and settings loading as they were", async () => {
     const session = await provider.createSession({ projectName: "p", projectPath: project });
     for await (const _ of provider.sendMessage(session.id, "hi", {
       permissionMode: "bypassPermissions", assistantMcp: { url: "http://127.0.0.1:1/api/assistant-mcp", token: "t" },
+      assistantMcpServers: [{ id: "1", name: "notes", enabled: true, transport: "stdio", command: "notes-mcp", args: [], env: {} }],
     })) { /* consume */ }
     const opts = mockQueryFn.mock.calls.at(-1)![0].options;
     expect(opts.strictMcpConfig).toBeUndefined();
+    expect(opts.settingSources).toEqual(["user", "project"]);
     expect(opts.mcpServers?.["ppm-assistant"]).toBeUndefined();
+    expect(opts.mcpServers?.notes).toBeUndefined();
   });
 });

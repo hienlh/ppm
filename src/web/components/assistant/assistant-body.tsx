@@ -17,6 +17,7 @@ import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
+import { getAssistantSettings } from "@/lib/assistant-settings-api";
 import { nextAssistantChatEpoch } from "./open-assistant";
 import {
   AssistantNewSession, AssistantSessionList, useAssistantProviders, useAssistantSessions,
@@ -50,14 +51,27 @@ export function AssistantBody({ tabId, metadata }: { tabId: string; metadata: Re
     setDrawerOpen(false);
   }, [tabId, metadata]);
 
-  // A first open carries no provider: take the default one when it can run the Assistant,
-  // else the first that can. Nothing to pick until the list has loaded.
+  // The provider Settings → PPM Assistant starts new sessions on; null follows the chat default.
+  // Read only when there is a provider to pick, and `undefined` until it has answered.
+  const needsProvider = !sessionId && !providerId;
+  const [assistantDefault, setAssistantDefault] = useState<string | null | undefined>(undefined);
   useEffect(() => {
-    if (sessionId || providerId || !providers?.length) return;
-    const preferred = readChatPreparationSettings()?.default_provider;
-    const pick = providers.find((p) => p.id === preferred) ?? providers[0]!;
+    if (!needsProvider || assistantDefault !== undefined) return;
+    let active = true;
+    getAssistantSettings()
+      .then((res) => { if (active) setAssistantDefault(res.settings.default_provider); })
+      .catch(() => { if (active) setAssistantDefault(null); });
+    return () => { active = false; };
+  }, [needsProvider, assistantDefault]);
+
+  // A first open carries no provider: take the Assistant's default, else the chat default, when
+  // it can run the Assistant, else the first that can. Nothing to pick until both have loaded.
+  useEffect(() => {
+    if (!needsProvider || !providers?.length || assistantDefault === undefined) return;
+    const preferred = [assistantDefault, readChatPreparationSettings()?.default_provider];
+    const pick = preferred.map((id) => providers.find((p) => p.id === id)).find(Boolean) ?? providers[0]!;
     patchTabMetadata(tabId, { providerId: pick.id, ...ASSISTANT_PERMISSION, projectName: ASSISTANT_PROJECT_NAME });
-  }, [sessionId, providerId, providers, tabId]);
+  }, [needsProvider, providers, assistantDefault, tabId]);
 
   // A session named without its provider (a notification knows only the id): the list says
   // which provider runs it. One the list does not hold is opened as Claude, the chat default.
