@@ -54,6 +54,26 @@ describe("AccessUnitAssembler", () => {
     expect(extractNalTypes(all[0]!.bytes)).toEqual([NAL_TYPE_SPS, NAL_TYPE_PPS, NAL_TYPE_IDR]);
   });
 
+  it("keeps every slice of a frame in that frame's access unit", () => {
+    // x264 under `tune=zerolatency` cuts each frame into one slice per thread, and only the
+    // first names macroblock 0. Cutting at every slice sent each one to the decoder as a frame
+    // of its own, which decoded to nothing at all (#48).
+    const asm = new AccessUnitAssembler();
+    const aus = asm.push(slices(
+      [NAL_TYPE_SPS, 0], [NAL_TYPE_PPS, 0],
+      [NAL_TYPE_IDR, 0], [NAL_TYPE_IDR, 1], [NAL_TYPE_IDR, 2],
+      [NAL_TYPE_SLICE_NON_IDR, 0], [NAL_TYPE_SLICE_NON_IDR, 1],
+      // Not asserted on: the splitter releases a NAL only once the next one starts, and the
+      // assembler a picture only once the next one opens — so two more pictures push it out.
+      [NAL_TYPE_SLICE_NON_IDR, 0], [NAL_TYPE_SLICE_NON_IDR, 0],
+    ));
+    expect(aus.length).toBe(2);
+    expect(aus[0]!.isKey).toBe(true);
+    expect(extractNalTypes(aus[0]!.bytes)).toEqual([NAL_TYPE_SPS, NAL_TYPE_PPS, NAL_TYPE_IDR, NAL_TYPE_IDR, NAL_TYPE_IDR]);
+    expect(aus[1]!.isKey).toBe(false);
+    expect(extractNalTypes(aus[1]!.bytes)).toEqual([NAL_TYPE_SLICE_NON_IDR, NAL_TYPE_SLICE_NON_IDR]);
+  });
+
   it("caches SPS for codec-string derivation even before the first AU flushes", () => {
     const asm = new AccessUnitAssembler();
     asm.push(annexB(NAL_TYPE_SPS, NAL_TYPE_PPS, NAL_TYPE_IDR));
@@ -62,6 +82,13 @@ describe("AccessUnitAssembler", () => {
     expect(nalType(sps!)).toBe(NAL_TYPE_SPS);
   });
 });
+
+/** Annex-B from `[nalType, firstMb]` pairs. The byte after the header is where a slice's
+ *  first_mb_in_slice starts, Exp-Golomb coded: 0 is `1`, 1 is `010`, 2 is `011`. */
+function slices(...units: [number, 0 | 1 | 2][]): Uint8Array {
+  const firstMbByte = [0x88, 0x48, 0x68];
+  return new Uint8Array(units.flatMap(([type, firstMb]) => [0, 0, 0, 1, type, firstMbByte[firstMb]!, 0xbb, 0xcc]));
+}
 
 function extractNalTypes(bytes: Uint8Array): number[] {
   const types: number[] = [];
