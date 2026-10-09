@@ -27,7 +27,7 @@ import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
 import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
-import { ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { ASSISTANT_APPROVAL_SECTION, ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
 import { assistantMcpAccessFor, assistantMcpTokens } from "./assistant-mcp/assistant-mcp-tokens.ts";
 import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
@@ -404,7 +404,7 @@ class ChatService {
     const assistantMcp = assistantMcpAccessFor(sessionId);
     return {
       ...rest,
-      assistantInstructions: buildAssistantInstructions({ sections: assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION] : [] }),
+      assistantInstructions: buildAssistantInstructions({ sections: assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION] : [] }),
       assistantSession: true,
       ...(assistantMcp ? { assistantMcp } : {}),
       permissionMode: "default",

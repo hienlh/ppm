@@ -2,7 +2,7 @@
  * The Assistant's navigation tools on the server: the project and every target are checked
  * against what PPM has registered before the device is asked, the device gets only the
  * normalised target, its answer is passed on with `previousProject`, and a close the device
- * refused for unsaved work comes back as needing the user's approval.
+ * refused for unsaved work happens only once the user approves it.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
@@ -17,6 +17,7 @@ import {
 } from "../../../src/services/assistant-mcp/assistant-ui-nav-tools.ts";
 import { UI_NAV_TOOL_DEFINITIONS } from "../../../src/services/assistant-mcp/assistant-ui-tool-definitions.ts";
 import { ASSISTANT_UI_NO_DEVICE_MESSAGE, type AssistantUiBody, type AssistantUiOutcome } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
+import { noApprover, type ApprovalAsk } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
 
 let root: string;
 let saved: unknown;
@@ -136,15 +137,49 @@ describe("ui_focus_tab and ui_switch_project", () => {
 describe("ui_close_tab", () => {
   it("answers what was closed", async () => {
     const d = device({ closed: true, tabId: "editor:a", project: "api", closedTab: { type: "editor", title: "a.ts", project: "api", details: { filePath: "a.ts" } } });
-    const body = JSON.parse(text(await uiCloseTab("s1", { tabId: "editor:a" }, d.request)));
+    const body = JSON.parse(text(await uiCloseTab("s1", { tabId: "editor:a" }, noApprover, d.request)));
     expect(body).toMatchObject({ closed: true, tabId: "editor:a", closedTab: { type: "editor", title: "a.ts", project: "api", details: { filePath: "a.ts" } } });
   });
 
-  it("says a tab holding unsaved work needs the user's approval", async () => {
-    const d = device({ closed: false, tabId: "editor:a", needsApproval: { reason: "Its editor has changes that are not saved yet." } });
-    const result = await uiCloseTab("s1", { tabId: "editor:a" }, d.request);
+  /** A device that refuses the first close for unsaved work and closes on the approved one. */
+  function dirtyDevice() {
+    const asked: AssistantUiBody[] = [];
+    const request = async (_s: string, body: AssistantUiBody): Promise<AssistantUiOutcome> => {
+      asked.push(body);
+      const data = body.args.discardUnsaved === true
+        ? { closed: true, tabId: "editor:a", project: "api", closedTab: { type: "editor", title: "a.ts", project: "api" } }
+        : { closed: false, tabId: "editor:a", needsApproval: { reason: "Its editor has changes that are not saved yet.", tab: { type: "editor", title: "a.ts", project: "api" } } };
+      return { ok: true, result: { type: "assistant_ui_result", requestId: "r", ok: true, data } };
+    };
+    return { asked, request };
+  }
+
+  it("leaves a tab holding unsaved work open when the user declines, and says it is final", async () => {
+    const d = dirtyDevice();
+    const asks: ApprovalAsk[] = [];
+    const result = await uiCloseTab("s1", { tabId: "editor:a", discardUnsaved: true }, async (a) => {
+      asks.push(a);
+      return { verdict: "denied", reason: "The user declined." };
+    }, d.request);
     expect((result as any).isError).toBe(true);
-    const body = JSON.parse(text(result));
-    expect(body).toMatchObject({ outcome: "needs-approval", action: "close_tab", tabId: "editor:a", reason: "Its editor has changes that are not saved yet." });
+    expect(JSON.parse(text(result))).toMatchObject({ outcome: "declined", action: "close_tab", tabId: "editor:a" });
+    // The agent's own `discardUnsaved` is never passed on: the device was asked once, plainly.
+    expect(d.asked).toEqual([{ op: "close_tab", args: { tabId: "editor:a" } }]);
+    expect(asks[0]!.summary).toMatchObject({ headline: "Close a tab and discard its unsaved work", warning: "Its editor has changes that are not saved yet." });
+    expect(asks[0]!.summary.facts).toContainEqual({ label: "Tab", value: "a.ts" });
+  });
+
+  it("closes it once the user approves", async () => {
+    const d = dirtyDevice();
+    const body = JSON.parse(text(await uiCloseTab("s1", { tabId: "editor:a" }, async () => ({ verdict: "approved" }), d.request)));
+    expect(body).toMatchObject({ closed: true, tabId: "editor:a", closedTab: { title: "a.ts" } });
+    expect(d.asked.map((b) => b.args)).toEqual([{ tabId: "editor:a" }, { tabId: "editor:a", discardUnsaved: true }]);
+  });
+
+  it("does not close it when the approval times out", async () => {
+    const d = dirtyDevice();
+    const result = await uiCloseTab("s1", { tabId: "editor:a" }, async () => ({ verdict: "timeout", reason: "No answer." }), d.request);
+    expect(JSON.parse(text(result))).toMatchObject({ outcome: "no-answer", action: "close_tab" });
+    expect(d.asked).toHaveLength(1);
   });
 });

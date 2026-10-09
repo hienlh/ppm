@@ -17,7 +17,7 @@ import type { TabOpenRequest, TabOpenResult } from "../../shared/tab-open-protoc
  * Assistant's UI broker are instances of it with their own wire messages and wording.
  */
 
-export type DeviceBrokerFailure = "no-device" | "timeout" | "busy" | "rate-limited";
+export type DeviceBrokerFailure = "no-device" | "timeout" | "busy" | "rate-limited" | "withdrawn";
 
 export type DeviceBrokerOutcome<Res> =
   | { ok: true; result: Res }
@@ -29,6 +29,8 @@ export interface DeviceBrokerMessages {
   busy: string;
   rateLimited: (perMinute: number) => string;
   timeout: (seconds: number) => string;
+  /** When the caller stops waiting before an answer. */
+  withdrawn?: string;
 }
 
 interface Pending<Res> {
@@ -44,6 +46,8 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
   messages: DeviceBrokerMessages;
   /** Prefix of the warning logged when a delivery throws. */
   logTag: string;
+  /** Told once whenever a delivered call ends, however it ended: answered, timed out or cancelled. */
+  onEnd?: (sessionId: string, requestId: string, outcome: DeviceBrokerOutcome<Res>) => void;
   /** The id a session goes by now, following a provider's rename; the id itself by default. */
   canonical?: (sessionId: string) => string;
   now?: () => number;
@@ -76,8 +80,13 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
     return true;
   }
 
-  function request(asked: string, body: Body, waitMs: number): Promise<DeviceBrokerOutcome<Res>> {
+  /**
+   * Hands `body` to the session's devices and waits up to `waitMs` for the first answer. An
+   * aborted `signal` (the caller stopped waiting) withdraws the call.
+   */
+  function request(asked: string, body: Body, waitMs: number, signal?: AbortSignal): Promise<DeviceBrokerOutcome<Res>> {
     const sessionId = canonical(asked);
+    if (signal?.aborted) return Promise.resolve({ ok: false, reason: "withdrawn", message: messages.withdrawn ?? "The call was withdrawn." });
     if (pending.size >= maxPending || inFlight(sessionId) >= maxInFlight) {
       return Promise.resolve({ ok: false, reason: "busy", message: messages.busy });
     }
@@ -87,10 +96,19 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
     const requestId = randomBytes(12).toString("base64url");
     return new Promise<DeviceBrokerOutcome<Res>>((done) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let delivered = false;
+      const onAbort = (): void => settle({ ok: false, reason: "withdrawn", message: messages.withdrawn ?? "The call was withdrawn." });
       const settle = (outcome: DeviceBrokerOutcome<Res>): void => {
         if (!pending.delete(requestId)) return;
         if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         done(outcome);
+        if (!delivered || !opts.onEnd) return;
+        try {
+          opts.onEnd(sessionId, requestId, outcome);
+        } catch (e) {
+          console.warn(`[${opts.logTag}] onEnd failed for session=${sessionId}: ${(e as Error).message}`);
+        }
       };
       pending.set(requestId, { sessionId, settle });
       let reached = 0;
@@ -103,6 +121,8 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
         settle({ ok: false, reason: "no-device", message: messages.noDevice });
         return;
       }
+      delivered = true;
+      signal?.addEventListener("abort", onAbort, { once: true });
       timer = setTimeout(() => settle({
         ok: false, reason: "timeout", message: messages.timeout(Math.round(waitMs / 1000)),
       }), waitMs);
@@ -117,13 +137,32 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
     return true;
   }
 
+  /** Whether a call with this id is still waiting. */
+  function owns(requestId: string): boolean {
+    return pending.has(requestId);
+  }
+
+  /** Ends a waiting call without an answer, whichever session it is for; false when none is waiting. */
+  function cancel(requestId: string, outcome: { reason: DeviceBrokerFailure; message: string }): boolean {
+    const entry = pending.get(requestId);
+    if (!entry) return false;
+    entry.settle({ ok: false, ...outcome });
+    return true;
+  }
+
+  /** The ids of the calls waiting on a session. */
+  function pendingFor(sessionId: string): string[] {
+    const id = canonical(sessionId);
+    return [...pending].filter(([, p]) => canonical(p.sessionId) === id).map(([requestId]) => requestId);
+  }
+
   /** Drops a session's rate window, e.g. when the session is deleted. */
   function forget(sessionId: string): void {
     recent.delete(sessionId);
     recent.delete(canonical(sessionId));
   }
 
-  return { request, settle, forget, pendingCount: () => pending.size };
+  return { request, settle, owns, cancel, pendingFor, forget, pendingCount: () => pending.size };
 }
 
 /** Sends the request to the session's devices; the number of sockets it went to. */

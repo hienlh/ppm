@@ -73,8 +73,8 @@ export const UI_NAV_TOOL_DEFINITIONS = [
     name: UI_CLOSE_TAB_TOOL,
     title: "Close a tab",
     description: "Close an open tab on the chatting device. A tab whose close would lose work — unsaved editor text, "
-      + "unsaved SQL or table edits, a terminal and whatever runs in it — is not closed: the answer says it needs the "
-      + "user's approval. Answers what was closed, enough to open it again.",
+      + "unsaved SQL or table edits, a terminal and whatever runs in it — is closed only once the user approves the "
+      + "card this shows them. Answers what was closed, enough to open it again.",
     inputSchema: object({ tabId: TAB_ID }, ["tabId"]),
     annotations: { ...NAV, idempotentHint: false },
   },
@@ -88,8 +88,8 @@ export const UI_READ_TAB_DEFINITION = {
     + "a call; read on with `offset` (the line the answer's `nextOffset` gives). A terminal: its newest "
     + `${READ_TAB_TERMINAL_LINES} lines, colours removed; \`offset\` skips that many newest lines to read further back. `
     + `A chat: its newest ${READ_TAB_CHAT_MESSAGES} messages; \`offset\` reads the ones before that index. A database tab: `
-    + `its SQL and up to ${READ_TAB_DB_ROWS} of the rows it shows. Other tabs: a description only. A file outside every `
-    + "registered project is not read without the user's approval. Read only what the task needs.",
+    + `its SQL and up to ${READ_TAB_DB_ROWS} of the rows it shows. Other tabs: a description only. A file or terminal outside every `
+    + "registered project is read only after the user approves the card this shows them. Read only what the task needs.",
   inputSchema: {
     type: "object",
     properties: {

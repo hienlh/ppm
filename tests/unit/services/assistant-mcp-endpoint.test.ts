@@ -59,10 +59,13 @@ describe("assistant MCP endpoint", () => {
     expect(init.result.serverInfo.name).toBe("ppm-assistant");
     const list = await (await rpc(token, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([...ASSISTANT_TOOLS]);
-    // Every tool reads, except the ones that move the user's screen, which change no data.
+    // Every tool reads, except the ones that move the user's screen, which change no data, and the
+    // two that may change data once the user approves.
     const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab"]);
+    const writes = new Set(["db_query", "chat_send_message"]);
     for (const tool of list.result.tools) {
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
+      else if (writes.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
       else expect(tool.annotations.readOnlyHint).toBe(true);
     }
   });

@@ -4,8 +4,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveChatProjectPath } from "../helpers/resolve-chat-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
-import { describeApprovalInput } from "../../services/notification-format.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
@@ -33,6 +32,17 @@ import { parseAssistantUiResult, type UiSummary } from "../../shared/assistant-u
 import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
+import { APPROVAL_END, createPendingApprovals, type PendingApprovalEvent } from "./chat-pending-approval.ts";
+import { announceApprovalRequest } from "./chat-approval-notification.ts";
+import { assistantApprovalBroker, setAssistantApprovalDelivery } from "../../services/assistant-mcp/assistant-approval-broker.ts";
+import { APPROVAL_NO_LONGER_VALID_MESSAGE, type ApprovalStaleMessage } from "../../shared/assistant-approval.ts";
+import {
+  effectivePermissionMode, targetChatMode, type ChatDeliveryState,
+} from "./chat-deliver-user-message.ts";
+import { setAssistantChatDelivery, TARGET_HAS_PENDING_APPROVAL, type DeliverResult } from "../../services/assistant-mcp/assistant-chat-send.ts";
+import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
+import type { TraceOrigin } from "../../shared/session-trace.ts";
+import type { ReplyReference } from "../../shared/chat-reply.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -170,7 +180,10 @@ interface SessionEntry {
   pingIntervals: Map<ChatWsSocket, ReturnType<typeof setInterval>>;
   phase: SessionPhase;
   cleanupTimer?: ReturnType<typeof setTimeout>;
-  pendingApprovalEvent?: { type: string; requestId: string; tool: string; input: unknown };
+  /** The approval card the session shows; only `chat-pending-approval.ts` changes it. */
+  pendingApprovalEvent?: PendingApprovalEvent;
+  /** Approval cards waiting behind the shown one, oldest first. */
+  approvalQueue?: PendingApprovalEvent[];
   turnEvents: unknown[];
   /** The opening of the turn's last top-level text block — the answer a "Chat completed" notification quotes. */
   finalText?: string;
@@ -178,6 +191,8 @@ interface SessionEntry {
   currentUserMessage?: string;
   streamPromise?: Promise<void>;
   permissionMode?: string;
+  /** The mode the running subprocess was started in; set while `isStreamingActive`. */
+  liveMode?: string;
   /** Per-session model override; falls back to provider default when undefined */
   model?: string;
   /** Whether the persistent event consumer loop is running */
@@ -511,6 +526,48 @@ setTabOpenDelivery((sessionId, request) => deliverToChattingDevice(sessionId, re
 setAssistantUiDelivery((sessionId, request) => deliverToChattingDevice(sessionId, request, { strict: true }), resolveMigratedSession);
 
 /**
+ * Every session's approval cards, provider and Assistant endpoint alike, one shown at a time
+ * (see `chat-pending-approval.ts`). A card is a question for the user, not a UI command, so it
+ * goes to every device showing the session and is kept for one that connects later.
+ */
+const approvals = createPendingApprovals({
+  show: (sessionId, ev) => {
+    const entry = activeSessions.get(sessionId);
+    if (!entry) return;
+    bufferAndBroadcast(sessionId, ev);
+    announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
+  },
+  announceResolved: (sessionId, requestId, approved, answers) => {
+    broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers });
+  },
+  denyProvider: (sessionId, requestId, reason) => {
+    const entry = activeSessions.get(sessionId);
+    if (!entry) return;
+    chatService.resolveApproval(entry.providerId, sessionId, requestId, false, undefined, { reason: reason.code, origin: "ws" });
+    logSessionEvent(sessionId, "INFO", `Pending approval ${requestId} refused (${reason.code})`);
+  },
+  endEndpoint: (requestId, reason) => { assistantApprovalBroker.withdraw(requestId, reason.message); },
+});
+
+setAssistantApprovalDelivery(
+  (sessionId, request) => {
+    const entry = activeSessions.get(sessionId);
+    if (!entry) return 0;
+    approvals.offer(sessionId, entry, request);
+    return 1;
+  },
+  // The request ended — answered, timed out or withdrawn — so its card goes, on every device.
+  (asked, requestId, approved) => {
+    const sessionId = resolveMigratedSession(asked);
+    const entry = activeSessions.get(sessionId);
+    if (entry && approvals.clear(sessionId, entry, requestId, APPROVAL_END.answered, { approved })) {
+      broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
+    }
+  },
+  resolveMigratedSession,
+);
+
+/**
  * Forward an event to connected WS clients for a session (if any).
  * Used by background processes (e.g. Jira debug) that run sessions server-side
  * but want to stream events to any frontend client viewing that session.
@@ -763,7 +820,7 @@ function startCleanupTimer(sessionId: string): void {
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], uiSummary?: UiSummary): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], uiSummary?: UiSummary, origin: TraceOrigin = "ws"): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -772,7 +829,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   log.debug(`session=${sessionId} startSessionConsumer started (clients=${entry.clients.size})`);
 
   entry.isStreamingActive = true;
-  entry.pendingApprovalEvent = undefined;
+  // Both providers fix the mode for the life of the subprocess this starts; a follow-up pushed
+  // into it runs in this mode whatever it asked for.
+  entry.liveMode = effectivePermissionMode(sessionId, providerId, permissionMode);
+  approvals.clearAll(sessionId, entry, APPROVAL_END.turnStarted);
   entry.turnEvents = [];
   entry.nestedBuffered = 0;
   entry.finalText = undefined;
@@ -828,7 +888,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(uiSummary && { uiSummary }), origin: "ws" })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(uiSummary && { uiSummary }), origin })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1108,31 +1168,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           });
         }).catch(() => {});
       } else if (evType === "approval_request") {
-        entry.pendingApprovalEvent = ev;
-
-        const isQuestion = ev.tool === "AskUserQuestion";
-        const nType = isQuestion ? "question" : "approval_request";
-        // Persist unread to DB + broadcast to all tabs/devices
-        const approvalSession = chatService.getSession(sessionId);
-        incrementSessionUnread(sessionId, nType, approvalSession?.title, entry.projectName || null);
-        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: nType, projectName: entry.projectName || "", sessionTitle: approvalSession?.title || null });
-
-        import("../../services/notification.service.ts").then(({ notificationService }) => {
-          const project = entry.projectName || "Project";
-          const session = chatService.getSession(sessionId);
-          const sTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
-          const title = isQuestion ? "AI has a question" : "Waiting for approval";
-          const body = isQuestion
-            ? `${project} — ${sTitle}`
-            : `${project} — ${ev.tool} needs permission`;
-          notificationService.broadcast(nType, {
-            title, body, project: entry.projectName || "", sessionId, providerId: entry.providerId, sessionTitle: sTitle, tool: ev.tool,
-            ...describeApprovalInput(ev.tool, ev.input),
-          }, {
-            // Answered, or looked at, on any device since — either way it needs no alert.
-            stillUnseen: () => entry.pendingApprovalEvent?.requestId === ev.requestId && getSessionUnreadCount(sessionId) > 0,
-          });
-        }).catch(() => {});
+        // Shown (buffered, broadcast and notified) now, or queued behind the card already
+        // shown — e.g. an Assistant endpoint request — and shown once that one is answered.
+        // Never anything the provider says: the card's `origin` is the endpoint's alone.
+        const { origin: _origin, summary: _summary, ...providerEvent } = ev;
+        approvals.offer(sessionId, entry, providerEvent as PendingApprovalEvent);
+        continue;
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking
         const newId = ev.newSessionId as string;
@@ -1184,7 +1225,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       if (evType === "done") {
         entry.turnEvents = [];
         entry.nestedBuffered = 0;
-        entry.pendingApprovalEvent = undefined;
+        // The provider's own requests ended with its turn. An endpoint card stays: its tool call
+        // (a background agent's, say) is still waiting, and ends on its own when it does.
+        approvals.clearAll(sessionId, entry, APPROVAL_END.turnEnded, { only: "provider" });
         // Clear stale compact status if turn ended without compact_boundary.
         // SDK may emit `status: compacting` without a matching boundary (deferred,
         // resolved, or errored); without this clear, UI shows stuck "Compacting…".
@@ -1224,7 +1267,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       broadcast(sessionId, { type: "compact_status", status: "done" });
     }
     setPhase(sessionId, "idle");
-    entry.pendingApprovalEvent = undefined;
+    entry.liveMode = undefined;
+    approvals.clearAll(sessionId, entry, APPROVAL_END.turnEnded);
     // Cleanup bash output spies
     bashOutputSpy.stopAllForSession(sessionId);
     // SDK subprocess teardown kills its background children — reflect as stopped
@@ -1244,6 +1288,256 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     log.info(`session=${sessionId} consumer loop ended`);
   }
 }
+
+/** How a message reaches {@link deliverUserMessage}, and who sent it. */
+interface DeliverOpts {
+  /**
+   * "ws": a device's message, `sender` being its socket. "assistant": a message the PPM
+   * Assistant sends into this chat with the user's approval — it never answers a waiting card
+   * on the user's behalf, never makes any device the chat's "chatting device", and is shown to
+   * every device showing the chat, since none of them typed it.
+   */
+  origin: "ws" | "assistant";
+  sender?: ChatWsSocket;
+  images?: Array<{ data: string; mediaType: string }>;
+  imagePaths?: string[];
+  replyTo?: ReplyReference;
+  priority?: "now" | "next" | "later";
+  uiSummary?: UiSummary;
+  /** The mode a turn this message starts runs in; the chat's sticky mode when absent. */
+  permissionMode?: string;
+  receivedAt?: number;
+}
+
+/**
+ * A user's message, from the point it is valid and its sticky settings are stored: rewritten
+ * to what will actually run, echoed to the session's other devices, then started as a turn or
+ * pushed into the running one.
+ */
+async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
+  const providerId = entry.providerId;
+  const parsed = { content: text };
+  const fromAssistant = opts.origin === "assistant";
+  // Checked before anything is echoed: the Assistant's message must not answer a card for the
+  // user, and a card is how that chat asks them anything.
+  if (fromAssistant && entry.pendingApprovalEvent) return { ok: false, error: TARGET_HAS_PENDING_APPROVAL };
+
+  // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
+  // name the runtime never registers — it names plugin items after the plugin
+  // and directory instead. Rewrite before the echo so every consumer (other
+  // devices, the stored transcript, the SDK) sees the name that actually ran.
+  const typedContent = parsed.content.trimStart();
+  if (typedContent.startsWith("/")) {
+    const { listSlashItems, rewriteSlashAlias } = await import("../../services/slash-discovery/index.ts");
+    const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
+    if (canonical !== typedContent) parsed.content = canonical;
+  }
+
+  // Providers with their own skill runtime may not use a leading slash.
+  // Codex resolves a skill from a `$name` mention in the prompt; sent as
+  // `/imagegen` it is inert prose, so the picked skill would silently not
+  // run. Rewritten before the echo for the same reason as the alias above:
+  // other devices and the stored transcript must show what actually ran.
+  await rewriteProviderSkillSigil(parsed, providerId, sessionId);
+  parsed.content = encodeReply(parsed.content, opts.replyTo);
+
+  // Echo the user message to the clients that did not type it (a second device or tab).
+  // The sender renders it optimistically; without this echo a live-connected
+  // second device only sees the assistant stream for this turn.
+  if (entry.clients.size > (opts.sender ? 1 : 0)) {
+    const echo = JSON.stringify({
+      type: "user_message",
+      content: parsed.content,
+      imageCount: opts.images?.length ?? 0,
+      timestamp: new Date().toISOString(),
+    });
+    for (const client of entry.clients) {
+      if (client === opts.sender) continue;
+      try { client.send(echo); } catch { evictClient(entry, client); }
+    }
+  }
+
+  // Intercept PPM-handled built-in commands (e.g. /skills, /version)
+  const content = parsed.content.trim();
+  const slashMatch = content.match(/^\/(\S+)/);
+  if (slashMatch) {
+    const { isPpmHandled, executeBuiltin } = await import("../../services/slash-discovery/index.ts");
+    const cmdName = slashMatch[1]!;
+    if (isPpmHandled(cmdName)) {
+      const response = executeBuiltin(cmdName, entry.projectPath ?? "");
+      if (response) {
+        broadcast(sessionId, { type: "text", content: response });
+        broadcast(sessionId, { type: "done", resultSubtype: "builtin", numTurns: 0 });
+        return { ok: true, sessionId };
+      }
+    }
+  }
+
+  const provider = providerRegistry.get(providerId);
+
+  // User sent a message instead of answering a pending question/approval.
+  // The SDK generator is blocked inside canUseTool awaiting that approval, so
+  // it can't consume the pushed message — resolve the approval as skipped to
+  // unblock it, then the follow-up message flows through normally.
+  // Every waiting card goes, the queued ones too: a provider still blocked on a second
+  // request could not take the message either, and an Assistant endpoint request ends
+  // with "not run" so its agent reads the new message instead of waiting on the card.
+  if (!fromAssistant) approvals.clearAll(sessionId, entry, APPROVAL_END.superseded, { deny: true, announce: true });
+
+  // Store user message for reconnect replay (turn_events includes only assistant events)
+  entry.currentUserMessage = parsed.content;
+  if (opts.sender) entry.lastSender = opts.sender;
+  // What this device shows, for an Assistant session's turn. Validated and cleaned by
+  // chatService, which ignores it for every other session; only an object is passed on.
+  const rawSummary = opts.uiSummary as unknown;
+  const uiSummary = rawSummary && typeof rawSummary === "object" && !Array.isArray(rawSummary) ? rawSummary as UiSummary : undefined;
+  // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
+  if (!entry.isStreamingActive || entry.phase === "idle") {
+    entry.turnRequestedAt = { at: opts.receivedAt ?? Date.now(), cold: !entry.isStreamingActive };
+  }
+
+  if (!entry.isStreamingActive) {
+    // First message or post-crash recovery: start persistent consumer
+    // Resume session in provider (can be slow on first call — sdkListSessions)
+    if (provider && "resumeSession" in provider) {
+      const t0 = Date.now();
+      try {
+        await (provider as any).resumeSession(sessionId);
+      } catch (e) {
+        // The message is dropped, as it was when this rejected out of the handler; this
+        // names the session and provider that the socket dispatcher's catch cannot.
+        log.error(`session=${sessionId} resume failed provider=${providerId}:`, e);
+        return { ok: false, error: `The chat could not be resumed: ${(e as Error).message}` };
+      }
+      const elapsed = Date.now() - t0;
+      if (elapsed > 500) {
+        log.warn(`session=${sessionId} resumeSession took ${elapsed}ms`);
+        logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
+      }
+    }
+    if (entry.projectPath && provider && "ensureProjectPath" in provider) {
+      (provider as any).ensureProjectPath(sessionId, entry.projectPath);
+    }
+
+    entry.turnEvents = [];
+    setPhase(sessionId, "initializing");
+
+    const permMode = opts.permissionMode ?? entry.permissionMode;
+    const msgModel = entry.model;
+    const origin = fromAssistant ? "assistant" : "ws";
+    entry.streamPromise = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        startSessionConsumer(sessionId, providerId, parsed.content, permMode, opts.images, msgModel, opts.imagePaths, uiSummary, origin).then(resolve, resolve);
+      }, 0);
+    });
+  } else {
+    // Follow-up: push into existing generator via provider
+    if (provider && "pushMessage" in provider) {
+      const effort = getSessionEffort(sessionId) ?? undefined;
+      const thinkingBudget = getSessionThinking(sessionId);
+      try {
+        await chatService.pushMessage(providerId, sessionId, parsed.content, {
+          origin: fromAssistant ? "assistant" : "ws",
+          priority: opts.priority ?? "next",
+          images: opts.images,
+          imagePaths: opts.imagePaths,
+          ...(entry.model ? { model: entry.model } : {}),
+          ...(effort ? { effort } : {}),
+          ...(thinkingBudget != null ? { thinkingBudget } : {}),
+          ...(uiSummary ? { uiSummary } : {}),
+        });
+      } catch (e) {
+        log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);
+        return { ok: false, error: `The message could not be passed to the running chat: ${(e as Error).message}` };
+      }
+    }
+    // Clear turn events for new turn display + transition phase. Waiting cards were cleared
+    // before the push; one that arrived since belongs to this message and stays.
+    entry.turnEvents = [];
+    setPhase(sessionId, "thinking");
+    log.debug(`session=${sessionId} follow-up pushed to generator`);
+  }
+  return { ok: true, sessionId };
+}
+
+/** A session's entry before any turn: idle, nothing buffered. */
+function newSessionEntry(
+  sessionId: string,
+  init: { providerId: string; clients: ChatWsSocket[]; projectPath?: string; projectName?: string },
+): SessionEntry {
+  return {
+    providerId: init.providerId,
+    clients: new Set(init.clients),
+    projectPath: init.projectPath,
+    projectName: init.projectName,
+    pingIntervals: new Map(),
+    phase: "idle",
+    turnEvents: [],
+    isStreamingActive: false,
+    streamSeq: 0,
+    teamWatchers: new Map(),
+    teamNames: new Set(),
+    compactStatus: null,
+    model: getSessionModel(sessionId) ?? undefined,
+  };
+}
+
+/** What the PPM Assistant's `chat_send_message` needs to know about its target before asking. */
+function assistantTargetState(sessionId: string, providerId: string): ChatDeliveryState {
+  const entry = activeSessions.get(resolveMigratedSession(sessionId));
+  return {
+    providerId: entry?.providerId ?? providerId,
+    running: !!entry?.isStreamingActive,
+    ...(entry?.liveMode ? { liveMode: entry.liveMode } : {}),
+    ...(entry?.permissionMode ? { entryMode: entry.permissionMode } : {}),
+    pendingApproval: !!entry?.pendingApprovalEvent,
+  };
+}
+
+/**
+ * A message the PPM Assistant sends into one of the user's chats, once the user approved it
+ * (`chat_send_message`). Runs in `permissionMode`, the mode the card showed: if the chat would
+ * now run it in another one — its session started meanwhile in a different mode — nothing is
+ * sent. A chat nobody has open gets an entry of its own, so whoever opens it later sees the turn.
+ */
+async function deliverFromAssistant(
+  target: { sessionId: string; projectName: string; providerId: string },
+  text: string,
+  permissionMode: string,
+): Promise<DeliverResult> {
+  const sessionId = resolveMigratedSession(target.sessionId);
+  if (isAssistantSession(sessionId)) return { ok: false, error: "The Assistant cannot send messages into its own chats." };
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    let projectPath: string | undefined;
+    try { projectPath = resolveChatProjectPath(target.projectName); } catch {
+      return { ok: false, error: `Project "${target.projectName}" is not registered any more.` };
+    }
+    entry = newSessionEntry(sessionId, {
+      providerId: resolveStoredProvider(sessionId) ?? target.providerId, clients: [], projectPath, projectName: target.projectName,
+    });
+    activeSessions.set(sessionId, entry);
+    // Nobody may ever open it: the entry goes like any abandoned one once its turn is over.
+    entry.idleSince = Date.now();
+  }
+  const now = targetChatMode(sessionId, assistantTargetState(sessionId, entry.providerId));
+  if (now.mode !== permissionMode) {
+    return { ok: false, error: `The chat would now run in "${now.mode}" rather than "${permissionMode}", the mode the user approved; nothing was sent. Ask again.` };
+  }
+  logSessionEvent(sessionId, "INFO", `Message from the PPM Assistant, approved by the user (mode ${permissionMode})`);
+  const result = await deliverUserMessage(sessionId, entry, text, { origin: "assistant", permissionMode });
+  // An entry made for this message and left unused must not outlive the attempt.
+  if (!result.ok && entry.clients.size === 0 && !entry.isStreamingActive) startCleanupTimer(sessionId);
+  return result;
+}
+
+setAssistantChatDelivery({
+  inspect: (sessionId, providerId) => {
+    const state = assistantTargetState(sessionId, providerId);
+    return { ...targetChatMode(resolveMigratedSession(sessionId), state), pendingApproval: state.pendingApproval };
+  },
+  deliver: deliverFromAssistant,
+});
 
 /**
  * Chat WebSocket handler for Bun.serve().
@@ -1333,21 +1627,7 @@ export const chatWebSocket = {
     }
 
     // New session entry
-    const newEntry: SessionEntry = {
-      providerId,
-      clients: new Set([ws]),
-      projectPath,
-      projectName,
-      pingIntervals: new Map(),
-      phase: "idle",
-      turnEvents: [],
-      isStreamingActive: false,
-      streamSeq: 0,
-      teamWatchers: new Map(),
-      teamNames: new Set(),
-      compactStatus: null,
-      model: getSessionModel(sessionId) ?? undefined,
-    };
+    const newEntry = newSessionEntry(sessionId, { providerId, clients: [ws], projectPath, projectName });
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
 
@@ -1440,12 +1720,7 @@ export const chatWebSocket = {
       const pid = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
       if (pn) { try { pp = resolveChatProjectPath(pn); } catch { reportUnregisteredProject(sessionId, pn); } }
-      const newEntry: SessionEntry = {
-        providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
-        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false, streamSeq: 0,
-        teamWatchers: new Map(), teamNames: new Set(), compactStatus: null,
-        model: getSessionModel(sessionId) ?? undefined,
-      };
+      const newEntry = newSessionEntry(sessionId, { providerId: pid, clients: [ws], projectPath: pp, projectName: pn });
       activeSessions.set(sessionId, newEntry);
       setupClientPing(newEntry, ws);
       entry = newEntry;
@@ -1520,11 +1795,13 @@ export const chatWebSocket = {
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
-        // A design session keeps its mode for callers that pass none (CLI, scheduler), so
-        // the one the user picked here is written back rather than living in this socket.
-        if (VALID_PERMISSION_MODES.includes(parsed.permissionMode as typeof VALID_PERMISSION_MODES[number])
-          && getSessionDesignSlug(sessionId)) {
-          setSessionPermissionMode(sessionId, parsed.permissionMode);
+        // Every chat keeps the mode the user picked, rather than this socket alone: a design
+        // session runs callers that pass none (CLI, scheduler) in it, and a message the PPM
+        // Assistant sends into the chat runs in it — the approval card says so.
+        if (VALID_PERMISSION_MODES.includes(parsed.permissionMode as typeof VALID_PERMISSION_MODES[number])) {
+          try { setSessionPermissionMode(sessionId, parsed.permissionMode); } catch (e) {
+            log.warn(`session=${sessionId} could not save permission mode: ${(e as Error).message}`);
+          }
         }
       }
       // Store model override — sticky for this session
@@ -1541,150 +1818,16 @@ export const chatWebSocket = {
         setSessionThinking(sessionId, parsed.thinking ? THINKING_ADAPTIVE : 0);
       }
 
-      // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
-      // name the runtime never registers — it names plugin items after the plugin
-      // and directory instead. Rewrite before the echo so every consumer (other
-      // devices, the stored transcript, the SDK) sees the name that actually ran.
-      const typedContent = parsed.content.trimStart();
-      if (typedContent.startsWith("/")) {
-        const { listSlashItems, rewriteSlashAlias } = await import("../../services/slash-discovery/index.ts");
-        const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
-        if (canonical !== typedContent) parsed.content = canonical;
-      }
-
-      // Providers with their own skill runtime may not use a leading slash.
-      // Codex resolves a skill from a `$name` mention in the prompt; sent as
-      // `/imagegen` it is inert prose, so the picked skill would silently not
-      // run. Rewritten before the echo for the same reason as the alias above:
-      // other devices and the stored transcript must show what actually ran.
-      await rewriteProviderSkillSigil(parsed, providerId, sessionId);
-      parsed.content = encodeReply(parsed.content, parsed.replyTo);
-
-      // Echo the user message to OTHER connected clients (second device/tab).
-      // The sender renders it optimistically; without this echo a live-connected
-      // second device only sees the assistant stream for this turn.
-      if (entry.clients.size > 1) {
-        const echo = JSON.stringify({
-          type: "user_message",
-          content: parsed.content,
-          imageCount: parsed.images?.length ?? 0,
-          timestamp: new Date().toISOString(),
-        });
-        for (const client of entry.clients) {
-          if (client === ws) continue;
-          try { client.send(echo); } catch { evictClient(entry, client); }
-        }
-      }
-
-      // Intercept PPM-handled built-in commands (e.g. /skills, /version)
-      const content = parsed.content.trim();
-      const slashMatch = content.match(/^\/(\S+)/);
-      if (slashMatch) {
-        const { isPpmHandled, executeBuiltin } = await import("../../services/slash-discovery/index.ts");
-        const cmdName = slashMatch[1]!;
-        if (isPpmHandled(cmdName)) {
-          const response = executeBuiltin(cmdName, entry.projectPath ?? "");
-          if (response) {
-            broadcast(sessionId, { type: "text", content: response });
-            broadcast(sessionId, { type: "done", resultSubtype: "builtin", numTurns: 0 });
-            return;
-          }
-        }
-      }
-
-      const provider = providerRegistry.get(providerId);
-
-      // User sent a message instead of answering a pending question/approval.
-      // The SDK generator is blocked inside canUseTool awaiting that approval, so
-      // it can't consume the pushed message — resolve the approval as skipped to
-      // unblock it, then the follow-up message flows through normally.
-      if (entry.pendingApprovalEvent) {
-        const pendingReqId = entry.pendingApprovalEvent.requestId;
-        chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
-        entry.pendingApprovalEvent = undefined;
-        broadcast(sessionId, {
-          type: "approval_resolved",
-          requestId: pendingReqId,
-          approved: false,
-          answers: null,
-        });
-        logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
-      }
-
-      // Store user message for reconnect replay (turn_events includes only assistant events)
-      entry.currentUserMessage = parsed.content;
-      entry.lastSender = ws;
-      // What this device shows, for an Assistant session's turn. Validated and cleaned by
-      // chatService, which ignores it for every other session; only an object is passed on.
-      const rawSummary = (parsed as { uiSummary?: unknown }).uiSummary;
-      const uiSummary = rawSummary && typeof rawSummary === "object" && !Array.isArray(rawSummary) ? rawSummary as UiSummary : undefined;
-      // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
-      if (!entry.isStreamingActive || entry.phase === "idle") {
-        entry.turnRequestedAt = { at: messageReceivedAt, cold: !entry.isStreamingActive };
-      }
-
-      if (!entry.isStreamingActive) {
-        // First message or post-crash recovery: start persistent consumer
-        // Resume session in provider (can be slow on first call — sdkListSessions)
-        if (provider && "resumeSession" in provider) {
-          const t0 = Date.now();
-          try {
-            await (provider as any).resumeSession(sessionId);
-          } catch (e) {
-            // The message is dropped, as it was when this rejected out of the handler; this
-            // names the session and provider that the socket dispatcher's catch cannot.
-            log.error(`session=${sessionId} resume failed provider=${providerId}:`, e);
-            return;
-          }
-          const elapsed = Date.now() - t0;
-          if (elapsed > 500) {
-            log.warn(`session=${sessionId} resumeSession took ${elapsed}ms`);
-            logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
-          }
-        }
-        if (entry.projectPath && provider && "ensureProjectPath" in provider) {
-          (provider as any).ensureProjectPath(sessionId, entry.projectPath);
-        }
-
-        entry.turnEvents = [];
-        setPhase(sessionId, "initializing");
-
-        const permMode = entry.permissionMode;
-        const msgModel = entry.model;
-        const msgImages = parsed.type === "message" ? parsed.images : undefined;
-        const msgImagePaths = parsed.type === "message" ? parsed.imagePaths : undefined;
-        entry.streamPromise = new Promise<void>((resolve) => {
-          setTimeout(() => {
-            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths, uiSummary).then(resolve, resolve);
-          }, 0);
-        });
-      } else {
-        // Follow-up: push into existing generator via provider
-        if (provider && "pushMessage" in provider && parsed.type === "message") {
-          const effort = getSessionEffort(sessionId) ?? undefined;
-          const thinkingBudget = getSessionThinking(sessionId);
-          try {
-            await chatService.pushMessage(providerId, sessionId, parsed.content, {
-              origin: "ws",
-              priority: parsed.priority ?? 'next',
-              images: parsed.images,
-              imagePaths: parsed.imagePaths,
-              ...(entry.model ? { model: entry.model } : {}),
-              ...(effort ? { effort } : {}),
-              ...(thinkingBudget != null ? { thinkingBudget } : {}),
-              ...(uiSummary ? { uiSummary } : {}),
-            });
-          } catch (e) {
-            log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);
-            return;
-          }
-        }
-        // Clear turn events for new turn display + transition phase
-        entry.turnEvents = [];
-        entry.pendingApprovalEvent = undefined;
-        setPhase(sessionId, "thinking");
-        log.debug(`session=${sessionId} follow-up pushed to generator`);
-      }
+      await deliverUserMessage(sessionId, entry, parsed.content, {
+        origin: "ws",
+        sender: ws,
+        images: parsed.images,
+        imagePaths: parsed.imagePaths,
+        replyTo: parsed.replyTo ?? undefined,
+        priority: parsed.priority,
+        uiSummary: (parsed as { uiSummary?: UiSummary }).uiSummary,
+        receivedAt: messageReceivedAt,
+      });
     } else if (parsed.type === "set_model") {
       // Persist per-session model override. If an idle subprocess is alive,
       // abort it so the next message recreates the query with the new model
@@ -1769,6 +1912,9 @@ export const chatWebSocket = {
       const phase = entry?.phase ?? "unknown";
       log.info(`session=${sessionId} WS cancel received from FE (phase=${phase})`);
       logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
+      // An Assistant endpoint request is withdrawn here rather than left to the provider closing
+      // its HTTP call: the card goes at once and its tool answers "not run".
+      approvals.clearAll(sessionId, entry, APPROVAL_END.cancelled, { only: "endpoint" });
       chatService.abortQuery(providerId, sessionId, "ws_cancel", "ws");
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
@@ -1813,40 +1959,48 @@ export const chatWebSocket = {
           log.error(`session=${sessionId} follow-up failed provider=${providerId} (kill_background_shell shellId=${shellId}):`, e);
           return;
         }
+        // A waiting card stays: the instruction queues behind it, and the card is still answerable.
         entry.turnEvents = [];
-        entry.pendingApprovalEvent = undefined;
         setPhase(sessionId, "thinking");
       }
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
-      chatService.resolveApproval(providerId, sessionId, parsed.requestId, parsed.approved, (parsed as any).data, { origin: "ws" });
-      if (entry) {
-        entry.pendingApprovalEvent = undefined;
-        // Enrich the buffered approval_request with response data so replayed
-        // events render correctly (e.g. AskUserQuestion shows answered state)
-        const respData = (parsed as any).data;
+      const requestId = typeof parsed.requestId === "string" ? parsed.requestId : "";
+      const approved = parsed.approved === true;
+      const respData = (parsed as { data?: unknown }).data;
+      // Answered: the buffered request carries the answer, so a replay renders it answered
+      // (an AskUserQuestion card shows its chosen answers).
+      const recordAnswer = () => {
         for (let i = entry.turnEvents.length - 1; i >= 0; i--) {
           const buffered = entry.turnEvents[i] as any;
-          if (buffered.type === "approval_request" && buffered.requestId === parsed.requestId) {
-            buffered.approved = parsed.approved;
-            if (buffered.tool === "AskUserQuestion" && respData) {
-              buffered.input = { ...buffered.input, answers: respData };
-            }
+          if (buffered.type === "approval_request" && buffered.requestId === requestId) {
+            buffered.approved = approved;
+            if (buffered.tool === "AskUserQuestion" && respData) buffered.input = { ...buffered.input, answers: respData };
             break;
           }
         }
-        // Tell every connected device this approval was resolved so their live
-        // prompt clears — even the device that didn't answer. Without this a
-        // second device keeps showing the (now dead) question card.
-        broadcast(sessionId, {
-          type: "approval_resolved",
-          requestId: parsed.requestId,
-          approved: parsed.approved,
-          answers: (parsed as any).data ?? null,
-        });
-        // Broadcast approval cleared to all clients
-        broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
+      };
+      // The Assistant endpoint's own request: the first device to answer settles it, and the
+      // broker's end takes the card away on every device (see setAssistantApprovalDelivery).
+      if (assistantApprovalBroker.owns(requestId) && assistantApprovalBroker.settle(sessionId, requestId, approved)) {
+        recordAnswer();
+        return;
       }
+      // Nothing waits on that id any more — answered elsewhere, ended, or from before a restart.
+      // Saying so, rather than broadcasting a resolution, keeps a stale card from looking as if
+      // the user's answer ran something.
+      if (!approvals.has(entry, requestId)) {
+        const stale: ApprovalStaleMessage = { type: "approval_stale", requestId, message: APPROVAL_NO_LONGER_VALID_MESSAGE };
+        try { ws.send(JSON.stringify(stale)); } catch { /* socket gone */ }
+        logSessionEvent(sessionId, "INFO", `approval_response for unknown request ${requestId.slice(0, 64)} refused as no longer valid`);
+        return;
+      }
+      chatService.resolveApproval(providerId, sessionId, requestId, approved, respData, { origin: "ws" });
+      recordAnswer();
+      // Tell every connected device this approval was resolved so their live prompt clears —
+      // even the device that didn't answer — and show the next card waiting, if any.
+      approvals.clear(sessionId, entry, requestId, APPROVAL_END.answered, { announce: true, approved, answers: respData ?? null });
+      broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
     }
   },
 

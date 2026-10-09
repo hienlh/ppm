@@ -153,9 +153,16 @@ describe("closing", () => {
       for (const id of ["db-query:q", "editor:untitled-1", "editor:y.ts", "terminal:1"]) {
         const res = closeAssistantTab({ tabId: id });
         expect(res.closed).toBe(false);
-        if (!res.closed) expect(res.needsApproval.reason.length).toBeGreaterThan(10);
+        if (!res.closed) {
+          expect(res.needsApproval.reason.length).toBeGreaterThan(10);
+          // Enough for the approval card to name the tab.
+          expect(res.needsApproval.tab?.type).toBe(id.split(":")[0]);
+        }
         expect(allTabs().map((t) => t.id)).toContain(id);
       }
+      // Once the user approved, the server asks again with `discardUnsaved` and the tab goes.
+      expect(closeAssistantTab({ tabId: "terminal:1", discardUnsaved: true }).closed).toBe(true);
+      expect(allTabs().map((t) => t.id)).not.toContain("terminal:1");
     } finally {
       stop();
     }

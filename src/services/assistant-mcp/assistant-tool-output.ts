@@ -39,18 +39,22 @@ export function jsonResult<T>(payload: Record<string, unknown>, items?: { key: s
 export const errorResult = (message: string): Json => textResult(message, true);
 
 /**
- * A call PPM did not carry out because it needs the user's approval first: closing a tab that
- * holds unsaved work, reading outside the registered projects. Marked as an error, since
- * nothing happened, and shaped so the agent can say exactly what it wanted and why.
+ * A call PPM did not carry out because the user's approval was not given: they declined, did
+ * not answer in time, or the request was withdrawn (they typed a message instead, stopped the
+ * turn). Marked as an error, since nothing happened. Final: the agent must not retry it or
+ * reach the same result another way unless the user asks.
  */
-export function needsApprovalResult(action: string, reason: string, details: Record<string, unknown> = {}): Json {
+export function notApprovedResult(
+  action: string,
+  verdict: { verdict: "denied" | "timeout" | "withdrawn" | "unavailable"; reason: string },
+  details: Record<string, unknown> = {},
+): Json {
   return textResult(JSON.stringify({
-    outcome: "needs-approval",
+    outcome: verdict.verdict === "denied" ? "declined" : verdict.verdict === "timeout" ? "no-answer" : verdict.verdict,
     action,
-    reason,
+    reason: verdict.reason,
     ...details,
-    note: "Nothing was done. This needs the user's approval, which this tool cannot ask for yet: tell the user what you "
-      + "wanted to do and why, and let them do it themselves.",
+    note: "Nothing was done, and this is final: do not retry, ask again or reach the same result another way unless the user asks.",
   }, null, 1), true);
 }
 

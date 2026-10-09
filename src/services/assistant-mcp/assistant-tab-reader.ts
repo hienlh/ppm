@@ -68,7 +68,7 @@ const windowed = (w: ReturnType<typeof lineWindow>, again: string) => ({
   ...w, ...(w.nextOffset !== undefined ? { more: `${again} with offset: ${w.nextOffset}` } : {}),
 });
 
-async function readEditor(desc: TabDescription, offset: number, deps: TabReaderDeps): Promise<TabReadOutcome> {
+async function readEditor(desc: TabDescription, offset: number, deps: TabReaderDeps, outsideApproved: boolean): Promise<TabReadOutcome> {
   const ed = desc.editor;
   if (!ed || ed.special) return unreadable("This editor shows a diff, a viewer or inline text, not a file PPM can read for you.");
   if (ed.untitled) {
@@ -83,14 +83,14 @@ async function readEditor(desc: TabDescription, offset: number, deps: TabReaderD
   if (!target.ok) return error(target.error);
   const absolute = target.target.projectName && tabProject ? resolve(tabProject.path, target.target.filePath) : target.target.filePath;
   const owner = target.target.projectName ? tabProject : await projectHolding(absolute, deps);
-  if (!owner) {
+  if (!owner && !outsideApproved) {
     return {
       kind: "needs-approval",
       reason: "The file is outside every registered project; reading it needs the user's approval.",
       details: { path: target.target.displayPath },
     };
   }
-  const head = { project: owner.name, path: target.target.displayPath };
+  const head = { project: owner?.name ?? null, path: target.target.displayPath };
   if (ed.dirty && ed.unsaved) return content({ ...head, source: "the editor's unsaved text (not on disk yet)", ...windowed(ed.unsaved, "Read more") });
   try {
     if ((await stat(absolute)).size > MAX_READ_FILE_BYTES) return error(`${head.path} is larger than ${MAX_READ_FILE_BYTES / 1024 / 1024} MB; PPM does not read it here.`);
@@ -110,14 +110,14 @@ export function terminalLines(raw: string): string[] {
   return lines;
 }
 
-async function readTerminal(desc: TabDescription, offset: number, deps: TabReaderDeps): Promise<TabReadOutcome> {
+async function readTerminal(desc: TabDescription, offset: number, deps: TabReaderDeps, outsideApproved: boolean): Promise<TabReadOutcome> {
   const id = desc.terminal?.sessionId;
   if (!id) return unreadable("This terminal has not started a shell on this device yet.");
   if (!TERMINAL_ID_RE.test(id)) return error("The device named a terminal PPM does not recognise.");
   const session = deps.terminal.get(id);
   if (!session) return error("This terminal's shell has ended; there is no output left to read.");
   const owner = await projectHolding(session.projectPath, deps);
-  if (!owner) {
+  if (!owner && !outsideApproved) {
     return {
       kind: "needs-approval",
       reason: "This terminal runs outside every registered project; reading it needs the user's approval.",
@@ -126,7 +126,7 @@ async function readTerminal(desc: TabDescription, offset: number, deps: TabReade
   }
   const lines = terminalLines(deps.terminal.getBuffer(id));
   return content({
-    project: owner.name, source: "terminal output, newest last (colours removed)",
+    project: owner?.name ?? null, ...(owner ? {} : { folder: session.projectPath }), source: "terminal output, newest last (colours removed)",
     ...windowed(tailWindow(lines, offset), "Read older lines"),
   });
 }
@@ -158,11 +158,21 @@ function readDatabase(desc: TabDescription): TabReadOutcome {
   });
 }
 
-/** What the tab shows, read; content only — the caller adds the tab's description. */
-export async function readDescribedTab(desc: TabDescription, offset: number, deps: TabReaderDeps = defaultDeps): Promise<TabReadOutcome> {
+/**
+ * What the tab shows, read; content only — the caller adds the tab's description. A file or
+ * terminal outside every registered project answers `needs-approval` unless `outsideApproved`:
+ * the user has just approved reading it.
+ */
+export async function readDescribedTab(
+  desc: TabDescription,
+  offset: number,
+  deps: TabReaderDeps = defaultDeps,
+  opts: { outsideApproved?: boolean } = {},
+): Promise<TabReadOutcome> {
+  const outside = opts.outsideApproved === true;
   switch (desc.type) {
-    case "editor": return readEditor(desc, offset, deps);
-    case "terminal": return readTerminal(desc, offset, deps);
+    case "editor": return readEditor(desc, offset, deps, outside);
+    case "terminal": return readTerminal(desc, offset, deps, outside);
     case "chat": return readChat(desc, offset, deps);
     case "database":
     case "db-query": return readDatabase(desc);

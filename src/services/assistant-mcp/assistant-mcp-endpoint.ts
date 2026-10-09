@@ -2,7 +2,7 @@ import { createMcpHttpHandler, type Json } from "../mcp-http-endpoint.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { resolveMigratedSession } from "../db.service.ts";
 import {
-  CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
+  CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
   DB_QUERY_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
   UI_READ_TAB_TOOL, UI_SWITCH_PROJECT_TOOL,
 } from "../../shared/assistant-tool-names.ts";
@@ -14,6 +14,8 @@ import { errorResult } from "./assistant-tool-output.ts";
 import { uiGetState } from "./assistant-ui-tools.ts";
 import { uiCloseTab, uiFocusTab, uiOpenTab, uiSwitchProject } from "./assistant-ui-nav-tools.ts";
 import { uiReadTab } from "./assistant-ui-read-tool.ts";
+import { approvalAskerFor } from "./assistant-approval-broker.ts";
+import { chatSendMessage } from "./assistant-chat-send.ts";
 
 /**
  * `/api/assistant-mcp` — the PPM Assistant's own tools, for one Assistant session's agent (the
@@ -24,7 +26,7 @@ import { uiReadTab } from "./assistant-ui-read-tool.ts";
  * ordinary chat, reaches nothing.
  */
 
-type ToolCall = (binding: AssistantMcpTokenBinding, name: string, args: Record<string, unknown>) => Promise<Json>;
+type ToolCall = (binding: AssistantMcpTokenBinding, name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<Json>;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -42,26 +44,32 @@ export function createAssistantMcpHandler(deps: {
     },
     tools: ASSISTANT_TOOL_DEFINITIONS,
     holdOpenSeconds: ASSISTANT_MCP_HOLD_OPEN_SECONDS,
-    callTool: (binding, name, args) => deps.callTool(binding, name, isObj(args) ? args : {}),
+    callTool: (binding, name, args, signal) => deps.callTool(binding, name, isObj(args) ? args : {}, signal),
   });
 }
 
-/** Runs one of the Assistant's tools for the session `binding` names. */
-export const callAssistantTool: ToolCall = async ({ sessionId }, name, args) => {
+/**
+ * Runs one of the Assistant's tools for the session `binding` names. A tool that may change
+ * something asks the user through `ask`, bound to this session and to this HTTP call: the
+ * provider closing the call withdraws the question.
+ */
+export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, signal) => {
+  const ask = approvalAskerFor(sessionId, signal);
   switch (name) {
     case PROJECTS_LIST_TOOL: return projectsList();
     case CHAT_LIST_SESSIONS_TOOL: return chatListSessions(args);
     case CHAT_SEARCH_TOOL: return chatSearch(args);
     case CHAT_READ_MESSAGES_TOOL: return chatReadMessages(args);
+    case CHAT_SEND_MESSAGE_TOOL: return chatSendMessage(args, ask);
     case DB_LIST_CONNECTIONS_TOOL: return dbListConnections();
     case DB_QUERY_TOOL:
-      return dbQuery(args, { actor: "agent", callerIp: null, callerUa: `PPM Assistant (session ${sessionId})` });
+      return dbQuery(args, { actor: "agent", callerIp: null, callerUa: `PPM Assistant (session ${sessionId})` }, ask);
     case UI_GET_STATE_TOOL: return uiGetState(sessionId);
     case UI_OPEN_TAB_TOOL: return uiOpenTab(sessionId, args);
     case UI_FOCUS_TAB_TOOL: return uiFocusTab(sessionId, args);
     case UI_SWITCH_PROJECT_TOOL: return uiSwitchProject(sessionId, args);
-    case UI_CLOSE_TAB_TOOL: return uiCloseTab(sessionId, args);
-    case UI_READ_TAB_TOOL: return uiReadTab(sessionId, args);
+    case UI_CLOSE_TAB_TOOL: return uiCloseTab(sessionId, args, ask);
+    case UI_READ_TAB_TOOL: return uiReadTab(sessionId, args, ask);
     default: return errorResult(`Unknown tool: ${name.slice(0, 60)}`);
   }
 };

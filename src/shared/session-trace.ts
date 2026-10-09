@@ -16,6 +16,8 @@ export type TraceOrigin =
   | "cli"
   | "proxy"
   | "browser"
+  /** A message the PPM Assistant sent into a chat, with the user's approval. */
+  | "assistant"
   | "unknown";
 
 /** Most entries one `POST /api/trace` may carry; a larger batch is refused whole. */

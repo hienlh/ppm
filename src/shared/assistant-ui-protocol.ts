@@ -122,11 +122,13 @@ export interface AssistantClosedTab {
 
 /**
  * `close_tab`'s answer. A tab whose close would lose something nothing else keeps is not
- * closed; `needsApproval` says why, so the server can ask the user before closing it anyway.
+ * closed; `needsApproval` says why and which tab, so the server can ask the user, then ask the
+ * device again with `discardUnsaved: true` — an argument only the server adds, and only after
+ * the user approved.
  */
 export type AssistantCloseTabResult =
   | { closed: true; tabId: string; closedTab: AssistantClosedTab; project: string | null }
-  | { closed: false; tabId: string; needsApproval: { reason: string } };
+  | { closed: false; tabId: string; needsApproval: { reason: string; tab?: Pick<AssistantClosedTab, "type" | "title" | "project"> } };
 
 /**
  * The short picture of the device's screen an Assistant message carries, so the agent knows

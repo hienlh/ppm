@@ -16,6 +16,7 @@ import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { isAssistantProject } from "../../shared/assistant-project";
+import { approvalAfterGreeting, approvalFromWire, type ApprovalRequest } from "@/lib/approval-request";
 import { ASSISTANT_TAB_TITLE, openAssistant } from "@/components/assistant/open-assistant";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
@@ -28,12 +29,6 @@ import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary"
  *  in from the REST history response before it ever reaches React state. */
 function slimHistoryMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((m) => (m.events ? { ...m, events: slimHistoryEvents(m.events) } : m));
-}
-
-interface ApprovalRequest {
-  requestId: string;
-  tool: string;
-  input: unknown;
 }
 
 export interface TeamMessageItem {
@@ -671,11 +666,7 @@ export function useChat(
         // During turn_events replay, session_state already set the correct
         // pendingApproval — skip re-setting it for historical (already-answered) events
         if (isReplayingRef.current) break;
-        setPendingApproval({
-          requestId: ev.requestId,
-          tool: ev.tool,
-          input: ev.input,
-        });
+        setPendingApproval(approvalFromWire(ev));
         if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
           const nType = ev.tool === "AskUserQuestion" ? "question" : "approval_request";
           // Unread state added via server-side session:unread_changed broadcast — only play sound + toast here
@@ -914,6 +905,15 @@ export function useChat(
       return;
     }
 
+    // This device answered a card nothing waits on any more (answered elsewhere, timed out,
+    // withdrawn, or from before a restart). Nothing ran; say so instead of looking done.
+    if ((data as any).type === "approval_stale") {
+      const reqId = (data as any).requestId as string;
+      setPendingApproval((cur) => (cur && cur.requestId === reqId ? null : cur));
+      toast.warning(typeof (data as any).message === "string" ? (data as any).message : "This approval request is no longer valid. Nothing was run.");
+      return;
+    }
+
     if (isReplayingRef.current) {
       queuedReplayMessagesRef.current.push(event);
       return;
@@ -1112,13 +1112,13 @@ export function useChat(
       if (typeof state.thinking === "boolean") {
         setThinkingState(state.thinking);
       }
-      if (state.pendingApproval) {
-        setPendingApproval({
-          requestId: state.pendingApproval.requestId,
-          tool: state.pendingApproval.tool,
-          input: state.pendingApproval.input,
-        });
-      }
+      // The server's word on which card waits: none means none, even one shown before a
+      // reconnect — after a restart nothing is waiting on it any more.
+      setPendingApproval((cur) => {
+        const next = approvalAfterGreeting(cur, state);
+        if (!next && cur && approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
+        return next;
+      });
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);

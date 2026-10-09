@@ -3,14 +3,17 @@ import type { AssistantCloseTabResult, AssistantNavResult } from "../../shared/a
 import { resolveAssistantProject } from "./assistant-project-scope.ts";
 import { resolveOpenTabTarget } from "./assistant-open-tab-target.ts";
 import { askDevice, assistantUiBroker, tabIdArg, type UiRequest } from "./assistant-ui-tools.ts";
-import { clip, errorResult, jsonResult, needsApprovalResult } from "./assistant-tool-output.ts";
+import { clip, errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
+import { closeTabSummary } from "./assistant-approval-summary.ts";
+import { noApprover, type AskApproval } from "./assistant-approval-broker.ts";
+import { UI_CLOSE_TAB_TOOL } from "../../shared/assistant-tool-names.ts";
 
 /**
  * The Assistant's tools that move around the user's screen: open, focus and close tabs, and
  * switch project. Navigation only — nothing is written — so none of them asks first, with one
- * exception the device decides: a tab whose close would lose unsaved work is left open and the
- * answer says it needs the user's approval. Every answer names the project shown before and
- * after, which is how the agent puts the screen back.
+ * exception the device decides: a tab whose close would lose unsaved work is closed only once
+ * the user approves. Every answer names the project shown before and after, which is how the
+ * agent puts the screen back.
  */
 
 /** How long a navigation waits for the device: it is a store update, milliseconds. */
@@ -59,20 +62,49 @@ export async function uiSwitchProject(sessionId: string, args: Record<string, un
   return navigate(sessionId, "switch_project", { project: project.value.name }, "switch project", request);
 }
 
-export async function uiCloseTab(sessionId: string, args: Record<string, unknown>, request: UiRequest = assistantUiBroker.request): Promise<Json> {
+type CloseAnswer = {
+  closed?: boolean;
+  needsApproval?: { reason?: unknown; tab?: { type?: unknown; title?: unknown; project?: unknown } };
+  closedTab?: Partial<Extract<AssistantCloseTabResult, { closed: true }>["closedTab"]>;
+  project?: unknown;
+};
+
+/**
+ * `ui_close_tab`. A tab whose close would lose work (unsaved editor or database edits, a
+ * terminal's shell) is left open while the user is asked; once they approve, the device is
+ * asked again with `discardUnsaved`, an argument the agent cannot pass — only this function adds it.
+ */
+export async function uiCloseTab(
+  sessionId: string,
+  args: Record<string, unknown>,
+  ask: AskApproval = noApprover,
+  request: UiRequest = assistantUiBroker.request,
+): Promise<Json> {
   const tabId = tabIdArg(args.tabId);
   if (!tabId) return errorResult("`tabId` is required: a tab id from ui_get_state.");
-  const answer = await askDevice(request, sessionId, { op: "close_tab", args: { tabId } }, UI_NAV_WAIT_MS, "close the tab");
-  if (!answer.ok) return answer.result;
-  // The device's answer, read field by field: only the shape `AssistantCloseTabResult` names is passed on.
-  const data = (answer.data && typeof answer.data === "object" ? answer.data : {}) as {
-    closed?: boolean;
-    needsApproval?: { reason?: unknown };
-    closedTab?: Partial<Extract<AssistantCloseTabResult, { closed: true }>["closedTab"]>;
-    project?: unknown;
+  const close = async (discardUnsaved: boolean) => {
+    const answer = await askDevice(request, sessionId, { op: "close_tab", args: discardUnsaved ? { tabId, discardUnsaved } : { tabId } },
+      UI_NAV_WAIT_MS, "close the tab");
+    // The device's answer, read field by field: only the shape `AssistantCloseTabResult` names is passed on.
+    return answer.ok ? { ok: true as const, data: (answer.data && typeof answer.data === "object" ? answer.data : {}) as CloseAnswer } : answer;
   };
+  let answer = await close(false);
+  if (!answer.ok) return answer.result;
+  let data = answer.data;
   if (data.closed === false && data.needsApproval && typeof data.needsApproval.reason === "string") {
-    return needsApprovalResult("close_tab", data.needsApproval.reason.slice(0, 500), { tabId });
+    const reason = data.needsApproval.reason.slice(0, 500);
+    const tab = data.needsApproval.tab ?? {};
+    const verdict = await ask({
+      tool: UI_CLOSE_TAB_TOOL,
+      input: { tabId },
+      summary: closeTabSummary({
+        tabType: clip(String(tab.type ?? "tab"), 40), tabTitle: clip(String(tab.title ?? ""), 200), project: str(tab.project), reason,
+      }),
+    });
+    if (verdict.verdict !== "approved") return notApprovedResult("close_tab", verdict, { tabId });
+    answer = await close(true);
+    if (!answer.ok) return answer.result;
+    data = answer.data;
   }
   const closed = data.closed === true && data.closedTab && typeof data.closedTab === "object" ? data.closedTab : null;
   if (!closed) return errorResult("The device answered, but not with a result PPM understands; check with ui_get_state.");

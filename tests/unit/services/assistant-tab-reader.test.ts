@@ -1,6 +1,6 @@
 /**
  * Reading a tab's content for the Assistant: a file is resolved against the project the TAB
- * belongs to, a file outside every registered project needs the user's approval, PPM's own
+ * belongs to, a file outside every registered project is read only with the user's approval, PPM's own
  * folder is refused, terminal output loses its escape sequences, and long text is read in
  * windows continued with `offset`.
  */
@@ -14,6 +14,7 @@ import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/c
 import { readDescribedTab, terminalLines, type TabReaderDeps } from "../../../src/services/assistant-mcp/assistant-tab-reader.ts";
 import { uiReadTab } from "../../../src/services/assistant-mcp/assistant-ui-read-tool.ts";
 import type { AssistantUiOutcome } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
+import { noApprover, type ApprovalAsk } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
 import { lineWindow, tailWindow, type TabDescription } from "../../../src/shared/assistant-tab-content.ts";
 
 let root: string;
@@ -168,7 +169,7 @@ describe("ui_read_tab", () => {
 
   it("asks the device to describe the tab, then reads it", async () => {
     const asked: unknown[] = [];
-    const result: any = await uiReadTab("s1", { tabId: "editor:src/same.ts", offset: 0 }, async (sessionId, body, waitMs) => {
+    const result: any = await uiReadTab("s1", { tabId: "editor:src/same.ts", offset: 0 }, noApprover, async (sessionId, body, waitMs) => {
       asked.push(body);
       return answer(editor("src/same.ts", "beta"))();
     }, deps);
@@ -178,13 +179,41 @@ describe("ui_read_tab", () => {
     expect(body.note).toContain("data");
   });
 
-  it("answers needs-approval for a file outside the projects, and refuses a garbled description", async () => {
-    const outside: any = await uiReadTab("s1", { tabId: "t" }, answer(editor(join(root, "outside.txt"), null)), deps);
-    expect(outside.isError).toBe(true);
-    expect(JSON.parse(outside.content[0].text)).toMatchObject({ outcome: "needs-approval", action: "read_tab", tabId: "t" });
-    const garbled: any = await uiReadTab("s1", { tabId: "t" }, answer({ nope: true }), deps);
+  it("reads a file outside the projects only once the user approves, and refuses a garbled description", async () => {
+    const outsidePath = join(root, "outside.txt");
+    const asks: ApprovalAsk[] = [];
+    const declined: any = await uiReadTab("s1", { tabId: "t" }, async (a) => {
+      asks.push(a);
+      return { verdict: "denied", reason: "The user declined." };
+    }, answer(editor(outsidePath, null)), deps);
+    expect(declined.isError).toBe(true);
+    expect(JSON.parse(declined.content[0].text)).toMatchObject({ outcome: "declined", action: "read_tab", tabId: "t", path: outsidePath });
+    expect(declined.content[0].text).not.toContain("not in a project");
+    expect(asks[0]!.summary).toMatchObject({ headline: "Read a file outside every registered project", facts: [{ label: "File", value: outsidePath }] });
+
+    const approved: any = await uiReadTab("s1", { tabId: "t" }, async () => ({ verdict: "approved" }), answer(editor(outsidePath, null)), deps);
+    expect(JSON.parse(approved.content[0].text)).toMatchObject({ project: null, path: outsidePath, text: "not in a project" });
+
+    const garbled: any = await uiReadTab("s1", { tabId: "t" }, noApprover, answer({ nope: true }), deps);
     expect(garbled.isError).toBe(true);
-    const badOffset: any = await uiReadTab("s1", { tabId: "t", offset: -1 }, answer({}), deps);
+    const badOffset: any = await uiReadTab("s1", { tabId: "t", offset: -1 }, noApprover, answer({}), deps);
     expect(badOffset.content[0].text).toContain("`offset`");
+  });
+
+  it("never reads PPM's own folder, approved or not", async () => {
+    const result: any = await uiReadTab("s1", { tabId: "t" }, async () => ({ verdict: "approved" }), answer(editor(join(getPpmDir(), "private.txt"), null)), deps);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain("ppm secret");
+  });
+
+  it("reads a terminal outside the projects once approved", async () => {
+    terminals.set(TERM, { projectPath: root, buffer: "hello from outside\n" });
+    try {
+      const desc: TabDescription = { id: "terminal:1", type: "terminal", title: "zsh", project: null, area: "grid", terminal: { sessionId: TERM } };
+      const result: any = await uiReadTab("s1", { tabId: "terminal:1" }, async () => ({ verdict: "approved" }), answer(desc), deps);
+      expect(JSON.parse(result.content[0].text)).toMatchObject({ project: null, folder: root, text: "hello from outside" });
+    } finally {
+      terminals.clear();
+    }
   });
 });

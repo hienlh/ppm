@@ -159,15 +159,13 @@ export function closeAssistantTab(args: Record<string, unknown>): AssistantClose
   const { panel, tab } = findTab(args.tabId);
   if (tab.type === "assistant") throw new Error("That is the Assistant's own tab; only the user closes it.");
   if (!tab.closable) throw new Error("That tab cannot be closed.");
-  const reason = unsavedWorkReason(tab);
-  if (reason) return { closed: false, tabId: tab.id, needsApproval: { reason } };
   const metaProject = tab.metadata?.projectName;
+  const project = tab.projectId ?? (typeof metaProject === "string" && metaProject ? metaProject : null);
+  // `discardUnsaved` is the server's alone to add, once the user approved losing this work.
+  const reason = args.discardUnsaved === true ? null : unsavedWorkReason(tab);
+  if (reason) return { closed: false, tabId: tab.id, needsApproval: { reason, tab: { type: tab.type, title: tab.title, project } } };
   const details = tabDetails(tab);
-  const closedTab = {
-    type: tab.type, title: tab.title,
-    project: tab.projectId ?? (typeof metaProject === "string" && metaProject ? metaProject : null),
-    ...(details ? { details } : {}),
-  };
+  const closedTab = { type: tab.type, title: tab.title, project, ...(details ? { details } : {}) };
   usePanelStore.getState().closeTab(tab.id, panel.id);
   return { closed: true, tabId: tab.id, closedTab, project: usePanelStore.getState().currentProject };
 }

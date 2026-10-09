@@ -1,5 +1,5 @@
 import {
-  CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL,
+  CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL,
   PROJECTS_LIST_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
@@ -7,8 +7,10 @@ import { UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFINITION } from "./assistant-ui-
 
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
- * provider knows them by are in `assistant-tool-names.ts`. Every tool here only reads; the ones that
- * read the user's screen are defined beside their handler in `assistant-ui-tools.ts`.
+ * provider knows them by are in `assistant-tool-names.ts`. Reading needs no approval; a call that
+ * would change something (a database write, a message into a chat, closing a tab with unsaved
+ * work, reading outside the registered projects) asks the user inside the endpoint first. The
+ * tools that work on the user's screen are defined beside their handlers.
  */
 
 export interface AssistantMcpAccess {
@@ -30,6 +32,7 @@ export const ASSISTANT_MCP_HOLD_OPEN_SECONDS = ASSISTANT_MCP_TIMEOUT_MS / 1000 +
 export const MAX_SESSIONS_LISTED = 100;
 export const MAX_SEARCH_RESULTS = 50;
 export const MAX_MESSAGES_READ = 100;
+export const MAX_CHAT_MESSAGE_CHARS = 20_000;
 
 const PROJECT = { type: "string", description: "Name of a registered PPM project, as projects_list gives it." };
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false };
@@ -94,17 +97,33 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   },
   {
     name: DB_QUERY_TOOL,
-    title: "Run a read query",
-    description: "Run one read-only SQL query on a saved connection and get its rows (at most 200, long values "
-      + "shortened). Only a query PPM can prove only reads runs here: SELECT/WITH/SHOW/EXPLAIN calling ordinary "
-      + "functions (aggregates, string, date, math, casts). Anything else is not run; the answer says why.",
+    title: "Run a SQL query",
+    description: "Run SQL on a saved connection and get its rows (at most 200, long values shortened) or how many "
+      + "rows it changed. A query PPM can prove only reads (SELECT/WITH/SHOW/EXPLAIN calling ordinary functions: "
+      + "aggregates, string, date, math, casts) runs at once on the read-only path. Anything else is shown to the user "
+      + "in full and runs only if they approve; a read-only connection never runs a write.",
     inputSchema: object({
       connectionId: { type: ["integer", "string"], description: "The connection's id or name, from db_list_connections." },
-      sql: { type: "string", minLength: 1, description: "The query." },
+      sql: { type: "string", minLength: 1, description: "The SQL to run." },
     }, ["connectionId", "sql"]),
-    annotations: READ_ONLY,
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   },
   ...UI_TOOL_DEFINITIONS,
   ...UI_NAV_TOOL_DEFINITIONS,
   UI_READ_TAB_DEFINITION,
+  {
+    name: CHAT_SEND_MESSAGE_TOOL,
+    title: "Send a message into a chat",
+    description: "Send a message into one of a project's chats, which then works on it as if the user had typed it. "
+      + "Always asks the user first: the card shows the chat, the full message and the permission mode it will run in. "
+      + "Refused for the Assistant's own chats and for a chat waiting on an approval of its own. Answers with the "
+      + "session id; read the chat's reply later with chat_read_messages.",
+    inputSchema: object({
+      project: PROJECT,
+      sessionId: { type: "string", description: "The chat's session id, from chat_list_sessions or chat_search." },
+      providerId: { type: "string", enum: ["claude", "codex"], description: "The chat's provider, when known." },
+      text: { type: "string", minLength: 1, maxLength: MAX_CHAT_MESSAGE_CHARS, description: "The message, exactly as it should be sent." },
+    }, ["project", "sessionId", "text"]),
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  },
 ] as const;

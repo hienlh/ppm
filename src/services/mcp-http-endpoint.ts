@@ -52,7 +52,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   resolveToken: (token: string | null) => B | null;
   tools: readonly Json[];
   /** A `tools/call` result for a tool named in `tools`. */
-  callTool: (binding: B, name: string, args: unknown) => Promise<Json>;
+  callTool: (binding: B, name: string, args: unknown, signal: AbortSignal) => Promise<Json>;
   /**
    * How long a `tools/call` may run before it answers, for tools that can outlast Bun.serve's
    * 10 s idle limit (a slow query, an approval the user has not answered yet). Unset: the
@@ -63,7 +63,8 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   const names = new Set(opts.tools.map((t) => t.name));
   const log = createLogger(opts.serverName);
 
-  async function dispatch(binding: B, msg: Json): Promise<Json> {
+  /** `signal` aborts when the caller closes the request: a tool still waiting can stop. */
+  async function dispatch(binding: B, msg: Json, signal: AbortSignal): Promise<Json> {
     const id = msg.id;
     const params = (msg.params && typeof msg.params === "object" ? msg.params : {}) as Json;
     switch (msg.method) {
@@ -83,7 +84,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
         if (typeof params.name !== "string" || !names.has(params.name)) {
           return rpcError(id, -32602, `Unknown tool: ${String(params.name).slice(0, 60)}`);
         }
-        return rpcResult(id, await opts.callTool(binding, params.name, params.arguments));
+        return rpcResult(id, await opts.callTool(binding, params.name, params.arguments, signal));
       default:
         return rpcError(id, -32601, "Method not found");
     }
@@ -114,7 +115,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
     // Lifted before the tool runs: nothing is sent until it answers.
     if (message.method === "tools/call" && opts.holdOpenSeconds) holdRequestOpen(c, opts.holdOpenSeconds);
     try {
-      return c.json(await dispatch(binding, message));
+      return c.json(await dispatch(binding, message, c.req.raw.signal));
     } catch (e) {
       // Answered as a 200, so the access log records a success.
       log.error(`${String(message.method).slice(0, 60)} failed (session ${binding.sessionId}): ${(e as Error).message}`);

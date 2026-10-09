@@ -77,12 +77,14 @@ export type ChatWsServerMessage =
   | { type: "bash_output"; toolUseId: string; content: string; lineCount: number }
   | { type: "background_registry"; sessionId: string; shells: BackgroundShell[] }
   | { type: "subagent_status"; toolUseId: string; status: import("../shared/background-agent-status").BackgroundAgentStatus }
-  | { type: "approval_request"; requestId: string; tool: string; input: unknown }
+  | { type: "approval_request"; requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary; origin?: "endpoint" }
+  /** This device answered an approval nothing waits on any more; nothing ran. */
+  | import("../shared/assistant-approval").ApprovalStaleMessage
   | { type: "done"; sessionId: string; contextWindowPct?: number }
   | { type: "error"; message: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
-  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; turnStop?: import("../shared/turn-stop").TurnStop | null }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; turnStop?: import("../shared/turn-stop").TurnStop | null }
   /** The turn that just ended was ended by an error. Sent just before its `done`. */
   | { type: "turn_stop"; stop: import("../shared/turn-stop").TurnStop }
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }

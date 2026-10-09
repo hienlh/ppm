@@ -2,17 +2,19 @@ import type { Json } from "../mcp-http-endpoint.ts";
 import { getConnectionById, getConnectionByName, getConnections, type ConnectionRow } from "../db.service.ts";
 import { dialectFor } from "../database/dialects.ts";
 import { runConnectionQuery } from "../database/run-connection-query.ts";
-import { detectOperation } from "../query-audit/query-audit.service.ts";
-import { logQueryAs, type AuditCaller } from "../../server/routes/query-audit-hook.ts";
-import { connAudit } from "../../server/routes/database-route-helpers.ts";
+import type { AuditCaller } from "../../server/routes/query-audit-hook.ts";
 import { assistantSqlSafety } from "./assistant-sql-safety.ts";
 import { clip, errorResult, jsonResult } from "./assistant-tool-output.ts";
+import type { QueryRunResponse } from "../../shared/db-grid.ts";
+import { noApprover, type AskApproval } from "./assistant-approval-broker.ts";
+import { runApprovedQuery } from "./assistant-write-tools.ts";
 
 /**
  * The Assistant's database tools. Only connections the user left "Available to the AI chat"
  * (`ai_access`) are listed or opened, nothing about how to reach one (URL, password, file
- * path) is ever returned, and a query runs only when it is proven to read — on the connection's
- * read-only path whatever the connection allows, audited as the agent's.
+ * path) is ever returned, and every statement is audited as the agent's. A query proven to
+ * read runs on the connection's read-only path whatever the connection allows; anything else
+ * runs only with the user's approval, and never writes through a read-only connection.
  */
 
 export const MAX_QUERY_ROWS = 200;
@@ -73,7 +75,33 @@ function cell(value: unknown): unknown {
   return value;
 }
 
-export async function dbQuery(args: Args, caller: AuditCaller): Promise<Json> {
+/** A query's answer as the agent gets it: rows capped and cut, or how many rows a write changed. */
+export function queryResultJson(conn: ConnectionRow, result: QueryRunResponse): Json {
+  if (result.changeType === "modify" && result.columns.length === 0) {
+    return jsonResult({ connection: conn.name, rowsAffected: result.rowsAffected, executionTimeMs: result.executionTimeMs });
+  }
+  const rows = result.rows.slice(0, MAX_QUERY_ROWS).map((row) => row.map(cell));
+  const cut = result.rows.length > MAX_QUERY_ROWS || !!result.truncated;
+  return jsonResult({
+    connection: conn.name,
+    columns: result.columns.map((c) => c.name),
+    rows,
+    rowCount: result.rows.length,
+    ...(result.changeType === "modify" ? { rowsAffected: result.rowsAffected } : {}),
+    ...(cut ? { truncated: `Only the first ${rows.length} rows are shown${result.truncated ? " (the result was already cut short)" : ""}; add a LIMIT or narrow the query.` } : {}),
+    executionTimeMs: result.executionTimeMs,
+  }, { key: "rows", list: rows });
+}
+
+export const queryFailedResult = (conn: ConnectionRow, e: unknown): Json =>
+  errorResult(`The query failed on "${conn.name}": ${clip((e as Error)?.message ?? String(e), 1_000)}`);
+
+/**
+ * `db_query`. A query proven to read runs at once, on the read-only path whatever the
+ * connection allows. Anything else goes to `runApprovedQuery`: shown to the user in full, run
+ * only once they approve. Without an asker (no Assistant session to ask in) it is not run.
+ */
+export async function dbQuery(args: Args, caller: AuditCaller, ask?: AskApproval): Promise<Json> {
   const found = findAiConnection(args.connectionId);
   if (!found.ok) return errorResult(found.error);
   const { conn } = found;
@@ -83,29 +111,14 @@ export async function dbQuery(args: Args, caller: AuditCaller): Promise<Json> {
 
   const safety = assistantSqlSafety(sql, dialectFor(conn.type).name);
   if (!safety.proven) {
-    const message = `Not run: this query may change data or the server's state — ${safety.reason}. Running it needs the user's approval; `
-      + "this tool runs only queries proven to read. Rewrite it as a plain read, or ask the user to run it themselves.";
-    logQueryAs(caller, {
-      ...connAudit(conn), source: "editor", operation: detectOperation(sql), sql, status: "blocked", error: message, durationMs: 0,
-    });
-    return errorResult(message);
+    return runApprovedQuery(conn, sql, safety.reason, caller, ask ?? noApprover);
   }
 
   try {
     const outcome = await runConnectionQuery({ conn, sql, caller, forceReadonly: true });
     if (!outcome.ok) return errorResult(`Not run: ${outcome.message}`);
-    const { result } = outcome;
-    const rows = result.rows.slice(0, MAX_QUERY_ROWS).map((row) => row.map(cell));
-    const cut = result.rows.length > MAX_QUERY_ROWS || !!result.truncated;
-    return jsonResult({
-      connection: conn.name,
-      columns: result.columns.map((c) => c.name),
-      rows,
-      rowCount: result.rows.length,
-      ...(cut ? { truncated: `Only the first ${rows.length} rows are shown${result.truncated ? " (the result was already cut short)" : ""}; add a LIMIT or narrow the query.` } : {}),
-      executionTimeMs: result.executionTimeMs,
-    }, { key: "rows", list: rows });
+    return queryResultJson(conn, outcome.result);
   } catch (e) {
-    return errorResult(`The query failed on "${conn.name}": ${clip((e as Error).message ?? String(e), 1_000)}`);
+    return queryFailedResult(conn, e);
   }
 }

@@ -1,14 +1,18 @@
 import type { Json } from "../mcp-http-endpoint.ts";
+import { UI_READ_TAB_TOOL } from "../../shared/assistant-tool-names.ts";
 import { askDevice, assistantUiBroker, tabIdArg, type UiRequest } from "./assistant-ui-tools.ts";
 import { parseTabDescription } from "./assistant-tab-description.ts";
 import { readDescribedTab, type TabReaderDeps } from "./assistant-tab-reader.ts";
-import { errorResult, intArg, jsonResult, needsApprovalResult } from "./assistant-tool-output.ts";
+import { readOutsideSummary } from "./assistant-approval-summary.ts";
+import { noApprover, type AskApproval } from "./assistant-approval-broker.ts";
+import { errorResult, intArg, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 
 /**
  * `ui_read_tab`: what one tab on the chatting device shows, read only when the agent asks —
  * nothing of a tab's content is ever put into a message on its own. The device describes the
  * tab and adds what only it holds (unsaved editor text, a database tab's SQL and rows); the
- * server reads the rest (`assistant-tab-reader.ts`).
+ * server reads the rest (`assistant-tab-reader.ts`). A file or terminal outside every
+ * registered project is read only once the user approves; each such read asks again.
  */
 
 /** How long the device has to describe a tab: a store read, milliseconds. */
@@ -17,6 +21,7 @@ export const UI_READ_TAB_WAIT_MS = 8_000;
 export async function uiReadTab(
   sessionId: string,
   args: Record<string, unknown>,
+  ask: AskApproval = noApprover,
   request: UiRequest = assistantUiBroker.request,
   deps?: TabReaderDeps,
 ): Promise<Json> {
@@ -28,9 +33,19 @@ export async function uiReadTab(
   if (!answer.ok) return answer.result;
   const desc = parseTabDescription(answer.data);
   if (!desc) return errorResult("The device answered, but not with a tab description PPM understands.");
-  const outcome = await readDescribedTab(desc, offset, deps);
+  let outcome = await readDescribedTab(desc, offset, deps);
+  if (outcome.kind === "needs-approval") {
+    const location = String(outcome.details.path ?? outcome.details.folder ?? "");
+    const verdict = await ask({
+      tool: UI_READ_TAB_TOOL,
+      input: { tabId, ...outcome.details },
+      summary: readOutsideSummary({ kind: desc.type === "terminal" ? "terminal" : "file", location }),
+    });
+    if (verdict.verdict !== "approved") return notApprovedResult("read_tab", verdict, { tabId, ...outcome.details });
+    outcome = await readDescribedTab(desc, offset, deps, { outsideApproved: true });
+  }
   if (outcome.kind === "error") return errorResult(outcome.message);
-  if (outcome.kind === "needs-approval") return needsApprovalResult("read_tab", outcome.reason, { tabId, ...outcome.details });
+  if (outcome.kind === "needs-approval") return errorResult(outcome.reason);
   const tab = { id: desc.id, type: desc.type, title: desc.title, project: desc.project, ...(desc.details ? { details: desc.details } : {}) };
   const payload = {
     tab,
