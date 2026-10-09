@@ -909,7 +909,8 @@ export function useChat(
     }
     // The same for a PPM Assistant UI tool; refused unless this chat is an Assistant session.
     if (data.type === "assistant_ui") {
-      void answerAssistantUi(data, { projectName: projectNameRef.current || undefined }, (message) => sendRef.current(message));
+      void answerAssistantUi(data, { projectName: projectNameRef.current || undefined, sessionId: sessionIdRef.current ?? undefined },
+        (message) => sendRef.current(message));
       return;
     }
 

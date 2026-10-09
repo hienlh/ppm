@@ -43,6 +43,19 @@ function findConnection(ref: unknown): ConnectionRow | null {
   return getConnectionByName(trimmed);
 }
 
+/**
+ * The saved connection `ref` names (its id or name), when the user left it available to the
+ * AI; otherwise why not, worded for the agent.
+ */
+export function findAiConnection(ref: unknown): { ok: true; conn: ConnectionRow } | { ok: false; error: string } {
+  const conn = findConnection(ref);
+  if (!conn) return { ok: false, error: "No saved connection has that id or name. Call db_list_connections for the list." };
+  if (!available(conn)) {
+    return { ok: false, error: `Connection "${conn.name}" is not available to the AI: "Available to the AI chat" is off in its settings in PPM. Ask the user to do this themselves, or to turn that setting on.` };
+  }
+  return { ok: true, conn };
+}
+
 /** A cell as JSON can carry it, long values cut. */
 function cell(value: unknown): unknown {
   if (value === null || value === undefined) return null;
@@ -61,11 +74,9 @@ function cell(value: unknown): unknown {
 }
 
 export async function dbQuery(args: Args, caller: AuditCaller): Promise<Json> {
-  const conn = findConnection(args.connectionId);
-  if (!conn) return errorResult("No saved connection has that id or name. Call db_list_connections for the list.");
-  if (!available(conn)) {
-    return errorResult(`Connection "${conn.name}" is not available to the AI: "Available to the AI chat" is off in its settings in PPM. Ask the user to run the query, or to turn that setting on.`);
-  }
+  const found = findAiConnection(args.connectionId);
+  if (!found.ok) return errorResult(found.error);
+  const { conn } = found;
   if (typeof args.sql !== "string" || !args.sql.trim()) return errorResult("`sql` is required: the query to run.");
   if (args.sql.length > MAX_SQL_CHARS) return errorResult(`\`sql\` is longer than ${MAX_SQL_CHARS} characters.`);
   const sql = args.sql;

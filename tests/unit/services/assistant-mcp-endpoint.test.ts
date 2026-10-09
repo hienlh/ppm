@@ -59,7 +59,12 @@ describe("assistant MCP endpoint", () => {
     expect(init.result.serverInfo.name).toBe("ppm-assistant");
     const list = await (await rpc(token, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([...ASSISTANT_TOOLS]);
-    for (const tool of list.result.tools) expect(tool.annotations.readOnlyHint).toBe(true);
+    // Every tool reads, except the ones that move the user's screen, which change no data.
+    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab"]);
+    for (const tool of list.result.tools) {
+      if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
+      else expect(tool.annotations.readOnlyHint).toBe(true);
+    }
   });
 
   it("refuses a browser request, a wrong token and a body over the cap", async () => {

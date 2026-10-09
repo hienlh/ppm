@@ -16,6 +16,8 @@ import { targetKey, targetLabel, targetUrl } from "@/lib/db-tabs";
 import { usePanelStore } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useDbRowsStatusStore } from "@/stores/db-rows-status-store";
+import { useTabLiveContent } from "@/lib/assistant-ui/tab-live-content";
+import { READ_TAB_DB_ROWS } from "../../../../shared/assistant-tab-content";
 import { slotUnsavedRows } from "@/stores/unsaved-grid-rows-store";
 import type { DbObjectKind, DbTableStructure } from "../../../../shared/db-structure";
 import { rowsToRecords, type GridRequest, type GridResponse, type GridSort } from "../../../../shared/db-grid";
@@ -118,6 +120,16 @@ export function TableView({ tab, table, schemaName, objectKind, color, header = 
   const rootRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<GlideGridHandle>(null);
   const data = db.tableData;
+
+  // The rows read so far, for the PPM Assistant to read; it takes at most a couple of hundred.
+  useTabLiveContent(shownIn, () => ({
+    kind: "rows",
+    rows: data ? {
+      columns: data.columns,
+      rows: data.rows.slice(0, READ_TAB_DB_ROWS).map((r) => data.columns.map((c) => r[c])),
+      more: data.hasMore || data.rows.length > READ_TAB_DB_ROWS,
+    } : null,
+  }));
 
   // "Rows: N" is the status bar's, where DBGate has it: over the grid, it covered the last row read.
   useEffect(() => {

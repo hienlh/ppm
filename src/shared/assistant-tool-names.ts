@@ -11,11 +11,17 @@ export const CHAT_READ_MESSAGES_TOOL = "chat_read_messages";
 export const DB_LIST_CONNECTIONS_TOOL = "db_list_connections";
 export const DB_QUERY_TOOL = "db_query";
 export const UI_GET_STATE_TOOL = "ui_get_state";
+export const UI_OPEN_TAB_TOOL = "ui_open_tab";
+export const UI_FOCUS_TAB_TOOL = "ui_focus_tab";
+export const UI_SWITCH_PROJECT_TOOL = "ui_switch_project";
+export const UI_CLOSE_TAB_TOOL = "ui_close_tab";
+export const UI_READ_TAB_TOOL = "ui_read_tab";
 
 /** Every tool the endpoint serves, in the order `tools/list` gives them. */
 export const ASSISTANT_TOOLS = [
   PROJECTS_LIST_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_SEARCH_TOOL, CHAT_READ_MESSAGES_TOOL,
   DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, UI_GET_STATE_TOOL,
+  UI_OPEN_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_SWITCH_PROJECT_TOOL, UI_CLOSE_TAB_TOOL, UI_READ_TAB_TOOL,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
 

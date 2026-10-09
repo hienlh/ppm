@@ -4,6 +4,8 @@ import { isAssistantProject } from "../../../shared/assistant-project";
 import type { AssistantUiOp, AssistantUiRequest, AssistantUiResult, UiSummary } from "../../../shared/assistant-ui-protocol";
 import { buildUiStateSnapshot, type UiStateSnapshot } from "./ui-state-snapshot";
 import { buildUiSummary } from "./ui-summary";
+import { closeAssistantTab, focusAssistantTab, openAssistantTab, switchAssistantProject } from "./assistant-ui-actions";
+import { describeTab } from "./describe-tab";
 
 /**
  * The device half of the PPM Assistant's UI tools: answers the server's `assistant_ui` on the
@@ -15,7 +17,14 @@ import { buildUiSummary } from "./ui-summary";
  * unsupported rather than ignored, so the agent is told instead of waiting out the timeout.
  */
 
-type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>;
+/** The Assistant chat a request arrived on. */
+export interface AssistantUiChat {
+  projectName: string | undefined;
+  /** The session the chat shows; tabs the Assistant opens go beside it. */
+  sessionId?: string;
+}
+
+type Handler = (args: Record<string, unknown>, chat: AssistantUiChat) => unknown | Promise<unknown>;
 
 /** This device's layout, read from the stores as it is right now. */
 export function readUiState(): UiStateSnapshot {
@@ -44,13 +53,18 @@ export function readUiSummary(): UiSummary | undefined {
 
 const HANDLERS: Partial<Record<AssistantUiOp, Handler>> = {
   get_state: () => readUiState(),
+  open_tab: (args, chat) => openAssistantTab(args, { sessionId: chat.sessionId ?? "" }),
+  focus_tab: (args) => focusAssistantTab(args),
+  switch_project: (args) => switchAssistantProject(args),
+  close_tab: (args) => closeAssistantTab(args),
+  describe_tab: (args) => describeTab(args),
 };
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export async function answerAssistantUi(
   req: AssistantUiRequest,
-  chat: { projectName: string | undefined },
+  chat: AssistantUiChat,
   send: (data: string) => void,
 ): Promise<void> {
   const reply = (answer: { ok: true; data: unknown } | { ok: false; error: string }): void => {
@@ -67,7 +81,7 @@ export async function answerAssistantUi(
     return;
   }
   try {
-    reply({ ok: true, data: await handler(req.args && typeof req.args === "object" ? req.args : {}) });
+    reply({ ok: true, data: await handler(req.args && typeof req.args === "object" ? req.args : {}, chat) });
   } catch (e) {
     reply({ ok: false, error: errorText(e) });
   }

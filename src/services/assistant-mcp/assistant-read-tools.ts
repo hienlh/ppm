@@ -1,10 +1,9 @@
 import type { Json } from "../mcp-http-endpoint.ts";
 import { projectService } from "../project.service.ts";
 import { listProjectSessions, searchProjectChats } from "../chat-session-queries.service.ts";
-import { readSessionHistory } from "../chat-history-read.service.ts";
+import { readChatPage } from "./assistant-chat-page.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
-import type { ChatEvent, ChatMessage } from "../../types/chat.ts";
 import { resolveAssistantProject, resolveAssistantSessionTarget } from "./assistant-project-scope.ts";
 import { MAX_MESSAGES_READ, MAX_SEARCH_RESULTS, MAX_SESSIONS_LISTED } from "./assistant-mcp-tools.ts";
 import { clip, errorResult, intArg, jsonResult } from "./assistant-tool-output.ts";
@@ -17,9 +16,6 @@ import { clip, errorResult, intArg, jsonResult } from "./assistant-tool-output.t
 
 const MAX_TITLE_CHARS = 200;
 const MAX_SNIPPET_CHARS = 400;
-const MAX_MESSAGE_CHARS = 4_000;
-/** What the messages of one answer may take, leaving room in the answer for the rest. */
-const MESSAGE_BUDGET_BYTES = 40 * 1024;
 
 type Args = Record<string, unknown>;
 
@@ -80,19 +76,6 @@ export async function chatSearch(args: Args): Promise<Json> {
   }, { key: "results", list: hits });
 }
 
-const toolNames = (events: ChatEvent[] | undefined): string[] =>
-  [...new Set((events ?? []).flatMap((e) => (e.type === "tool_use" ? [e.tool] : [])))];
-
-function messageView(m: ChatMessage) {
-  const tools = toolNames(m.events);
-  return {
-    role: m.role,
-    at: m.timestamp || null,
-    text: clip(m.content ?? "", MAX_MESSAGE_CHARS),
-    ...(tools.length ? { tools } : {}),
-  };
-}
-
 export async function chatReadMessages(args: Args): Promise<Json> {
   const project = resolveAssistantProject(args.project);
   if (!project.ok) return errorResult(project.error);
@@ -101,23 +84,13 @@ export async function chatReadMessages(args: Args): Promise<Json> {
   const limit = intArg(args.limit, 30, 1, MAX_MESSAGES_READ);
   const before = args.before === undefined || args.before === null ? undefined : intArg(args.before, 0, 0, Number.MAX_SAFE_INTEGER);
   if (limit === null || before === null) return errorResult(`\`limit\` must be 1–${MAX_MESSAGES_READ} and \`before\` a whole number from 0.`);
-  const page = await readSessionHistory(target.value.providerId, target.value.sessionId, { limit, ...(before !== undefined ? { before } : {}) });
-  // Keep the newest messages that fit; the oldest ones of the page are left for the next call.
-  const messages: ReturnType<typeof messageView>[] = [];
-  let bytes = 0;
-  for (let i = page.messages.length - 1; i >= 0; i--) {
-    const view = messageView(page.messages[i]!);
-    bytes += Buffer.byteLength(JSON.stringify(view));
-    if (bytes > MESSAGE_BUDGET_BYTES && messages.length > 0) break;
-    messages.unshift(view);
-  }
-  const start = page.start + (page.messages.length - messages.length);
+  const { start, total, messages } = await readChatPage(target.value, { limit, ...(before !== undefined ? { before } : {}) });
   return jsonResult({
     project: project.value.name,
     sessionId: target.value.sessionId,
     providerId: target.value.providerId,
     start,
-    total: page.total,
+    total,
     ...(start > 0 ? { olderMessages: `${start} older; call again with before: ${start}` } : {}),
     messages,
   });

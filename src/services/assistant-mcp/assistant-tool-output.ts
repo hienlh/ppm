@@ -38,6 +38,22 @@ export function jsonResult<T>(payload: Record<string, unknown>, items?: { key: s
 
 export const errorResult = (message: string): Json => textResult(message, true);
 
+/**
+ * A call PPM did not carry out because it needs the user's approval first: closing a tab that
+ * holds unsaved work, reading outside the registered projects. Marked as an error, since
+ * nothing happened, and shaped so the agent can say exactly what it wanted and why.
+ */
+export function needsApprovalResult(action: string, reason: string, details: Record<string, unknown> = {}): Json {
+  return textResult(JSON.stringify({
+    outcome: "needs-approval",
+    action,
+    reason,
+    ...details,
+    note: "Nothing was done. This needs the user's approval, which this tool cannot ask for yet: tell the user what you "
+      + "wanted to do and why, and let them do it themselves.",
+  }, null, 1), true);
+}
+
 /** A whole number argument within bounds, its default when absent; null when it is malformed. */
 export function intArg(value: unknown, fallback: number, min: number, max: number): number | null {
   if (value === undefined || value === null) return fallback;

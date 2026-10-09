@@ -3,6 +3,7 @@ import {
   PROJECTS_LIST_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
+import { UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFINITION } from "./assistant-ui-tool-definitions.ts";
 
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
@@ -104,4 +105,6 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     annotations: READ_ONLY,
   },
   ...UI_TOOL_DEFINITIONS,
+  ...UI_NAV_TOOL_DEFINITIONS,
+  UI_READ_TAB_DEFINITION,
 ] as const;

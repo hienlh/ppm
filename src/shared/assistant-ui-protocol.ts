@@ -70,6 +70,65 @@ export function parseAssistantUiResult(raw: unknown): AssistantUiResult | null {
 }
 
 /**
+ * What `ui_open_tab` may open: a closed set, so no request names an arbitrary component. The
+ * server validates `project` and the target against what PPM has registered and sends the
+ * device the normalised {@link AssistantOpenTabTarget}; the device checks the project again.
+ */
+export const ASSISTANT_TAB_KINDS = ["chat", "terminal", "database", "file", "git", "settings"] as const;
+export type AssistantTabKind = (typeof ASSISTANT_TAB_KINDS)[number];
+
+export const isAssistantTabKind = (value: unknown): value is AssistantTabKind =>
+  typeof value === "string" && (ASSISTANT_TAB_KINDS as readonly string[]).includes(value);
+
+export type AssistantOpenTabTarget =
+  /** An existing session (proven to be the project's), or a new chat when `sessionId` is absent. */
+  | { kind: "chat"; sessionId?: string; providerId?: "claude" | "codex"; title?: string }
+  /** A new terminal in the project's folder. */
+  | { kind: "terminal" }
+  /** A table's data, or a new Query tab on the connection when `table` is absent. */
+  | {
+    kind: "database"; connectionId: number; connectionName: string; dbType: string; color?: string;
+    database?: string; schema?: string; table?: string;
+  }
+  /** Relative to the project's folder, or absolute when the file is outside it (`projectName` null). */
+  | { kind: "file"; filePath: string; projectName: string | null; line?: number }
+  | { kind: "git"; view: "review" | "log" }
+  | { kind: "settings"; section?: string };
+
+export interface AssistantOpenTabArgs {
+  project: string;
+  target: AssistantOpenTabTarget;
+}
+
+/**
+ * What every navigation answers with: the tab it acted on and the project shown before and
+ * after, so the agent can put the screen back (`ui_switch_project` to `previousProject`).
+ * `window` names a floating window opened instead of a tab (Settings on a desktop).
+ */
+export interface AssistantNavResult {
+  tabId: string | null;
+  project: string | null;
+  previousProject: string | null;
+  window?: string;
+}
+
+/** The tab a close took away, enough to open it again. */
+export interface AssistantClosedTab {
+  type: string;
+  title: string;
+  project: string | null;
+  details?: Record<string, string | number | boolean>;
+}
+
+/**
+ * `close_tab`'s answer. A tab whose close would lose something nothing else keeps is not
+ * closed; `needsApproval` says why, so the server can ask the user before closing it anyway.
+ */
+export type AssistantCloseTabResult =
+  | { closed: true; tabId: string; closedTab: AssistantClosedTab; project: string | null }
+  | { closed: false; tabId: string; needsApproval: { reason: string } };
+
+/**
  * The short picture of the device's screen an Assistant message carries, so the agent knows
  * what the user is looking at without a tool call. Built by the browser, validated and turned
  * into text by the server (`assistant-ui-summary.ts`); titles in it are names users and other
