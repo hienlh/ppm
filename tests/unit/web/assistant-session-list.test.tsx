@@ -28,13 +28,33 @@ function Providers() {
 
 it("offers only the configured providers that can run the Assistant, asked of its own project", async () => {
   const get = spyOn(api, "get").mockResolvedValue([
-    { id: "claude", name: "Claude" }, { id: "cursor", name: "Cursor" }, { id: "codex", name: "Codex" },
+    { id: "claude", name: "Claude", supportsAssistantSessions: true },
+    { id: "cursor", name: "Cursor", supportsAssistantSessions: true },
+    { id: "codex", name: "Codex", supportsAssistantSessions: true },
   ] as never);
   spies.push(get);
   view = await mount(<Providers />);
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   expect(view.container.querySelector("output")!.textContent).toBe("claude,codex");
   expect(String(get.mock.calls[0]![0])).toBe("/api/project/__assistant__/chat/providers");
+});
+
+it("leaves out a provider the server does not say can run the Assistant", async () => {
+  const get = spyOn(api, "get").mockResolvedValue([
+    { id: "claude", name: "Claude", supportsAssistantSessions: true },
+    { id: "codex", name: "Codex", supportsAssistantSessions: false },
+  ] as never);
+  view = await mount(<Providers />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(view.container.querySelector("output")!.textContent).toBe("claude");
+  await view.unmount();
+  get.mockRestore();
+  clearChatPreparationCache();
+  // An older server's list carries no capability at all: nothing is offered.
+  spies.push(spyOn(api, "get").mockResolvedValue([{ id: "claude", name: "Claude" }] as never));
+  view = await mount(<Providers />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(view.container.querySelector("output")!.textContent).toBe("");
 });
 
 it("starts a session on the provider whose button was pressed", async () => {

@@ -8,6 +8,10 @@ import {
   CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, TAB_TOOLS_TIMEOUT_MS,
   type TabToolsMcpAccess,
 } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import {
+  ASSISTANT_MCP_TIMEOUT_MS, CODEX_ASSISTANT_MCP_TOKEN_ENV, type AssistantMcpAccess,
+} from "../../services/assistant-mcp/assistant-mcp-tools.ts";
+import { ASSISTANT_TOOLS, CODEX_ASSISTANT_MCP_SERVER } from "../../shared/assistant-tool-names.ts";
 
 /** Config overrides, keyed like `-c key=value` on codex's command line (dotted paths). */
 export type CodexConfigOverrides = Record<string, unknown>;
@@ -26,6 +30,8 @@ export interface ThreadParamsInput {
   designMcp?: DesignMcpAccess;
   /** The tab tools (`open_file`, `open_preview`) while the user has them on; likewise. */
   tabToolsMcp?: TabToolsMcpAccess;
+  /** Set for a PPM Assistant session, with its own tools' endpoint when this server has one. */
+  assistant?: { mcp?: AssistantMcpAccess };
 }
 
 /**
@@ -79,6 +85,36 @@ export function tabToolsMcpEnv(access: TabToolsMcpAccess | undefined): Record<st
 }
 
 /**
+ * A PPM Assistant session's config overrides: codex's built-in web search off — it reaches out
+ * with no approval card, and the Assistant reads content it did not write — and the
+ * Assistant's tools. The tools only read, or ask inside the endpoint before changing anything,
+ * so they are approved up front like the design and tab tools; the long timeout leaves room for
+ * a slow query or an approval the user takes a while to answer. `{}` for any other session.
+ */
+export function assistantSessionConfig(assistant: ThreadParamsInput["assistant"]): CodexConfigOverrides {
+  if (!assistant) return {};
+  const access = assistant.mcp;
+  return {
+    web_search: "disabled",
+    ...(access ? {
+      [`mcp_servers.${CODEX_ASSISTANT_MCP_SERVER}`]: {
+        url: access.url,
+        bearer_token_env_var: CODEX_ASSISTANT_MCP_TOKEN_ENV,
+        enabled_tools: [...ASSISTANT_TOOLS],
+        default_tools_approval_mode: "approve",
+        startup_timeout_sec: 10,
+        tool_timeout_sec: Math.ceil(ASSISTANT_MCP_TIMEOUT_MS / 1000),
+      },
+    } : {}),
+  };
+}
+
+/** The environment the app-server needs for {@link assistantSessionConfig}'s tools; `{}` without them. */
+export function assistantMcpEnv(access: AssistantMcpAccess | undefined): Record<string, string> {
+  return access ? { [CODEX_ASSISTANT_MCP_TOKEN_ENV]: access.token } : {};
+}
+
+/**
  * One builder for the params of every thread/start and thread/resume — the first connect
  * and the account-switch respawn used to assemble them separately, which is how a field
  * added to one silently goes missing from the other. `developerInstructions` is left out
@@ -90,6 +126,7 @@ export function buildThreadParams(input: ThreadParamsInput): CodexThreadParams {
     ...(input.configOverrides?.config ?? {}),
     ...designMcpConfig(input.designMcp),
     ...tabToolsMcpConfig(input.tabToolsMcp),
+    ...assistantSessionConfig(input.assistant),
   };
   return {
     ...(Object.keys(config).length ? { config } : {}),

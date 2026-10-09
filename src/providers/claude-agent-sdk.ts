@@ -7,7 +7,7 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
@@ -863,6 +863,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     env: Record<string, string | undefined>;
     allowedTools: string[];
     mcpServers: Record<string, unknown>;
+    /** Load only `mcpServers`, ignoring every MCP config the CLI would find on its own. */
+    strictMcpConfig?: boolean;
     permissionMode: string;
     opts?: Pick<import("./provider.interface.ts").SendMessageOpts, "model" | "oneMContext" | "effort" | "thinkingBudget" | "maxTurns">;
     providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
@@ -906,6 +908,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       settings: { permissions: { allow: [], deny: [] } },
       allowedTools: p.allowedTools,
       ...(Object.keys(p.mcpServers).length > 0 && { mcpServers: p.mcpServers }),
+      ...(p.strictMcpConfig && { strictMcpConfig: true }),
       permissionMode: p.permissionMode,
       allowDangerouslySkipPermissions: p.permissionMode === "bypassPermissions",
       ...(mqo.model && { model: mqo.model }),
@@ -1416,12 +1419,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       const userMcpServers = this.resolveMcpServers(effectiveCwd);
       // The Assistant policy allows `mcp__ppm-assistant__*` unasked, so a user server under
-      // that name must never be what answers to it.
+      // that name must never be what answers to it: PPM's own entry is written last, and the
+      // query runs with `strictMcpConfig` (below), so the CLI loads no server PPM did not pass —
+      // not from `.mcp.json`, user settings or a plugin.
       if (assistantPolicy) delete userMcpServers[CLAUDE_ASSISTANT_MCP_SERVER];
       const mcpServers = {
         ...userMcpServers,
         ...designMcpServers(opts?.designSession && !assistantPolicy ? opts.designMcp : undefined),
         ...tabToolsMcpServers(tabToolsMcp),
+        ...assistantMcpServers(assistantPolicy ? opts?.assistantMcp : undefined),
       };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
@@ -1444,6 +1450,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         env: queryEnv,
         allowedTools,
         mcpServers,
+        strictMcpConfig: assistantPolicy,
         permissionMode,
         opts,
         providerConfig,

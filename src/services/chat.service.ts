@@ -26,7 +26,8 @@ import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
 import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
-import { buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { ASSISTANT_READ_TOOLS_SECTION, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { assistantMcpAccessFor, assistantMcpTokens } from "./assistant-mcp/assistant-mcp-tokens.ts";
 import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
@@ -183,6 +184,7 @@ class ChatService {
     this.invalidateSharedContext(providerId, sessionId);
     designMcpTokens.revoke(sessionId);
     tabToolsMcpTokens.revoke(sessionId);
+    assistantMcpTokens.revoke(sessionId);
     tabOpenBroker.forget(sessionId);
     return provider.deleteSession(sessionId);
   }
@@ -375,12 +377,17 @@ class ChatService {
     ensureAssistantWorkDir();
     const {
       designInstructions: _design, designSession: _designFlag, designMcp: _designMcp,
-      assistantInstructions: _instructions, assistantSession: _flag, permissionMode: _mode, ...rest
+      assistantInstructions: _instructions, assistantSession: _flag, assistantMcp: _assistantMcp,
+      permissionMode: _mode, ...rest
     } = opts ?? {};
+    // No endpoint (a process that serves no HTTP) means no tools, and instructions that
+    // describe none.
+    const assistantMcp = assistantMcpAccessFor(sessionId);
     return {
       ...rest,
-      assistantInstructions: buildAssistantInstructions(),
+      assistantInstructions: buildAssistantInstructions({ sections: assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION] : [] }),
       assistantSession: true,
+      ...(assistantMcp ? { assistantMcp } : {}),
       permissionMode: "default",
     };
   }
@@ -402,7 +409,7 @@ class ChatService {
   private async resolveDesignOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
     const {
       designInstructions: _instructions, designSession: _flag, designMcp: _mcp,
-      assistantInstructions: _assistant, assistantSession: _assistantFlag, ...rest
+      assistantInstructions: _assistant, assistantSession: _assistantFlag, assistantMcp: _assistantMcp, ...rest
     } = opts ?? {};
     const { getSessionDesignSlug, getSessionPermissionMode, getSessionProjectPath } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);

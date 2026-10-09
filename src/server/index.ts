@@ -237,6 +237,9 @@ app.all("/api/design-mcp", designMcpHandler);
 // Tab tools (`open_file`, `open_preview`): the same arrangement, for any chat session.
 import { tabToolsMcpHandler } from "../services/tab-tools-mcp/tab-tools-mcp-endpoint.ts";
 app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
+// The PPM Assistant's own tools: the same arrangement, for Assistant sessions only.
+import { assistantMcpHandler } from "../services/assistant-mcp/assistant-mcp-endpoint.ts";
+app.all("/api/assistant-mcp", assistantMcpHandler);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);

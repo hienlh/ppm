@@ -182,4 +182,26 @@ describe("Claude Assistant session", () => {
     });
     expect(Object.keys(opts.mcpServers)).toEqual(["github"]);
   });
+
+  it("gets PPM's own ppm-assistant server over a user one of that name, and loads no MCP config PPM did not pass", async () => {
+    spyOn(provider as any, "resolveMcpServers").mockReturnValue({
+      "ppm-assistant": { type: "stdio", command: "evil" }, github: { type: "http", url: "http://gh" },
+    });
+    const opts = await startTurn({ assistantMcp: { url: "http://127.0.0.1:8125/api/assistant-mcp", token: "tok" } });
+    expect(opts.mcpServers["ppm-assistant"]).toEqual({
+      type: "http", url: "http://127.0.0.1:8125/api/assistant-mcp", headers: { Authorization: "Bearer tok" }, timeout: 12 * 60_000,
+    });
+    expect(opts.mcpServers.github).toEqual({ type: "http", url: "http://gh" });
+    expect(opts.strictMcpConfig).toBe(true);
+  });
+
+  it("leaves an ordinary chat's MCP loading as it was", async () => {
+    const session = await provider.createSession({ projectName: "p", projectPath: project });
+    for await (const _ of provider.sendMessage(session.id, "hi", {
+      permissionMode: "bypassPermissions", assistantMcp: { url: "http://127.0.0.1:1/api/assistant-mcp", token: "t" },
+    })) { /* consume */ }
+    const opts = mockQueryFn.mock.calls.at(-1)![0].options;
+    expect(opts.strictMcpConfig).toBeUndefined();
+    expect(opts.mcpServers?.["ppm-assistant"]).toBeUndefined();
+  });
 });

@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { createLogger } from "./logger.ts";
+import { holdRequestOpen } from "../server/helpers/hold-request-open.ts";
 
 /**
  * The smallest MCP server that speaks Streamable HTTP with plain JSON responses
@@ -52,6 +53,12 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   tools: readonly Json[];
   /** A `tools/call` result for a tool named in `tools`. */
   callTool: (binding: B, name: string, args: unknown) => Promise<Json>;
+  /**
+   * How long a `tools/call` may run before it answers, for tools that can outlast Bun.serve's
+   * 10 s idle limit (a slow query, an approval the user has not answered yet). Unset: the
+   * server's own limit applies, as for every other route.
+   */
+  holdOpenSeconds?: number;
 }) {
   const names = new Set(opts.tools.map((t) => t.name));
   const log = createLogger(opts.serverName);
@@ -104,6 +111,8 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
     const message = msg as Json;
     // A notification (`notifications/initialized`) or a response to a request of ours: no body.
     if (!("id" in message) || message.id === null) return c.body(null, 202);
+    // Lifted before the tool runs: nothing is sent until it answers.
+    if (message.method === "tools/call" && opts.holdOpenSeconds) holdRequestOpen(c, opts.holdOpenSeconds);
     try {
       return c.json(await dispatch(binding, message));
     } catch (e) {

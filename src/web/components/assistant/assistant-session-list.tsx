@@ -26,8 +26,9 @@ export interface AssistantProviders {
   error: boolean;
 }
 
+/** Only a provider the server says will enforce the Assistant's policy is offered. */
 function supported(list: ChatProviderInfo[] | undefined): ChatProviderInfo[] | null {
-  return list ? list.filter((p) => ASSISTANT_PROVIDER_IDS.includes(p.id)) : null;
+  return list ? list.filter((p) => ASSISTANT_PROVIDER_IDS.includes(p.id) && p.supportsAssistantSessions === true) : null;
 }
 
 /** Configured providers among the ones the Assistant supports. */

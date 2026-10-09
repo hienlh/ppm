@@ -12,6 +12,28 @@ export function buildAssistantInstructions(opts: { sections?: readonly string[] 
   return [BASE_INSTRUCTIONS, ...extra].join("\n\n");
 }
 
+/**
+ * What the Assistant's own read tools are for. Added only when the session has them: a turn
+ * run where PPM serves no HTTP has no endpoint, and instructions describing tools it lacks
+ * would send it looking for them.
+ */
+export const ASSISTANT_READ_TOOLS_SECTION = `## Your PPM tools
+These come from the \`ppm-assistant\` tool server and only read; they never ask first:
+- \`projects_list\` — the registered projects and their folders. Every other tool takes one of
+  these names as \`project\`.
+- \`chat_list_sessions\` — a project's chats, pinned first, then most recently active.
+- \`chat_search\` — search a project's chats by title and message text.
+- \`chat_read_messages\` — read one chat of a project: its newest messages, in order; pass
+  \`before\` to read further back.
+- \`db_list_connections\` — the database connections the user made available to the AI.
+- \`db_query\` — run one read-only query on such a connection (at most 200 rows come back).
+  Only a query PPM can prove only reads runs; anything else comes back "Not run" with the
+  reason. Do not try to get the same effect another way: rewrite it as a plain read, or tell
+  the user what you wanted to run.
+
+Prefer these tools over reading PPM's own files or databases directly, and over shell commands.
+The Assistant's own chats are not a project and cannot be read with them.`;
+
 const BASE_INSTRUCTIONS = `# PPM Assistant
 
 You are the PPM Assistant. PPM is a web IDE and project manager: the user works in several

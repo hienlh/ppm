@@ -1,0 +1,119 @@
+import type { DialectName } from "../../shared/db-types.ts";
+import { splitSqlStatements, sqlCode, type SqlLexOptions } from "../../shared/split-sql-statements.ts";
+import { isReadOnlyQuery } from "../database/readonly-check.ts";
+
+/**
+ * Whether a query the PPM Assistant wants to run is *proven* to only read, so it may run without
+ * asking. Running on a read-only transaction or file handle is not proof on its own: a read-only
+ * transaction still lets a function terminate a backend (`pg_terminate_backend`), reload the
+ * server's config, take an advisory lock, write through another connection (`dblink_exec`),
+ * sleep for an hour or set a variable, and a PRAGMA can set what it names.
+ *
+ * Proven means: {@link isReadOnlyQuery} holds, every PRAGMA only reads, there is no locking
+ * clause, and every function called is on the list below — aggregates, window functions, string,
+ * date/time, math, JSON accessors and casts — called by its own name or through `pg_catalog`.
+ * Anything else (a function on no list, one in another schema, one named in quotes) is not
+ * proven, and the caller asks the user before running it. The list is deliberately short:
+ * an ordinary read that misses it only costs a question.
+ */
+
+export type SqlSafety = { proven: true } | { proven: false; reason: string };
+
+const SAFE_FUNCTIONS = new Set(`
+count sum avg min max total string_agg array_agg group_concat bool_and bool_or every stddev stddev_pop stddev_samp
+variance var_pop var_samp json_agg jsonb_agg json_object_agg jsonb_object_agg json_arrayagg json_objectagg
+percentile_cont percentile_disc mode bit_and bit_or bit_xor grouping
+row_number rank dense_rank percent_rank cume_dist ntile lag lead first_value last_value nth_value
+lower upper lcase ucase length char_length character_length octet_length bit_length substr substring mid trim ltrim
+rtrim btrim replace concat concat_ws left right lpad rpad position strpos instr locate reverse repeat split_part
+initcap format regexp_replace regexp_matches regexp_match regexp_like regexp_substr regexp_instr regexp_count ascii
+chr char md5 translate starts_with to_hex hex unhex printf unicode field find_in_set soundex space string_to_array
+array_to_string array_length cardinality unnest array_position quote_ident quote_literal
+json_extract json_unquote json_object json_array json_build_object json_build_array jsonb_build_object
+jsonb_build_array to_json to_jsonb row_to_json json_typeof jsonb_typeof json_array_length jsonb_array_length
+json_extract_path jsonb_extract_path json_extract_path_text jsonb_extract_path_text json_each jsonb_each json_each_text
+jsonb_each_text json_array_elements jsonb_array_elements json_array_elements_text jsonb_array_elements_text
+json_object_keys jsonb_object_keys jsonb_pretty json_valid json_length json_keys json_contains json_type
+now date time datetime julianday strftime unixepoch date_trunc date_part extract age to_char to_date to_timestamp
+to_number make_date make_time make_timestamp make_interval date_add date_sub datediff timestampdiff timestampadd
+date_format str_to_date year month day dayofmonth dayofweek dayofyear hour minute second week weekday quarter last_day
+from_unixtime unix_timestamp curdate curtime utc_timestamp utc_date clock_timestamp statement_timestamp
+transaction_timestamp current_timestamp current_date current_time localtime localtimestamp timezone convert_tz
+isfinite justify_days justify_hours justify_interval generate_series
+abs ceil ceiling floor round trunc truncate mod power pow sqrt cbrt exp ln log log10 log2 sign pi degrees radians sin
+cos tan asin acos atan atan2 cot greatest least div random width_bucket
+coalesce nullif ifnull nvl if iif cast convert try_cast typeof pg_typeof encode decode to_base64 from_base64
+version current_database current_schema current_schemas database schema current_user session_user user
+pg_size_pretty pg_total_relation_size pg_relation_size pg_table_size pg_indexes_size pg_database_size
+`.trim().split(/\s+/));
+
+/** Words that may stand before a parenthesis without calling anything: clauses, operators, type modifiers. */
+const NOT_A_CALL = new Set(`
+select from where in exists as values join on and or not when then else case is between like ilike similar escape
+distinct all any some using lateral union intersect except having limit offset with recursive materialized row array
+over filter within by group order partition window rows range groups explain analyze table first next fetch cube
+rollup sets xor regexp rlike match against binary
+varchar char character varying nchar nvarchar numeric decimal dec float real timestamp timestamptz time timetz bit
+varbit interval
+`.trim().split(/\s+/));
+
+const READ_PRAGMAS = new Set(`
+table_info table_xinfo table_list index_list index_info index_xinfo foreign_key_list database_list collation_list
+function_list module_list pragma_list compile_options user_version application_id schema_version data_version
+page_count page_size freelist_count encoding journal_mode foreign_keys integrity_check quick_check
+`.trim().split(/\s+/));
+/** Read-only PRAGMAs whose argument names what to read rather than a value to set. */
+const PRAGMAS_WITH_ARGUMENT = new Set(
+  "table_info table_xinfo table_list index_list index_info index_xinfo foreign_key_list integrity_check quick_check".split(" "),
+);
+
+const PRAGMA = /^\s*PRAGMA\s+(?:\w+\s*\.\s*)?(\w+)\s*([\s\S]*)$/i;
+const LOCKING = /\bFOR\s+(?:NO\s+KEY\s+)?(?:UPDATE|SHARE|KEY\s+SHARE)\b|\bLOCK\s+IN\s+SHARE\s+MODE\b/i;
+/** A name (optionally qualified) or a blanked quoted name or string, then an opening parenthesis. */
+const CALL = /((?:[A-Za-z_][\w$]*\s*\.\s*)*)([A-Za-z_][\w$]*)\s*\(|(""|'')\s*\(/g;
+
+function readings(dialect: DialectName): SqlLexOptions[] {
+  return dialect === "mysql" ? [{ backslashEscapes: true }, { backslashEscapes: false }] : [{}];
+}
+
+function pragmaSafety(name: string, rest: string): SqlSafety {
+  const pragma = name.toLowerCase();
+  if (!READ_PRAGMAS.has(pragma)) return { proven: false, reason: `PRAGMA ${pragma} is not one PPM knows to only read` };
+  const argument = rest.replace(/;\s*$/, "").trim();
+  if (argument.includes("=")) return { proven: false, reason: `PRAGMA ${pragma} = … sets a value` };
+  if (argument && !PRAGMAS_WITH_ARGUMENT.has(pragma)) return { proven: false, reason: `PRAGMA ${pragma}(…) sets a value` };
+  return { proven: true };
+}
+
+function statementSafety(code: string): SqlSafety {
+  const pragma = PRAGMA.exec(code);
+  if (pragma) return pragmaSafety(pragma[1]!, pragma[2] ?? "");
+  if (LOCKING.test(code)) return { proven: false, reason: "it takes row locks (FOR UPDATE / FOR SHARE)" };
+  // MySQL's `SELECT @v := …` sets a variable on a pooled session that later queries share.
+  if (code.includes(":=")) return { proven: false, reason: "it assigns a variable (:=)" };
+  for (const m of code.matchAll(CALL)) {
+    if (m[3]) return { proven: false, reason: "it calls a function named in quotes" };
+    const qualifier = (m[1] ?? "").replace(/\s+/g, "").toLowerCase();
+    const name = m[2]!.toLowerCase();
+    // `"other_schema".lower(…)`: the quoted qualifier was blanked, the dot before the name is left.
+    if (!qualifier && code.slice(0, m.index).trimEnd().endsWith(".")) {
+      return { proven: false, reason: `it calls ${name}() in a schema named in quotes` };
+    }
+    if (!qualifier && NOT_A_CALL.has(name)) continue;
+    if (qualifier && qualifier !== "pg_catalog.") return { proven: false, reason: `it calls ${qualifier}${name}(), a function outside the known-safe list` };
+    if (!SAFE_FUNCTIONS.has(name)) return { proven: false, reason: `it calls ${name}(), which is not on PPM's list of functions known to only read` };
+  }
+  return { proven: true };
+}
+
+/** Whether `sql` is proven to only read on a `dialect` database; when not, why. */
+export function assistantSqlSafety(sql: string, dialect: DialectName): SqlSafety {
+  if (!isReadOnlyQuery(sql, dialect)) return { proven: false, reason: "it is not a plain read (SELECT, WITH, SHOW, EXPLAIN, VALUES)" };
+  for (const opts of readings(dialect)) {
+    for (const statement of splitSqlStatements(sql, dialect, opts)) {
+      const verdict = statementSafety(sqlCode(statement, dialect, opts));
+      if (!verdict.proven) return verdict;
+    }
+  }
+  return { proven: true };
+}

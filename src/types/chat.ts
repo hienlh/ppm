@@ -54,6 +54,11 @@ export interface SendMessageOpts {
    * provider applies whatever `permissionMode` says.
    */
   assistantSession?: boolean;
+  /**
+   * The PPM Assistant's own MCP endpoint (`/api/assistant-mcp`) and the session's capability
+   * token for it. Server-built for an Assistant session only, never taken from a caller.
+   */
+  assistantMcp?: { url: string; token: string };
 }
 
 export interface AIProvider {

@@ -1,7 +1,12 @@
 import { api, projectUrl } from "./api-client";
 import type { AISettings } from "./api-settings";
 
-export interface ChatProviderInfo { id: string; name: string }
+export interface ChatProviderInfo {
+  id: string;
+  name: string;
+  /** Whether the provider can run a PPM Assistant session; absent from an older server's list. */
+  supportsAssistantSessions?: boolean;
+}
 const TTL_MS = 60_000;
 export const CHAT_PREPARATION_TIMEOUT_MS = 30_000;
 type Entry<T> = { value?: T; expires: number; request?: Promise<T> };

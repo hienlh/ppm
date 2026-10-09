@@ -13,6 +13,8 @@ import {
 import {
   CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import { ASSISTANT_MCP_TIMEOUT_MS, type AssistantMcpAccess } from "../services/assistant-mcp/assistant-mcp-tools.ts";
+import { CLAUDE_ASSISTANT_MCP_SERVER } from "../shared/assistant-tool-names.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -264,6 +266,23 @@ export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined)
       url: access.url,
       headers: { Authorization: `Bearer ${access.token}` },
       timeout: TAB_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/**
+ * The PPM Assistant's MCP server as the SDK's `http` server config, for an Assistant session
+ * only; `{}` otherwise. Its timeout is long because a query may run for minutes and a change
+ * waits for the user's approval inside the call. The token travels in the header.
+ */
+export function assistantMcpServers(access: AssistantMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_ASSISTANT_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: ASSISTANT_MCP_TIMEOUT_MS,
     },
   };
 }

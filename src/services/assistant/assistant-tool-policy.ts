@@ -1,6 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { canonicalPath, expandHome, isInside, patternLeavesRoot } from "../design/design-tool-policy.ts";
 import { isCredentialPath } from "../fs-credential-path-guard.ts";
+import { CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER } from "../../shared/assistant-tool-names.ts";
 
 /**
  * Permission policy for a PPM Assistant session's Claude tools. The Assistant reads content it
@@ -21,10 +22,11 @@ import { isCredentialPath } from "../fs-credential-path-guard.ts";
  */
 export type AssistantToolDecision = "allow" | "ask";
 
-/** Claude's name prefix for the Assistant's own MCP server's tools. */
-export const CLAUDE_ASSISTANT_MCP_PREFIX = "mcp__ppm-assistant__";
-/** The MCP server key those tools come from; a user server of this name is never loaded beside it. */
-export const CLAUDE_ASSISTANT_MCP_SERVER = "ppm-assistant";
+/**
+ * The Assistant's own MCP server key and its tools' name prefix; a user server of this name is
+ * never loaded beside it.
+ */
+export { CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER };
 
 const ALWAYS_ALLOWED = new Set(["ToolSearch", "TodoWrite"]);
 

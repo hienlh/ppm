@@ -7,7 +7,8 @@ import { configService } from "../../../src/services/config.service.ts";
 import { getDb, setSessionAssistant, setSessionDesignSlug, setSessionMetadata, setSessionPermissionMode } from "../../../src/services/db.service.ts";
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { assistantWorkDir } from "../../../src/services/assistant/assistant-work-dir.ts";
-import { buildAssistantInstructions } from "../../../src/services/assistant/assistant-instructions.ts";
+import { ASSISTANT_READ_TOOLS_SECTION, buildAssistantInstructions } from "../../../src/services/assistant/assistant-instructions.ts";
+import { assistantMcpTokens } from "../../../src/services/assistant-mcp/assistant-mcp-tokens.ts";
 import type { AIProvider, PrewarmInput, SendMessageOpts } from "../../../src/types/chat.ts";
 
 const prewarms: PrewarmInput[] = [];
@@ -49,9 +50,29 @@ describe("chatService for an Assistant session", () => {
       model: "kept",
     });
     expect(opts.assistantSession).toBe(true);
-    expect(opts.assistantInstructions).toBe(buildAssistantInstructions());
+    expect(opts.assistantInstructions).toBe(buildAssistantInstructions({ sections: [ASSISTANT_READ_TOOLS_SECTION] }));
     expect(opts.permissionMode).toBe("default");
     expect(opts.model).toBe("kept");
+  });
+
+  it("hands the session its own tools' endpoint, minted here, never the caller's", async () => {
+    setSessionAssistant("a6");
+    const opts = await chatService.prepareSendOptions("stub-asst", "a6", "hi", {
+      assistantMcp: { url: "http://evil.example/mcp", token: "forged" },
+    });
+    expect(opts.assistantMcp?.url).toBe("http://127.0.0.1:8125/api/assistant-mcp");
+    expect(opts.assistantMcp?.token).not.toBe("forged");
+    expect(assistantMcpTokens.resolve(opts.assistantMcp!.token)).toEqual({ sessionId: "a6" });
+    // The same token on the next turn: a Claude query keeps the MCP config it started with.
+    expect((await chatService.prepareSendOptions("stub-asst", "a6", "again")).assistantMcp?.token).toBe(opts.assistantMcp!.token);
+  });
+
+  it("describes no tools when this process serves no endpoint for them", async () => {
+    setServerListenAddress(0, "");
+    setSessionAssistant("a7");
+    const opts = await chatService.prepareSendOptions("stub-asst", "a7", "hi");
+    expect(opts).not.toHaveProperty("assistantMcp");
+    expect(opts.assistantInstructions).toBe(buildAssistantInstructions());
   });
 
   it("creates the work dir a provider would otherwise replace with the home directory", async () => {
@@ -89,9 +110,11 @@ describe("chatService for an Assistant session", () => {
     setSessionMetadata("o1", "proj", "/proj");
     const opts = await chatService.prepareSendOptions("stub-asst", "o1", "hi", {
       permissionMode: "acceptEdits", assistantInstructions: "x", assistantSession: true,
+      assistantMcp: { url: "http://evil.example/mcp", token: "forged" },
     });
     expect(opts).not.toHaveProperty("assistantInstructions");
     expect(opts).not.toHaveProperty("assistantSession");
+    expect(opts).not.toHaveProperty("assistantMcp");
     expect(opts.permissionMode).toBe("acceptEdits");
   });
 
