@@ -39,6 +39,9 @@ import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
 
+import { AssistantContentContext } from "@/components/shared/markdown-context";
+import { isAssistantProject } from "../../../shared/assistant-project";
+
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
@@ -190,6 +193,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Use tab's own project, not global activeProject (keep-alive: hidden tabs must not react to switches)
   const projectName = (metadata?.projectName as string) ?? "";
+  // A PPM Assistant chat: its virtual project answers only the chat routes, so everything here
+  // that reaches a project's files, terminals, MCP sign-in or change review is left out.
+  const assistant = isAssistantProject(projectName);
 
   /**
    * Every sessionless chat tab (new, `/clear`, a design's chat, a reload mid-resolution)
@@ -473,24 +479,26 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     killBackgroundShell,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
 
-  const sessionChanges = useSessionFileChanges({ projectName, sessionId, messages, isStreaming });
+  // No project to review changes against: an empty name keeps the hook idle.
+  const sessionChanges = useSessionFileChanges({ projectName: assistant ? "" : projectName, sessionId, messages, isStreaming });
   const openReview = useCallback((path?: string) => {
     if (!sessionId) return;
     openSessionReview({ projectName, sessionId, title: sessionTitle || undefined, providerId, paths: sessionChanges.paths, selectPath: path });
   }, [projectName, sessionId, sessionTitle, providerId, sessionChanges.paths]);
   // Each turn's change tray answers the same list the bar shows.
   const sessionChangesValue = useMemo((): SessionChangesValue | null => (
-    projectName && sessionId
+    projectName && sessionId && !assistant
       ? { projectName, sessionId, files: sessionChanges.files, refresh: sessionChanges.refresh, openReview }
       : null
-  ), [projectName, sessionId, sessionChanges.files, sessionChanges.refresh, openReview]);
+  ), [projectName, sessionId, assistant, sessionChanges.files, sessionChanges.refresh, openReview]);
 
   // `model`/`effort`/`thinking` are what change when a pick does; the picks sent are read
   // through `turnSettings`, which leaves out whatever the user has not chosen.
   const firstMessagePicks = useMemo(() => turnSettings(), [turnSettings, model, effort, thinking]);
   const touchPrewarm = useChatPrewarm({
     // Not while the provider is still being resolved: the process would start for a guess.
-    enabled: !sessionId && !designSlug && tourTabActive && !!projectName && !preparation.pending,
+    // Nor for the Assistant: a warm spare is started without its instructions and policy.
+    enabled: !sessionId && !designSlug && !assistant && tourTabActive && !!projectName && !preparation.pending,
     projectName,
     providerId,
     permissionMode,
@@ -566,9 +574,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, [sessionId, tabId]);
 
   // Update tab title when SDK summary arrives. A design tab is named after its design, not
-  // after whichever of its sessions happens to be open.
+  // after whichever of its sessions happens to be open, and the Assistant tab after itself.
   useEffect(() => {
-    if (tabId && sessionTitle && !designSlug) {
+    if (tabId && sessionTitle && !designSlug && !assistant) {
       updateTab(tabId, { title: sessionTitle });
     }
     if (sessionId && projectName && sessionTitle) {
@@ -792,10 +800,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     setClearInputSignal((signal) => signal + 1);
     setSessionId(session.id);
     setProviderId(session.providerId);
-    if (tabId && !designSlug) updateTab(tabId, { title: session.title || "Chat" });
+    if (tabId && !designSlug && !assistant) updateTab(tabId, { title: session.title || "Chat" });
     // Immediately clear notification for the selected session
     useNotificationStore.getState().clearForSession(session.id);
-  }, [tabId, updateTab, abandonPendingSend, designSlug]);
+  }, [tabId, updateTab, abandonPendingSend, designSlug, assistant]);
 
   /** Fork current session and open new tab with the forked session, resending userMessage */
   const handleFork = useCallback(async (userMessage: string, messageId?: string) => {
@@ -1037,6 +1045,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             // Fixed at creation: the server gives every turn of this session the design's
             // instructions and the design permission default.
             ...(designSlug && { designSlug }),
+            // Fixed at creation too: the server runs every turn with the Assistant's
+            // instructions and its ask-before-changing policy.
+            ...(assistant && { assistant: true }),
           }, { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) });
           if (attempt !== firstSendAttempt.current) return;
           useSessionListStore.getState().upsertSession(projectRefForName(pName), {
@@ -1064,7 +1075,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, moveDraft, preparation, ensureAccountClaim, tabId, permissionReplaceable],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, assistant, moveDraft, preparation, ensureAccountClaim, tabId, permissionReplaceable],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -1196,12 +1207,13 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // --- File picker handlers ---
   // An open @-picker keeps the file index current, like the palette — see `openIndexReader`.
+  // The Assistant has no file index: its project has no files to mention.
   useEffect(() => {
-    if (showFilePicker && projectName) return useFileStore.getState().openIndexReader(projectName);
-  }, [showFilePicker, projectName]);
+    if (showFilePicker && projectName && !assistant) return useFileStore.getState().openIndexReader(projectName);
+  }, [showFilePicker, projectName, assistant]);
   // A project too long to send is searched on the server as the @-query changes.
   const indexRemote = useFileStore((s) => s.indexRemote);
-  const remoteFileItems = useRemoteFileSearch(projectName, fileFilter, { enabled: showFilePicker && indexRemote, kind: "all" });
+  const remoteFileItems = useRemoteFileSearch(projectName, fileFilter, { enabled: showFilePicker && indexRemote && !assistant, kind: "all" });
 
   const handleFileStateChange = useCallback((visible: boolean, filter: string) => {
     setShowFilePicker(visible);
@@ -1263,6 +1275,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   return (
     <AgentSessionProvider value={agentSessionIdentity}>
+    <AssistantContentContext.Provider value={assistant}>
     <div
       data-onboarding="chat"
       // `@container/chat`: the bars and the composer compact on the chat's own width, which a
@@ -1364,18 +1377,18 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onContinue={() => sendMessage(CONTINUE_AFTER_STOP, { permissionMode })}
       />
 
-      {/* MCP servers this session cannot use until someone signs in */}
-      <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />
+      {/* MCP servers this session cannot use until someone signs in (a project-scoped flow) */}
+      {!assistant && <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />}
 
       {/* Every file this session has changed, across all its turns */}
-      <SessionChangesBar
+      {!assistant && <SessionChangesBar
         files={sessionChanges.files}
         projectName={projectName}
         providerId={providerId}
         onOpen={sessionChanges.refresh}
         onSetReviewed={sessionChanges.setReviewed}
         onReview={openReview}
-      />
+      />}
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-panel shrink-0">
@@ -1481,12 +1494,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             onContentChange={handleContentChange}
             getUserHistory={getUserHistory}
             permissionMode={permissionMode}
-            onModeChange={!preparation?.pending && !firstSendPending ? handleModeChange : undefined}
+            onModeChange={!preparation?.pending && !firstSendPending && !assistant ? handleModeChange : undefined}
+            permissionLocked={assistant}
+            fileMentions={!assistant}
             providerId={preparation?.providerId ?? providerId}
             sessionId={sessionId ?? undefined}
-            // A design chat's provider was chosen among those that carry design instructions;
-            // the composer's picker offers every provider, so it is not offered here.
-            onProviderChange={!sessionId && !designSlug && !preparation?.pending && !firstSendPending ? handleProviderChange : undefined}
+            // A design chat's provider was chosen among those that carry design instructions,
+            // and an Assistant chat's by the Assistant's own "New" buttons; the composer's
+            // picker offers every provider, so it is not offered for either.
+            onProviderChange={!sessionId && !designSlug && !assistant && !preparation?.pending && !firstSendPending ? handleProviderChange : undefined}
             model={model}
             onModelChange={!preparation?.pending && !firstSendPending ? setModel : undefined}
             effort={effort}
@@ -1498,6 +1514,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         )}
       </div>
     </div>
+    </AssistantContentContext.Provider>
     </AgentSessionProvider>
   );
 }

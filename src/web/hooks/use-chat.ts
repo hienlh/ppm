@@ -14,6 +14,8 @@ import type { BackgroundAgentStatus } from "../../shared/background-agent-status
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
+import { isAssistantProject } from "../../shared/assistant-project";
+import { ASSISTANT_TAB_TITLE, openAssistant } from "@/components/assistant/open-assistant";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
@@ -680,14 +682,18 @@ export function useChat(
           // Persistent toast with action to navigate to the waiting session
           const sid = sessionIdRef.current;
           const isQuestion = ev.tool === "AskUserQuestion";
+          const assistant = isAssistantProject(projectNameRef.current);
           approvalToastRef.current = toast[isQuestion ? "info" : "warning"](
             isQuestion ? "AI has a question" : `${ev.tool} needs permission`,
             {
-              description: projectNameRef.current || `Session ${sid.slice(0, 8)}`,
+              description: assistant ? ASSISTANT_TAB_TITLE : projectNameRef.current || `Session ${sid.slice(0, 8)}`,
               duration: Infinity,
               action: {
                 label: "Go to session",
                 onClick: () => {
+                  // The Assistant may sit in a window or in a grid that is not on screen;
+                  // opening it brings it forward wherever it is.
+                  if (assistant) { openAssistant({ sessionId: sid }); return; }
                   const { panels } = usePanelStore.getState();
                   for (const [panelId, panel] of Object.entries(panels)) {
                     const tab = panel.tabs.find((t) => t.metadata?.sessionId === sid);

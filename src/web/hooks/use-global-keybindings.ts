@@ -8,6 +8,7 @@ import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { openSettings } from "@/components/settings/open-settings";
+import { openAssistant } from "@/components/assistant/open-assistant";
 import { basename } from "@/lib/utils";
 import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
 
@@ -179,6 +180,13 @@ export function useGlobalKeybindings() {
       if (match(e, "open-settings")) {
         e.preventDefault();
         openSettings();
+        return;
+      }
+
+      // PPM Assistant — a tab-host window on desktop, a tab on mobile.
+      if (match(e, "open-assistant")) {
+        e.preventDefault();
+        openAssistant();
         return;
       }
 

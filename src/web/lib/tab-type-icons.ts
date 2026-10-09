@@ -8,7 +8,7 @@
 import {
   Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Puzzle, Sparkles, Users, CircleX,
   GitCommitHorizontal, Palette, Smartphone, Plug, Table, FolderTree, Code, SquareTerminal, ArrowLeftRight, Globe, ScrollText,
-  type LucideIcon,
+  BotMessageSquare, type LucideIcon,
 } from "@/lib/icons";
 import type { ElementType } from "react";
 import type { TabType } from "@/stores/tab-store";
@@ -46,6 +46,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   android: Smartphone,
   "web-preview": Globe,
   logs: ScrollText,
+  assistant: BotMessageSquare,
 };
 
 /** Resolve the icon for a tab type, falling back to a generic glyph. */

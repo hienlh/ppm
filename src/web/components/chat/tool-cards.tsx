@@ -11,6 +11,7 @@ import {
   SendMessageOutcomeView,
 } from "./send-message-card";
 import { parseSendMessageResult } from "./send-message-parse";
+import { isAssistantProject } from "../../../shared/assistant-project";
 import {
   ChevronDown,
   ChevronRight,
@@ -456,14 +457,18 @@ function ToolDetails({
   const s = (v: unknown) => String(v ?? "");
   const { openTab } = useTabStore(useShallow((state) => ({ openTab: state.openTab })));
 
+  // The Assistant's virtual project owns no files and no grid: a tab stamped with it would be
+  // hidden in every project. Its tools name absolute paths, which open on their own.
+  const fileProject = isAssistantProject(projectName) ? undefined : projectName;
+
   /** Open a file in a new editor tab */
   const openFile = (filePath: string) => {
     if (!projectName) return;
     openTab({
       type: "editor",
       title: basename(filePath),
-      metadata: { filePath, projectName },
-      projectId: projectName,
+      metadata: fileProject ? { filePath, projectName: fileProject } : { filePath },
+      projectId: fileProject ?? null,
       closable: true,
     });
   };
@@ -473,8 +478,8 @@ function ToolDetails({
     openTab({
       type: "git-diff",
       title: `Diff ${basename(filePath)}`,
-      metadata: { filePath, projectName, original: oldStr, modified: newStr },
-      projectId: projectName ?? null,
+      metadata: { filePath, projectName: fileProject, original: oldStr, modified: newStr },
+      projectId: fileProject ?? null,
       closable: true,
     });
   };

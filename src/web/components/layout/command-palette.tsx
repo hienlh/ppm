@@ -22,9 +22,11 @@ import {
   Cpu,
   ScrollText,
   Bug,
+  BotMessageSquare,
 } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
+import { openAssistant } from "@/components/assistant/open-assistant";
 import { openRemoteAccess } from "@/components/settings/remote-access/remote-access-tab-store";
 import { openPortForwarding } from "@/components/tunnels/open-port-forwarding";
 import { useOpenSystemMonitor } from "@/components/system/use-open-system-monitor";
@@ -247,6 +249,12 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
     const builtIn: CommandItem[] = [
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action", shortcut: formatShortcut(getBinding("open-chat")) },
+      {
+        id: "ppm-assistant", label: "PPM Assistant", icon: BotMessageSquare, group: "action",
+        keywords: "assistant agent helper control ppm ai claude codex",
+        action: () => { openAssistant(); onClose(); },
+        shortcut: formatShortcut(getBinding("open-assistant")),
+      },
       { id: "new-file", label: "New File", icon: FilePlus, action: () => { useTabStore.getState().openNewFile(); onClose(); }, keywords: "create untitled blank empty", group: "action", shortcut: formatShortcut(getBinding("new-file")) },
       { id: "new-db-query", label: "New DB Query", icon: Database, action: () => { void openNewQuery(); onClose(); }, keywords: "sql database query scratchpad new", group: "action" },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },

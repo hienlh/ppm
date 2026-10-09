@@ -386,7 +386,8 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
                       <ContextMenuSeparator />
                     </>
                   )}
-                  {sessionId && projectTags.length > 0 && (
+                  {/* Tags are the open project's; an Assistant session is in none. */}
+                  {sessionId && tab.type !== "assistant" && projectTags.length > 0 && (
                     <>
                       <ContextMenuSub>
                         <ContextMenuSubTrigger>
