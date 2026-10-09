@@ -24,6 +24,10 @@ import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
+import { isAssistantProject } from "../shared/assistant-project.ts";
+import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
+import { buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
 import { createLogger } from "./logger.ts";
@@ -109,10 +113,20 @@ class ChatService {
       ? providerRegistry.get(providerId)
       : providerRegistry.getDefault();
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
-    const session = await provider.createSession(config);
+    // Every session in the Assistant's virtual project is an Assistant session, whichever
+    // door created it (the new-chat route, a fork, a script).
+    const assistant = isAssistantProject(config.projectName);
+    if (assistant && !provider.supportsAssistantSessions) {
+      throw new Error(`Provider "${provider.id}" does not support PPM Assistant sessions`);
+    }
+    // A warm spare was spawned with an ordinary chat's prompt and permissions.
+    const session = await provider.createSession(assistant ? { ...config, adoptWarmSpare: false } : config);
+    const { setSessionProvider, setSessionAssistant } = await import("./db.service.ts");
+    // Not best-effort, unlike the provider row below: an Assistant session without its mark
+    // would only be recognised by its working directory.
+    if (assistant) setSessionAssistant(session.id);
     // Persist provider ownership so the WS routes follow-ups correctly across restarts.
     try {
-      const { setSessionProvider } = await import("./db.service.ts");
       setSessionProvider(session.id, provider.id);
     } catch { /* non-fatal */ }
     return session;
@@ -120,6 +134,8 @@ class ChatService {
 
   /** Start the process the next new chat in a project will run on, where the provider can. */
   async prewarm(providerId: string | undefined, input: PrewarmInput): Promise<void> {
+    // An Assistant session never adopts a spare, so one started for it would only idle.
+    if (isAssistantWorkDir(input.projectPath)) return;
     const provider = providerId ? providerRegistry.get(providerId) : providerRegistry.getDefault();
     await provider?.prewarm?.(input);
   }
@@ -309,10 +325,13 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    // Like the design fields, the tab tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
-    // A design session checks its canvas with `design_check` instead.
-    const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession
+    // Like the design fields, the tab tools are only ever server-built. An Assistant session is
+    // never also a design session: its policy replaces the design one outright.
+    const { tabToolsMcp: _tabTools, ...design } = this.resolveAssistantOptions(providerId, sessionId, opts)
+      ?? await this.resolveDesignOptions(providerId, sessionId, opts);
+    // A design session checks its canvas with `design_check` instead; the Assistant gets
+    // tools of its own that drive the UI.
+    const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession && !design.assistantSession
       ? tabToolsMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
@@ -337,6 +356,36 @@ class ChatService {
   }
 
   /**
+   * Assistant identity for this turn, or null for any other session. Resolved here for the
+   * same reason as the design identity below: every caller sends through this service.
+   *
+   * The instructions are server-built and every caller-supplied Assistant or design field is
+   * dropped. The permission mode is forced to `default` whatever the caller or the stored
+   * session asks for — the Assistant's policy, not the composer's mode, decides what runs
+   * unasked, and `default` is the mode in which both providers consult that policy. A provider
+   * that cannot enforce it refuses the turn instead of running it as an ordinary chat.
+   */
+  private resolveAssistantOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): SendMessageOpts | null {
+    if (!isAssistantSession(sessionId, this.getSession(sessionId)?.projectPath)) return null;
+    if (!providerRegistry.get(providerId)?.supportsAssistantSessions) {
+      throw new Error(`Provider "${providerId}" does not support PPM Assistant sessions`);
+    }
+    // A provider falls back to the home directory for a cwd that does not exist, which would
+    // file the session under another directory's history and judge its paths from there.
+    ensureAssistantWorkDir();
+    const {
+      designInstructions: _design, designSession: _designFlag, designMcp: _designMcp,
+      assistantInstructions: _instructions, assistantSession: _flag, permissionMode: _mode, ...rest
+    } = opts ?? {};
+    return {
+      ...rest,
+      assistantInstructions: buildAssistantInstructions(),
+      assistantSession: true,
+      permissionMode: "default",
+    };
+  }
+
+  /**
    * Design identity for this turn, resolved here because every caller — the WebSocket, the
    * CLI, the scheduler, group chat, the bots — sends through this service, and a design
    * session reached by any of them must get its instructions.
@@ -351,7 +400,10 @@ class ChatService {
    * then the provider's configured default, exactly as for any other chat.
    */
   private async resolveDesignOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
-    const { designInstructions: _instructions, designSession: _flag, designMcp: _mcp, ...rest } = opts ?? {};
+    const {
+      designInstructions: _instructions, designSession: _flag, designMcp: _mcp,
+      assistantInstructions: _assistant, assistantSession: _assistantFlag, ...rest
+    } = opts ?? {};
     const { getSessionDesignSlug, getSessionPermissionMode, getSessionProjectPath } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);
     if (!slug || !isValidDesignSlug(slug)) return rest;

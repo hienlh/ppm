@@ -1,7 +1,7 @@
 import { encodeReply, validateReply } from "../../shared/chat-reply.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
-import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { resolveChatProjectPath } from "../helpers/resolve-chat-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
 import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
@@ -1254,7 +1254,7 @@ export const chatWebSocket = {
 
     let projectPath: string | undefined;
     if (projectName) {
-      try { projectPath = resolveProjectPath(projectName); } catch { reportUnregisteredProject(sessionId, projectName); }
+      try { projectPath = resolveChatProjectPath(projectName); } catch { reportUnregisteredProject(sessionId, projectName); }
     }
     if (session && !session.projectPath && projectPath) {
       session.projectPath = projectPath;
@@ -1427,7 +1427,7 @@ export const chatWebSocket = {
       adoptProviderHint(sessionId, providerHint);
       const pid = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
-      if (pn) { try { pp = resolveProjectPath(pn); } catch { reportUnregisteredProject(sessionId, pn); } }
+      if (pn) { try { pp = resolveChatProjectPath(pn); } catch { reportUnregisteredProject(sessionId, pn); } }
       const newEntry: SessionEntry = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
         pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false, streamSeq: 0,

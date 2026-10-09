@@ -38,7 +38,8 @@ export const THINKING_ADAPTIVE = -1;
  * the permission evaluation chain → the PreToolUse hook. The design policy lists nothing:
  * the read-only list would let Read and Grep reach any path on disk and every MCP tool run
  * unasked, which is exactly what a design session's agent (fed page content it did not
- * write) must not do.
+ * write) must not do. The Assistant policy lists nothing for the same reason, and because its
+ * one read rule depends on the path, which only the permission hook sees.
  */
 export const READ_ONLY_TOOLS: readonly string[] = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
 
@@ -47,7 +48,9 @@ export function allowedToolsFor(p: {
   agentTeams?: boolean;
   designPolicy?: boolean;
   designCheckTool?: string | null;
+  assistantPolicy?: boolean;
 }): string[] {
+  if (p.assistantPolicy) return [];
   if (p.designPolicy) return p.designCheckTool ? [p.designCheckTool] : [];
   const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
   const teamTools = p.agentTeams
@@ -118,7 +121,8 @@ export interface PresetSystemPromptOption {
 
 /**
  * Compose the SDK `systemPrompt` option from the provider's "Additional Instructions"
- * (`system_prompt`) and a design session's instruction block.
+ * (`system_prompt`) and the session's own instruction block — a design session's or a PPM
+ * Assistant session's, never both.
  *
  * Both are appended to the preset, never used as a replacing `custom` prompt: the setting
  * is labelled as *additional* instructions, and replacing Claude Code's prompt would drop
@@ -127,9 +131,9 @@ export interface PresetSystemPromptOption {
  */
 export function buildSystemPromptOption(
   additional?: string,
-  design?: string,
+  session?: string,
 ): PresetSystemPromptOption {
-  const parts = [additional, design]
+  const parts = [additional, session]
     .map((part) => part?.trim())
     .filter((part): part is string => !!part);
   return parts.length

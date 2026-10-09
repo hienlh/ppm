@@ -38,7 +38,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
@@ -158,6 +158,11 @@ interface LiveSession {
   /** Design instructions, resent on every thread/start and thread/resume — codex does not
    *  persist them, and the account-switch respawn has no send options to read them from. */
   developerInstructions?: string;
+  /** The session may not run without `developerInstructions` (a PPM Assistant session): a
+   *  codex that refuses the field fails the connect, and the account-switch respawn, with a
+   *  clear error rather than retrying without them. Kept here because the respawn has no
+   *  send options to tell it so. */
+  requireInstructions?: boolean;
   /** A design session's `design_check` endpoint, kept for the same reason. */
   designMcp?: DesignMcpAccess;
   /** The tab tools' endpoint, when the user has them on; kept for the same reason. */
@@ -352,6 +357,7 @@ function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestU
 export class CodexAppServerProvider implements AIProvider {
   readonly supportsSharedContext = true;
   readonly supportsDesignInstructions = true;
+  readonly supportsAssistantSessions = true;
   readonly id = "codex";
   readonly name = "Codex";
 
@@ -791,7 +797,9 @@ export class CodexAppServerProvider implements AIProvider {
       await this.respawnOn(live, threadId, next);
     } catch (e) {
       log.error(`session=${threadId} rotation to ${next.id} failed: ${redactTruncate((e as Error)?.message, 200)}`);
-      giveUp();
+      // The new account's codex cannot run this session at all: say that, not "usage limit".
+      if (e instanceof RequiredInstructionsError) this.abandonRotation(live, e.message);
+      else giveUp();
       return;
     }
 
@@ -874,7 +882,7 @@ export class CodexAppServerProvider implements AIProvider {
       tabToolsMcp: live.tabToolsMcp,
     });
     await requestWithInstructionsFallback(resumeBase,
-      (params) => this.resumeThread(client, threadId, found, account.home, params));
+      (params) => this.resumeThread(client, threadId, found, account.home, params), undefined, live.requireInstructions);
   }
 
   /**
@@ -919,7 +927,12 @@ export class CodexAppServerProvider implements AIProvider {
   private async connect(sessionId: string, opts?: SendMessageOpts): Promise<LiveSession> {
     const meta = this.sessions.get(sessionId);
     const cwd = meta?.projectPath || getSessionProjectPath(sessionId) || process.cwd();
-    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode, { designSession: opts?.designSession });
+    // An Assistant session's instructions and permission profile replace the design ones and
+    // ignore the requested mode; they are fixed for the life of this app-server.
+    const assistant = !!opts?.assistantSession;
+    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode, {
+      designSession: opts?.designSession, assistantSession: assistant,
+    });
     const model = codexModel(opts?.model ?? this.config?.model);
 
     // Only resume a rollout attributable to this project. An unknown/resumed ID
@@ -935,9 +948,10 @@ export class CodexAppServerProvider implements AIProvider {
     const channel = createEventChannel();
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
-      developerInstructions: opts?.designInstructions,
-      designMcp: opts?.designSession ? opts.designMcp : undefined,
-      tabToolsMcp: opts?.designSession ? undefined : opts?.tabToolsMcp,
+      developerInstructions: assistant ? opts?.assistantInstructions : opts?.designInstructions,
+      requireInstructions: assistant,
+      designMcp: opts?.designSession && !assistant ? opts.designMcp : undefined,
+      tabToolsMcp: opts?.designSession || assistant ? undefined : opts?.tabToolsMcp,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -968,7 +982,7 @@ export class CodexAppServerProvider implements AIProvider {
     // project (fail-closed cwd guard) — never resume another project's thread.
     const result = await requestWithInstructionsFallback(resumeBase, (params) => found
       ? this.resumeThread(client, sessionId, found, account?.home, params)
-      : client.request("thread/start", params));
+      : client.request("thread/start", params), undefined, live.requireInstructions);
 
     const threadId = extractThreadId(result) ?? (found ? sessionId : null);
     if (!threadId) throw new Error("codex thread/start returned no thread id");

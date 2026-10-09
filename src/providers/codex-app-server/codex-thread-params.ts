@@ -108,20 +108,41 @@ export function isUnknownDeveloperInstructionsError(err: unknown): boolean {
     && /unknown|unexpected|unrecognized|not allowed|invalid/i.test(message);
 }
 
+/** Why a session whose instructions are not optional cannot run on this codex. */
+export const REQUIRED_INSTRUCTIONS_UNSUPPORTED =
+  "This Codex version cannot take the instructions a PPM Assistant session runs with. Update Codex (npm i -g @openai/codex) to use the Assistant on Codex.";
+
+/** A thread request refused because the session's required instructions could not be sent. */
+export class RequiredInstructionsError extends Error {
+  constructor(message = REQUIRED_INSTRUCTIONS_UNSUPPORTED) {
+    super(message);
+    this.name = "RequiredInstructionsError";
+  }
+}
+
 /**
  * Send a thread request, and if an older codex refuses the instructions field, send it
  * once more without it — a design session that loses its instructions still works as a
  * chat, while a refused thread/start is no session at all. Logged, never silent.
+ *
+ * `required` is for a session that must not run without them (a PPM Assistant session, whose
+ * instructions carry its rules): there the refusal, or instructions missing from the params
+ * altogether, is an error that says so instead of a quiet retry.
  */
 export async function requestWithInstructionsFallback<T>(
   params: CodexThreadParams,
   send: (params: CodexThreadParams) => Promise<T>,
   log: (message: string) => void = console.warn,
+  required = false,
 ): Promise<T> {
+  if (required && !params.developerInstructions) {
+    throw new RequiredInstructionsError("This session cannot start without its instructions, and none were given.");
+  }
   try {
     return await send(params);
   } catch (err) {
     if (!params.developerInstructions || !isUnknownDeveloperInstructionsError(err)) throw err;
+    if (required) throw new RequiredInstructionsError();
     log("[codex] app-server rejected developerInstructions; retrying without design instructions");
     const { developerInstructions: _dropped, ...rest } = params;
     return send(rest);

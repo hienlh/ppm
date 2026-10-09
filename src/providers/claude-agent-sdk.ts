@@ -16,6 +16,7 @@ import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../servic
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
+import { assistantToolDecision, CLAUDE_ASSISTANT_MCP_SERVER } from "../services/assistant/assistant-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
@@ -235,6 +236,7 @@ interface PendingApproval {
 export class ClaudeAgentSdkProvider implements AIProvider {
   readonly supportsSharedContext = true;
   readonly supportsDesignInstructions = true;
+  readonly supportsAssistantSessions = true;
   id = "claude";
   name = "Claude";
 
@@ -1122,20 +1124,34 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // Resolve permission mode early — canUseTool needs isBypass
     const providerConfig = this.getProviderConfig();
-    const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
+    // An Assistant session runs under its own policy whatever mode was asked for. Forced to
+    // `default` here as well as in the chat service, because the policy lives in the
+    // permission hook and bypass mode never installs that hook.
+    const assistantPolicy = !!opts?.assistantSession;
+    const permissionMode = assistantPolicy
+      ? "default"
+      : opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
-    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
+    const systemPromptOpt = buildSystemPromptOption(
+      providerConfig.system_prompt,
+      assistantPolicy ? opts?.assistantInstructions : opts?.designInstructions,
+    );
     // A design session in acceptEdits auto-approves file tools only while they target the
     // project, and asks for everything else. Any other mode the user picks for a design
     // session behaves exactly as that mode does in an ordinary chat.
-    const designPolicy = !!opts?.designSession && permissionMode === "acceptEdits";
+    const designPolicy = !assistantPolicy && !!opts?.designSession && permissionMode === "acceptEdits";
     // No project root means nothing can be proven inside it, so every file tool asks.
     const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
+    /** Read per call: a project registered mid-session is readable from the next tool call on. */
+    const assistantContext = (cwd?: unknown) => ({
+      cwd: typeof cwd === "string" && cwd ? cwd : meta.projectPath,
+      projectRoots: configService.get("projects").map((p) => p.path),
+    });
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
-    const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
-    const tabToolsMcp = opts?.designSession ? undefined : opts?.tabToolsMcp;
-    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
+    const designCheckTool = !assistantPolicy && opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    const tabToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.tabToolsMcp;
+    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy });
 
     /**
      * Approval events to yield from the generator.
@@ -1180,6 +1196,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const result = await waitForApproval(toolName, input);
         if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
       }
+      // The same backstop for the Assistant policy.
+      if (assistantPolicy && assistantToolDecision(toolName, input, assistantContext()) !== "allow") {
+        const result = await waitForApproval(toolName, input);
+        if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
+      }
       return { behavior: "allow" as const, updatedInput: input };
     };
 
@@ -1205,7 +1226,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
       // auto-approvals (which include some shell commands) never get a say.
-      if (designPolicy) {
+      // Assistant policy: reads inside registered projects and the Assistant's own tools pass;
+      // everything else — the web tools from READ_ONLY_TOOLS included — asks. Relative paths
+      // are judged against the cwd the CLI reports, which is the one it resolves them against.
+      if (assistantPolicy) {
+        if (assistantToolDecision(toolName, hookInput?.tool_input, assistantContext(hookInput?.cwd)) === "allow") {
+          return preToolUseDecision("allow");
+        }
+      } else if (designPolicy) {
         if (designToolDecision(toolName, hookInput?.tool_input, designRoot) === "allow") {
           return preToolUseDecision("allow");
         }
@@ -1386,9 +1414,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           log.warn(`session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
         }
       }
+      const userMcpServers = this.resolveMcpServers(effectiveCwd);
+      // The Assistant policy allows `mcp__ppm-assistant__*` unasked, so a user server under
+      // that name must never be what answers to it.
+      if (assistantPolicy) delete userMcpServers[CLAUDE_ASSISTANT_MCP_SERVER];
       const mcpServers = {
-        ...this.resolveMcpServers(effectiveCwd),
-        ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
+        ...userMcpServers,
+        ...designMcpServers(opts?.designSession && !assistantPolicy ? opts.designMcp : undefined),
         ...tabToolsMcpServers(tabToolsMcp),
       };
 
@@ -1468,7 +1500,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // A new session's first attempt takes over the CLI `prewarm` started for it, if that
       // is exactly the process it would have spawned; otherwise it spawns one as always.
-      const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork
+      // Never for an Assistant session: a spare was started for an ordinary chat.
+      const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork && !assistantPolicy
         ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();

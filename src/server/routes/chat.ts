@@ -7,6 +7,7 @@ import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
+import { isAssistantProject } from "../../shared/assistant-project.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
@@ -17,7 +18,7 @@ import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionForkSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
@@ -141,11 +142,12 @@ chatRoutes.get("/usage", async (c) => {
 /** GET /chat/providers — list available AI providers */
 chatRoutes.get("/providers", (c) => {
   try {
-    // The capability rides along so a client offering design sessions can list only the
-    // providers that will actually deliver the instructions.
+    // The capabilities ride along so a client offering design or Assistant sessions can list
+    // only the providers that will actually deliver the instructions and enforce the policy.
     return c.json(ok(providerRegistry.list().map((p) => ({
       ...p,
       supportsDesignInstructions: !!providerRegistry.get(p.id)?.supportsDesignInstructions,
+      supportsAssistantSessions: !!providerRegistry.get(p.id)?.supportsAssistantSessions,
     }))));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -511,10 +513,21 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown; assistant?: unknown }>();
+    // An Assistant session lives only in the Assistant's virtual project, and every session
+    // there is one (`chatService.createSession` marks it); the flag only has to agree.
+    const assistant = isAssistantProject(projectName);
+    if (body.assistant !== undefined && body.assistant !== assistant) {
+      return c.json(err(assistant
+        ? "Every session in the PPM Assistant project is an Assistant session"
+        : "Assistant sessions can only be created in the PPM Assistant project"), 400);
+    }
     // A design session is only created on a provider that will carry its instructions;
     // anywhere else it would silently be an ordinary chat that believes it is not.
     const designSlug = body.designSlug;
+    if (assistant && designSlug !== undefined && designSlug !== null) {
+      return c.json(err("An Assistant session cannot be a design session"), 400);
+    }
     if (designSlug !== undefined && designSlug !== null) {
       if (!isValidDesignSlug(designSlug)) return c.json(err("Invalid designSlug"), 400);
       const provider = body.providerId ? providerRegistry.get(body.providerId) : providerRegistry.getDefault();
@@ -527,8 +540,8 @@ chatRoutes.post("/sessions", async (c) => {
       projectName,
       projectPath,
       title: body.title,
-      // A design session spawns with its own instructions, so a spare would not fit it.
-      adoptWarmSpare: !isValidDesignSlug(designSlug),
+      // A design or Assistant session spawns with its own instructions, so a spare would not fit it.
+      adoptWarmSpare: !isValidDesignSlug(designSlug) && !assistant,
     });
     if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
     if (isValidDesignSlug(designSlug)) setSessionDesignSlug(session.id, designSlug);
@@ -853,8 +866,8 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         });
         // Register forked session with provider + DB so it's tracked in memory
         setSessionMetadata(result.sessionId, projectName, projectPath);
-        // Before the resume below: a fork of a design chat must stay a design chat.
-        copySessionDesignSettings(sourceId, result.sessionId);
+        // Before the resume below: a fork of a design or Assistant chat must stay one.
+        copySessionForkSettings(sourceId, result.sessionId);
         // Persist the inherited user-set title so the collapsed-tree head shows
         // it regardless of the SDK-derived summary.
         if (inheritedTitle) setSessionTitle(result.sessionId, inheritedTitle);
@@ -918,7 +931,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         projectName, projectPath, title: inheritedTitle ?? "Forked Chat",
       });
       if (inheritedTitle) setSessionTitle(session.id, inheritedTitle);
-      copySessionDesignSettings(sourceId, session.id);
+      copySessionForkSettings(sourceId, session.id);
       return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     }
   } catch (e) {

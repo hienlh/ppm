@@ -6,6 +6,7 @@ import { mapFsError } from "../../services/fs-path-guard.service.ts";
 import { browserFacingHost } from "../helpers/preview-asset-guard.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { assertNotAssistantProject } from "../helpers/resolve-chat-project.ts";
 import { BRIDGE_NONCE_RE } from "../../shared/design-bridge-protocol.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { getDesign } from "../../services/design/design-store.service.ts";
@@ -73,6 +74,7 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
     const purpose = b.purpose;
     let projectPath: string;
     try {
+      assertNotAssistantProject(b.projectName);
       projectPath = resolveProjectPath(b.projectName);
     } catch {
       return c.json(err("Project not found"), 404);

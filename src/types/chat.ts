@@ -43,6 +43,17 @@ export interface SendMessageOpts {
    * like `designMcp`.
    */
   tabToolsMcp?: { url: string; token: string };
+  /**
+   * PPM Assistant instruction block, server-built by `chatService.prepareSendOptions` for an
+   * Assistant session and stripped from whatever the caller passed, like `designInstructions`.
+   * Delivered the same way: Claude appends it, Codex sends it as `developerInstructions`.
+   */
+  assistantInstructions?: string;
+  /**
+   * Set alongside `assistantInstructions`; selects the Assistant permission policy, which a
+   * provider applies whatever `permissionMode` says.
+   */
+  assistantSession?: boolean;
 }
 
 export interface AIProvider {
@@ -53,6 +64,10 @@ export interface AIProvider {
   /** Delivers opts.designInstructions to the model on every turn. Only such providers may
    *  host a design session; anywhere else the instructions would be silently dropped. */
   supportsDesignInstructions?: boolean;
+  /** Delivers opts.assistantInstructions on every turn and enforces the Assistant permission
+   *  policy when opts.assistantSession is set. Only such providers may run an Assistant
+   *  session; anywhere else it would be an ordinary chat in the user's chosen mode. */
+  supportsAssistantSessions?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
   getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
 

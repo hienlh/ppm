@@ -56,13 +56,13 @@ export function designToolDecision(
 
 /** `~` is expanded the way a shell would, so `~/.ssh` is judged as the home directory it
  *  names rather than as a folder called `~` inside the project. */
-function expandHome(path: string): string {
+export function expandHome(path: string): string {
   if (path === "~") return homedir();
   if (path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(2));
   return path;
 }
 
-function patternLeavesRoot(pattern: string): boolean {
+export function patternLeavesRoot(pattern: string): boolean {
   if (isAbsolute(pattern) || /^[a-zA-Z]:/.test(pattern) || pattern.startsWith("~")) return true;
   return pattern.split(/[\\/]/).includes("..");
 }
@@ -72,7 +72,7 @@ function patternLeavesRoot(pattern: string): boolean {
  * re-appended — a Write usually targets a file that does not exist yet, and its parent
  * directories may not either. Null when nothing along the chain resolves.
  */
-function canonicalPath(path: string): string | null {
+export function canonicalPath(path: string): string | null {
   const tail: string[] = [];
   let current = resolve(path);
   for (;;) {
@@ -101,7 +101,7 @@ function entryExists(path: string): boolean {
   }
 }
 
-function isInside(target: string, root: string): boolean {
+export function isInside(target: string, root: string): boolean {
   const caseFold = process.platform === "win32" || process.platform === "darwin";
   const a = caseFold ? target.toLowerCase() : target;
   const b = caseFold ? root.toLowerCase() : root;

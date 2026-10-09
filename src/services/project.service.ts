@@ -4,12 +4,22 @@ import { configService } from "./config.service.ts";
 import { seedDefaultTags } from "./tag.service.ts";
 import { deleteAvatar } from "./avatar-storage.service.ts";
 import type { ProjectConfig } from "../types/config.ts";
+import { ASSISTANT_PROJECT_NAME, isAssistantProject } from "../shared/assistant-project.ts";
 import type { ProjectInfo } from "../types/project.ts";
 import { createLogger } from "./logger.ts";
 
 const log = createLogger("project");
 
 const MAX_SCAN_DEPTH = 3;
+
+/**
+ * The PPM Assistant's virtual project owns this name: the chat routes resolve it to the
+ * Assistant's work directory before looking at registered projects, so a real project by
+ * that name would have its chats land in the Assistant and its other routes refused.
+ */
+function assertNotReservedName(name: string): void {
+  if (isAssistantProject(name)) throw new Error(`"${ASSISTANT_PROJECT_NAME}" is reserved for the PPM Assistant`);
+}
 
 class ProjectService {
   /** List all registered projects with optional git info */
@@ -32,6 +42,7 @@ class ProjectService {
 
     const projects = configService.get("projects");
     const projectName = name ?? basename(abs);
+    assertNotReservedName(projectName);
 
     // Check duplicates
     if (projects.some((p) => p.name === projectName)) {
@@ -66,6 +77,7 @@ class ProjectService {
     const current = projects[idx]!;
     const newName = updates.name?.trim() || current.name;
     const newPath = updates.path ? resolve(updates.path) : current.path;
+    if (newName !== currentName) assertNotReservedName(newName);
 
     // Validate new path exists
     if (updates.path && !existsSync(newPath)) {

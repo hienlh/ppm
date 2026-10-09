@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { terminalService } from "../../services/terminal.service.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { assertNotAssistantProject } from "../helpers/resolve-chat-project.ts";
 import { assertAllowed, resolvePath } from "../../services/fs-path-guard.service.ts";
 import { createLogger } from "../../services/logger.ts";
 
@@ -22,7 +23,7 @@ function resolveStartDir(projectName: string | undefined, cwd: string | undefine
     if (!statSync(resolved).isDirectory()) throw new Error("Not a directory");
     return resolved;
   }
-  if (projectName) return resolveProjectPath(projectName);
+  if (projectName) { assertNotAssistantProject(projectName); return resolveProjectPath(projectName); }
   return homedir();
 }
 

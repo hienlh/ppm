@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 56;
+export const CURRENT_SCHEMA_VERSION = 57;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1259,6 +1259,15 @@ export function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE connections ADD COLUMN ai_access INTEGER NOT NULL DEFAULT 1"); } catch { /* column exists */ }
     database.exec(`PRAGMA user_version = 56;`);
   }
+
+  if (current < 57) {
+    // A PPM Assistant session: its own instructions and a permission policy that ignores the
+    // mode picked in the composer. Stored rather than inferred from the project because a
+    // forked or provider-migrated session must stay one, and losing the mark would drop it to
+    // the provider default — usually bypass. 0 = an ordinary session, every existing row.
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN assistant INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 57;`);
+  }
 }
 
 /**
@@ -1502,14 +1511,17 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode)
-      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode, assistant)
+      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode, assistant FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
         thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
         design_slug = COALESCE(session_metadata.design_slug, excluded.design_slug),
-        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode)
+        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode),
+        -- Only ever raised: the destination row usually exists already (codex writes its
+        -- metadata before announcing the swap) with the column at its default 0.
+        assistant = MAX(session_metadata.assistant, excluded.assistant)
     `).run(newSessionId, oldSessionId);
     database.query(
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
@@ -1670,6 +1682,30 @@ export function copySessionDesignSettings(sourceSessionId: string, targetSession
     const mode = getSessionPermissionMode(sourceSessionId);
     if (mode) setSessionPermissionMode(targetSessionId, mode);
   })();
+}
+
+/** True when the session is a PPM Assistant session, by its own row only — see `isAssistantSession`. */
+export function getSessionIsAssistant(sessionId: string): boolean {
+  const row = getDb().query("SELECT assistant FROM session_metadata WHERE session_id = ?").get(sessionId) as { assistant: number } | null;
+  return row?.assistant === 1;
+}
+
+/** Mark a session as a PPM Assistant session. There is no unmarking: a session never stops being one. */
+export function setSessionAssistant(sessionId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, assistant) VALUES (?, 1) ON CONFLICT(session_id) DO UPDATE SET assistant = 1",
+  ).run(sessionId);
+}
+
+/**
+ * Everything a fork inherits from its source besides the transcript: the design identity and
+ * the Assistant mark. A fork of an Assistant chat that came out ordinary would run under the
+ * provider's default mode — usually bypass — with none of the Assistant's instructions.
+ */
+export function copySessionForkSettings(sourceSessionId: string, targetSessionId: string): void {
+  if (sourceSessionId === targetSessionId) return;
+  copySessionDesignSettings(sourceSessionId, targetSessionId);
+  if (getSessionIsAssistant(sourceSessionId)) setSessionAssistant(targetSessionId);
 }
 
 // ---------------------------------------------------------------------------
