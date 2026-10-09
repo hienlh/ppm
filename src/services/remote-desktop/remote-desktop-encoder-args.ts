@@ -59,10 +59,12 @@ export function captureEncoderArgs(
       // assumptions hold unchanged.
       return ["-c:v", "h264_videotoolbox", "-realtime", "1", "-prio_speed", "1", "-allow_sw", "1", ...common];
     default:
-      // libx264 low-latency. `-tune zerolatency` enables sliced-threads (multi-slice NALs);
-      // access-unit-assembler.ts assumes one slice/frame, so force it back with sliced-threads=0.
+      // libx264 low-latency. `-tune zerolatency` threads *within* a frame (one slice per
+      // thread, which the AU assembler keeps together). Never `sliced-threads=0`: x264 then
+      // threads *across* frames and holds one frame per thread — measured ~1.1 s later per frame
+      // than single-threaded on a 24-thread host.
       return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-        "-profile:v", "main", "-level", "4.0", "-x264-params", "sliced-threads=0:slices=1",
+        "-profile:v", "main", "-level", "4.0",
         "-bufsize", "1M", ...common];
   }
 }
