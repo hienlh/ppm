@@ -95,11 +95,29 @@ function spawnBunPty(
     env: withoutAiChatMark(process.env as Record<string, string>),
   });
 
-  pty.onData(onData);
-  pty.onExit((e: { exitCode?: number; signal?: number | string } | undefined) =>
-    onExit(e?.exitCode ?? null, e?.signal ? String(e.signal) : null));
+  return bunPtyHandle(pty, onData, onExit);
+}
 
+/** What `spawnBunPty` uses of a bun-pty process. */
+export interface BunPtyProcess {
+  onData(listener: (data: string) => void): void;
+  onExit(listener: (e: { exitCode?: number; signal?: number | string } | undefined) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  readonly pid?: number;
+}
+
+/** A bun-pty process as a `PtyHandle`. */
+export function bunPtyHandle(pty: BunPtyProcess, onData: (text: string) => void, onExit: ExitHandler): PtyHandle {
   let _closed = false;
+  // bun-pty never reports a ConPTY whose shell exited as closed; Bun's native terminal does.
+  let exited = false;
+  pty.onData(onData);
+  pty.onExit((e) => {
+    exited = true;
+    onExit(e?.exitCode ?? null, e?.signal ? String(e.signal) : null);
+  });
   return {
     write: (data) => pty.write(data),
     resize: (c, r) => pty.resize(c, r),
@@ -108,7 +126,7 @@ function spawnBunPty(
       _closed = true;
       try { pty.kill(); } catch { /* already dead */ }
     },
-    get closed() { return _closed; },
+    get closed() { return _closed || exited; },
     pid: pty.pid,
   };
 }
@@ -127,6 +145,11 @@ export interface TerminalSession {
   pty: PtyHandle;
   projectPath: string;
   createdAt: Date;
+  /** The PTY's size now: the AI's `read_terminal` replays the output at it. */
+  cols: number;
+  rows: number;
+  /** When the shell last printed anything (ms since the epoch), null before it has. */
+  lastOutputAt: number | null;
   /** Connected WebSocket (if any) */
   ws: unknown | null;
   /** Timeout to kill session after WS disconnect */
@@ -143,6 +166,7 @@ export interface TerminalSessionInfo {
   projectPath: string;
   createdAt: string;
   connected: boolean;
+  lastOutputAt: number | null;
 }
 
 type OutputCallback = (sessionId: string, data: string) => void;
@@ -159,6 +183,8 @@ export class TerminalService {
     const createdAt = new Date();
 
     const onData = (text: string) => {
+      const session = this.sessions.get(id);
+      if (session) session.lastOutputAt = Date.now();
       this.appendBuffer(id, text);
       this.resetIdleTimer(id);
       const listener = this.outputListeners.get(id);
@@ -189,6 +215,9 @@ export class TerminalService {
       pty,
       projectPath,
       createdAt,
+      cols,
+      rows,
+      lastOutputAt: null,
       ws: null,
       disconnectTimer: null,
       idleTimer: this.createIdleTimer(id),
@@ -214,6 +243,9 @@ export class TerminalService {
       pty,
       projectPath,
       createdAt: new Date(),
+      cols: 80,
+      rows: 24,
+      lastOutputAt: null,
       ws: null,
       disconnectTimer: null,
       idleTimer: this.createIdleTimer(id),
@@ -238,6 +270,8 @@ export class TerminalService {
     if (!session || session.pty.closed) return;
     if (!isUsableTerminalSize(cols, rows)) return;
     session.pty.resize(cols, rows);
+    session.cols = cols;
+    session.rows = rows;
   }
 
   /** Kill a terminal session */
@@ -268,6 +302,7 @@ export class TerminalService {
         projectPath: session.projectPath,
         createdAt: session.createdAt.toISOString(),
         connected: session.ws !== null,
+        lastOutputAt: session.lastOutputAt,
       });
     }
     return result;

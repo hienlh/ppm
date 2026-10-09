@@ -49,14 +49,24 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   /** The 401 body's message when no valid token is presented. */
   tokenRequired: string;
   resolveToken: (token: string | null) => B | null;
-  tools: readonly Json[];
-  /** A `tools/call` result for a tool named in `tools`. */
-  callTool: (binding: B, name: string, args: unknown) => Promise<Json>;
+  /** The tools, or a function giving them as they are now (a description naming what exists). */
+  tools: readonly Json[] | (() => readonly Json[]);
+  /**
+   * Why a tool in `tools` is off right now, or null. An off tool is left out of `tools/list`, and
+   * a chat that listed it before it went off gets this as the call's error result.
+   */
+  unavailable?: (name: string) => string | null;
+  /**
+   * A `tools/call` result for a tool named in `tools`. `signal` is the call's HTTP request: it
+   * aborts when the provider gives up on the call, e.g. because the user stopped the turn.
+   */
+  callTool: (binding: B, name: string, args: unknown, signal: AbortSignal) => Promise<Json>;
 }) {
-  const names = new Set(opts.tools.map((t) => t.name));
+  const toolList = (): readonly Json[] => (typeof opts.tools === "function" ? opts.tools() : opts.tools);
+  const offReason = (name: string): string | null => opts.unavailable?.(name) ?? null;
   const log = createLogger(opts.serverName);
 
-  async function dispatch(binding: B, msg: Json): Promise<Json> {
+  async function dispatch(binding: B, msg: Json, signal: AbortSignal): Promise<Json> {
     const id = msg.id;
     const params = (msg.params && typeof msg.params === "object" ? msg.params : {}) as Json;
     switch (msg.method) {
@@ -71,12 +81,15 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
       case "ping":
         return rpcResult(id, {});
       case "tools/list":
-        return rpcResult(id, { tools: opts.tools });
-      case "tools/call":
-        if (typeof params.name !== "string" || !names.has(params.name)) {
+        return rpcResult(id, { tools: toolList().filter((t) => !offReason(String(t.name))) });
+      case "tools/call": {
+        if (typeof params.name !== "string" || !toolList().some((t) => t.name === params.name)) {
           return rpcError(id, -32602, `Unknown tool: ${String(params.name).slice(0, 60)}`);
         }
-        return rpcResult(id, await opts.callTool(binding, params.name, params.arguments));
+        const off = offReason(params.name);
+        if (off) return rpcResult(id, textResult(off, true));
+        return rpcResult(id, await opts.callTool(binding, params.name, params.arguments, signal));
+      }
       default:
         return rpcError(id, -32601, "Method not found");
     }
@@ -105,7 +118,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
     // A notification (`notifications/initialized`) or a response to a request of ours: no body.
     if (!("id" in message) || message.id === null) return c.body(null, 202);
     try {
-      return c.json(await dispatch(binding, message));
+      return c.json(await dispatch(binding, message, c.req.raw.signal));
     } catch (e) {
       // Answered as a 200, so the access log records a success.
       log.error(`${String(message.method).slice(0, 60)} failed (session ${binding.sessionId}): ${(e as Error).message}`);

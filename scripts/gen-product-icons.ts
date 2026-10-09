@@ -222,6 +222,7 @@ const MAP: Record<string, string | null> = {
   Keyboard: "keyboard",
   Settings: "settings",
   Settings2: "settings-cog-multiple",
+  Wrench: "wrench", // Settings → Tools
   Palette: "color",
   Sparkles: "sparkle",
   Bot: "bot",

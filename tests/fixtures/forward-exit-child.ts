@@ -6,6 +6,7 @@
  *
  *   bun forward-exit-child.ts tailscale <dev port> <fake-tailscale.ts> <state.json>
  *   bun forward-exit-child.ts tailscale-pair <dev port>,<dev port> <fake-tailscale.ts> <state.json>
+ *   bun forward-exit-child.ts tailscale-same <dev port> <fake-tailscale.ts> <state.json>
  *   bun forward-exit-child.ts cloudflared <dev port> <fake-cloudflared.ts> <its file>
  *
  * A process of its own rather than an import, because tunnel-registry-routes.test.ts mocks both
@@ -51,6 +52,10 @@ if (mode === "tailscale") {
   urls = [(await startTailscaleForward(Number(port), { argv: fakeArgv, runner: defaultRunner })).url];
 } else if (mode === "tailscale-pair") {
   urls = await startTailscalePair(port);
+} else if (mode === "tailscale-same") {
+  // One port asked for twice before either forward is up, as two open_url calls can.
+  const cli: TailscaleCli = { argv: fakeArgv, runner: defaultRunner };
+  urls = (await Promise.all([startTailscaleForward(Number(port), cli), startTailscaleForward(Number(port), cli)])).map((forward) => forward.url);
 } else if (mode === "cloudflared") {
   const tunnel = await spawnTunnelProcess(Number(port), fakeArgv);
   registerTunnel(Number(port), tunnel.process, tunnel.url, tunnel.hop);

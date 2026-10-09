@@ -142,6 +142,22 @@ describe("forwards started together", () => {
   }, 15_000);
 });
 
+describe("one port forwarded twice at once", () => {
+  test("starts one tailscale serve, and both callers get its forward", async () => {
+    const { dir, stateFile, foreground } = fakeState();
+    let forward: ForwardChild | undefined;
+    try {
+      forward = await startForwardChild(["tailscale-same", "5173", FAKE, stateFile]);
+      expect(forward.urls).toEqual(["https://devbox.tail1234.ts.net:5173/", "https://devbox.tail1234.ts.net:5173/"]);
+      expect(Object.keys(foreground())).toHaveLength(1);
+    } finally {
+      await forward?.exit();
+      for (const pid of Object.keys(foreground())) killLeftover(Number(pid));
+      await rmRetrying(dir);
+    }
+  }, 15_000);
+});
+
 // Not on Windows: a Bun child sits in its parent's job object there, and dies with it.
 describe.skipIf(process.platform === "win32")("a forward ends with PPM's process", () => {
   test("a fatal exit stops the tailscale serve child, so no handler is left pointing at the dead hop", async () => {
