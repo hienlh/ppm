@@ -36,8 +36,8 @@ import { createLogger } from "../logger.ts";
 
 const log = createLogger("remote-desktop");
 
-/** Which GStreamer elements this host actually has. Probed once — `gst-inspect-1.0` is ~40 ms
- *  and this sits on the session-start path. */
+/** Which GStreamer elements this host actually has. Remembered once nothing is missing —
+ *  `gst-inspect-1.0` is ~40 ms and this sits on the session-start path. */
 export interface GstElements {
   /** `gst-launch-1.0` itself. */
   launch: string | null;
@@ -63,21 +63,28 @@ async function hasElement(name: string): Promise<boolean> {
   }
 }
 
-export async function gstElements(force = false): Promise<GstElements> {
+/** How the host is asked. A test stands in for it: `Bun.which` and `Bun.spawn` resolve through
+ *  the PATH this process started with, which a test cannot change. */
+export interface GstProbe {
+  launch: () => string | null;
+  has: (element: string) => Promise<boolean>;
+}
+
+const HOST_PROBE: GstProbe = { launch: () => Bun.which("gst-launch-1.0"), has: hasElement };
+
+export async function gstElements(force = false, probe: GstProbe = HOST_PROBE): Promise<GstElements> {
   if (cachedElements && !force) return cachedElements;
-  const launch = Bun.which("gst-launch-1.0");
-  if (!launch) {
-    cachedElements = { launch: null, pipewiresrc: false, vapostproc: false, vah264enc: false, x264enc: false };
-    return cachedElements;
-  }
-  const [pipewiresrc, vapostproc, vah264enc, x264enc] = await Promise.all([
-    hasElement("pipewiresrc"),
-    hasElement("vapostproc"),
-    hasElement("vah264enc"),
-    hasElement("x264enc"),
-  ]);
-  cachedElements = { launch, pipewiresrc, vapostproc, vah264enc, x264enc };
-  return cachedElements;
+  const launch = probe.launch();
+  const [pipewiresrc, vapostproc, vah264enc, x264enc] = launch
+    ? await Promise.all([probe.has("pipewiresrc"), probe.has("vapostproc"), probe.has("vah264enc"), probe.has("x264enc")])
+    : [false, false, false, false];
+  const els = { launch, pipewiresrc, vapostproc, vah264enc, x264enc };
+  // Only a host with nothing left to install is remembered. Anything missing may be installed
+  // while PPM runs, and the GPU pair replaces the x264 fallback the moment it appears: caching
+  // the first answer kept a host that had just installed vah264enc on x264 until PPM restarted,
+  // and made the checklist's "PPM re-checks automatically" untrue (#48).
+  cachedElements = launch && pipewiresrc && vapostproc && vah264enc ? els : null;
+  return els;
 }
 
 /** Drop the probe cache, so a package installed while PPM is running is picked up. */
@@ -135,9 +142,12 @@ export function buildWaylandCaptureArgs(
     "!", `video/x-raw,framerate=${fps}/1`,
     "!", ...convert,
     "!", ...encode,
-    "!", "h264parse",
-    // Annex-B with one buffer per access unit — exactly the shape `AccessUnitAssembler` and the
-    // RTSP remux both expect, and the same bytes ffmpeg's `-f h264 pipe:1` produces.
+    // Annex-B straight from the encoder — exactly the shape `AccessUnitAssembler` and the RTSP
+    // remux both expect, and the same bytes ffmpeg's `-f h264 pipe:1` produces. No `h264parse`:
+    // both encoders already emit byte-stream with SPS/PPS ahead of every IDR (measured), and the
+    // parser lives in gst-plugins-bad, which a host with x264enc (gst-plugins-ugly) need not have
+    // — there every session died at start with `no element "h264parse"` behind a checklist that
+    // said ready (#48).
     "!", "video/x-h264,stream-format=byte-stream,alignment=au",
     "!", "fdsink", "fd=1",
   ];

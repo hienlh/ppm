@@ -6,6 +6,8 @@
 
 - **Remote Desktop on Wayland showed a solid green or black picture on a host without a GPU encoder.** It happened on a fresh Ubuntu 24.04 with GNOME (#48). The software encoder splits each frame into slices, and PPM sent every slice to the browser as a frame of its own, which no browser can decode. Slices of one frame now travel together. The same fix repairs the Android viewer on a host without a hardware encoder, and makes Remote Desktop on an X11 host without one respond about a second sooner: it had avoided the split by encoding many frames at once, which held each frame back by about a second on a 24-thread machine.
 
+- **Remote Desktop on Wayland no longer needs gst-plugins-bad, and notices GStreamer packages installed while PPM runs.** A host with the software encoder but not that package passed the checklist and then lost every session at start to `no element "h264parse"`; PPM no longer uses that element. And PPM looked for GStreamer elements once per run, so a GPU encoder installed afterwards was ignored until PPM restarted, although the checklist says it re-checks automatically. It now looks again until nothing is missing.
+
 ## [0.23.14] - 2026-10-08
 
 ### Added
