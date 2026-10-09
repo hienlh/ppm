@@ -17,6 +17,7 @@ import {
 import * as accounts from "../../../src/services/codex-account.service.ts";
 import { setSessionMetadata } from "../../../src/services/db.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
+import { createAssistantMcpTokenStore } from "../../../src/services/assistant-mcp/assistant-mcp-tokens.ts";
 import type { ChatEvent } from "../../../src/types/chat.ts";
 
 const ASSISTANT_OPTS = {
@@ -94,10 +95,10 @@ describe("Codex Assistant session", () => {
     const live = await internal.connect((await provider.createSession({})).id, ASSISTANT_OPTS);
     const start = params.find((p) => p.method === "thread/start")!.value;
     expect(start).toMatchObject({ sandbox: "read-only", approvalPolicy: "untrusted", developerInstructions: "# PPM Assistant" });
-    // No tab tools; codex's own web search, apps, plugins and hooks off (the Assistant's tools come
-    // with an endpoint), and MCP approvals asked as elicitations.
+    // No tab tools; codex's own web search, apps, plugins, hooks and the user's notify program
+    // off (the Assistant's tools come with an endpoint), and MCP approvals asked as elicitations.
     expect(start.config).toEqual({
-      web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, "features.tool_call_mcp_elicitation": true,
+      web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true,
     });
     expect(live.requireInstructions).toBe(true);
     expect(live.tabToolsMcp).toBeUndefined();
@@ -152,5 +153,23 @@ describe("Codex Assistant session", () => {
     internal.respawnOn = async () => { throw new RequiredInstructionsError(); };
     await internal.rotateAccount(live, "s-asst", null, "usage limit reached", "usage");
     expect(pushed.find((e) => e.type === "error")).toEqual({ type: "error", message: REQUIRED_INSTRUCTIONS_UNSUPPORTED });
+  });
+
+  it("keeps the token its running app-server was spawned with, however many sessions mint after it", async () => {
+    // The app-server reads the token from its environment once, at spawn; evicting it would
+    // fail every Assistant tool call that process makes from then on.
+    const store = createAssistantMcpTokenStore(2);
+    const token = store.mint({ sessionId: "asst-live" });
+    await internal.connect((await provider.createSession({})).id, {
+      ...ASSISTANT_OPTS, assistantMcp: { url: "http://127.0.0.1:1/api/assistant-mcp", token },
+    });
+    for (let i = 0; i < 5; i++) store.mint({ sessionId: `other-${i}` });
+    expect(store.resolve(token)).toEqual({ sessionId: "asst-live" });
+
+    // Once that app-server is gone the token is an ordinary entry again.
+    provider.cleanupAll();
+    store.mint({ sessionId: "after" });
+    store.mint({ sessionId: "after-2" });
+    expect(store.resolve(token)).toBeNull();
   });
 });

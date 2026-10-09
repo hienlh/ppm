@@ -30,6 +30,15 @@ export function enabledAssistantMcpServers(): AssistantMcpServer[] {
   return getAssistantSettings().mcp_servers.filter((s) => s.enabled);
 }
 
+/** Whether two stored URLs (both validated as http/https on the way in) share scheme, host and port. */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
 export type SaveAssistantSettingsResult =
   | { ok: true; settings: AssistantSettingsView }
   | { ok: false; errors: string[] };
@@ -52,18 +61,23 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
     const id = previous && !usedIds.has(server.id) ? server.id : randomUUID();
     usedIds.add(id);
     const kept = previous?.transport === server.transport ? previous : undefined;
-    const fill = (pairs: Record<string, string>, saved: Record<string, string> | undefined, what: string) => {
+    const fill = (pairs: Record<string, string>, saved: Record<string, string> | undefined, what: string, why = "") => {
       const out: Record<string, string> = {};
       for (const [key, val] of Object.entries(pairs)) {
         if (val) out[key] = val;
         else if (saved && Object.hasOwn(saved, key)) out[key] = saved[key]!;
-        else errors.push(`MCP server "${server.name}": ${what} ${key} needs a value`);
+        else errors.push(`MCP server "${server.name}": ${what} ${key} needs a value${why}`);
       }
       return out;
     };
-    return server.transport === "stdio"
-      ? { ...server, id, env: fill(server.env, kept?.transport === "stdio" ? kept.env : undefined, "variable") }
-      : { ...server, id, headers: fill(server.headers, kept?.transport === "http" ? kept.headers : undefined, "header") };
+    if (server.transport === "stdio") {
+      return { ...server, id, env: fill(server.env, kept?.transport === "stdio" ? kept.env : undefined, "variable") };
+    }
+    // A header saved for one server is not sent to another: a URL moved to a different origin
+    // takes its headers only as typed again, the way ntfy drops its token for a new server.
+    const savedHeaders = kept?.transport === "http" && sameOrigin(kept.url, server.url) ? kept.headers : undefined;
+    const moved = kept?.transport === "http" && !savedHeaders ? " (the URL now points at a different server, so the saved value is not reused)" : "";
+    return { ...server, id, headers: fill(server.headers, savedHeaders, "header", moved) };
   });
   if (errors.length > 0) return { ok: false, errors };
   const next: AssistantSettings = { ...value, mcp_servers: servers };

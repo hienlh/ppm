@@ -49,6 +49,23 @@ describe("assistant settings service", () => {
     expect(saveAssistantSettings({ mcp_servers: [{ ...SERVER, id: "forged", env: { GH_TOKEN: "" } }] }, anyProvider).ok).toBe(false);
   });
 
+  it("does not carry a saved header to a URL on another origin, but does across a path change", () => {
+    const [docs] = saveOk({ mcp_servers: [HTTP] }).mcp_servers;
+    saveOk({ mcp_servers: [{ ...docs, url: "https://docs.example/v2/mcp", headers: { Authorization: "" } }] });
+    expect(getAssistantSettings().mcp_servers[0]).toMatchObject({ headers: { Authorization: "Bearer docs-secret" } });
+
+    for (const url of ["https://evil.example/mcp", "http://docs.example/mcp", "https://docs.example:8443/mcp"]) {
+      const moved = saveAssistantSettings({ mcp_servers: [{ ...docs, url, headers: { Authorization: "" } }] }, anyProvider);
+      expect(moved.ok).toBe(false);
+      if (!moved.ok) expect(moved.errors[0]).toContain("header Authorization needs a value");
+    }
+    expect(getAssistantSettings().mcp_servers[0]).toMatchObject({ url: "https://docs.example/v2/mcp", headers: { Authorization: "Bearer docs-secret" } });
+
+    // Typed again, the header goes with the server to its new address.
+    saveOk({ mcp_servers: [{ ...docs, url: "https://new.example/mcp", headers: { Authorization: "Bearer new" } }] });
+    expect(getAssistantSettings().mcp_servers[0]).toMatchObject({ url: "https://new.example/mcp", headers: { Authorization: "Bearer new" } });
+  });
+
   it("replaces a value that is sent, and drops a key that is not", () => {
     const [github] = saveOk({ mcp_servers: [{ ...SERVER, env: { GH_TOKEN: "old", EXTRA: "x" } }] }).mcp_servers;
     saveOk({ mcp_servers: [{ ...github, env: { GH_TOKEN: "new" } }] });

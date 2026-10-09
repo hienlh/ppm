@@ -32,7 +32,7 @@ import { parseAssistantUiResult, type UiSummary } from "../../shared/assistant-u
 import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
-import { APPROVAL_END, createPendingApprovals, type PendingApprovalEvent } from "./chat-pending-approval.ts";
+import { APPROVAL_END, createPendingApprovals, isEndpointApproval, type PendingApprovalEvent } from "./chat-pending-approval.ts";
 import { announceApprovalRequest } from "./chat-approval-notification.ts";
 import { assistantApprovalBroker, setAssistantApprovalDelivery } from "../../services/assistant-mcp/assistant-approval-broker.ts";
 import { APPROVAL_NO_LONGER_VALID_MESSAGE, type ApprovalStaleMessage } from "../../shared/assistant-approval.ts";
@@ -178,7 +178,8 @@ const BUFFERABLE_TYPES = new Set([
 ]);
 
 type ChatWsSocket = {
-  data: { type: string; sessionId: string; projectName?: string; providerHint?: string };
+  /** `clientId`: the browser tab, kept across its reconnects (see `shared/chat-client-id.ts`). */
+  data: { type: string; sessionId: string; projectName?: string; providerHint?: string; clientId?: string };
   send: (data: string) => void;
   ping?: (data?: string | ArrayBuffer) => void;
 };
@@ -248,6 +249,12 @@ interface SessionEntry {
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
   /** The socket whose message opened the latest turn: where the AI's tab tools open a tab. */
   lastSender?: ChatWsSocket;
+  /**
+   * The tab that socket belongs to. Outlives the socket: when the tab reconnects (a network blip,
+   * or a Codex rename reopening it under the thread id) its new socket is the chatting device.
+   * Moves with the entry when the session is re-keyed.
+   */
+  lastSenderClientId?: string;
   /** Events broadcast with no client attached since the session last went idle — logged then, as one count. */
   droppedEvents?: number;
 }
@@ -512,10 +519,11 @@ function evictClient(entry: SessionEntry, ws: ChatWsSocket): void {
 
 /**
  * Hands an AI tool's request to the device that sent the turn's message — the one the user is
- * talking from. When that one has gone (a locked phone, a closed laptop), a non-`strict` call
- * goes to every device showing the chat and the first answer settles it: harmless for opening
- * a tab. A `strict` call goes nowhere instead, because the PPM Assistant's UI operations
- * (switching project, running a command) must never happen on a screen nobody is talking from.
+ * talking from. When that socket has gone, a non-`strict` call goes to every device showing the
+ * chat and the first answer settles it: harmless for opening a tab. A `strict` call goes only to
+ * the same tab's new socket if it reconnected, and otherwise nowhere (a locked phone, a closed
+ * laptop), because the PPM Assistant's UI operations (switching project, running a command)
+ * must never happen on a screen nobody is talking from.
  * Never buffered into `turnEvents`: a device that reconnects later must not act on it again.
  * Returns how many sockets it went to.
  */
@@ -531,7 +539,14 @@ export function deliverToChattingDevice(sessionId: string, payload: object, opts
     return sent;
   };
   if (entry.lastSender && entry.clients.has(entry.lastSender) && sendTo([entry.lastSender]) > 0) return 1;
-  return opts.strict ? 0 : sendTo(entry.clients);
+  if (!opts.strict) return sendTo(entry.clients);
+  // The sender's socket is gone; the same tab reconnected is still the device the user is
+  // talking from. One socket only, even if a duplicated tab carries the same id.
+  const id = entry.lastSenderClientId;
+  for (const client of id ? [...entry.clients] : []) {
+    if (client.data.clientId === id && sendTo([client]) > 0) return 1;
+  }
+  return 0;
 }
 setTabOpenDelivery((sessionId, request) => deliverToChattingDevice(sessionId, request, { strict: false }), resolveMigratedSession);
 setAssistantUiDelivery((sessionId, request) => deliverToChattingDevice(sessionId, request, { strict: true }), resolveMigratedSession);
@@ -547,6 +562,9 @@ const approvals = createPendingApprovals({
     if (!entry) return;
     bufferAndBroadcast(sessionId, ev);
     announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
+    // An endpoint card answers within its own window, counted from now: time spent queued
+    // behind another card the user had not answered is not time the user had to answer this one.
+    if (isEndpointApproval(ev)) assistantApprovalBroker.shown(ev.requestId);
   },
   announceResolved: (sessionId, requestId, approved, answers) => {
     broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers });
@@ -1397,7 +1415,11 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
 
   // Store user message for reconnect replay (turn_events includes only assistant events)
   entry.currentUserMessage = parsed.content;
-  if (opts.sender) entry.lastSender = opts.sender;
+  if (opts.sender) {
+    entry.lastSender = opts.sender;
+    // A tab that sends no id (an older bundle) must not inherit the previous sender's.
+    entry.lastSenderClientId = opts.sender.data.clientId;
+  }
   // What this device shows, for an Assistant session's turn. Validated and cleaned by
   // chatService, which ignores it for every other session; only an object is passed on.
   const rawSummary = opts.uiSummary as unknown;

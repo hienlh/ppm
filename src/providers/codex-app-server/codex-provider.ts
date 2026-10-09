@@ -34,6 +34,7 @@ import {
   isCodexAccountAuthFailed, markCodexAccountAuthFailed, clearCodexAccountAuthFailure,
 } from "../../services/codex-account-auth-state.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
+import { holdTokens } from "../../services/mcp-session-tokens.ts";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
@@ -382,6 +383,12 @@ export class CodexAppServerProvider implements AIProvider {
   private skillsPending = new Map<string, Promise<CodexSkill[]>>();
   /** model/list and skills/list fail again on every picker open, so each is a WARN once a minute. */
   private listFailureWarned = new Map<string, { at: number; suppressed: number }>();
+
+  constructor() {
+    // A running app-server keeps the MCP tokens it was spawned with for its whole life (they
+    // are in its environment), so none of them may be evicted from their store while it runs.
+    holdTokens((token) => this.holdsToken(token));
+  }
 
   private get config() {
     try { return configService.get("ai").providers["codex"] ?? null; } catch { return null; }
@@ -1277,6 +1284,15 @@ export class CodexAppServerProvider implements AIProvider {
       log.error(`session=${live.threadId ?? "?"} app-server pid=${live.client.pid ?? "?"} exited unexpectedly turnInFlight=${!!live.turnInFlight}`);
     }
     live.channel.done();
+  }
+
+  /** Whether a running app-server was spawned with `token` in its environment. */
+  private holdsToken(token: string): boolean {
+    for (const live of this.live.values()) {
+      if (live.client.isClosed) continue;
+      if (live.assistant?.mcp?.token === token || live.tabToolsMcp?.token === token || live.designMcp?.token === token) return true;
+    }
+    return false;
   }
 
   hasStreamingSession(sessionId: string): boolean {

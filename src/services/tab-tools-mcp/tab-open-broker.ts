@@ -33,6 +33,18 @@ export interface DeviceBrokerMessages {
   withdrawn?: string;
 }
 
+/**
+ * Every broker made, so a deleted session can be forgotten by all of them at once: the tab
+ * tools, the Assistant's screen requests and its approvals each keep a rate window per session,
+ * and one left behind by a deleted session is never read again.
+ */
+const brokers = new Set<{ forget: (sessionId: string) => void }>();
+
+/** Drops a session's rate window in every broker, e.g. when the session is deleted. */
+export function forgetSessionInDeviceBrokers(sessionId: string): void {
+  for (const broker of brokers) broker.forget(sessionId);
+}
+
 interface Pending<Res> {
   sessionId: string;
   settle: (outcome: DeviceBrokerOutcome<Res>) => void;
@@ -61,9 +73,10 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
   const pending = new Map<string, Pending<Res>>();
   const recent = new Map<string, number[]>();
 
+  /** Calls waiting on `sessionId` (already canonical), including any asked under its old name. */
   function inFlight(sessionId: string): number {
     let n = 0;
-    for (const p of pending.values()) if (p.sessionId === sessionId) n++;
+    for (const p of pending.values()) if (canonical(p.sessionId) === sessionId) n++;
     return n;
   }
 
@@ -71,6 +84,12 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
   function admit(sessionId: string): boolean {
     const cutoff = now() - 60_000;
     const times = (recent.get(sessionId) ?? []).filter((t) => t > cutoff);
+    // Calls made before a rename were counted under the old name; they still count.
+    for (const [key, earlier] of recent) {
+      if (key === sessionId || canonical(key) !== sessionId) continue;
+      times.push(...earlier.filter((t) => t > cutoff));
+      recent.delete(key);
+    }
     if (times.length >= perMinute) {
       recent.set(sessionId, times);
       return false;
@@ -156,13 +175,18 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
     return [...pending].filter(([, p]) => canonical(p.sessionId) === id).map(([requestId]) => requestId);
   }
 
-  /** Drops a session's rate window, e.g. when the session is deleted. */
+  /**
+   * Drops a session's rate window, e.g. when the session is deleted — under every name it went
+   * by, since calls made before a rename were counted under the old one.
+   */
   function forget(sessionId: string): void {
-    recent.delete(sessionId);
-    recent.delete(canonical(sessionId));
+    const id = canonical(sessionId);
+    for (const key of [...recent.keys()]) if (key === sessionId || canonical(key) === id) recent.delete(key);
   }
 
-  return { request, settle, owns, cancel, pendingFor, forget, pendingCount: () => pending.size };
+  const broker = { request, settle, owns, cancel, pendingFor, forget, pendingCount: () => pending.size };
+  brokers.add(broker);
+  return broker;
 }
 
 /** Sends the request to the session's devices; the number of sockets it went to. */

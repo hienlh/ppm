@@ -21,6 +21,12 @@ import { runApprovedQuery } from "./assistant-write-tools.ts";
 export const MAX_QUERY_ROWS = 200;
 export const MAX_CELL_CHARS = 500;
 const MAX_SQL_CHARS = 100_000;
+/**
+ * How long a read that runs without asking may take. It loads the user's database with nobody
+ * having agreed to it, so it is bounded on the server (`statement_timeout` / `max_execution_time`)
+ * as well as by PPM; a read the agent needs to run longer can be put to the user instead.
+ */
+export const UNASKED_READ_TIMEOUT_MS = 60_000;
 
 type Args = Record<string, unknown>;
 
@@ -102,8 +108,19 @@ export const queryFailedResult = (conn: ConnectionRow, e: unknown): Json =>
  * runs at once, on the read-only path whatever the connection allows. Anything else goes to
  * `runApprovedQuery`: shown to the user in full, run only once they approve. Without an asker
  * (no Assistant session to ask in) it is not run. `read` replaces the catalog read, for tests.
+ *
+ * The unasked read stops after {@link UNASKED_READ_TIMEOUT_MS} (`run.timeoutMs` replaces it, for
+ * tests) and when `run.signal` aborts — the MCP call that asked for it was closed — so nothing
+ * keeps loading the database after the agent has stopped waiting. An approved query is the
+ * user's to run to the end.
  */
-export async function dbQuery(args: Args, caller: AuditCaller, ask?: AskApproval, read?: CatalogReader): Promise<Json> {
+export async function dbQuery(
+  args: Args,
+  caller: AuditCaller,
+  ask?: AskApproval,
+  read?: CatalogReader,
+  run: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<Json> {
   const found = findAiConnection(args.connectionId);
   if (!found.ok) return errorResult(found.error);
   const { conn } = found;
@@ -121,7 +138,9 @@ export async function dbQuery(args: Args, caller: AuditCaller, ask?: AskApproval
   }
 
   try {
-    const outcome = await runConnectionQuery({ conn, sql, caller, forceReadonly: true });
+    const outcome = await runConnectionQuery({
+      conn, sql, caller, forceReadonly: true, timeoutMs: run.timeoutMs ?? UNASKED_READ_TIMEOUT_MS, signal: run.signal,
+    });
     if (!outcome.ok) return errorResult(`Not run: ${outcome.message}`);
     return queryResultJson(conn, outcome.result);
   } catch (e) {

@@ -136,10 +136,17 @@ export function assistantUserMcpConfig(servers: readonly AssistantMcpServer[] | 
  *
  * The session is kept apart from the user's own codex setup: each of the user's MCP servers is
  * switched off (`enabled = false`), and so are apps (ChatGPT connectors) and plugins, which bring
- * tools of their own, and hooks, which run the user's commands around the agent's. The servers of
- * Settings → PPM Assistant take their place. MCP tool approvals are asked as elicitations
- * (`tool_call_mcp_elicitation`), answered by an approval card that offers no "always allow". All
- * five keys are ones codex 0.161 recognises (it warns on an unknown one).
+ * tools of their own, and hooks, which run the user's commands around the agent's. `notify` is
+ * emptied for the same reason: it names a program of the user's that codex runs after every turn,
+ * handed the turn's messages, and codex installs it whether or not the hooks feature is on; an
+ * empty list installs nothing. The servers of Settings → PPM Assistant take their place. MCP tool
+ * approvals are asked as elicitations (`tool_call_mcp_elicitation`), answered by an approval card
+ * that offers no "always allow". Every key is one codex 0.161 recognises: under `--strict-config`
+ * it refuses an unknown key, and refuses `notify` unless it is a list.
+ *
+ * Not covered: the user's global instructions file (`$CODEX_HOME/AGENTS.md`) still reaches the
+ * session, since codex 0.161 has no setting that leaves it out while keeping the session's own
+ * instructions. It is guidance the user wrote for their own agent, not a tool or a program.
  */
 export function assistantSessionConfig(assistant: ThreadParamsInput["assistant"]): CodexConfigOverrides {
   if (!assistant) return {};
@@ -150,6 +157,7 @@ export function assistantSessionConfig(assistant: ThreadParamsInput["assistant"]
     "features.apps": false,
     "features.plugins": false,
     "features.hooks": false,
+    notify: [],
     "features.tool_call_mcp_elicitation": true,
     ...disabled,
     ...assistantUserMcpConfig(assistant.servers),

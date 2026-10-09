@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { createDeviceBroker, createTabOpenBroker } from "../../../src/services/tab-tools-mcp/tab-open-broker.ts";
+import { createDeviceBroker, createTabOpenBroker, forgetSessionInDeviceBrokers } from "../../../src/services/tab-tools-mcp/tab-open-broker.ts";
+import { createApprovalBroker, MAX_APPROVALS_PER_MINUTE } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
 import { ASSISTANT_UI_NO_DEVICE_MESSAGE, createAssistantUiBroker } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
 import type { AssistantUiRequest } from "../../../src/shared/assistant-ui-protocol.ts";
 import type { TabOpenRequest } from "../../../src/shared/tab-open-protocol.ts";
@@ -154,5 +155,46 @@ describe("device broker", () => {
     const none = await createAssistantUiBroker({ deliver: () => 0 }).request("s1", { op: "get_state", args: {} }, 1000);
     expect(none).toEqual({ ok: false, reason: "no-device", message: ASSISTANT_UI_NO_DEVICE_MESSAGE });
     expect(ASSISTANT_UI_NO_DEVICE_MESSAGE).toContain("open the Assistant session on their device and send a message");
+  });
+});
+
+describe("a session renamed or deleted", () => {
+  it("counts a call asked under the old name against the renamed session's limit", async () => {
+    const renamed = new Map<string, string>();
+    const sent: TabOpenRequest[] = [];
+    const broker = createTabOpenBroker({
+      deliver: (_s, request) => { sent.push(request); return 1; },
+      canonical: (sessionId) => renamed.get(sessionId) ?? sessionId,
+      maxInFlightPerSession: 1,
+    });
+    const first = broker.request("ppm-id", REQ, 1000);
+    renamed.set("ppm-id", "thread-id");
+    expect(await broker.request("thread-id", REQ, 1000)).toMatchObject({ ok: false, reason: "busy" });
+    broker.settle("thread-id", answer(sent[0]!.requestId));
+    expect((await first).ok).toBe(true);
+  });
+
+  it("is forgotten by every broker, under every name it went by", async () => {
+    // Nothing is reached, so each call ends at once, but it still counts in the session's window.
+    const renamed = new Map<string, string>();
+    const canonical = (sessionId: string) => renamed.get(sessionId) ?? sessionId;
+    const tabs = createTabOpenBroker({ deliver: () => 0, canonical, perMinute: 1 });
+    const screen = createAssistantUiBroker({ deliver: () => 0, canonical, perMinute: 1 });
+    const approvals = createApprovalBroker({ deliver: () => 0, canonical });
+    const ask = { tool: "db_query", input: {}, summary: { headline: "h", facts: [] } };
+
+    await tabs.request("ppm-id", REQ, 1000);
+    await screen.request("ppm-id", { op: "get_state", args: {} }, 1000);
+    for (let i = 0; i < MAX_APPROVALS_PER_MINUTE; i++) await approvals.request("ppm-id", ask);
+    // The window follows the rename: calls counted under the old name still count.
+    renamed.set("ppm-id", "thread-id");
+    expect(await tabs.request("thread-id", REQ, 1000)).toMatchObject({ reason: "rate-limited" });
+    expect((await approvals.request("thread-id", ask)).reason).toContain("last minute");
+    // Deleted under the name it goes by now; the calls were counted under the one it had then.
+    forgetSessionInDeviceBrokers("thread-id");
+
+    expect(await tabs.request("thread-id", REQ, 1000)).toMatchObject({ reason: "no-device" });
+    expect(await screen.request("thread-id", { op: "get_state", args: {} }, 1000)).toMatchObject({ reason: "no-device" });
+    expect((await approvals.request("thread-id", ask)).reason).not.toContain("last minute");
   });
 });

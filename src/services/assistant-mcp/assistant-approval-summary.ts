@@ -136,13 +136,17 @@ export interface ReadOutsideApproval {
   kind: "file" | "terminal";
   /** The file's path, or the folder the terminal runs in, as PPM resolved it. */
   location: string;
+  /** The file is in a store of logins or keys, which asks even inside a registered project. */
+  privateStore?: boolean;
 }
 
-export function readOutsideSummary({ kind, location }: ReadOutsideApproval): ApprovalSummary {
+export function readOutsideSummary({ kind, location, privateStore }: ReadOutsideApproval): ApprovalSummary {
   return {
-    headline: kind === "file"
-      ? "Read a file outside every registered project"
-      : "Read the output of a terminal running outside every registered project",
+    headline: privateStore
+      ? "Read a file where logins or keys are kept"
+      : kind === "file"
+        ? "Read a file outside every registered project"
+        : "Read the output of a terminal running outside every registered project",
     facts: [fact(kind === "file" ? "File" : "Folder", location)],
     warning: "What is read is sent to the AI provider as part of this conversation.",
   };

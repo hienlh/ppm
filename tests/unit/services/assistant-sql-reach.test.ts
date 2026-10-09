@@ -110,6 +110,21 @@ describe("postgresReachVerdict", () => {
     expect(verdict("SELECT upper(name) FROM t", only({ shadowed: captured.shadowed }))).toEqual({ proven: true });
   });
 
+  it("does not prove a user function written as a row's column, which Postgres calls with no parenthesis", () => {
+    for (const sql of ["SELECT t.evil FROM t", "SELECT (t).evil FROM t", 'SELECT t."Evil" FROM t']) {
+      expect(verdict(sql, only({ shadowed: ["evil", "Evil"] }))).toMatchObject({
+        proven: false, reason: expect.stringContaining("written as t."),
+      });
+    }
+    expect(verdict("SELECT t.id FROM t", only({ shadowed: ["evil"] }))).toEqual({ proven: true });
+  });
+
+  it("asks the catalog about every word of the query, not only the safe-listed names", () => {
+    const sql = postgresReachSql(["t", "evil"]);
+    expect(sql).toContain("p.proname IN (SELECT name FROM names)");
+    expect(sql).not.toContain("FROM safe");
+  });
+
   it("does not prove the use of a symbol a user operator also has, but ignores one inside a string", () => {
     expect(verdict("SELECT a @@@ b FROM t", only({ operators: ["@@@"] })).proven).toBe(false);
     expect(verdict("SELECT '@@@' FROM t", only({ operators: ["@@@"] }))).toEqual({ proven: true });

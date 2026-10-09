@@ -10,14 +10,16 @@
  * - an external image becomes a link to it;
  * - embeds (iframe, video, audio, object, picture…) become links to what they would load;
  * - `<script>`, `<style>`, `<link>`, `<meta>`, `<base>` are dropped outright;
- * - any other attribute that names an external resource (`srcset`, `poster`, SVG `href`,
- *   `background`…) is removed, and so is an inline `style` that could fetch (`url(`, any
- *   CSS escape, `image-set`…). KaTeX's own layout styles carry none of those, so maths
- *   still renders.
+ * - everything else is held to an allowlist (`markdown-assistant-allowlist.ts`): known
+ *   elements keep only known attributes, an unknown HTML element is replaced by its text,
+ *   SVG is limited to static shapes and MathML to presentation markup, and a CSS-valued
+ *   attribute (`style`, `fill`…) that could fetch (`url(`, any CSS escape, `image-set`…) is
+ *   removed. KaTeX's own spans, SVG and MathML fit inside it, so maths still renders.
  *
  * "External" is anything the browser would fetch from another origin. Local file paths
  * are loaded through PPM's own API by `MdImage`, and `data:`/`blob:` never leave the page.
  */
+import { isAllowedAttribute, isAllowedElement, type MarkupSpace } from "./markdown-assistant-allowlist";
 
 interface HastNode {
   type: string;
@@ -31,10 +33,8 @@ interface HastNode {
 const DROP_TAGS = new Set(["script", "style", "link", "meta", "base", "noscript", "template"]);
 /** Elements that load media or documents; replaced by links to what they would load. */
 const EMBED_TAGS = new Set(["iframe", "frame", "frameset", "embed", "object", "applet", "portal", "video", "audio", "picture", "source", "track"]);
-/** Attributes (hast property names) the browser fetches from without a click. */
+/** Attributes (hast property names) an embed may name what it loads with; offered back as links. */
 const URL_PROPS = ["src", "srcSet", "href", "xLinkHref", "poster", "data", "background", "lowsrc", "dynsrc", "codeBase", "archive", "manifest", "icon"];
-/** CSS that can reach the network: `url(`, `image-set(`, `image(`, `@import`, or any escape that could spell them. */
-const FETCHING_STYLE = /\\|url|image|@import|expression/i;
 
 /**
  * Whether the browser would fetch `raw` from somewhere other than PPM itself.
@@ -94,41 +94,57 @@ function blockedEmbed(node: HastNode, insideLink: boolean): HastNode {
   return { type: "element", tagName: "span", properties: { className: ["md-blocked-resource"] }, children };
 }
 
-function stripProperties(node: HastNode, keepHref: boolean): void {
+/** Removes every property the allowlist does not keep for this element. */
+function keepAllowedProperties(node: HastNode, space: MarkupSpace, tag: string): void {
   const props = node.properties;
   if (!props) return;
-  delete props.ping;
-  if (typeof props.style === "string" && FETCHING_STYLE.test(props.style)) delete props.style;
-  for (const prop of URL_PROPS) {
-    if (prop === "href" && keepHref) continue;
-    const values = prop === "srcSet" ? srcsetUrls(props[prop]) : urlsOf(props[prop]);
-    if (values.some(isExternalResourceUrl)) delete props[prop];
+  for (const [prop, value] of Object.entries(props)) {
+    if (!isAllowedAttribute(space, tag, prop, value)) delete props[prop];
   }
 }
 
-function sanitize(node: HastNode, insideLink: boolean): HastNode | null {
+/** What an element becomes: itself, its children in its place, or nothing. */
+type Sanitized = HastNode | HastNode[] | null;
+
+function sanitize(node: HastNode, insideLink: boolean, space: MarkupSpace): Sanitized {
   if (node.type !== "element") return node;
-  const tag = (node.tagName ?? "").toLowerCase();
-  if (DROP_TAGS.has(tag)) return null;
-  if (EMBED_TAGS.has(tag)) return blockedEmbed(node, insideLink);
-  if (tag === "img") {
-    const src = typeof node.properties?.src === "string" ? node.properties.src : "";
-    if (src && isExternalResourceUrl(src)) {
-      const alt = typeof node.properties?.alt === "string" && node.properties.alt ? node.properties.alt : src;
-      return linkTo(src, `Image: ${alt}`, insideLink);
+  const tag = node.tagName ?? "";
+  const lower = tag.toLowerCase();
+  if (DROP_TAGS.has(lower)) return null;
+  if (space === "html") {
+    if (EMBED_TAGS.has(lower)) return blockedEmbed(node, insideLink);
+    if (lower === "svg" || lower === "math") return sanitizeElement(node, insideLink, lower);
+    if (lower === "img") {
+      const src = typeof node.properties?.src === "string" ? node.properties.src : "";
+      if (src && isExternalResourceUrl(src)) {
+        const alt = typeof node.properties?.alt === "string" && node.properties.alt ? node.properties.alt : src;
+        return linkTo(src, `Image: ${alt}`, insideLink);
+      }
     }
+    if (lower === "input" && String(node.properties?.type ?? "").toLowerCase() !== "checkbox") return null;
+    // An unknown HTML element keeps its text: `<x-widget src=…>words</x-widget>` reads as "words".
+    if (!isAllowedElement("html", tag)) return sanitizeChildren(node.children ?? [], insideLink, "html");
+    return sanitizeElement(node, insideLink, "html");
   }
-  const isLink = tag === "a" || tag === "area";
-  stripProperties(node, isLink);
-  if (node.children) node.children = sanitizeChildren(node.children, insideLink || tag === "a");
+  // Inside SVG or MathML anything off the static subset goes with its subtree: animation
+  // elements carry no text, and what an island like `foreignObject` holds is the problem.
+  if (!isAllowedElement(space, tag)) return null;
+  return sanitizeElement(node, insideLink, space);
+}
+
+function sanitizeElement(node: HastNode, insideLink: boolean, space: MarkupSpace): HastNode {
+  const tag = node.tagName ?? "";
+  keepAllowedProperties(node, space, tag);
+  if (node.children) node.children = sanitizeChildren(node.children, insideLink || tag.toLowerCase() === "a", space);
   return node;
 }
 
-function sanitizeChildren(children: HastNode[], insideLink: boolean): HastNode[] {
+function sanitizeChildren(children: HastNode[], insideLink: boolean, space: MarkupSpace): HastNode[] {
   const out: HastNode[] = [];
   for (const child of children) {
-    const next = sanitize(child, insideLink);
-    if (next) out.push(next);
+    const next = sanitize(child, insideLink, space);
+    if (Array.isArray(next)) out.push(...next);
+    else if (next) out.push(next);
   }
   return out;
 }
@@ -136,6 +152,6 @@ function sanitizeChildren(children: HastNode[], insideLink: boolean): HastNode[]
 /** Rehype plugin: see the file comment. Mutates the tree in place, as rehype plugins do. */
 export function rehypeBlockExternalResources() {
   return (tree: HastNode) => {
-    if (tree.children) tree.children = sanitizeChildren(tree.children, false);
+    if (tree.children) tree.children = sanitizeChildren(tree.children, false, "html");
   };
 }

@@ -74,8 +74,8 @@ export const postgresAdapter: DatabaseAdapter = {
     return service(config).estimateRows(connectionString(config), table, schema);
   },
 
-  async runQuery(config, sql) {
-    return service(config).runQuery(connectionString(config), sql);
+  async runQuery(config, sql, opts) {
+    return service(config).runQuery(connectionString(config), sql, opts);
   },
 
   async openQuerySession(config) {

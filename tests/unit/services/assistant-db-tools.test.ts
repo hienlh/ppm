@@ -16,7 +16,7 @@ import { getAdapter } from "../../../src/services/database/adapter-registry.ts";
 import { getAuditDb } from "../../../src/services/query-audit/query-audit-db.ts";
 import { listQueryLogs } from "../../../src/services/query-audit/query-audit.service.ts";
 import { runConnectionQuery, READ_ONLY_RUN_MESSAGE } from "../../../src/services/database/run-connection-query.ts";
-import { dbListConnections, dbQuery, MAX_CELL_CHARS, MAX_QUERY_ROWS } from "../../../src/services/assistant-mcp/assistant-db-tools.ts";
+import { dbListConnections, dbQuery, MAX_CELL_CHARS, MAX_QUERY_ROWS, UNASKED_READ_TIMEOUT_MS } from "../../../src/services/assistant-mcp/assistant-db-tools.ts";
 
 const CALLER = { actor: "agent" as const, callerIp: null, callerUa: "PPM Assistant (session test)" };
 const dirs: string[] = [];
@@ -107,6 +107,24 @@ describe("db_query", () => {
     expect(parsed.rows[0][1].length).toBeLessThan(2_000);
     expect(parsed.rows[0][1]).toStartWith("x".repeat(MAX_CELL_CHARS));
     expect(parsed.rows[0][1]).toContain("more characters cut");
+  });
+
+  it("bounds an unasked read in time and hands it the call's signal", async () => {
+    const runQuery = spyOn(getAdapter("sqlite"), "runQuery");
+    spies.push(runQuery);
+    const controller = new AbortController();
+    await dbQuery({ connectionId: open, sql: "SELECT 1" }, CALLER, undefined, undefined, { signal: controller.signal });
+    expect(runQuery.mock.calls[0]![2]).toEqual({ timeoutMs: UNASKED_READ_TIMEOUT_MS, signal: controller.signal });
+    expect(UNASKED_READ_TIMEOUT_MS).toBe(60_000);
+  });
+
+  it("runs nothing once the call that asked has gone, and says it was stopped", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await dbQuery({ connectionId: open, sql: "SELECT count(*) FROM items" }, CALLER, undefined, undefined, { signal: controller.signal });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("was stopped");
+    expect(listQueryLogs({ connectionId: open })[0]).toMatchObject({ status: "error" });
   });
 
   it("says when the query fails, and when the connection does not exist", async () => {

@@ -24,7 +24,9 @@ const RUN = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toStrin
 const S = `ppm_reach_${RUN}`;
 /** Advisory lock keys the fixtures' functions take: held afterwards only if one of them ran. */
 const KEY = Math.floor(Math.random() * 1e9);
-const KEYS = [KEY, KEY + 1, KEY + 2, KEY + 3];
+const KEYS = [KEY, KEY + 1, KEY + 2, KEY + 3, KEY + 4, KEY + 5];
+/** A function on the search path, reached by writing it as a column of a row of `t`. */
+const ROW_FN = `leak_${RUN}`;
 const CALLER = { actor: "agent" as const, callerIp: null, callerUa: "PPM Assistant (integration test)" };
 
 const read: CatalogReader = async (sql) => (await readonlyPostgresService.runQuery(PG_URL!, sql)).rows;
@@ -63,11 +65,15 @@ describe.skipIf(!PG_URL)("assistant catalog check on Postgres", () => {
       CREATE POLICY p ON ${S}.secret FOR SELECT USING (pg_try_advisory_lock(${KEYS[3]}));
       CREATE FUNCTION ${S}.cat(text, text) RETURNS text LANGUAGE sql IMMUTABLE AS 'SELECT $1 || $2';
       CREATE OPERATOR ${S}.@@@ (leftarg = text, rightarg = text, function = ${S}.cat);
+      CREATE FUNCTION public.${ROW_FN}(${S}.t) RETURNS int LANGUAGE plpgsql STABLE
+        AS $$ BEGIN PERFORM pg_advisory_lock(${KEYS[4]}); RETURN 1; END $$;
+      CREATE OR REPLACE FUNCTION public.first(bigint) RETURNS int LANGUAGE plpgsql STABLE
+        AS $$ BEGIN PERFORM pg_advisory_lock(${KEYS[5]}); RETURN 1; END $$;
     `).simple();
   });
 
   afterAll(async () => {
-    await admin?.unsafe(`DROP SCHEMA IF EXISTS ${S} CASCADE`).catch(() => {});
+    await admin?.unsafe(`DROP SCHEMA IF EXISTS ${S} CASCADE; DROP FUNCTION IF EXISTS public.first(bigint)`).simple().catch(() => {});
     await readonlyPostgresService.close(PG_URL!).catch(() => {});
     await admin?.end({ timeout: 5 });
   });
@@ -88,8 +94,51 @@ describe.skipIf(!PG_URL)("assistant catalog check on Postgres", () => {
     expect(await check(`SELECT name::text @@@ 'x' FROM ${S}.t`)).toMatchObject({ proven: false, reason: expect.stringContaining("@@@") });
   });
 
+  it("refuses a user function written as a column of a row, which has no parenthesis to see", async () => {
+    // Postgres reads `r.leak_…` as `leak_…(r)` because `t` has no column of that name.
+    expect(await check(`SELECT r.${ROW_FN} FROM ${S}.t r`)).toMatchObject({ proven: false, reason: expect.stringContaining(`written as t.${ROW_FN}`) });
+    expect(await check(`SELECT (r).${ROW_FN} FROM ${S}.t r`)).toMatchObject({ proven: false });
+  });
+
   it("ran none of those functions while checking", async () => {
     expect(await heldLocks()).toBe(0);
+  });
+
+  it("asks before a call named by a keyword Postgres does not reserve, and before a column-style call", async () => {
+    const conn = insertConnection("postgres", `kw-${RUN}`, { type: "postgres", connectionString: PG_URL! });
+    const asked: string[] = [];
+    const decline: AskApproval = async (a) => { asked.push(String(a.input.sql)); return { verdict: "denied", reason: "The user declined." }; };
+    for (const sql of ["SELECT first(1)", `SELECT r.${ROW_FN} FROM ${S}.t r`]) {
+      const result = await dbQuery({ connectionId: conn.id, sql }, CALLER, decline);
+      expect(result.isError).toBe(true);
+    }
+    expect(asked).toHaveLength(2);
+    expect(await heldLocks()).toBe(0);
+  });
+
+  it("stops an unasked read at its time limit, and when its call is cancelled, on the server", async () => {
+    const conn = insertConnection("postgres", `stop-${RUN}`, { type: "postgres", connectionString: PG_URL! });
+    const slow = (tag: string) => `SELECT count(*) /* ${tag}-${RUN} */ FROM generate_series(1, 3000000000)`;
+    const running = async (tag: string): Promise<number> => {
+      const [row] = await admin!.unsafe(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%${tag}-${RUN}%' AND pid <> pg_backend_pid()`);
+      return (row as { n: number }).n;
+    };
+
+    let started = performance.now();
+    const timedOut = await dbQuery({ connectionId: conn.id, sql: slow("timeout") }, CALLER, undefined, undefined, { timeoutMs: 400 });
+    expect(timedOut.isError).toBe(true);
+    expect(JSON.stringify(timedOut)).toContain("longer than 400 ms");
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(await running("timeout")).toBe(0);
+
+    const controller = new AbortController();
+    started = performance.now();
+    setTimeout(() => controller.abort(), 400);
+    const aborted = await dbQuery({ connectionId: conn.id, sql: slow("abort") }, CALLER, undefined, undefined, { signal: controller.signal });
+    expect(aborted.isError).toBe(true);
+    expect(JSON.stringify(aborted)).toContain("was stopped");
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(await running("abort")).toBe(0);
   });
 
   it("is checked by db_query before anything runs, and a refused read is not run without approval", async () => {

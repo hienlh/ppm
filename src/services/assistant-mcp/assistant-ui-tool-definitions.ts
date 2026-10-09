@@ -90,8 +90,9 @@ export const UI_READ_TAB_DEFINITION = {
     + "a call; read on with `offset` (the line the answer's `nextOffset` gives). A terminal: its newest "
     + `${READ_TAB_TERMINAL_LINES} lines, colours removed; \`offset\` skips that many newest lines to read further back. `
     + `A chat: its newest ${READ_TAB_CHAT_MESSAGES} messages; \`offset\` reads the ones before that index. A database tab: `
-    + `its SQL and up to ${READ_TAB_DB_ROWS} of the rows it shows. Other tabs: a description only. A file or terminal outside every `
-    + "registered project is read only after the user approves the card this shows them. Read only what the task needs.",
+    + `its SQL and up to ${READ_TAB_DB_ROWS} of the rows it shows, only for a connection available to the AI. Other tabs: a `
+    + "description only. A file or terminal outside every registered project, or a file where logins or keys are kept, is read "
+    + "only after the user approves the card this shows them. Read only what the task needs.",
   inputSchema: {
     type: "object",
     properties: {

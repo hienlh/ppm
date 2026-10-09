@@ -79,6 +79,27 @@ it("queues the endpoint's card behind the provider's, then shows it once that on
   expect(phone.of("approval_resolved").at(-1)).toMatchObject({ requestId: endpointCard.requestId, approved: true });
 });
 
+it("gives a card queued behind an unanswered one its whole answer window once it is shown", async () => {
+  const prev = process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS;
+  process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS = "150";
+  cleanups.push(() => { if (prev === undefined) delete process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS; else process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS = prev; });
+  const s = await session([PROVIDER_CARD]);
+  const phone = s.connect();
+  await s.say(phone.socket, { type: "message", content: "clean up" });
+  await until(() => phone.of("approval_request").length === 1);
+
+  let settled = false;
+  const verdict = assistantApprovalBroker.request(s.id, ASK).then((v) => { settled = true; return v; });
+  // The user takes longer over the provider's card than the endpoint card's whole window.
+  await Bun.sleep(300);
+  expect(settled).toBe(false);
+  await s.say(phone.socket, { type: "approval_response", requestId: "prov-1", approved: true });
+  const endpointCard = phone.of("approval_request")[1];
+  expect(endpointCard.origin).toBe("endpoint");
+  await s.say(phone.socket, { type: "approval_response", requestId: endpointCard.requestId, approved: true });
+  expect(await verdict).toEqual({ verdict: "approved" });
+});
+
 it("queues a provider's card behind the endpoint's instead of replacing it", async () => {
   let push!: () => void;
   const later = new Promise<void>((resolve) => { push = resolve; });

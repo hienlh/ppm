@@ -31,7 +31,7 @@ const SERVERS: AssistantMcpServer[] = [
   { id: "2", name: "docs", enabled: true, transport: "http", url: "https://docs.example/mcp", headers: { "X-Key": "secret-docs" } },
   { id: "3", name: "off", enabled: false, transport: "stdio", command: "x", args: [], env: {} },
 ];
-const ISOLATION = { web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, "features.tool_call_mcp_elicitation": true };
+const ISOLATION = { web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true };
 
 describe("Claude", () => {
   it("is an http server named ppm-assistant with a 12-minute timeout, the token in the header", () => {

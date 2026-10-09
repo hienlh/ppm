@@ -1,5 +1,5 @@
 import { splitSqlStatements, sqlCode } from "../../shared/split-sql-statements.ts";
-import { deparsedPostgresSafety, SAFE_FUNCTIONS, type SqlSafety } from "./assistant-sql-safety.ts";
+import { deparsedPostgresSafety, type SqlSafety } from "./assistant-sql-safety.ts";
 import { hexJson, mentionsName, operatorRuns } from "./assistant-sql-reach-names.ts";
 
 /**
@@ -20,8 +20,8 @@ import { hexJson, mentionsName, operatorRuns } from "./assistant-sql-reach-names
  *  - for those: each view's definition, each SELECT policy's condition, each virtual generated
  *    column's expression — deparsed under that pinned path, so a bare call in them is exactly a
  *    `pg_catalog` function and anything else comes out schema-qualified or as `OPERATOR(…)`;
- *  - domains with CHECK constraints, user casts through a function, and the user functions and
- *    operators that could shadow a name in the query's own text.
+ *  - domains with CHECK constraints, user casts through a function, the user functions named
+ *    like any word of the query (called, or used column-style on a row), and the user operators.
  * Each text then goes through the same check as the query. "Pure" below means an IMMUTABLE
  * function that is C/internal (only a superuser installs one), in a system schema, or part of an
  * extension (whose script the server's administrator put in place) — citext's `max(citext)`, say.
@@ -34,7 +34,12 @@ export interface PostgresReach {
   policies: [table: string, policy: string, condition: string][];
   generated: [table: string, column: string, expression: string][];
   domains: [name: string, checks: string[]][];
-  /** Functions outside the system schemas, not pure, named like a function on the safe list. */
+  /**
+   * Functions outside the system schemas, not pure, named like one of the query's words. Not
+   * only those it calls as `name(…)`: Postgres also runs a one-argument function written as a
+   * column of a row — `t.f` or `(t).f` calls `f(t)` when `t` has no column `f` — with no
+   * parenthesis anywhere for the text check to see.
+   */
   shadowed: string[];
   /** Operators outside the system schemas whose function is not pure. */
   operators: string[];
@@ -44,14 +49,11 @@ export interface PostgresReach {
   castColumns: boolean;
 }
 
-const SAFE_HEX = hexJson([...SAFE_FUNCTIONS]);
-
 /** The catalog query for a query whose words are `names`; the last statement answers one row, one text column of JSON. */
 export function postgresReachSql(names: readonly string[]): string {
   return `SELECT pg_catalog.set_config('search_path', 'pg_catalog', true), pg_catalog.set_config('statement_timeout', '5000', true);
 WITH RECURSIVE
 names AS (SELECT json_array_elements_text(convert_from(decode('${hexJson(names)}', 'hex'), 'UTF8')::json) AS name),
-safe AS (SELECT json_array_elements_text(convert_from(decode('${SAFE_HEX}', 'hex'), 'UTF8')::json) AS name),
 sys AS (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema')),
 pure_fn AS (
   SELECT p.oid FROM pg_catalog.pg_proc p
@@ -121,7 +123,7 @@ SELECT json_build_object(
     ) x
     WHERE t.typtype = 'd' AND t.typnamespace NOT IN (SELECT oid FROM sys) AND x.checks IS NOT NULL),
   'shadowed', (SELECT json_agg(DISTINCT p.proname) FROM pg_catalog.pg_proc p
-    WHERE p.proname IN (SELECT name FROM safe) AND p.pronamespace NOT IN (SELECT oid FROM sys) AND p.oid NOT IN (SELECT oid FROM pure)),
+    WHERE p.proname IN (SELECT name FROM names) AND p.pronamespace NOT IN (SELECT oid FROM sys) AND p.oid NOT IN (SELECT oid FROM pure)),
   'operators', (SELECT json_agg(DISTINCT o.oprname) FROM pg_catalog.pg_operator o
     WHERE o.oprnamespace NOT IN (SELECT oid FROM sys) AND o.oprcode::oid NOT IN (SELECT oid FROM pure)),
   'castTypes', (SELECT json_agg(DISTINCT typname) FROM cast_types),
@@ -159,6 +161,9 @@ export function parsePostgresReach(text: unknown): PostgresReach {
 
 const after = (verdict: SqlSafety & { proven: false }): string => verdict.reason.replace(/^it /, "");
 
+/** `pg_catalog.name`, bare or quoted: a name pinned to the system schema, which no user function answers to. */
+const PG_CATALOG_QUALIFIED = /(?<![\w$"])(?:pg_catalog|"pg_catalog")\s*\.\s*(?:[A-Za-z_][\w$]*|"(?:[^"]|"")*")/gi;
+
 /**
  * Whether `sql` — already proven by its own text, calling the safe-listed functions `called` —
  * stays proven given what the catalog says it reaches; when not, why.
@@ -190,9 +195,19 @@ export function postgresReachVerdict(sql: string, called: ReadonlySet<string>, r
   if (cast) return { proven: false, reason: `it may convert a ${cast} value with a cast that runs a user function` };
 
   // The query's own text runs under the session's search path, where a user function or operator
-  // can win over the built-in it is named like: a closer argument type is enough.
-  const shadow = reach.shadowed.find((name) => called.has(name));
-  if (shadow) return { proven: false, reason: `it calls ${shadow}(), and this database also has a function named ${shadow} outside pg_catalog that the call could reach` };
+  // can win over the built-in it is named like (a closer argument type is enough), and where a
+  // name written as a row's column can be a call. Only a name pinned to pg_catalog reaches
+  // nothing else.
+  const unpinned = sql.replace(PG_CATALOG_QUALIFIED, " ");
+  const shadow = reach.shadowed.find((name) => mentionsName([unpinned], name));
+  if (shadow) {
+    return {
+      proven: false,
+      reason: called.has(shadow.toLowerCase())
+        ? `it calls ${shadow}(), and this database also has a function named ${shadow} outside pg_catalog that the call could reach`
+        : `it names ${shadow}, and this database has a function of that name outside pg_catalog, which Postgres runs for a row written as t.${shadow}`,
+    };
+  }
   if (reach.operators.length) {
     const runs = splitSqlStatements(sql, "postgres").flatMap((s) => operatorRuns(sqlCode(s, "postgres")));
     const operator = reach.operators.find((op) => runs.some((run) => run.includes(op)));

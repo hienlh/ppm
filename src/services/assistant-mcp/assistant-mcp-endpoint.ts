@@ -64,7 +64,7 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case CHAT_SEND_MESSAGE_TOOL: return chatSendMessage(args, ask);
     case DB_LIST_CONNECTIONS_TOOL: return dbListConnections();
     case DB_QUERY_TOOL:
-      return dbQuery(args, { actor: "agent", callerIp: null, callerUa: `PPM Assistant (session ${sessionId})` }, ask);
+      return dbQuery(args, { actor: "agent", callerIp: null, callerUa: `PPM Assistant (session ${sessionId})` }, ask, undefined, { signal });
     case UI_GET_STATE_TOOL: return uiGetState(sessionId);
     case UI_OPEN_TAB_TOOL: return uiOpenTab(sessionId, args);
     case UI_FOCUS_TAB_TOOL: return uiFocusTab(sessionId, args);

@@ -6,7 +6,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -16,6 +16,8 @@ import { uiReadTab } from "../../../src/services/assistant-mcp/assistant-ui-read
 import type { AssistantUiOutcome } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
 import { noApprover, type ApprovalAsk } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
 import { lineWindow, tailWindow, type TabDescription } from "../../../src/shared/assistant-tab-content.ts";
+import { parseTabDescription } from "../../../src/services/assistant-mcp/assistant-tab-description.ts";
+import { insertConnection, updateConnection } from "../../../src/services/db.service.ts";
 
 let root: string;
 let claudeRoot: string;
@@ -214,6 +216,85 @@ describe("ui_read_tab", () => {
       expect(JSON.parse(result.content[0].text)).toMatchObject({ project: null, folder: root, text: "hello from outside" });
     } finally {
       terminals.clear();
+    }
+  });
+});
+
+describe("a file in a credential store", () => {
+  const home = () => join(root, "home");
+  const privateDeps = (): TabReaderDeps => ({ ...deps, privateRoots: () => [join(home(), ".aws"), join(alpha().path, ".ssh")] });
+
+  beforeAll(() => {
+    mkdirSync(join(alpha().path, ".ssh"), { recursive: true });
+    writeFileSync(join(alpha().path, ".ssh", "id_ed25519"), "private key\n");
+    mkdirSync(join(home(), ".aws"), { recursive: true });
+    writeFileSync(join(home(), ".aws", "credentials"), "aws key\n");
+    // A link inside a project into the store is judged by where it points.
+    symlinkSync(join(home(), ".aws"), join(beta().path, "aws"), process.platform === "win32" ? "junction" : "dir");
+  });
+
+  it("needs the user's approval even inside a registered project, and through a link", async () => {
+    const descs = [
+      editor(".ssh/id_ed25519", "alpha"),
+      editor("aws/credentials", "beta"),
+      editor(".ssh/id_ed25519", "alpha", { dirty: true, unsaved: lineWindow("typed", 0) }),
+    ];
+    for (const desc of descs) {
+      expect(await readDescribedTab(desc, 0, privateDeps())).toMatchObject({ kind: "needs-approval", why: "private" });
+    }
+    const approved = await readDescribedTab(editor(".ssh/id_ed25519", "alpha"), 0, privateDeps(), { outsideApproved: true });
+    expect(contentOf(approved).text).toBe("private key");
+    expect(contentOf(await readDescribedTab(editor("src/same.ts", "alpha"), 0, privateDeps())).text).toBe("alpha copy");
+  });
+
+  it("asks under its own headline, and reads nothing when declined", async () => {
+    const asks: ApprovalAsk[] = [];
+    const describe = async (): Promise<AssistantUiOutcome> =>
+      ({ ok: true, result: { type: "assistant_ui_result", requestId: "r", ok: true, data: editor(".ssh/id_ed25519", "alpha") } });
+    const declined: any = await uiReadTab("s1", { tabId: "t" }, async (a) => {
+      asks.push(a);
+      return { verdict: "denied", reason: "The user declined." };
+    }, describe, privateDeps());
+    expect(declined.isError).toBe(true);
+    expect(declined.content[0].text).not.toContain("private key");
+    expect(asks[0]!.summary.headline).toBe("Read a file where logins or keys are kept");
+  });
+});
+
+describe("a database tab", () => {
+  let open: number;
+  let hidden: number;
+  beforeAll(() => {
+    open = insertConnection("sqlite", "open-db", { type: "sqlite", path: join(root, "a.db") }).id;
+    hidden = insertConnection("sqlite", "private-db", { type: "sqlite", path: join(root, "b.db") }).id;
+    updateConnection(hidden, { aiAccess: 0 });
+  });
+  const dbTab = (database: TabDescription["database"]): TabDescription => ({
+    id: "db-query:q", type: "db-query", title: "Query 1", project: null, area: "grid",
+    database: { sql: "select secret from users", rows: { columns: ["secret"], rows: [["s3cret"]], more: false }, ...database },
+  });
+
+  it("is read for a connection available to the AI", async () => {
+    const c = contentOf(await readDescribedTab(dbTab({ connectionId: open }), 0, deps));
+    expect(c).toMatchObject({ connection: "open-db", sql: "select secret from users", rows: [["s3cret"]] });
+  });
+
+  it("is refused when the connection is not available to the AI, is gone, or is not named", async () => {
+    for (const desc of [dbTab({ connectionId: hidden }), dbTab({ connectionId: 987_654 }), dbTab({})]) {
+      const outcome = await readDescribedTab(desc, 0, deps);
+      expect(outcome.kind).toBe("error");
+      expect(JSON.stringify(outcome)).not.toContain("s3cret");
+      expect(JSON.stringify(outcome)).not.toContain("select secret");
+    }
+    const off = await readDescribedTab(dbTab({ connectionId: hidden }), 0, deps);
+    if (off.kind === "error") expect(off.message).toContain("not available to the AI");
+  });
+
+  it("keeps the connection id a device sends only when it is a positive whole number", () => {
+    const raw = { id: "q", type: "db-query", title: "Q", project: null, area: "grid", database: { connectionId: open, sql: "x" } };
+    expect(parseTabDescription(raw)!.database).toEqual({ connectionId: open, sql: "x" });
+    for (const bad of ["1", -1, 1.5, null]) {
+      expect(parseTabDescription({ ...raw, database: { connectionId: bad, sql: "x" } })!.database).toEqual({ sql: "x" });
     }
   });
 });

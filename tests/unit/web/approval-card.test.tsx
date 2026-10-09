@@ -64,3 +64,40 @@ it("follows the server's greeting: none named means none shown", () => {
   // A garbled summary is dropped rather than shown half-read.
   expect(approvalFromWire({ requestId: "r3", tool: "x", input: {}, summary: { facts: "nope" } })).toEqual({ requestId: "r3", tool: "x", input: {} });
 });
+
+// Built from code points so this file holds no invisible characters of its own.
+const RLO = String.fromCodePoint(0x202e);
+const ZWSP = String.fromCodePoint(0x200b);
+const LSEP = String.fromCodePoint(0x2028);
+
+it("shows a direction override or invisible character as a marker, and says so", async () => {
+  const sql = `SELECT 1; -- ${RLO}DROP TABLE users${ZWSP};${LSEP}x`;
+  view = await mount(<ApprovalCard
+    approval={{
+      requestId: "r4", tool: "db_query", input: { sql },
+      summary: { headline: "Run SQL", facts: [{ label: "Chat", value: `Notes${RLO}cba` }], body: { label: "SQL", text: sql, format: "sql" } },
+    }}
+    onRespond={() => {}}
+  />);
+  const pre = view.container.querySelector("pre")!;
+  expect(pre.textContent).toBe("SELECT 1; -- ⟨U+202E⟩DROP TABLE users⟨U+200B⟩;⟨U+2028⟩x");
+  expect(view.container.textContent).toContain("Notes⟨U+202E⟩cba");
+  expect(view.container.textContent).not.toContain(RLO);
+  expect(view.container.textContent).toContain("invisible or text-direction characters");
+});
+
+it("does the same for a provider card's raw input", async () => {
+  view = await mount(<ApprovalCard approval={{ requestId: "r5", tool: "Bash", input: { command: `rm -rf ${RLO}build` } }} onRespond={() => {}} />);
+  expect(view.container.querySelector("pre")!.textContent).toContain("rm -rf ⟨U+202E⟩build");
+  expect(view.container.textContent).toContain("invisible or text-direction characters");
+});
+
+it("adds no warning to ordinary text, tabs and newlines included", async () => {
+  const sql = "SELECT 1;\n\tSELECT 'é — ✓';";
+  view = await mount(<ApprovalCard
+    approval={{ requestId: "r6", tool: "db_query", input: {}, summary: { headline: "h", facts: [], body: { label: "SQL", text: sql, format: "sql" } } }}
+    onRespond={() => {}}
+  />);
+  expect(view.container.querySelector("pre")!.textContent).toBe(sql);
+  expect(view.container.textContent).not.toContain("text-direction characters");
+});

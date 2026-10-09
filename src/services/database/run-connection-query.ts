@@ -31,6 +31,12 @@ export interface RunConnectionQueryInput {
   source?: "editor" | "filter";
   /** Run on the read-only path even when the connection is writable. */
   forceReadonly?: boolean;
+  /**
+   * Stop the statement after this long, or when this signal aborts (see `RunQueryOptions` for
+   * what each database can do); a stopped run is audited as an error and thrown.
+   */
+  timeoutMs?: number;
+  signal?: AbortSignal;
   /** Called when the statement ran (or was refused) but its audit entry could not be written. */
   onAuditError?: (message: string) => void;
 }
@@ -63,7 +69,8 @@ export async function runConnectionQuery(input: RunConnectionQueryInput): Promis
   const config = connConfig(conn, database);
   const adapter = getAdapter(conn.type);
   try {
-    const result = await adapter.runQuery(input.forceReadonly ? { ...config, readonly: true } : config, sql);
+    const stopOn = input.timeoutMs !== undefined || input.signal ? { timeoutMs: input.timeoutMs, signal: input.signal } : undefined;
+    const result = await adapter.runQuery(input.forceReadonly ? { ...config, readonly: true } : config, sql, stopOn);
     log({
       status: "ok",
       rows: rowsToRecords(result.columns, result.rows).records,

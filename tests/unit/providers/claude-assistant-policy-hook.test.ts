@@ -91,10 +91,14 @@ describe("assistantToolDecision", () => {
   });
 
   it("allows the conversation-only tools and the Assistant's own MCP tools, and asks for the rest", () => {
-    for (const tool of ["ToolSearch", "TodoWrite", "mcp__ppm-assistant__ui_state"]) {
+    for (const tool of ["ToolSearch", "TodoWrite", "mcp__ppm-assistant__ui_get_state", "mcp__ppm-assistant__db_query"]) {
       expect(assistantToolDecision(tool, {}, ctx())).toBe("allow");
     }
-    for (const tool of ["WebFetch", "WebSearch", "Bash", "Write", "Edit", "Agent", "Skill", "mcp__github__create_issue", "mcp__ppm-tabs__open_file"]) {
+    for (const tool of [
+      "WebFetch", "WebSearch", "Bash", "Write", "Edit", "Agent", "Skill", "mcp__github__create_issue", "mcp__ppm-tabs__open_file",
+      // A user server named like the Assistant's plus an underscore, and a tool the Assistant does not serve.
+      "mcp__ppm-assistant___db_query", "mcp__ppm-assistant__x",
+    ]) {
       expect(assistantToolDecision(tool, { file_path: join(project, "a.ts"), url: "https://x" }, ctx())).toBe("ask");
     }
   });
@@ -145,7 +149,7 @@ describe("Claude Assistant session", () => {
     const hook = permissionHook(await startTurn());
     const cwd = assistantWorkDir();
     expect(await hook({ tool_name: "Read", tool_input: { file_path: join(project, "a.ts") }, cwd })).toEqual(ALLOW);
-    expect(await hook({ tool_name: "mcp__ppm-assistant__x", tool_input: {}, cwd })).toEqual(ALLOW);
+    expect(await hook({ tool_name: "mcp__ppm-assistant__ui_get_state", tool_input: {}, cwd })).toEqual(ALLOW);
     expect(await hook({ tool_name: "ToolSearch", tool_input: { query: "x" }, cwd })).toEqual(ALLOW);
   });
 

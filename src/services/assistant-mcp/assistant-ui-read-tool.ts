@@ -12,7 +12,8 @@ import { errorResult, intArg, jsonResult, notApprovedResult } from "./assistant-
  * nothing of a tab's content is ever put into a message on its own. The device describes the
  * tab and adds what only it holds (unsaved editor text, a database tab's SQL and rows); the
  * server reads the rest (`assistant-tab-reader.ts`). A file or terminal outside every
- * registered project is read only once the user approves; each such read asks again.
+ * registered project, or a file in a credential store, is read only once the user approves;
+ * each such read asks again.
  */
 
 /** How long the device has to describe a tab: a store read, milliseconds. */
@@ -39,7 +40,7 @@ export async function uiReadTab(
     const verdict = await ask({
       tool: UI_READ_TAB_TOOL,
       input: { tabId, ...outcome.details },
-      summary: readOutsideSummary({ kind: desc.type === "terminal" ? "terminal" : "file", location }),
+      summary: readOutsideSummary({ kind: desc.type === "terminal" ? "terminal" : "file", location, privateStore: outcome.why === "private" }),
     });
     if (verdict.verdict !== "approved") return notApprovedResult("read_tab", verdict, { tabId, ...outcome.details });
     outcome = await readDescribedTab(desc, offset, deps, { outsideApproved: true });

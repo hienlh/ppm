@@ -17,15 +17,16 @@ import { isReadOnlyQuery } from "../database/readonly-check.ts";
  * an ordinary read that misses it only costs a question.
  *
  * This reads the text only. What the text names can still call something it does not show — a
- * view, a row-level security policy, a user function that shadows a listed name — so on Postgres
- * and MySQL a text that passes here is proven only once `assistantSqlReachSafety`
- * (`assistant-sql-reach-check.ts`) has asked the database's catalog what it reaches.
+ * view, a row-level security policy, a user function that shadows a listed name or that Postgres
+ * runs for a row written as `t.name` — so on Postgres and MySQL a text that passes here is proven
+ * only once `assistantSqlReachSafety` (`assistant-sql-reach-check.ts`) has asked the database's
+ * catalog what it reaches.
  */
 
 export type SqlSafety = { proven: true } | { proven: false; reason: string };
 
-/** Names the check lets a query call; exported for the catalog check, which asks whether any is shadowed. */
-export const SAFE_FUNCTIONS: ReadonlySet<string> = new Set(`
+/** Names the check lets a query call. */
+const SAFE_FUNCTIONS: ReadonlySet<string> = new Set(`
 count sum avg min max total string_agg array_agg group_concat bool_and bool_or every stddev stddev_pop stddev_samp
 variance var_pop var_samp json_agg jsonb_agg json_object_agg jsonb_object_agg json_arrayagg json_objectagg
 percentile_cont percentile_disc mode bit_and bit_or bit_xor grouping
@@ -53,15 +54,84 @@ version current_database current_schema current_schemas database schema current_
 pg_size_pretty pg_total_relation_size pg_relation_size pg_table_size pg_indexes_size pg_database_size
 `.trim().split(/\s+/));
 
-/** Words that may stand before a parenthesis without calling anything: clauses, operators, type modifiers. */
-const NOT_A_CALL = new Set(`
+const words = (list: string): ReadonlySet<string> => new Set(list.trim().split(/\s+/));
+
+/**
+ * Words that may stand bare before a parenthesis without calling anything, per dialect: only
+ * those the dialect's grammar never reads as a function name. A keyword that is not reserved
+ * is an ordinary name there — Postgres lets a user function be called `first(…)`, `cube(…)`,
+ * `match(…)` or `xor(…)`, and MySQL a stored function `offset(…)` or `any(…)` — so such a word
+ * before `(` is a call like any other, unless {@link SYNTAX_AFTER} or {@link isCallPosition}
+ * says the place it stands in cannot hold one.
+ *
+ * Postgres: its reserved keywords and the column-name keywords its grammar keeps for types and
+ * special forms (`row`, `values`, `exists`, `between`, `varchar`…), which cannot name a function.
+ * Not the "type or function name" keywords (`join`, `like`, `ilike`, `similar`, `is`, `binary`):
+ * a function may carry those, so `x LIKE (…)` costs a question there.
+ * MySQL and MariaDB: words both reserve. SQLite: it has no stored functions and PPM registers
+ * none, so a skipped word can only ever reach a built-in — the full list stays.
+ */
+const NEVER_A_FUNCTION: Record<DialectName, ReadonlySet<string>> = {
+  postgres: words(`
+select from where in exists as values on and or not when then else case between distinct all any some using lateral
+union intersect except having limit offset with row array group order window table fetch analyze
+varchar char character nchar numeric decimal dec float real timestamp time bit interval
+`),
+  mysql: words(`
+select from where in exists as values on and or not when then else case between distinct all using union having limit
+with group order table fetch analyze like regexp rlike xor match binary join is partition by range
+varchar char character varying numeric decimal dec float real interval
+`),
+  sqlite: words(`
 select from where in exists as values join on and or not when then else case is between like ilike similar escape
 distinct all any some using lateral union intersect except having limit offset with recursive materialized row array
 over filter within by group order partition window rows range groups explain analyze table first next fetch cube
 rollup sets xor regexp rlike match against binary
 varchar char character varying nchar nvarchar numeric decimal dec float real timestamp timestamptz time timetz bit
 varbit interval
-`.trim().split(/\s+/));
+`),
+};
+
+/**
+ * Syntax words that sit before a parenthesis without calling anything — but only straight after
+ * the token listed: a window's `OVER (…)` and an aggregate's `FILTER (…)` follow the call they
+ * qualify, as MySQL's `AGAINST (…)` follows `MATCH (…)`; `FETCH FIRST (n)`, `GROUPING SETS (…)`,
+ * `CHARACTER VARYING (n)`, `AS MATERIALIZED (…)`, `ORDER BY (…)`. The same word anywhere else is
+ * a call.
+ */
+const SYNTAX_AFTER: Readonly<Record<string, readonly string[]>> = {
+  over: [")"],
+  filter: [")"],
+  against: [")"],
+  first: ["fetch"],
+  next: ["fetch"],
+  sets: ["grouping"],
+  varying: ["character", "bit"],
+  materialized: ["as", "not"],
+  by: ["order", "group", "partition"],
+};
+
+/**
+ * The token before position `at` of `code`: `::`, a single punctuation character, or the last
+ * word (lower case); empty at the start of the statement.
+ */
+function previousToken(code: string, at: number): string {
+  const before = code.slice(0, at).trimEnd();
+  if (!before) return "";
+  if (before.endsWith("::")) return "::";
+  const word = /[A-Za-z_][\w$]*$/.exec(before);
+  return word ? word[0].toLowerCase() : before.slice(-1);
+}
+
+/**
+ * Whether a bare name standing before `(` after `previous` can be a function call at all. Never
+ * at the start of a statement (`EXPLAIN (…)`), and never as a type or an alias: after `::` or
+ * `AS` a name is a type with its modifier (`x::timestamptz(3)`, `CAST(x AS nvarchar(10))`) or an
+ * alias with its column list (`… AS g(n)`), in every dialect.
+ */
+function isCallPosition(previous: string): boolean {
+  return previous !== "" && previous !== "::" && previous !== "as";
+}
 
 const READ_PRAGMAS = new Set(`
 table_info table_xinfo table_list index_list index_info index_xinfo foreign_key_list database_list collation_list
@@ -98,7 +168,7 @@ const UNICODE_ESCAPED_NAME = /\bU&\s*""/i;
  * Whether the statement `code` (strings, quoted names and comments blanked by `sqlCode`) is proven
  * to only read. Each function on the safe list it calls by a bare name is added to `called`.
  */
-function statementSafety(code: string, called?: Set<string>): SqlSafety {
+function statementSafety(code: string, dialect: DialectName, called?: Set<string>): SqlSafety {
   const pragma = PRAGMA.exec(code);
   if (pragma) return pragmaSafety(pragma[1]!, pragma[2] ?? "");
   if (LOCKING.test(code)) return { proven: false, reason: "it takes row locks (FOR UPDATE / FOR SHARE)" };
@@ -113,7 +183,10 @@ function statementSafety(code: string, called?: Set<string>): SqlSafety {
     if (!qualifier && code.slice(0, m.index).trimEnd().endsWith(".")) {
       return { proven: false, reason: `it calls ${name}() in a schema named in quotes` };
     }
-    if (!qualifier && NOT_A_CALL.has(name)) continue;
+    if (!qualifier) {
+      const previous = previousToken(code, m.index);
+      if (NEVER_A_FUNCTION[dialect].has(name) || !isCallPosition(previous) || SYNTAX_AFTER[name]?.includes(previous)) continue;
+    }
     if (qualifier && qualifier !== "pg_catalog.") return { proven: false, reason: `it calls ${qualifier}${name}(), a function outside the known-safe list` };
     if (!SAFE_FUNCTIONS.has(name)) return { proven: false, reason: `it calls ${name}(), which is not on PPM's list of functions known to only read` };
     // Only a bare name is looked up on the search path, where something else could answer to it.
@@ -131,7 +204,7 @@ export function assistantSqlSafety(sql: string, dialect: DialectName, called?: S
   if (!isReadOnlyQuery(sql, dialect)) return { proven: false, reason: "it is not a plain read (SELECT, WITH, SHOW, EXPLAIN, VALUES)" };
   for (const opts of readings(dialect)) {
     for (const statement of splitSqlStatements(sql, dialect, opts)) {
-      const verdict = statementSafety(sqlCode(statement, dialect, opts), called);
+      const verdict = statementSafety(sqlCode(statement, dialect, opts), dialect, called);
       if (!verdict.proven) return verdict;
     }
   }
@@ -152,5 +225,5 @@ const LOWER_CASE_QUOTED_NAME = /(?<!")"([a-z_][a-z0-9_$]*)"(?!")/g;
  */
 export function deparsedPostgresSafety(text: string, called?: Set<string>): SqlSafety {
   const code = sqlCode(text.replace(LOWER_CASE_QUOTED_NAME, "$1"), "postgres");
-  return statementSafety(code.replace(/;\s*$/, ""), called);
+  return statementSafety(code.replace(/;\s*$/, ""), "postgres", called);
 }

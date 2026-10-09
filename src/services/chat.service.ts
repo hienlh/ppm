@@ -23,7 +23,7 @@ import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
 import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
 import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
-import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
+import { forgetSessionInDeviceBrokers } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
 import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
@@ -186,7 +186,8 @@ class ChatService {
     designMcpTokens.revoke(sessionId);
     tabToolsMcpTokens.revoke(sessionId);
     assistantMcpTokens.revoke(sessionId);
-    tabOpenBroker.forget(sessionId);
+    // The tab tools', the Assistant's screen and its approval brokers each keep a rate window.
+    forgetSessionInDeviceBrokers(sessionId);
     return provider.deleteSession(sessionId);
   }
 

@@ -14,6 +14,13 @@ describe("assistantMcpNameError", () => {
     for (const name of ["ppm-assistant", "ppm_assistant", "PPM-Assistant"]) expect(assistantMcpNameError(name)).toContain("own tool server");
   });
 
+  it("refuses the Assistant's own name with `_` or `-` added, whose Claude tool names would begin with its prefix", () => {
+    for (const name of ["ppm-assistant_", "ppm-assistant-", "ppm_assistant-", "PPM-Assistant_-"]) {
+      expect(assistantMcpNameError(name)).toContain("own tool server");
+    }
+    for (const name of ["ppm-assistant2", "ppm-assistant-notes", "my-ppm-assistant"]) expect(assistantMcpNameError(name)).toBeNull();
+  });
+
   it("refuses unsafe characters, a double underscore, an empty or overlong name", () => {
     for (const name of ["", "-x", "a.b", "a b", "a/b", "x__y", "a".repeat(49)]) expect(assistantMcpNameError(name)).not.toBeNull();
   });

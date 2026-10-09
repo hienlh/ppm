@@ -91,14 +91,17 @@ export function foldMcpName(name: string): string {
  * Why a server name cannot be used, or null. Only letters, digits, `-` and `_`, which both
  * providers accept as a server key; never two underscores in a row, because Claude names a tool
  * `mcp__<server>__<tool>` and a name carrying `__` could pass for another server's tool; never
- * the Assistant's own server.
+ * the Assistant's own server — nor that name with `_` or `-` added at the end, since
+ * `ppm-assistant_` makes tool names that begin `mcp__ppm-assistant__`, which read as the
+ * Assistant's own.
  */
 export function assistantMcpNameError(name: string): string | null {
   if (!name) return "Name is required";
   if (name.length > MAX_NAME) return `Name must be at most ${MAX_NAME} characters`;
   if (!NAME_RE.test(name)) return "Name must start with a letter or digit and use only letters, digits, - and _";
   if (name.includes("__")) return "Name cannot contain two underscores in a row";
-  if (RESERVED_NAMES.some((r) => foldMcpName(r) === foldMcpName(name))) return `"${name}" is the Assistant's own tool server`;
+  const bare = foldMcpName(name).replace(/[-_]+$/, "");
+  if (RESERVED_NAMES.some((r) => foldMcpName(r) === bare)) return `"${name}" is the Assistant's own tool server`;
   return null;
 }
 

@@ -24,6 +24,8 @@ import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
+import { getChatClientId } from "@/lib/chat-client-id";
+import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
 
 /** Slim every Agent/Task card a provider stamped `transcriptAvailable` on, walking
  *  in from the REST history response before it ever reaches React state. */
@@ -1245,8 +1247,10 @@ export function useChat(
   // codex-default install is then resumed as codex — which answers "transcript not
   // found" and drops every message with the composer already emptied. It is only a
   // hint: the server adopts it when nothing is stored, never over a stored value.
+  // The client id tells the server a reconnected socket is still this tab (see chat-client-id.ts).
   const wsUrl = sessionId && projectName
     ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}?providerId=${encodeURIComponent(providerId)}`
+      + `&${CHAT_CLIENT_ID_PARAM}=${encodeURIComponent(getChatClientId())}`
     : "";
 
   const { send, connect: wsReconnect } = useWebSocket({

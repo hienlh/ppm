@@ -59,7 +59,15 @@ describe("describing a tab", () => {
     expect(desc.database!.rows!.more).toBe(true);
     expect(String(desc.database!.rows!.rows[0]![1]).length).toBeLessThan(READ_TAB_DB_CELL_CHARS + 60);
     const unloaded = describeTabFrom({ tab: tab("database:3::public:t", "database", { connectionId: 3, tableName: "t" }, null), area: "grid", offset: 0 });
-    expect(unloaded.database).toEqual({});
+    expect(unloaded.database).toEqual({ connectionId: 3 });
+    expect(desc.database!.connectionId).toBe(3);
+  });
+
+  it("names the saved connection a database tab shows, and none for a database file", () => {
+    const legacy = describeTabFrom({ tab: tab("database:7::public:t", "database", { connectionId: "7", tableName: "t" }, null), area: "grid", offset: 0 });
+    expect(legacy.database).toEqual({ connectionId: 7 });
+    const file = describeTabFrom({ tab: tab("database:file", "database", { dbFile: { path: "/x/app.db" }, tableName: "t" }, null), area: "grid", offset: 0 });
+    expect(file.database).toEqual({});
   });
 
   it("keeps a wide result within what one answer may carry", () => {

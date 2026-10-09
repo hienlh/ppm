@@ -1,7 +1,8 @@
+import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { canonicalPath, expandHome, isInside, patternLeavesRoot } from "../design/design-tool-policy.ts";
-import { isCredentialPath } from "../fs-credential-path-guard.ts";
-import { CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER } from "../../shared/assistant-tool-names.ts";
+import { ASSISTANT_TOOLS, CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER, claudeAssistantToolName } from "../../shared/assistant-tool-names.ts";
+import { assistantPrivateRoots, isAssistantPrivatePath, privateRootWithin } from "./assistant-private-paths.ts";
 
 /**
  * Permission policy for a PPM Assistant session's Claude tools. The Assistant reads content it
@@ -9,16 +10,20 @@ import { CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER } from "../../
  * that content off the machine or change something asks first, whatever mode the composer
  * shows. Answers "allow" only for:
  *  - Read, Glob and Grep whose target resolves inside a registered project and outside every
- *    credential root (the PPM dir, `~/.cloudflared`, the database snapshots) — a project
- *    registered at the home directory must not open `~/.ppm/ppm.db` to an unasked Read;
+ *    private root (`assistant-private-paths.ts`: the PPM dir, `~/.cloudflared`, the database
+ *    snapshots, and the credential stores common tools keep under the home folder) — a project
+ *    registered at the home directory must not open `~/.ppm/ppm.db` or `~/.ssh` to an unasked
+ *    Read. A Glob or Grep searches everything below its folder, so one whose folder *holds* a
+ *    private root asks too;
  *  - ToolSearch and TodoWrite, which touch nothing outside the conversation;
- *  - the Assistant's own MCP tools, which ask inside their endpoint before any change.
+ *  - the Assistant's own MCP tools, by exact name, which ask inside their endpoint before any change.
  * Everything else — web, shell, file writes, subagents, skills, the user's own MCP servers,
  * reads anywhere else — answers "ask".
  *
  * Fail-closed like the design policy it borrows its path rules from: a path that is not a
- * string, cannot be resolved, or is relative with no known working directory answers "ask",
- * and symlinks are judged by where they point.
+ * string, cannot be resolved, names no drive on Windows (a network share, which is never
+ * resolved), or is relative with no known working directory answers "ask", and symlinks are
+ * judged by where they point.
  */
 export type AssistantToolDecision = "allow" | "ask";
 
@@ -29,6 +34,12 @@ export type AssistantToolDecision = "allow" | "ask";
 export { CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER };
 
 const ALWAYS_ALLOWED = new Set(["ToolSearch", "TodoWrite"]);
+
+/**
+ * The Assistant's tools as Claude names them, matched whole. A prefix test would also pass a
+ * user server named `ppm-assistant_`, whose tools Claude spells `mcp__ppm-assistant___<tool>`.
+ */
+const OWN_MCP_TOOLS: ReadonlySet<string> = new Set(ASSISTANT_TOOLS.map(claudeAssistantToolName));
 
 /** Tool → the input field naming its target; Glob and Grep default to the working directory. */
 const READ_TOOLS: Record<string, { field: string; optional: boolean }> = {
@@ -42,6 +53,8 @@ export interface AssistantPolicyContext {
   cwd?: string;
   /** Paths of every registered project, read per call so a project added mid-session counts. */
   projectRoots: readonly string[];
+  /** The home folder whose credential stores always ask; the real one unless a test names another. */
+  home?: string;
 }
 
 export function assistantToolDecision(
@@ -49,13 +62,13 @@ export function assistantToolDecision(
   input: unknown,
   ctx: AssistantPolicyContext,
 ): AssistantToolDecision {
-  if (ALWAYS_ALLOWED.has(toolName) || toolName.startsWith(CLAUDE_ASSISTANT_MCP_PREFIX)) return "allow";
+  if (ALWAYS_ALLOWED.has(toolName) || OWN_MCP_TOOLS.has(toolName)) return "allow";
   const spec = READ_TOOLS[toolName];
   if (!spec || !input || typeof input !== "object") return "ask";
   const record = input as Record<string, unknown>;
 
-  // A Glob pattern is itself a path expression: `/etc/*` or `../**` enumerates outside
-  // whatever `path` names.
+  // A Glob pattern is itself a path expression: `/etc/*`, `../**` or `{..,x}/**` enumerates
+  // outside whatever `path` names.
   if (toolName === "Glob") {
     const pattern = record.pattern;
     if (typeof pattern !== "string" || !pattern || patternLeavesRoot(pattern)) return "ask";
@@ -71,7 +84,11 @@ export function assistantToolDecision(
   if (!isAbsolute(expanded) && !ctx.cwd) return "ask";
 
   const resolved = canonicalPath(ctx.cwd ? resolve(ctx.cwd, expanded) : resolve(expanded));
-  if (!resolved || isCredentialPath(resolved)) return "ask";
+  if (!resolved) return "ask";
+  const privateRoots = assistantPrivateRoots(ctx.home ?? homedir());
+  if (isAssistantPrivatePath(resolved, privateRoots)) return "ask";
+  // Glob and Grep walk the whole tree below their folder; Read on a file walks nothing.
+  if (toolName !== "Read" && privateRootWithin(resolved, privateRoots)) return "ask";
   for (const root of ctx.projectRoots) {
     const canonicalRoot = canonicalPath(root);
     if (canonicalRoot && isInside(resolved, canonicalRoot)) return "allow";

@@ -62,19 +62,64 @@ export function expandHome(path: string): string {
   return path;
 }
 
+/**
+ * Whether a Glob pattern could match outside the folder it is rooted at: an absolute or
+ * drive-qualified pattern, `~`, a `..` segment, or a brace expression that could spell one.
+ * Glob expands braces before matching, so `{..,src}/**` and `.{.,}/x` reach the parent and
+ * `{/etc,src}/*` an absolute root, though no segment of the text reads `..`. A brace group is
+ * judged by what it holds: alternatives made only of name characters (`*.{ts,tsx}`) cannot
+ * form a parent, a root or a home, so only a group holding a dot, a separator, `~` or `:` —
+ * or one left unclosed, which a matcher may read either way — counts as leaving.
+ */
 export function patternLeavesRoot(pattern: string): boolean {
   if (isAbsolute(pattern) || /^[a-zA-Z]:/.test(pattern) || pattern.startsWith("~")) return true;
-  return pattern.split(/[\\/]/).includes("..");
+  if (pattern.split(/[\\/]/).includes("..")) return true;
+  return braceGroupCouldLeave(pattern);
+}
+
+function braceGroupCouldLeave(pattern: string): boolean {
+  let depth = 0;
+  let inside = "";
+  for (const ch of pattern) {
+    if (ch === "{") {
+      depth++;
+      continue;
+    }
+    if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0) {
+        if (/[./\\~:]/.test(inside)) return true;
+        inside = "";
+      }
+      continue;
+    }
+    if (depth > 0) inside += ch;
+  }
+  return depth > 0;
+}
+
+/**
+ * On Windows, a path that does not start with a drive letter — `\\server\share\…`, the
+ * device namespaces `\\?\…` and `\\.\…`, or their forward-slash spellings. Decided from the
+ * text alone: resolving such a path opens an SMB session to whatever host it names (sending
+ * the user's NTLM credentials there) and blocks the event loop while Windows gives up, so no
+ * policy may touch the disk to find out what it is. Never true on other platforms, where `//x`
+ * is an ordinary local path.
+ */
+export function isWindowsNonDrivePath(path: string, platform: string = process.platform): boolean {
+  return platform === "win32" && !/^[A-Za-z]:[\\/]/.test(path);
 }
 
 /**
  * Realpath of the path, or of its nearest existing ancestor with the missing tail
  * re-appended — a Write usually targets a file that does not exist yet, and its parent
- * directories may not either. Null when nothing along the chain resolves.
+ * directories may not either. Null when nothing along the chain resolves, and — without
+ * touching the disk — for a Windows path that names no drive (see {@link isWindowsNonDrivePath}).
  */
 export function canonicalPath(path: string): string | null {
   const tail: string[] = [];
   let current = resolve(path);
+  if (isWindowsNonDrivePath(current)) return null;
   for (;;) {
     try {
       const real = realpathSync.native(current);

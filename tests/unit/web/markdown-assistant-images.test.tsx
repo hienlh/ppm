@@ -123,6 +123,97 @@ describe("raw HTML in Assistant content", () => {
   });
 });
 
+/**
+ * Markup a list of "attributes that fetch" cannot see: an SVG animation sets a URL attribute
+ * *after* render (`<set attributeName="href" to=…>` turns an empty `<image>` into a request),
+ * and SVG presentation attributes are CSS values, so `fill`, `filter`, `mask`, `clip-path`,
+ * `marker-*` and `cursor` can each name `url(…)`. MathML adds `href` on any element, and a
+ * foreign-content island lets HTML back in under a parent that looked inert. Assistant content
+ * renders only what is known to be static, so none of it survives.
+ */
+describe("raw HTML that fetches after render or through a CSS value", () => {
+  const CASES: Array<[string, string]> = [
+    ["SMIL <set> giving an image its source", `<svg><image><set attributeName="href" to="${LEAK}"/></image></svg>`],
+    ["SMIL <animate> over a <use> reference", `<svg><use><animate attributeName="href" values="${LEAK};${LEAK}" dur="1s"/></use></svg>`],
+    ["SMIL on xlink:href with from/to", `<svg><image><animate attributeName="xlink:href" from="${LEAK}" to="${LEAK}"/></image></svg>`],
+    ["animateTransform / animateMotion", `<svg><rect width="1" height="1"><animateTransform attributeName="transform" type="rotate" values="0;9"/><animateMotion path="M0 0L9 9"/></rect></svg>`],
+    ["paint server and effect references", `<svg><rect width="9" height="9" fill="url(${LEAK}#p)" stroke="url(${LEAK}#s)" filter="url(${LEAK}#f)" mask="url(${LEAK}#m)" clip-path="url(${LEAK}#c)"/></svg>`],
+    ["marker and cursor references", `<svg><path d="M0 0L9 9" marker-start="url(${LEAK}#a)" marker-end="url(${LEAK}#b)" cursor="url(${LEAK}), auto"/></svg>`],
+    ["an escaped url() in a presentation attribute", `<svg><rect width="9" height="9" fill="u\\72l(${LEAK}#p)"/></svg>`],
+    ["feImage inside a filter", `<svg><filter id="f"><feImage href="${LEAK}"/></filter></svg>`],
+    ["HTML inside foreignObject", `<svg><foreignObject width="9" height="9"><img src="${LEAK}"></foreignObject></svg>`],
+    ["MathML href on a token element", `<math><mi href="${LEAK}">x</mi></math>`],
+    ["HTML inside a MathML annotation-xml", `<math><semantics><mi>x</mi><annotation-xml encoding="text/html"><img src="${LEAK}"></annotation-xml></semantics></math>`],
+    ["an unknown element carrying a URL attribute", `<x-widget src="${LEAK}" background="${LEAK}">kept text</x-widget>`],
+    ["an image input", `<input type="image" src="${LEAK}">`],
+  ];
+  /** Tags that only animate or pull in other content; none may appear in Assistant output. */
+  const DYNAMIC_TAGS = ["animate", "set", "animateTransform", "animateMotion", "image", "use", "feImage", "foreignObject", "annotation-xml", "x-widget"];
+
+  /**
+   * Every place the leak URL survives except a link's own target or tooltip, which load
+   * nothing until clicked. Broader than `autoLoaded`: any attribute counts, since which ones
+   * fetch is exactly what a denylist gets wrong.
+   */
+  function leakingAttributes(root: HTMLElement): string[] {
+    const found: string[] = [];
+    for (const el of root.querySelectorAll("*")) {
+      for (const attr of el.getAttributeNames()) {
+        if (!el.getAttribute(attr)?.includes("evil.example")) continue;
+        if (attr === "title" || (el.tagName === "A" && attr === "href")) continue;
+        found.push(`${el.tagName.toLowerCase()}[${attr}]`);
+      }
+    }
+    for (const tag of DYNAMIC_TAGS) {
+      if ([...root.querySelectorAll("*")].some((el) => el.tagName.toLowerCase() === tag.toLowerCase())) found.push(`<${tag}>`);
+    }
+    return found;
+  }
+
+  for (const [name, html] of CASES) {
+    it(`renders nothing that can fetch: ${name}`, async () => {
+      const root = await render(html, "assistant-project");
+      expect(leakingAttributes(root)).toEqual([]);
+    });
+  }
+
+  it("would have rendered the dynamic markup in an ordinary chat (the probe sees it)", async () => {
+    // SVG only: happy-dom gives an <img> created under MathML no `style`, so React cannot
+    // mount the annotation-xml case here at all (a test-DOM gap, not a rendering one).
+    const svgOnly = CASES.filter(([, html]) => html.startsWith("<svg")).map(([, html]) => html);
+    const root = await render(svgOnly.join("\n\n"), "normal");
+    const leaks = leakingAttributes(root);
+    for (const tag of ["<set>", "<animate>", "<image>", "<use>", "<foreignObject>"]) expect(leaks).toContain(tag);
+    expect(leaks).toContain("rect[fill]");
+  });
+
+  it("keeps the text of an element it does not render", async () => {
+    const root = await render(`<x-widget src="${LEAK}">kept text</x-widget>`, "assistant-project");
+    expect(root.textContent).toContain("kept text");
+  });
+
+  it("still draws a static SVG", async () => {
+    const root = await render(`<svg viewBox="0 0 10 10" width="10"><g><rect width="10" height="10" fill="red"/><path d="M0 0L9 9" stroke="blue"/></g></svg>`, "assistant-project");
+    const rect = [...root.querySelectorAll("*")].find((el) => el.tagName.toLowerCase() === "rect");
+    expect(rect?.getAttribute("fill")).toBe("red");
+    expect(root.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 10 10");
+  });
+
+  it("keeps KaTeX's own SVG and MathML (roots, arrows, fractions)", async () => {
+    const root = await render("$$\\sqrt{x^2+1} + \\frac{a}{b} + \\overrightarrow{AB} + \\cancel{x}$$", "assistant-project");
+    const tags = [...root.querySelectorAll("*")].map((el) => el.tagName.toLowerCase());
+    for (const tag of ["svg", "path", "line", "math", "msqrt", "mfrac", "annotation"]) expect(tags).toContain(tag);
+    expect(root.querySelector(".katex-html")).not.toBeNull();
+  });
+
+  it("keeps GFM task lists, table alignment and footnotes", async () => {
+    const root = await render("- [x] done\n\n| a | b |\n|:-|-:|\n| 1 | 2 |\n\nnote[^1]\n\n[^1]: the note", "assistant-project");
+    expect(root.querySelector("input[type=checkbox]")?.hasAttribute("checked")).toBe(true);
+    expect(root.querySelector("td")?.getAttribute("style")).toContain("text-align: left");
+    expect(root.querySelector("a[data-footnote-ref]")).not.toBeNull();
+  });
+});
+
 describe("isExternalResourceUrl", () => {
   it.each([
     ["https://x.example/a.png", true],

@@ -62,6 +62,39 @@ describe("assistantSqlSafety", () => {
     expect(proven("")).toBe(false);
   });
 
+  it("treats a call named by a keyword the dialect does not reserve as a call", () => {
+    // Postgres lets a user function carry any of these names and be called bare.
+    for (const sql of [
+      "SELECT first(x) FROM t", "SELECT next(1)", "SELECT cube(a, b) FROM t", "SELECT xor(1)", "SELECT match(a)",
+      "SELECT rollup(1)", "SELECT x FROM t WHERE filter(x)", "SELECT over(1)", "SELECT timestamptz(x) FROM t",
+      "SELECT nvarchar(1)", "SELECT a FROM t ORDER BY escape(a)", "SELECT range(1, 2)", "SELECT explain(1)", "SELECT like('a')",
+      "SELECT a FROM t, recursive(1)",
+    ]) {
+      expect(proven(sql)).toBe(false);
+    }
+    // MySQL and MariaDB: a stored function may be named by a keyword they do not reserve.
+    for (const sql of ["SELECT offset(1)", "SELECT any(1)", "SELECT some(1)", "SELECT first(x) FROM t", "SELECT intersect(1)", "SELECT lateral(1)"]) {
+      expect(proven(sql, "mysql")).toBe(false);
+    }
+  });
+
+  it("still proves the syntax those words form where no call can stand", () => {
+    for (const sql of [
+      "SELECT count(*) FILTER (WHERE a > 1) OVER (PARTITION BY b) FROM t",
+      "SELECT a FROM t ORDER BY (a + 1) FETCH FIRST (5) ROWS ONLY",
+      "SELECT a, b, count(*) FROM t GROUP BY GROUPING SETS ((a), (b))",
+      "SELECT x::timestamptz(3), CAST(y AS character varying(10)), CAST(z AS nvarchar(5)) FROM t",
+      "WITH c AS MATERIALIZED (SELECT 1) SELECT * FROM c",
+      "SELECT n FROM generate_series(1, 3) AS g(n)",
+      "EXPLAIN (COSTS false) SELECT 1",
+    ]) {
+      expect(proven(sql)).toBe(true);
+    }
+    expect(proven("SELECT * FROM t WHERE MATCH(a) AGAINST('x') AND b LIKE ('%y') AND a = ALL (SELECT 1)", "mysql")).toBe(true);
+    // Reserved in both MySQL and MariaDB, so never a stored function's bare name there.
+    expect(proven("SELECT a XOR (b) FROM t", "mysql")).toBe(true);
+  });
+
   it("says why", () => {
     const verdict = assistantSqlSafety("SELECT pg_terminate_backend(1)", "postgres");
     expect(verdict).toEqual({ proven: false, reason: expect.stringContaining("pg_terminate_backend()") });

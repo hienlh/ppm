@@ -6,6 +6,7 @@ import {
 } from "../../../shared/assistant-tab-content";
 import { MAX_SNAPSHOT_TITLE_CHARS, tabDetails } from "./ui-state-snapshot";
 import { readTabLiveContent, type TabLiveContent } from "./tab-live-content";
+import { targetOf } from "@/lib/db-tabs";
 
 /**
  * The device half of `ui_read_tab` (`describe_tab`): which tab it is, its allow-listed
@@ -83,7 +84,13 @@ export function describeTabFrom({ tab, area, live, terminalSessionId, offset }: 
   } else if (DB_TAB_TYPES.has(tab.type)) {
     const sql = tab.type === "db-query" && typeof meta.currentSql === "string" ? cut(meta.currentSql, READ_TAB_SQL_CHARS) : undefined;
     const rows = live?.kind === "rows" && live.rows ? capShownRows(live.rows) : undefined;
-    desc.database = { ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}) };
+    // The server reads the tab only for a saved connection the user made available to the AI,
+    // so it needs to know which one; a database file opened by path names none.
+    const target = targetOf(meta);
+    const connectionId = target?.kind === "connection" ? target.connectionId : undefined;
+    desc.database = {
+      ...(connectionId !== undefined ? { connectionId } : {}), ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}),
+    };
   }
   return desc;
 }

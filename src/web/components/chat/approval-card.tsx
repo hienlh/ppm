@@ -1,4 +1,5 @@
 import { AlertCircle, ShieldAlert } from "@/lib/icons";
+import { hasHiddenCharacters, revealHiddenCharacters } from "@/lib/reveal-hidden-characters";
 import type { ApprovalSummary } from "../../../shared/assistant-approval";
 
 /**
@@ -7,6 +8,8 @@ import type { ApprovalSummary } from "../../../shared/assistant-approval";
  * summary line, the facts it checked (connection, chat, the mode a message runs in) and the full
  * SQL or message — never the agent's description of it. Everything wraps: a long statement or
  * command must be readable to its last word without scrolling sideways, where a `DROP` could hide.
+ * For the same reason a character that draws nothing or reverses its neighbours is shown as a
+ * marker, with a line saying so: the card must not be able to show one statement and run another.
  */
 
 export interface ApprovalCardRequest {
@@ -18,7 +21,34 @@ export interface ApprovalCardRequest {
 
 const WRAPPED_BLOCK = "text-xs font-mono whitespace-pre-wrap break-words bg-background rounded p-2 border border-border max-h-80 overflow-y-auto select-text";
 
+/** Said whenever what is about to run holds a character `RevealedText` had to mark. */
+export const HIDDEN_CHARACTERS_WARNING = "Contains invisible or text-direction characters, shown as ⟨U+…⟩. They are part of what runs.";
+
+/**
+ * Text to approve, drawn so that what is displayed is what runs: a character that would draw
+ * nothing or reorder its neighbours is shown as a `⟨U+XXXX⟩` marker instead of taking effect.
+ */
+function RevealedText({ text }: { text: string }) {
+  return (
+    <>
+      {revealHiddenCharacters(text).map((part, i) => "text" in part
+        ? part.text
+        : <span key={i} className="rounded bg-warning/20 px-0.5 font-mono text-warning" data-hidden-character>{part.marker}</span>)}
+    </>
+  );
+}
+
+function WarningLine({ children }: { children: string }) {
+  return (
+    <div className="flex items-start gap-2 rounded border border-warning/50 bg-warning/15 px-2 py-1.5 text-xs font-medium text-warning">
+      <AlertCircle className="size-4 shrink-0" />
+      <span className="break-words">{children}</span>
+    </div>
+  );
+}
+
 function SummaryBody({ summary }: { summary: ApprovalSummary }) {
+  const hidden = [summary.body?.text ?? "", ...summary.facts.map((f) => f.value)].some(hasHiddenCharacters);
   return (
     <>
       <p className="text-sm text-text-primary">{summary.headline}</p>
@@ -27,7 +57,7 @@ function SummaryBody({ summary }: { summary: ApprovalSummary }) {
           {summary.facts.map((f) => (
             <div key={f.label} className="contents">
               <dt className="text-text-secondary">{f.label}</dt>
-              <dd className={f.tone === "warning" ? "font-medium text-warning break-words" : "text-text-primary break-words"}>{f.value}</dd>
+              <dd className={f.tone === "warning" ? "font-medium text-warning break-words" : "text-text-primary break-words"}><RevealedText text={f.value} /></dd>
             </div>
           ))}
         </dl>
@@ -39,16 +69,12 @@ function SummaryBody({ summary }: { summary: ApprovalSummary }) {
             {summary.statementCount != null && ` · ${summary.statementCount} statement${summary.statementCount === 1 ? "" : "s"}`}
           </div>
           <pre className={`${WRAPPED_BLOCK} ${summary.body.format === "sql" ? "text-text-primary" : "font-sans text-text-primary"}`}>
-            {summary.body.text}
+            <RevealedText text={summary.body.text} />
           </pre>
         </div>
       )}
-      {summary.warning && (
-        <div className="flex items-start gap-2 rounded border border-warning/50 bg-warning/15 px-2 py-1.5 text-xs font-medium text-warning">
-          <AlertCircle className="size-4 shrink-0" />
-          <span className="break-words">{summary.warning}</span>
-        </div>
-      )}
+      {hidden && <WarningLine>{HIDDEN_CHARACTERS_WARNING}</WarningLine>}
+      {summary.warning && <WarningLine>{summary.warning}</WarningLine>}
     </>
   );
 }
@@ -61,6 +87,7 @@ export function ApprovalCard({
   onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
 }) {
   const summary = approval.summary;
+  const rawInput = summary ? "" : JSON.stringify(approval.input, null, 2) ?? "";
   return (
     <div className="rounded-lg border-2 border-warning/40 bg-warning/10 p-3 space-y-2" data-approval-request={approval.requestId}>
       <div className="flex items-center gap-2 text-warning text-sm font-medium">
@@ -73,8 +100,9 @@ export function ApprovalCard({
             <span className="font-medium">{approval.tool}</span>
           </div>
           <pre className={`${WRAPPED_BLOCK} text-text-secondary`}>
-            {JSON.stringify(approval.input, null, 2)}
+            <RevealedText text={rawInput} />
           </pre>
+          {hasHiddenCharacters(rawInput) && <WarningLine>{HIDDEN_CHARACTERS_WARNING}</WarningLine>}
         </>
       )}
       <div className="flex gap-2">

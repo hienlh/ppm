@@ -9,9 +9,10 @@ const GET_STATE = { op: "get_state" as const, args: {} };
 
 function harness() {
   const sockets: any[] = [];
-  const connect = (sessionId: string) => {
+  /** `clientId`: the browser tab the socket belongs to, as the client sends it with each connection. */
+  const connect = (sessionId: string, clientId?: string) => {
     const messages: any[] = [];
-    const socket = { data: { sessionId }, send: (json: string) => messages.push(JSON.parse(json)) };
+    const socket = { data: { sessionId, clientId }, send: (json: string) => messages.push(JSON.parse(json)) };
     sockets.push(socket);
     chatWebSocket.open(socket as any);
     return {
@@ -137,6 +138,122 @@ it("drops a malformed answer without settling the call", async () => {
   } finally {
     release();
     send.mockRestore();
+    closeAll();
+  }
+});
+
+const PHONE_TAB = "phone-tab-0001";
+const LAPTOP_TAB = "laptop-tab-0002";
+
+/** A turn held open, so a reconnect lands mid-turn the way it does in a browser. */
+function heldTurn(events: object[] = []) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const send = spyOn(chatService, "sendMessage").mockImplementation(async function* () {
+    for (const e of events) yield e as any;
+    yield { type: "text", content: "working" } as any;
+    await gate;
+  });
+  return { release: () => { release(); send.mockRestore(); } };
+}
+
+const waitForText = async (device: { messages: any[] }) => {
+  for (let i = 0; i < 100 && !device.messages.some((m) => m.type === "text"); i++) await Bun.sleep(5);
+};
+
+it("still reaches the chatting tab after its socket reconnects", async () => {
+  const session = await chatService.createSession("mock", {});
+  const turn = heldTurn();
+  const { connect, answer, closeAll } = harness();
+  try {
+    const phone = connect(session.id, PHONE_TAB);
+    const laptop = connect(session.id, LAPTOP_TAB);
+    await chatWebSocket.message(phone.socket as any, JSON.stringify({ type: "message", content: "what is open?" }));
+    await waitForText(phone);
+    // The new socket opens before the old one closes, as a browser reconnect often does.
+    const phoneAgain = connect(session.id, PHONE_TAB);
+    chatWebSocket.close(phone.socket as any);
+
+    const call = assistantUiBroker.request(session.id, GET_STATE, 2000);
+    expect(phoneAgain.asks()).toHaveLength(1);
+    expect(laptop.asks()).toHaveLength(0);
+    await answer(phoneAgain.socket, phoneAgain.asks()[0].requestId);
+    expect((await call).ok).toBe(true);
+  } finally {
+    turn.release();
+    closeAll();
+  }
+});
+
+it("still reaches the chatting tab after a rename reopens its socket under the new id", async () => {
+  const session = await chatService.createSession("mock", {});
+  const threadId = `thread-${session.id}`;
+  const turn = heldTurn([{ type: "session_migrated", oldSessionId: session.id, newSessionId: threadId }]);
+  const { connect, answer, closeAll } = harness();
+  try {
+    const device = connect(session.id, PHONE_TAB);
+    await chatWebSocket.message(device.socket as any, JSON.stringify({ type: "message", content: "what is open?" }));
+    await waitForText(device);
+    // The browser follows the rename: it closes the old socket and opens one under the thread id.
+    chatWebSocket.close(device.socket as any);
+    const reopened = connect(threadId, PHONE_TAB);
+
+    const call = assistantUiBroker.request(session.id, GET_STATE, 2000);
+    expect(reopened.asks()).toHaveLength(1);
+    await answer(reopened.socket, reopened.asks()[0].requestId);
+    expect((await call).ok).toBe(true);
+  } finally {
+    turn.release();
+    closeAll();
+  }
+});
+
+it("does not take another tab, or a tab with no id, for the chatting one", async () => {
+  const session = await chatService.createSession("mock", {});
+  const turn = heldTurn();
+  const { connect, closeAll } = harness();
+  try {
+    const phone = connect(session.id, PHONE_TAB);
+    await chatWebSocket.message(phone.socket as any, JSON.stringify({ type: "message", content: "what is open?" }));
+    await waitForText(phone);
+    chatWebSocket.close(phone.socket as any);
+    const laptop = connect(session.id, LAPTOP_TAB);
+    const unnamed = connect(session.id);
+
+    expect(await assistantUiBroker.request(session.id, GET_STATE, 2000)).toEqual({
+      ok: false, reason: "no-device", message: ASSISTANT_UI_NO_DEVICE_MESSAGE,
+    });
+    expect(laptop.asks()).toHaveLength(0);
+    expect(unnamed.asks()).toHaveLength(0);
+
+    // The tab tools still go to every device showing the chat once the sender has gone.
+    const opened = tabOpenBroker.request(session.id, { tool: "open_file", filePath: "a.ts", projectName: null }, 2000);
+    expect(laptop.opens()).toHaveLength(1);
+    expect(unnamed.opens()).toHaveLength(1);
+    await chatWebSocket.message(laptop.socket as any, JSON.stringify({ type: "tab_open_result", requestId: laptop.opens()[0].requestId, opened: true }));
+    expect((await opened).ok).toBe(true);
+  } finally {
+    turn.release();
+    closeAll();
+  }
+});
+
+it("forgets the previous tab when the next message comes from a tab that sends no id", async () => {
+  const session = await chatService.createSession("mock", {});
+  const turn = heldTurn();
+  const { connect, closeAll } = harness();
+  try {
+    const phone = connect(session.id, PHONE_TAB);
+    const older = connect(session.id);
+    await chatWebSocket.message(phone.socket as any, JSON.stringify({ type: "message", content: "first" }));
+    await waitForText(phone);
+    await chatWebSocket.message(older.socket as any, JSON.stringify({ type: "message", content: "second" }));
+    chatWebSocket.close(older.socket as any);
+    // The phone tab is still connected, but it is not the one the user is talking from now.
+    expect(await assistantUiBroker.request(session.id, GET_STATE, 2000)).toMatchObject({ ok: false, reason: "no-device" });
+    expect(phone.asks()).toHaveLength(0);
+  } finally {
+    turn.release();
     closeAll();
   }
 });

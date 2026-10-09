@@ -136,6 +136,11 @@ export interface TabDescription {
   };
   terminal?: { sessionId?: string };
   database?: {
+    /**
+     * The saved connection the tab shows; absent for a database file opened by path. The server
+     * reads the tab only when this connection is available to the AI.
+     */
+    connectionId?: number;
     /** A Query tab's SQL as typed. */
     sql?: string;
     /** What the tab shows; absent when it has not loaded on this device. */

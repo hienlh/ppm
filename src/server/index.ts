@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { writeFileSync } from "node:fs";
 import { SERVER_PORT_FILE } from "../services/edge-target-resolver.ts";
+import { CHAT_CLIENT_ID_PARAM, chatClientIdFrom } from "../shared/chat-client-id.ts";
 import { configService } from "../services/config.service.ts";
 import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
@@ -1119,8 +1120,10 @@ if (process.argv.includes("__serve__")) {
           // provider, so a tab that knows it is a claude chat cannot be resumed
           // as whatever the install's default provider happens to be.
           const providerHint = url.searchParams.get("providerId") ?? undefined;
+          // Which tab this is, so a reconnect is recognised; a routing hint, never a credential.
+          const clientId = chatClientIdFrom(url.searchParams.get(CHAT_CLIENT_ID_PARAM));
           const upgraded = server.upgrade(req, {
-            data: { type: "chat", sessionId, projectName, providerHint },
+            data: { type: "chat", sessionId, projectName, providerHint, clientId },
           });
           if (upgraded) return undefined;
           return upgradeFailed(url);

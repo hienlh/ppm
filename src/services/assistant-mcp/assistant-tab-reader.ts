@@ -10,25 +10,38 @@ import {
 } from "../../shared/assistant-tab-content.ts";
 import { resolveAssistantProject, resolveAssistantSessionTarget, type AssistantProject, type AssistantSessionTarget } from "./assistant-project-scope.ts";
 import { readChatPage, type ChatPage } from "./assistant-chat-page.ts";
+import { findAiConnection } from "./assistant-db-tools.ts";
+import { assistantPrivateRoots, isAssistantPrivatePath } from "../assistant/assistant-private-paths.ts";
 
 /**
  * Reads what a tab shows, for `ui_read_tab`: the device described the tab (`describe_tab`);
  * the server reads the parts it holds itself — a file, a terminal's output, a chat's messages —
  * under the same rules the Assistant's other reads follow. A file is resolved against the
  * project the TAB belongs to, never the Assistant's own folder; a file or terminal outside
- * every registered project is not read without the user's approval; PPM's private folders are
- * refused outright by `resolveTabTarget`.
+ * every registered project, and a file in a credential store even inside one
+ * (`assistant-private-paths.ts`), is not read without the user's approval; PPM's private
+ * folders are refused outright by `resolveTabTarget`. A database tab's SQL and rows are the
+ * device's to send, but only for a saved connection the user left available to the AI — the
+ * same setting `db_query` and `ui_open_tab` honour.
  */
 
 export type TabReadOutcome =
   | { kind: "content"; content: Record<string, unknown> }
-  | { kind: "needs-approval"; reason: string; details: Record<string, unknown> }
+  | {
+    kind: "needs-approval";
+    /** Outside every registered project, or in a store of logins and keys. */
+    why: "outside" | "private";
+    reason: string;
+    details: Record<string, unknown>;
+  }
   | { kind: "error"; message: string };
 
 export interface TabReaderDeps {
   listProjects: () => AssistantProject[];
   terminal: { get(id: string): { projectPath: string } | undefined; getBuffer(id: string): string };
   readChat: (target: AssistantSessionTarget, opts: { limit: number; before?: number }) => Promise<ChatPage>;
+  /** The private roots a file is checked against; the Assistant's own list unless a test names others. */
+  privateRoots?: () => readonly string[];
 }
 
 const defaultDeps: TabReaderDeps = {
@@ -83,9 +96,21 @@ async function readEditor(desc: TabDescription, offset: number, deps: TabReaderD
   if (!target.ok) return error(target.error);
   const absolute = target.target.projectName && tabProject ? resolve(tabProject.path, target.target.filePath) : target.target.filePath;
   const owner = target.target.projectName ? tabProject : await projectHolding(absolute, deps);
+  // Judged as written and where it points: a link inside a project can lead into `~/.ssh`.
+  const roots = deps.privateRoots?.() ?? assistantPrivateRoots();
+  const real = await realpath(absolute).catch(() => absolute);
+  if ((isAssistantPrivatePath(absolute, roots) || isAssistantPrivatePath(real, roots)) && !outsideApproved) {
+    return {
+      kind: "needs-approval",
+      why: "private",
+      reason: "The file is where logins or keys are kept; reading it needs the user's approval.",
+      details: { path: target.target.displayPath },
+    };
+  }
   if (!owner && !outsideApproved) {
     return {
       kind: "needs-approval",
+      why: "outside",
       reason: "The file is outside every registered project; reading it needs the user's approval.",
       details: { path: target.target.displayPath },
     };
@@ -120,6 +145,7 @@ async function readTerminal(desc: TabDescription, offset: number, deps: TabReade
   if (!owner && !outsideApproved) {
     return {
       kind: "needs-approval",
+      why: "outside",
       reason: "This terminal runs outside every registered project; reading it needs the user's approval.",
       details: { folder: session.projectPath },
     };
@@ -147,10 +173,23 @@ async function readChat(desc: TabDescription, offset: number, deps: TabReaderDep
   });
 }
 
+/**
+ * A database tab's SQL and rows, as the device sent them — only when the tab names a saved
+ * connection that is still available to the AI. Checked here, not on the device: the rows are
+ * already in the browser, so the server is the one place that can keep them from the agent. A
+ * tab naming no connection (a database file opened by path, or one whose connection was
+ * deleted) has no such setting to consult, so it is refused too.
+ */
 function readDatabase(desc: TabDescription): TabReadOutcome {
   const db = desc.database ?? {};
+  if (db.connectionId === undefined) {
+    return error("This tab does not show a saved connection, so PPM cannot check that the user made it available to the AI; its SQL and rows are not read.");
+  }
+  const found = findAiConnection(db.connectionId);
+  if (!found.ok) return error(found.error);
   const rows = db.rows;
   return content({
+    connection: found.conn.name,
     ...(db.sql !== undefined ? { sql: db.sql } : {}),
     ...(rows
       ? { columns: rows.columns, rows: rows.rows, ...(rows.more ? { moreRows: "The tab holds more rows than these; query them with db_query." } : {}) }

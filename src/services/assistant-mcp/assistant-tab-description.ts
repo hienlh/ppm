@@ -88,7 +88,11 @@ export function parseTabDescription(raw: unknown): TabDescription | null {
   if (isObj(raw.database)) {
     const sql = typeof raw.database.sql === "string" ? clip(raw.database.sql, READ_TAB_SQL_CHARS) : undefined;
     const rows = shownRows(raw.database.rows);
-    desc.database = { ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}) };
+    const id = raw.database.connectionId;
+    const connectionId = typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : undefined;
+    desc.database = {
+      ...(connectionId !== undefined ? { connectionId } : {}), ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}),
+    };
   }
   return desc;
 }
