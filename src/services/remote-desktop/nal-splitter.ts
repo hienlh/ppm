@@ -19,10 +19,23 @@ export function nalType(nal: Uint8Array): number {
   return (nal[0] ?? 0) & 0x1f;
 }
 
-/** A slice NAL starts a new access unit; SPS/PPS/AUD/SEI attach to whichever AU follows them. */
+/** A slice NAL — picture data, as opposed to SPS/PPS/AUD/SEI. */
 export function isVclNal(nal: Uint8Array): boolean {
   const t = nalType(nal);
   return t === NAL_TYPE_SLICE_NON_IDR || t === NAL_TYPE_IDR;
+}
+
+/**
+ * Whether a slice NAL opens a new picture rather than continuing the one already open.
+ *
+ * An encoder may cut one frame into several slices — x264 does under `tune=zerolatency`, one per
+ * thread, measured at ~17 per 1080p frame on a 24-thread host. Every slice after the first names
+ * the macroblock it starts at, and `first_mb_in_slice` is the slice header's first field: an
+ * Exp-Golomb number, in which only 0 is coded as a single leading 1 bit. The byte after the NAL
+ * header can never hold an emulation-prevention byte (that needs two zero bytes before it).
+ */
+export function startsPicture(nal: Uint8Array): boolean {
+  return isVclNal(nal) && ((nal[1] ?? 0) & 0x80) !== 0;
 }
 
 /** `Bun.spawn` stdout chunks type as `Uint8Array<ArrayBufferLike>` (could in principle back
