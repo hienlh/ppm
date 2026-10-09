@@ -59,6 +59,12 @@ export interface SendMessageOpts {
    * token for it. Server-built for an Assistant session only, never taken from a caller.
    */
   assistantMcp?: { url: string; token: string };
+  /**
+   * What the device that sent an Assistant session's message shows, as that device reported it.
+   * Consumed by `chatService.prepareSendOptions`, which validates and cleans it into an entry of
+   * the shared-context block, and never handed to a provider; ignored for any other session.
+   */
+  uiSummary?: import("../shared/assistant-ui-protocol.ts").UiSummary;
 }
 
 export interface AIProvider {

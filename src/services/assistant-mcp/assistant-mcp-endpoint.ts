@@ -3,13 +3,14 @@ import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { resolveMigratedSession } from "../db.service.ts";
 import {
   CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
-  DB_QUERY_TOOL, PROJECTS_LIST_TOOL,
+  DB_QUERY_TOOL, PROJECTS_LIST_TOOL, UI_GET_STATE_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_TOOL_DEFINITIONS } from "./assistant-mcp-tools.ts";
 import { assistantMcpTokens, type AssistantMcpTokenBinding } from "./assistant-mcp-tokens.ts";
 import { chatListSessions, chatReadMessages, chatSearch, projectsList } from "./assistant-read-tools.ts";
 import { dbListConnections, dbQuery } from "./assistant-db-tools.ts";
 import { errorResult } from "./assistant-tool-output.ts";
+import { uiGetState } from "./assistant-ui-tools.ts";
 
 /**
  * `/api/assistant-mcp` — the PPM Assistant's own tools, for one Assistant session's agent (the
@@ -52,6 +53,7 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args) => 
     case DB_LIST_CONNECTIONS_TOOL: return dbListConnections();
     case DB_QUERY_TOOL:
       return dbQuery(args, { actor: "agent", callerIp: null, callerUa: `PPM Assistant (session ${sessionId})` });
+    case UI_GET_STATE_TOOL: return uiGetState(sessionId);
     default: return errorResult(`Unknown tool: ${name.slice(0, 60)}`);
   }
 };

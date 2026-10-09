@@ -27,7 +27,9 @@ import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.t
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
-import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
+import { parseTabOpenResult } from "../../shared/tab-open-protocol.ts";
+import { assistantUiBroker, setAssistantUiDelivery } from "../../services/assistant-mcp/assistant-ui-tools.ts";
+import { parseAssistantUiResult, type UiSummary } from "../../shared/assistant-ui-protocol.ts";
 import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
@@ -483,15 +485,18 @@ function evictClient(entry: SessionEntry, ws: ChatWsSocket): void {
 }
 
 /**
- * Hands an AI tab tool's request to the device that sent the turn's message or, when that
- * one has gone (a locked phone, a closed laptop), to every device showing the chat; the
- * first answer settles the call. Never buffered into `turnEvents`: a device that reconnects
- * later must not open the tab again. Returns how many sockets it went to.
+ * Hands an AI tool's request to the device that sent the turn's message — the one the user is
+ * talking from. When that one has gone (a locked phone, a closed laptop), a non-`strict` call
+ * goes to every device showing the chat and the first answer settles it: harmless for opening
+ * a tab. A `strict` call goes nowhere instead, because the PPM Assistant's UI operations
+ * (switching project, running a command) must never happen on a screen nobody is talking from.
+ * Never buffered into `turnEvents`: a device that reconnects later must not act on it again.
+ * Returns how many sockets it went to.
  */
-function deliverTabOpen(sessionId: string, request: TabOpenRequest): number {
+export function deliverToChattingDevice(sessionId: string, payload: object, opts: { strict: boolean }): number {
   const entry = activeSessions.get(sessionId);
   if (!entry) return 0;
-  const json = JSON.stringify(request);
+  const json = JSON.stringify(payload);
   const sendTo = (clients: Iterable<ChatWsSocket>): number => {
     let sent = 0;
     for (const client of [...clients]) {
@@ -500,9 +505,10 @@ function deliverTabOpen(sessionId: string, request: TabOpenRequest): number {
     return sent;
   };
   if (entry.lastSender && entry.clients.has(entry.lastSender) && sendTo([entry.lastSender]) > 0) return 1;
-  return sendTo(entry.clients);
+  return opts.strict ? 0 : sendTo(entry.clients);
 }
-setTabOpenDelivery(deliverTabOpen, resolveMigratedSession);
+setTabOpenDelivery((sessionId, request) => deliverToChattingDevice(sessionId, request, { strict: false }), resolveMigratedSession);
+setAssistantUiDelivery((sessionId, request) => deliverToChattingDevice(sessionId, request, { strict: true }), resolveMigratedSession);
 
 /**
  * Forward an event to connected WS clients for a session (if any).
@@ -757,7 +763,7 @@ function startCleanupTimer(sessionId: string): void {
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[]): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], uiSummary?: UiSummary): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -822,7 +828,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin: "ws" })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(uiSummary && { uiSummary }), origin: "ws" })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1387,11 +1393,17 @@ export const chatWebSocket = {
       return;
     }
 
-    // A device answering an AI tab tool (see deliverTabOpen). Settles only a call pending
-    // for this very session; anything else is dropped without a reply.
+    // A device answering an AI tab tool (see deliverToChattingDevice). Settles only a call
+    // pending for this very session; anything else is dropped without a reply.
     if (parsed.type === "tab_open_result") {
       const result = parseTabOpenResult(parsed);
       if (result) tabOpenBroker.settle(sessionId, result);
+      return;
+    }
+    // The same for the PPM Assistant's UI tools.
+    if (parsed.type === "assistant_ui_result") {
+      const result = parseAssistantUiResult(parsed);
+      if (result) assistantUiBroker.settle(sessionId, result);
       return;
     }
 
@@ -1602,6 +1614,10 @@ export const chatWebSocket = {
       // Store user message for reconnect replay (turn_events includes only assistant events)
       entry.currentUserMessage = parsed.content;
       entry.lastSender = ws;
+      // What this device shows, for an Assistant session's turn. Validated and cleaned by
+      // chatService, which ignores it for every other session; only an object is passed on.
+      const rawSummary = (parsed as { uiSummary?: unknown }).uiSummary;
+      const uiSummary = rawSummary && typeof rawSummary === "object" && !Array.isArray(rawSummary) ? rawSummary as UiSummary : undefined;
       // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
       if (!entry.isStreamingActive || entry.phase === "idle") {
         entry.turnRequestedAt = { at: messageReceivedAt, cold: !entry.isStreamingActive };
@@ -1639,7 +1655,7 @@ export const chatWebSocket = {
         const msgImagePaths = parsed.type === "message" ? parsed.imagePaths : undefined;
         entry.streamPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
-            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths).then(resolve, resolve);
+            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths, uiSummary).then(resolve, resolve);
           }, 0);
         });
       } else {
@@ -1656,6 +1672,7 @@ export const chatWebSocket = {
               ...(entry.model ? { model: entry.model } : {}),
               ...(effort ? { effort } : {}),
               ...(thinkingBudget != null ? { thinkingBudget } : {}),
+              ...(uiSummary ? { uiSummary } : {}),
             });
           } catch (e) {
             log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);

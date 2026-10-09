@@ -7,6 +7,7 @@ import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { answerTabOpen } from "@/lib/open-ai-tab";
+import { answerAssistantUi, readUiSummary } from "@/lib/assistant-ui/answer-assistant-ui";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
@@ -906,6 +907,11 @@ export function useChat(
         (message) => sendRef.current(message));
       return;
     }
+    // The same for a PPM Assistant UI tool; refused unless this chat is an Assistant session.
+    if (data.type === "assistant_ui") {
+      void answerAssistantUi(data, { projectName: projectNameRef.current || undefined }, (message) => sendRef.current(message));
+      return;
+    }
 
     if (isReplayingRef.current) {
       queuedReplayMessagesRef.current.push(event);
@@ -1511,6 +1517,8 @@ export function useChat(
         imagePaths: opts?.imagePaths,
         replyTo: opts?.replyTo,
         ...turnSettings(),
+        // An Assistant session tells the agent what this device shows, with every message.
+        ...(isAssistantProject(projectNameRef.current) ? { uiSummary: readUiSummary() } : {}),
       }));
     },
     [send, isConnected, connectedSessionId, turnSettings],

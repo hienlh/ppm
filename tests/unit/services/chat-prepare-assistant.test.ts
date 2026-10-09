@@ -7,7 +7,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { getDb, setSessionAssistant, setSessionDesignSlug, setSessionMetadata, setSessionPermissionMode } from "../../../src/services/db.service.ts";
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { assistantWorkDir } from "../../../src/services/assistant/assistant-work-dir.ts";
-import { ASSISTANT_READ_TOOLS_SECTION, buildAssistantInstructions } from "../../../src/services/assistant/assistant-instructions.ts";
+import { ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, buildAssistantInstructions } from "../../../src/services/assistant/assistant-instructions.ts";
 import { assistantMcpTokens } from "../../../src/services/assistant-mcp/assistant-mcp-tokens.ts";
 import type { AIProvider, PrewarmInput, SendMessageOpts } from "../../../src/types/chat.ts";
 
@@ -50,7 +50,7 @@ describe("chatService for an Assistant session", () => {
       model: "kept",
     });
     expect(opts.assistantSession).toBe(true);
-    expect(opts.assistantInstructions).toBe(buildAssistantInstructions({ sections: [ASSISTANT_READ_TOOLS_SECTION] }));
+    expect(opts.assistantInstructions).toBe(buildAssistantInstructions({ sections: [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION] }));
     expect(opts.permissionMode).toBe("default");
     expect(opts.model).toBe("kept");
   });

@@ -10,11 +10,12 @@ export const CHAT_SEARCH_TOOL = "chat_search";
 export const CHAT_READ_MESSAGES_TOOL = "chat_read_messages";
 export const DB_LIST_CONNECTIONS_TOOL = "db_list_connections";
 export const DB_QUERY_TOOL = "db_query";
+export const UI_GET_STATE_TOOL = "ui_get_state";
 
 /** Every tool the endpoint serves, in the order `tools/list` gives them. */
 export const ASSISTANT_TOOLS = [
   PROJECTS_LIST_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_SEARCH_TOOL, CHAT_READ_MESSAGES_TOOL,
-  DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL,
+  DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, UI_GET_STATE_TOOL,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
 

@@ -2,10 +2,12 @@ import {
   CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL,
   PROJECTS_LIST_TOOL,
 } from "../../shared/assistant-tool-names.ts";
+import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
 
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
- * provider knows them by are in `assistant-tool-names.ts`. Every tool here only reads.
+ * provider knows them by are in `assistant-tool-names.ts`. Every tool here only reads; the ones that
+ * read the user's screen are defined beside their handler in `assistant-ui-tools.ts`.
  */
 
 export interface AssistantMcpAccess {
@@ -101,4 +103,5 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     }, ["connectionId", "sql"]),
     annotations: READ_ONLY,
   },
+  ...UI_TOOL_DEFINITIONS,
 ] as const;

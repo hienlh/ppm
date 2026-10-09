@@ -52,7 +52,7 @@ function assistantSession(): string {
 }
 
 describe("assistant MCP endpoint", () => {
-  it("lists the six read tools under the ppm-assistant server", async () => {
+  it("lists its tools under the ppm-assistant server", async () => {
     const { tokens, rpc } = setup();
     const token = tokens.mint({ sessionId: assistantSession() });
     const init = await (await rpc(token, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} })).json();
