@@ -1,37 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from "react";
-import {
-  Terminal,
-  MessageSquare,
-  GitCommitHorizontal,
-  Puzzle,
-  Settings,
-  Database,
-  Search,
-  FilePlus,
-  FolderOpen,
-  Loader2,
-  Globe,
-  MonitorSmartphone,
-  Mic,
-  Columns2,
-  Cloud,
-  AppWindow,
-  CircleX,
-  WrapText,
-  Zap,
-  Cpu,
-  ScrollText,
-  Bug,
-  BotMessageSquare,
-} from "@/lib/icons";
-import { openExplorer } from "@/components/os-explorer/open-explorer";
-import { openSettings } from "@/components/settings/open-settings";
-import { openAssistant } from "@/components/assistant/open-assistant";
-import { openRemoteAccess } from "@/components/settings/remote-access/remote-access-tab-store";
-import { openPortForwarding } from "@/components/tunnels/open-port-forwarding";
-import { useOpenSystemMonitor } from "@/components/system/use-open-system-monitor";
-import { openLogs } from "@/components/logs/open-logs";
-import { useTabStore, type TabType } from "@/stores/tab-store";
+import { MessageSquare, Database, Search, FolderOpen, Loader2 } from "@/lib/icons";
+import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
@@ -40,52 +9,21 @@ import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
 import { useExtensionStore } from "@/stores/extension-store";
-import { extensionIcon } from "@/lib/extension-icons";
-import { useCompareStore } from "@/stores/compare-store";
-import { usePanelStore } from "@/stores/panel-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
 import { splitSourceLocation, type SourceLine } from "@/lib/source-location";
 import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
-import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
 import { fileIconElement } from "@/lib/file-icons";
+import { composeCommands, type CommandContext } from "@/lib/commands/command-registry";
 import { DB_TYPE_LABELS, type DbType } from "../../../shared/db-types";
-import { openConnectionForm } from "@/components/database/open-connection-form";
 import { openTableTab } from "@/components/database/explorer/open-db-tabs";
-import { openNewQuery } from "@/components/database/explorer/open-new-query";
 import { NewDesignDialogHost, useDesignCommands } from "./command-palette-design-commands";
 import { useDbPaletteCommands } from "./command-palette-db-commands";
+import { paletteItemFromCommand, type CommandItem } from "./command-palette-items";
 
 /** Max results to display — prevents rendering thousands of matches */
 const MAX_RESULTS = 100;
-
-export interface CommandItem {
-  id: string;
-  label: string;
-  hint?: string;
-  icon: React.ElementType;
-  action: () => void;
-  keywords?: string;
-  group: "action" | "file" | "fs" | "db";
-  connectionColor?: string | null;
-  shortcut?: string;
-  /** True if gitignored — rendered with muted style for visual cue */
-  isIgnored?: boolean;
-}
-
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
-
-/** Format a keybinding combo for display (e.g. "Mod+G" → "⌘G" on Mac, "Ctrl+G" on others) */
-function formatShortcut(combo: string): string {
-  if (!combo) return "";
-  return combo
-    .replace(/Mod\+/g, isMac ? "⌘" : "Ctrl+")
-    .replace(/Alt\+/g, isMac ? "⌥" : "Alt+")
-    .replace(/Shift\+/g, isMac ? "⇧" : "Shift+")
-    .replace(/Meta\+/g, "⌘")
-    .replace(/Ctrl\+/g, isMac ? "⌃" : "Ctrl+");
-}
 
 interface DbSearchResult {
   connectionId: number;
@@ -149,13 +87,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const loadIndex = useFileStore((s) => s.loadIndex);
   const openIndexReader = useFileStore((s) => s.openIndexReader);
   const fileTree = useFileStore((s) => s.tree);
-  const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
   const getBinding = useKeybindingsStore((s) => s.getBinding);
   const extContributions = useExtensionStore((s) => s.contributions);
   const isMobile = useIsMobile();
   const isTouchOnly = useIsTouchOnly();
   const lspEnabled = useSettingsStore((s) => s.lspEnabled);
-  const openSystemMonitor = useOpenSystemMonitor();
 
   /**
    * A query may name one place in a file — `app.ts:120`, `app.ts:120-140`, `app.ts#L120` —
@@ -234,158 +170,20 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     return () => clearTimeout(timer);
   }, [query]);
 
-  const designCommands = useDesignCommands(activeProject?.name ?? null, open, onClose);
-  const dbPaletteCommands = useDbPaletteCommands(isMobile, onClose);
+  const designCommands = useDesignCommands(activeProject?.name ?? null, open);
+  const dbPaletteCommands = useDbPaletteCommands(isMobile);
 
-  // Action commands
-  const actionCommands = useMemo<CommandItem[]>(() => {
-    const projectId = activeProject?.name ?? null;
-    const meta = activeProject ? { projectName: activeProject.name } : undefined;
+  /** What the registry's commands see when one is listed or picked here. */
+  const commandContext = useMemo<CommandContext>(() => ({
+    project: activeProject ?? null, isMobile, isTouchOnly, lspEnabled, getBinding, extensions: extContributions,
+  }), [activeProject, isMobile, isTouchOnly, lspEnabled, getBinding, extContributions]);
 
-    const openNewTab = (type: TabType, title: string) => () => {
-      openTab({ type, title, projectId, metadata: meta, closable: true });
-      onClose();
-    };
-
-    const builtIn: CommandItem[] = [
-      { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action", shortcut: formatShortcut(getBinding("open-chat")) },
-      {
-        id: "ppm-assistant", label: "PPM Assistant", icon: BotMessageSquare, group: "action",
-        keywords: "assistant agent helper control ppm ai claude codex",
-        action: () => { openAssistant(); onClose(); },
-        shortcut: formatShortcut(getBinding("open-assistant")),
-      },
-      { id: "new-file", label: "New File", icon: FilePlus, action: () => { useTabStore.getState().openNewFile(); onClose(); }, keywords: "create untitled blank empty", group: "action", shortcut: formatShortcut(getBinding("new-file")) },
-      { id: "new-db-query", label: "New DB Query", icon: Database, action: () => { void openNewQuery(); onClose(); }, keywords: "sql database query scratchpad new", group: "action" },
-      { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
-      { id: "remote-access", label: "Remote Access", icon: MonitorSmartphone, action: () => { openRemoteAccess(); onClose(); }, keywords: "remote access tunnel cloudflare tailscale public link share url phone domain", group: "action" },
-      { id: "forward-port", label: "Forward a Port", icon: Globe, action: () => { openPortForwarding(); onClose(); }, keywords: "forward port forwarding localhost web preview tunnel cloudflare tailscale dev server url", group: "action" },
-      { id: "cloud-share", label: "PPM Cloud & Share", icon: Cloud, action: () => { window.dispatchEvent(new CustomEvent("open-cloud-share")); onClose(); }, keywords: "cloud permanent link alias share phone remote device qr sign in login", group: "action" },
-      { id: "new-db-connection", label: "New connection…", icon: Database, action: () => { openConnectionForm(); onClose(); }, keywords: "database connection postgres pg mysql mariadb sqlite add", group: "action" },
-      { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
-      { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },
-      { id: "problems", label: "Problems", icon: CircleX, action: () => { usePanelStore.getState().openInDock({ type: "problems", title: "Problems", projectId: null, closable: true }); onClose(); }, keywords: "errors warnings diagnostics lint typescript", group: "action", shortcut: formatShortcut(getBinding("open-problems")) },
-      {
-        // The editor's own wrap toggle is in the desktop-only breadcrumb bar,
-        // so on a phone this and Settings are the way to reach it.
-        id: "word-wrap", label: "Toggle Word Wrap", icon: WrapText, group: "action",
-        keywords: "wrap unwrap word lines editor soft",
-        action: () => {
-          const settings = useSettingsStore.getState();
-          if (isMobile) settings.toggleMobileWordWrap();
-          else settings.toggleWordWrap();
-          onClose();
-        },
-        shortcut: isMobile ? undefined : "Alt+Z",
-      },
-      {
-        id: "compare-files",
-        label: "Compare Files...",
-        icon: Columns2,
-        group: "action",
-        keywords: "diff compare two files select",
-        shortcut: formatShortcut(getBinding("compare-files")),
-        action: () => {
-          const { activeTabId: tid, tabs: ts } = useTabStore.getState();
-          const active = ts.find((t) => t.id === tid);
-          const meta = active?.metadata as { filePath?: string; projectName?: string; unsavedContent?: string } | undefined;
-          if (active?.type === "editor" && meta?.filePath && meta?.projectName) {
-            useCompareStore.getState().setSelection({
-              filePath: meta.filePath,
-              projectName: meta.projectName,
-              dirtyContent: meta.unsavedContent,
-              label: basename(meta.filePath),
-            });
-          }
-          window.dispatchEvent(new CustomEvent("open-compare-picker"));
-          onClose();
-        },
-      },
-      // `isTouchOnly`, not `isMobile`: the editor gates the server on the device
-      // rather than on the viewport, so a wide touch-only tablet was offered this
-      // entry while the setting it toggles did nothing there. The two have to ask
-      // the same question or the palette advertises a switch with no effect.
-      ...(isTouchOnly ? [] : [{
-        id: "language-server",
-        label: lspEnabled ? "Turn Off Language Server" : "Turn On Language Server",
-        icon: Zap,
-        group: "action" as const,
-        keywords: "lsp language server completions intellisense hover definition typescript pyright gopls",
-        hint: "This device",
-        action: () => {
-          const settings = useSettingsStore.getState();
-          settings.setLspEnabled(!settings.lspEnabled);
-          onClose();
-        },
-      }]),
-      {
-        id: "settings", label: "Settings", icon: Settings,
-        action: () => {
-          openSettings();
-          onClose();
-        },
-        keywords: "config preferences theme",
-        group: "action",
-        shortcut: formatShortcut(getBinding("open-settings")),
-      },
-      {
-        id: "open-file-explorer", label: "Open File Explorer", icon: AppWindow, group: "action",
-        keywords: "open file explorer finder browse files folders disk drive window",
-        action: () => {
-          void openExplorer();
-          onClose();
-        },
-      },
-      // A phone's only way in: the status bar's CPU/MEM chip, the other one, is hidden below md.
-      {
-        id: "system-monitor", label: "System Monitor", icon: Cpu, group: "action",
-        keywords: "task manager activity monitor cpu memory ram disk network gpu processes services apps performance resources",
-        action: () => {
-          openSystemMonitor();
-          onClose();
-        },
-      },
-      {
-        id: "logs", label: "Logs", icon: ScrollText, group: "action",
-        keywords: "logs server errors warnings debug tail ppm.log browser console cloudflared",
-        action: () => {
-          openLogs();
-          onClose();
-        },
-      },
-      {
-        id: "report-bug", label: "Report a Bug", icon: Bug, group: "action",
-        keywords: "report bug issue github feedback problem crash",
-        action: () => {
-          openLogs({ view: "report" });
-          onClose();
-        },
-      },
-    ];
-
-    // Append extension-contributed commands (with keybinding shortcuts, respecting user overrides)
-    const extKbs = extContributions?.keybindings ?? [];
-    const extCmds: CommandItem[] = (extContributions?.commands ?? []).map((cmd) => {
-      const kb = extKbs.find((k) => k.command === cmd.command);
-      const overrideCombo = kb ? getBinding(`ext:${kb.command}`) : "";
-      const shortcutCombo = overrideCombo || (kb ? ((isMac && kb.mac) ? kb.mac : kb.key) : "");
-      return {
-        id: `ext:${cmd.command}`,
-        label: cmd.title,
-        hint: cmd.category,
-        icon: extensionIcon(cmd.icon) ?? Puzzle,
-        group: "action" as const,
-        keywords: `extension ${cmd.command} ${cmd.category ?? ""}`,
-        shortcut: shortcutCombo ? formatShortcut(shortcutCombo) : undefined,
-        action: () => {
-          void dispatchExtCommand(cmd.command);
-          onClose();
-        },
-      };
-    });
-
-    return [...builtIn, ...designCommands, ...dbPaletteCommands, ...extCmds];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, getBinding, extContributions, isMobile, isTouchOnly, lspEnabled, designCommands, openSystemMonitor, dbPaletteCommands]);
+  // Action commands: the registry's, in its order.
+  const actionCommands = useMemo<CommandItem[]>(
+    () => composeCommands(commandContext, { design: designCommands, db: dbPaletteCommands })
+      .map((cmd) => paletteItemFromCommand(cmd, commandContext, onClose)),
+    [commandContext, designCommands, dbPaletteCommands, onClose],
+  );
 
   // File commands — from index when ready, fallback to flattened tree
   const fileCommands = useMemo<CommandItem[]>(() => {

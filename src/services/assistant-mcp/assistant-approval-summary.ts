@@ -106,6 +106,32 @@ export function closeTabSummary(input: CloseTabApproval): ApprovalSummary {
   };
 }
 
+export interface RunCommandApproval {
+  id: string;
+  /** The label the device's command registry gives it — the palette row the user would pick. */
+  label: string;
+  /** The project the device shows, which the command acts in. */
+  project: string | null;
+  /** An extension's command, which PPM cannot see into. */
+  extension: boolean;
+}
+
+export function runCommandSummary(input: RunCommandApproval): ApprovalSummary {
+  return {
+    headline: input.extension
+      ? `Run the extension command "${input.label}" on your device`
+      : `Run the PPM command "${input.label}" on your device`,
+    facts: [
+      fact("Command", input.label),
+      fact("Id", input.id),
+      fact("Project", input.project ?? "(none shown)"),
+    ],
+    warning: input.extension
+      ? "An extension's command runs with the extension's own access; PPM cannot see what it changes."
+      : "PPM marks this command as one that changes data or settings.",
+  };
+}
+
 export interface ReadOutsideApproval {
   kind: "file" | "terminal";
   /** The file's path, or the folder the terminal runs in, as PPM resolved it. */

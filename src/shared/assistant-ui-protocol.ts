@@ -131,6 +131,57 @@ export type AssistantCloseTabResult =
   | { closed: false; tabId: string; needsApproval: { reason: string; tab?: Pick<AssistantClosedTab, "type" | "title" | "project"> } };
 
 /**
+ * One of PPM's commands as the device lists it for `list_commands`: the id `run_command` takes,
+ * the label the palette shows, and whether running it changes data — what the server decides
+ * the approval by, before it asks the device to run anything.
+ */
+export interface AssistantCommandEntry {
+  id: string;
+  label: string;
+  hint?: string;
+  shortcut?: string;
+  changesData: boolean;
+}
+
+/** `list_commands`: every command matching `query`, or only the one named `id`. */
+export interface AssistantListCommandsArgs {
+  query?: string;
+  id?: string;
+}
+
+export interface AssistantListCommandsResult {
+  /** The project the device shows, which a command acts in. */
+  project: string | null;
+  commands: AssistantCommandEntry[];
+  /** How many matched, when more than `commands` holds. */
+  total: number;
+}
+
+/** Most commands one `list_commands` answer carries. */
+export const MAX_ASSISTANT_COMMANDS_LISTED = 200;
+/** Longest command id either side accepts. */
+export const MAX_ASSISTANT_COMMAND_ID_CHARS = 200;
+
+/**
+ * `run_command`. A command that changes data runs only with `approved: true` and the label the
+ * user approved — arguments only the server adds, and only once the user approved the card it
+ * built from the device's own `list_commands` entry. The device refuses such a command without
+ * them, and refuses one whose label no longer matches (it is not the command that was approved).
+ */
+export interface AssistantRunCommandArgs {
+  id: string;
+  approved?: true;
+  approvedLabel?: string;
+}
+
+export interface AssistantRunCommandResult {
+  ran: true;
+  id: string;
+  label: string;
+  project: string | null;
+}
+
+/**
  * The short picture of the device's screen an Assistant message carries, so the agent knows
  * what the user is looking at without a tool call. Built by the browser, validated and turned
  * into text by the server (`assistant-ui-summary.ts`); titles in it are names users and other

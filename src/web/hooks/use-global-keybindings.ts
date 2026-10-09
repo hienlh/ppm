@@ -6,11 +6,34 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useKeybindingsStore, parseCombo, eventMatchesCombo, matchesDockBacktick } from "@/stores/keybindings-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { useExtensionStore } from "@/stores/extension-store";
-import { useCompareStore } from "@/stores/compare-store";
-import { openSettings } from "@/components/settings/open-settings";
-import { openAssistant } from "@/components/assistant/open-assistant";
-import { basename } from "@/lib/utils";
-import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
+import { listCommands, runCommandInBackground } from "@/lib/commands/command-registry";
+import { readCommandContext } from "@/lib/commands/read-command-context";
+import { extensionKeyCombo, runExtensionCommand } from "@/lib/commands/extension-commands";
+
+/**
+ * The keybinding actions that run a command-registry command (the command declaring that
+ * `binding`), in the order they are checked — which decides who wins when a user binds one
+ * combo to two of them. The registry holds what each one does, so a shortcut and its palette
+ * row cannot drift apart.
+ */
+const COMMAND_BINDINGS_FIRST = ["new-file", "open-chat", "open-terminal", "open-settings", "open-assistant", "open-git-status", "voice-input"];
+const COMMAND_BINDINGS_COMPARE = ["compare-files"];
+const COMMAND_BINDINGS_LAST = ["open-problems"];
+
+/**
+ * Runs the registry command bound to whichever of `bindings` the event matches. True when the
+ * event was consumed.
+ */
+function runBoundCommand(e: KeyboardEvent, match: (ev: KeyboardEvent, id: string) => boolean, bindings: readonly string[]): boolean {
+  const binding = bindings.find((id) => match(e, id));
+  if (!binding) return false;
+  const ctx = readCommandContext();
+  const cmd = listCommands(ctx).find((c) => c.binding === binding);
+  if (!cmd) return false;
+  e.preventDefault();
+  runCommandInBackground(cmd, ctx);
+  return true;
+}
 
 /** Dispatch this event to open the command palette from anywhere, optionally with initial query */
 export function openCommandPalette(initialQuery?: string) {
@@ -149,83 +172,14 @@ export function useGlobalKeybindings() {
         return;
       }
 
-      // New file
-      if (match(e, "new-file")) {
-        e.preventDefault();
-        useTabStore.getState().openNewFile();
-        return;
-      }
-
-      // Open tab shortcuts
-      const tabShortcuts: { action: string; type: string; title: string }[] = [
-        { action: "open-chat", type: "chat", title: "AI Chat" },
-        { action: "open-terminal", type: "terminal", title: "Terminal" },
-      ];
-      for (const s of tabShortcuts) {
-        if (match(e, s.action)) {
-          e.preventDefault();
-          const project = useProjectStore.getState().activeProject;
-          useTabStore.getState().openTab({
-            type: s.type as any,
-            title: s.title,
-            projectId: project?.name ?? null,
-            metadata: project ? { projectName: project.name } : undefined,
-            closable: true,
-          });
-          return;
-        }
-      }
-
-      // Open settings — its own window on desktop, a tab on mobile.
-      if (match(e, "open-settings")) {
-        e.preventDefault();
-        openSettings();
-        return;
-      }
-
-      // PPM Assistant — a tab-host window on desktop, a tab on mobile.
-      if (match(e, "open-assistant")) {
-        e.preventDefault();
-        openAssistant();
-        return;
-      }
-
-      // Open git status (sidebar)
-      if (match(e, "open-git-status")) {
-        e.preventDefault();
-        const settings = useSettingsStore.getState();
-        if (settings.sidebarCollapsed) settings.toggleSidebar();
-        settings.setSidebarActiveTab("git");
-        return;
-      }
-
-      // Toggle voice input in chat
-      if (match(e, "voice-input")) {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("toggle-voice-input"));
-        return;
-      }
+      // New file, new chat or terminal, Settings, the Assistant, Source Control, voice input
+      if (runBoundCommand(e, match, COMMAND_BINDINGS_FIRST)) return;
 
       // Chat transcript navigation — the focused panel's chat tab picks these up
       if (dispatchChatNav(e, match)) return;
 
-      // Compare Files — seed A from active editor tab if applicable, then open picker
-      if (match(e, "compare-files")) {
-        e.preventDefault();
-        const { activeTabId, tabs } = useTabStore.getState();
-        const active = tabs.find((t) => t.id === activeTabId);
-        const meta = active?.metadata as { filePath?: string; projectName?: string; unsavedContent?: string } | undefined;
-        if (active?.type === "editor" && meta?.filePath && meta?.projectName) {
-          useCompareStore.getState().setSelection({
-            filePath: meta.filePath,
-            projectName: meta.projectName,
-            dirtyContent: meta.unsavedContent,
-            label: basename(meta.filePath),
-          });
-        }
-        window.dispatchEvent(new CustomEvent("open-compare-picker"));
-        return;
-      }
+      // Compare Files — seeded from the editor in front
+      if (runBoundCommand(e, match, COMMAND_BINDINGS_COMPARE)) return;
 
       // Open search (sidebar)
       if (match(e, "open-search")) {
@@ -237,13 +191,7 @@ export function useGlobalKeybindings() {
       }
 
       // Problems, in the dock — VS Code's Ctrl+Shift+M, and its placement.
-      if (match(e, "open-problems")) {
-        e.preventDefault();
-        usePanelStore.getState().openInDock({
-          type: "problems", title: "Problems", projectId: null, closable: true,
-        });
-        return;
-      }
+      if (runBoundCommand(e, match, COMMAND_BINDINGS_LAST)) return;
 
       // Switch project 1-9
       for (let i = 1; i <= 9; i++) {
@@ -262,18 +210,16 @@ export function useGlobalKeybindings() {
       // Extension-contributed keybindings (with user override support)
       const extKbs = useExtensionStore.getState().contributions?.keybindings;
       if (extKbs) {
-        const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
-        const { getBinding: getBind } = useKeybindingsStore.getState();
+        const keybindings = useKeybindingsStore.getState();
         for (const kb of extKbs) {
-          const overrideCombo = getBind(`ext:${kb.command}`);
-          const raw = overrideCombo || ((mac && kb.mac) ? kb.mac : kb.key);
+          const raw = extensionKeyCombo(keybindings, kb);
           if (!raw) continue;
           // Use per-extension parsed cache to avoid parseCombo on every keydown
           let parsed = extParsedCache.get(raw);
           if (!parsed) { parsed = parseCombo(raw); extParsedCache.set(raw, parsed); }
           if (eventMatchesCombo(e, parsed)) {
             e.preventDefault();
-            void dispatchExtCommand(kb.command);
+            void runExtensionCommand(kb.command).catch((err) => console.error(`[keybindings] "${kb.command}" failed:`, err));
             return;
           }
         }

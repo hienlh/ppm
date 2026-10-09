@@ -4,7 +4,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { listDesigns } from "@/lib/design/api-designs";
 import { openDesignTab } from "@/lib/design/open-design-tab";
 import { NEW_DESIGN_EVENT, requestNewDesign, type NewDesignRequest } from "@/lib/design/design-ui-events";
-import type { CommandItem } from "./command-palette";
+import { publishCommandSource, type AppCommand } from "@/lib/commands/command-registry";
 import type { DesignSummary } from "../../../shared/design-types";
 
 // Lazy: the dialog (and the design API it pulls in) loads the first time it is asked for.
@@ -14,9 +14,10 @@ const NewDesignDialog = lazy(() =>
 /**
  * The palette's design entries: New Design, the Designs section, and one "Open Design" per
  * design of the active project (listed each time the palette opens, so a design an agent
- * just created is there).
+ * just created is there). Each opens a dialog, the sidebar or a tab, so none changes data. The
+ * list is published to the command registry, which is how the PPM Assistant sees it too.
  */
-export function useDesignCommands(projectName: string | null, open: boolean, onClose: () => void): CommandItem[] {
+export function useDesignCommands(projectName: string | null, open: boolean): AppCommand[] {
   const [designs, setDesigns] = useState<DesignSummary[]>([]);
 
   useEffect(() => {
@@ -28,28 +29,32 @@ export function useDesignCommands(projectName: string | null, open: boolean, onC
     return () => { cancelled = true; };
   }, [open, projectName]);
 
-  return useMemo(() => {
+  const commands = useMemo<AppCommand[]>(() => {
     if (!projectName) return [];
-    const showSection = () => {
-      const settings = useSettingsStore.getState();
-      if (settings.sidebarCollapsed) settings.toggleSidebar();
-      settings.setSidebarActiveTab("designs");
-      onClose();
-    };
     return [
       {
-        id: "new-design", label: "New Design…", icon: Plus, group: "action" as const,
+        id: "new-design", label: "New Design…", icon: Plus, changesData: false, closePaletteFirst: true,
         keywords: "design mockup prototype page slides deck presentation canvas create",
-        action: () => { onClose(); requestNewDesign(projectName); },
+        run: () => requestNewDesign(projectName),
       },
-      { id: "designs", label: "Designs", icon: Palette, group: "action" as const, keywords: "design list canvas", action: showSection },
-      ...designs.map((d) => ({
+      { id: "designs", label: "Designs", icon: Palette, keywords: "design list canvas", changesData: false, run: showDesignsSection },
+      ...designs.map((d): AppCommand => ({
         id: `design:${d.slug}`, label: `Open Design: ${d.title}`, hint: `designs/${d.slug}`, icon: Palette,
-        group: "action" as const, keywords: `design ${d.slug} ${d.kind}`,
-        action: () => { openDesignTab({ projectName, slug: d.slug, title: d.title }); onClose(); },
+        keywords: `design ${d.slug} ${d.kind}`, changesData: false,
+        run: () => { openDesignTab({ projectName, slug: d.slug, title: d.title }); },
       })),
     ];
-  }, [projectName, designs, onClose]);
+  }, [projectName, designs]);
+
+  useEffect(() => publishCommandSource("design", commands), [commands]);
+  return commands;
+}
+
+/** The sidebar's Designs section, expanding a collapsed sidebar. */
+function showDesignsSection(): void {
+  const settings = useSettingsStore.getState();
+  if (settings.sidebarCollapsed) settings.toggleSidebar();
+  settings.setSidebarActiveTab("designs");
 }
 
 /**

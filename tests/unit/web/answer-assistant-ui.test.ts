@@ -39,7 +39,8 @@ describe("answering the Assistant's UI requests on the device", () => {
   });
 
   it("answers an operation it has no handler for instead of staying silent", async () => {
-    const answer = await ask("run_command", "__assistant__");
+    // An op a newer server may send that this build has no handler for.
+    const answer = await ask("no_such_op", "__assistant__");
     expect(answer).toMatchObject({ ok: false });
     expect(answer.error).toContain("does not support");
   });

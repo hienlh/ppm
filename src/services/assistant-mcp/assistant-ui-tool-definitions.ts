@@ -1,15 +1,17 @@
 import {
-  UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_OPEN_TAB_TOOL, UI_READ_TAB_TOOL, UI_SWITCH_PROJECT_TOOL,
+  UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_LIST_COMMANDS_TOOL, UI_OPEN_TAB_TOOL, UI_READ_TAB_TOOL, UI_RUN_COMMAND_TOOL,
+  UI_SWITCH_PROJECT_TOOL,
 } from "../../shared/assistant-tool-names.ts";
-import { ASSISTANT_TAB_KINDS } from "../../shared/assistant-ui-protocol.ts";
+import { ASSISTANT_TAB_KINDS, MAX_ASSISTANT_COMMAND_ID_CHARS, MAX_ASSISTANT_COMMANDS_LISTED } from "../../shared/assistant-ui-protocol.ts";
 import {
   READ_TAB_CHAT_MESSAGES, READ_TAB_DB_ROWS, READ_TAB_MAX_LINES, READ_TAB_TERMINAL_LINES,
 } from "../../shared/assistant-tab-content.ts";
 
 /**
  * How the Assistant's screen tools are described to the agent: the ones that move around the
- * screen and the one that reads a tab. Definitions only, so the tool list can be built without
- * loading what the tools reach (handlers: `assistant-ui-nav-tools.ts`, `assistant-ui-read-tool.ts`).
+ * screen, the one that reads a tab, and the two that list and run PPM's commands. Definitions
+ * only, so the tool list can be built without loading what the tools reach (handlers:
+ * `assistant-ui-nav-tools.ts`, `assistant-ui-read-tool.ts`, `assistant-ui-command-tools.ts`).
  */
 
 const NAV = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -101,3 +103,30 @@ export const UI_READ_TAB_DEFINITION = {
   },
   annotations: { readOnlyHint: true, openWorldHint: false },
 } as const;
+
+export const UI_COMMAND_TOOL_DEFINITIONS = [
+  {
+    name: UI_LIST_COMMANDS_TOOL,
+    title: "List PPM commands",
+    description: "List the commands of PPM's command palette as the device the user is chatting from offers them "
+      + "right now (they depend on its project, screen size and extensions): id, label, keyboard shortcut and "
+      + "`changesData` — whether running it asks the user first. `query` keeps those whose id, label or keywords "
+      + `contain every word of it. At most ${MAX_ASSISTANT_COMMANDS_LISTED}; \`total\` says how many matched.`,
+    inputSchema: object({ query: { type: "string", description: "Words to look for." } }, []),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: UI_RUN_COMMAND_TOOL,
+    title: "Run a PPM command",
+    description: "Run one command from ui_list_commands on the device the user is chatting from, exactly as picking it "
+      + "in the command palette would, in the project that device shows. A command that changes data — every "
+      + "extension command among them — runs only once the user approves the card this shows them. Runs once, on "
+      + "that one device. Answers what ran and in which project.",
+    inputSchema: object({
+      id: { type: "string", minLength: 1, maxLength: MAX_ASSISTANT_COMMAND_ID_CHARS, description: "The command's id, from ui_list_commands." },
+      args: { type: "object", description: "Arguments, for a command that takes them. No PPM command takes any yet: leave it out." },
+    }, ["id"]),
+    // An extension's command may reach outside (a git pull), so this is not a closed-world tool.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  },
+] as const;

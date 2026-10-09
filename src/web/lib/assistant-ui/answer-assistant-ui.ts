@@ -6,6 +6,7 @@ import { buildUiStateSnapshot, type UiStateSnapshot } from "./ui-state-snapshot"
 import { buildUiSummary } from "./ui-summary";
 import { closeAssistantTab, focusAssistantTab, openAssistantTab, switchAssistantProject } from "./assistant-ui-actions";
 import { describeTab } from "./describe-tab";
+import { listAssistantCommands, runAssistantCommand } from "./assistant-commands";
 
 /**
  * The device half of the PPM Assistant's UI tools: answers the server's `assistant_ui` on the
@@ -58,6 +59,8 @@ const HANDLERS: Partial<Record<AssistantUiOp, Handler>> = {
   switch_project: (args) => switchAssistantProject(args),
   close_tab: (args) => closeAssistantTab(args),
   describe_tab: (args) => describeTab(args),
+  list_commands: (args) => listAssistantCommands(args),
+  run_command: (args) => runAssistantCommand(args),
 };
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
