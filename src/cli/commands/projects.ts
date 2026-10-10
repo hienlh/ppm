@@ -36,17 +36,25 @@ export function registerProjectsCommands(program: Command): void {
   projects
     .command("list")
     .description("List all registered projects")
-    .action(async () => {
+    .option("--json", "Output as JSON")
+    .action(async (options: { json?: boolean }) => {
       try {
         const { projectService } = await import("../../services/project.service.ts");
-        const { gitService } = await import("../../services/git.service.ts");
+        const { configService } = await import("../../services/config.service.ts");
+        // A fresh process holds only the defaults (no projects) until it reads the database.
+        configService.load();
         const list = projectService.list();
 
+        if (options.json) {
+          console.log(JSON.stringify(list.map((p) => ({ name: p.name, path: p.path })), null, 2));
+          return;
+        }
         if (list.length === 0) {
           console.log(`${C.yellow}No projects registered.${C.reset} Run: ppm init`);
           return;
         }
 
+        const { gitService } = await import("../../services/git.service.ts");
         const rows: string[][] = [];
         for (const p of list) {
           let branch = "-";

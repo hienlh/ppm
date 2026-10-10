@@ -45,6 +45,17 @@ describe("the header", () => {
     expect(header).not.toContain("WARNING");
   });
 
+  it("tells the Assistant a project change shows in the running server, and keeps projects out of the stale-data list", () => {
+    const header = ppmCliReferenceHeader(base);
+    const live = header.indexOf("the running server picks up at once");
+    const direct = header.indexOf("## Commands that read or write PPM's data directly");
+    const projects = header.indexOf("- ppm projects");
+    expect(live).toBeGreaterThan(-1);
+    expect(projects).toBeGreaterThan(live);
+    expect(projects).toBeLessThan(direct);
+    expect(header.indexOf("- ppm projects", direct)).toBe(-1);
+  });
+
   it("warns that a profile server's data is out of the CLI's reach", () => {
     const header = ppmCliReferenceHeader({ ...base, dbFile: "/home/u/.ppm/ppm.dev.db", profile: "dev" });
     expect(header).toContain('WARNING: this server runs on the "dev" database profile (ppm.dev.db)');

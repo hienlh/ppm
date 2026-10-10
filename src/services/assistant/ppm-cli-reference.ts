@@ -36,7 +36,12 @@ export function currentPpmInstance(): PpmInstance {
 }
 
 const VIA_SERVER = ["status", "restart", "stop", "open", "schedule run-now"];
-const DIRECT = ["config", "projects", "db", "schedule (all but run-now)", "cloud", "ext", "jira", "backup", "autostart",
+/**
+ * Written directly, but the server re-reads the projects table when another process changed it
+ * and its own saves apply only what it changed itself (`config-projects-sync.ts`).
+ */
+const DIRECT_SEEN_LIVE = ["projects"];
+const DIRECT = ["config", "db", "schedule (all but run-now)", "cloud", "ext", "jira", "backup", "autostart",
   "chat (also runs an AI turn inside the command itself)"];
 
 export function ppmCliReferenceHeader(instance: PpmInstance): string {
@@ -60,6 +65,10 @@ export function ppmCliReferenceHeader(instance: PpmInstance): string {
   lines.push(
     "## Commands that go through the running server (prefer these)",
     VIA_SERVER.map((c) => `- ppm ${c}`).join("\n"),
+    "",
+    "## Commands that write PPM's data directly, and the running server picks up at once",
+    "A project added or removed here shows in PPM without a restart, and the server keeps it.",
+    DIRECT_SEEN_LIVE.map((c) => `- ppm ${c}`).join("\n"),
     "",
     "## Commands that read or write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
@@ -132,6 +141,7 @@ ppm upgrade
 \`\`\`
 ppm projects list
   List all registered projects
+  --json — Output as JSON
 
 ppm projects add <path>
   Add a project to the registry
