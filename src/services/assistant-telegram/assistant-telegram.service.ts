@@ -16,7 +16,7 @@
 import { TelegramBotClient, type TelegramBotClientOptions } from "../telegram/telegram-bot-client.ts";
 import { BOT_TOKEN_RE } from "../telegram/telegram-api-base.ts";
 import type { TelegramCallbackQuery } from "../telegram/telegram-types.ts";
-import { ppmbotReading } from "../telegram-connect.service.ts";
+import { assistantBridgeReading } from "../telegram-connect.service.ts";
 import { getPPMBotBot } from "../telegram-bots.ts";
 import { configService } from "../config.service.ts";
 import { clearSessionUnread, getSessionTitle } from "../db.service.ts";
@@ -158,7 +158,7 @@ export class AssistantTelegramBridge {
     recoverInterrupted(queue, state);
     mirror.attach();
     relay.attach();
-    ppmbotReading(token);
+    assistantBridgeReading(token);
     void client.setMyCommands(BOT_COMMANDS);
     log.info(`Reading Telegram bot ${client.botId}`);
     poller.start(opts.pollTimeoutS ?? POLL_TIMEOUT_S);
@@ -174,7 +174,7 @@ export class AssistantTelegramBridge {
     run.inbound.stop();
     await run.poller.stop();
     run.queue.stop();
-    ppmbotReading(null);
+    assistantBridgeReading(null);
     log.info("Stopped reading Telegram");
   }
 

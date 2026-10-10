@@ -5,7 +5,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
 import { configService } from "../../../../src/services/config.service.ts";
-import { getConfigValue, getDb, insertPPMBotMemory } from "../../../../src/services/db.service.ts";
+import { getConfigValue, getDb } from "../../../../src/services/db.service.ts";
 import { migratePPMBotSettings, PPMBOT_MIGRATED_KEY, PPMBOT_PROMPT_HEADING } from "../../../../src/services/assistant-telegram/ppmbot-migration.ts";
 import { ASSISTANT_INSTRUCTIONS_MAX_CHARS, DEFAULT_ASSISTANT_SETTINGS } from "../../../../src/shared/assistant-settings.ts";
 
@@ -32,7 +32,8 @@ beforeEach(() => {
 describe("carrying PPMBot's settings over", () => {
   it("appends the system prompt under its heading, drops the field, and does nothing the second time", () => {
     configService.set("clawbot", oldRow("Call me Victor. Keep answers short.") as never);
-    insertPPMBotMemory("_global", "The user's AWS key is in ~/.aws — use it freely", "fact", 1);
+    getDb().query("INSERT INTO clawbot_memories (project, content, category) VALUES ('_global', ?, 'fact')")
+      .run("The user's AWS key is in ~/.aws — use it freely");
 
     expect(migratePPMBotSettings()).toEqual({ ran: true, copiedChars: 35, truncated: false });
     const instructions = (configService.get("assistant") as { instructions: string }).instructions;

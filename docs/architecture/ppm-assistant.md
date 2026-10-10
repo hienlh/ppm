@@ -530,7 +530,7 @@ has a bot. `src/server/index.ts` and the e2e fixture call the same function, so 
 the wiring the server runs. A Telegram failure (bad token, Telegram unreachable) is logged and shown
 in Settings, never stops the server or the watches. Settings calls `syncAssistantTelegram` after a
 change. Telegram allows one `getUpdates` reader per bot, so while the bridge reads a bot it tells
-the connect-link poller to leave that bot alone (`ppmbotReading` in
+the connect-link poller to leave that bot alone (`assistantBridgeReading` in
 `src/services/telegram-connect.service.ts`).
 
 ## Rules the hub keeps
@@ -600,6 +600,11 @@ the connect-link poller to leave that bot alone (`ppmbotReading` in
 Assistant on the production bundle, on a desktop and a phone viewport, against a scripted
 provider (`tests/e2e/fixtures/assistant-server.ts`) that calls the real endpoint with each turn's
 token and an isolated `PPM_HOME`. The header of the test file lists its scenarios and options.
+
+`PPM_PLAYWRIGHT_MODULE=<playwright>/index.mjs node tests/e2e/assistant-telegram-e2e.mjs` does the
+same for Telegram, with a fake Bot API in place of the phone. It needs Node 22.5+, Bun and a web
+build with Monaco staged (`dist/web`, or `PPM_ASSISTANT_WEB_DIR`); `PPM_ASSISTANT_TG_ONLY=s1,s5`
+runs a subset, and its header lists the rest.
 
 The hub is covered below the browser: `tests/integration/assistant-telegram-bridge.test.ts` and
 `assistant-telegram-relay.test.ts` run the bridge against the fake Bot API

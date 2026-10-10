@@ -7,11 +7,13 @@
  *
  * - Notifications send through the `telegram` config bot to the chats in the
  *   `telegram_notify_chats` row. Being on that list grants nothing else.
- * - PPMBot answers through the bot in the `ppmbot_telegram` row, to the chats approved in
- *   `clawbot_paired_chats` — each one connected with a link from Settings → PPMBot.
+ * - PPM Assistant's Telegram bridge answers through the bot in the `ppmbot_telegram` row, to
+ *   the chats approved in `clawbot_paired_chats` — each one connected with a link from
+ *   Settings → PPM Assistant → Telegram. Row, table and the `*PPMBotBot` names are PPMBot's,
+ *   kept because the Assistant took over PPMBot's bot and chats as they were.
  *
  * Both rows sit outside `CONFIG_TABLE_KEYS`, like the VAPID key: never loaded into the
- * config object, so nothing that dumps config can show PPMBot's token.
+ * config object, so nothing that dumps config can show the Assistant's token.
  *
  * The two can still name one bot: an install that ran PPMBot before the split keeps the
  * bot it was answering on. Telegram lets one program read a bot, which is why
@@ -84,7 +86,7 @@ function readRow(row: string): unknown {
   }
 }
 
-/** PPMBot's bot. An empty token means PPMBot has none yet. */
+/** PPM Assistant's bot (PPMBot's, before). An empty token means it has none yet. */
 export function getPPMBotBot(): TelegramConfig {
   ensureSplit();
   const value = readRow(PPMBOT_BOT_ROW) as Partial<TelegramConfig> | undefined;
@@ -100,7 +102,7 @@ export function setPPMBotBot(bot: TelegramConfig): void {
   const json = JSON.stringify(bot);
   setConfigValue(PPMBOT_BOT_ROW, json);
   // The name only: the token is a password for the bot.
-  if (before !== json) log.info(bot.bot_token ? `PPMBot now uses @${bot.bot_username ?? "?"}` : "PPMBot's bot removed");
+  if (before !== json) log.info(bot.bot_token ? `PPM Assistant now uses @${bot.bot_username ?? "?"}` : "PPM Assistant's bot removed");
 }
 
 function isNotifyChat(value: unknown): value is NotifyChat {

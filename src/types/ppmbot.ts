@@ -1,7 +1,8 @@
 /**
- * Row shapes of the tables PPMBot left behind, still read (connected chats, the connect link's
- * message, legacy memories) or kept for old databases (sessions, tasks). PPMBot itself is gone:
- * the PPM Assistant's Telegram bridge uses the connected chats and the bot.
+ * Shapes PPM Assistant's Telegram side still reads under PPMBot's names: the connect link's
+ * message and the connected chats (`clawbot_paired_chats`). PPMBot itself is gone; its other
+ * tables stay in old databases unwritten, and the legacy-memories route reads its memories
+ * with a query of its own.
  */
 
 /** A Telegram message, as the connect-link poller reads it. */
@@ -14,61 +15,7 @@ export interface TelegramMessage {
   caption?: string;
 }
 
-/** PPMBot session row from SQLite */
-export interface PPMBotSessionRow {
-  id: number;
-  telegram_chat_id: string;
-  session_id: string;
-  provider_id: string;
-  project_name: string;
-  project_path: string;
-  is_active: number;
-  created_at: number;
-  last_message_at: number;
-}
-
-/** PPMBot memory row from SQLite */
-export interface PPMBotMemoryRow {
-  id: number;
-  project: string;
-  content: string;
-  category: PPMBotMemoryCategory;
-  importance: number;
-  created_at: number;
-  updated_at: number;
-  session_id: string | null;
-  superseded_by: number | null;
-}
-
-export type PPMBotMemoryCategory =
-  | "fact"
-  | "decision"
-  | "preference"
-  | "architecture"
-  | "issue";
-
-/** Bot task row from SQLite */
-export interface BotTask {
-  id: string;
-  chatId: string;
-  projectName: string;
-  projectPath: string;
-  prompt: string;
-  status: BotTaskStatus;
-  resultSummary: string | null;
-  resultFull: string | null;
-  sessionId: string | null;
-  error: string | null;
-  reported: boolean;
-  timeoutMs: number;
-  createdAt: number;
-  startedAt: number | null;
-  completedAt: number | null;
-}
-
-export type BotTaskStatus = "pending" | "running" | "completed" | "failed" | "timeout";
-
-/** Paired chat row from SQLite */
+/** A row of `clawbot_paired_chats`: a Telegram chat connected to PPM Assistant. */
 export interface PPMBotPairedChat {
   id: number;
   telegram_chat_id: string;

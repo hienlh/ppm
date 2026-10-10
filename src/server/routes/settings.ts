@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { configService, FILE_CONFIG_KEYS } from "../../services/config.service.ts";
-import { getConfigValue, setConfigValue, listPairedChats, revokePairing, getPPMBotMemories, getDb } from "../../services/db.service.ts";
+import { getConfigValue, setConfigValue, listPairedChats, revokePairing } from "../../services/db.service.ts";
 import {
   validateAIProviderConfig,
   validateCodexContextConfig,
@@ -337,7 +337,8 @@ settingsRoutes.put("/keybindings", async (c) => {
 
 // ── Telegram ───────────────────────────────────────────────────────
 // Two bots: `/telegram` is the one Notifications send through, `/clawbot/telegram` (below)
-// is PPMBot's. See `services/telegram-bots.ts`.
+// is PPM Assistant's — still under the `clawbot` name PPMBot used, so existing setups carry
+// over. See `services/telegram-bots.ts`.
 
 /** The bot a PUT asked for, checked with Telegram (getMe) before it is kept. An empty token removes the bot. */
 async function checkedBot(
@@ -676,25 +677,6 @@ settingsRoutes.delete("/clawbot/telegram/connect", async (c) => {
   return c.json(ok({ cancelled: true }));
 });
 
-/** GET /settings/clawbot/memories?project=xxx — list memories for a project */
-settingsRoutes.get("/clawbot/memories", (c) => {
-  const project = c.req.query("project") || "_global";
-  const memories = getPPMBotMemories(project, 50);
-  return c.json(ok(memories));
-});
-
-/** DELETE /settings/clawbot/memories/:id — delete a specific memory */
-settingsRoutes.delete("/clawbot/memories/:id", (c) => {
-  const id = Number(c.req.param("id"));
-  if (!id) return c.json(err("Invalid memory ID"), 400);
-  try {
-    getDb().query("DELETE FROM clawbot_memories WHERE id = ?").run(id);
-    return c.json(ok({ deleted: id }));
-  } catch (e) {
-    return c.json(err((e as Error).message), 500);
-  }
-});
-
 // ── File Filters ──────────────────────────────────────────────────────────────
 
 /** GET /settings/files — return global file filter config */
@@ -740,20 +722,5 @@ settingsRoutes.patch("/files", async (c) => {
     }));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
-  }
-});
-
-/** GET /settings/clawbot/tasks — list recent delegated tasks */
-settingsRoutes.get("/clawbot/tasks", (c) => {
-  const limit = Number(c.req.query("limit")) || 20;
-  try {
-    const rows = getDb().query(
-      "SELECT * FROM bot_tasks ORDER BY created_at DESC LIMIT ?",
-    ).all(limit);
-    return c.json(ok(rows));
-  } catch (e) {
-    // Answered as an empty list, so the failure is recorded nowhere else.
-    log.error("Bot task list failed:", e);
-    return c.json(ok([]));
   }
 });

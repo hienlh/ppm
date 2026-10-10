@@ -1,13 +1,13 @@
 /**
- * The `/api/settings/clawbot` contract the Settings pane builds on: three settings and nothing of
- * PPMBot's coordinator, revoking a chat forgets it in the bridge too, and PPMBot's memories are
- * listed read-only.
+ * The `/api/settings/clawbot` contract the Settings pane builds on (the `clawbot` name is PPMBot's,
+ * kept so existing setups carry over): three settings and none of PPMBot's old fields, revoking a
+ * chat forgets it in the bridge too, and PPMBot's memories are listed read-only.
  */
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import { Hono } from "hono";
 import { configService } from "../../../src/services/config.service.ts";
-import { getDb, insertPPMBotMemory, isPairedChat, upsertApprovedPairing } from "../../../src/services/db.service.ts";
+import { getDb, isPairedChat, upsertApprovedPairing } from "../../../src/services/db.service.ts";
 import { getTelegramBinding, setTelegramBinding } from "../../../src/services/assistant-hub/assistant-hub-db.ts";
 import { assistantTelegramBridge } from "../../../src/services/assistant-telegram/assistant-telegram.service.ts";
 import { PPMBOT_MIGRATED_KEY } from "../../../src/services/assistant-telegram/ppmbot-migration.ts";
@@ -96,12 +96,18 @@ describe("DELETE /api/settings/clawbot/paired/:chatId", () => {
   });
 });
 
+/** A memory row as PPMBot wrote them; nothing in PPM writes that table any more. */
+function insertMemory(project: string, content: string, category: string): number {
+  const result = getDb().query("INSERT INTO clawbot_memories (project, content, category) VALUES (?, ?, ?)").run(project, content, category);
+  return Number(result.lastInsertRowid);
+}
+
 describe("GET /api/assistant/telegram/legacy-memories", () => {
   it("lists PPMBot's live memories newest first, with times in milliseconds", async () => {
     getDb().query("DELETE FROM clawbot_memories").run();
-    const old = insertPPMBotMemory("_global", "Prefers short answers", "preference", 1);
-    const replaced = insertPPMBotMemory("api", "Deploys on Fridays", "fact", 1);
-    const newer = insertPPMBotMemory("api", "Deploys on Mondays", "fact", 1);
+    const old = insertMemory("_global", "Prefers short answers", "preference");
+    const replaced = insertMemory("api", "Deploys on Fridays", "fact");
+    const newer = insertMemory("api", "Deploys on Mondays", "fact");
     getDb().query("UPDATE clawbot_memories SET created_at = 1700000000 WHERE id = ?").run(old);
     getDb().query("UPDATE clawbot_memories SET superseded_by = ? WHERE id = ?").run(newer, replaced);
     const res = await call("GET", "/api/assistant/telegram/legacy-memories");

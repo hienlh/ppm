@@ -10,6 +10,7 @@ export type TraceSource = "agent" | "server" | "browser";
 export type TraceOrigin =
   | "ws"
   | "scheduler"
+  /** PPMBot's runs. PPMBot is gone and writes none; kept because older traces carry it. */
   | "ppmbot"
   | "group-chat"
   | "jira"

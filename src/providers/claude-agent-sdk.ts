@@ -1331,7 +1331,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      * refusal, an exhausted retry budget). The CLI closes such a turn with a result whose
      * subtype is still "success" — the API error is an assistant message, not an execution
      * fault — so without this the `done` would call a turn that produced nothing a success,
-     * and notifications, schedules and PPMBot would all read it that way.
+     * and notifications, schedules and the Assistant's Telegram bridge would all read it that way.
      */
     let turnEndedInError = false;
     let resultNumTurns: number | undefined;
