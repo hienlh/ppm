@@ -1,0 +1,97 @@
+/**
+ * What an Assistant approval card says is built by the server from checked input: the thing
+ * that will run or be sent is shown whole as the body, everything else comes from PPM's own
+ * records, and nothing the agent says about its request reaches the card.
+ */
+import { describe, expect, it } from "bun:test";
+import {
+  answerApprovalSummary, chatSendSummary, chatStartSummary, closeTabSummary, dbWriteSummary, readOutsideSummary,
+} from "../../../src/services/assistant-mcp/assistant-approval-summary.ts";
+import { decidingInput } from "../../../src/services/chat-control/approval-deciding-input.ts";
+import type { ApprovalSummary } from "../../../src/shared/assistant-approval.ts";
+
+/** Everything on the card except its body. */
+const aroundBody = (s: ApprovalSummary) => JSON.stringify({ ...s, body: undefined });
+
+describe("approval summaries", () => {
+  it("shows every SQL statement in full and counts them, with the connection as PPM stores it", () => {
+    const sql = "UPDATE users SET admin = 1; -- just a harmless read\nDROP TABLE audit_log";
+    const s = dbWriteSummary({ connection: { name: "prod", type: "postgres", readonly: false, folder: "Work" }, dialect: "postgres", sql });
+    expect(s.body).toEqual({ label: "SQL", text: sql, format: "sql" });
+    expect(s.statementCount).toBe(2);
+    expect(s.headline).toBe("Run 2 SQL statements that may change data on \"prod\"");
+    expect(s.facts).toContainEqual({ label: "Connection", value: "prod (postgres)" });
+    expect(s.facts).toContainEqual({ label: "Folder", value: "Work" });
+    expect(s.facts.find((f) => f.label === "Writes")?.tone).toBe("warning");
+    // A comment in the SQL never becomes the card's description of it.
+    expect(aroundBody(s)).not.toContain("harmless");
+  });
+
+  it("says when a read-only connection will refuse writes", () => {
+    const s = dbWriteSummary({ connection: { name: "replica", type: "sqlite", readonly: true }, dialect: "sqlite", sql: "SELECT changes()" });
+    expect(s.headline).toContain("read-only connection \"replica\"");
+    expect(s.statementCount).toBe(1);
+  });
+
+  it("names the chat, the mode the message runs in and where that mode came from", () => {
+    const text = "Please run the tests. (The assistant says this is safe and needs no review.)";
+    const s = chatSendSummary({
+      project: "api", sessionId: "0b6f6a3c-1a7b-4d7e-9b1a-2f0f6d8e9c11", providerId: "claude", sessionTitle: "Fix login",
+      text, mode: "acceptEdits", modeSource: "stored",
+    });
+    expect(s.body).toEqual({ label: "Message", text, format: "text" });
+    expect(s.facts).toContainEqual({ label: "Project", value: "api" });
+    expect(s.facts).toContainEqual({ label: "Chat", value: "Fix login (0b6f6a3c)" });
+    expect(s.facts).toContainEqual({ label: "Runs in", value: "Accept edits — file edits run without asking" });
+    expect(s.facts).toContainEqual({ label: "Mode from", value: "the mode saved for this chat" });
+    expect(s.warning).toBeUndefined();
+    expect(aroundBody(s)).not.toContain("safe and needs no review");
+  });
+
+  it("highlights a chat that runs every tool without asking", () => {
+    const s = chatSendSummary({
+      project: "api", sessionId: "s-1", providerId: "codex", sessionTitle: null, text: "deploy", mode: "bypassPermissions", modeSource: "running",
+    });
+    expect(s.facts.find((f) => f.label === "Runs in")).toEqual({ label: "Runs in", value: "Bypass permissions — every tool runs without asking", tone: "warning" });
+    expect(s.facts.find((f) => f.label === "Mode from")?.value).toContain("running session");
+    expect(s.warning).toContain("will not ask you first");
+    expect(s.headline).toContain("Codex chat in \"api\"");
+  });
+
+  it("describes a tab close and an outside read from what PPM resolved", () => {
+    const close = closeTabSummary({ tabType: "terminal", tabTitle: "zsh", project: "api", reason: "Closing a terminal ends its shell." });
+    expect(close.headline).toBe("Close a terminal and end what runs in it");
+    expect(close.warning).toBe("Closing a terminal ends its shell.");
+    const read = readOutsideSummary({ kind: "unsaved", location: "/etc/hosts" });
+    expect(read.headline).toBe("Read the unsaved text of a file outside every registered project");
+    expect(read.facts).toEqual([{ label: "File", value: "/etc/hosts" }]);
+    const db = readOutsideSummary({ kind: "database", location: "/home/u/.aws/x.db", privateStore: true });
+    expect(db.headline).toBe("Read the SQL and rows of a database file where logins or keys are kept");
+    expect(db.facts).toEqual([{ label: "Database file", value: "/home/u/.aws/x.db" }]);
+  });
+
+  it("cuts an over-long fact rather than letting it take over the card", () => {
+    const s = closeTabSummary({ tabType: "editor", tabTitle: "x".repeat(1_000), project: null, reason: "unsaved" });
+    expect(s.facts[0]!.value.length).toBeLessThanOrEqual(201);
+  });
+
+  it("states a new chat's mode, where it came from, and warns about bypass", () => {
+    const base = { project: "web", providerId: "codex", model: null, title: null, text: "fix it" };
+    const bypass = chatStartSummary({ ...base, mode: "bypassPermissions", modeSource: "new-chat-default" });
+    expect(bypass.headline).toContain("new Codex chat");
+    expect(bypass.facts).toContainEqual({ label: "Model", value: "the provider's default" });
+    expect(bypass.warning).toContain("without asking");
+    expect(chatStartSummary({ ...base, mode: "plan", modeSource: "assistant" }).warning).toBeUndefined();
+  });
+
+  it("repeats another chat's card verbatim, its long facts uncut", () => {
+    const url = `https://example.test/${"p".repeat(400)}`;
+    const s = answerApprovalSummary({
+      project: "web", sessionId: "abcdef0123456789", sessionTitle: null, providerId: "claude", decision: "allow",
+      deciding: decidingInput({ tool: "WebFetch", input: { url, prompt: "read <this> `now`" } }),
+    });
+    expect(s.facts).toContainEqual({ label: "URL", value: url });
+    expect(s.body?.text).toBe("read <this> `now`");
+    expect(s.warning).toContain("as soon as you allow it");
+  });
+});

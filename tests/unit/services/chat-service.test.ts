@@ -1,5 +1,7 @@
 import { describe, it, expect, spyOn } from "bun:test";
 import { chatService } from "../../../src/services/chat.service.ts";
+import { providerRegistry } from "../../../src/providers/registry.ts";
+import type { AIProvider, ChatEvent } from "../../../src/types/chat.ts";
 
 describe("ChatService", () => {
   it("creates session with default provider", async () => {
@@ -135,6 +137,59 @@ describe("ChatService", () => {
     } finally {
       info.mockRestore();
       error.mockRestore();
+    }
+  });
+
+  it("names each turn of a live stream by the origin that started that turn", async () => {
+    // One stream that runs three turns: its own, then one per follow-up. A follow-up into a live
+    // stream is folded into it (pushed, or sent while the stream is running), the way Claude and
+    // Codex take them.
+    let queued = 0;
+    let waiter: (() => void) | null = null;
+    let liveStream = false;
+    // A follow-up may arrive before the stream waits for it (it is sent while the stream is
+    // suspended on its `done`), so they are counted rather than signalled.
+    const followUp = () => { queued++; waiter?.(); };
+    const nextFollowUp = async () => {
+      while (queued === 0) await new Promise<void>((resolve) => { waiter = resolve; });
+      queued--;
+      waiter = null;
+    };
+    const provider: AIProvider & { pushMessage(id: string, content: string): void } = {
+      id: "live-origin-test",
+      name: "Live origin test",
+      createSession: async () => ({ id: "unused", providerId: "live-origin-test", title: "", createdAt: "" }),
+      resumeSession: async (id) => ({ id, providerId: "live-origin-test", title: "", createdAt: "" }),
+      listSessions: async () => [],
+      deleteSession: async () => {},
+      pushMessage: () => { followUp(); },
+      async *sendMessage(sessionId) {
+        if (liveStream) { followUp(); return; }
+        liveStream = true;
+        for (let i = 0; i < 3; i++) {
+          if (i > 0) await nextFollowUp();
+          yield { type: "text", content: `turn ${i}` } as ChatEvent;
+          yield { type: "done", sessionId } as ChatEvent;
+        }
+        liveStream = false;
+      },
+    };
+    providerRegistry.register(provider);
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const sid = "live-origin-session";
+      let done = 0;
+      for await (const event of chatService.sendMessage(provider.id, sid, "first", { origin: "telegram" })) {
+        if (event.type !== "done") continue;
+        done++;
+        if (done === 1) await chatService.pushMessage(provider.id, sid, "second", { origin: "watch" });
+        if (done === 2) for await (const _ of chatService.sendMessage(provider.id, sid, "third", { origin: "assistant" })) { /* folded in */ }
+      }
+      const ends = info.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[chat] turn end"))
+        .map((l) => /origin=(\S+)/.exec(l)?.[1]);
+      expect(ends).toEqual(["telegram", "watch", "assistant"]);
+    } finally {
+      info.mockRestore();
     }
   });
 });

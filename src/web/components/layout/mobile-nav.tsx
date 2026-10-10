@@ -113,6 +113,8 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
   // Chat-session context for the long-press menu (Mark as unread / Set Tag)
   const menuSessionId = tabSessionId(menuTab);
+  // Rename and tags go through the open project's routes, which an Assistant session is not in.
+  const menuProjectSessionId = menuTab?.type === "assistant" ? undefined : menuSessionId;
   const menuNotiType = menuSessionId ? ((notifications.get(menuSessionId)?.count ?? 0) > 0) : false;
   // Editor "Compare with Selected" only when a different file in the same project is selected
   const menuFilePath = menuTab?.metadata?.filePath as string | undefined;
@@ -356,7 +358,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
         <div className="px-3 py-2 text-xs text-text-secondary border-b border-border truncate">
           {menuTab?.title}
         </div>
-        {menuSessionId && (
+        {menuProjectSessionId && (
           <button onClick={() => startRename(menuTab!)}
             className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
             <Pencil className="size-4" /> Rename
@@ -404,21 +406,21 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             <Circle className="size-4 fill-primary text-primary" /> Mark as unread
           </button>
         )}
-        {menuSessionId && projectTags.length > 0 && (
+        {menuProjectSessionId && projectTags.length > 0 && (
           <>
             <div className="px-3 pt-2 pb-1 text-xs text-text-secondary flex items-center gap-2">
               <Tag className="size-3.5" /> Set Tag
             </div>
             {projectTags.map((pt) => (
-              <button key={pt.id} onClick={() => assignTagToSession(menuSessionId, pt.id)}
+              <button key={pt.id} onClick={() => assignTagToSession(menuProjectSessionId, pt.id)}
                 className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
                 <span className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: pt.color }} />
                 {pt.name}
-                {sessionTagMap[menuSessionId]?.id === pt.id && <Check className="size-3.5 ml-auto" />}
+                {sessionTagMap[menuProjectSessionId]?.id === pt.id && <Check className="size-3.5 ml-auto" />}
               </button>
             ))}
-            {sessionTagMap[menuSessionId] && (
-              <button onClick={() => assignTagToSession(menuSessionId, null)}
+            {sessionTagMap[menuProjectSessionId] && (
+              <button onClick={() => assignTagToSession(menuProjectSessionId, null)}
                 className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
                 Remove tag
               </button>

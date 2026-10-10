@@ -31,3 +31,42 @@ export function redactTruncate(input: unknown, max = DEFAULT_MAX): string {
   }
   return text;
 }
+
+/** Past this size a structured value is flattened back into one capped string. */
+const STRUCTURED_MAX = 64 * 1024;
+const MAX_DEPTH = 8;
+const MAX_ITEMS = 200;
+const SECRET_KEY = /authorization|api[_-]?key|token|secret|password/i;
+
+/**
+ * `redactTruncate` applied to every string inside a value, keeping its shape. A card that
+ * renders its input (an approval, a question form) needs the object itself: the JSON string
+ * `redactTruncate` returns gets stringified a second time and shows as escaped JSON. Depth,
+ * array length and the total size stay bounded, so the payload is never larger than before
+ * by more than a constant.
+ */
+export function redactFields(input: unknown, max = DEFAULT_MAX): unknown {
+  const walk = (value: unknown, depth: number): unknown => {
+    if (typeof value === "string") return redactTruncate(value, max);
+    if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+    if (typeof value !== "object" || depth >= MAX_DEPTH) return redactTruncate(value, max);
+    if (Array.isArray(value)) {
+      const items = value.slice(0, MAX_ITEMS).map((v) => walk(v, depth + 1));
+      if (value.length > MAX_ITEMS) items.push(`… [${value.length - MAX_ITEMS} more]`);
+      return items;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      // The credential pattern keys on the name before the value (`"token":"…"`), which a
+      // field-by-field walk no longer has in the same string — so put it back for the check.
+      out[k] = typeof v === "string" && SECRET_KEY.test(k)
+        ? redactTruncate(`${k}=${v}`, max + k.length + 1).slice(k.length + 1)
+        : walk(v, depth + 1);
+    }
+    return out;
+  };
+  const result = walk(input, 0);
+  let size: number;
+  try { size = JSON.stringify(result)?.length ?? 0; } catch { return redactTruncate(input, max); }
+  return size > STRUCTURED_MAX ? redactTruncate(input, max) : result;
+}

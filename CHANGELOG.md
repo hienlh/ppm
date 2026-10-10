@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Added
+
+- **PPM Assistant: an AI chat that works on PPM itself**, on Claude or Codex. Open it from the command palette (a window on a desktop, a tab on a phone). It finds and reads your chats, projects, databases and the screen you chat from, opens and closes tabs, switches project, runs palette commands, and sends messages into your chats.
+  - It asks before anything that changes data or could leave the machine, whatever mode the composer shows. Reads run unasked only inside your registered projects. A SQL query runs unasked only after PPM proves it only reads.
+  - It has its own settings in **Settings → PPM Assistant**: provider, model and effort, extra instructions, and its own MCP servers. None of your own Claude or Codex setup, hooks, skills or `AGENTS.md` load into it.
+  - An approved UPDATE or DELETE shows the rows as they were before it ran (up to 200).
+- **The Assistant runs your chats for you.** It can tell you which chats are waiting on you (chats that are not open count too), start a new chat in a project, and answer another chat's approval card after showing you that card word for word.
+- **"Tell me when that chat is done."** The Assistant watches a chat and reports in the conversation when it finishes or stops, even across a PPM restart. If a report cannot get through, a push notification names the chat.
+- **PPM Assistant on Telegram.** A connected private chat continues one Assistant conversation, and messages, answers and approval cards show up in both places. The bot has `/new`, `/sessions`, `/status`, `/stop` and `/help`, and you can send it photos. Allow is offered only when the whole request fits on the card.
+- **Settings → PPM Assistant → Telegram** holds the bot, the connected chats and the Connect link. The Assistant's session list marks the conversation that is on Telegram and has *Use on Telegram*. `/assistant?session=…` links open that conversation.
+
+### Changed
+
+- **Approval cards are clearer.** An approval no longer adds a second tool card, and a denied call shows as denied, both live and after a reload. Codex command cards show the command, folder and reason, and a Windows command is labelled PowerShell.
+- **Every chat now remembers its permission mode on the server.**
+
+### Removed
+
+- **Breaking: PPMBot's coordinator and the `ppm bot` CLI are gone**, along with task delegation and the hidden `/restart`. The PPM Assistant takes their place. Your bot, connected chats and settings are kept, and the settings moved to **Settings → PPM Assistant → Telegram**. PPMBot's system prompt is copied once into the Assistant's instructions. Its old memories are listed under Settings → PPM Assistant → General so you can copy them by hand.
+
+### Fixed
+
+- **Codex question cards on the web now show their questions and choices.** Before, the form was empty.
+- **A Telegram reply that contains `<` or `&` is no longer refused,** and long replies split without breaking their formatting.
+- **A Claude turn that ends in an API error is now reported as failed,** not as done.
+- **Middle-click closes a tab again** when the tab strip overflows.
+- **A tab inside a floating window keeps its state after a reload.**
+- **The page no longer loads Google Fonts.**
+- **A secret answer to a question is no longer written in clear to the session trace.**
+
 ## [0.23.14] - 2026-10-08
 
 ### Added

@@ -19,9 +19,10 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
-  DEFAULT_SETTINGS_CATEGORY, SETTINGS_NAVIGATE_EVENT, isSettingsCategoryId, settingsCategory,
+  DEFAULT_SETTINGS_CATEGORY, SETTINGS_NAVIGATE_EVENT, settingsCategory,
   type SettingsCategoryId,
 } from "./settings-categories";
+import { resolveSettingsLink } from "./assistant-settings-tab-store";
 import { SettingsCategoryRail } from "./settings-category-rail";
 import { SettingsCategoryList } from "./settings-category-list";
 import { SettingsSectionContent } from "./settings-section-content";
@@ -58,8 +59,8 @@ export function SettingsBody({ initialCategory, onCategoryChange }: SettingsBody
   selectRef.current = select;
   useEffect(() => {
     const onNavigate = (e: Event) => {
-      const id = (e as CustomEvent<unknown>).detail;
-      if (isSettingsCategoryId(id)) selectRef.current(id);
+      const id = resolveSettingsLink((e as CustomEvent<unknown>).detail);
+      if (id) selectRef.current(id);
     };
     window.addEventListener(SETTINGS_NAVIGATE_EVENT, onNavigate);
     return () => window.removeEventListener(SETTINGS_NAVIGATE_EVENT, onNavigate);

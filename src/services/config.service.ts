@@ -2,27 +2,26 @@ import { randomBytes } from "node:crypto";
 import type { PpmConfig, ProjectConfig } from "../types/config.ts";
 import { DEFAULT_CONFIG, sanitizeConfig } from "../types/config.ts";
 import { createLogger } from "./logger.ts";
+import type { Database } from "bun:sqlite";
 import {
   getConfigValue,
   setConfigValue,
   getAllConfig,
-  getProjects,
-  upsertProject,
-  deleteProject as dbDeleteProject,
   getDb,
   getDbFilePath,
   getProjectSettingsJson,
   patchProjectSettingsJson,
 } from "./db.service.ts";
+import { readDataVersion, readProjectRows, rowsToProjects, writeProjectChanges } from "./config-projects-sync.ts";
 
 /**
- * Top-level config keys stored in the config table (not projects), all rewritten by `save()`.
- * Not `log_level`: `ppm config set log_level` writes that row from another process while the
- * server runs, and the server's next save would put back the level it loaded at boot. Only
- * `set()` writes it.
+ * Top-level config keys stored in the config table (not projects), written by `save()` when this
+ * process changed them. Not `log_level`: `ppm config set log_level` writes that row from another
+ * process while the server runs, and only an explicit `set()` may write over it.
  */
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
   "device_name", "port", "host", "theme", "auth", "ai", "telegram", "ntfy", "clawbot", "notifications", "query_audit", "session_trace", "tunnel",
+  "assistant",
 ];
 
 const log = createLogger("config");
@@ -47,10 +46,44 @@ export const FILE_CONFIG_KEYS = {
   useIgnoreFiles: "files.useIgnoreFiles",
 } as const;
 
+/** Stored JSON in one canonical spelling, so formatting alone never counts as a change. */
+function canonicalJson(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  try { return JSON.stringify(JSON.parse(raw)); } catch { return undefined; }
+}
+
+/**
+ * What this process last read from or wrote to the projects table, on which connection, and the
+ * connection's data version at that moment.
+ */
+interface ProjectsSyncState {
+  db: Database;
+  dataVersion: number;
+  base: ProjectConfig[];
+}
+
+/** Whether two lists hold the same stored fields (path, name, colour) in the same order. */
+function sameProjectRows(a: ProjectConfig[], b: ProjectConfig[]): boolean {
+  return a.length === b.length && a.every((p, i) => {
+    const q = b[i]!;
+    return p.path === q.path && p.name === q.name && (p.color ?? null) === (q.color ?? null);
+  });
+}
+
 class ConfigService {
   private config: PpmConfig = structuredClone(DEFAULT_CONFIG);
   /** Whether `config` reflects the database rather than the pristine defaults. */
   private loaded = false;
+  /**
+   * Each config row as this process last read or wrote it (canonical JSON; undefined = no usable
+   * row). `save()` writes only the keys whose value differs from it: rewriting every key from
+   * memory reverted whatever another process — `ppm config set`, run while the server is up —
+   * had written since.
+   */
+  private storedJson = new Map<string, string | undefined>();
+  /** The connection `storedJson` describes; on any other (a test swapped it) every key is written. */
+  private storedJsonDb: Database | null = null;
+  private projectsSync: ProjectsSyncState | null = null;
 
   /**
    * Refuse writes that would push the untouched defaults over real data.
@@ -73,8 +106,14 @@ class ConfigService {
     // Set before assembling: createDefault() and the sanitize pass below both
     // persist, and they are legitimate writes from inside load() itself.
     this.loaded = true;
+    const db = getDb();
+    // Before the rows: a write landing in between then shows as a change on the next read.
+    const dataVersion = readDataVersion(db);
     const dbConfig = getAllConfig();
-    const dbProjects = getProjects();
+    const dbProjects = rowsToProjects(readProjectRows(db), []);
+    this.storedJson = new Map(CONFIG_TABLE_KEYS.map((k) => [String(k), canonicalJson(dbConfig[String(k)])]));
+    this.storedJsonDb = db;
+    this.projectsSync = { db, dataVersion, base: structuredClone(dbProjects) };
 
     if (Object.keys(dbConfig).length > 0 || dbProjects.length > 0) {
       this.config = this.assembleConfig(dbConfig, dbProjects);
@@ -103,18 +142,25 @@ class ConfigService {
   /** Save current config to DB */
   save(): void {
     this.assertLoaded("save");
+    const db = getDb();
+    if (db !== this.storedJsonDb) {
+      this.storedJson = new Map();
+      this.storedJsonDb = db;
+    }
     for (const key of CONFIG_TABLE_KEYS) {
       const value = this.config[key];
-      if (value !== undefined) {
-        setConfigValue(String(key), JSON.stringify(value));
-      }
+      if (value === undefined) continue;
+      const json = JSON.stringify(value);
+      if (json === this.storedJson.get(String(key))) continue;
+      setConfigValue(String(key), json);
+      this.storedJson.set(String(key), json);
     }
-    // Sync projects to DB
     this.syncProjectsToDb(this.config.projects);
   }
 
   /** Get a top-level config key */
   get<K extends keyof PpmConfig>(key: K): PpmConfig[K] {
+    if (key === "projects") this.refreshProjectsIfChangedElsewhere();
     return this.config[key];
   }
 
@@ -133,6 +179,7 @@ class ConfigService {
       const previous = getConfigValue(String(key));
       const json = JSON.stringify(value);
       setConfigValue(String(key), json);
+      if (CONFIG_TABLE_KEYS.includes(key) && getDb() === this.storedJsonDb) this.storedJson.set(String(key), json);
       if (previous !== json) {
         let before: unknown;
         try { before = previous === null ? undefined : JSON.parse(previous); } catch { before = undefined; }
@@ -144,6 +191,7 @@ class ConfigService {
 
   /** Get the full config object */
   getAll(): PpmConfig {
+    this.refreshProjectsIfChangedElsewhere();
     return this.config;
   }
 
@@ -197,10 +245,7 @@ class ConfigService {
     return config;
   }
 
-  private assembleConfig(
-    dbRows: Record<string, string>,
-    dbProjects: { path: string; name: string; color: string | null }[],
-  ): PpmConfig {
+  private assembleConfig(dbRows: Record<string, string>, dbProjects: ProjectConfig[]): PpmConfig {
     const config = structuredClone(DEFAULT_CONFIG);
     // Existing installs without an AI row must also retain the old tab behavior.
     config.ai.new_chat_provider_mode = "default";
@@ -215,36 +260,49 @@ class ConfigService {
       }
     }
     // Projects from dedicated table
-    config.projects = dbProjects.map((p) => ({
-      path: p.path,
-      name: p.name,
-      ...(p.color ? { color: p.color } : {}),
-    }));
+    config.projects = dbProjects;
     return config;
   }
 
+  /**
+   * Write what this process changed in the project list, then adopt the table as it stands —
+   * which includes any project another process added or removed meanwhile.
+   */
   private syncProjectsToDb(projects: ProjectConfig[]): void {
-    // Also guarded here, not just in save(): this is the call that DELETEs every
-    // project row, and set("projects", ...) reaches it without going through save().
+    // Also guarded here, not just in save(): set("projects", ...) reaches it without save(), and
+    // an unloaded service would otherwise remove every project it does not know about.
     this.assertLoaded("syncProjectsToDb");
     const db = getDb();
-    // Wrap in a transaction so a mid-operation SIGKILL cannot leave the table empty
-    // (DELETE committed but INSERTs never ran would permanently wipe all projects).
-    db.exec("BEGIN");
-    try {
-      db.exec("DELETE FROM projects");
-      const stmt = db.query(
-        "INSERT INTO projects (path, name, color, sort_order) VALUES (?, ?, ?, ?)",
-      );
-      for (let i = 0; i < projects.length; i++) {
-        const p = projects[i]!;
-        stmt.run(p.path, p.name, p.color ?? null, i);
-      }
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
+    // No baseline on this connection (a test swapped the database under a loaded service): take
+    // the list given as the whole intended list, as before.
+    const base = this.projectsSync?.db === db ? this.projectsSync.base : null;
+    const { rows, dataVersion } = writeProjectChanges(db, base, projects);
+    const adopted = rowsToProjects(rows, [projects, this.projectsSync?.base ?? []]);
+    this.config.projects = adopted;
+    this.projectsSync = { db, dataVersion, base: structuredClone(adopted) };
+  }
+
+  /**
+   * Pick up a project another process added, removed or edited, so the server lists it without a
+   * restart. Cheap when nothing changed: one `PRAGMA data_version`, which moves only when another
+   * connection commits to the file.
+   *
+   * Only on the connection the list was read on, and never through getDb(): a read must not
+   * reopen a database that shutdown closed. Once that connection is closed (shutdown, or a test
+   * swapping the database) there is nothing to compare with and the list stays as it is.
+   */
+  private refreshProjectsIfChangedElsewhere(): void {
+    const sync = this.projectsSync;
+    if (!this.loaded || !sync) return;
+    const db = sync.db;
+    let dataVersion: number;
+    try { dataVersion = readDataVersion(db); } catch { return; /* connection closed */ }
+    if (dataVersion === sync.dataVersion) return;
+    // An edit made to the list here but not saved yet would be lost; the save merges it instead.
+    if (!sameProjectRows(this.config.projects, sync.base)) return;
+    const fresh = rowsToProjects(readProjectRows(db), [this.config.projects]);
+    this.config.projects = fresh;
+    this.projectsSync = { db, dataVersion, base: structuredClone(fresh) };
   }
 }
 

@@ -98,6 +98,10 @@ export function DraggableTab({
       data-tab-id={tab.id}
       draggable={!editing}
       onClick={onSelect}
+      // A middle press inside a strip that overflows starts Chrome's autoscroll (Windows, and
+      // Linux with autoscroll on), and then no `auxclick` follows — so middle-click-to-close
+      // worked only while every tab fitted. Cancelling the press keeps the `auxclick`.
+      onMouseDown={(e) => { if (e.button === 1 && tab.closable) e.preventDefault(); }}
       onAuxClick={(e) => { if (e.button === 1 && tab.closable) { e.preventDefault(); onClose(); } }}
       onDragStart={onDragStart}
       onDragOver={onDragOver}

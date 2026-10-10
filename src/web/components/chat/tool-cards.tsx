@@ -11,6 +11,7 @@ import {
   SendMessageOutcomeView,
 } from "./send-message-card";
 import { parseSendMessageResult } from "./send-message-parse";
+import { isAssistantProject } from "../../../shared/assistant-project";
 import {
   ChevronDown,
   ChevronRight,
@@ -191,14 +192,17 @@ export function ToolCard({
 
   const { toolName, input } = extractToolInfo(tool);
   const hasResult = result?.type === "tool_result";
-  const isError = hasResult && !!(result as any).isError;
+  // An approval request's own card (a question) carries its answer: declined reads as an error,
+  // not as done — "answered" alone is not success.
+  const approvalAnswer = tool.type === "approval_request" ? (tool as any).approved as boolean | undefined : undefined;
+  const isError = (hasResult && !!(result as any).isError) || approvalAnswer === false;
   // Codex sends an exit code for shell tools. Keep it visible: output can contain
   // useful rows even when PowerShell recorded a non-terminating error and exited 1.
   const exitCode = hasResult && typeof (result as any).exitCode === "number"
     ? (result as any).exitCode as number
     : undefined;
   const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
-  const wasApproved = tool.type === "approval_request" && (tool as any).approved != null;
+  const wasApproved = approvalAnswer === true;
   const isSubagent = (toolName === "Agent" || toolName === "Task") && tool.type === "tool_use";
   const children = isSubagent ? (tool as any).children as ChatEvent[] | undefined : undefined;
   const hasChildren = children && children.length > 0;
@@ -456,14 +460,18 @@ function ToolDetails({
   const s = (v: unknown) => String(v ?? "");
   const { openTab } = useTabStore(useShallow((state) => ({ openTab: state.openTab })));
 
+  // The Assistant's virtual project owns no files and no grid: a tab stamped with it would be
+  // hidden in every project. Its tools name absolute paths, which open on their own.
+  const fileProject = isAssistantProject(projectName) ? undefined : projectName;
+
   /** Open a file in a new editor tab */
   const openFile = (filePath: string) => {
     if (!projectName) return;
     openTab({
       type: "editor",
       title: basename(filePath),
-      metadata: { filePath, projectName },
-      projectId: projectName,
+      metadata: fileProject ? { filePath, projectName: fileProject } : { filePath },
+      projectId: fileProject ?? null,
       closable: true,
     });
   };
@@ -473,8 +481,8 @@ function ToolDetails({
     openTab({
       type: "git-diff",
       title: `Diff ${basename(filePath)}`,
-      metadata: { filePath, projectName, original: oldStr, modified: newStr },
-      projectId: projectName ?? null,
+      metadata: { filePath, projectName: fileProject, original: oldStr, modified: newStr },
+      projectId: fileProject ?? null,
       closable: true,
     });
   };

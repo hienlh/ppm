@@ -2,6 +2,7 @@ import type { ChatEvent } from "../provider.interface.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseSubagentActivity, type SubagentActivity } from "./codex-subagent-thread.ts";
 import { changeToToolUse, rolloutFileChanges } from "./codex-patch.ts";
+import { DECLINED_COMMAND_OUTPUT, itemStatusIsDeclined, itemStatusIsError, shellToolName } from "./codex-event-mapper.ts";
 
 /**
  * Rollout `item_completed` records → PPM chat events.
@@ -80,16 +81,17 @@ function commandText(item: Item): string {
 }
 
 function commandExecutionEvents(item: Item): ChatEvent[] {
-  const raw = Array.isArray(item.command) ? item.command.join(" ") : String(item.command ?? "");
-  const tool = /powershell|pwsh/i.test(raw) ? "PowerShell" : "Bash";
+  const tool = shellToolName(item.command);
   const toolUseId = typeof item.id === "string" ? item.id : undefined;
   const exit = item.exit_code;
+  // Same rule as the live stream (`itemToToolResult`), so a reload shows what the chat showed.
+  const output = redactTruncate(item.aggregated_output ?? item.stdout ?? "");
   return [
     { type: "tool_use", tool, input: { command: commandText(item), cwd: plainCwd(item.cwd) }, toolUseId },
     {
       type: "tool_result",
-      output: redactTruncate(item.aggregated_output ?? item.stdout ?? ""),
-      isError: typeof exit === "number" && exit !== 0,
+      output: !output && itemStatusIsDeclined(item.status) ? DECLINED_COMMAND_OUTPUT : output,
+      isError: (typeof exit === "number" && exit !== 0) || itemStatusIsError(item.status),
       toolUseId,
     },
   ];
@@ -128,13 +130,12 @@ function fileChangeEvents(item: Item): ChatEvent[] {
   const changes = rolloutFileChanges(item.changes);
   if (changes.length === 0) return genericEvents(item);
   const toolUseId = typeof item.id === "string" ? item.id : undefined;
-  const status = String(item.status ?? "");
   return [
     changeToToolUse(changes[0]!, toolUseId, changes),
     {
       type: "tool_result",
       output: redactTruncate(item.stdout || changes.map((c) => `${c.op} ${c.path}`).join("\n")),
-      isError: status === "failed" || status === "declined",
+      isError: itemStatusIsError(item.status),
       toolUseId,
     },
   ];

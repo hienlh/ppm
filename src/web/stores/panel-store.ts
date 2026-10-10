@@ -29,6 +29,8 @@ import {
   type PopOutOptions,
 } from "./window-panel-actions";
 import { saveWindowPanels } from "./window-panel-persistence";
+import { isPanelOnScreen, projectOwningPanel, relocateTab } from "./singleton-tab-relocation";
+import { isAssistantProject } from "../../shared/assistant-project";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { hydrateProjectCache } from "@/lib/browser-cache/project-cache-hydration";
@@ -50,8 +52,8 @@ import {
   activeProjectDockTabCount,
 } from "./dock-actions";
 
-/** Tab types that can only have 1 instance per project */
-const SINGLETON_TYPES = new Set<TabType>(["settings", "git-log"]);
+/** Tab types that can only have 1 instance per project (the Assistant: one overall) */
+const SINGLETON_TYPES = new Set<TabType>(["settings", "git-log", "assistant"]);
 
 /**
  * One tab per table's data, per table's structure and per object's SQL, as in DBGate: opening one
@@ -245,6 +247,24 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     });
   }
 
+  /**
+   * Move a tab out of a panel that is not on screen (another project's keep-alive grid) into
+   * `toPanelId`, and write the owning project's layout without it, so a reload does not bring
+   * a second copy back there. The live DOM node moves with the tab (TabPool reparents it), so
+   * a chat inside keeps its stream.
+   */
+  function bringTabOnScreen(tabId: string, fromPanelId: string, toPanelId: string): void {
+    set((s) => ({ panels: relocateTab(s.panels, tabId, fromPanelId, toPanelId), focusedPanelId: toPanelId }));
+    const owner = projectOwningPanel(get().projectGrids, fromPanelId);
+    if (owner && owner !== get().currentProject) {
+      const saved = loadPanelLayout(owner);
+      if (saved?.panels[fromPanelId]) {
+        savePanelLayout(owner, { ...saved, panels: { ...saved.panels, [fromPanelId]: get().panels[fromPanelId]! } });
+      }
+    }
+    persist();
+  }
+
   function findPanel(tabId: string): Panel | undefined {
     return Object.values(get().panels).find((p) => p.tabs.some((t) => t.id === tabId));
   }
@@ -291,6 +311,9 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     redockFromWindow: makeRedockFromWindow(set, get),
 
     switchProject: (projectName) => {
+      // The Assistant's virtual project is a chat scope, never a workspace: its tab lives in
+      // whichever grid is on screen, so there is no grid of its own to switch to.
+      if (isAssistantProject(projectName)) return;
       // Every switch path lands here, so this is the one place that must start
       // warming the new project's cache — mounting the tabs that read it comes
       // right after. `__global__` is a virtual workspace with no server-side
@@ -367,10 +390,15 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // and closeTab is the only thing that removes an emptied panel, so leaving
         // one behind wedges its panel permanently (it renders as a blank slot).
         let healed = false;
+        // A tab one of this device's floating windows holds is not put in the grid as well. The
+        // windows are this device's own, while the layout may have come from another device
+        // through the server (a phone keeps the Assistant as a grid tab, a desktop in a window):
+        // two panels holding one tab id mount one body, and the other shows a blank window.
+        const inWindows = new Set(Object.entries(panels).filter(([id]) => isWindowPanelId(id)).flatMap(([, p]) => p.tabs.map((t) => t.id)));
         const migratedPanels: typeof loaded.panels = {};
         for (const [pid, panel] of Object.entries(loaded.panels)) {
           const filteredTabs = visibleTabs(panel.tabs, projectName)
-            .filter((t) => !OBSOLETE_TAB_TYPES.has(t.type));
+            .filter((t) => !OBSOLETE_TAB_TYPES.has(t.type) && !inWindows.has(t.id));
           if (filteredTabs.length !== panel.tabs.length) healed = true;
           const filteredHistory = panel.tabHistory.filter(
             (id) => filteredTabs.some((t) => t.id === id),
@@ -655,6 +683,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (SINGLETON_TYPES.has(tabDef.type)) {
         for (const p of Object.values(get().panels)) {
           const existing = p.tabs.find((t) => t.id === baseId);
+          // A singleton with no project is wherever it was opened, which can be another
+          // project's grid that is not on screen: bring it here instead of focusing it there.
+          // A window panel is left to the window reconcile, which owns that hand-back.
+          if (existing && !existing.projectId && !isWindowPanelId(p.id)
+            && !isPanelOnScreen(p.id, get().grid, mobile) && get().panels[pid]) {
+            bringTabOnScreen(existing.id, p.id, pid);
+            return existing.id;
+          }
           if (existing) {
             set((s) => ({
               focusedPanelId: focusAfterActivate(p.id),
@@ -668,6 +704,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
                 },
               },
             }));
+            raiseWindowOf(p.id);
             persist();
             return existing.id;
           }
@@ -824,6 +861,10 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           [panel.id]: { ...panel, tabs: panel.tabs.map((t) => (t.id === tabId ? { ...t, ...updates } : t)) },
         },
       }));
+      // A tab in a floating window is in no project's layout, so `persist` never writes it:
+      // without this, what a tab learns there (the session a new chat or the Assistant just
+      // created) is gone after a reload, which brings the window back on the stale tab.
+      if (isWindowPanelId(panel.id)) saveWindowPanels(get().panels);
       persist();
     },
 

@@ -6,13 +6,16 @@
 // label "Extra" must map to "xhigh" before reaching this layer).
 
 import { isAbsolute, resolve } from "node:path";
-import type { McpHttpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { McpHttpServerConfig, McpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { AssistantMcpServer } from "../shared/assistant-settings.ts";
 import {
   CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
 } from "../services/design/mcp/design-mcp-tool.ts";
 import {
   CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import { ASSISTANT_MCP_TIMEOUT_MS, type AssistantMcpAccess } from "../services/assistant-mcp/assistant-mcp-tools.ts";
+import { CLAUDE_ASSISTANT_MCP_SERVER } from "../shared/assistant-tool-names.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -38,7 +41,8 @@ export const THINKING_ADAPTIVE = -1;
  * the permission evaluation chain → the PreToolUse hook. The design policy lists nothing:
  * the read-only list would let Read and Grep reach any path on disk and every MCP tool run
  * unasked, which is exactly what a design session's agent (fed page content it did not
- * write) must not do.
+ * write) must not do. The Assistant policy lists nothing for the same reason, and because its
+ * one read rule depends on the path, which only the permission hook sees.
  */
 export const READ_ONLY_TOOLS: readonly string[] = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
 
@@ -47,7 +51,9 @@ export function allowedToolsFor(p: {
   agentTeams?: boolean;
   designPolicy?: boolean;
   designCheckTool?: string | null;
+  assistantPolicy?: boolean;
 }): string[] {
+  if (p.assistantPolicy) return [];
   if (p.designPolicy) return p.designCheckTool ? [p.designCheckTool] : [];
   const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
   const teamTools = p.agentTeams
@@ -118,7 +124,8 @@ export interface PresetSystemPromptOption {
 
 /**
  * Compose the SDK `systemPrompt` option from the provider's "Additional Instructions"
- * (`system_prompt`) and a design session's instruction block.
+ * (`system_prompt`) and the session's own instruction block — a design session's or a PPM
+ * Assistant session's, never both.
  *
  * Both are appended to the preset, never used as a replacing `custom` prompt: the setting
  * is labelled as *additional* instructions, and replacing Claude Code's prompt would drop
@@ -127,9 +134,9 @@ export interface PresetSystemPromptOption {
  */
 export function buildSystemPromptOption(
   additional?: string,
-  design?: string,
+  session?: string,
 ): PresetSystemPromptOption {
-  const parts = [additional, design]
+  const parts = [additional, session]
     .map((part) => part?.trim())
     .filter((part): part is string => !!part);
   return parts.length
@@ -194,6 +201,14 @@ export function shellHookCall(hookInput: any): { phase: "begin" | "end"; toolUse
 
 type ToolHook = (...args: any[]) => Promise<any>;
 
+/**
+ * Seconds the CLI waits for the permission hook. Its own default is ten minutes, and the hook
+ * waits for the user's answer to an approval card, which takes as long as the user takes: an
+ * Assistant card in particular waits until it is answered or PPM restarts. The largest value the
+ * CLI can hold — it turns this into a timer, and one past 2^31 − 1 ms fires at once.
+ */
+export const PERMISSION_HOOK_TIMEOUT_SECONDS = Math.floor(2_147_483_647 / 1000);
+
 /** The permission hook, then — for a call it let through — the shell or file-write hook. */
 function thenCapture(preToolUse: ToolHook, shellCommand: ToolHook, fileWrite: ToolHook): ToolHook {
   return async (...args) => {
@@ -225,7 +240,7 @@ export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fil
   return {
     PreToolUse: p.isBypass
       ? [fileWrite, shell]
-      : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite)] }],
+      : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite)], timeout: PERMISSION_HOOK_TIMEOUT_SECONDS }],
     PostToolUse: [shell, fileWrite],
     PostToolUseFailure: [shell, fileWrite],
   };
@@ -262,6 +277,36 @@ export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined)
       timeout: TAB_TOOLS_TIMEOUT_MS,
     },
   };
+}
+
+/**
+ * An Assistant session's whole MCP server list: the servers the user connected for the Assistant
+ * in Settings → PPM Assistant, then the PPM Assistant's own server as the SDK's `http` config,
+ * written last so nothing can stand in for it. `{}` for any other session. The own server's
+ * timeout is long because a query may run for minutes and a change waits for the user's approval
+ * inside the call; its token travels in the header. The user's servers carry no permission of
+ * their own: the Assistant policy asks before every one of their tools runs.
+ */
+export function assistantMcpServers(
+  access: AssistantMcpAccess | null | undefined,
+  servers: readonly AssistantMcpServer[] = [],
+): Record<string, McpServerConfig> {
+  const out: Record<string, McpServerConfig> = {};
+  for (const server of servers) {
+    if (!server.enabled || server.name === CLAUDE_ASSISTANT_MCP_SERVER) continue;
+    out[server.name] = server.transport === "stdio"
+      ? { type: "stdio", command: server.command, args: [...server.args], ...(Object.keys(server.env).length ? { env: { ...server.env } } : {}) }
+      : { type: "http", url: server.url, ...(Object.keys(server.headers).length ? { headers: { ...server.headers } } : {}) };
+  }
+  if (access) {
+    out[CLAUDE_ASSISTANT_MCP_SERVER] = {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: ASSISTANT_MCP_TIMEOUT_MS,
+    } as McpHttpServerConfig;
+  }
+  return out;
 }
 
 /** They only open a tab for the user to look at, so they never ask first. */

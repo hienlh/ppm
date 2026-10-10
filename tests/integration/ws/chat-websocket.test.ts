@@ -1,10 +1,19 @@
 import { encodeReply, decodeReply, type ReplyReference } from "../../../src/shared/chat-reply.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
-import { describe, it, expect, beforeAll, afterAll, spyOn } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, afterEach, spyOn } from "bun:test";
 import "../../test-setup.ts"; // disable auth
-import { chatService } from "../../../src/services/chat.service.ts";
-import { getSessionEffort, getSessionThinking, getSessionModel, clearSessionUnread, getSessionUnreadCount } from "../../../src/services/db.service.ts";
+import { chatService, TELEGRAM_CHANNEL_CONTEXT_ENTRY } from "../../../src/services/chat.service.ts";
+import {
+  getSessionEffort, getSessionThinking, getSessionModel, clearSessionUnread, getSessionUnreadCount,
+  setSessionAssistant, setSessionProvider, setSessionPermissionMode,
+} from "../../../src/services/db.service.ts";
 import { THINKING_ADAPTIVE } from "../../../src/providers/claude-agent-sdk-query-options.ts";
+import { CHAT_BUSY, chatControl, type ChatControl } from "../../../src/services/chat-control/chat-control.ts";
+import { chatLifecycle, type ChatLifecycleEvents } from "../../../src/services/chat-control/chat-lifecycle.ts";
+import { addNotificationSuppressor } from "../../../src/services/chat-control/notification-suppressor.ts";
+import { ASSISTANT_PROJECT_NAME } from "../../../src/shared/assistant-project.ts";
+import { normalizeCodexQuestions } from "../../../src/shared/approval-questions.ts";
+import type { AIProvider, SendMessageOpts } from "../../../src/types/chat.ts";
 
 const PORT = 19879; // Unique port — avoid conflict with supervisor-resilience (19876)
 let server: ReturnType<typeof Bun.serve>;
@@ -133,6 +142,23 @@ describe("Chat WebSocket — New Protocol", () => {
     expect(state.pendingApproval).toBeNull();
 
     close();
+  });
+
+  it("tells the browser the chat's stored permission mode, and only the stored one", async () => {
+    // A chat created on the server (chat_start) reaches a tab that knows no mode for it.
+    const stored = await chatService.createSession("mock", {});
+    setSessionPermissionMode(stored.id, "default");
+    const first = await connectWs(stored.id);
+    expect(await first.waitForType("session_state")).toMatchObject({ permissionMode: "default" });
+    first.close();
+
+    // Nothing stored: null, so the browser shows the default without adopting (and pinning) it.
+    const fresh = await chatService.createSession("mock", {});
+    const second = await connectWs(fresh.id);
+    const state = await second.waitForType("session_state");
+    expect(state.permissionMode).toBeNull();
+    expect(typeof state.defaultPermissionMode).toBe("string");
+    second.close();
   });
 
   // ─── phase transitions ───
@@ -968,5 +994,382 @@ describe("Chat WebSocket — what a notification is held back by", () => {
     } finally {
       notifications.restore();
     }
+  });
+});
+
+describe("Chat control from the server, with or without a browser", () => {
+  const ctl = (): ChatControl => {
+    const c = chatControl();
+    if (!c) throw new Error("the chat socket layer registered no chat control");
+    return c;
+  };
+  const until = async (check: () => boolean, ms = 5000) => {
+    for (let waited = 0; !check() && waited < ms; waited += 10) await Bun.sleep(10);
+    expect(check()).toBe(true);
+  };
+
+  type Heard = { [K in keyof ChatLifecycleEvents]: { name: K; payload: ChatLifecycleEvents[K] } }[keyof ChatLifecycleEvents];
+  const unsubscribes: Array<() => void> = [];
+  afterEach(() => {
+    for (const off of unsubscribes.splice(0)) off();
+  });
+  /** Every lifecycle event for one session, in order. */
+  function listen(sessionId: () => string): Heard[] {
+    const heard: Heard[] = [];
+    const names: Array<keyof ChatLifecycleEvents> = ["stream", "user_message", "approval_shown", "approval_resolved", "turn_ended", "migrated"];
+    for (const name of names) {
+      unsubscribes.push(chatLifecycle.on(name, (payload: any) => {
+        if (payload.sessionId === sessionId() || payload.oldSessionId === sessionId()) heard.push({ name, payload } as Heard);
+      }));
+    }
+    return heard;
+  }
+  const ofName = <K extends keyof ChatLifecycleEvents>(heard: Heard[], name: K) =>
+    heard.filter((h) => h.name === name).map((h) => h.payload as ChatLifecycleEvents[K]);
+
+  /** An Assistant-capable provider that answers every message at once and records what it was given. */
+  const turns: Array<{ sessionId: string; message: string; opts?: SendMessageOpts }> = [];
+  const STUB = "stub-chat-control";
+  providerRegistry.register({
+    id: STUB, name: STUB, supportsAssistantSessions: true, supportsSharedContext: true,
+    async createSession() { return { id: "unused", providerId: STUB, title: "", createdAt: "" }; },
+    async resumeSession(id: string) { return { id, providerId: STUB, title: "", createdAt: "" }; },
+    async listSessions() { return []; },
+    async deleteSession() {},
+    async *sendMessage(sessionId: string, message: string, opts?: SendMessageOpts) {
+      turns.push({ sessionId, message, opts });
+      yield { type: "text", content: "Reply for the phone." };
+      yield { type: "done", sessionId };
+    },
+  } as AIProvider);
+  function assistantSession(): string {
+    const id = `asst-${crypto.randomUUID()}`;
+    setSessionAssistant(id);
+    setSessionProvider(id, STUB);
+    return id;
+  }
+  const turnsOf = (id: string) => turns.filter((t) => t.sessionId === id);
+
+  it("runs a Telegram message through an Assistant session nobody has open, and is heard end to end", async () => {
+    const id = assistantSession();
+    const heard = listen(() => id);
+    const result = await ctl().sendUserMessage(id, "what needs me today?", {
+      origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId: STUB,
+    });
+    expect(result).toEqual({ ok: true, sessionId: id });
+    await until(() => ofName(heard, "turn_ended").length === 1);
+
+    expect(heard[0]).toMatchObject({ name: "user_message", payload: { text: "what needs me today?", origin: "telegram", providerId: STUB, projectName: ASSISTANT_PROJECT_NAME } });
+    const streamed = ofName(heard, "stream").map((s) => (s.event as { type: string }).type);
+    expect(streamed).toEqual(expect.arrayContaining(["phase_changed", "text", "done"]));
+    expect(ofName(heard, "turn_ended")[0]).toMatchObject({ outcome: "done", finalText: "Reply for the phone.", providerId: STUB });
+    // The end comes after the turn's `done` reached the stream.
+    const doneAt = heard.findIndex((h) => h.name === "stream" && (h.payload.event as { type?: string }).type === "done");
+    expect(doneAt).toBeGreaterThan(0);
+    expect(heard.findIndex((h) => h.name === "turn_ended")).toBeGreaterThan(doneAt);
+    // The model is told no screen is attached to this turn.
+    expect(turnsOf(id)[0]?.opts?.sharedContext).toContain(TELEGRAM_CHANNEL_CONTEXT_ENTRY);
+    expect(ctl().liveState(id)).toMatchObject({ phase: "idle", running: false, queuedCards: 0 });
+    expect(ctl().listLive().some((s) => s.sessionId === id)).toBe(true);
+  });
+
+  it("forgets the screen the model last saw once the user writes from Telegram", async () => {
+    const id = assistantSession();
+    const ui = { project: "web", layout: "desktop", panels: [], windows: [] };
+    const c = await connectWs(id, ASSISTANT_PROJECT_NAME);
+    await c.waitForType("session_state");
+    const fromPpm = async (n: number) => {
+      c.ws.send(JSON.stringify({ type: "message", content: `from ppm ${n}`, uiSummary: ui }));
+      await until(() => turnsOf(id).length === n);
+      await until(() => ctl().liveState(id)?.phase === "idle");
+    };
+
+    await fromPpm(1);
+    expect(turnsOf(id)[0]?.opts?.sharedContext).toContain("Current project:");
+    await fromPpm(2);
+    // Unchanged, so not sent again.
+    expect(turnsOf(id)[1]?.opts?.sharedContext ?? "").not.toContain("Current project:");
+
+    expect((await ctl().sendUserMessage(id, "from the phone", { origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId: STUB })).ok).toBe(true);
+    await until(() => turnsOf(id).length === 3);
+    await until(() => ctl().liveState(id)?.phase === "idle");
+    expect(turnsOf(id)[2]?.opts?.sharedContext).toContain(TELEGRAM_CHANNEL_CONTEXT_ENTRY);
+    expect(turnsOf(id)[2]?.opts?.sharedContext).not.toContain("Current project:");
+
+    await fromPpm(4);
+    expect(turnsOf(id)[3]?.opts?.sharedContext).toContain("Current project:");
+    expect(turnsOf(id)[3]?.opts?.sharedContext).not.toContain(TELEGRAM_CHANNEL_CONTEXT_ENTRY);
+    c.close();
+  });
+
+  it("leaves no PPM screen as the chatting device after a Telegram message, though one is open", async () => {
+    const { deliverToChattingDevice } = await import("../../../src/server/ws/chat.ts");
+    const session = await chatService.createSession("mock", {});
+    const c = await connectWs(session.id);
+    await c.waitForType("session_state");
+    c.ws.send(JSON.stringify({ type: "message", content: "hello" }));
+    await c.waitForType("done");
+    await until(() => ctl().liveState(session.id)?.phase === "idle");
+    expect(deliverToChattingDevice(session.id, { type: "probe" }, { strict: true })).toBe(1);
+
+    const result = await ctl().sendUserMessage(session.id, "from the phone", { origin: "telegram", projectName: "unused", providerId: "mock" });
+    expect(result.ok).toBe(true);
+    expect(deliverToChattingDevice(session.id, { type: "probe" }, { strict: true })).toBe(0);
+    // The open screen still shows the message: nobody there typed it.
+    const echo = await c.waitForType("user_message");
+    expect(echo.content).toBe("from the phone");
+    await c.waitForNthType("done", 2);
+    c.close();
+  });
+
+  it("settles a card once when the browser and Telegram both answer it, Telegram first", async () => {
+    const session = await chatService.createSession("mock", {});
+    const heard = listen(() => session.id);
+    const c = await connectWs(session.id);
+    await c.waitForType("session_state");
+    c.ws.send(JSON.stringify({ type: "message", content: "delete temp files" }));
+    const card = await c.waitForType("approval_request");
+    expect(ofName(heard, "approval_shown")[0]?.card).toMatchObject({ requestId: card.requestId, tool: "Bash", isQuestion: false });
+    expect(ctl().liveState(session.id)?.card?.requestId).toBe(card.requestId);
+
+    expect(ctl().answerApproval(session.id, card.requestId, { approved: true }, "telegram")).toBe("answered");
+    expect(ofName(heard, "approval_resolved")).toEqual([
+      { sessionId: session.id, requestId: card.requestId, approved: true, reason: "answered", by: "telegram" },
+    ]);
+    const resolved = await c.waitForType("approval_resolved");
+    expect(resolved).toMatchObject({ requestId: card.requestId, approved: true });
+
+    c.ws.send(JSON.stringify({ type: "approval_response", requestId: card.requestId, approved: false }));
+    const stale = await c.waitForType("approval_stale");
+    expect(stale.requestId).toBe(card.requestId);
+    expect(ctl().answerApproval(session.id, card.requestId, { approved: false }, "telegram")).toBe("stale");
+    expect(ofName(heard, "approval_resolved")).toHaveLength(1);
+    await c.waitForType("done");
+    c.close();
+  });
+
+  it("settles a card once when the browser answers before Telegram", async () => {
+    const session = await chatService.createSession("mock", {});
+    const heard = listen(() => session.id);
+    const c = await connectWs(session.id);
+    await c.waitForType("session_state");
+    c.ws.send(JSON.stringify({ type: "message", content: "remove the cache" }));
+    const card = await c.waitForType("approval_request");
+    c.ws.send(JSON.stringify({ type: "approval_response", requestId: card.requestId, approved: true }));
+    await c.waitForType("approval_resolved");
+    expect(ctl().answerApproval(session.id, card.requestId, { approved: true }, "telegram")).toBe("stale");
+    expect(ofName(heard, "approval_resolved").map((r) => r.by)).toEqual(["ws"]);
+    expect(c.messages.filter((m) => m.type === "approval_stale")).toHaveLength(0);
+    await c.waitForType("done");
+    c.close();
+  });
+
+  it("refuses a watch report as busy while a card waits, and leaves the card where it is", async () => {
+    const session = await chatService.createSession("mock", {});
+    const c = await connectWs(session.id);
+    await c.waitForType("session_state");
+    c.ws.send(JSON.stringify({ type: "message", content: "delete temp files" }));
+    const card = await c.waitForType("approval_request");
+
+    const result = await ctl().sendUserMessage(session.id, "<ppm-event>chat X finished</ppm-event>", { origin: "watch", projectName: "unused", providerId: "mock" });
+    expect(result).toEqual({ ok: false, error: CHAT_BUSY });
+    expect(ctl().liveState(session.id)?.card?.requestId).toBe(card.requestId);
+    expect(c.messages.filter((m) => m.type === "approval_resolved" || m.type === "user_message")).toHaveLength(0);
+
+    expect(ctl().answerApproval(session.id, card.requestId, { approved: true }, "telegram")).toBe("answered");
+    await c.waitForType("done");
+    c.close();
+  });
+
+  it("carries channel and origin into a message joining a running turn, and keeps a watch out of it", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const HELD = "stub-chat-control-held";
+    providerRegistry.register({
+      id: HELD, name: HELD, supportsAssistantSessions: true, supportsSharedContext: true,
+      async createSession() { return { id: "unused", providerId: HELD, title: "", createdAt: "" }; },
+      async resumeSession(id: string) { return { id, providerId: HELD, title: "", createdAt: "" }; },
+      async listSessions() { return []; },
+      async deleteSession() {},
+      async *sendMessage(sessionId: string) {
+        yield { type: "text", content: "working" };
+        await gate;
+        yield { type: "done", sessionId };
+      },
+      pushMessage() {},
+    } as AIProvider);
+    const id = `held-${crypto.randomUUID()}`;
+    setSessionAssistant(id);
+    setSessionProvider(id, HELD);
+    const pushed = spyOn(chatService, "pushMessage").mockImplementation(async () => {});
+    const opts = { origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId: HELD } as const;
+    try {
+      expect((await ctl().sendUserMessage(id, "start", opts)).ok).toBe(true);
+      // Streaming, not merely starting: only a running consumer takes a message as a follow-up.
+      await until(() => ctl().liveState(id)?.phase === "streaming");
+      expect((await ctl().sendUserMessage(id, "and this", opts)).ok).toBe(true);
+      expect(pushed).toHaveBeenCalledWith(HELD, id, "and this", expect.objectContaining({ origin: "telegram", channel: "telegram" }));
+      // A watch report never joins a turn the user is in the middle of.
+      const report = { origin: "watch", projectName: ASSISTANT_PROJECT_NAME, providerId: HELD } as const;
+      expect(await ctl().sendUserMessage(id, "<ppm-event>done</ppm-event>", report)).toEqual({ ok: false, error: CHAT_BUSY });
+      expect(pushed).toHaveBeenCalledTimes(1);
+      release();
+      await until(() => ctl().liveState(id)?.phase === "idle");
+      expect((await ctl().sendUserMessage(id, "<ppm-event>done</ppm-event>", report)).ok).toBe(true);
+    } finally {
+      release();
+      pushed.mockRestore();
+    }
+  });
+
+  it("stops a running turn and reports its end; an unknown chat has nothing to stop", async () => {
+    const session = await chatService.createSession("mock", {});
+    const heard = listen(() => session.id);
+    const c = await connectWs(session.id);
+    await c.waitForType("session_state");
+    c.ws.send(JSON.stringify({ type: "message", content: "tell me a long story" }));
+    await c.waitForType("text");
+    expect(ctl().listLive().find((s) => s.sessionId === session.id)?.running).toBe(true);
+    expect(ctl().cancelTurn(session.id, "telegram")).toBe(true);
+    await until(() => ofName(heard, "turn_ended").length === 1);
+    expect(ctl().liveState(session.id)?.running).toBe(false);
+    expect(ctl().cancelTurn(`missing-${crypto.randomUUID()}`, "telegram")).toBe(false);
+    expect(ctl().liveState(`missing-${crypto.randomUUID()}`)).toBeNull();
+    c.close();
+  });
+
+  it("refuses what no server-side sender may send", async () => {
+    const session = await chatService.createSession("mock", {});
+    const send = (text: string, extra: Record<string, unknown> = {}) =>
+      ctl().sendUserMessage(session.id, text, { origin: "telegram", projectName: "unused", providerId: "mock", ...extra } as never);
+    expect((await send("  ")).ok).toBe(false);
+    expect((await send("hi", { origin: "ws" })).ok).toBe(false);
+    expect((await send("hi", { permissionMode: "yolo" })).ok).toBe(false);
+    expect((await send("hi", { images: [{ data: "x", mediaType: "image/tiff" }] })).ok).toBe(false);
+    expect((await send("hi", { images: Array.from({ length: 6 }, () => ({ data: "x", mediaType: "image/png" })) })).ok).toBe(false);
+    const unregistered = await ctl().sendUserMessage(`fresh-${crypto.randomUUID()}`, "hi", { origin: "telegram", projectName: `nope-${crypto.randomUUID()}`, providerId: "mock" });
+    expect(unregistered.ok).toBe(false);
+  });
+
+  it("holds back the notifications a suppressor claims, and still marks the chat unread", async () => {
+    const { notificationService } = await import("../../../src/services/notification.service.ts");
+    const sent: Array<{ type: string; sessionId?: string }> = [];
+    const spy = spyOn(notificationService, "broadcast").mockImplementation(async (type, payload) => {
+      sent.push({ type, sessionId: (payload as { sessionId?: string }).sessionId });
+    });
+    try {
+      const session = await chatService.createSession("mock", {});
+      unsubscribes.push(addNotificationSuppressor((sessionId) => sessionId === session.id));
+      const c = await connectWs(session.id);
+      await c.waitForType("session_state");
+      c.ws.send(JSON.stringify({ type: "message", content: "delete temp files" }));
+      const card = await c.waitForType("approval_request");
+      c.ws.send(JSON.stringify({ type: "approval_response", requestId: card.requestId, approved: true }));
+      await c.waitForType("done");
+      await Bun.sleep(150);
+      expect(sent.filter((s) => s.sessionId === session.id)).toEqual([]);
+      expect(getSessionUnreadCount(session.id)).toBeGreaterThan(0);
+      c.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("Question cards, answered by question id whichever provider asked", () => {
+  /** What each provider was handed for each answered card. */
+  const given = new Map<string, { approved: boolean; data: unknown }>();
+  const waiting = new Map<string, () => void>();
+
+  /** A provider whose every turn asks one question, waits for the answer, then ends. */
+  function questionProvider(id: string, card: () => Record<string, unknown>): AIProvider {
+    return {
+      id, name: id,
+      async createSession() { return { id: `${id}-${crypto.randomUUID()}`, providerId: id, title: "", createdAt: "" }; },
+      async resumeSession(sid: string) { return { id: sid, providerId: id, title: "", createdAt: "" }; },
+      async listSessions() { return []; },
+      async deleteSession() {},
+      async *sendMessage(sessionId: string) {
+        const requestId = crypto.randomUUID();
+        const answered = new Promise<void>((resolve) => waiting.set(requestId, resolve));
+        yield { type: "approval_request", requestId, tool: "AskUserQuestion", ...card() } as any;
+        await answered;
+        yield { type: "text", content: "Thanks." };
+        yield { type: "done", sessionId };
+      },
+      resolveApproval(requestId: string, approved: boolean, data?: unknown) {
+        given.set(requestId, { approved, data });
+        waiting.get(requestId)?.();
+      },
+    } as AIProvider;
+  }
+
+  // Codex's card as its provider sends it: the questions normalized from the raw request.
+  const CODEX_QUESTIONS = normalizeCodexQuestions({
+    questions: [
+      { id: "env", header: "Target", question: "Deploy where?", isOther: false, isSecret: false, options: [{ label: "staging" }, { label: "prod" }] },
+      { id: "token", header: "Token", question: "Deploy token?", isOther: false, isSecret: true, options: null },
+    ],
+  });
+  const CLAUDE_INPUT = {
+    questions: [
+      { question: "Which database?", header: "DB", options: [{ label: "Postgres" }, { label: "SQLite" }], multiSelect: false },
+      { question: "Which features?", header: "Features", options: [{ label: "Auth" }, { label: "Billing" }], multiSelect: true },
+    ],
+  };
+
+  it("hands Codex the answers under its own question ids, and shows a secret to nobody", async () => {
+    // Registered under codex's id, since that id is what decides the provider's answer shape.
+    const real = providerRegistry.get("codex");
+    providerRegistry.register(questionProvider("codex", () => ({ input: { questions: CODEX_QUESTIONS }, questions: CODEX_QUESTIONS })));
+    try {
+      const session = await chatService.createSession("codex", {});
+      const c = await connectWs(session.id);
+      await c.waitForType("session_state");
+      c.ws.send(JSON.stringify({ type: "message", content: "deploy" }));
+      const card = await c.waitForType("approval_request");
+      expect(card.questions.map((q: any) => q.id)).toEqual(["env", "token"]);
+      expect(chatControl()!.liveState(session.id)?.card?.questions?.map((q) => q.id)).toEqual(["env", "token"]);
+
+      c.ws.send(JSON.stringify({ type: "approval_response", requestId: card.requestId, approved: true, answersById: { env: ["prod"], token: ["s3cret"], bogus: ["x"] } }));
+      const resolved = await c.waitForType("approval_resolved");
+      expect(resolved.answers).toEqual({ "Deploy where?": "prod", "Deploy token?": "(hidden)" });
+      expect(given.get(card.requestId)).toEqual({ approved: true, data: { env: ["prod"], token: ["s3cret"] } });
+      await c.waitForType("done");
+      c.close();
+    } finally {
+      if (real) providerRegistry.register(real);
+      else (providerRegistry as unknown as { providers: Map<string, AIProvider> }).providers.delete("codex");
+    }
+  });
+
+  it("hands Claude its own shape from an id answer, and still reads an older tab's answer by text", async () => {
+    const STUB = "stub-question-claude";
+    providerRegistry.register(questionProvider(STUB, () => ({ input: CLAUDE_INPUT })));
+    const session = await chatService.createSession(STUB, {});
+    const c = await connectWs(session.id);
+    await c.waitForType("session_state");
+
+    c.ws.send(JSON.stringify({ type: "message", content: "set up" }));
+    const first = await c.waitForType("approval_request");
+    // Claude sends no ids; the server reads its questions off the tool input.
+    expect(first.questions.map((q: any) => q.id)).toEqual(["q1", "q2"]);
+    expect(chatControl()!.answerApproval(session.id, first.requestId, { approved: true, answersById: { q1: ["SQLite"], q2: ["Auth", "Billing"] } }, "telegram")).toBe("answered");
+    expect(given.get(first.requestId)?.data).toEqual({ "Which database?": "SQLite", "Which features?": "Auth, Billing" });
+    await c.waitForType("done");
+
+    c.ws.send(JSON.stringify({ type: "message", content: "again" }));
+    const second = await c.waitForNthType("approval_request", 2);
+    c.ws.send(JSON.stringify({ type: "approval_response", requestId: second.requestId, approved: true, data: { "Which database?": "Postgres" } }));
+    await c.waitForNthType("done", 2);
+    expect(given.get(second.requestId)?.data).toEqual({ "Which database?": "Postgres" });
+
+    // A skip is still a skip: no answers reach the provider.
+    c.ws.send(JSON.stringify({ type: "message", content: "once more" }));
+    const third = await c.waitForNthType("approval_request", 3);
+    c.ws.send(JSON.stringify({ type: "approval_response", requestId: third.requestId, approved: false }));
+    await c.waitForNthType("done", 3);
+    expect(given.get(third.requestId)).toEqual({ approved: false, data: undefined });
+    c.close();
   });
 });

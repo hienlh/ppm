@@ -10,6 +10,7 @@
 //   PPM_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node tests/e2e/ai-tab-tools-e2e.mjs
 //
 // PPM_TAB_TOOLS_WEB_DIR=<dir> reuses a scratch build (with Monaco staged under assets/monaco/vs).
+// PPM_PLAYWRIGHT_CHANNEL=chrome runs the installed Chrome instead of Playwright's own build.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
@@ -128,7 +129,7 @@ try {
 
   const modulePath = process.env.PPM_PLAYWRIGHT_MODULE;
   const pw = modulePath ? await import(pathToFileURL(modulePath).href) : await import("playwright");
-  browser = await pw.chromium.launch({ headless: true });
+  browser = await pw.chromium.launch({ headless: true, channel: process.env.PPM_PLAYWRIGHT_CHANNEL || undefined });
   // Init scripts run in every frame, the sandboxed previews too, where storage throws.
   const onboarding = () => {
     if (window.top !== window) return;
@@ -247,7 +248,8 @@ try {
   {
     const [missing] = await turn(page, [{ tool: "open_preview", args: { path: "site/nope.html" } }], "show a page that is not there");
     assert.equal(missing.isError, true);
-    assert.match(missing.text, /There is no file at .*site\/nope\.html\. Write the file first/);
+    // The absolute path, in the host's own separators: backslashes on Windows.
+    assert.match(missing.text, /There is no file at .*site[\\/]nope\.html\. Write the file first/);
     record("a file that does not exist is refused before any tab opens", { text: missing.text });
   }
 

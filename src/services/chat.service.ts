@@ -1,8 +1,9 @@
 import { providerRegistry } from "../providers/registry.ts";
 import { configService } from "./config.service.ts";
-import { createHash } from "node:crypto";
 import { buildSharedProviderContext } from "./provider-shared-context.ts";
-import { stripSharedContext, withSharedContext } from "../shared/provider-context.ts";
+import { joinSharedContextEntries, stripSharedContext, withSharedContext } from "../shared/provider-context.ts";
+import { SharedContextSnapshots, type SharedContextPart } from "./shared-context-snapshots.ts";
+import { uiSummaryContextEntry } from "./assistant/assistant-ui-summary.ts";
 import type {
   Session,
   SessionConfig,
@@ -22,17 +23,52 @@ import { scheduleTurnSnapshot } from "./design/design-turn-snapshot.ts";
 import { designMcpAccessFor } from "./design/mcp/design-mcp-access.ts";
 import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
-import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
+import { forgetSessionInDeviceBrokers } from "./tab-tools-mcp/tab-open-broker.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
+import { isAssistantProject } from "../shared/assistant-project.ts";
+import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
+import { ASSISTANT_APPROVAL_SECTION, ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, assistantUserMcpSection, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { enabledAssistantMcpServers, getAssistantSettings } from "./assistant/assistant-settings.service.ts";
+import { assistantMcpAccessFor, assistantMcpTokens } from "./assistant-mcp/assistant-mcp-tokens.ts";
+import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
 import { createLogger } from "./logger.ts";
+import { watchEventsContextEntry } from "./assistant-watch/watch-event-text.ts";
+import { deleteAssistantWatchesFor } from "./assistant-hub/assistant-hub-db.ts";
 
 const log = createLogger("chat");
 const designLog = createLogger("design");
 
 /** What a caller passes to send: the provider's options plus which door the run came through. */
 export type ChatSendOpts = SendMessageOpts & { origin?: TraceOrigin };
+
+/** The shared-context entries one message carried, by entry. */
+type SentContext = Partial<Record<SharedContextPart, string>>;
+
+/**
+ * What an Assistant session is told on every message typed on Telegram. Sent each time rather
+ * than once: the same conversation is also typed into from PPM, and each message must say where
+ * its writer is. The UI tools would answer "no device" anyway; saying so up front saves the
+ * model a wasted call and keeps it from describing a screen it cannot see.
+ */
+export const TELEGRAM_CHANNEL_CONTEXT_ENTRY = [
+  "Channel: this message was sent from Telegram on the user's phone.",
+  "No PPM screen is attached to this turn: the UI tools (ui_*) will answer no-device, so use the data tools instead.",
+  "Keep the reply short; it is read on a phone.",
+].join("\n");
+
+/**
+ * What an Assistant session is told on the first message typed in PPM after one from Telegram:
+ * the "no screen" it was told before no longer holds.
+ */
+export const BACK_ON_PPM_CONTEXT_ENTRY = [
+  "Channel: this message was typed in PPM, on a screen. The user's earlier messages came from Telegram;",
+  "the UI tools (ui_*) work again for this device, and replies no longer need to be phone-sized.",
+].join(" ");
+
+/** How many sessions' last channel is remembered; the least recently written go first. */
+const MAX_CHANNEL_RECORDS = 512;
 
 /**
  * What the "turn start" / "turn end" log lines need about one run, which can span many turns.
@@ -86,20 +122,28 @@ function endsDesignWork(event: ChatEvent): boolean {
 
 class ChatService {
   // Delivery hints only: a restart/eviction safely sends a fresh snapshot.
-  private sharedSnapshots = new Map<string, string>();
+  private sharedSnapshots = new SharedContextSnapshots();
   /** Runs in flight, by every id they answer to — read only by the turn log lines. */
   private turnLogs = new Map<string, TurnLog>();
+  /**
+   * Where each Assistant session's user last wrote from, by `provider:session`, so the first
+   * message typed in PPM after Telegram says the screen is back. Not cleared with the snapshots:
+   * an error or a compaction does not move the user. Lost on restart, which costs one line.
+   */
+  private lastChannel = new Map<string, "telegram" | "ppm">();
 
-  private rememberSharedContext(providerId: string, sessionId: string, context?: string): void {
-    if (!context) return;
-    const key = `${providerId}:${sessionId}`;
-    this.sharedSnapshots.delete(key);
-    this.sharedSnapshots.set(key, createHash("sha256").update(context).digest("hex"));
-    if (this.sharedSnapshots.size > 512) this.sharedSnapshots.delete(this.sharedSnapshots.keys().next().value!);
+  private noteChannel(key: string, channel: "telegram" | "ppm"): void {
+    this.lastChannel.delete(key);
+    this.lastChannel.set(key, channel);
+    if (this.lastChannel.size > MAX_CHANNEL_RECORDS) this.lastChannel.delete(this.lastChannel.keys().next().value!);
+  }
+
+  private rememberSharedContext(providerId: string, sessionId: string, sent: SentContext): void {
+    this.sharedSnapshots.remember(`${providerId}:${sessionId}`, sent);
   }
 
   invalidateSharedContext(providerId: string, sessionId: string): void {
-    this.sharedSnapshots.delete(`${providerId}:${sessionId}`);
+    this.sharedSnapshots.forget(`${providerId}:${sessionId}`);
   }
   async createSession(
     providerId?: string,
@@ -109,10 +153,20 @@ class ChatService {
       ? providerRegistry.get(providerId)
       : providerRegistry.getDefault();
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
-    const session = await provider.createSession(config);
+    // Every session in the Assistant's virtual project is an Assistant session, whichever
+    // door created it (the new-chat route, a fork, a script).
+    const assistant = isAssistantProject(config.projectName);
+    if (assistant && !provider.supportsAssistantSessions) {
+      throw new Error(`Provider "${provider.id}" does not support PPM Assistant sessions`);
+    }
+    // A warm spare was spawned with an ordinary chat's prompt and permissions.
+    const session = await provider.createSession(assistant ? { ...config, adoptWarmSpare: false } : config);
+    const { setSessionProvider, setSessionAssistant } = await import("./db.service.ts");
+    // Not best-effort, unlike the provider row below: an Assistant session without its mark
+    // would only be recognised by its working directory.
+    if (assistant) setSessionAssistant(session.id);
     // Persist provider ownership so the WS routes follow-ups correctly across restarts.
     try {
-      const { setSessionProvider } = await import("./db.service.ts");
       setSessionProvider(session.id, provider.id);
     } catch { /* non-fatal */ }
     return session;
@@ -120,6 +174,8 @@ class ChatService {
 
   /** Start the process the next new chat in a project will run on, where the provider can. */
   async prewarm(providerId: string | undefined, input: PrewarmInput): Promise<void> {
+    // An Assistant session never adopts a spare, so one started for it would only idle.
+    if (isAssistantWorkDir(input.projectPath)) return;
     const provider = providerId ? providerRegistry.get(providerId) : providerRegistry.getDefault();
     await provider?.prewarm?.(input);
   }
@@ -167,7 +223,16 @@ class ChatService {
     this.invalidateSharedContext(providerId, sessionId);
     designMcpTokens.revoke(sessionId);
     tabToolsMcpTokens.revoke(sessionId);
-    tabOpenBroker.forget(sessionId);
+    assistantMcpTokens.revoke(sessionId);
+    // The tab tools', the Assistant's screen and its approval brokers each keep a rate window.
+    forgetSessionInDeviceBrokers(sessionId);
+    this.lastChannel.delete(`${providerId}:${sessionId}`);
+    // Watches the session set, and watches on it: neither can report to anyone any more.
+    try {
+      deleteAssistantWatchesFor(sessionId);
+    } catch (e) {
+      log.warn(`session=${sessionId} could not drop its watches: ${(e as Error).message}`);
+    }
     return provider.deleteSession(sessionId);
   }
 
@@ -193,7 +258,10 @@ class ChatService {
       turn = { sessionId, providerId, origin: origin ?? "unknown", startedAt: Date.now() };
       this.turnLogs.set(sessionId, turn);
     } else if (live.startedAt === null) {
+      // A follow-up into an idle live stream starts a turn of its own, so its end line names
+      // who asked for it — not whoever opened the stream turns ago.
       live.startedAt = Date.now();
+      live.origin = origin ?? live.origin;
     }
     let outcome: "completed" | "consumer_closed" | "failed" = "consumer_closed";
     try {
@@ -255,9 +323,9 @@ class ChatService {
       yield event;
       return;
     }
-    const prepared = await this.prepareSendOptions(providerId, sessionId, message, opts);
+    const { opts: prepared, sent } = await this.prepareSend(providerId, sessionId, message, opts);
     run.contextAdded(prepared.sharedContext, provider.supportsSharedContext ? "provider" : "message");
-    this.rememberSharedContext(providerId, sessionId, prepared.sharedContext);
+    this.rememberSharedContext(providerId, sessionId, sent);
     let finished = false;
     let activeSessionId = sessionId;
     try {
@@ -280,10 +348,11 @@ class ChatService {
         }
         const migratedId = event.type === "session_migrated" ? event.newSessionId : event.type === "done" ? event.sessionId : undefined;
         if (migratedId && migratedId !== activeSessionId) {
-          const snapshot = this.sharedSnapshots.get(`${providerId}:${activeSessionId}`);
-          if (snapshot) {
-            this.sharedSnapshots.set(`${providerId}:${migratedId}`, snapshot);
-            this.invalidateSharedContext(providerId, activeSessionId);
+          this.sharedSnapshots.move(`${providerId}:${activeSessionId}`, `${providerId}:${migratedId}`);
+          const channel = this.lastChannel.get(`${providerId}:${activeSessionId}`);
+          if (channel) {
+            this.lastChannel.delete(`${providerId}:${activeSessionId}`);
+            this.noteChannel(`${providerId}:${migratedId}`, channel);
           }
           activeSessionId = migratedId;
         }
@@ -308,19 +377,40 @@ class ChatService {
     message: string,
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
+    return (await this.prepareSend(providerId, sessionId, message, opts)).opts;
+  }
+
+  /**
+   * {@link prepareSendOptions}, plus the shared-context entries the message carries, which the
+   * caller records once the message is on its way so an unchanged entry is not sent again.
+   */
+  private async prepareSend(
+    providerId: string,
+    sessionId: string,
+    message: string,
+    opts?: SendMessageOpts,
+  ): Promise<{ opts: SendMessageOpts; sent: SentContext }> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    // Like the design fields, the tab tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
-    // A design session checks its canvas with `design_check` instead.
-    const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession
+    const { uiSummary, channel, watchEvents, ...callerOpts } = opts ?? {};
+    // Like the design fields, the tab tools are only ever server-built. An Assistant session is
+    // never also a design session: its policy replaces the design one outright.
+    const { tabToolsMcp: _tabTools, ...design } = this.resolveAssistantOptions(providerId, sessionId, callerOpts)
+      ?? await this.resolveDesignOptions(providerId, sessionId, callerOpts);
+    // A design session checks its canvas with `design_check` instead; the Assistant gets
+    // tools of its own that drive the UI.
+    const tabToolsMcp = configService.get("ai").tab_tools === true && !design.designSession && !design.assistantSession
       ? tabToolsMcpAccessFor(sessionId) : null;
-    let sharedContext: string | undefined;
-    if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
-      this.invalidateSharedContext(providerId, sessionId);
-    }
+    const key = `${providerId}:${sessionId}`;
+    // The user's shared instructions and memories belong to their own chats: an Assistant
+    // session is kept apart from them whatever the sharing setting says.
+    const sharing = configService.get("ai").share_provider_context !== false && !design.assistantSession;
+    if (/^\s*\/(compact|clear|new)(\s|$)/i.test(message)) this.sharedSnapshots.forget(key);
+    else if (!sharing) this.sharedSnapshots.forget(key, "shared");
     // Slash commands belong to the runtime parser. A context prefix would turn
     // /compact (or a provider skill) into an ordinary prompt.
-    if (configService.get("ai").share_provider_context !== false && !message.trimStart().startsWith("/")) {
+    const slash = message.trimStart().startsWith("/");
+    let shared: string | undefined;
+    if (sharing && !slash) {
       const { getSessionProjectPath } = await import("./db.service.ts");
       const projectPath = this.getSession(sessionId)?.projectPath ?? getSessionProjectPath(sessionId);
       if (projectPath) {
@@ -328,12 +418,81 @@ class ChatService {
           const item = providerRegistry.get(id);
           return item ? [item] : [];
         });
-        sharedContext = await buildSharedProviderContext(projectPath, providers, { recipientProviderId: providerId });
-        const hash = createHash("sha256").update(sharedContext).digest("hex");
-        if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
+        shared = await buildSharedProviderContext(projectPath, providers, { recipientProviderId: providerId });
+        if (this.sharedSnapshots.unchanged(key, "shared", shared)) shared = undefined;
       }
     }
-    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), sharedContext };
+    // What the Assistant's user is looking at rides in the same block, whatever the sharing
+    // setting says: it is how the Assistant knows which screen it is talking about.
+    let ui: string | undefined;
+    let channelEntry: string | undefined;
+    if (design.assistantSession && watchEvents?.length) {
+      // PPM woke the session to report on watched chats: the entry carries the news, says that
+      // nobody typed and no screen is attached, and is news once — never compared with a
+      // previous one. Where the user last wrote from is unchanged: they did not write.
+      channelEntry = watchEventsContextEntry(watchEvents);
+    } else if (design.assistantSession && channel === "telegram") {
+      // No screen is attached to this turn. The screen the model last saw is forgotten, so the
+      // next message typed in PPM sends it again instead of the model assuming it is unchanged.
+      this.sharedSnapshots.forget(key, "ui");
+      this.noteChannel(key, "telegram");
+      if (!slash) channelEntry = TELEGRAM_CHANNEL_CONTEXT_ENTRY;
+    } else if (design.assistantSession && !slash) {
+      ui = uiSummaryContextEntry(uiSummary);
+      if (ui && this.sharedSnapshots.unchanged(key, "ui", ui)) ui = undefined;
+      // The model was told the user is on their phone; without this it would go on believing it.
+      if (this.lastChannel.get(key) === "telegram") channelEntry = BACK_ON_PPM_CONTEXT_ENTRY;
+      this.noteChannel(key, "ppm");
+    }
+    const sharedContext = joinSharedContextEntries(shared, ui, channelEntry);
+    return { opts: { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), sharedContext }, sent: { shared, ui } };
+  }
+
+  /**
+   * Assistant identity for this turn, or null for any other session. Resolved here for the
+   * same reason as the design identity below: every caller sends through this service.
+   *
+   * The instructions are server-built and every caller-supplied Assistant or design field is
+   * dropped. The permission mode is forced to `default` whatever the caller or the stored
+   * session asks for — the Assistant's policy, not the composer's mode, decides what runs
+   * unasked, and `default` is the mode in which both providers consult that policy. A provider
+   * that cannot enforce it refuses the turn instead of running it as an ordinary chat.
+   */
+  private resolveAssistantOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): SendMessageOpts | null {
+    if (!isAssistantSession(sessionId, this.getSession(sessionId)?.projectPath)) return null;
+    if (!providerRegistry.get(providerId)?.supportsAssistantSessions) {
+      throw new Error(`Provider "${providerId}" does not support PPM Assistant sessions`);
+    }
+    // A provider falls back to the home directory for a cwd that does not exist, which would
+    // file the session under another directory's history and judge its paths from there.
+    ensureAssistantWorkDir();
+    const {
+      designInstructions: _design, designSession: _designFlag, designMcp: _designMcp,
+      assistantInstructions: _instructions, assistantSession: _flag, assistantMcp: _assistantMcp,
+      assistantMcpServers: _servers, permissionMode: _mode, ...rest
+    } = opts ?? {};
+    // No endpoint (a process that serves no HTTP) means no tools, and instructions that
+    // describe none.
+    const assistantMcp = assistantMcpAccessFor(sessionId);
+    // Settings → PPM Assistant: the model and effort a session runs with when nothing chose one
+    // for it, the user's own instructions, and the MCP servers the user connected for it.
+    const settings = getAssistantSettings();
+    const defaults = settings.providers[providerId] ?? {};
+    const servers = enabledAssistantMcpServers();
+    const sections = [
+      ...(assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION] : []),
+      ...(servers.length > 0 ? [assistantUserMcpSection(servers.map((s) => s.name))] : []),
+    ];
+    return {
+      ...rest,
+      ...(!rest.model && defaults.model ? { model: defaults.model } : {}),
+      ...(!rest.effort && defaults.effort ? { effort: defaults.effort } : {}),
+      assistantInstructions: buildAssistantInstructions({ sections, userInstructions: settings.instructions }),
+      assistantSession: true,
+      ...(assistantMcp ? { assistantMcp } : {}),
+      ...(servers.length > 0 ? { assistantMcpServers: servers } : {}),
+      permissionMode: "default",
+    };
   }
 
   /**
@@ -351,7 +510,11 @@ class ChatService {
    * then the provider's configured default, exactly as for any other chat.
    */
   private async resolveDesignOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
-    const { designInstructions: _instructions, designSession: _flag, designMcp: _mcp, ...rest } = opts ?? {};
+    const {
+      designInstructions: _instructions, designSession: _flag, designMcp: _mcp,
+      assistantInstructions: _assistant, assistantSession: _assistantFlag, assistantMcp: _assistantMcp,
+      assistantMcpServers: _assistantServers, ...rest
+    } = opts ?? {};
     const { getSessionDesignSlug, getSessionPermissionMode, getSessionProjectPath } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);
     if (!slug || !isValidDesignSlug(slug)) return rest;
@@ -390,7 +553,7 @@ class ChatService {
     };
     if (!streaming.pushMessage) return;
     const { origin, ...sendOpts } = opts ?? {};
-    const prepared = await this.prepareSendOptions(providerId, sessionId, message, sendOpts);
+    const { opts: prepared, sent } = await this.prepareSend(providerId, sessionId, message, sendOpts);
     // Written before the push, so the input precedes every event it causes in the trace.
     traceFollowUp(sessionId, providerId, message, {
       ...sendOpts,
@@ -404,8 +567,13 @@ class ChatService {
     streaming.pushMessage(sessionId,
       provider.supportsSharedContext ? message : withSharedContext(message, prepared.sharedContext),
       { ...prepared, sharedContext: provider.supportsSharedContext ? prepared.sharedContext : undefined });
-    if (live && live.startedAt === null) live.startedAt = Date.now();
-    this.rememberSharedContext(providerId, sessionId, prepared.sharedContext);
+    // Only a push that starts a turn takes it over: one sent mid-turn may be folded into the
+    // running turn, which keeps the origin it started with.
+    if (live && live.startedAt === null) {
+      live.startedAt = Date.now();
+      live.origin = origin ?? live.origin;
+    }
+    this.rememberSharedContext(providerId, sessionId, sent);
   }
 
   /**
@@ -434,11 +602,17 @@ class ChatService {
     requestId: string,
     approved: boolean,
     data?: unknown,
-    extra: { reason?: string; origin?: TraceOrigin } = {},
+    extra: {
+      reason?: string;
+      origin?: TraceOrigin;
+      /** What the trace records in place of `data`, when `data` holds something it must not keep (a secret answer). */
+      traceData?: unknown;
+    } = {},
   ): void {
     const provider = providerRegistry.get(providerId);
     if (typeof provider?.resolveApproval !== "function") return;
-    traceApproval(sessionId, providerId, requestId, approved, { data, ...extra });
+    const { traceData, ...rest } = extra;
+    traceApproval(sessionId, providerId, requestId, approved, { data: "traceData" in extra ? traceData : data, ...rest });
     provider.resolveApproval(requestId, approved, data);
   }
 

@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 56;
+export const CURRENT_SCHEMA_VERSION = 58;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1259,6 +1259,50 @@ export function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE connections ADD COLUMN ai_access INTEGER NOT NULL DEFAULT 1"); } catch { /* column exists */ }
     database.exec(`PRAGMA user_version = 56;`);
   }
+
+  if (current < 57) {
+    // A PPM Assistant session: its own instructions and a permission policy that ignores the
+    // mode picked in the composer. Stored rather than inferred from the project because a
+    // forked or provider-migrated session must stay one, and losing the mark would drop it to
+    // the provider default — usually bypass. 0 = an ordinary session, every existing row.
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN assistant INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 57;`);
+  }
+
+  if (current < 58) {
+    // The PPM Assistant on Telegram. A binding is which Assistant session a Telegram chat talks
+    // to, one per chat. A watch is the user asking to be told when another chat finishes; it is
+    // stored because it has to outlive a restart, and keeps its outcome once it fired so the
+    // report can be delivered later if the Assistant could not take it at once. Session ids are
+    // stored as given and followed through `migrated_to` on read: Codex renames a session on its
+    // first turn. Times are epoch milliseconds.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS assistant_telegram_bindings (
+        telegram_chat_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS assistant_watches (
+        id TEXT PRIMARY KEY,
+        assistant_session_id TEXT NOT NULL,
+        target_session_id TEXT NOT NULL,
+        target_project TEXT NOT NULL,
+        target_provider TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        armed_running INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'fired', 'cancelled', 'expired')),
+        last_event TEXT,
+        fired_at INTEGER,
+        delivered_at INTEGER,
+        event_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_assistant_watches_status ON assistant_watches(status);
+      CREATE INDEX IF NOT EXISTS idx_assistant_watches_target ON assistant_watches(target_session_id);
+      PRAGMA user_version = 58;
+    `);
+  }
 }
 
 /**
@@ -1502,14 +1546,17 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode)
-      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode, assistant)
+      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode, assistant FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
         thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
         design_slug = COALESCE(session_metadata.design_slug, excluded.design_slug),
-        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode)
+        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode),
+        -- Only ever raised: the destination row usually exists already (codex writes its
+        -- metadata before announcing the swap) with the column at its default 0.
+        assistant = MAX(session_metadata.assistant, excluded.assistant)
     `).run(newSessionId, oldSessionId);
     database.query(
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
@@ -1670,6 +1717,30 @@ export function copySessionDesignSettings(sourceSessionId: string, targetSession
     const mode = getSessionPermissionMode(sourceSessionId);
     if (mode) setSessionPermissionMode(targetSessionId, mode);
   })();
+}
+
+/** True when the session is a PPM Assistant session, by its own row only — see `isAssistantSession`. */
+export function getSessionIsAssistant(sessionId: string): boolean {
+  const row = getDb().query("SELECT assistant FROM session_metadata WHERE session_id = ?").get(sessionId) as { assistant: number } | null;
+  return row?.assistant === 1;
+}
+
+/** Mark a session as a PPM Assistant session. There is no unmarking: a session never stops being one. */
+export function setSessionAssistant(sessionId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, assistant) VALUES (?, 1) ON CONFLICT(session_id) DO UPDATE SET assistant = 1",
+  ).run(sessionId);
+}
+
+/**
+ * Everything a fork inherits from its source besides the transcript: the design identity and
+ * the Assistant mark. A fork of an Assistant chat that came out ordinary would run under the
+ * provider's default mode — usually bypass — with none of the Assistant's instructions.
+ */
+export function copySessionForkSettings(sourceSessionId: string, targetSessionId: string): void {
+  if (sourceSessionId === targetSessionId) return;
+  copySessionDesignSettings(sourceSessionId, targetSessionId);
+  if (getSessionIsAssistant(sourceSessionId)) setSessionAssistant(targetSessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -2473,145 +2544,14 @@ export function deleteExtensionStorage(extId: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// PPMBot session helpers
+// Telegram chats connected to PPM Assistant. The table keeps PPMBot's name
+// (`clawbot_paired_chats`): the Assistant's bridge took PPMBot's chats over as they were.
+// PPMBot's other tables (`clawbot_sessions`, `clawbot_memories`, `bot_tasks`) are left in
+// old databases and never written; only `clawbot_memories` is still read, by the
+// Assistant's legacy-memories route.
 // ---------------------------------------------------------------------------
 
-import type { PPMBotSessionRow, PPMBotMemoryRow, PPMBotPairedChat } from "../types/ppmbot.ts";
-
-export function getActivePPMBotSession(
-  telegramChatId: string,
-  projectName: string,
-): PPMBotSessionRow | null {
-  return getDb().query(
-    `SELECT * FROM clawbot_sessions
-     WHERE telegram_chat_id = ? AND project_name = ? AND is_active = 1
-     ORDER BY last_message_at DESC LIMIT 1`,
-  ).get(telegramChatId, projectName) as PPMBotSessionRow | null;
-}
-
-export function createPPMBotSession(
-  telegramChatId: string,
-  sessionId: string,
-  providerId: string,
-  projectName: string,
-  projectPath: string,
-): void {
-  getDb().query(
-    `INSERT INTO clawbot_sessions
-     (telegram_chat_id, session_id, provider_id, project_name, project_path)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(telegramChatId, sessionId, providerId, projectName, projectPath);
-}
-
-export function deactivatePPMBotSession(sessionId: string): void {
-  getDb().query(
-    "UPDATE clawbot_sessions SET is_active = 0 WHERE session_id = ?",
-  ).run(sessionId);
-}
-
-export function touchPPMBotSession(sessionId: string): void {
-  getDb().query(
-    "UPDATE clawbot_sessions SET last_message_at = unixepoch() WHERE session_id = ?",
-  ).run(sessionId);
-}
-
-export function getRecentPPMBotSessions(
-  telegramChatId: string,
-  limit = 10,
-): PPMBotSessionRow[] {
-  return getDb().query(
-    `SELECT * FROM clawbot_sessions
-     WHERE telegram_chat_id = ?
-     ORDER BY last_message_at DESC LIMIT ?`,
-  ).all(telegramChatId, limit) as PPMBotSessionRow[];
-}
-
-export function getDistinctPPMBotProjectNames(): string[] {
-  const rows = getDb().query(
-    "SELECT DISTINCT project_name FROM clawbot_sessions ORDER BY project_name",
-  ).all() as { project_name: string }[];
-  return rows.map((r) => r.project_name);
-}
-
-// ---------------------------------------------------------------------------
-// PPMBot memory helpers
-// ---------------------------------------------------------------------------
-
-export function insertPPMBotMemory(
-  project: string,
-  content: string,
-  category: string,
-  importance: number,
-  sessionId?: string,
-): number {
-  const result = getDb().query(
-    `INSERT INTO clawbot_memories (project, content, category, importance, session_id)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(project, content, category, importance, sessionId ?? null);
-  return Number(result.lastInsertRowid);
-}
-
-export function searchPPMBotMemories(
-  project: string,
-  query: string,
-  limit = 20,
-): Array<PPMBotMemoryRow & { rank: number }> {
-  return getDb().query(
-    `SELECT m.*, fts.rank
-     FROM clawbot_memories m
-     JOIN clawbot_memories_fts fts ON m.id = fts.rowid
-     WHERE clawbot_memories_fts MATCH ?
-       AND m.project IN (?, '_global')
-       AND m.superseded_by IS NULL
-     ORDER BY fts.rank
-     LIMIT ?`,
-  ).all(query, project, limit) as Array<PPMBotMemoryRow & { rank: number }>;
-}
-
-export function getPPMBotMemories(
-  project: string,
-  limit = 20,
-): PPMBotMemoryRow[] {
-  return getDb().query(
-    `SELECT * FROM clawbot_memories
-     WHERE project IN (?, '_global')
-       AND superseded_by IS NULL
-     ORDER BY importance DESC, updated_at DESC
-     LIMIT ?`,
-  ).all(project, limit) as PPMBotMemoryRow[];
-}
-
-export function supersedePPMBotMemory(
-  oldId: number,
-  newId: number,
-): void {
-  getDb().query(
-    "UPDATE clawbot_memories SET superseded_by = ? WHERE id = ?",
-  ).run(newId, oldId);
-}
-
-export function deletePPMBotMemoriesByTopic(
-  project: string,
-  topic: string,
-): number {
-  const matches = getDb().query(
-    `SELECT m.id FROM clawbot_memories m
-     JOIN clawbot_memories_fts fts ON m.id = fts.rowid
-     WHERE clawbot_memories_fts MATCH ?
-       AND m.project IN (?, '_global')
-       AND m.superseded_by IS NULL`,
-  ).all(topic, project) as { id: number }[];
-
-  for (const row of matches) {
-    getDb().query("DELETE FROM clawbot_memories WHERE id = ?").run(row.id);
-  }
-  return matches.length;
-}
-
-
-// ---------------------------------------------------------------------------
-// PPMBot pairing helpers
-// ---------------------------------------------------------------------------
+import type { PPMBotPairedChat } from "../types/ppmbot.ts";
 
 /** Approve a chat in one step — for the one-time connect link, which is its own proof of ownership. */
 export function upsertApprovedPairing(chatId: string, userId: string, displayName: string): void {
@@ -2650,87 +2590,6 @@ export function isPairedChat(chatId: string): boolean {
     "SELECT 1 FROM clawbot_paired_chats WHERE telegram_chat_id = ? AND status = 'approved'",
   ).get(chatId);
   return row != null;
-}
-
-// ---------------------------------------------------------------------------
-// Bot Tasks helpers
-// ---------------------------------------------------------------------------
-
-import type { BotTask, BotTaskStatus } from "../types/ppmbot.ts";
-
-export function createBotTask(
-  id: string, chatId: string, projectName: string, projectPath: string,
-  prompt: string, timeoutMs = 900000,
-): void {
-  getDb().query(
-    `INSERT INTO bot_tasks (id, chat_id, project_name, project_path, prompt, timeout_ms)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, chatId, projectName, projectPath, prompt, timeoutMs);
-}
-
-export function updateBotTaskStatus(
-  id: string, status: BotTaskStatus,
-  updates?: { sessionId?: string; resultSummary?: string; resultFull?: string; error?: string },
-): void {
-  const sets = ["status = ?"];
-  const params: (string | number | null)[] = [status];
-
-  if (status === "running") {
-    sets.push("started_at = unixepoch()");
-  }
-  if (status === "completed" || status === "failed" || status === "timeout") {
-    sets.push("completed_at = unixepoch()");
-  }
-  if (updates?.sessionId != null) { sets.push("session_id = ?"); params.push(updates.sessionId); }
-  if (updates?.resultSummary != null) { sets.push("result_summary = ?"); params.push(updates.resultSummary); }
-  if (updates?.resultFull != null) { sets.push("result_full = ?"); params.push(updates.resultFull); }
-  if (updates?.error != null) { sets.push("error = ?"); params.push(updates.error); }
-
-  params.push(id);
-  getDb().query(`UPDATE bot_tasks SET ${sets.join(", ")} WHERE id = ?`).run(...params);
-}
-
-export function markBotTaskReported(id: string): void {
-  getDb().query("UPDATE bot_tasks SET reported = 1 WHERE id = ?").run(id);
-}
-
-export function getBotTask(id: string): BotTask | null {
-  const row = getDb().query("SELECT * FROM bot_tasks WHERE id = ?").get(id) as Record<string, any> | null;
-  return row ? mapBotTaskRow(row) : null;
-}
-
-export function getRecentBotTasks(chatId: string, limit = 20): BotTask[] {
-  const rows = getDb().query(
-    "SELECT * FROM bot_tasks WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?",
-  ).all(chatId, limit) as Record<string, any>[];
-  return rows.map(mapBotTaskRow);
-}
-
-export function getRunningBotTasks(): BotTask[] {
-  const rows = getDb().query(
-    "SELECT * FROM bot_tasks WHERE status IN ('pending', 'running') ORDER BY created_at ASC",
-  ).all() as Record<string, any>[];
-  return rows.map(mapBotTaskRow);
-}
-
-function mapBotTaskRow(row: Record<string, any>): BotTask {
-  return {
-    id: row.id,
-    chatId: row.chat_id,
-    projectName: row.project_name,
-    projectPath: row.project_path,
-    prompt: row.prompt,
-    status: row.status,
-    resultSummary: row.result_summary,
-    resultFull: row.result_full,
-    sessionId: row.session_id,
-    error: row.error,
-    reported: !!row.reported,
-    timeoutMs: row.timeout_ms,
-    createdAt: row.created_at,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-  };
 }
 
 // ---------------------------------------------------------------------------

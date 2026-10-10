@@ -77,23 +77,30 @@ export function isChatUploadPath(resolved: string): boolean {
 
 /**
  * Images the codex image-generation tool produced. Codex writes them under its
- * own CODEX_HOME, which PPM places inside the PPM dir (one home per account),
- * so `isPpmDirPath` covers them and the chat could not render a picture the
- * assistant had just made.
+ * own CODEX_HOME, which PPM places inside the PPM dir, so `isPpmDirPath` covers
+ * them and the chat could not render a picture the assistant had just made.
+ * There are two kinds of such home: one per account (`codex-accounts/<id>`),
+ * and the PPM Assistant's own per account (`assistant/codex-homes/<key>`,
+ * `assistantCodexHomesRoot()` in `codex-assistant-home.ts`), whose app-server
+ * writes its pictures into that home's `generated_images`.
  *
  * The match is structural rather than a lookup of the account table: the path
- * must be `<ppmDir>/codex-accounts/<something>/generated_images/<at least one
+ * must be `<one of those roots>/<something>/generated_images/<at least one
  * more segment>`. That keeps the exception to the one subtree codex fills with
- * generated pictures and leaves the rest of an account home — `auth.json`
- * above all, but equally the session, log, and memory databases beside it —
- * refused, since none of those sit under a `generated_images` segment. Callers
- * pass an already-resolved path, so `..` cannot walk back out of the subtree.
+ * generated pictures and leaves the rest of a home — `auth.json` above all,
+ * but equally the session, log, and memory databases beside it, and the
+ * Assistant home's link to the account's sessions — refused, since none of
+ * those sit under a `generated_images` segment. Callers pass an
+ * already-resolved path, so `..` cannot walk back out of the subtree, and they
+ * check the real path as well, so a `generated_images` replaced by a link into
+ * the rest of the PPM dir is refused there.
  */
 export function isCodexGeneratedImagePath(resolved: string): boolean {
-  return ppmSubdirSpellings(resolve(getPpmDir(), "codex-accounts")).some((root) => {
+  const homes = [resolve(getPpmDir(), "codex-accounts"), resolve(getPpmDir(), "assistant", "codex-homes")];
+  return homes.flatMap(ppmSubdirSpellings).some((root) => {
     if (!isInside(resolved, root) || resolved === root) return false;
     const rel = resolved.slice(root.length + 1).split(sep);
-    // [accountId, "generated_images", …at least one file segment]
+    // [home, "generated_images", …at least one file segment]
     return rel.length >= 3 && rel[1] === "generated_images";
   });
 }

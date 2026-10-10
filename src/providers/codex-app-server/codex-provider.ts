@@ -34,14 +34,19 @@ import {
   isCodexAccountAuthFailed, markCodexAccountAuthFailed, clearCodexAccountAuthFailure,
 } from "../../services/codex-account-auth-state.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
+import { holdTokens } from "../../services/mcp-session-tokens.ts";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import { assistantMcpEnv, buildThreadParams, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams } from "./codex-thread-params.ts";
+import { planAssistantCodexMcp } from "./codex-assistant-mcp-guard.ts";
+import { planAssistantCodexSkills } from "./codex-assistant-skills.ts";
+import { assistantSpawnHome } from "./codex-assistant-home.ts";
+import { codexMcpApproval, codexMcpApprovalResponse, type CodexMcpApproval } from "./codex-mcp-approval.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
-import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
+import { mapCodexEvent, newCodexTurnText, parseTokenUsage, type CodexTurnText } from "./codex-event-mapper.ts";
 import { recordFileChangeBaselines } from "./codex-file-baselines.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
@@ -49,7 +54,10 @@ import { parseModelList } from "./codex-model-parser.ts";
 import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { codexUsageSource } from "./codex-usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
-import { redactTruncate } from "./codex-redact.ts";
+import { redactFields, redactTruncate } from "./codex-redact.ts";
+import { normalizeCodexQuestions } from "../../shared/approval-questions.ts";
+import { assistantShellEnv } from "../../services/assistant/assistant-shell-env.ts";
+import { approvalInput, approvalToolLabel } from "./codex-approval-input.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
 import { getRolloutMessagesAsync } from "./codex-history-async.ts";
 import {
@@ -146,6 +154,8 @@ interface PendingApproval {
   codexId: number | string;
   method: string;
   questions?: unknown;
+  /** Set for an MCP tool approval of an Assistant session, which is answered allow or deny. */
+  mcpApproval?: CodexMcpApproval;
 }
 
 interface LiveSession {
@@ -158,10 +168,18 @@ interface LiveSession {
   /** Design instructions, resent on every thread/start and thread/resume — codex does not
    *  persist them, and the account-switch respawn has no send options to read them from. */
   developerInstructions?: string;
+  /** The session may not run without `developerInstructions` (a PPM Assistant session): a
+   *  codex that refuses the field fails the connect, and the account-switch respawn, with a
+   *  clear error rather than retrying without them. Kept here because the respawn has no
+   *  send options to tell it so. */
+  requireInstructions?: boolean;
   /** A design session's `design_check` endpoint, kept for the same reason. */
   designMcp?: DesignMcpAccess;
   /** The tab tools' endpoint, when the user has them on; kept for the same reason. */
   tabToolsMcp?: TabToolsMcpAccess;
+  /** Set for a PPM Assistant session (web search off, its own tools and servers, none of the
+   *  user's); kept for the same reason. */
+  assistant?: CodexAssistantSession;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -171,6 +189,8 @@ interface LiveSession {
   transcript: ChatMessage[];
   currentAssistant: string;
   currentEvents: ChatEvent[];
+  /** Keeps the root thread's consecutive agent messages apart (see `CodexTurnText`). */
+  turnText: CodexTurnText;
   compactRequested?: boolean;
   /** Token counts from the most recent usage notification, attached to `done`. */
   lastUsage?: import("../../shared/turn-usage.ts").TurnUsage;
@@ -316,15 +336,6 @@ function loggableError(err: unknown): string {
   return redactTruncate((err as Error)?.message ?? String(err), 200);
 }
 
-/** Human label for an approval prompt (dormant in MVP under default bypass). */
-function approvalToolLabel(method: string, params: unknown): string {
-  const p = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
-  if (method.includes("commandExecution") || method === "execCommandApproval") return "Bash";
-  if (method.includes("fileChange") || method === "applyPatchApproval") return "Edit";
-  if (method === "item/tool/requestUserInput") return "AskUserQuestion";
-  return String(p.tool ?? "Tool");
-}
-
 function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestUserInputResponse {
   const answers: ToolRequestUserInputResponse["answers"] = {};
   if (data && typeof data === "object" && !Array.isArray(data)) {
@@ -352,6 +363,7 @@ function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestU
 export class CodexAppServerProvider implements AIProvider {
   readonly supportsSharedContext = true;
   readonly supportsDesignInstructions = true;
+  readonly supportsAssistantSessions = true;
   readonly id = "codex";
   readonly name = "Codex";
 
@@ -369,6 +381,12 @@ export class CodexAppServerProvider implements AIProvider {
   private skillsPending = new Map<string, Promise<CodexSkill[]>>();
   /** model/list and skills/list fail again on every picker open, so each is a WARN once a minute. */
   private listFailureWarned = new Map<string, { at: number; suppressed: number }>();
+
+  constructor() {
+    // A running app-server keeps the MCP tokens it was spawned with for its whole life (they
+    // are in its environment), so none of them may be evicted from their store while it runs.
+    holdTokens((token) => this.holdsToken(token));
+  }
 
   private get config() {
     try { return configService.get("ai").providers["codex"] ?? null; } catch { return null; }
@@ -547,6 +565,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.lastTurnInput = { message, opts };
     live.currentAssistant = "";
     live.currentEvents = [];
+    live.turnText = newCodexTurnText();
     live.lastUsage = undefined;
     const input = turnInput(message, opts);
     const turnModel = codexModel(opts?.model);
@@ -791,7 +810,9 @@ export class CodexAppServerProvider implements AIProvider {
       await this.respawnOn(live, threadId, next);
     } catch (e) {
       log.error(`session=${threadId} rotation to ${next.id} failed: ${redactTruncate((e as Error)?.message, 200)}`);
-      giveUp();
+      // The new account's codex cannot run this session at all: say that, not "usage limit".
+      if (e instanceof RequiredInstructionsError) this.abandonRotation(live, e.message);
+      else giveUp();
       return;
     }
 
@@ -858,11 +879,13 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd: live.cwd, codexHome: account.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) }, purpose: "chat" });
+    const codexHome = live.assistant ? assistantSpawnHome(account.home) : account.home;
+    client.start({ cwd: live.cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
+    if (live.assistant) await this.planAssistantMcp(live, client);
 
     const resumeBase = buildThreadParams({
       cwd: live.cwd,
@@ -872,9 +895,10 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: live.developerInstructions,
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
+      assistant: live.assistant,
     });
     await requestWithInstructionsFallback(resumeBase,
-      (params) => this.resumeThread(client, threadId, found, account.home, params));
+      (params) => this.resumeThread(client, threadId, found, codexHome, params), undefined, live.requireInstructions);
   }
 
   /**
@@ -900,7 +924,8 @@ export class CodexAppServerProvider implements AIProvider {
     const target = sessionsDirForHome(codexHome);
     const path = localizeRollout(found.path, found.sessionsDir, target);
     if (path !== found.path) {
-      log.info(`thread=${threadId} rollout copied into the serving account's home to resume`);
+      // Also the normal case for an Assistant home, which reaches the same file through its link.
+      log.info(`thread=${threadId} rollout resumed through the serving home's sessions folder (copied there if it was missing)`);
     }
     return client.request("thread/resume", { threadId, path, ...resumeBase });
   }
@@ -919,7 +944,12 @@ export class CodexAppServerProvider implements AIProvider {
   private async connect(sessionId: string, opts?: SendMessageOpts): Promise<LiveSession> {
     const meta = this.sessions.get(sessionId);
     const cwd = meta?.projectPath || getSessionProjectPath(sessionId) || process.cwd();
-    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode, { designSession: opts?.designSession });
+    // An Assistant session's instructions and permission profile replace the design ones and
+    // ignore the requested mode; they are fixed for the life of this app-server.
+    const assistant = !!opts?.assistantSession;
+    const permission = permissionModeToCodex(opts?.permissionMode ?? this.config?.permission_mode, {
+      designSession: opts?.designSession, assistantSession: assistant,
+    });
     const model = codexModel(opts?.model ?? this.config?.model);
 
     // Only resume a rollout attributable to this project. An unknown/resumed ID
@@ -935,11 +965,13 @@ export class CodexAppServerProvider implements AIProvider {
     const channel = createEventChannel();
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
-      developerInstructions: opts?.designInstructions,
-      designMcp: opts?.designSession ? opts.designMcp : undefined,
-      tabToolsMcp: opts?.designSession ? undefined : opts?.tabToolsMcp,
+      developerInstructions: assistant ? opts?.assistantInstructions : opts?.designInstructions,
+      requireInstructions: assistant,
+      designMcp: opts?.designSession && !assistant ? opts.designMcp : undefined,
+      tabToolsMcp: opts?.designSession || assistant ? undefined : opts?.tabToolsMcp,
+      assistant: assistant ? { mcp: opts?.assistantMcp, servers: opts?.assistantMcpServers } : undefined,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
-      history: [], transcript: [], currentAssistant: "", currentEvents: [],
+      history: [], transcript: [], currentAssistant: "", currentEvents: [], turnText: newCodexTurnText(),
       pendingTurns: [], subagentThreadIds: new Set(),
     };
     this.live.set(sessionId, live);
@@ -952,10 +984,14 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd, codexHome: account?.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) }, purpose: "chat" });
+    // An Assistant app-server runs on a home of its own that shares only the account's login and
+    // sessions folder, so the user's AGENTS.md, config.toml and skills stay behind.
+    const codexHome = live.assistant ? assistantSpawnHome(account?.home) : account?.home;
+    client.start({ cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
+    if (live.assistant) await this.planAssistantMcp(live, client);
 
     const resumeBase = buildThreadParams({
       cwd, permission, model,
@@ -963,12 +999,13 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: live.developerInstructions,
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
+      assistant: live.assistant,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
     const result = await requestWithInstructionsFallback(resumeBase, (params) => found
-      ? this.resumeThread(client, sessionId, found, account?.home, params)
-      : client.request("thread/start", params));
+      ? this.resumeThread(client, sessionId, found, codexHome, params)
+      : client.request("thread/start", params), undefined, live.requireInstructions);
 
     const threadId = extractThreadId(result) ?? (found ? sessionId : null);
     if (!threadId) throw new Error("codex thread/start returned no thread id");
@@ -1038,6 +1075,7 @@ export class CodexAppServerProvider implements AIProvider {
         live.discardingTurn = false;
         live.currentAssistant = "";
         live.currentEvents = [];
+        live.turnText = newCodexTurnText();
         this.endTurn(live);
       }
       return;
@@ -1048,15 +1086,22 @@ export class CodexAppServerProvider implements AIProvider {
       const accountId = getSessionCodexAccount(live.threadId);
       if (accountId) clearCodexAccountAuthFailure(accountId);
     }
-    if (!isChild && notif.method === "item/agentMessage/delta") {
-      const d = (notif.params as { delta?: string })?.delta;
-      if (typeof d === "string") live.currentAssistant += d;
-    }
     if (!isChild && notif.method === "thread/tokenUsage/updated") {
       const usage = parseTokenUsage(notif.params, live.model);
       if (usage) live.lastUsage = usage;
     }
-    const events = mapCodexEvent(notif, live.threadId ?? "");
+    // Only the root thread's messages are kept apart: a child's text lands under its card.
+    const events = mapCodexEvent(notif, live.threadId ?? "", isChild ? undefined : live.turnText);
+    // The live transcript is built from the mapped text, not the raw deltas, so a reload
+    // during the session shows the same break between agent messages as the stream did. A
+    // break that would open a transcript message (the answer after a steered follow-up starts
+    // a message of its own) is left out there; the stream still needs it.
+    if (!isChild && notif.method === "item/agentMessage/delta") {
+      for (const ev of events) {
+        if (ev.type !== "text" || (!live.currentAssistant && ev.content === "\n\n")) continue;
+        live.currentAssistant += ev.content;
+      }
+    }
     for (const ev of events) {
       // Child lifecycle notifications must never terminate or change the phase
       // of the root stream. Keep only content and diagnostics under its card.
@@ -1142,19 +1187,54 @@ export class CodexAppServerProvider implements AIProvider {
     }
   }
 
+  /**
+   * Which of the user's own codex MCP servers to switch off for an Assistant session on this
+   * app-server, read from the config it loaded. Throws (and so refuses the session) on a name
+   * clash or a config that cannot be read.
+   */
+  private async planAssistantMcp(live: LiveSession, client: CodexJsonRpcClient): Promise<void> {
+    const assistant = live.assistant!;
+    assistant.disableUserServers = await planAssistantCodexMcp(client, live.cwd, {
+      ownServer: !!assistant.mcp,
+      privateNames: (assistant.servers ?? []).filter((s) => s.enabled).map((s) => s.name),
+    });
+    if (assistant.disableUserServers.length > 0) {
+      log.info(`assistant session: switched off ${assistant.disableUserServers.length} of the user's codex MCP server(s)`);
+    }
+    try {
+      assistant.disableSkills = await planAssistantCodexSkills(client, live.cwd);
+    } catch (e) {
+      // Their catalogue is already out of the prompt; only a skill named in a message gets through.
+      assistant.disableSkills = [];
+      log.warn(`assistant session: could not list codex skills to switch off: ${redactTruncate((e as Error).message, 200)}`);
+    }
+  }
+
   private handleServerRequest(live: LiveSession, req: ServerRequest): void {
     const method = req.method;
+    // An Assistant session's MCP tools ask before every call: the question becomes an approval
+    // card, answered allow or deny. Any other session declines MCP elicitations as before.
+    const mcpApproval = live.assistant ? codexMcpApproval(method, req.params) : null;
+    if (mcpApproval) {
+      const ppmReqId = crypto.randomUUID();
+      live.pendingApprovals.set(ppmReqId, { codexId: req.id, method, mcpApproval });
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: mcpApproval.tool, input: redactFields(mcpApproval.input) });
+      return;
+    }
     if (isApprovalMethod(method)) {
       const ppmReqId = crypto.randomUUID();
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method });
-      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: approvalToolLabel(method, req.params), input: redactTruncate(req.params) });
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: approvalToolLabel(method, req.params), input: approvalInput(method, req.params) });
       return;
     }
     if (method === "item/tool/requestUserInput") {
       const ppmReqId = crypto.randomUUID();
       const questions = (req.params as { questions?: unknown })?.questions;
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method, questions });
-      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: "AskUserQuestion", input: redactTruncate(req.params) });
+      // The card is read from the request as received, not from a capped string: its questions
+      // and options are what the user answers, and answers come back keyed by the same ids.
+      const normalized = normalizeCodexQuestions(req.params);
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: "AskUserQuestion", input: { questions: normalized }, questions: normalized });
       return;
     }
     // permissions/* response is a granted-profile, not a decision → decline.
@@ -1167,7 +1247,9 @@ export class CodexAppServerProvider implements AIProvider {
       const pending = live.pendingApprovals.get(requestId);
       if (!pending) continue;
       live.pendingApprovals.delete(requestId);
-      if (pending.method === "item/tool/requestUserInput") {
+      if (pending.mcpApproval) {
+        this.respondOnce(live, pending.codexId, codexMcpApprovalResponse(pending.mcpApproval, approved));
+      } else if (pending.method === "item/tool/requestUserInput") {
         this.respondOnce(live, pending.codexId, buildUserInputResponse(pending.questions, data));
       } else if (isApprovalMethod(pending.method)) {
         this.respondOnce(live, pending.codexId, decisionFor(pending.method as ApprovalMethod, approved));
@@ -1186,7 +1268,8 @@ export class CodexAppServerProvider implements AIProvider {
 
   private declinePending(live: LiveSession): void {
     for (const [, pending] of live.pendingApprovals) {
-      if (pending.method === "item/tool/requestUserInput") this.respondOnce(live, pending.codexId, { answers: {} });
+      if (pending.mcpApproval) this.respondOnce(live, pending.codexId, codexMcpApprovalResponse(pending.mcpApproval, false, true));
+      else if (pending.method === "item/tool/requestUserInput") this.respondOnce(live, pending.codexId, { answers: {} });
       else if (isApprovalMethod(pending.method)) this.respondOnce(live, pending.codexId, decisionFor(pending.method as ApprovalMethod, false, true));
       else this.respondOnce(live, pending.codexId, null, "session ended");
     }
@@ -1223,6 +1306,15 @@ export class CodexAppServerProvider implements AIProvider {
       log.error(`session=${live.threadId ?? "?"} app-server pid=${live.client.pid ?? "?"} exited unexpectedly turnInFlight=${!!live.turnInFlight}`);
     }
     live.channel.done();
+  }
+
+  /** Whether a running app-server was spawned with `token` in its environment. */
+  private holdsToken(token: string): boolean {
+    for (const live of this.live.values()) {
+      if (live.client.isClosed) continue;
+      if (live.assistant?.mcp?.token === token || live.tabToolsMcp?.token === token || live.designMcp?.token === token) return true;
+    }
+    return false;
   }
 
   hasStreamingSession(sessionId: string): boolean {

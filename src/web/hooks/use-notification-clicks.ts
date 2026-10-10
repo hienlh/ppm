@@ -4,9 +4,16 @@ import { useTabStore } from "@/stores/tab-store";
 import { hydrateWorkspaceFromServer } from "@/stores/panel-utils";
 import { autoOpenFromUrl } from "@/hooks/use-url-sync";
 import { OPEN_FROM_NOTIFICATION, type OpenFromNotificationMessage } from "../../shared/web-push-payload";
+import { isAssistantProject } from "../../shared/assistant-project";
+import { openAssistant } from "@/components/assistant/open-assistant";
 
 /** Show a notification's session in this window, the way a `?openChat=` link opens it at boot. */
 async function openNotifiedSession(projectName: string, sessionId: string, providerId: string): Promise<void> {
+  // An Assistant session is not in any project: it opens in the Assistant, over whatever is shown.
+  if (isAssistantProject(projectName)) {
+    openAssistant({ sessionId: sessionId || undefined, providerId: providerId || undefined });
+    return;
+  }
   const target = useProjectStore.getState().projects.find((p) => p.name === projectName);
   if (!target) return;
   // Without a local copy of the layout, switching would create an empty one and overwrite the saved tabs.

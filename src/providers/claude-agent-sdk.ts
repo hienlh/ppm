@@ -7,7 +7,7 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
@@ -16,6 +16,8 @@ import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../servic
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
+import { assistantToolDecision } from "../services/assistant/assistant-tool-policy.ts";
+import { assistantShellEnv } from "../services/assistant/assistant-shell-env.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
@@ -235,6 +237,7 @@ interface PendingApproval {
 export class ClaudeAgentSdkProvider implements AIProvider {
   readonly supportsSharedContext = true;
   readonly supportsDesignInstructions = true;
+  readonly supportsAssistantSessions = true;
   id = "claude";
   name = "Claude";
 
@@ -418,6 +421,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private buildQueryEnv(
     _projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
+    opts?: { assistantSession?: boolean },
   ): Record<string, string | undefined> {
     // Terminal `/resume` and the IDE session pickers list with includeProgrammatic: false,
     // which drops every transcript whose entrypoint is sdk-cli/sdk-ts/sdk-py — and sdk-ts is
@@ -427,6 +431,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // "other", so naming ourselves beats borrowing another client's label.
     // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
     const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK };
+    // The CLI's embedded ripgrep (Glob, Grep) reads a config file named by this variable, and
+    // one holding `--follow` makes both tools walk through links out of a project. The
+    // Assistant's read policy allows a search by the folder it names, so its CLI must never
+    // be handed such a file; ordinary chats keep the user's ripgrep setup.
+    if (opts?.assistantSession) {
+      delete base.RIPGREP_CONFIG_PATH;
+      // A `ppm …` command the user approves must reach this instance, not the default folder.
+      Object.assign(base, assistantShellEnv());
+    }
 
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();
@@ -861,6 +874,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     env: Record<string, string | undefined>;
     allowedTools: string[];
     mcpServers: Record<string, unknown>;
+    /** Load only `mcpServers`, ignoring every MCP config the CLI would find on its own. */
+    strictMcpConfig?: boolean;
+    /**
+     * Load no settings file at all — no user or project settings, hooks, plugins, skills or
+     * CLAUDE.md — the way `completeOnce` runs. Authentication is unaffected: it comes from
+     * `env` (`buildQueryEnv`) and the CLI's credential store, neither of which is a setting.
+     */
+    isolated?: boolean;
     permissionMode: string;
     opts?: Pick<import("./provider.interface.ts").SendMessageOpts, "model" | "oneMContext" | "effort" | "thinkingBudget" | "maxTurns">;
     providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
@@ -899,11 +920,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ...(p.forkSession && { forkSession: true }),
       cwd: p.cwd,
       systemPrompt: p.systemPrompt,
-      settingSources: ["user", "project"],
+      settingSources: p.isolated ? [] : ["user", "project"],
       env: p.env,
       settings: { permissions: { allow: [], deny: [] } },
       allowedTools: p.allowedTools,
       ...(Object.keys(p.mcpServers).length > 0 && { mcpServers: p.mcpServers }),
+      ...(p.strictMcpConfig && { strictMcpConfig: true }),
       permissionMode: p.permissionMode,
       allowDangerouslySkipPermissions: p.permissionMode === "bypassPermissions",
       ...(mqo.model && { model: mqo.model }),
@@ -1122,20 +1144,46 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // Resolve permission mode early — canUseTool needs isBypass
     const providerConfig = this.getProviderConfig();
-    const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
+    // An Assistant session runs under its own policy whatever mode was asked for. Forced to
+    // `default` here as well as in the chat service, because the policy lives in the
+    // permission hook and bypass mode never installs that hook.
+    const assistantPolicy = !!opts?.assistantSession;
+    const permissionMode = assistantPolicy
+      ? "default"
+      : opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
-    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
+    // The provider's "Additional Instructions" belong to ordinary chats: an Assistant session
+    // carries its own instructions, the user's part included, and nothing else.
+    const systemPromptOpt = assistantPolicy
+      ? buildSystemPromptOption(undefined, opts?.assistantInstructions)
+      : buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
     // A design session in acceptEdits auto-approves file tools only while they target the
     // project, and asks for everything else. Any other mode the user picks for a design
     // session behaves exactly as that mode does in an ordinary chat.
-    const designPolicy = !!opts?.designSession && permissionMode === "acceptEdits";
+    const designPolicy = !assistantPolicy && !!opts?.designSession && permissionMode === "acceptEdits";
     // No project root means nothing can be proven inside it, so every file tool asks.
     const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
+    /**
+     * The environment the CLI was last started with. Every spawn of this turn — the first one
+     * and each account or image retry — goes through `queryEnvFor`, so the Assistant policy
+     * judges the variables the CLI really has rather than PPM's own.
+     */
+    let cliEnv: Record<string, string | undefined> | undefined;
+    const queryEnvFor = (acc: { id: string; accessToken: string } | null) =>
+      (cliEnv = this.buildQueryEnv(meta.projectPath, acc, { assistantSession: assistantPolicy }));
+    /** Read per call: a project registered mid-session is readable from the next tool call on. */
+    const assistantContext = (cwd?: unknown) => ({
+      cwd: typeof cwd === "string" && cwd ? cwd : meta.projectPath,
+      projectRoots: configService.get("projects").map((p) => p.path),
+      // Before the first spawn there is nothing to judge but PPM's own environment, which only
+      // makes the policy stricter.
+      env: cliEnv,
+    });
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
-    const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
-    const tabToolsMcp = opts?.designSession ? undefined : opts?.tabToolsMcp;
-    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
+    const designCheckTool = !assistantPolicy && opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    const tabToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.tabToolsMcp;
+    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy });
 
     /**
      * Approval events to yield from the generator.
@@ -1180,6 +1228,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const result = await waitForApproval(toolName, input);
         if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
       }
+      // The same backstop for the Assistant policy.
+      if (assistantPolicy && assistantToolDecision(toolName, input, assistantContext()) !== "allow") {
+        const result = await waitForApproval(toolName, input);
+        if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
+      }
       return { behavior: "allow" as const, updatedInput: input };
     };
 
@@ -1205,7 +1258,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
       // auto-approvals (which include some shell commands) never get a say.
-      if (designPolicy) {
+      // Assistant policy: reads inside registered projects and the Assistant's own tools pass;
+      // everything else — the web tools from READ_ONLY_TOOLS included — asks. Relative paths
+      // are judged against the cwd the CLI reports, which is the one it resolves them against.
+      if (assistantPolicy) {
+        if (assistantToolDecision(toolName, hookInput?.tool_input, assistantContext(hookInput?.cwd)) === "allow") {
+          return preToolUseDecision("allow");
+        }
+      } else if (designPolicy) {
         if (designToolDecision(toolName, hookInput?.tool_input, designRoot) === "allow") {
           return preToolUseDecision("allow");
         }
@@ -1266,6 +1326,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     let assistantContent = "";
     let resultSubtype: string | undefined;
+    /**
+     * The turn was ended by an API error PPM already surfaced (authentication, billing, a
+     * refusal, an exhausted retry budget). The CLI closes such a turn with a result whose
+     * subtype is still "success" — the API error is an assistant message, not an execution
+     * fault — so without this the `done` would call a turn that produced nothing a success,
+     * and notifications, schedules and the Assistant's Telegram bridge would all read it that way.
+     */
+    let turnEndedInError = false;
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
     let resultCostUsd: number | undefined;
@@ -1377,7 +1445,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const latest = accountService.getWithTokens(account.id);
         if (latest) account = latest;
       }
-      const queryEnv = this.buildQueryEnv(meta.projectPath, account);
+      const queryEnv = queryEnvFor(account);
 
       // Pre-flight: warn if no credentials at all (avoids 2-minute silent timeout)
       if (!account) {
@@ -1386,11 +1454,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           log.warn(`session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
         }
       }
-      const mcpServers = {
-        ...this.resolveMcpServers(effectiveCwd),
-        ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
-        ...tabToolsMcpServers(tabToolsMcp),
-      };
+      // An Assistant session runs with the servers of Settings → PPM Assistant and its own, and
+      // none of the user's other servers: the query runs with `strictMcpConfig` and no setting
+      // sources (below), so the CLI loads no server PPM did not pass — not from `.mcp.json`,
+      // user settings or a plugin. The Assistant policy allows `mcp__ppm-assistant__*` unasked,
+      // and PPM's own entry is written last, so nothing else can answer to that name.
+      const mcpServers = assistantPolicy
+        ? assistantMcpServers(opts?.assistantMcp, opts?.assistantMcpServers)
+        : {
+          ...this.resolveMcpServers(effectiveCwd),
+          ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
+          ...tabToolsMcpServers(tabToolsMcp),
+        };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
       let stderrBuffer = "";
@@ -1412,6 +1487,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         env: queryEnv,
         allowedTools,
         mcpServers,
+        strictMcpConfig: assistantPolicy,
+        isolated: assistantPolicy,
         permissionMode,
         opts,
         providerConfig,
@@ -1468,7 +1545,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // A new session's first attempt takes over the CLI `prewarm` started for it, if that
       // is exactly the process it would have spawned; otherwise it spawns one as always.
-      const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork
+      // Never for an Assistant session: a spare was started for an ordinary chat.
+      const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork && !assistantPolicy
         ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
@@ -1510,7 +1588,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const rebuildQuery = (acc: AccountWithTokens | null) => {
         const retry = buildRetryMsg();
         closeCurrentStream();
-        const env = this.buildQueryEnv(meta.projectPath, acc);
+        const env = queryEnvFor(acc);
         const { generator, controller } = createMessageChannel();
         controller.push(retry.msg);
         const opts = { ...queryOptions, sessionId: undefined, resume: sessionId, env };
@@ -1661,7 +1739,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (recovered) {
               authRetryCount = recovered.newRetryCount;
               account = recovered.account;
-              const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+              const retryEnv = queryEnvFor(account);
               const retry2 = buildRetryMsg();
               closeCurrentStream();
               const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
@@ -1890,7 +1968,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (recovered) {
                 authRetryCount = recovered.newRetryCount;
                 account = recovered.account;
-                const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const retryEnv = queryEnvFor(account);
                 const retry3 = buildRetryMsg();
                 closeCurrentStream();
                 const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
@@ -1907,6 +1985,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
               // All recovery exhausted — tear down streaming session
               log.error(`session=${sessionId} turn failed: authentication failed after ${authRetryCount} recovery attempts account=${account.id}`);
+              turnEndedInError = true;
               yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
               break;
             }
@@ -1929,7 +2008,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 // Rebuild query with the fresh account env, no backoff delay.
                 const retryU = buildRetryMsg();
                 closeCurrentStream();
-                const ulRetryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const ulRetryEnv = queryEnvFor(account);
                 const { generator: ulRetryGen, controller: ulRetryCtrl } = createMessageChannel();
                 ulRetryCtrl.push(retryU.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: ulRetryEnv };
@@ -1945,6 +2024,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // No fresh account left — stop. One clear error, no retry loop.
               const resetSuffix = usageLimitResetText ? ` Resets ${usageLimitResetText}.` : "";
               log.error(`session=${sessionId} turn failed: usage limit, no fresh account left accountsTried=${usageLimitedAccounts.size}`);
+              turnEndedInError = true;
               yield { type: "error", message: `All accounts have hit their usage limit.${resetSuffix} Add another account in Settings → Accounts or wait for the reset.` };
               break;
             }
@@ -1987,6 +2067,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 continue retryLoop;
               }
               log.error(`session=${sessionId} turn failed: rate limited, all accounts exhausted accountsTried=${rateLimitedAccounts.size}`);
+              turnEndedInError = true;
               yield { type: "error", message: "All accounts are rate limited right now. Add another account in Settings → Accounts, or wait for the limit to reset." };
               break;
             }
@@ -2021,6 +2102,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (!stripped || stripped.removed === 0) {
                 const reason = stripped?.reason || "no images left to remove";
                 log.error(`session=${sessionId} turn failed: the API refused an image and nothing was left to strip (${reason})`);
+                turnEndedInError = true;
                 yield { type: "error", message: `The API refused an image in this conversation, but nothing could be removed automatically (${reason}). Open Session debug to remove images yourself, start a new session, or use /compact to summarise the history away.` };
                 break;
               }
@@ -2041,6 +2123,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             // that says why and what to do next (rephrase in a new session, or change the model).
             const refusalText = (msg as any).message?.stop_reason === "refusal" ? this.extractAssistantText(msg) : "";
             const hint = refusalText || (errorHints[assistantError] ?? `API error: ${assistantError}`);
+            turnEndedInError = true;
             yield { type: "error", message: hint };
             // Skip emitting the raw 401 error as text content — already shown as error event
             continue;
@@ -2150,7 +2233,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 account = recovered.account;
                 const retry6 = buildRetryMsg();
                 closeCurrentStream();
-                const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const retryEnv = queryEnvFor(account);
                 const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
                 authRetryCtrl2.push(retry6.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
@@ -2168,7 +2251,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // Only mark success when the result is actually successful,
               // not for unrecognized error subtypes (e.g. quota exhaustion)
               const resultSub = (msg as any).subtype as string | undefined;
-              if (!resultSub || resultSub === "success") {
+              if ((!resultSub || resultSub === "success") && !turnEndedInError) {
                 accountSelector.onSuccess(account.id);
               }
             }
@@ -2274,7 +2357,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           // Detect empty/suspicious success — SDK returned "success" but no real assistant content
-          if ((!subtype || subtype === "success") && (result.num_turns ?? 0) === 0 && !assistantContent) {
+          // Not after an API error already reported: that error is the reason nothing came back,
+          // and a second, vaguer one would replace it as the turn's last word.
+          if ((!subtype || subtype === "success") && !turnEndedInError && (result.num_turns ?? 0) === 0 && !assistantContent) {
             // SDK success result has `result: string` containing final text
             const resultText = typeof result.result === "string" ? result.result : "";
             log.error(`session=${sessionId} turn produced no response (0 turns) result=${JSON.stringify(resultText.slice(0, 200))}`);
@@ -2285,8 +2370,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             yield { type: "error", message: hint };
           }
 
-          // Store subtype and numTurns for the done event
-          resultSubtype = subtype;
+          // Store subtype and numTurns for the done event. A "success" result closing a turn
+          // the API failed is reported as failed, the subtype Codex gives the same turn, so
+          // every consumer of `done` agrees with the error the user was shown. `is_error` is
+          // the CLI's own flag for a turn whose last message was an API error.
+          resultSubtype = (!subtype || subtype === "success") && (turnEndedInError || result.is_error === true)
+            ? "error_during_execution"
+            : subtype;
           resultNumTurns = result.num_turns as number | undefined;
 
           // Extract context window usage from modelUsage.
@@ -2370,6 +2460,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           pendingToolCount = 0;
           assistantContent = "";
           resultSubtype = undefined;
+          turnEndedInError = false;
           resultNumTurns = undefined;
           resultContextWindowPct = undefined;
           resultCostUsd = undefined;
@@ -2448,7 +2539,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       yield {
         type: "done",
         sessionId,
-        resultSubtype: resultSubtype as any,
+        // A turn given up on after its retries (auth, usage or rate limit) breaks out before
+        // any result arrives, and still has to say it failed.
+        resultSubtype: (resultSubtype ?? (turnEndedInError ? "error_during_execution" : undefined)) as any,
         numTurns: resultNumTurns,
         contextWindowPct: resultContextWindowPct,
         costUsd: resultCostUsd,

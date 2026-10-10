@@ -5,6 +5,7 @@
  * panel switch back to it.
  */
 import { projectCacheId, type ProjectCacheRef } from "./cache-keys";
+import { isAssistantProject } from "../../../shared/assistant-project";
 
 export type ProjectHydrator = (project: ProjectCacheRef) => Promise<void>;
 
@@ -41,7 +42,9 @@ export function registerProjectHydrator(fn: ProjectHydrator): void {
  * not block the others or the caller.
  */
 export function hydrateProjectCache(project: ProjectCacheRef): Promise<void> {
-  rememberLastProject(project);
+  // The Assistant's session list hydrates through here too, but it is not a project to
+  // warm on the next boot.
+  if (!isAssistantProject(project.name)) rememberLastProject(project);
   const id = projectCacheId(project);
   if (started.has(id)) return Promise.resolve();
   started.set(id, project);

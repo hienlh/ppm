@@ -56,6 +56,8 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   android: true,
   "web-preview": true,
   logs: false,
+  // The Assistant lives in a floating window on a desktop and comes back in one after a reload.
+  assistant: true,
 };
 
 export function isPoppableTabType(type: unknown): type is TabType {

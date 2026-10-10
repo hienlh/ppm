@@ -5,7 +5,7 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { useFileStore } from "@/stores/file-store";
 import { syncRunningSessions } from "@/lib/sync-running-sessions";
-import { syncAllKnownProjects } from "@/stores/session-list-sync-triggers";
+import { syncAllKnownProjects, syncKnownProject } from "@/stores/session-list-sync-triggers";
 import { notifyGlobalReady, sendIfOpen, setGlobalWsClient } from "@/lib/global-ws-channel";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
@@ -36,6 +36,10 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   On every (re)connect the indicators are also reconciled against the server
  *   registry, since a phase change that happened while this socket was down was
  *   never delivered and would otherwise stick until a full reload.
+ * - `sessions:list_changed` → re-syncs that project's session list, when this browser holds one.
+ *   The server sends it for sessions no browser asked for (the Assistant's tools, Telegram).
+ * - `assistant:*` → re-dispatched as window events (`assistant:telegram_binding_changed`,
+ *   which moves the "Telegram" label in the Assistant's session list).
  * - `jira:*` → re-dispatched as window events.
  * - `tunnel:*` → re-dispatched as window events (named-tunnel setup flow —
  *   login URL/state, setup progress/done/pending/error).
@@ -128,6 +132,14 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         return;
       }
 
+      if (type === "sessions:list_changed") {
+        // Sessions created on the server's own initiative (an Assistant tool, a Telegram `/new`)
+        // reach no chat socket, so without this the list would show them only after the tab was
+        // hidden and shown again, or the socket reconnected.
+        if (typeof data.projectName === "string" && data.projectName) syncKnownProject(data.projectName);
+        return;
+      }
+
       if (type === "session:migrated") {
         // The server re-keyed the session, so every phase change from here on carries the new
         // id and the old one's `idle` will never arrive. Drop it now rather than waiting for
@@ -146,6 +158,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("git:")
         || type.startsWith("agent-transcript:")
         || type.startsWith("logs:")
+        || type.startsWith("assistant:")
         || type === "agent-activity"
       ) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));

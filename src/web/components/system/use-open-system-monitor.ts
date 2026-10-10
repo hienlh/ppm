@@ -15,20 +15,18 @@ import { useWindowStore } from "@/components/floating-window/window-store";
 import { useTabStore } from "@/stores/tab-store";
 import { resolveOpenSystemMonitorAction } from "./resolve-open-system-monitor-action";
 
+/** Opens the System Monitor the right way for a phone-sized (`isMobile`) or wider viewport. */
+export function openSystemMonitor(isMobile: boolean): void {
+  const windows = useWindowStore.getState();
+  const existing = Object.values(windows.windows).find((w) => w.kind === "system-monitor");
+  const action = resolveOpenSystemMonitorAction(isMobile, existing?.id ?? null);
+  if (action.kind === "tab") useTabStore.getState().openTab(action.tab);
+  else if (action.kind === "focus") windows.focus(action.id);
+  else windows.open("system-monitor");
+}
+
 /** Callback that opens the System Monitor the right way for this viewport. */
 export function useOpenSystemMonitor(): () => void {
   const isMobile = useIsMobile();
-  const openWindow = useWindowStore((s) => s.open);
-  const focusWindow = useWindowStore((s) => s.focus);
-  const openTab = useTabStore((s) => s.openTab);
-
-  return useCallback(() => {
-    const existing = Object.values(useWindowStore.getState().windows).find(
-      (w) => w.kind === "system-monitor",
-    );
-    const action = resolveOpenSystemMonitorAction(isMobile, existing?.id ?? null);
-    if (action.kind === "tab") openTab(action.tab);
-    else if (action.kind === "focus") focusWindow(action.id);
-    else openWindow("system-monitor");
-  }, [isMobile, openWindow, focusWindow, openTab]);
+  return useCallback(() => openSystemMonitor(isMobile), [isMobile]);
 }

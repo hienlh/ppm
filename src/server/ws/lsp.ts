@@ -19,6 +19,7 @@
  */
 import nodePath from "node:path";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { assertNotAssistantProject } from "../helpers/resolve-chat-project.ts";
 import { isUnavailable, lspManager } from "../../services/lsp/lsp-manager.ts";
 import { createLogger } from "../../services/logger.ts";
 import { pathToFileUri, uriKey } from "../../shared/lsp-uri.ts";
@@ -122,6 +123,7 @@ function handleOpen(ws: WsLike): void {
   }
   let projectPath: string;
   try {
+    assertNotAssistantProject(projectName);
     projectPath = resolveProjectPath(projectName);
   } catch (e) {
     ws.close(1008, e instanceof Error ? e.message : "unknown project");

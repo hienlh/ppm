@@ -1,10 +1,10 @@
 /**
  * Connecting a Telegram chat with a one-time link, shared by Settings → Notifications and
- * Settings → PPMBot. Each has its own bot and its own endpoint; the flow is the same:
+ * Settings → PPM Assistant → Telegram. Each has its own bot and its own endpoint; the flow is the same:
  * mint a link, show it (and a QR code on a desktop, whose Telegram is often on the
  * phone), and watch the status until a new chat appears or the link is spent.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
 import { ExternalLink, Loader2, Trash2 } from "@/lib/icons";
@@ -75,17 +75,21 @@ export function useTelegramConnect<S extends { chats: TelegramChatInfo[]; connec
   return { link, starting, connect, cancel };
 }
 
-/** The connected chats, each with a Disconnect button. */
-export function TelegramChatList({ chats, onDisconnect }: {
+/** The connected chats, each with a Disconnect button and, when given, a line under its name. */
+export function TelegramChatList({ chats, onDisconnect, detail }: {
   chats: TelegramChatInfo[];
   onDisconnect: (chat: TelegramChatInfo) => void;
+  detail?: (chat: TelegramChatInfo) => ReactNode;
 }) {
   if (chats.length === 0) return null;
   return (
     <ul className="divide-y divide-border rounded-lg border border-border">
       {chats.map((chat) => (
         <li key={chat.chatId} className="flex items-center gap-3 py-1.5 pl-4 pr-1">
-          <span className="min-w-0 flex-1 truncate text-sm">{chat.name}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm">{chat.name}</span>
+            {detail && <span className="block truncate text-xs text-muted-foreground">{detail(chat)}</span>}
+          </span>
           <IconButton label={`Disconnect ${chat.name}`} danger onClick={() => onDisconnect(chat)}>
             <Trash2 className="size-4" />
           </IconButton>

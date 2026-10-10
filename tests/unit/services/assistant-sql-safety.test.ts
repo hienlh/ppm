@@ -1,0 +1,139 @@
+/**
+ * The Assistant runs a query without asking only when it is proven to read. A read-only
+ * transaction is not proof: functions with side effects run inside one, and a PRAGMA can set
+ * what it names. Anything the check cannot prove is left for the user to approve.
+ */
+import { describe, expect, it } from "bun:test";
+import { assistantSqlSafety, deparsedPostgresSafety } from "../../../src/services/assistant-mcp/assistant-sql-safety.ts";
+
+const proven = (sql: string, dialect: "postgres" | "mysql" | "sqlite" = "postgres") => assistantSqlSafety(sql, dialect).proven;
+
+describe("assistantSqlSafety", () => {
+  it("proves plain reads that call only ordinary functions", () => {
+    expect(proven("SELECT count(*), lower(name) FROM t")).toBe(true);
+    expect(proven("SELECT count(*), lower(name) FROM t", "mysql")).toBe(true);
+    expect(proven("SELECT count(*), lower(name) FROM t", "sqlite")).toBe(true);
+    expect(proven("SELECT id FROM orders WHERE status IN ('a', 'b') AND EXISTS (SELECT 1 FROM x WHERE x.id = orders.id)")).toBe(true);
+    expect(proven("WITH recent AS (SELECT * FROM t WHERE created_at > now() - interval '1 day') SELECT date_trunc('day', created_at), sum(total) FROM recent GROUP BY 1")).toBe(true);
+    expect(proven("SELECT CAST(x AS varchar(10)), y::numeric(10,2), coalesce(z, 0) FROM t")).toBe(true);
+    expect(proven("SELECT row_number() OVER (PARTITION BY a ORDER BY b) FROM t")).toBe(true);
+    expect(proven("SELECT pg_catalog.lower(name) FROM t")).toBe(true);
+    expect(proven("SHOW TABLES", "mysql")).toBe(true);
+    expect(proven("EXPLAIN SELECT * FROM t")).toBe(true);
+    expect(proven("PRAGMA table_info(users)", "sqlite")).toBe(true);
+    expect(proven("PRAGMA user_version", "sqlite")).toBe(true);
+    // A function name inside a string or a comment calls nothing.
+    expect(proven("SELECT 'pg_terminate_backend(1)' AS note -- pg_sleep(5)")).toBe(true);
+  });
+
+  it("does not prove an assigning PRAGMA, or one it does not know", () => {
+    expect(proven("PRAGMA x = 1", "sqlite")).toBe(false);
+    expect(proven("PRAGMA user_version = 5", "sqlite")).toBe(false);
+    expect(proven("PRAGMA user_version(5)", "sqlite")).toBe(false);
+    expect(proven("PRAGMA journal_mode=WAL", "sqlite")).toBe(false);
+    expect(proven("PRAGMA optimize", "sqlite")).toBe(false);
+  });
+
+  it("does not prove a call to a function with side effects", () => {
+    expect(proven("SELECT pg_terminate_backend(1)")).toBe(false);
+    expect(proven("SELECT dblink_exec('host=x', 'DELETE FROM t')")).toBe(false);
+    expect(proven("SELECT GET_LOCK('a',1)", "mysql")).toBe(false);
+    expect(proven("SELECT nextval('s')")).toBe(false);
+    expect(proven("SELECT pg_sleep(600)")).toBe(false);
+    expect(proven("SELECT SLEEP(10)", "mysql")).toBe(false);
+    expect(proven("SELECT set_config('a', 'b', false)")).toBe(false);
+    expect(proven("SELECT pg_advisory_lock(1)")).toBe(false);
+  });
+
+  it("does not prove a function it cannot name, or one in another schema", () => {
+    expect(proven('SELECT "pg_terminate_backend"(1)')).toBe(false);
+    expect(proven('SELECT "evil".lower(name) FROM t')).toBe(false);
+    expect(proven("SELECT public.lower(name) FROM t")).toBe(false);
+    expect(proven("SELECT `GET_LOCK`('a', 1)", "mysql")).toBe(false);
+  });
+
+  it("does not prove locking reads, variable assignment or anything that is not a read", () => {
+    expect(proven("SELECT * FROM t FOR UPDATE")).toBe(false);
+    expect(proven("SELECT * FROM t LOCK IN SHARE MODE", "mysql")).toBe(false);
+    expect(proven("SELECT @x := 1", "mysql")).toBe(false);
+    expect(proven("DELETE FROM t")).toBe(false);
+    expect(proven("SELECT 1; DROP TABLE t")).toBe(false);
+    expect(proven("SELECT * INTO copy FROM t")).toBe(false);
+    expect(proven("")).toBe(false);
+  });
+
+  it("treats a call named by a keyword the dialect does not reserve as a call", () => {
+    // Postgres lets a user function carry any of these names and be called bare.
+    for (const sql of [
+      "SELECT first(x) FROM t", "SELECT next(1)", "SELECT cube(a, b) FROM t", "SELECT xor(1)", "SELECT match(a)",
+      "SELECT rollup(1)", "SELECT x FROM t WHERE filter(x)", "SELECT over(1)", "SELECT timestamptz(x) FROM t",
+      "SELECT nvarchar(1)", "SELECT a FROM t ORDER BY escape(a)", "SELECT range(1, 2)", "SELECT explain(1)", "SELECT like('a')",
+      "SELECT a FROM t, recursive(1)",
+    ]) {
+      expect(proven(sql)).toBe(false);
+    }
+    // MySQL and MariaDB: a stored function may be named by a keyword they do not reserve.
+    for (const sql of ["SELECT offset(1)", "SELECT any(1)", "SELECT some(1)", "SELECT first(x) FROM t", "SELECT intersect(1)", "SELECT lateral(1)"]) {
+      expect(proven(sql, "mysql")).toBe(false);
+    }
+  });
+
+  it("still proves the syntax those words form where no call can stand", () => {
+    for (const sql of [
+      "SELECT count(*) FILTER (WHERE a > 1) OVER (PARTITION BY b) FROM t",
+      "SELECT a FROM t ORDER BY (a + 1) FETCH FIRST (5) ROWS ONLY",
+      "SELECT a, b, count(*) FROM t GROUP BY GROUPING SETS ((a), (b))",
+      "SELECT x::timestamptz(3), CAST(y AS character varying(10)), CAST(z AS nvarchar(5)) FROM t",
+      "WITH c AS MATERIALIZED (SELECT 1) SELECT * FROM c",
+      "SELECT n FROM generate_series(1, 3) AS g(n)",
+      "EXPLAIN (COSTS false) SELECT 1",
+    ]) {
+      expect(proven(sql)).toBe(true);
+    }
+    expect(proven("SELECT * FROM t WHERE MATCH(a) AGAINST('x') AND b LIKE ('%y') AND a = ALL (SELECT 1)", "mysql")).toBe(true);
+    // Reserved in both MySQL and MariaDB, so never a stored function's bare name there.
+    expect(proven("SELECT a XOR (b) FROM t", "mysql")).toBe(true);
+  });
+
+  it("says why", () => {
+    const verdict = assistantSqlSafety("SELECT pg_terminate_backend(1)", "postgres");
+    expect(verdict).toEqual({ proven: false, reason: expect.stringContaining("pg_terminate_backend()") });
+  });
+
+  it("does not prove a name spelled in Unicode escapes, which no lookup by name can match", () => {
+    expect(proven('SELECT * FROM U&"v\\0031"')).toBe(false);
+    expect(proven("SELECT U&'caf\\00e9' AS s")).toBe(true);
+  });
+
+  it("collects the functions called by a bare name, for the catalog's shadowing check", () => {
+    const called = new Set<string>();
+    expect(assistantSqlSafety("SELECT lower(a), pg_catalog.upper(b), count(*) FROM t", "postgres", called).proven).toBe(true);
+    expect([...called].sort()).toEqual(["count", "lower"]);
+  });
+});
+
+/** Captured from `pg_get_viewdef` on Postgres 15 with the search path pinned to pg_catalog. */
+describe("deparsedPostgresSafety", () => {
+  const ok = (text: string) => deparsedPostgresSafety(text).proven;
+
+  it("proves a definition calling only pg_catalog functions, reading quoted lower-case keywords as bare names", () => {
+    expect(ok(' SELECT "left"((t.name)::text, 2) AS "left",\n    "substring"((t.name)::text, 1, 2) AS "substring",\n    POSITION((\'a\'::text) IN (t.name)) AS "position",\n    ((t.name)::text || \'x\'::text) AS c,\n    EXTRACT(day FROM now()) AS "extract"\n   FROM public.t;')).toBe(true);
+    expect(ok(" SELECT t.id,\n    lower((t.name)::text) AS l,\n    count(*) OVER () AS count\n   FROM public.t;")).toBe(true);
+    expect(ok("SELECT ((owner = CURRENT_USER) AND (id > 0))")).toBe(true);
+  });
+
+  it("does not prove a user function, a shadowing one, a user operator, or a side effect a plan would hide", () => {
+    expect(ok(" SELECT t.id\n   FROM public.t\n  WHERE (t.id = public.evil(1));")).toBe(false);
+    expect(ok(" SELECT public.lower(t.name) AS l\n   FROM public.t;")).toBe(false);
+    expect(ok(" SELECT ((t.name)::text OPERATOR(public.@@@) 'x'::text) AS y\n   FROM public.t;")).toBe(false);
+    // A Values Scan and a Limit show none of these in EXPLAIN; the definition does.
+    expect(ok(" VALUES ((pg_backend_pid() + 1)), (2);")).toBe(false);
+    expect(ok(" SELECT t.id,\n    t.name\n   FROM public.t\n LIMIT pg_backend_pid();")).toBe(false);
+    expect(ok(" SELECT t.id\n   FROM public.t\n FOR UPDATE OF t;")).toBe(false);
+  });
+
+  it("does not read a name made of two quoted halves as the bare name they spell", () => {
+    expect(ok('SELECT "low""er"(x)')).toBe(false);
+    expect(ok('SELECT "Lower"(x)')).toBe(false);
+  });
+});

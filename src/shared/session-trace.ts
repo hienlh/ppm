@@ -10,12 +10,19 @@ export type TraceSource = "agent" | "server" | "browser";
 export type TraceOrigin =
   | "ws"
   | "scheduler"
+  /** PPMBot's runs. PPMBot is gone and writes none; kept because older traces carry it. */
   | "ppmbot"
   | "group-chat"
   | "jira"
   | "cli"
   | "proxy"
   | "browser"
+  /** A message the PPM Assistant sent into a chat, with the user's approval. */
+  | "assistant"
+  /** The user, typing or pressing a button on Telegram. */
+  | "telegram"
+  /** The server reporting on a chat the PPM Assistant was asked to watch. */
+  | "watch"
   | "unknown";
 
 /** Most entries one `POST /api/trace` may carry; a larger batch is refused whole. */

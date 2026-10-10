@@ -1,21 +1,14 @@
 /**
  * The few Telegram Bot API calls the notification side needs: checking a token,
  * sending one message, and reading updates while a connect link is open.
- * PPMBot keeps its own client (`ppmbot/ppmbot-telegram.ts`) for its chat features.
+ * A bot's chat features go through `telegram/telegram-bot-client.ts` instead.
  */
-import type { TelegramUpdate } from "../types/ppmbot.ts";
+import { BOT_TOKEN_RE, botMethodUrl, scrubToken } from "./telegram/telegram-api-base.ts";
+import type { TelegramApiResult, TelegramUpdate } from "./telegram/telegram-types.ts";
 
-const TELEGRAM_API = "https://api.telegram.org/bot";
+export { BOT_TOKEN_RE };
+
 const REQUEST_TIMEOUT_MS = 10_000;
-
-export const BOT_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{30,50}$/;
-
-export interface TelegramApiResult<T> {
-  ok: boolean;
-  result?: T;
-  description?: string;
-  error_code?: number;
-}
 
 async function callTelegram<T>(
   token: string,
@@ -23,7 +16,7 @@ async function callTelegram<T>(
   body: Record<string, unknown>,
   signal: AbortSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 ): Promise<TelegramApiResult<T>> {
-  const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
+  const res = await fetch(botMethodUrl(token, method), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -50,7 +43,7 @@ export async function getBotIdentity(token: string): Promise<BotIdentity> {
       message: `Telegram did not accept this token${json.description ? ` (${json.description})` : ""}. Copy it again from @BotFather.`,
     };
   } catch (e) {
-    return { ok: false, reason: "unreachable", message: `Could not reach Telegram to check the token: ${(e as Error).message}` };
+    return { ok: false, reason: "unreachable", message: `Could not reach Telegram to check the token: ${scrubToken((e as Error).message, token)}` };
   }
 }
 

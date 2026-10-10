@@ -18,6 +18,7 @@ import { getOrFetchUsage } from "./provider-usage/usage-registry.ts";
 import { isCodexAccountUsageLimited } from "./codex-account-cooldown.ts";
 import { isCodexAccountAuthFailed } from "./codex-account-auth-state.ts";
 import { codexSignedOutMessage } from "../providers/codex-app-server/codex-auth-failure.ts";
+import { removeAssistantCodexHome } from "../providers/codex-app-server/codex-assistant-home.ts";
 import { dailyGuardMessage, dailyGuardState } from "../shared/codex-daily-guard.ts";
 import type { UsageInfo } from "../providers/provider.interface.ts";
 
@@ -180,11 +181,20 @@ function assertSomeAccountSignedIn(): void {
     : `Every Codex account is signed out (${enabled.map((a) => a.label).join(", ")}). Press "Sign in again" on their cards in Settings → Accounts → Codex.`);
 }
 
-/** Remove the account row and its CODEX_HOME dir. */
+/**
+ * Remove the account row, the PPM Assistant's home made for it, and its CODEX_HOME dir.
+ *
+ * The Assistant home goes first and at once: its auth.json is a hard link to the account's, so
+ * deleting the account's own folder would leave the login alive there until a later Assistant
+ * spawn swept it. Its links are taken out before anything else is deleted (see
+ * `removeAssistantCodexHome`), so that delete never reaches the account's files through them.
+ */
 export function removeCodexAccount(id: string): void {
   const acct = getCodexAccount(id);
   getDb().query("DELETE FROM codex_accounts WHERE id = ?").run(id);
-  if (acct) { try { rmSync(acct.home, { recursive: true, force: true }); } catch { /* ignore */ } }
+  if (!acct) return;
+  removeAssistantCodexHome(acct.home);
+  try { rmSync(acct.home, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
 // ── Selection ──

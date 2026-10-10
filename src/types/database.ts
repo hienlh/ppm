@@ -98,6 +98,20 @@ export interface StreamRowsOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * What `runQuery` also takes: a time limit and a signal, each of which stops the statement on
+ * the server. Postgres cancels the backend's statement (and, on a read-only run, also sets
+ * `statement_timeout` for it); MySQL and MariaDB `KILL QUERY` it from a second session (and set
+ * `max_execution_time` / `max_statement_time` for the session first). SQLite runs a statement
+ * synchronously on the server's own thread, where neither a timer nor an abort can be heard
+ * until it ends, so there only a signal already aborted is honoured, before anything starts.
+ * A stopped run throws `QueryStoppedError`.
+ */
+export interface RunQueryOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
 /** One parameterised statement, ready for the driver. */
 export interface DbStatement {
   sql: string;
@@ -225,7 +239,7 @@ export interface DatabaseAdapter {
   /** The engine's own estimate of a whole table's rows, when it keeps statistics. */
   estimateRows(config: DbConnectionConfig, table: string, schema?: string): Promise<number | null>;
   /** Run SQL typed by the user; columns come from the driver, rows as arrays. */
-  runQuery(config: DbConnectionConfig, sql: string): Promise<DbRunResult>;
+  runQuery(config: DbConnectionConfig, sql: string, opts?: RunQueryOptions): Promise<DbRunResult>;
   /** The Query tab's session for one run (see `DbQuerySession`). */
   openQuerySession(config: DbConnectionConfig): Promise<DbQuerySession>;
   /** Tables, views, routines, triggers and sequences, per schema. */

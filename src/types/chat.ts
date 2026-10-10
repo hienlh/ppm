@@ -43,6 +43,69 @@ export interface SendMessageOpts {
    * like `designMcp`.
    */
   tabToolsMcp?: { url: string; token: string };
+  /**
+   * PPM Assistant instruction block, server-built by `chatService.prepareSendOptions` for an
+   * Assistant session and stripped from whatever the caller passed, like `designInstructions`.
+   * Delivered the same way: Claude appends it, Codex sends it as `developerInstructions`.
+   */
+  assistantInstructions?: string;
+  /**
+   * Set alongside `assistantInstructions`; selects the Assistant permission policy, which a
+   * provider applies whatever `permissionMode` says.
+   */
+  assistantSession?: boolean;
+  /**
+   * The PPM Assistant's own MCP endpoint (`/api/assistant-mcp`) and the session's capability
+   * token for it. Server-built for an Assistant session only, never taken from a caller.
+   */
+  assistantMcp?: { url: string; token: string };
+  /**
+   * The MCP servers the user connected for the Assistant in Settings → PPM Assistant, the enabled
+   * ones, secrets included. Server-built for an Assistant session only, never taken from a caller;
+   * an Assistant session loads these and its own server, and none of the user's other servers.
+   */
+  assistantMcpServers?: import("../shared/assistant-settings.ts").AssistantMcpServer[];
+  /**
+   * What the device that sent an Assistant session's message shows, as that device reported it.
+   * Consumed by `chatService.prepareSendOptions`, which validates and cleans it into an entry of
+   * the shared-context block, and never handed to a provider; ignored for any other session.
+   */
+  uiSummary?: import("../shared/assistant-ui-protocol.ts").UiSummary;
+  /**
+   * The channel the user typed this message on, when it is not a PPM screen. Consumed by
+   * `chatService.prepareSendOptions`, which tells an Assistant session that no screen is attached
+   * to the turn, and never handed to a provider.
+   */
+  channel?: "telegram";
+  /**
+   * What a chat the Assistant was asked to watch did, when PPM itself wakes an Assistant session
+   * to report it. Consumed by `chatService.prepareSendOptions`, which renders it into the
+   * shared-context block — never into the stored message, which is a fixed opener — and never
+   * handed to a provider; ignored for any other session.
+   */
+  watchEvents?: WatchEventNotice[];
+}
+
+/** How a watched chat's run ended, as the Assistant is told it. */
+export type WatchEventKind = "done" | "stopped" | "interrupted" | "expired";
+
+/**
+ * One watched chat's news. Everything here except `kind` and the ids comes from that chat or its
+ * user, so it is data: `watch-event-text.ts` cleans and labels it before a model sees it.
+ */
+export interface WatchEventNotice {
+  watchId: string;
+  kind: WatchEventKind;
+  project: string;
+  sessionId: string;
+  providerId: string;
+  title: string;
+  /** The opening of the chat's final answer, for `done`. */
+  finalText?: string;
+  /** What stopped the chat, for `stopped`. */
+  stopReason?: string;
+  /** When it happened, epoch milliseconds. */
+  at: number;
 }
 
 export interface AIProvider {
@@ -53,6 +116,10 @@ export interface AIProvider {
   /** Delivers opts.designInstructions to the model on every turn. Only such providers may
    *  host a design session; anywhere else the instructions would be silently dropped. */
   supportsDesignInstructions?: boolean;
+  /** Delivers opts.assistantInstructions on every turn and enforces the Assistant permission
+   *  policy when opts.assistantSession is set. Only such providers may run an Assistant
+   *  session; anywhere else it would be an ordinary chat in the user's chosen mode. */
+  supportsAssistantSessions?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
   getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
 
@@ -300,7 +367,7 @@ export type ChatEvent =
       arrivalSeq?: number;
     }
   | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string; arrivalSeq?: number }
-  | { type: "approval_request"; requestId: string; tool: string; input: unknown }
+  | { type: "approval_request"; requestId: string; tool: string; input: unknown; questions?: import("../shared/approval-questions").NormalizedQuestion[] }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }
   | { type: "account_info"; accountId: string; accountLabel: string }

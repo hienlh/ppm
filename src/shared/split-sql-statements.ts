@@ -215,6 +215,23 @@ export function sqlCode(statement: string, dialect: DialectName = "postgres", op
 }
 
 /** A MySQL `DELIMITER` line, and the terminator it sets for what follows. */
+/**
+ * One statement's code at its own positions: every character of a comment becomes a blank,
+ * every character of a string literal `\u0001` and of a quoted name `\u0002`, and the rest is
+ * kept, so a keyword found in the result sits at the same offset in the statement and the text
+ * around it can be cut from the statement as written.
+ */
+export function sqlCodeInPlace(statement: string, dialect: DialectName = "postgres", opts: SqlLexOptions = {}): string {
+  let out = "";
+  for (const p of lex(statement, dialect, opts)) {
+    const text = statement.slice(p.start, p.end);
+    if (p.kind === "code" || p.kind === "end") out += text;
+    else if (p.kind === "literal") out += (text[0] === '"' || text[0] === "`" || text[0] === "[" ? "\u0002" : "\u0001").repeat(text.length);
+    else out += " ".repeat(text.length);
+  }
+  return out;
+}
+
 export interface DelimiterDirective {
   /** Offset of the line's first character. */
   start: number;

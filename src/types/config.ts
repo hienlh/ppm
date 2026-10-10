@@ -1,6 +1,7 @@
 import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
+import { DEFAULT_ASSISTANT_SETTINGS, type AssistantSettings } from "../shared/assistant-settings.ts";
 
 export interface TelegramConfig {
   bot_token: string;
@@ -17,13 +18,17 @@ export interface NtfyConfig {
   token: string;
 }
 
+/**
+ * The Telegram side of PPM Assistant, kept under the `clawbot` key PPMBot used so existing
+ * settings carry over. A row saved by PPMBot may still hold its other fields
+ * (`default_provider`, `permission_mode`, `show_thinking`, `system_prompt`): they are ignored.
+ */
 export interface PPMBotConfig {
+  /** The bridge between the Assistant and the Telegram bot runs. */
   enabled: boolean;
-  default_provider: string;
-  system_prompt: string;
+  /** An answer on Telegram names the tools it ran (never their input or output). */
   show_tool_calls: boolean;
-  show_thinking: boolean;
-  permission_mode: string;
+  /** Messages sent this close together are one message to the Assistant. */
   debounce_ms: number;
 }
 
@@ -67,6 +72,8 @@ export interface PpmConfig {
   session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
   android?: AndroidConfig;
+  /** Settings → PPM Assistant: the Assistant's own provider, model, instructions and MCP servers. */
+  assistant?: AssistantSettings;
   /** Lowest level written to ppm.log. `PPM_LOG_LEVEL` overrides it; see `services/logger.ts`. */
   log_level?: LogLevel;
 }
@@ -225,13 +232,10 @@ export const DEFAULT_CONFIG: PpmConfig = {
   },
   ntfy: { server: "", topic: "", token: "" },
   notifications: structuredClone(DEFAULT_NOTIFICATION_SETTINGS),
+  assistant: structuredClone(DEFAULT_ASSISTANT_SETTINGS),
   clawbot: {
     enabled: false,
-    default_provider: "claude",
-    system_prompt: "",
     show_tool_calls: true,
-    show_thinking: false,
-    permission_mode: "bypassPermissions",
     debounce_ms: 2000,
   },
   tunnel: {

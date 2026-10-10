@@ -337,7 +337,7 @@ function TelegramSection({ settings, update }: {
   return (
     <section className="space-y-3">
       <SectionHeader title="Telegram">
-        Alerts in a chat with your own Telegram bot. A chat connected here gets alerts and nothing else — PPMBot has its own bot and chats.
+        Alerts in a chat with your own Telegram bot. A chat connected here gets alerts and nothing else — the PPM Assistant has its own bot and chats.
       </SectionHeader>
       {loadError && <p className="text-xs text-error">{loadError}</p>}
 
@@ -345,7 +345,7 @@ function TelegramSection({ settings, update }: {
         <>
           {status.sharedWithPPMBot && (
             <p className="text-xs leading-relaxed text-muted-foreground">
-              PPMBot answers through this bot too, so alerts arrive in your PPMBot chats. Give PPMBot a bot of its own in Settings → PPMBot to keep them apart.
+              The PPM Assistant answers through this bot too, so alerts arrive in your Assistant chats. Give it a bot of its own in Settings → PPM Assistant → Telegram to keep them apart.
             </p>
           )}
           <div className="rounded-lg border border-border">

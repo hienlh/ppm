@@ -29,7 +29,8 @@ export type TabType =
   | "design"
   | "android"
   | "web-preview"
-  | "logs";
+  | "logs"
+  | "assistant";
 
 export interface Tab {
   id: string;

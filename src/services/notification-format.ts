@@ -3,6 +3,7 @@
  * tested without a bot, a browser or a clock.
  */
 import type { NotificationPayload } from "./notification.service.ts";
+import { isAssistantProject } from "../shared/assistant-project.ts";
 
 const DETAIL_MAX = 300;
 
@@ -23,6 +24,13 @@ export function escapeTelegramHtml(text: string): string {
  */
 export function notificationPath(payload: Pick<NotificationPayload, "project" | "sessionId" | "providerId">): string {
   if (!payload.project) return "/";
+  // The Assistant's virtual project is no project the app can open: `/project/__assistant__`
+  // falls back to the first registered project and opens the session there as an ordinary chat.
+  if (isAssistantProject(payload.project)) {
+    if (!payload.sessionId) return "/assistant";
+    const session = payload.providerId ? `${payload.providerId}/${payload.sessionId}` : payload.sessionId;
+    return `/assistant?session=${encodeURIComponent(session)}`;
+  }
   const base = `/project/${encodeURIComponent(payload.project)}`;
   if (!payload.sessionId) return base;
   // `provider/session`, as the app's own chat URLs name it: without the provider a chat tab

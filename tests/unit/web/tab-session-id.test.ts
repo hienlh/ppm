@@ -14,6 +14,11 @@ describe("tabSessionId", () => {
     expect(tabSessionId({ type: "design", metadata: { sessionId: "s2", designSlug: "x" } })).toBe("s2");
   });
 
+  it("answers for the PPM Assistant tab, which shows one Assistant session at a time", () => {
+    expect(tabSessionId({ type: "assistant", metadata: { sessionId: "a1", projectName: "__assistant__" } })).toBe("a1");
+    expect(tabSessionId({ type: "assistant", metadata: { projectName: "__assistant__" } })).toBeUndefined();
+  });
+
   it("answers nothing for other tabs, sessionless tabs and junk ids", () => {
     expect(tabSessionId({ type: "editor", metadata: { sessionId: "s3" } })).toBeUndefined();
     expect(tabSessionId({ type: "chat", metadata: {} })).toBeUndefined();

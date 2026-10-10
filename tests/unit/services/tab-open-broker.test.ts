@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { createTabOpenBroker } from "../../../src/services/tab-tools-mcp/tab-open-broker.ts";
+import { createDeviceBroker, createTabOpenBroker, forgetSessionInDeviceBrokers } from "../../../src/services/tab-tools-mcp/tab-open-broker.ts";
+import { createApprovalBroker, MAX_APPROVALS_PER_MINUTE } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
+import { ASSISTANT_UI_NO_DEVICE_MESSAGE, createAssistantUiBroker } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
+import type { AssistantUiRequest } from "../../../src/shared/assistant-ui-protocol.ts";
 import type { TabOpenRequest } from "../../../src/shared/tab-open-protocol.ts";
 
 const REQ = { tool: "open_file" as const, filePath: "a.ts", projectName: "demo" };
@@ -91,5 +94,107 @@ describe("tab open broker", () => {
   it("treats a delivery that throws as reaching no device", async () => {
     const broker = createTabOpenBroker({ deliver: () => { throw new Error("socket closed"); } });
     expect(await broker.request("s1", REQ, 1000)).toMatchObject({ ok: false, reason: "no-device" });
+  });
+});
+
+describe("device broker", () => {
+  type Req = { type: "probe"; requestId: string; what: string };
+  type Res = { requestId: string; value: number };
+  const messages = {
+    noDevice: "nobody", busy: "busy now",
+    rateLimited: (n: number) => `limit ${n}`, timeout: (s: number) => `waited ${s}`,
+  };
+
+  it("builds its own wire request and answers in its own words", async () => {
+    const sent: Array<{ sessionId: string; request: Req }> = [];
+    const broker = createDeviceBroker<Req, Res, { what: string }>({
+      deliver: (sessionId, request) => { sent.push({ sessionId, request }); return 1; },
+      build: (requestId, body) => ({ type: "probe", requestId, what: body.what }),
+      messages, logTag: "probe", maxPending: 8, maxInFlightPerSession: 1, perMinute: 2,
+    });
+    const call = broker.request("s1", { what: "layout" }, 1000);
+    expect(sent[0]!.request).toMatchObject({ type: "probe", what: "layout" });
+    expect(await broker.request("s1", { what: "again" }, 1000)).toEqual({ ok: false, reason: "busy", message: "busy now" });
+    expect(broker.settle("s1", { requestId: sent[0]!.request.requestId, value: 7 })).toBe(true);
+    expect(await call).toEqual({ ok: true, result: { requestId: sent[0]!.request.requestId, value: 7 } });
+    expect(await broker.request("s1", { what: "late" }, 10)).toEqual({ ok: false, reason: "timeout", message: "waited 0" });
+    expect(await broker.request("s1", { what: "over" }, 10)).toEqual({ ok: false, reason: "rate-limited", message: "limit 2" });
+  });
+
+  it("answers no-device in its own words when nothing was reached", async () => {
+    const broker = createDeviceBroker<Req, Res, { what: string }>({
+      deliver: () => 0, build: (requestId, body) => ({ type: "probe", requestId, what: body.what }),
+      messages, logTag: "probe", maxPending: 8, maxInFlightPerSession: 1, perMinute: 2,
+    });
+    expect(await broker.request("s1", { what: "x" }, 1000)).toEqual({ ok: false, reason: "no-device", message: "nobody" });
+    expect(broker.pendingCount()).toBe(0);
+  });
+
+  it("keeps the tab tools' wording", async () => {
+    const outcome = await createTabOpenBroker({ deliver: () => 0 }).request("s1", REQ, 1000);
+    expect(outcome).toEqual({ ok: false, reason: "no-device", message: "No PPM window has this chat open, so nothing was shown." });
+    let time = 0;
+    const limited = createTabOpenBroker({ deliver: () => 1, now: () => time, perMinute: 1 });
+    void limited.request("s1", REQ, 5);
+    time += 1;
+    expect(await limited.request("s1", REQ, 5)).toEqual({
+      ok: false, reason: "rate-limited", message: "Tabs were opened 1 times in the last minute; wait before opening more.",
+    });
+    expect(await createTabOpenBroker({ deliver: () => 1 }).request("s1", REQ, 20)).toEqual({
+      ok: false, reason: "timeout", message: "The user's device did not confirm within 0 s; the tab may or may not have opened.",
+    });
+  });
+
+  it("sends the Assistant's UI requests as assistant_ui and asks the user to chat from a device when none is", async () => {
+    const sent: AssistantUiRequest[] = [];
+    const broker = createAssistantUiBroker({ deliver: (_s, request) => { sent.push(request); return 1; } });
+    const call = broker.request("s1", { op: "get_state", args: {} }, 1000);
+    expect(sent[0]).toMatchObject({ type: "assistant_ui", op: "get_state", args: {} });
+    broker.settle("s1", { type: "assistant_ui_result", requestId: sent[0]!.requestId, ok: true, data: { panels: [] } });
+    expect(await call).toMatchObject({ ok: true, result: { ok: true, data: { panels: [] } } });
+    const none = await createAssistantUiBroker({ deliver: () => 0 }).request("s1", { op: "get_state", args: {} }, 1000);
+    expect(none).toEqual({ ok: false, reason: "no-device", message: ASSISTANT_UI_NO_DEVICE_MESSAGE });
+    expect(ASSISTANT_UI_NO_DEVICE_MESSAGE).toContain("open the Assistant session on their device and send a message");
+  });
+});
+
+describe("a session renamed or deleted", () => {
+  it("counts a call asked under the old name against the renamed session's limit", async () => {
+    const renamed = new Map<string, string>();
+    const sent: TabOpenRequest[] = [];
+    const broker = createTabOpenBroker({
+      deliver: (_s, request) => { sent.push(request); return 1; },
+      canonical: (sessionId) => renamed.get(sessionId) ?? sessionId,
+      maxInFlightPerSession: 1,
+    });
+    const first = broker.request("ppm-id", REQ, 1000);
+    renamed.set("ppm-id", "thread-id");
+    expect(await broker.request("thread-id", REQ, 1000)).toMatchObject({ ok: false, reason: "busy" });
+    broker.settle("thread-id", answer(sent[0]!.requestId));
+    expect((await first).ok).toBe(true);
+  });
+
+  it("is forgotten by every broker, under every name it went by", async () => {
+    // Nothing is reached, so each call ends at once, but it still counts in the session's window.
+    const renamed = new Map<string, string>();
+    const canonical = (sessionId: string) => renamed.get(sessionId) ?? sessionId;
+    const tabs = createTabOpenBroker({ deliver: () => 0, canonical, perMinute: 1 });
+    const screen = createAssistantUiBroker({ deliver: () => 0, canonical, perMinute: 1 });
+    const approvals = createApprovalBroker({ deliver: () => 0, canonical });
+    const ask = { tool: "db_query", input: {}, summary: { headline: "h", facts: [] } };
+
+    await tabs.request("ppm-id", REQ, 1000);
+    await screen.request("ppm-id", { op: "get_state", args: {} }, 1000);
+    for (let i = 0; i < MAX_APPROVALS_PER_MINUTE; i++) await approvals.request("ppm-id", ask);
+    // The window follows the rename: calls counted under the old name still count.
+    renamed.set("ppm-id", "thread-id");
+    expect(await tabs.request("thread-id", REQ, 1000)).toMatchObject({ reason: "rate-limited" });
+    expect((await approvals.request("thread-id", ask)).reason).toContain("last minute");
+    // Deleted under the name it goes by now; the calls were counted under the one it had then.
+    forgetSessionInDeviceBrokers("thread-id");
+
+    expect(await tabs.request("thread-id", REQ, 1000)).toMatchObject({ reason: "no-device" });
+    expect(await screen.request("thread-id", { op: "get_state", args: {} }, 1000)).toMatchObject({ reason: "no-device" });
+    expect((await approvals.request("thread-id", ask)).reason).not.toContain("last minute");
   });
 });
