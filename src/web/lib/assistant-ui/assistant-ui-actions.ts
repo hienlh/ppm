@@ -5,7 +5,7 @@ import { isPanelOnScreen, projectOwningPanel } from "@/stores/singleton-tab-relo
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { ASSISTANT_TAB_ID, openAssistant } from "@/components/assistant/open-assistant";
 import { openSettings } from "@/components/settings/open-settings";
-import { isSettingsCategoryId } from "@/components/settings/settings-categories";
+import { resolveSettingsLink } from "@/components/settings/assistant-settings-tab-store";
 import { nextQueryNumber } from "@/lib/db-tabs";
 import { chooseAiTabPlacement } from "@/lib/ai-tab-placement";
 import { openAiTab } from "@/lib/open-ai-tab";
@@ -102,8 +102,10 @@ export function openAssistantTab(args: Record<string, unknown>, chat: AssistantC
     return result(opened.tabId, previous);
   }
   if (target.kind === "settings") {
-    if (target.section !== undefined && !isSettingsCategoryId(target.section)) throw new Error(`Settings has no section "${String(target.section).slice(0, 40)}".`);
-    openSettings(target.section);
+    // A retired id (the old `ppmbot`) still leads to where that pane lives now.
+    const section = target.section === undefined ? undefined : resolveSettingsLink(target.section);
+    if (target.section !== undefined && !section) throw new Error(`Settings has no section "${String(target.section).slice(0, 40)}".`);
+    openSettings(section);
     // A desktop shows Settings as a window of its own, a phone as a tab.
     const inWindow = Object.values(useWindowStore.getState().windows).some((w) => w.kind === "settings");
     if (inWindow && !usePanelStore.getState().isMobile()) return result(null, previous, { window: "settings" });

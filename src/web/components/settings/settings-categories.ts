@@ -11,7 +11,6 @@ import {
   Palette,
   Bot,
   KeyRound,
-  BotMessageSquare,
   BellRing,
   Bug,
   Puzzle,
@@ -46,7 +45,6 @@ export type SettingsCategoryId =
   | "assistant"
   | "design"
   | "voice"
-  | "ppmbot"
   | "notifications"
   | "jira"
   | "extensions"
@@ -94,11 +92,10 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },
-  { id: "assistant", group: "ai", label: "PPM Assistant", subtitle: "Its own model, instructions, MCP servers", icon: Sparkles },
+  { id: "assistant", group: "ai", label: "PPM Assistant", subtitle: "Its own model, instructions, MCP servers, Telegram", icon: Sparkles },
   { id: "design", group: "ai", label: "Design", subtitle: "Design instructions and skills", icon: LayoutGrid },
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 
-  { id: "ppmbot", group: "integrations", label: "PPMBot", subtitle: "Telegram AI bot", icon: BotMessageSquare },
   { id: "notifications", group: "integrations", label: "Notifications", subtitle: "Push, Telegram & ntfy alerts", icon: BellRing },
   { id: "jira", group: "integrations", label: "Jira Watcher", subtitle: "Auto-debug Jira tickets", icon: Bug },
   { id: "extensions", group: "integrations", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
@@ -123,7 +120,8 @@ export const DEFAULT_SETTINGS_CATEGORY: SettingsCategoryId = "general";
 
 /**
  * Narrows an unknown value (a persisted window payload, a URL fragment) to a real category.
- * Anything unrecognised falls back rather than rendering an empty pane.
+ * Anything unrecognised falls back rather than rendering an empty pane. A retired id (the old
+ * `ppmbot`) is not one: `resolveSettingsLink` in `assistant-settings-tab-store.ts` follows those.
  */
 export function isSettingsCategoryId(value: unknown): value is SettingsCategoryId {
   return typeof value === "string" && SETTINGS_CATEGORIES.some((c) => c.id === value);

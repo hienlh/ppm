@@ -10,6 +10,10 @@ import { foldMcpName, type AssistantMcpServer, type AssistantSettingsView } from
 import { AssistantProviderDefaultsRow } from "./assistant-provider-defaults";
 import { AssistantMcpServerDialog } from "./assistant-mcp-server-dialog";
 import { IconButton, SectionHeader } from "./settings-rows";
+import { cn } from "@/lib/utils";
+import { AssistantTelegramSettings } from "./assistant-telegram-settings";
+import { AssistantLegacyMemories, appendToInstructions } from "./assistant-legacy-memories";
+import { ASSISTANT_SETTINGS_TABS, useAssistantSettingsTab, type AssistantSettingsTabId } from "./assistant-settings-tab-store";
 
 const CHAT_DEFAULT = "__chat__";
 
@@ -20,11 +24,56 @@ function savedKeysOf(server: AssistantMcpServer | undefined): Set<string> {
 }
 
 /**
- * Settings → PPM Assistant: the Assistant's own provider, model, effort, instructions and MCP
- * servers. Assistant sessions use none of the settings, MCP servers, hooks, plugins or memory of
- * ordinary chats, so everything they run with is set here. One Save for the whole pane.
+ * Settings → PPM Assistant, in two sub-tabs: General (what sessions run with) and Telegram (the
+ * bot that reaches them from a phone). Each panel stays mounted once shown, so switching away
+ * and back keeps an unsaved draft instead of reloading over it.
  */
 export function AssistantSettingsSection() {
+  const tab = useAssistantSettingsTab((s) => s.tab);
+  const setTab = useAssistantSettingsTab((s) => s.setTab);
+  const [shown, setShown] = useState<ReadonlySet<AssistantSettingsTabId>>(() => new Set([tab]));
+  useEffect(() => {
+    setShown((prev) => (prev.has(tab) ? prev : new Set([...prev, tab])));
+  }, [tab]);
+
+  return (
+    <div className="space-y-5" data-testid="assistant-settings" data-tab={tab}>
+      <div role="tablist" aria-label="PPM Assistant settings" className="flex gap-1 overflow-x-auto border-b border-border/50">
+        {ASSISTANT_SETTINGS_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            data-testid={`assistant-settings-tab-${t.id}`}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              "flex min-h-11 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-t px-3 text-sm transition-colors md:min-h-9 md:text-xs",
+              tab === t.id
+                ? "border-b-2 border-primary font-medium text-primary"
+                : "text-text-subtle hover:text-text-secondary",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {(shown.has("general") || tab === "general") && (
+        <div role="tabpanel" hidden={tab !== "general"}><AssistantGeneralSettings /></div>
+      )}
+      {(shown.has("telegram") || tab === "telegram") && (
+        <div role="tabpanel" hidden={tab !== "telegram"}><AssistantTelegramSettings /></div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Assistant's own provider, model, effort, instructions and MCP servers. Assistant sessions
+ * use none of the settings, MCP servers, hooks, plugins or memory of ordinary chats, so
+ * everything they run with is set here. One Save for the whole panel.
+ */
+function AssistantGeneralSettings() {
   const [loaded, setLoaded] = useState<AssistantSettingsResponse | null>(null);
   const [draft, setDraft] = useState<AssistantSettingsView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -104,6 +153,8 @@ export function AssistantSettingsSection() {
         <p className={tooLong ? "text-xs text-destructive" : "text-xs text-text-subtle"}>
           {draft.instructions.length.toLocaleString()} / {loaded.limits.instructionsMaxChars.toLocaleString()} characters
         </p>
+        <AssistantLegacyMemories instructions={draft.instructions} disabled={saving}
+          onCopy={(content) => patch({ instructions: appendToInstructions(draft.instructions, content) })} />
       </div>
 
       <div className="space-y-2">

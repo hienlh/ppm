@@ -4,6 +4,7 @@ import { useWindowStore } from "@/components/floating-window/window-store";
 import { openSettings } from "@/components/settings/open-settings";
 import { openAssistant } from "@/components/assistant/open-assistant";
 import { isAssistantProject } from "../../shared/assistant-project";
+import { assistantLinkFromLocation, type AssistantDeepLink } from "@/lib/assistant-deep-link";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
 import { designTabMetadata } from "@/lib/design/design-tab-metadata";
@@ -18,6 +19,11 @@ export interface UrlState {
   tabType: TabType | null;
   tabIdentifier: string | null;
   openChat: string | null;
+  /**
+   * An address that opens the PPM Assistant (`/assistant?session=…`, or the older
+   * `/project/__assistant__?openChat=…`), and the session it names. Never a project to open.
+   */
+  assistant: AssistantDeepLink | null;
 }
 
 const VALID_TAB_TYPES: TabType[] = [
@@ -53,23 +59,26 @@ export function parseUrlState(): UrlState {
   const params = new URLSearchParams(window.location.search);
   const openChat = params.get("openChat");
 
+  // The Assistant's virtual project is never a workspace to open, whatever an address says:
+  // an address naming it opens the Assistant instead, and its `openChat` is the Assistant's.
+  const assistant = assistantLinkFromLocation(path, window.location.search);
+  if (assistant) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant };
+
   const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);
-  if (!match) return { projectName: null, tabType: null, tabIdentifier: null, openChat };
+  if (!match) return { projectName: null, tabType: null, tabIdentifier: null, openChat, assistant: null };
 
   const projectName = decodePathSegment(match[1]!);
-  // The Assistant's virtual project is never a workspace to open, whatever an address says.
-  if (isAssistantProject(projectName)) return { projectName: null, tabType: null, tabIdentifier: null, openChat };
   const rawType = match[2] ?? null;
   const rawIdentifier = match[3] ? match[3].slice(1) : null; // strip leading /
 
   // Legacy fallback: /project/{name}/tab/{tabId}
   if (rawType === "tab") {
-    return { projectName, tabType: null, tabIdentifier: null, openChat };
+    return { projectName, tabType: null, tabIdentifier: null, openChat, assistant: null };
   }
 
   const tabType = VALID_TAB_TYPES.includes(rawType as TabType) ? (rawType as TabType) : null;
 
-  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat };
+  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat, assistant: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +208,16 @@ function onceWindowLayerIsReady(open: () => void): void {
     unsubscribe();
     open();
   });
+}
+
+/**
+ * Opens the Assistant an address asked for, on the session it names, over whichever project is
+ * on screen — never as a chat of some project. The address itself is dropped: it names no
+ * workspace, so the workspace's own address takes over from here.
+ */
+export function openAssistantFromAddress(link: AssistantDeepLink): void {
+  window.history.replaceState(null, "", "/");
+  onceWindowLayerIsReady(() => openAssistant(link));
 }
 
 /** Auto-open or focus a tab based on URL state */

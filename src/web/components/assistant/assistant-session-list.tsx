@@ -6,10 +6,11 @@
  * first message creates it. The server only ever lists Assistant sessions for that project.
  */
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Plus } from "@/lib/icons";
-import { cn } from "@/lib/utils";
-import { formatRelativeDate } from "@/lib/format-date";
-import { PROVIDER_LOGOS } from "@/lib/provider-logos";
+import { useAssistantTelegramBinding, type AssistantTelegramChat } from "@/hooks/use-assistant-telegram-binding";
+import { AssistantSessionRow, ProviderLogo } from "./assistant-session-row";
+import { ASSISTANT_PROVIDER_IDS } from "@/lib/assistant-deep-link";
 import { getChatProviders, peekChatProviders, type ChatProviderInfo } from "@/lib/chat-preparation-cache";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { useSessionListStore, EMPTY_SESSIONS } from "@/stores/session-list-store";
@@ -17,8 +18,7 @@ import { useProjectRef } from "@/stores/session-list-sync-triggers";
 import { ASSISTANT_PROJECT_NAME } from "../../../shared/assistant-project";
 import type { SessionInfo } from "../../../types/chat";
 
-/** The providers an Assistant session can run on. */
-export const ASSISTANT_PROVIDER_IDS: readonly string[] = ["claude", "codex"];
+export { ASSISTANT_PROVIDER_IDS };
 
 export interface AssistantProviders {
   /** Configured providers that can run the Assistant; null while loading. */
@@ -63,11 +63,6 @@ export function useAssistantSessions(): { sessions: SessionInfo[]; synced: boole
   return { sessions, synced };
 }
 
-function ProviderLogo({ providerId, className }: { providerId: string; className?: string }) {
-  const Logo = PROVIDER_LOGOS[providerId];
-  return Logo ? <Logo className={cn("shrink-0", className)} /> : null;
-}
-
 /** One "New" button per configured provider, so the choice is made by the press itself. */
 export function AssistantNewSession({ providers, onNew }: {
   providers: ChatProviderInfo[];
@@ -92,40 +87,42 @@ export function AssistantNewSession({ providers, onNew }: {
   );
 }
 
+/**
+ * The sessions, newest first. A session a Telegram chat talks to carries a "Telegram" label, and
+ * each row's menu (right-click, or a long press on a touch screen) offers "Use on Telegram" while
+ * the bridge is on and a chat is connected — one item per chat when there are several.
+ */
 export function AssistantSessionList({ sessions, activeSessionId, onSelect }: {
   sessions: SessionInfo[];
   activeSessionId: string | null;
   onSelect: (session: SessionInfo) => void;
 }) {
   const rows = useMemo(() => sessions.filter((s) => ASSISTANT_PROVIDER_IDS.includes(s.providerId)), [sessions]);
+  const telegram = useAssistantTelegramBinding();
   if (rows.length === 0) {
     return <p className="px-3 py-4 text-center text-sm text-text-subtle md:text-xs">No Assistant sessions yet.</p>;
   }
+  const putOnTelegram = async (session: SessionInfo, chat: AssistantTelegramChat) => {
+    try {
+      await telegram.bind(session.id, chat.chatId);
+      toast.success(`${chat.name} now talks to this session`);
+    } catch (e) {
+      toast.error("Could not use this session on Telegram", { description: e instanceof Error ? e.message : String(e) });
+    }
+  };
   return (
     <ul className="flex flex-col py-1" aria-label="Assistant sessions">
-      {rows.map((s) => {
-        const active = s.id === activeSessionId;
-        return (
-          <li key={s.id}>
-            <button
-              type="button"
-              onClick={() => onSelect(s)}
-              aria-current={active ? "true" : undefined}
-              className={cn(
-                "flex min-h-11 w-full items-center gap-2 px-3 text-left md:min-h-9",
-                "hover:bg-surface-elevated active:bg-surface-elevated",
-                active && "bg-surface-elevated",
-              )}
-            >
-              <ProviderLogo providerId={s.providerId} className="size-4" />
-              <span className="min-w-0 flex-1 truncate text-sm md:text-xs">{s.title || "Untitled session"}</span>
-              <span className="shrink-0 text-xs text-text-subtle md:text-[11px]">
-                {formatRelativeDate(s.updatedAt ?? s.createdAt)}
-              </span>
-            </button>
-          </li>
-        );
-      })}
+      {rows.map((s) => (
+        <AssistantSessionRow
+          key={s.id}
+          session={s}
+          active={s.id === activeSessionId}
+          onSelect={onSelect}
+          boundChats={telegram.chatsOn(s.id)}
+          bindableChats={telegram.bindableChats}
+          onUseOnTelegram={(chat) => void putOnTelegram(s, chat)}
+        />
+      ))}
     </ul>
   );
 }

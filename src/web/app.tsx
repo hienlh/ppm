@@ -22,7 +22,7 @@ import { hydrateProjectCache, peekLastProjectRef } from "@/lib/browser-cache/pro
 // Registers the slash-list hydrator before boot hydration runs; the chat tab that
 // otherwise loads this module sits in a lazy chunk.
 import "@/lib/slash-items-cache";
-import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync";
+import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
@@ -223,7 +223,16 @@ export function App() {
     fetchProjects().then(async () => {
       const urlState = initialUrlRef.current;
       const { projects, customOrder } = useProjectStore.getState();
-      if (projects.length === 0) return;
+      // An Assistant address (`/assistant?session=…`, a Telegram "Open in PPM" or a notification)
+      // names no project: the Assistant opens over whichever one is on screen, so it opens even
+      // when there is none.
+      const openAssistantFromUrl = () => {
+        if (urlState.assistant) openAssistantFromAddress(urlState.assistant);
+      };
+      if (projects.length === 0) {
+        openAssistantFromUrl();
+        return;
+      }
 
       // URL project takes priority, then fall back to first sorted project
       let target = urlState.projectName
@@ -246,6 +255,7 @@ export function App() {
       // which get lost when the switchProject effect fires after render.
       useTabStore.getState().switchProject(target.name);
 
+      openAssistantFromUrl();
       // Auto-open target tab from URL (type-based)
       if (urlState.tabType) {
         autoOpenFromUrl(urlState.tabType, urlState.tabIdentifier, target!.name);

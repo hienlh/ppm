@@ -1,5 +1,5 @@
 /**
- * A Telegram bot token, with the steps to get one. Notifications and PPMBot each keep a
+ * A Telegram bot token, with the steps to get one. Notifications and the PPM Assistant each keep a
  * bot of their own, so each passes the endpoint its token is saved to.
  *
  * The server asks Telegram (`getMe`) before saving, so a mistyped token is refused here
