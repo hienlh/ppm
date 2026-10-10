@@ -6,6 +6,8 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 | Document | Covers |
 |---|---|
 | [AI Chat & Providers](architecture/ai-chat-and-providers.md) | Provider adapters, AI configuration, the persistent chat streaming session |
+| [Session changes and review](architecture/session-changes-and-review.md) | What one chat session changed: the pre-session baselines, the changes bar and per-answer pill, the block-by-block Review tab, keep/revert/undo and Revert turn |
+| [AI tab tools](architecture/ai-tab-tools.md) | `open_file` and `open_preview`: the AI opening a file or a page in a PPM tab on the chatting device, and the preview's self-check |
 | [PPM Assistant](architecture/ppm-assistant.md) | The chat that operates PPM itself: its virtual project and isolation, `/api/assistant-mcp`, chatting-device delivery, approvals, proving a SQL read |
 | [Extension System](architecture/extensions.md) | Manifest, lifecycle, RPC, worker isolation, contribution registry, dev workflow |
 | [Data & Storage](architecture/data-and-storage.md) | SQLite schema and access, database viewer, MCP server management, group-chat model |
