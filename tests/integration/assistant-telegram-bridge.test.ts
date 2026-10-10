@@ -28,16 +28,21 @@ const gates = new Map<string, () => void>();
 const aborts = new Map<string, () => void>();
 const received: Array<{ sessionId: string; message: string }> = [];
 const images: number[] = [];
+/** Titled from the first message, as a CLI titles its sessions; listed newest first. */
+const titles = new Map<string, string>();
 const aborted = (sessionId: string) => new Promise<null>((resolve) => aborts.set(sessionId, () => resolve(null)));
 
 providerRegistry.register({
   id: P, name: "Bridge stub", supportsAssistantSessions: true, supportsSharedContext: true,
   async createSession() { return { id: `tgb-${crypto.randomUUID()}`, providerId: P, title: "", createdAt: new Date().toISOString() }; },
   async resumeSession(id: string) { return { id, providerId: P, title: "", createdAt: "" }; },
-  async listSessions() { return []; },
+  async listSessions() {
+    return [...titles].reverse().map(([id, title]) => ({ id, providerId: P, title, createdAt: new Date().toISOString() }));
+  },
   async deleteSession() {},
   async *sendMessage(sessionId: string, message: string, opts?: SendMessageOpts): AsyncIterable<ChatEvent> {
     received.push({ sessionId, message });
+    if (!titles.has(sessionId)) titles.set(sessionId, message.slice(0, 50));
     images.push(opts?.images?.length ?? 0);
     if (message.startsWith("approve:")) {
       const requestId = crypto.randomUUID();
@@ -251,6 +256,23 @@ describe("Telegram as a second window onto an Assistant session", () => {
     fake.pushText(group, 5, "hello all", "group");
     await until(() => texts(group).length === 1);
     expect(texts(group)[0]).toContain("private chat");
+  });
+
+  it("switches conversations with /sessions and names the one picked as the list did", async () => {
+    const chat = phone();
+    fake.pushText(chat, chat, "the first topic");
+    await until(() => texts(chat).includes("Echo: the first topic"));
+    const first = getTelegramBinding(String(chat))!.sessionId;
+    fake.pushText(chat, chat, "/new");
+    await until(() => texts(chat).some((t) => t.startsWith("🆕 New conversation")));
+    expect(getTelegramBinding(String(chat))!.sessionId).not.toBe(first);
+    fake.pushText(chat, chat, "/sessions");
+    const list = await until(() => lastWith(chat, "Pick the conversation"));
+    const pick = fake.buttons(chat, list.message_id).flat().find((b) => b.text.startsWith("the first topic"))!;
+    fake.pressButton(chat, chat, list.message_id, pick.callback_data!);
+    // Not "that conversation": the session has no rename, but its provider titled it.
+    await until(() => texts(chat).includes("Now talking to the first topic."));
+    expect(getTelegramBinding(String(chat))!.sessionId).toBe(first);
   });
 
   it("passes a photo on as an image, and wraps a forwarded message as someone else's", async () => {

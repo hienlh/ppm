@@ -7,9 +7,12 @@
  * update exists or the timeout runs out, an `offset` that confirms everything before it,
  * `allowed_updates` remembered between calls, a second poll ending the first with 409, message
  * ids counted per chat, and the refusals PPM has to survive — HTML it cannot parse, a message
- * over 4096 characters, `callback_data` over 64 bytes, an edit that changes nothing, deleting a
- * message that is not there. A test
- * plays the person on the other end with `pushText`, `pushPhoto` and `pressButton`.
+ * over 4096 characters, `callback_data` over 64 bytes, a URL button Telegram cannot open (anything
+ * but https on a public host: `BUTTON_URL_INVALID`), an edit that changes nothing, deleting a
+ * message that is not there. A test plays the person on the other end with `pushText` (an old
+ * `date` makes a backlog message, `forward_origin` a forwarded one), `pushPhoto` and
+ * `pressButton` (`stale` presses a button the message showed once, as a phone still drawing an
+ * old keyboard does).
  */
 import type {
   InlineKeyboardButton,
@@ -58,10 +61,14 @@ export interface FakeTelegram {
   answers: Array<{ callback_query_id: string; text?: string }>;
   /** Messages the bot deleted, as they were when deleted. They are gone from `sent`. */
   deleted: FakeSentMessage[];
-  pushText(chatId: number, userId: number, text: string, chatType?: TelegramMessage["chat"]["type"]): TelegramUpdate;
+  /** `extra` is merged into the message: `date` (seconds) for a backlog message, `forward_origin`. */
+  pushText(chatId: number, userId: number, text: string, chatType?: TelegramMessage["chat"]["type"], extra?: Record<string, unknown>): TelegramUpdate;
   pushPhoto(chatId: number, userId: number, options?: { bytes?: Uint8Array; caption?: string; chatType?: TelegramMessage["chat"]["type"] }): TelegramUpdate;
-  /** Press a button the bot put under one of its messages; throws if there is no such button. */
-  pressButton(chatId: number, userId: number, messageId: number, data: string): TelegramUpdate;
+  /**
+   * Press a button the bot put under one of its messages; throws if there is no such button.
+   * With `stale`, a button the message showed at any point counts, taken away since or not.
+   */
+  pressButton(chatId: number, userId: number, messageId: number, data: string, options?: { stale?: boolean }): TelegramUpdate;
   sent(chatId: number): FakeSentMessage[];
   lastText(chatId: number): string | undefined;
   buttons(chatId: number, messageId: number): InlineKeyboardButton[][];
@@ -119,6 +126,18 @@ export function parseTelegramHtml(html: string): { text: string } | { error: str
   return { text };
 }
 
+const PRIVATE_HOST = /^(?:localhost|.*\.localhost|.*\.local|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|0\.0\.0\.0|\[.*\]|\d+(?:\.\d+){3})$/i;
+
+/** A URL a phone could open from a button: https on a public, dotted host name. */
+function openableUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && url.hostname.includes(".") && !PRIVATE_HOST.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function checkMarkup(markup: unknown): string | null {
   if (markup === undefined) return null;
   const rows = (markup as InlineKeyboardMarkup)?.inline_keyboard;
@@ -127,11 +146,12 @@ function checkMarkup(markup: unknown): string | null {
     if (typeof button?.text !== "string" || !button.text) return "Bad Request: text buttons are unallowed in the inline keyboard";
     if (button.callback_data !== undefined && Buffer.byteLength(button.callback_data) > CALLBACK_DATA_MAX) return "Bad Request: BUTTON_DATA_INVALID";
     if (button.callback_data === undefined && button.url === undefined) return "Bad Request: can't parse inline keyboard button: InlineKeyboardButton must have exactly one optional field";
+    if (button.url !== undefined && (typeof button.url !== "string" || !openableUrl(button.url))) return "Bad Request: BUTTON_URL_INVALID";
   }
   return null;
 }
 
-export function startFakeTelegram(options: { token?: string; username?: string } = {}): FakeTelegram {
+export function startFakeTelegram(options: { token?: string; username?: string; port?: number } = {}): FakeTelegram {
   const token = options.token ?? FAKE_BOT_TOKEN;
   const bot: TelegramUser = { id: Number(token.split(":")[0]), is_bot: true, first_name: "PPM", username: options.username ?? "ppm_fake_bot" };
   const calls: FakeTelegramCall[] = [];
@@ -143,6 +163,14 @@ export function startFakeTelegram(options: { token?: string; username?: string }
   const nextMessageId = new Map<number, number>();
   const files = new Map<string, { path: string; bytes: Uint8Array }>();
   const openQueries = new Set<string>();
+  /** Every `callback_data` each message has shown, by `<chat>:<message id>`, for a stale press. */
+  const everShown = new Map<string, Set<string>>();
+  const remember = (m: FakeSentMessage) => {
+    const key = `${m.chat_id}:${m.message_id}`;
+    const seen = everShown.get(key) ?? new Set<string>();
+    for (const b of m.reply_markup?.inline_keyboard.flat() ?? []) if (b.callback_data) seen.add(b.callback_data);
+    everShown.set(key, seen);
+  };
   let updates: TelegramUpdate[] = [];
   let nextUpdateId = 1;
   let nextFile = 1;
@@ -244,6 +272,7 @@ export function startFakeTelegram(options: { token?: string; username?: string }
           history: [],
         };
         messages.set(chatId, [...(messages.get(chatId) ?? []), sent]);
+        remember(sent);
         return ok(botMessage(sent));
       }
       case "editMessageText": {
@@ -262,6 +291,7 @@ export function startFakeTelegram(options: { token?: string; username?: string }
         // Like Telegram, an edit without a keyboard takes the old one away.
         if (markup) message.reply_markup = markup;
         else delete message.reply_markup;
+        remember(message);
         return ok(botMessage(message));
       }
       case "editMessageReplyMarkup": {
@@ -276,6 +306,7 @@ export function startFakeTelegram(options: { token?: string; username?: string }
         }
         if (next) message.reply_markup = next;
         else delete message.reply_markup;
+        remember(message);
         return ok(botMessage(message));
       }
       case "deleteMessage": {
@@ -308,7 +339,7 @@ export function startFakeTelegram(options: { token?: string; username?: string }
   }
 
   const server = Bun.serve({
-    port: 0,
+    port: options.port ?? 0,
     hostname: "127.0.0.1",
     // A long poll holds the request open for its whole timeout.
     idleTimeout: 120,
@@ -360,14 +391,15 @@ export function startFakeTelegram(options: { token?: string; username?: string }
     commands,
     answers,
     deleted,
-    pushText(chatId, userId, text, chatType = "private") {
-      const message: TelegramMessage = {
+    pushText(chatId, userId, text, chatType = "private", extra = {}) {
+      const message = {
         message_id: messageId(chatId),
         from: userOf(userId),
         chat: chatOf(chatId, chatType),
         date: Math.floor(Date.now() / 1000),
         text,
-      };
+        ...extra,
+      } as TelegramMessage;
       return enqueue({ message });
     },
     pushPhoto(chatId, userId, { bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), caption, chatType = "private" } = {}) {
@@ -388,10 +420,11 @@ export function startFakeTelegram(options: { token?: string; username?: string }
       };
       return enqueue({ message });
     },
-    pressButton(chatId, userId, messageId, data) {
+    pressButton(chatId, userId, messageId, data, { stale = false } = {}) {
       const message = find(chatId, messageId);
       if (!message) throw new Error(`no bot message ${messageId} in chat ${chatId}`);
-      if (!message.reply_markup?.inline_keyboard.flat().some((b) => b.callback_data === data)) {
+      const showing = message.reply_markup?.inline_keyboard.flat().some((b) => b.callback_data === data) ?? false;
+      if (!showing && !(stale && everShown.get(`${chatId}:${messageId}`)?.has(data))) {
         throw new Error(`message ${messageId} in chat ${chatId} has no button with data ${JSON.stringify(data)}`);
       }
       const id = `cbq-${nextQuery++}`;

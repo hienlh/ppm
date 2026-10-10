@@ -86,6 +86,29 @@ describe("fake Telegram", () => {
     expect((await api("sendMessage", { chat_id: 5, text: `<b>${"x".repeat(4096)}</b>`, parse_mode: "HTML" })).json.ok).toBe(true);
   });
 
+  it("refuses a URL button a phone could not open, and takes a public https one", async () => {
+    const withUrl = async (url: string) => (await api("sendMessage", { chat_id: 5, text: "x", reply_markup: { inline_keyboard: [[{ text: "Open", url }]] } })).json;
+    for (const url of ["http://localhost:8080/a", "https://localhost/a", "https://127.0.0.1/a", "https://192.168.1.4/a", "http://ppm.example.com/a", "https://intranet/a", "not a url"]) {
+      expect((await withUrl(url)).description).toBe("Bad Request: BUTTON_URL_INVALID");
+    }
+    expect((await withUrl("https://ppm.example.com/assistant?session=claude/1")).ok).toBe(true);
+  });
+
+  it("dates a pushed message as asked and marks it forwarded", async () => {
+    const date = Math.floor(Date.now() / 1000) - 3600;
+    fake.pushText(4, 4, "old", "private", { date, forward_origin: { type: "hidden_user", sender_user_name: "Mallory" } });
+    const [update] = (await api("getUpdates", { offset: 0, timeout: 0 })).json.result;
+    expect(update.message).toMatchObject({ text: "old", date, forward_origin: { sender_user_name: "Mallory" } });
+  });
+
+  it("presses a button taken away since only when asked for a stale press", async () => {
+    const sent = (await api("sendMessage", { chat_id: 6, text: "Allow?", reply_markup: { inline_keyboard: [[{ text: "Allow", callback_data: "a" }]] } })).json.result;
+    await api("editMessageText", { chat_id: 6, message_id: sent.message_id, text: "Allowed." });
+    expect(() => fake.pressButton(6, 6, sent.message_id, "a")).toThrow("no button");
+    expect(() => fake.pressButton(6, 6, sent.message_id, "never", { stale: true })).toThrow("no button");
+    expect(fake.pressButton(6, 6, sent.message_id, "a", { stale: true }).callback_query?.data).toBe("a");
+  });
+
   it("counts message ids per chat, records edits and refuses one that changes nothing", async () => {
     const a = (await api("sendMessage", { chat_id: 7, text: "v1" })).json.result;
     fake.pushText(7, 7, "from the user");

@@ -10,7 +10,19 @@
  *    is the real Claude policy, `assistantToolDecision`, which the Claude provider's PreToolUse
  *    hook calls; "ask" puts a provider card on the chat and waits for the answer, as the hook's
  *    `waitForApproval` does. In an ordinary chat it asks unless the chat runs in bypass mode;
- *  - `text`: say something (markdown included).
+ *  - `text`: say something (markdown included);
+ *  - `sleep`: take that long (a Stop ends it at once);
+ *  - `error`: end the turn on an error, as a provider that gave up does (nothing said after it);
+ *  - `fail`: the run itself throws, as a crashed CLI does;
+ *  - `codexPatch` / `codexQuestion`: a card shaped exactly as the Codex provider sends it — a
+ *    patch approval that names files and never its diff, and `item/tool/requestUserInput`'s
+ *    questions with their own ids, answered by id.
+ * A builtin may be any tool (Write, Edit, AskUserQuestion…); AskUserQuestion always asks, and the
+ * answer the provider receives is recorded. A posted script runs on the session it names, on the
+ * first turn whose message contains its `match`, or on whichever turn comes next.
+ *
+ * With PPM_ASSISTANT_FAKE_TELEGRAM=1 the Assistant's bot points at a fake Bot API and the bridge
+ * runs (`assistant-telegram-fixture-setup.ts`).
  * The "codex" provider renames each new session on its first turn (`session_migrated`), as Codex
  * does when its thread id replaces PPM's draft id. Sessions and transcripts are kept in a JSON
  * file (PPM_ASSISTANT_FIXTURE_STATE) and Claude's are also written where the CLI writes them, so
@@ -60,7 +72,13 @@ configService.set("ai", {
   },
 });
 
+const telegram = process.env.PPM_ASSISTANT_FAKE_TELEGRAM === "1"
+  ? await (await import("./assistant-telegram-fixture-setup")).setupFakeTelegram({ resuming })
+  : null;
+
 const { stringifyToolResultContent } = await import("../../../src/shared/tool-result-content");
+const { normalizeCodexQuestions } = await import("../../../src/shared/approval-questions");
+const { stripSharedContext } = await import("../../../src/shared/provider-context");
 const { setServerListenAddress } = await import("../../../src/services/server-listen-address");
 const { assistantToolDecision } = await import("../../../src/services/assistant/assistant-tool-policy");
 const { setSessionMetadata, setSessionProvider } = await import("../../../src/services/db.service");
@@ -73,10 +91,15 @@ type SessionInfo = import("../../../src/providers/provider.interface").SessionIn
 
 type ScriptOp =
   | { mcp: string; args?: Record<string, unknown>; wait?: number }
-  | { builtin: "WebFetch" | "Read" | "Bash"; input: Record<string, unknown> }
-  | { text: string };
+  | { builtin: string; input: Record<string, unknown> }
+  | { text: string }
+  | { sleep: number }
+  | { error: string }
+  | { fail: string }
+  | { codexPatch: { files: string[]; reason?: string } }
+  | { codexQuestion: { questions: Array<Record<string, unknown>> } };
 /** One posted script: the ops of one turn, and the words that turn ends with. */
-interface Script { label: string; ops: ScriptOp[] }
+interface Script { label: string; ops: ScriptOp[]; match?: string }
 
 interface CallRecord {
   label: string;
@@ -94,6 +117,8 @@ interface CallRecord {
   /** For a builtin: the policy's decision, and the card's answer when it asked. */
   decision?: "allow" | "ask";
   approved?: boolean;
+  /** What the provider was handed with the answer (a question card's answers, in its own shape). */
+  answer?: unknown;
   done?: boolean;
 }
 
@@ -107,17 +132,27 @@ const saveState = () => writeFileSync(statePath, JSON.stringify(state));
 
 /** Scripts waiting for a turn: by session id, or "*" for whichever turn comes next. */
 const scripts = new Map<string, Script[]>();
+/** Scripts waiting for the first turn whose message contains their `match`. */
+const matchScripts: Script[] = [];
 const calls: CallRecord[] = [];
-const turnsSeen: Array<{ label: string; sessionId: string; provider: string; message: string; assistant: boolean }> = [];
-const pendingApprovals = new Map<string, (approved: boolean) => void>();
+const turnsSeen: Array<{ label: string; sessionId: string; provider: string; message: string; assistant: boolean; images: number; mode?: string; at: number }> = [];
+const pendingApprovals = new Map<string, (answer: { approved: boolean; data?: unknown }) => void>();
 
-function takeScript(ids: string[]): Script | null {
+function takeScript(ids: string[], message: string): Script | null {
+  const matched = matchScripts.findIndex((s) => message.includes(s.match!));
+  if (matched >= 0) return matchScripts.splice(matched, 1)[0]!;
   for (const id of [...ids, "*"]) {
     const queue = scripts.get(id);
     if (queue?.length) return queue.shift()!;
   }
   return null;
 }
+
+/** Waits `ms`, or less when the run is stopped. */
+const pause = (ms: number, signal: AbortSignal) => new Promise<void>((done) => {
+  const timer = setTimeout(done, ms);
+  signal.addEventListener("abort", () => { clearTimeout(timer); done(); }, { once: true });
+});
 
 /** Same encoding the CLI uses for a project's transcript folder. */
 const claudeSlug = (projectPath: string) => projectPath.replace(/[/\\:.]/g, "-");
@@ -189,10 +224,10 @@ class ScriptedProvider {
     return this.stored(sessionId)?.messages ?? [];
   }
 
-  resolveApproval(requestId: string, approved: boolean): void {
+  resolveApproval(requestId: string, approved: boolean, data?: unknown): void {
     const settle = pendingApprovals.get(requestId);
     pendingApprovals.delete(requestId);
-    settle?.(approved);
+    settle?.({ approved, data });
   }
 
   /** A follow-up typed while the session's run is alive: it runs as that run's next turn. */
@@ -256,23 +291,39 @@ class ScriptedProvider {
       yield { type: "session_migrated", oldSessionId: sessionId, newSessionId: threadId } as ChatEvent;
       sessionId = threadId;
     }
-    if (s.title === "New Chat") s.title = message.slice(0, 50);
+    // Titled from what the user wrote, as the CLIs do, not from the context PPM put before it.
+    if (s.title === "New Chat") s.title = stripSharedContext(message).slice(0, 50);
     const now = () => new Date().toISOString();
     s.messages.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: now() });
-    const script = takeScript(ids) ?? { label: `unscripted ${message.slice(0, 40)}`, ops: [] };
-    turnsSeen.push({ label: script.label, sessionId, provider: this.id, message, assistant });
+    const script = takeScript(ids, message) ?? { label: `unscripted ${stripSharedContext(message).slice(0, 40)}`, ops: [] };
+    turnsSeen.push({ label: script.label, sessionId, provider: this.id, message, assistant, images: opts?.images?.length ?? 0, mode: opts?.permissionMode, at: Date.now() });
+    // Both CLIs put the user's message on disk as the turn starts, which is what proves a chat
+    // in its first turn belongs to its project.
+    if (s.projectPath) this.writeTranscript(s, "user", message);
     const access = opts?.assistantMcp;
     const events: ChatEvent[] = [];
     const emit = (ev: ChatEvent) => { events.push(ev); return ev; };
+    let endedOnError = false;
 
     for (const op of script.ops) {
       if (run.abort.signal.aborted) break;
       if ("text" in op) { yield emit({ type: "text", content: op.text }); continue; }
+      if ("sleep" in op) { await pause(op.sleep, run.abort.signal); continue; }
+      if ("fail" in op) throw new Error(op.fail);
+      if ("error" in op) {
+        yield emit({ type: "error", message: op.error } as ChatEvent);
+        endedOnError = true;
+        break;
+      }
       const record: CallRecord = { label: script.label, sessionId, provider: this.id, op, assistant, handed: !!access };
       calls.push(record);
       const toolUseId = `tu-${crypto.randomUUID()}`;
       if ("builtin" in op) {
         yield* this.builtin(record, op, toolUseId, run, s, opts, emit);
+        continue;
+      }
+      if ("codexPatch" in op || "codexQuestion" in op) {
+        yield* this.codexCard(record, op, run);
         continue;
       }
       const args = op.args ?? {};
@@ -307,11 +358,18 @@ class ScriptedProvider {
       record.done = true;
       yield emit({ type: "tool_result", output: stringifyToolResultContent([{ type: "text", text: record.text ?? "" }]), isError: record.isError, toolUseId } as ChatEvent);
     }
-    const text = `Turn "${script.label}" done.`;
-    yield emit({ type: "text", content: text });
+    // Stopped: like a CLI whose query was aborted, the stream simply ends — no closing words, no `done`.
+    if (run.abort.signal.aborted) {
+      s.messages.push({ id: crypto.randomUUID(), role: "assistant", content: events.filter((e) => e.type === "text").map((e) => (e as { content: string }).content).join("\n\n"), events, timestamp: now() } as ChatMessage);
+      saveState();
+      return;
+    }
+    // An error is the turn's last word: nothing the model says follows it.
+    const text = endedOnError ? "" : `Turn "${script.label}" done.`;
+    if (text) yield emit({ type: "text", content: text });
     s.messages.push({ id: crypto.randomUUID(), role: "assistant", content: events.filter((e) => e.type === "text").map((e) => (e as { content: string }).content).join("\n\n"), events, timestamp: now() } as ChatMessage);
     saveState();
-    if (this.id === "claude" && s.projectPath) this.writeTranscript(s, message, text);
+    if (s.projectPath) this.writeTranscript(s, "assistant", text || "(error)");
     yield { type: "done", sessionId };
   }
 
@@ -321,7 +379,8 @@ class ScriptedProvider {
     s: StoredSession, opts: SendOpts | undefined, emit: (ev: ChatEvent) => ChatEvent,
   ): AsyncIterable<ChatEvent> {
     yield emit({ type: "tool_use", tool: op.builtin, input: op.input, toolUseId } as ChatEvent);
-    const decision = opts?.assistantSession
+    // A question is always put to the user, whatever the mode: it is the user's answer it needs.
+    const decision = op.builtin === "AskUserQuestion" ? "ask" : opts?.assistantSession
       ? assistantToolDecision(op.builtin, op.input, { cwd: s.projectPath, projectRoots: configService.get("projects").map((p) => p.path) })
       : opts?.permissionMode === "bypassPermissions" || op.builtin === "Read" ? "allow" : "ask";
     record.decision = decision;
@@ -329,11 +388,13 @@ class ScriptedProvider {
     if (decision === "ask") {
       const requestId = crypto.randomUUID();
       run.cards.add(requestId);
-      const answer = new Promise<boolean>((settle) => pendingApprovals.set(requestId, settle));
+      const answer = new Promise<{ approved: boolean; data?: unknown }>((settle) => pendingApprovals.set(requestId, settle));
       yield { type: "approval_request", requestId, tool: op.builtin, input: op.input } as ChatEvent;
-      approved = await answer;
+      const got = await answer;
+      approved = got.approved;
       run.cards.delete(requestId);
       record.approved = approved;
+      if (got.data !== undefined) record.answer = got.data;
     }
     record.isError = !approved;
     record.text = approved ? `${op.builtin} ran` : "User denied tool execution";
@@ -341,16 +402,62 @@ class ScriptedProvider {
     yield emit({ type: "tool_result", output: record.text, isError: !approved, toolUseId } as ChatEvent);
   }
 
-  /** Where the Claude CLI keeps a session's transcript, which PPM's ownership checks look for. */
-  private writeTranscript(s: StoredSession, user: string, reply: string): void {
+  /**
+   * A card shaped as the Codex provider sends it (`codex-provider.ts` `handleServerRequest`): a
+   * patch approval carries the files and a reason, never the diff; `item/tool/requestUserInput`
+   * carries its questions normalized, each with Codex's own id, and is answered by id.
+   */
+  private async *codexCard(
+    record: CallRecord, op: Extract<ScriptOp, { codexPatch: unknown } | { codexQuestion: unknown }>, run: LiveRun,
+  ): AsyncIterable<ChatEvent> {
+    const requestId = crypto.randomUUID();
+    run.cards.add(requestId);
+    const answer = new Promise<{ approved: boolean; data?: unknown }>((settle) => pendingApprovals.set(requestId, settle));
+    record.decision = "ask";
+    if ("codexPatch" in op) {
+      yield { type: "approval_request", requestId, tool: "Edit", input: { files: op.codexPatch.files, ...(op.codexPatch.reason ? { reason: op.codexPatch.reason } : {}) } } as ChatEvent;
+    } else {
+      const questions = normalizeCodexQuestions({ questions: op.codexQuestion.questions });
+      yield { type: "approval_request", requestId, tool: "AskUserQuestion", input: { questions }, questions } as ChatEvent;
+    }
+    const got = await answer;
+    run.cards.delete(requestId);
+    record.approved = got.approved;
+    if (got.data !== undefined) record.answer = got.data;
+    record.isError = !got.approved;
+    record.text = got.approved ? "answered" : "declined";
+    record.done = true;
+  }
+
+  /**
+   * Where each CLI keeps a session's transcript, which PPM's ownership checks look for: Claude's
+   * `<home>/.claude/projects/<slug>/<id>.jsonl`, Codex's rollout under `<home>/.codex/sessions`
+   * whose `session_meta` names the thread and its cwd.
+   */
+  private writeTranscript(s: StoredSession, role: "user" | "assistant", content: string): void {
+    const timestamp = new Date().toISOString();
+    if (this.id === "codex") {
+      const file = (this.rollouts ??= new Map()).get(s.id) ?? (() => {
+        const day = timestamp.slice(0, 10).split("-");
+        const dir = join(homedir(), ".codex", "sessions", ...day);
+        mkdirSync(dir, { recursive: true });
+        const path = join(dir, `rollout-${timestamp.replace(/[:.]/g, "-")}-${s.id}.jsonl`);
+        appendFileSync(path, `${JSON.stringify({ timestamp, type: "session_meta", payload: { id: s.id, cwd: s.projectPath, timestamp, cli_version: "0.157.0" } })}\n`);
+        this.rollouts!.set(s.id, path);
+        return path;
+      })();
+      const payload = role === "user" ? { type: "user_message", message: content } : { type: "agent_message", message: content };
+      appendFileSync(file, `${JSON.stringify({ timestamp, type: "event_msg", payload })}\n`);
+      return;
+    }
     const dir = join(homedir(), ".claude", "projects", claudeSlug(s.projectPath!));
     mkdirSync(dir, { recursive: true });
-    const line = (role: "user" | "assistant", content: string) => JSON.stringify({
-      type: role, sessionId: s.id, uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), cwd: s.projectPath,
+    appendFileSync(join(dir, `${s.id}.jsonl`), `${JSON.stringify({
+      type: role, sessionId: s.id, uuid: crypto.randomUUID(), timestamp, cwd: s.projectPath,
       message: { role, content: role === "user" ? content : [{ type: "text", text: content }] },
-    });
-    appendFileSync(join(dir, `${s.id}.jsonl`), `${line("user", user)}\n${line("assistant", reply)}\n`);
+    })}\n`);
   }
+  private rollouts?: Map<string, string>;
 }
 
 const { providerRegistry } = await import("../../../src/providers/registry");
@@ -374,11 +481,18 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 async function testRoute(req: Request, path: string): Promise<Response> {
   if (path === "/__assistant-test/calls") return json({ calls, turns: turnsSeen, pendingProviderApprovals: pendingApprovals.size });
   if (path === "/__assistant-test/script" && req.method === "POST") {
-    const body = await req.json() as { sessionId?: string; label?: unknown; ops?: unknown };
+    const body = await req.json() as { sessionId?: string; label?: unknown; ops?: unknown; match?: unknown };
     if (typeof body.label !== "string" || !Array.isArray(body.ops)) return json({ error: "label and ops required" }, 400);
+    if (typeof body.match === "string" && body.match) {
+      matchScripts.push({ label: body.label, ops: body.ops as ScriptOp[], match: body.match });
+      return json({ ok: true });
+    }
     const key = body.sessionId ?? "*";
     scripts.set(key, [...(scripts.get(key) ?? []), { label: body.label, ops: body.ops as ScriptOp[] }]);
     return json({ ok: true });
+  }
+  if (telegram && path.startsWith("/__assistant-test/tg/")) {
+    return (await telegram.route(req, path.slice("/__assistant-test/tg/".length))) ?? json({ error: "unknown test route" }, 404);
   }
   // Shortens or restores the approval wait through the broker's own environment override; the
   // broker reads it each time it asks.
@@ -420,8 +534,10 @@ const server = Bun.serve<SocketData>({
     }
     if (data) return instance.upgrade(req, { data }) ? undefined : new Response("Upgrade failed", { status: 400 });
     if (url.pathname.startsWith("/ws/")) return new Response("Socket disabled in fixture", { status: 404 });
+    // The Assistant's own bot settings are what the Telegram e2e drives (its Bot API is the fake).
+    const assistantBot = telegram !== null && /^\/api\/settings\/clawbot(?:\/|$)/.test(url.pathname);
     if (/^\/api\/(?:accounts|tunnels?|preview|upgrade|codex-accounts|proxy|mcp|remote-desktop)(?:\/|$)/.test(url.pathname) ||
-        /^\/api\/settings\/(?:telegram|clawbot|ppmbot)/.test(url.pathname)) return new Response("Disabled in fixture", { status: 403 });
+        (!assistantBot && /^\/api\/settings\/(?:telegram|clawbot|ppmbot)/.test(url.pathname))) return new Response("Disabled in fixture", { status: 403 });
     if (!url.pathname.startsWith("/api/")) {
       const webDir = process.env.PPM_ASSISTANT_WEB_DIR;
       if (!webDir) throw new Error("PPM_ASSISTANT_WEB_DIR required");
@@ -457,7 +573,7 @@ setServerListenAddress(server.port ?? port, "127.0.0.1");
 // The same hub startup the server runs: watches, and the Telegram bridge when a test switched it
 // on and gave it a bot (pointed at a fake Bot API through PPM_TELEGRAM_API_BASE).
 const { startAssistantHub } = await import("../../../src/services/assistant-hub/assistant-hub-startup");
-await startAssistantHub();
+await startAssistantHub(telegram ? { bridge: telegram.bridge } : {});
 function shutdown() { server.stop(true); process.exit(0); }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

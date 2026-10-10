@@ -28,7 +28,7 @@ import { escapeTelegramHtml } from "../notification-format.ts";
 import { redactForTelegram } from "../telegram/telegram-html-format.ts";
 import type { PPMBotConfig } from "../../types/config.ts";
 import { canSendTo } from "./assistant-telegram-access.ts";
-import { BindingError, bindChat, onBindingChanged, unbindChat } from "./assistant-telegram-binding.ts";
+import { assistantSessionTitle, BindingError, bindChat, onBindingChanged, unbindChat } from "./assistant-telegram-binding.ts";
 import { BOT_COMMANDS } from "./assistant-telegram-commands.ts";
 import { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction, CardPress } from "./assistant-telegram-actions.ts";
@@ -200,9 +200,12 @@ export class AssistantTelegramBridge {
   private switchSession(chatId: string, sessionId: string): string {
     const queue = this.run?.queue;
     try {
-      bindChat(chatId, sessionId);
-      const title = redactForTelegram(getSessionTitle(sessionId) || "that conversation");
-      queue?.enqueue(chatId, sendMessageTask(queue, chatId, { html: `Now talking to <b>${escapeTelegramHtml(title)}</b>.` }, { label: "switched" }));
+      const binding = bindChat(chatId, sessionId);
+      // The name `/sessions` showed: the user's rename, else the provider's title (its first message).
+      void assistantSessionTitle(binding.sessionId, binding.providerId).catch(() => null).then((found) => {
+        const title = redactForTelegram(found || getSessionTitle(sessionId) || "that conversation");
+        queue?.enqueue(chatId, sendMessageTask(queue, chatId, { html: `Now talking to <b>${escapeTelegramHtml(title)}</b>.` }, { label: "switched" }));
+      });
       return "Switched.";
     } catch (e) {
       return e instanceof BindingError ? e.message : "Could not switch.";

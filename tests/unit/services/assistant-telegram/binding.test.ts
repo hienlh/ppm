@@ -5,8 +5,9 @@ import { deleteSessionMetadata, setSessionAssistant, setSessionProvider } from "
 import { providerRegistry } from "../../../../src/providers/registry.ts";
 import { getTelegramBinding } from "../../../../src/services/assistant-hub/assistant-hub-db.ts";
 import {
-  assistantProviderFor, BindingError, bindChat, boundSession, ensureBoundSession, startNewSession, unbindChat,
+  announceAfterFirstTurn, assistantProviderFor, BindingError, bindChat, boundSession, ensureBoundSession, startNewSession, unbindChat,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-binding.ts";
+import { createChatLifecycle } from "../../../../src/services/chat-control/chat-lifecycle.ts";
 import type { AIProvider } from "../../../../src/types/chat.ts";
 
 const STUB = "stub-telegram-binding";
@@ -63,6 +64,31 @@ describe("binding a Telegram chat to an Assistant session", () => {
     expect(providerRegistry.get(picked)?.supportsAssistantSessions).toBe(true);
     expect(() => assistantProviderFor("mock")).toThrow(BindingError);
     expect(assistantProviderFor(STUB)).toBe(STUB);
+  });
+
+  it("announces the session list again once a new session's first turn ends, under its new id if renamed", () => {
+    const lifecycle = createChatLifecycle();
+    const sent: unknown[] = [];
+    announceAfterFirstTurn("draft-1", { lifecycle, broadcast: (e) => sent.push(e) });
+    const end = (sessionId: string) => lifecycle.emit("turn_ended", { sessionId, outcome: "done", projectName: "__assistant__", providerId: STUB });
+    end("someone-else");
+    expect(sent).toEqual([]);
+    lifecycle.emit("migrated", { oldSessionId: "draft-1", newSessionId: "thread-1" });
+    end("thread-1");
+    expect(sent).toEqual([{ type: "sessions:list_changed", projectName: "__assistant__" }]);
+    // Once: later turns do not announce again.
+    end("thread-1");
+    expect(sent).toHaveLength(1);
+    expect(lifecycle.has("turn_ended")).toBe(false);
+  });
+
+  it("stops waiting for a first turn that never comes", async () => {
+    const lifecycle = createChatLifecycle();
+    announceAfterFirstTurn("never", { lifecycle, broadcast: () => {}, waitMs: 5 });
+    expect(lifecycle.has("turn_ended")).toBe(true);
+    await Bun.sleep(20);
+    expect(lifecycle.has("turn_ended")).toBe(false);
+    expect(lifecycle.has("migrated")).toBe(false);
   });
 
   it("starts no session for a chat that is not connected, and forgets an unbound chat", async () => {

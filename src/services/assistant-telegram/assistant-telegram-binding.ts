@@ -16,6 +16,7 @@ import { ensureAssistantWorkDir } from "../assistant/assistant-work-dir.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import { deleteTelegramBinding, getTelegramBinding, setTelegramBinding, type TelegramBinding } from "../assistant-hub/assistant-hub-db.ts";
 import { broadcastGlobalEvent } from "../../server/ws/global.ts";
+import { chatLifecycle, type ChatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { canSendTo } from "./assistant-telegram-access.ts";
 import { createLogger } from "../logger.ts";
 
@@ -99,7 +100,41 @@ export async function startNewSession(chatId: string, providerId?: string): Prom
     adoptWarmSpare: false,
   });
   broadcastGlobalEvent({ type: "sessions:list_changed", projectName: ASSISTANT_PROJECT_NAME });
+  announceAfterFirstTurn(session.id);
   return bindChat(chatId, session.id);
+}
+
+/** How long a new session's first turn is waited for before its second announcement is dropped. */
+export const FIRST_TURN_WAIT_MS = 30 * 60_000;
+
+/**
+ * Announces the Assistant's session list again once a session the bridge created has ended its
+ * first turn. The announcement at creation comes before the provider has written anything, and
+ * a session's title comes from its first message (a CLI lists a session only once its transcript
+ * exists), so without this an open session list shows the new conversation as "New Chat" — or
+ * not at all — until something else refreshes it. Follows a provider's rename of the session.
+ */
+export function announceAfterFirstTurn(
+  sessionId: string,
+  deps: { lifecycle?: ChatLifecycle; broadcast?: (event: unknown) => void; waitMs?: number } = {},
+): void {
+  const lifecycle = deps.lifecycle ?? chatLifecycle;
+  const broadcast = deps.broadcast ?? broadcastGlobalEvent;
+  let current = sessionId;
+  const offs = [
+    lifecycle.on("migrated", (p) => { if (p.oldSessionId === current) current = p.newSessionId; }),
+    lifecycle.on("turn_ended", (p) => {
+      if (p.sessionId !== current) return;
+      stop();
+      broadcast({ type: "sessions:list_changed", projectName: ASSISTANT_PROJECT_NAME });
+    }),
+  ];
+  const timer = setTimeout(() => stop(), deps.waitMs ?? FIRST_TURN_WAIT_MS);
+  (timer as { unref?: () => void }).unref?.();
+  function stop(): void {
+    clearTimeout(timer);
+    for (const off of offs.splice(0)) off();
+  }
 }
 
 /** The chat's session, a new one when it has none that still exists. */

@@ -390,10 +390,15 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // and closeTab is the only thing that removes an emptied panel, so leaving
         // one behind wedges its panel permanently (it renders as a blank slot).
         let healed = false;
+        // A tab one of this device's floating windows holds is not put in the grid as well. The
+        // windows are this device's own, while the layout may have come from another device
+        // through the server (a phone keeps the Assistant as a grid tab, a desktop in a window):
+        // two panels holding one tab id mount one body, and the other shows a blank window.
+        const inWindows = new Set(Object.entries(panels).filter(([id]) => isWindowPanelId(id)).flatMap(([, p]) => p.tabs.map((t) => t.id)));
         const migratedPanels: typeof loaded.panels = {};
         for (const [pid, panel] of Object.entries(loaded.panels)) {
           const filteredTabs = visibleTabs(panel.tabs, projectName)
-            .filter((t) => !OBSOLETE_TAB_TYPES.has(t.type));
+            .filter((t) => !OBSOLETE_TAB_TYPES.has(t.type) && !inWindows.has(t.id));
           if (filteredTabs.length !== panel.tabs.length) healed = true;
           const filteredHistory = panel.tabHistory.filter(
             (id) => filteredTabs.some((t) => t.id === id),
