@@ -231,9 +231,47 @@ export function stripTelegramHtml(html: string): string {
 }
 
 /**
- * Secrets taken out of text bound for Telegram — the same rules the Logs window applies, minus
- * the switches about home paths, emails and chat ids, which are the person's own and not secret.
+ * Secrets that turn up in answers more than in logs, so the Logs window's rules miss them: a
+ * whole PEM private key, AWS access key ids, Stripe and Slack tokens, Google API keys, and the
+ * `Pwd=` of an ADO-style connection string. Each keeps its first group and hides the rest.
  */
+const TELEGRAM_SECRETS: readonly RegExp[] = [
+  // An unterminated key (a message cut mid-key) hides to the end; one already hidden is left.
+  /(-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)(?!\[REDACTED\])[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
+  /()\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+  /()\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}/g,
+  /()\bxox[abprs]-[A-Za-z0-9-]{10,}/g,
+  /()\bAIza[0-9A-Za-z_-]{35}/g,
+  /(\bpwd\s*=\s*)[^;\s"'\u0001]+/gi,
+];
+/** Marks around a replacement while redacting, so the replacements can be counted. */
+const MARK_OPEN = "\u0001";
+const MARK_CLOSE = "\u0002";
+const MARKED = /\u0001([^\u0001\u0002]*)\u0002/g;
+/**
+ * A `*.trycloudflare.com` host. The Logs rules rename it, because a log leaving the machine must
+ * not carry the address of the person's PPM; a Telegram chat is the person's own, and the link
+ * back into PPM is what a message there is for (it still asks for PPM's sign-in).
+ */
+const TUNNEL_HOST = /\b[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com\b/gi;
+const HELD = /\u0003(\d+)\u0003/g;
+
+/**
+ * Secrets taken out of text bound for Telegram, and how many. Telegram keeps every message on
+ * its servers, so this runs on everything the bridge sends: the Logs window's secret rules, the
+ * extra rules above, and none of the Logs switches about home paths, emails and chat ids, which
+ * are the person's own. PPM's own tunnel and Tailscale links are left as they are.
+ */
+export function redactSecretsForTelegram(text: string): { text: string; hidden: number } {
+  const held: string[] = [];
+  let out = text.replace(/[\u0001-\u0003]/g, "").replace(TUNNEL_HOST, (host) => `\u0003${held.push(host) - 1}\u0003`);
+  for (const re of TELEGRAM_SECRETS) out = out.replace(re, (_s, keep: string) => `${keep}${MARK_OPEN}[REDACTED]${MARK_CLOSE}`);
+  out = redactLogText(out, { home: false, email: false, chats: false }, true);
+  let hidden = 0;
+  out = out.replace(MARKED, (_m, inner: string) => { hidden++; return inner; });
+  return { text: out.replace(HELD, (_m, n: string) => held[Number(n)] ?? ""), hidden };
+}
+
 export function redactForTelegram(text: string): string {
-  return redactLogText(text, { home: false, email: false, chats: false });
+  return redactSecretsForTelegram(text).text;
 }

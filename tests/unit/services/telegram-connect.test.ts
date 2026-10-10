@@ -172,7 +172,7 @@ describe("the PPMBot link", () => {
     expect(await handleConnectMessage(message(`/start ${tokenOf(url)}`), PPMBOT_TOKEN, reply)).toBe(true);
     expect(getApprovedPairedChats().map((c) => [c.telegram_chat_id, c.display_name])).toEqual([["42", "Thang (@thang)"]]);
     expect(listNotifyChats()).toHaveLength(0);
-    expect(replies[0]!.html).toContain("chat with PPMBot here");
+    expect(replies[0]!.html).toContain("chat with PPM Assistant here");
   });
 
   it("connects again a chat that was disconnected, or left waiting by an old pairing code", async () => {

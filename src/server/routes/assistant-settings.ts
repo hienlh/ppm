@@ -3,6 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { assistantSettingsView, saveAssistantSettings } from "../../services/assistant/assistant-settings.service.ts";
 import { ASSISTANT_INSTRUCTIONS_MAX_CHARS, ASSISTANT_MCP_MAX_SERVERS } from "../../shared/assistant-settings.ts";
 import { createLogger } from "../../services/logger.ts";
+import { assistantTelegramRoutes } from "./assistant-telegram.ts";
 import { ok, err } from "../../types/api.ts";
 
 /** Counts and names only: a server's settings carry secrets. */
@@ -14,6 +15,8 @@ const log = createLogger("assistant-settings");
  * as "keep the saved value".
  */
 export const assistantSettingsRoutes = new Hono();
+
+assistantSettingsRoutes.route("/telegram", assistantTelegramRoutes);
 
 /** Registered providers that can run an Assistant session. */
 function assistantProviders(): Array<{ id: string; name: string }> {

@@ -152,8 +152,8 @@ export const ppmbotConnect = new TelegramConnect({
   saveBot: setPPMBotBot,
   connect: upsertApprovedPairing,
   connectedText: (device) => ppmbotBotId
-    ? `✅ Connected to <b>${device}</b>. You can chat with PPMBot here — send /start to begin.`
-    : `✅ Connected to <b>${device}</b>. PPMBot will answer here once it is turned on in PPM.`,
+    ? `✅ Connected to <b>${device}</b>. You can chat with PPM Assistant here — just send a message.`
+    : `✅ Connected to <b>${device}</b>. PPM Assistant will answer here once it is turned on in PPM.`,
 });
 
 /**
