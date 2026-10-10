@@ -28,8 +28,9 @@
  * login kept in the OS keyring, which is keyed per home — nothing is linked and the caller runs
  * on the account's own home as before: losing the login is worse than loading AGENTS.md.
  *
- * Homes whose account is gone are deleted on the next preparation, so a removed account's
- * tokens do not live on here.
+ * Removing an account deletes its home at once (`removeAssistantCodexHome`); any home whose
+ * account is gone some other way, or that was still busy then, is deleted on the next
+ * preparation, so a removed account's tokens do not live on here.
  */
 import { createHash } from "node:crypto";
 import {
@@ -111,6 +112,27 @@ export function sweepAssistantCodexHomes(root: string = assistantCodexHomesRoot(
       // preparation tries again, and one busy home must not keep the others.
       log.warn(`assistant home ${name} not deleted yet: ${(e as Error).message}`);
     }
+  }
+}
+
+/**
+ * Delete the Assistant home made for `sourceHome`, if there is one. Called when that account is
+ * removed: its auth.json is a hard link, so deleting the account's own file leaves the login
+ * alive under this name until the next preparation's sweep. Call it while the account home
+ * still exists — the links are taken out first either way, so nothing of the account's is
+ * reached through them. Never throws; a home still held open by a running app-server is
+ * logged and left to the sweep, which deletes it once its account is gone.
+ */
+export function removeAssistantCodexHome(sourceHome: string, root: string = assistantCodexHomesRoot()): boolean {
+  const dir = join(root, homeKey(resolve(sourceHome)));
+  if (!lstatExists(dir)) return true;
+  try {
+    removeAssistantHome(dir);
+    log.info(`assistant home of a removed account deleted: ${basename(dir)}`);
+    return true;
+  } catch (e) {
+    log.warn(`assistant home ${basename(dir)} not deleted yet: ${(e as Error).message}`);
+    return false;
   }
 }
 

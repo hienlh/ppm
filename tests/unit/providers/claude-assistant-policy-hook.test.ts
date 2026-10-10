@@ -3,7 +3,7 @@
  * lets through only reads inside registered projects and the Assistant's own tools, whatever
  * mode was asked for; the web tools, the shell, writes and reads anywhere else ask first.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import "../../test-setup.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -215,6 +215,32 @@ describe("Claude Assistant session", () => {
     const opts = await startTurn();
     expect(opts.settingSources).toEqual([]);
     expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "# PPM Assistant" });
+  });
+
+  describe("with a ripgrep config in PPM's environment", () => {
+    let saved: string | undefined;
+    beforeEach(() => {
+      saved = process.env.RIPGREP_CONFIG_PATH;
+      process.env.RIPGREP_CONFIG_PATH = join(outside, "ripgreprc");
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env.RIPGREP_CONFIG_PATH;
+      else process.env.RIPGREP_CONFIG_PATH = saved;
+    });
+
+    it("starts the Assistant's CLI without it, so Glob and Grep cannot be told to follow links", async () => {
+      const opts = await startTurn();
+      expect("RIPGREP_CONFIG_PATH" in opts.env).toBe(false);
+      // The policy judges the CLI's environment, so a search inside a project is not asked about.
+      const hook = permissionHook(opts);
+      expect(await hook({ tool_name: "Grep", tool_input: { pattern: "x", path: project }, cwd: assistantWorkDir() })).toEqual(ALLOW);
+    });
+
+    it("keeps it for an ordinary chat", async () => {
+      const session = await provider.createSession({ projectName: "p", projectPath: project });
+      for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "bypassPermissions" })) { /* consume */ }
+      expect(mockQueryFn.mock.calls.at(-1)![0].options.env.RIPGREP_CONFIG_PATH).toBe(join(outside, "ripgreprc"));
+    });
   });
 
   it("leaves an ordinary chat's MCP and settings loading as they were", async () => {

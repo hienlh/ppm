@@ -66,16 +66,48 @@ origin.
   MCP servers are exactly the Assistant's own (`assistantMcpServers`). The provider's
   *Additional Instructions* are not applied. Authentication is unaffected (it comes from
   `buildQueryEnv` and the CLI's credential store), but anything only `~/.claude/settings.json`
-  provides is gone, its `env` block and `apiKeyHelper` included.
+  provides is gone, its `env` block and `apiKeyHelper` included. The CLI is also started
+  without `RIPGREP_CONFIG_PATH` (`buildQueryEnv(…, { assistantSession: true })`): Glob and
+  Grep run the CLI's embedded ripgrep without `--follow`, so they skip every link below the
+  folder they search (measured on the bundled CLI's ripgrep), and a ripgrep config file is the
+  one thing that could turn following on. The policy still asks for Glob and Grep should the
+  CLI's environment ever carry that variable; it judges the environment the CLI was started
+  with, not PPM's own.
 - **Codex**: a separate permission profile, `ASSISTANT_PERMISSION` (read-only sandbox,
   `untrusted` approvals), and mandatory developer instructions — a Codex too old to take them
-  fails the session (`RequiredInstructionsError`) instead of running it uninstructed. Codex has
-  no switch for "ignore my `config.toml`", so `planAssistantCodexMcp`
-  (`codex-assistant-mcp-guard.ts`) reads the effective config back with `config/read` and
-  `assistantSessionConfig` (`codex-thread-params.ts`) disables each of the user's servers by
-  name, turns off web search, apps, plugins, hooks and `notify`, and adds the Assistant's
-  servers. An unreadable config refuses the session; so does a user server with the same name
-  as one of the Assistant's, because Codex merges same-named tables key by key.
+  fails the session (`RequiredInstructionsError`) instead of running it uninstructed.
+  - **A CODEX_HOME of its own.** No codex setting skips `$CODEX_HOME/AGENTS.md`
+    (`project_doc_max_bytes = 0` and `instructions = ""` do not), and the same folder holds the
+    user's `config.toml`, hooks, agents, plugins and skills. So an Assistant app-server runs on
+    `<ppm dir>/assistant/codex-homes/<account folder>-<hash>` (`codex-assistant-home.ts`), which
+    holds none of them and is joined to the account's home by two links: `auth.json` is a hard
+    link to the account's file (a symlink where a hard link is refused) — codex rewrites it in
+    place, so a token refreshed from either home lands in the one file instead of forking a
+    rotating refresh token — and `sessions` is a junction (Windows) or directory symlink to the
+    account's `sessions`, so the Assistant's rollouts are where PPM's history readers look and a
+    resume finds them. The links are checked on every spawn and relinked if they no longer join
+    the two files, writing a newer login found only on the Assistant's side back into the
+    account's file first. Removing a Codex account deletes its Assistant home at once
+    (`removeCodexAccount` → `removeAssistantCodexHome`), taking the links out before anything
+    else so the delete never reaches the account's files; any home left behind is swept on the
+    next Assistant spawn. Where the home cannot be set up — the account keeps no `auth.json`
+    (a keyring login), or the file system refuses the links — the session runs on the account's
+    own home, with a warning in the log (see Known limitations).
+  - **Skills are switched off by name.** Skills under the user's home folder
+    (`~/.agents/skills`) are found whatever `CODEX_HOME` says, so the catalogue is kept out of the
+    prompt (`skills.include_instructions = false`), bundled skills are off, and each skill the
+    app-server lists is disabled by name (`codex-assistant-skills.ts`, `skills.config`).
+  - **The rest of the user's config.** `planAssistantCodexMcp` (`codex-assistant-mcp-guard.ts`)
+    reads the effective config back with `config/read` — on the Assistant's own home that is
+    only what codex finds outside it, and on the fallback the account's `config.toml` — and
+    `assistantSessionConfig` (`codex-thread-params.ts`) disables each of those servers by name,
+    turns off web search, apps, plugins, hooks and `notify`, and adds the Assistant's servers.
+    An unreadable config refuses the session; so does a user server with the same name as one of
+    the Assistant's, because Codex merges same-named tables key by key.
+  - **Generated images** land in the Assistant home's own `generated_images`. The file guard's
+    read exception for codex pictures (`isCodexGeneratedImagePath` in
+    `fs-credential-path-guard.ts`) covers that folder as it covers an account home's, so the
+    chat shows them; the home's `auth.json`, marker and `sessions` link stay refused.
 - **Shared context**: the user's shared instructions and memories are not added to Assistant
   turns, whatever `share_provider_context` says. Only the UI summary rides in that block.
 - **External resources**: Assistant Markdown never makes the browser fetch anything by itself.
@@ -114,8 +146,9 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 - **Ask first**: `db_query` for anything not proven to read, `chat_send_message` (always),
   `ui_run_command` for a command declared `changesData` and for every extension command,
   `ui_close_tab` for a tab that would lose work (unsaved editor text, unsaved SQL or table edits,
-  a terminal), and `ui_read_tab` for what would leave from outside every registered project or
-  from a credential store (below).
+  a terminal), and `ui_read_tab` for an editor's unsaved text, a terminal's output or a database
+  file's rows from outside every registered project or from a credential store (below) — a file
+  tab itself answers with its path, and reading the file is the provider's read tool's call.
 
 **Reading a tab** (`assistant-tab-reader.ts`). A file tab answers with the file's absolute path
 and its project, never the file: the agent reads it with its provider's own read tool, so one
@@ -251,23 +284,13 @@ closes (`src/services/database/query-stop.ts`). An approved query is the user's 
   per-path rule to give it. With Codex, what keeps that content on the machine is that every way
   out (web, shell beyond that set, writes, messages, MCP) asks or is off, and the read-only
   sandbox has no network (not checked by hand on Windows).
-- **Codex leaves out the user's `AGENTS.md` only by running on a home of its own.** No codex
-  setting skips `$CODEX_HOME/AGENTS.md` (`project_doc_max_bytes = 0` and `instructions = ""` do
-  not). So an Assistant app-server runs on `<ppm dir>/assistant/codex-homes/<account>`
-  (`codex-assistant-home.ts`), whose `auth.json` is a hard link to the account's (codex rewrites it
-  in place, so a refreshed token is never forked) and whose `sessions` is a link to the account's.
-  Where that cannot be set up — the account keeps no `auth.json` (a keyring login), or the file
-  system refuses the links — the session runs on the account's own home and gets the user's
-  `AGENTS.md` again, with a warning in the log. Anything only the user's `config.toml` provides (a
-  custom model provider, proxy settings) does not apply to Assistant sessions, and a removed
-  account's Assistant home is deleted on the next Assistant spawn, not at once.
-- **Codex skills are switched off by name.** Skills under the user's home folder
-  (`~/.agents/skills`) are found whatever `CODEX_HOME` says; their catalogue is kept out of the
-  prompt and each one the app-server lists is disabled (`codex-assistant-skills.ts`). If that list
-  cannot be read, a skill the user names with `$name` in a message still loads.
-- **Claude's Glob and Grep ask while `RIPGREP_CONFIG_PATH` is set.** Neither follows a link below
-  its folder (measured on the bundled CLI's ripgrep), but a ripgrep config file can turn
-  following on for every search, and the CLI inherits PPM's environment.
+- **Codex on the account's own home gets the user's `AGENTS.md` back.** That is the fallback
+  when the Assistant's home cannot be set up (an account with no `auth.json`, such as a keyring
+  login, or links the file system refuses): losing the login would be worse. On the Assistant's
+  own home, anything only the user's `config.toml` provides (a custom model provider, proxy
+  settings) does not apply to Assistant sessions.
+- **Codex skills.** If the skill list cannot be read, the catalogue still stays out of the
+  prompt, but a skill the user names with `$name` in a message loads.
 - **SQLite reads cannot be stopped.** bun:sqlite runs a statement synchronously with no
   interrupt, so the 60 s limit and the abort apply only before a statement starts.
 - **MySQL/MariaDB**: the reach check's catalog query has been verified only by unit tests over

@@ -33,8 +33,9 @@ import { assistantPrivateRoots, isAssistantPrivatePath, privateRootWithin } from
  * out of it, are neither listed nor searched, while the same run with `--follow` reaches all
  * three. Only the folder named on the command line is followed, and that one is judged by its
  * real location below. The exception is a ripgrep config file, which can add `--follow` to every
- * search: the embedded ripgrep honours `RIPGREP_CONFIG_PATH` and the CLI inherits this process's
- * environment, so while that variable names a file, Glob and Grep ask.
+ * search: the embedded ripgrep honours `RIPGREP_CONFIG_PATH`. An Assistant session's CLI is
+ * started without that variable (`buildQueryEnv`), and the check below stays as a second line:
+ * should the CLI's environment ever carry it, Glob and Grep ask.
  */
 export type AssistantToolDecision = "allow" | "ask";
 

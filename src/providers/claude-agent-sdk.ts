@@ -420,6 +420,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private buildQueryEnv(
     _projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
+    opts?: { assistantSession?: boolean },
   ): Record<string, string | undefined> {
     // Terminal `/resume` and the IDE session pickers list with includeProgrammatic: false,
     // which drops every transcript whose entrypoint is sdk-cli/sdk-ts/sdk-py — and sdk-ts is
@@ -429,6 +430,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // "other", so naming ourselves beats borrowing another client's label.
     // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
     const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK };
+    // The CLI's embedded ripgrep (Glob, Grep) reads a config file named by this variable, and
+    // one holding `--follow` makes both tools walk through links out of a project. The
+    // Assistant's read policy allows a search by the folder it names, so its CLI must never
+    // be handed such a file; ordinary chats keep the user's ripgrep setup.
+    if (opts?.assistantSession) delete base.RIPGREP_CONFIG_PATH;
 
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();
@@ -1152,10 +1158,21 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const designPolicy = !assistantPolicy && !!opts?.designSession && permissionMode === "acceptEdits";
     // No project root means nothing can be proven inside it, so every file tool asks.
     const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
+    /**
+     * The environment the CLI was last started with. Every spawn of this turn — the first one
+     * and each account or image retry — goes through `queryEnvFor`, so the Assistant policy
+     * judges the variables the CLI really has rather than PPM's own.
+     */
+    let cliEnv: Record<string, string | undefined> | undefined;
+    const queryEnvFor = (acc: { id: string; accessToken: string } | null) =>
+      (cliEnv = this.buildQueryEnv(meta.projectPath, acc, { assistantSession: assistantPolicy }));
     /** Read per call: a project registered mid-session is readable from the next tool call on. */
     const assistantContext = (cwd?: unknown) => ({
       cwd: typeof cwd === "string" && cwd ? cwd : meta.projectPath,
       projectRoots: configService.get("projects").map((p) => p.path),
+      // Before the first spawn there is nothing to judge but PPM's own environment, which only
+      // makes the policy stricter.
+      env: cliEnv,
     });
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
@@ -1415,7 +1432,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const latest = accountService.getWithTokens(account.id);
         if (latest) account = latest;
       }
-      const queryEnv = this.buildQueryEnv(meta.projectPath, account);
+      const queryEnv = queryEnvFor(account);
 
       // Pre-flight: warn if no credentials at all (avoids 2-minute silent timeout)
       if (!account) {
@@ -1558,7 +1575,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const rebuildQuery = (acc: AccountWithTokens | null) => {
         const retry = buildRetryMsg();
         closeCurrentStream();
-        const env = this.buildQueryEnv(meta.projectPath, acc);
+        const env = queryEnvFor(acc);
         const { generator, controller } = createMessageChannel();
         controller.push(retry.msg);
         const opts = { ...queryOptions, sessionId: undefined, resume: sessionId, env };
@@ -1709,7 +1726,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (recovered) {
               authRetryCount = recovered.newRetryCount;
               account = recovered.account;
-              const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+              const retryEnv = queryEnvFor(account);
               const retry2 = buildRetryMsg();
               closeCurrentStream();
               const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
@@ -1938,7 +1955,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (recovered) {
                 authRetryCount = recovered.newRetryCount;
                 account = recovered.account;
-                const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const retryEnv = queryEnvFor(account);
                 const retry3 = buildRetryMsg();
                 closeCurrentStream();
                 const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
@@ -1977,7 +1994,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 // Rebuild query with the fresh account env, no backoff delay.
                 const retryU = buildRetryMsg();
                 closeCurrentStream();
-                const ulRetryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const ulRetryEnv = queryEnvFor(account);
                 const { generator: ulRetryGen, controller: ulRetryCtrl } = createMessageChannel();
                 ulRetryCtrl.push(retryU.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: ulRetryEnv };
@@ -2198,7 +2215,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 account = recovered.account;
                 const retry6 = buildRetryMsg();
                 closeCurrentStream();
-                const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const retryEnv = queryEnvFor(account);
                 const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
                 authRetryCtrl2.push(retry6.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };

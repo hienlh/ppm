@@ -13,8 +13,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  assistantCodexHomesRoot, assistantSpawnHome, prepareAssistantCodexHome, sweepAssistantCodexHomes,
+  assistantCodexHomesRoot, assistantSpawnHome, prepareAssistantCodexHome, removeAssistantCodexHome, sweepAssistantCodexHomes,
 } from "../../../src/providers/codex-app-server/codex-assistant-home.ts";
+import { assertNotPpmDir } from "../../../src/services/fs-credential-path-guard.ts";
 import { planAssistantCodexSkills } from "../../../src/providers/codex-app-server/codex-assistant-skills.ts";
 import { assistantSessionConfig } from "../../../src/providers/codex-app-server/codex-thread-params.ts";
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider.ts";
@@ -158,6 +159,50 @@ describe("sweeping the Assistant's homes", () => {
     const home = prepared();
     sweepAssistantCodexHomes(root);
     expect(existsSync(join(home, "auth.json"))).toBe(true);
+  });
+});
+
+describe("removing an account's Assistant home", () => {
+  it("deletes the home through its links, leaving the account's login and rollouts alone", () => {
+    const home = prepared();
+    writeFileSync(join(account, "sessions", "rollout-a.jsonl"), "{}\n");
+    expect(lstatSync(join(home, "sessions")).isSymbolicLink()).toBe(true);
+
+    expect(removeAssistantCodexHome(account, root)).toBe(true);
+    expect(existsSync(home)).toBe(false);
+    expect(readFileSync(join(account, "auth.json"), "utf8")).toContain("rt-1");
+    expect(existsSync(join(account, "sessions", "rollout-a.jsonl"))).toBe(true);
+  });
+
+  it("answers true when the account never had one", () => {
+    expect(removeAssistantCodexHome(join(base, "never-used"), root)).toBe(true);
+  });
+});
+
+describe("the Assistant home's generated images", () => {
+  let home: string;
+  beforeEach(() => {
+    // Under the real (test) PPM dir, the only place the file guard's exception applies.
+    const result = prepareAssistantCodexHome(account);
+    if (!result.home) throw new Error(`not prepared: ${result.reason}`);
+    home = result.home;
+    expect(home.startsWith(assistantCodexHomesRoot())).toBe(true);
+  });
+  afterEach(() => { removeAssistantCodexHome(account); });
+
+  it("are readable through the file guard, as an account home's are, by path and by real path", () => {
+    const image = join(home, "generated_images", "thread-1", "call_1.png");
+    mkdirSync(join(home, "generated_images", "thread-1"), { recursive: true });
+    writeFileSync(image, "png");
+    expect(() => assertNotPpmDir(image)).not.toThrow();
+    expect(() => assertNotPpmDir(realpathSync(image))).not.toThrow();
+  });
+
+  it("leave the home's login, marker and sessions link refused", () => {
+    writeFileSync(join(home, "sessions", "rollout-a.jsonl"), "{}\n");
+    for (const path of [join(home, "auth.json"), join(home, ".ppm-source"), join(home, "sessions", "rollout-a.jsonl"), home]) {
+      expect(() => assertNotPpmDir(path)).toThrow("Access denied");
+    }
   });
 });
 
