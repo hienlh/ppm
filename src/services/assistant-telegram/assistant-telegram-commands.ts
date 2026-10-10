@@ -1,5 +1,5 @@
 /**
- * The bot's commands: `/start`, `/new [claude|codex]`, `/sessions`, `/stop`, `/help`. There is no
+ * The bot's commands: `/start`, `/new [claude|codex]`, `/sessions`, `/status`, `/stop`, `/help`. There is no
  * `/restart`: restarting PPM is a change, and a change goes through an approval card (the
  * Assistant can run `ppm restart` in a shell, which asks).
  *
@@ -14,6 +14,8 @@ import { redactForTelegram } from "../telegram/telegram-html-format.ts";
 import type { InlineKeyboardMarkup, TelegramBotCommand } from "../telegram/telegram-types.ts";
 import type { SessionInfo } from "../../types/chat.ts";
 import { assistantProviderIds, BindingError, boundSession, startNewSession } from "./assistant-telegram-binding.ts";
+import { buildStatus, type StatusDeps } from "./assistant-telegram-status.ts";
+import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -21,6 +23,7 @@ const log = createLogger("assistant-telegram");
 export const BOT_COMMANDS: TelegramBotCommand[] = [
   { command: "new", description: "Start a new conversation (optionally: claude or codex)" },
   { command: "sessions", description: "Switch to another conversation" },
+  { command: "status", description: "Which chats need you today" },
   { command: "stop", description: "Stop the answer in progress" },
   { command: "help", description: "What this bot can do" },
 ];
@@ -43,6 +46,12 @@ export interface CommandContext {
   reply(html: string, markup?: InlineKeyboardMarkup): void;
   /** A button code that switches the chat to `sessionId` when pressed. */
   switchCode(sessionId: string): string;
+  /** Shows another chat's card here, with buttons that answer that chat. */
+  relayCard(card: RelayedCard): void;
+}
+
+export interface CommandDeps {
+  status?: StatusDeps;
 }
 
 export const HELP_TEXT = [
@@ -53,6 +62,7 @@ export const HELP_TEXT = [
   "",
   "/new — start a new conversation (<code>/new claude</code> or <code>/new codex</code>)",
   "/sessions — switch to another conversation",
+  "/status — which chats need you today, with the cards they wait on",
   "/stop — stop the answer in progress",
   "/help — this message",
 ].join("\n");
@@ -61,7 +71,7 @@ function providerName(id: string): string {
   return providerRegistry.get(id)?.name ?? id;
 }
 
-export async function runCommand(cmd: ParsedCommand, ctx: CommandContext): Promise<void> {
+export async function runCommand(cmd: ParsedCommand, ctx: CommandContext, deps: CommandDeps = {}): Promise<void> {
   log.info(`/${cmd.name} from Telegram chat ${ctx.chatId}`);
   try {
     switch (cmd.name) {
@@ -72,6 +82,8 @@ export async function runCommand(cmd: ParsedCommand, ctx: CommandContext): Promi
         return await newSession(cmd.args, ctx);
       case "sessions":
         return await listSessions(ctx);
+      case "status":
+        return await showStatus(ctx, deps.status);
       case "stop":
         return stopTurn(ctx);
       default:
@@ -113,6 +125,13 @@ async function listSessions(ctx: CommandContext): Promise<void> {
     return [{ text: `${mark}${title} · ${providerName(s.providerId)}`, callback_data: ctx.switchCode(s.id) }];
   });
   ctx.reply("Pick the conversation to continue here (● is the current one):", { inline_keyboard: rows });
+}
+
+async function showStatus(ctx: CommandContext, deps?: StatusDeps): Promise<void> {
+  const status = await buildStatus(deps);
+  ctx.reply(status.html);
+  // After the list: each card names its chat, and the list said which chat waits on what.
+  for (const card of status.cards) ctx.relayCard(card);
 }
 
 function stopTurn(ctx: CommandContext): void {

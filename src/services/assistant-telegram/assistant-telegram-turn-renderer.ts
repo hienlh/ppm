@@ -10,8 +10,9 @@
  *
  * Telegram does not notify anyone about an *edited* message. A turn that took a while (or one
  * started by a watch, which the user did not just ask for) therefore ends with its answer as a
- * new message, so the phone actually buzzes; the message that held the draft is collapsed to a
- * pointer. A short turn's answer simply replaces its "…", which the user is looking at anyway.
+ * new message, so the phone actually buzzes; the message that held the draft is deleted (or, if
+ * Telegram refuses, collapsed to a pointer). A short turn's answer simply replaces its "…", which
+ * the user is looking at anyway.
  */
 import { markdownToTelegramHtml, redactForTelegram, splitTelegramHtml } from "../telegram/telegram-html-format.ts";
 import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
@@ -53,9 +54,9 @@ export class TurnRenderer {
   private md = "";
   /** Already-HTML line closing the answer (how the turn stopped). */
   private footer = "";
-  /** The draft messages, in page order, and the HTML each shows. */
+  /** The draft messages, in page order, and the HTML each shows (null once deleted). */
   private readonly ids: number[] = [];
-  private readonly shown: string[] = [];
+  private readonly shown: Array<string | null> = [];
   /** Pages of the final answer sent as new messages so far (a retried final resumes after them). */
   private finalSent = 0;
   private finished = false;
@@ -141,17 +142,30 @@ export class TurnRenderer {
     const pages = this.pages(true);
     const asNew = this.deps.origin === "watch" || this.now() - this.startedAt > LONG_TURN_MS;
     const inPlace = Math.min(pages.length, asNew ? Math.max(0, this.ids.length - 1) : this.ids.length);
-    for (let i = 0; i < this.ids.length; i++) {
-      const html = i < inPlace ? pages[i]! : MOVED_BELOW;
-      if (this.shown[i] === html) continue;
-      const res = await client.editMessageText(this.deps.chatId, this.ids[i]!, html, { final: true });
+    for (let i = 0; i < inPlace; i++) {
+      if (this.shown[i] === pages[i]) continue;
+      const res = await client.editMessageText(this.deps.chatId, this.ids[i]!, pages[i]!, { final: true });
       if (!res.ok) return outcomeOf(res, this.attempts);
-      this.shown[i] = html;
+      this.shown[i] = pages[i]!;
     }
+    // The rest goes out as new messages before any draft is removed, so the chat never shows a
+    // gap where the answer was.
     for (let i = inPlace + this.finalSent; i < pages.length; i++) {
       const sent = await this.sendNew(client, pages[i]!, null);
       if (sent.kind !== "done") return sent;
       this.finalSent++;
+    }
+    // Drafts the answer no longer lives in are deleted; one Telegram will not delete is
+    // collapsed to a pointer to the answer below instead.
+    for (let i = inPlace; i < this.ids.length; i++) {
+      if (this.shown[i] === null || this.shown[i] === MOVED_BELOW) continue;
+      if ((await client.deleteMessage(this.deps.chatId, this.ids[i]!)).ok) {
+        this.shown[i] = null;
+        continue;
+      }
+      const res = await client.editMessageText(this.deps.chatId, this.ids[i]!, MOVED_BELOW, { final: true });
+      if (!res.ok) return outcomeOf(res, this.attempts);
+      this.shown[i] = MOVED_BELOW;
     }
     for (const id of this.ids) this.deps.state.remove(this.deps.chatId, "render", id);
     this.deps.onDelivered?.();

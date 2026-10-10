@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import "../test-setup.ts";
 import { providerRegistry } from "../../src/providers/registry.ts";
-import { revokePairing, upsertApprovedPairing } from "../../src/services/db.service.ts";
+import { getDb, revokePairing, upsertApprovedPairing } from "../../src/services/db.service.ts";
 import { configService } from "../../src/services/config.service.ts";
 import { getTelegramBinding } from "../../src/services/assistant-hub/assistant-hub-db.ts";
 import { isAssistantSession } from "../../src/services/assistant/assistant-session.ts";
@@ -69,6 +69,8 @@ let server: ReturnType<typeof Bun.serve>;
 const originalAssistant = configService.get("assistant");
 
 beforeAll(async () => {
+  // The fake bot shares its token with other test files: start from its first update.
+  getDb().query("DELETE FROM config WHERE key = 'assistant_telegram_state'").run();
   configService.set("assistant", { ...originalAssistant, default_provider: P });
   const { chatWebSocket } = await import("../../src/server/ws/chat.ts");
   server = Bun.serve({

@@ -18,13 +18,17 @@ export interface NtfyConfig {
   token: string;
 }
 
+/**
+ * The Telegram side of PPM Assistant, kept under the `clawbot` key PPMBot used so existing
+ * settings carry over. A row saved by PPMBot may still hold its other fields
+ * (`default_provider`, `permission_mode`, `show_thinking`, `system_prompt`): they are ignored.
+ */
 export interface PPMBotConfig {
+  /** The bridge between the Assistant and the Telegram bot runs. */
   enabled: boolean;
-  default_provider: string;
-  system_prompt: string;
+  /** An answer on Telegram names the tools it ran (never their input or output). */
   show_tool_calls: boolean;
-  show_thinking: boolean;
-  permission_mode: string;
+  /** Messages sent this close together are one message to the Assistant. */
   debounce_ms: number;
 }
 
@@ -231,11 +235,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   assistant: structuredClone(DEFAULT_ASSISTANT_SETTINGS),
   clawbot: {
     enabled: false,
-    default_provider: "claude",
-    system_prompt: "",
     show_tool_calls: true,
-    show_thinking: false,
-    permission_mode: "bypassPermissions",
     debounce_ms: 2000,
   },
   tunnel: {

@@ -343,6 +343,24 @@ describe("a report that is not written", () => {
       title: `Chat finished: Session ${target.slice(0, 8)}`, project: PROJECT, detail: "Finished: migrate",
     })]);
   });
+
+  it("closes the news, with no retry and no push, when the user stops the watch turn", async () => {
+    const service = startService();
+    const assistant = assistantSession("hold-then-ask");
+    const target = targetChat();
+    watch(service, assistant, target);
+    await sendTo(target, "deploy");
+    await until(() => watchTurns(assistant).length === 1 && ctl().liveState(assistant)?.phase === "streaming");
+    expect(ctl().cancelTurn(assistant, "ws")).toBe(true);
+    await idle(assistant);
+    const [w] = listAssistantWatches({ assistantSessionId: assistant });
+    await until(() => getAssistantWatch(w!.id)!.deliveredAt !== null);
+    service.tick();
+    await quiet();
+    expect(watchTurns(assistant)).toHaveLength(1);
+    expect(getAssistantWatch(w!.id)!.eventJson).not.toContain('"attempts"');
+    expect(pushed.filter((p) => p.sessionId === target || p.sessionId === assistant)).toHaveLength(0);
+  });
 });
 
 describe("watches across a restart", () => {

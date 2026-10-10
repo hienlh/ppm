@@ -47,8 +47,9 @@ describe("an answer streamed into Telegram", () => {
     t.r.text(" — done.");
     t.r.finish();
     await t.queue.whenIdle();
-    const sent = fake.sent(Number(t.chat));
-    expect(sent.map((m) => m.text)).toEqual([MOVED_BELOW.replace(/<\/?i>/g, ""), "Working on it — done."]);
+    // The draft is deleted once the answer is out: only the answer is left.
+    expect(texts(fake, t.chat)).toEqual(["Working on it — done."]);
+    expect(fake.deleted.at(-1)!.chat_id).toBe(Number(t.chat));
     // Its state record is cleared: nothing to mark as cut off after a restart.
     expect(t.state.takeAll()).toEqual({});
   });
@@ -60,7 +61,18 @@ describe("an answer streamed into Telegram", () => {
     t.r.text("Chat X finished.");
     t.r.finish();
     await t.queue.whenIdle();
-    expect(texts(fake, t.chat)).toEqual([MOVED_BELOW.replace(/<\/?i>/g, ""), "Chat X finished."]);
+    expect(texts(fake, t.chat)).toEqual(["Chat X finished."]);
+  });
+
+  it("points the draft at the answer below when Telegram will not delete it", async () => {
+    const t = turn({ origin: "watch" });
+    t.r.start();
+    await t.queue.whenIdle();
+    fake.failNext("deleteMessage", { code: 400, description: "Bad Request: message can't be deleted for everyone" });
+    t.r.text("Chat Y finished.");
+    t.r.finish();
+    await t.queue.whenIdle();
+    expect(texts(fake, t.chat)).toEqual([MOVED_BELOW.replace(/<\/?i>/g, ""), "Chat Y finished."]);
   });
 
   it("moves on to a new message before Telegram's limit, every message under it", async () => {

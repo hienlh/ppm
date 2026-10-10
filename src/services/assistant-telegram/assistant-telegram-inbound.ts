@@ -23,6 +23,7 @@ import { fetchPhoto } from "./assistant-telegram-photos.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction } from "./assistant-telegram-actions.ts";
+import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { forwardedFrom, wrapForwarded, backlogQuestion } from "./assistant-telegram-inbound-text.ts";
 import { createLogger } from "../logger.ts";
 
@@ -48,6 +49,8 @@ export interface InboundDeps {
   pressCard: (chatId: string, press: Extract<BridgeAction, { kind: "card" }>, group: string, cq: TelegramCallbackQuery) => string;
   /** `/sessions` picked a session. */
   switchSession: (chatId: string, sessionId: string) => string;
+  /** `/status` shows a chat's waiting card here. */
+  relayCard: (chatId: string, card: RelayedCard) => void;
   now?: () => number;
 }
 
@@ -155,6 +158,7 @@ export class AssistantTelegramInbound {
         chatId,
         reply: (html, markup) => this.reply(chatId, html, markup),
         switchCode: (sessionId) => this.deps.codes.mint(chatId, `switch:${chatId}:${updateId}`, { kind: "switch", sessionId }),
+        relayCard: (card) => this.deps.relayCard(chatId, card),
       });
       return false;
     }

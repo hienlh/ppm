@@ -237,6 +237,40 @@ describe("a report that does not get written", () => {
     }));
   });
 
+  it("closes the news without a retry or a push when the user stops the watch turn", async () => {
+    const h = started(harness());
+    const reported = heard("watch_reported");
+    try {
+      h.watch("target-stop");
+      h.ended("target-stop", "done", "All green.");
+      await h.settle();
+      expect(h.chat.sent).toHaveLength(1);
+      h.emit("turn_ended", { sessionId: ASSISTANT, outcome: "stopped", cancelledBy: "ws", projectName: "", providerId: "claude" });
+      await h.settle();
+      h.service.tick();
+      await h.settle();
+      expect(h.chat.sent).toHaveLength(1);
+      const [w] = listAssistantWatches();
+      expect(w!.deliveredAt).not.toBeNull();
+      expect(w!.eventJson).not.toContain('"attempts"');
+      expect(h.pushes).toHaveLength(0);
+      expect(reported.list).toHaveLength(0);
+    } finally {
+      reported.stop();
+    }
+  });
+
+  it("still retries a watch turn that failed on its own", async () => {
+    const h = started(harness());
+    h.watch("target-crash");
+    h.ended("target-crash", "done", "x");
+    await h.settle();
+    h.emit("turn_ended", { sessionId: ASSISTANT, outcome: "failed", error: "provider crashed", projectName: "", providerId: "claude" });
+    await h.settle();
+    expect(listAssistantWatches()[0]!.eventJson).toContain('"attempts":1');
+    expect(listAssistantWatches()[0]!.deliveredAt).toBeNull();
+  });
+
   it("counts a watch turn that could not start as a failed attempt", async () => {
     const h = started(harness());
     h.chat.setReply(() => ({ ok: false, error: "The chat could not be resumed" }));

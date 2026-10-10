@@ -53,6 +53,8 @@ export interface ChatLifecycleEvents {
     finalText?: string;
     stop?: TurnStop;
     error?: string;
+    /** The turn was stopped on request (Stop, `/stop`), by whoever asked — not cut off by an error. */
+    cancelledBy?: ChatMessageOrigin;
     projectName: string;
     providerId: string;
   };

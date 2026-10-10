@@ -454,6 +454,10 @@ const server = Bun.serve<SocketData>({
 });
 // What `src/server/index.ts` records once it listens: the Assistant's tool URL is built from it.
 setServerListenAddress(server.port ?? port, "127.0.0.1");
+// The same hub startup the server runs: watches, and the Telegram bridge when a test switched it
+// on and gave it a bot (pointed at a fake Bot API through PPM_TELEGRAM_API_BASE).
+const { startAssistantHub } = await import("../../../src/services/assistant-hub/assistant-hub-startup");
+await startAssistantHub();
 function shutdown() { server.stop(true); process.exit(0); }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

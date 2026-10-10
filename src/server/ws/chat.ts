@@ -293,6 +293,11 @@ interface SessionEntry {
    * takes it over. In a `watch` turn nothing is asked of the user — every approval is refused.
    */
   turnOrigin?: ChatMessageOrigin;
+  /**
+   * Someone pressed Stop (or sent `/stop`) while the current turn ran: it ends as asked, not on
+   * an error. Told to `turn_ended` listeners once, then cleared.
+   */
+  cancelledBy?: ChatMessageOrigin;
 }
 
 /** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
@@ -923,8 +928,11 @@ function emitTurnEnded(
   outcome: "done" | "stopped" | "failed",
   detail: { finalText?: string; stop?: TurnStop; error?: string },
 ): void {
+  const cancelledBy = entry.cancelledBy;
+  entry.cancelledBy = undefined;
   chatLifecycle.emit("turn_ended", {
-    sessionId, outcome, ...detail, projectName: entry.projectName ?? "", providerId: entry.providerId,
+    sessionId, outcome, ...detail, ...(cancelledBy ? { cancelledBy } : {}),
+    projectName: entry.projectName ?? "", providerId: entry.providerId,
   });
 }
 
@@ -1844,6 +1852,8 @@ function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMess
   const who = origin === "ws" ? "FE" : origin;
   log.info(`session=${sessionId} ${origin === "ws" ? "WS" : origin} cancel received from ${who} (phase=${phase})`);
   logSessionEvent(sessionId, "CANCEL", `${origin === "ws" ? "WS" : origin} cancel from ${who} (phase=${phase})`);
+  // Only a running turn can be stopped; a cancel between turns must not mark the next one.
+  if (entry.phase && entry.phase !== "idle") entry.cancelledBy = origin;
   // An Assistant endpoint request is withdrawn here rather than left to the provider closing
   // its HTTP call: the card goes at once and its tool answers "not run".
   approvals.clearAll(sessionId, entry, APPROVAL_END.cancelled, { only: "endpoint" });

@@ -1,36 +1,63 @@
 import { Hono } from "hono";
-import { getSessionTitle } from "../../services/db.service.ts";
+import { getDb } from "../../services/db.service.ts";
 import { reachableChats } from "../../services/assistant-telegram/assistant-telegram-access.ts";
-import { BindingError, bindChat, boundSession } from "../../services/assistant-telegram/assistant-telegram-binding.ts";
+import { assistantSessionTitle, BindingError, bindChat, boundSession } from "../../services/assistant-telegram/assistant-telegram-binding.ts";
 import { assistantTelegramBridge, assistantTelegramConfig } from "../../services/assistant-telegram/assistant-telegram.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 /**
  * The Telegram side of PPM Assistant (`/api/assistant/telegram`), behind PPM's auth: which chats
  * are connected and which conversation each one talks to, and "use this conversation on
- * Telegram". Only connected private chats are listed or accepted.
+ * Telegram". Only connected private chats are listed or accepted. Also lists PPMBot's old
+ * memories, read-only.
  */
 export const assistantTelegramRoutes = new Hono();
 
 const ID_RE = /^[\w.:-]{1,256}$/;
 
-assistantTelegramRoutes.get("/", (c) => {
+assistantTelegramRoutes.get("/", async (c) => {
   try {
-    const chats = reachableChats().map((chat) => {
+    // Several chats may share a session: each title is looked up once.
+    const titles = new Map<string, Promise<string | null>>();
+    const titleOf = (sessionId: string, providerId: string) => {
+      if (!titles.has(sessionId)) titles.set(sessionId, assistantSessionTitle(sessionId, providerId));
+      return titles.get(sessionId)!;
+    };
+    const chats = await Promise.all(reachableChats().map(async (chat) => {
       const bound = boundSession(chat.chatId);
       return {
         chatId: chat.chatId,
         name: chat.name,
         sessionId: bound?.sessionId ?? null,
-        sessionTitle: bound ? getSessionTitle(bound.sessionId) : null,
+        sessionTitle: bound ? await titleOf(bound.sessionId, bound.providerId) : null,
       };
-    });
+    }));
     return c.json(ok({
       enabled: assistantTelegramConfig().enabled,
       running: assistantTelegramBridge.running,
       error: assistantTelegramBridge.lastError,
       chats,
     }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** How many of PPMBot's memories Settings lists. */
+const LEGACY_MEMORIES_MAX = 200;
+
+/**
+ * GET /legacy-memories — what PPMBot remembered, for the user to read and copy by hand. These
+ * were written by the AI, so they are never put into the Assistant's instructions for them.
+ */
+assistantTelegramRoutes.get("/legacy-memories", (c) => {
+  try {
+    const rows = getDb().query(
+      `SELECT id, project, category, content, created_at FROM clawbot_memories
+       WHERE superseded_by IS NULL ORDER BY created_at DESC, id DESC LIMIT ?`,
+    ).all(LEGACY_MEMORIES_MAX) as Array<{ id: number; project: string; category: string; content: string; created_at: number }>;
+    const memories = rows.map((r) => ({ id: r.id, project: r.project, category: r.category, content: r.content, createdAt: r.created_at * 1000 }));
+    return c.json(ok({ memories }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

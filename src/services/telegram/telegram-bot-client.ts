@@ -146,6 +146,16 @@ export class TelegramBotClient {
     return res.ok ? { ok: true, result: true } : res;
   }
 
+  /**
+   * Delete one of the bot's messages. A message already gone counts as deleted: the caller wanted
+   * it gone. Telegram refuses other deletions (a message over 48 hours old, say), and the caller
+   * then has to say what the message became some other way.
+   */
+  async deleteMessage(chatId: number | string, messageId: number): Promise<TelegramCallResult<true>> {
+    const res = await this.call<unknown>("deleteMessage", { chat_id: chatId, message_id: messageId }, { goneIsOk: true });
+    return res.ok ? { ok: true, result: true } : res;
+  }
+
   /** Stop the spinner on the pressed button; `text` shows as a short toast. */
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<TelegramCallResult<boolean>> {
     return this.call<boolean>("answerCallbackQuery", {
@@ -232,7 +242,7 @@ export class TelegramBotClient {
   private async call<T>(
     method: string,
     body: Record<string, unknown>,
-    options: { signal?: AbortSignal; quiet?: boolean; notModifiedIsOk?: boolean } = {},
+    options: { signal?: AbortSignal; quiet?: boolean; notModifiedIsOk?: boolean; goneIsOk?: boolean } = {},
   ): Promise<TelegramCallResult<T>> {
     let res = await this.request<T>(method, body, options);
 
@@ -251,6 +261,9 @@ export class TelegramBotClient {
     }
 
     if (!res.ok && options.notModifiedIsOk && res.errorCode === 400 && /message is not modified/i.test(res.description)) {
+      return { ok: true, result: true as T };
+    }
+    if (!res.ok && options.goneIsOk && res.errorCode === 400 && /message to delete not found/i.test(res.description)) {
       return { ok: true, result: true as T };
     }
     if (!res.ok && !options.quiet && res.errorCode !== null) {

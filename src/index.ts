@@ -158,9 +158,6 @@ export async function buildProgram(): Promise<Command> {
   const { registerBackupCommands } = await import("./cli/commands/backup-cmd.ts");
   registerBackupCommands(program);
 
-  const { registerBotCommands } = await import("./cli/commands/bot-cmd.ts");
-  registerBotCommands(program);
-
   const { registerJiraCommands } = await import("./cli/commands/jira-cmd.ts");
   await registerJiraCommands(program);
 

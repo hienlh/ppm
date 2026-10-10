@@ -6,16 +6,19 @@
  * leaves — answered here, in PPM or by the Assistant, the turn ending, a new message — arrives as
  * `approval_resolved`, and the Telegram card then loses its buttons and says why.
  *
+ * Cards of other chats come here too — a watched chat's, or what `/status` lists — headed with
+ * that chat's name and linking to it; their buttons answer that chat.
+ *
  * Each card is a new message (an edit would not buzz the phone). Pressing Allow or Deny spends
  * every button of that card; a question with several choices keeps its buttons while choices are
  * ticked, until Send.
  */
-import { chatControl } from "../chat-control/chat-control.ts";
+import { chatControl, type LiveApprovalCard } from "../chat-control/chat-control.ts";
 import type { ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
 import { answersByIdError, type AnswersById, type NormalizedQuestion } from "../../shared/approval-questions.ts";
 import type { InlineKeyboardButton, TelegramCallbackQuery } from "../telegram/telegram-types.ts";
 import { redactForTelegram, stripTelegramHtml } from "../telegram/telegram-html-format.ts";
-import { escapeTelegramHtml } from "../notification-format.ts";
+import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import type { CardPress } from "./assistant-telegram-actions.ts";
 import type { BridgeCards, BridgeDeps } from "./assistant-telegram.service.ts";
 import { formatApprovalCard, formatQuestionCard, needsPpm, resolutionLine } from "./assistant-telegram-card-format.ts";
@@ -28,6 +31,31 @@ const log = createLogger("assistant-telegram");
 /** Room left under Telegram's 4096 for the link line under a card. */
 const CARD_VISIBLE_MAX = 3900;
 const LABEL_MAX = 60;
+const CARD_TITLE_MAX = 80;
+
+/** A card of a chat other than the Assistant's own, and where that chat lives. */
+export interface RelayedCard {
+  targetSessionId: string;
+  targetProject: string;
+  targetProvider: string;
+  targetTitle: string;
+  card: LiveApprovalCard;
+}
+
+/** What a card is, whoever's it is. */
+type CardSource = Pick<ChatLifecycleEvents["approval_shown"], "sessionId" | "providerId" | "card">;
+
+/** How a card is introduced, and where its Open in PPM goes. */
+interface CardPresentation {
+  approvalHeadline: string;
+  questionHeadline: string;
+  link: () => Promise<string>;
+}
+
+/** A chat or project name inside a card's headline: plain (the headline is escaped), redacted, short. */
+function titleForCard(raw: string): string {
+  return truncateText(redactForTelegram(raw.replace(/\s+/g, " ").trim() || "Untitled"), CARD_TITLE_MAX);
+}
 
 interface ShownCard {
   chatId: string;
@@ -59,10 +87,36 @@ export class AssistantTelegramCards implements BridgeCards {
   constructor(private readonly deps: BridgeDeps) {}
 
   shown(chatId: string, p: ChatLifecycleEvents["approval_shown"]): void {
-    void this.show(chatId, p).catch((e) => log.warn(`Card for Telegram chat ${chatId} not shown: ${(e as Error).message}`));
+    this.showSafely(chatId, p, {
+      approvalHeadline: "PPM Assistant wants to",
+      questionHeadline: "PPM Assistant asks",
+      link: () => this.deps.sessionLink(p.providerId, p.sessionId),
+    });
   }
 
-  private async show(chatId: string, p: ChatLifecycleEvents["approval_shown"]): Promise<void> {
+  /**
+   * Another chat's card, shown here because the user asked to hear about that chat (a watch) or
+   * asked what is waiting (`/status`). Same rules, same buttons; they answer that chat directly.
+   */
+  relayed(chatId: string, p: RelayedCard): void {
+    const where = `“${titleForCard(p.targetTitle)}” in ${titleForCard(p.targetProject)}`;
+    this.showSafely(chatId, { sessionId: p.targetSessionId, providerId: p.targetProvider, card: p.card }, {
+      approvalHeadline: `Chat ${where} needs your decision`,
+      questionHeadline: `Chat ${where} asks`,
+      link: () => this.deps.chatLink(p.targetProject, p.targetProvider, p.targetSessionId),
+    });
+  }
+
+  /** Whether this chat already shows (or is about to show) that card. */
+  isShowing(chatId: string, requestId: string): boolean {
+    return this.cards.has(`${chatId}|${requestId}`);
+  }
+
+  private showSafely(chatId: string, p: CardSource, how: CardPresentation): void {
+    void this.show(chatId, p, how).catch((e) => log.warn(`Card for Telegram chat ${chatId} not shown: ${(e as Error).message}`));
+  }
+
+  private async show(chatId: string, p: CardSource, how: CardPresentation): Promise<void> {
     const key = `${chatId}|${p.card.requestId}`;
     if (this.cards.has(key)) return;
     const group = `card:${key}`;
@@ -73,7 +127,7 @@ export class AssistantTelegramCards implements BridgeCards {
     };
     // Registered before the link is looked up, so a card answered meanwhile is known to be done.
     this.cards.set(key, card);
-    const link = placeLink(await this.deps.sessionLink(p.providerId, p.sessionId));
+    const link = placeLink(await how.link());
     if (card.done) {
       this.cards.delete(key);
       return;
@@ -83,12 +137,12 @@ export class AssistantTelegramCards implements BridgeCards {
 
     let rows: ShownCard["rows"] = () => [];
     if (card.isQuestion) {
-      card.html = formatQuestionCard(questions, "PPM Assistant asks");
-      if (visibleLength(card.html) > CARD_VISIBLE_MAX) card.html = "❓ <b>PPM Assistant asks</b>\nThis question is too long to show here — answer it in PPM.";
+      card.html = formatQuestionCard(questions, how.questionHeadline);
+      if (visibleLength(card.html) > CARD_VISIBLE_MAX) card.html = `❓ <b>${escapeTelegramHtml(how.questionHeadline)}</b>\nThis question is too long to show here — answer it in PPM.`;
       else if (questions.length > 0 && !questions.some(needsPpm)) rows = questionRows(questions, mint);
     } else {
       // The deciding part is capped well under Telegram's limit, so the card always fits.
-      const formatted = formatApprovalCard(p.card, "PPM Assistant wants to");
+      const formatted = formatApprovalCard(p.card, how.approvalHeadline);
       card.html = formatted.html;
       const buttons = [
         ...(formatted.allow ? [{ text: "Allow", callback_data: mint({ op: "allow" }) }] : []),

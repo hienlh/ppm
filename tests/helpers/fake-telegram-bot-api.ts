@@ -7,7 +7,8 @@
  * update exists or the timeout runs out, an `offset` that confirms everything before it,
  * `allowed_updates` remembered between calls, a second poll ending the first with 409, message
  * ids counted per chat, and the refusals PPM has to survive — HTML it cannot parse, a message
- * over 4096 characters, `callback_data` over 64 bytes, an edit that changes nothing. A test
+ * over 4096 characters, `callback_data` over 64 bytes, an edit that changes nothing, deleting a
+ * message that is not there. A test
  * plays the person on the other end with `pushText`, `pushPhoto` and `pressButton`.
  */
 import type {
@@ -55,6 +56,8 @@ export interface FakeTelegram {
   commands: Array<{ command: string; description: string }>;
   /** `answerCallbackQuery` calls, in order. */
   answers: Array<{ callback_query_id: string; text?: string }>;
+  /** Messages the bot deleted, as they were when deleted. They are gone from `sent`. */
+  deleted: FakeSentMessage[];
   pushText(chatId: number, userId: number, text: string, chatType?: TelegramMessage["chat"]["type"]): TelegramUpdate;
   pushPhoto(chatId: number, userId: number, options?: { bytes?: Uint8Array; caption?: string; chatType?: TelegramMessage["chat"]["type"] }): TelegramUpdate;
   /** Press a button the bot put under one of its messages; throws if there is no such button. */
@@ -134,6 +137,7 @@ export function startFakeTelegram(options: { token?: string; username?: string }
   const calls: FakeTelegramCall[] = [];
   const commands: FakeTelegram["commands"] = [];
   const answers: FakeTelegram["answers"] = [];
+  const deleted: FakeSentMessage[] = [];
   const failures = new Map<string, FakeFailure[]>();
   const messages = new Map<number, FakeSentMessage[]>();
   const nextMessageId = new Map<number, number>();
@@ -274,6 +278,14 @@ export function startFakeTelegram(options: { token?: string; username?: string }
         else delete message.reply_markup;
         return ok(botMessage(message));
       }
+      case "deleteMessage": {
+        const message = find(body.chat_id, body.message_id);
+        if (!message) return refuse(400, "Bad Request: message to delete not found");
+        const chatId = Number(body.chat_id);
+        messages.set(chatId, (messages.get(chatId) ?? []).filter((m) => m !== message));
+        deleted.push(message);
+        return ok(true);
+      }
       case "answerCallbackQuery": {
         const id = String(body.callback_query_id ?? "");
         if (!openQueries.delete(id)) return refuse(400, "Bad Request: query is too old and response timeout expired or query ID is invalid");
@@ -347,6 +359,7 @@ export function startFakeTelegram(options: { token?: string; username?: string }
     calls,
     commands,
     answers,
+    deleted,
     pushText(chatId, userId, text, chatType = "private") {
       const message: TelegramMessage = {
         message_id: messageId(chatId),

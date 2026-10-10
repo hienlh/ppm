@@ -27,6 +27,13 @@ describe("what the bridge remembers across a restart", () => {
     expect(readBridgeState().chats["300"]).toBeUndefined();
   });
 
+  it("sets aside what another bot left when the token changed", () => {
+    new BridgeStateStore({ botId: "111", offset: 900, chats: { "5": { render: [3], cards: [] } } }).setOffset(901);
+    expect(readBridgeState("111")).toEqual({ botId: "111", offset: 901, chats: { "5": { render: [3], cards: [] } } });
+    // The new bot's update ids start far below 901: carrying the offset over would lose them.
+    expect(readBridgeState("222")).toEqual({ botId: "222", offset: 0, chats: {} });
+  });
+
   it("starts empty from a row it did not write", () => {
     setConfigValue(BRIDGE_STATE_ROW, "{not json");
     expect(readBridgeState()).toEqual({ offset: 0, chats: {} });

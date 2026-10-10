@@ -32,6 +32,7 @@ import { firstLine, reportedPush, unreportedPush } from "./watch-push.ts";
  *   while the session is busy, waits and goes into the next turn together.
  * - A report counts as delivered only when its turn ends with an answer. A turn that fails is
  *   tried again; after {@link MAX_REPORT_ATTEMPTS} a push notification names the chat instead.
+ *   A turn the user stopped is not a failure: its news is closed, with no retry and no push.
  * - An Assistant session no Telegram chat talks to gets a push naming the watched chat once it
  *   reports, in place of its own "Chat completed" alert, which says nothing about which chat.
  *
@@ -406,11 +407,23 @@ export class AssistantWatchService {
       if (reported.length > 0 && this.boundChats(id).length === 0) {
         this.notify(reportedPush(reported, text, { sessionId: id, providerId: this.providerOf(id) ?? end.providerId }));
       }
+    } else if (end.cancelledBy) {
+      // The user stopped the report themselves: they are looking at it, and want it to stop, not
+      // to come back as a retry or a push. The news is over.
+      this.endUnreported(id, rows, end.cancelledBy);
     } else {
       const why = end.outcome === "done" ? "it ended without an answer" : `it ${end.outcome}${end.error ? `: ${firstLine(end.error, 200)}` : ""}`;
       this.recordFailure(id, rows, `the watch turn did not report: ${why}`);
     }
     this.schedule(id);
+  }
+
+  /** News whose report the user cut short: closed without a retry, a push or `watch_reported`. */
+  private endUnreported(id: string, rows: AssistantWatch[], by: string): void {
+    log.info(`session=${id} watch turn stopped by ${by}: ${rows.length} watch(es) closed unreported`);
+    this.retryAt.delete(id);
+    const now = this.now();
+    for (const w of rows) updateAssistantWatch(w.id, { deliveredAt: now }, { ifStatus: w.status });
   }
 
   /** One more failed attempt for each watch; those out of attempts are pushed to the user as they are. */

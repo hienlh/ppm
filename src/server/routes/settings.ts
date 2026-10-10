@@ -22,7 +22,7 @@ import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../
 import { createLogger } from "../../services/logger.ts";
 
 const log = createLogger("settings");
-const ppmbotLog = createLogger("ppmbot");
+const assistantTelegramLog = createLogger("assistant-telegram");
 
 export const settingsRoutes = new Hono();
 
@@ -538,46 +538,51 @@ settingsRoutes.delete("/query-audit/logs", async (c) => {
   }
 });
 
-// ── PPMBot ─────────────────────────────────────────────────────
+// ── PPM Assistant on Telegram (kept under PPMBot's `clawbot` key and routes) ──
 
-/** GET /settings/clawbot — return current clawbot config */
-settingsRoutes.get("/clawbot", (c) => {
-  const config = configService.get("clawbot") as PPMBotConfig | undefined;
-  if (!config) return c.json(ok(DEFAULT_CONFIG.clawbot));
-  return c.json(ok(config));
+/** The three settings the bridge reads, whatever else an old PPMBot row still holds. */
+const CLAWBOT_KEYS = ["enabled", "show_tool_calls", "debounce_ms"] as const;
+
+/** GET /settings/clawbot — `{ enabled, show_tool_calls, debounce_ms }` */
+settingsRoutes.get("/clawbot", async (c) => {
+  const { assistantTelegramConfig } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
+  return c.json(ok(assistantTelegramConfig()));
 });
 
-/** PUT /settings/clawbot — update clawbot config */
+/**
+ * PUT /settings/clawbot — any of the three settings. PPMBot's other fields (provider, permission
+ * mode, thinking, system prompt) are ignored rather than refused, so an older page still saves.
+ * Switching `enabled` starts or stops the bridge.
+ */
 settingsRoutes.put("/clawbot", async (c) => {
+  let body: Record<string, unknown>;
   try {
-    const body = await c.req.json<Partial<PPMBotConfig>>();
-    const current = (configService.get("clawbot") as PPMBotConfig | undefined)
-      ?? structuredClone(DEFAULT_CONFIG.clawbot!);
-    const updated: PPMBotConfig = { ...current, ...body };
-
-    if (updated.debounce_ms < 0 || updated.debounce_ms > 30000) {
-      return c.json(err("debounce_ms must be 0-30000"), 400);
-    }
-
+    body = await c.req.json();
+  } catch {
+    return c.json(err("Body must be JSON"), 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return c.json(err("Body must be an object"), 400);
+  for (const key of ["enabled", "show_tool_calls"] as const) {
+    if (body[key] !== undefined && typeof body[key] !== "boolean") return c.json(err(`${key} must be true or false`), 400);
+  }
+  const debounce = body.debounce_ms;
+  if (debounce !== undefined && (typeof debounce !== "number" || !Number.isInteger(debounce) || debounce < 0 || debounce > 30000)) {
+    return c.json(err("debounce_ms must be a whole number from 0 to 30000"), 400);
+  }
+  try {
+    const { assistantTelegramConfig } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
+    const { migratePPMBotSettings } = await import("../../services/assistant-telegram/ppmbot-migration.ts");
+    // An old row's system prompt is carried over before the row is rewritten without it.
+    migratePPMBotSettings();
+    const updated: PPMBotConfig = { ...assistantTelegramConfig() };
+    for (const key of CLAWBOT_KEYS) if (body[key] !== undefined) (updated as unknown as Record<string, unknown>)[key] = body[key];
     configService.set("clawbot", updated);
-    configService.save();
 
-    // Restart clawbot if running state changed
-    try {
-      const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
-      if (updated.enabled && !ppmbotService.isRunning) {
-        await ppmbotService.start();
-      } else if (!updated.enabled && ppmbotService.isRunning) {
-        ppmbotService.stop();
-      }
-    } catch (e) {
-      // The response still says the new state; the bot did not follow it.
-      ppmbotLog.error(`${updated.enabled ? "Start" : "Stop"} after settings change failed:`, e);
-    }
-
+    const { syncAssistantTelegram } = await import("../../services/assistant-hub/assistant-hub-startup.ts");
+    await syncAssistantTelegram();
     return c.json(ok(updated));
   } catch (e) {
-    return c.json(err((e as Error).message), 400);
+    return c.json(err((e as Error).message), 500);
   }
 });
 
@@ -586,19 +591,31 @@ settingsRoutes.get("/clawbot/paired", (c) => {
   return c.json(ok(listPairedChats()));
 });
 
-/** DELETE /settings/clawbot/paired/:chatId — revoke pairing */
-settingsRoutes.delete("/clawbot/paired/:chatId", (c) => {
-  revokePairing(c.req.param("chatId"));
+/**
+ * DELETE /settings/clawbot/paired/:chatId — revoke a chat. The bridge forgets it in the same
+ * request (its binding, and anything queued for it), so not one more message reaches it.
+ */
+settingsRoutes.delete("/clawbot/paired/:chatId", async (c) => {
+  const chatId = c.req.param("chatId");
+  if (!/^-?\d{1,20}$/.test(chatId)) return c.json(err("Not a Telegram chat id"), 400);
+  revokePairing(chatId);
+  try {
+    const { assistantTelegramBridge } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
+    assistantTelegramBridge.forgetChat(chatId);
+  } catch (e) {
+    // Revoked all the same: every send checks the connection before it goes.
+    assistantTelegramLog.warn(`Telegram chat ${chatId} revoked, but the bridge could not forget it: ${(e as Error).message}`);
+  }
   return c.json(ok({ revoked: true }));
 });
 
-// ── PPMBot's Telegram bot ──────────────────────────────────────
+// ── PPM Assistant's Telegram bot ───────────────────────────────
 
-/** GET /settings/clawbot/telegram — PPMBot's bot, the chats that may use it, and an open connect link */
+/** GET /settings/clawbot/telegram — the Assistant's bot, the chats that may use it, and an open connect link */
 settingsRoutes.get("/clawbot/telegram", async (c) => {
   const { getPPMBotBot, sameBot } = await import("../../services/telegram-bots.ts");
   const { ppmbotConnect } = await import("../../services/telegram-connect.service.ts");
-  const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
+  const { assistantTelegramBridge, assistantTelegramConfig } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
   const bot = getPPMBotBot();
   const notifyToken = (configService.get("telegram") as TelegramConfig | undefined)?.bot_token ?? "";
   const rows = listPairedChats();
@@ -608,15 +625,15 @@ settingsRoutes.get("/clawbot/telegram", async (c) => {
     // Tokens saved before PPM stored the bot's name get it now, the first time it is needed.
     botUsername: bot.bot_token ? bot.bot_username ?? await ppmbotConnect.botUsername().catch(() => null) : null,
     sharedWithNotifications: !!bot.bot_token && sameBot(bot.bot_token, notifyToken),
-    enabled: (configService.get("clawbot") as PPMBotConfig | undefined)?.enabled === true,
-    running: ppmbotService.isRunning,
+    enabled: assistantTelegramConfig().enabled,
+    running: assistantTelegramBridge.running,
     chats: rows.filter((row) => row.status === "approved").map((row) => ({ chatId: row.telegram_chat_id, name: nameOf(row) })),
     connect: ppmbotConnect.status(),
   };
   return c.json(ok(status));
 });
 
-/** PUT /settings/clawbot/telegram — PPMBot's bot token, checked with Telegram first. An empty token removes the bot. */
+/** PUT /settings/clawbot/telegram — the Assistant's bot token, checked with Telegram first. An empty token removes the bot. */
 settingsRoutes.put("/clawbot/telegram", async (c) => {
   try {
     const body = await c.req.json<{ bot_token?: string }>();
@@ -630,16 +647,10 @@ settingsRoutes.put("/clawbot/telegram", async (c) => {
       // An open connect link names the old bot.
       const { ppmbotConnect } = await import("../../services/telegram-connect.service.ts");
       ppmbotConnect.cancel();
-      // PPMBot reads with the token it started with; without this, saving the token after
-      // switching PPMBot on left it stopped until the next restart.
-      try {
-        const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
-        if (ppmbotService.isRunning) ppmbotService.stop();
-        if ((configService.get("clawbot") as PPMBotConfig | undefined)?.enabled && checked.bot.bot_token) await ppmbotService.start();
-      } catch (e) {
-        // The response still says saved; PPMBot is not running with the new token.
-        ppmbotLog.error("Restart after token change failed:", e);
-      }
+      // The bridge reads with the token it started with: restarted, it reads the new bot (or,
+      // with the token removed, stops). Failures are logged; the token is saved either way.
+      const { syncAssistantTelegram } = await import("../../services/assistant-hub/assistant-hub-startup.ts");
+      await syncAssistantTelegram({ restart: true });
     }
     return c.json(ok(maskedBot(checked.bot)));
   } catch (e) {
@@ -647,7 +658,7 @@ settingsRoutes.put("/clawbot/telegram", async (c) => {
   }
 });
 
-/** POST /settings/clawbot/telegram/connect — a one-time link that lets the chat opening it use PPMBot */
+/** POST /settings/clawbot/telegram/connect — a one-time link that lets the chat opening it use the Assistant */
 settingsRoutes.post("/clawbot/telegram/connect", async (c) => {
   const { ppmbotConnect, TelegramConnectError } = await import("../../services/telegram-connect.service.ts");
   try {

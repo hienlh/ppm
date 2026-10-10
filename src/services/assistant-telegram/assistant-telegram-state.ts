@@ -24,6 +24,11 @@ export interface ChatMessages {
 }
 
 export interface BridgeState {
+  /**
+   * The bot the rest belongs to. Update ids count per bot, so another bot's offset would skip (or
+   * re-read) this one's updates, and its message ids name messages this bot cannot edit.
+   */
+  botId?: string;
   offset: number;
   chats: Record<string, ChatMessages>;
 }
@@ -31,12 +36,21 @@ export interface BridgeState {
 const ids = (value: unknown): number[] =>
   Array.isArray(value) ? value.filter((n): n is number => Number.isSafeInteger(n) && n > 0).slice(-MAX_IDS_PER_CHAT) : [];
 
-/** The stored state, or an empty one when the row is missing or not what this file writes. */
-export function readBridgeState(): BridgeState {
+/**
+ * The stored state, or an empty one when the row is missing or not what this file writes. Given
+ * `botId`, a state another bot left (the token was changed) is set aside the same way.
+ */
+export function readBridgeState(botId?: string): BridgeState {
+  const empty = (): BridgeState => ({ ...(botId ? { botId } : {}), offset: 0, chats: {} });
   const raw = getConfigValue(BRIDGE_STATE_ROW);
-  if (!raw) return { offset: 0, chats: {} };
+  if (!raw) return empty();
   try {
     const parsed = JSON.parse(raw) as Partial<BridgeState>;
+    const stored = typeof parsed.botId === "string" ? parsed.botId : undefined;
+    if (botId && stored && stored !== botId) {
+      log.info(`${BRIDGE_STATE_ROW} belongs to another bot; starting this one from an empty state`);
+      return empty();
+    }
     const chats: Record<string, ChatMessages> = {};
     for (const [chatId, value] of Object.entries(parsed.chats ?? {})) {
       if (!/^-?\d+$/.test(chatId)) continue;
@@ -44,10 +58,11 @@ export function readBridgeState(): BridgeState {
       chats[chatId] = { render: ids(v?.render), cards: ids(v?.cards) };
     }
     const offset = Number.isSafeInteger(parsed.offset) && (parsed.offset as number) >= 0 ? parsed.offset as number : 0;
-    return { offset, chats };
+    const owner = botId ?? stored;
+    return { ...(owner ? { botId: owner } : {}), offset, chats };
   } catch {
     log.warn(`${BRIDGE_STATE_ROW} is not valid JSON; starting from an empty state`);
-    return { offset: 0, chats: {} };
+    return empty();
   }
 }
 

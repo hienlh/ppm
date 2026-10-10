@@ -1218,11 +1218,11 @@ if (process.argv.includes("__serve__")) {
     console.error("[ExtService] Startup error:", e);
   });
 
-  // Start PPMBot Telegram poller (if enabled)
-  import("../services/ppmbot/ppmbot-service.ts")
-    .then(({ ppmbotService }) => ppmbotService.start())
+  // PPM Assistant's hub: chat watches, and the Telegram bridge when it is switched on
+  import("../services/assistant-hub/assistant-hub-startup.ts")
+    .then(({ startAssistantHub }) => startAssistantHub())
     .catch((e) => {
-      console.error("[ppmbot] Startup error:", e);
+      console.error("[assistant-telegram] Startup error:", e);
     });
 
   // Start Jira watchers (non-blocking, cleanup on exit)

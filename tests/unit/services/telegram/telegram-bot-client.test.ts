@@ -108,6 +108,19 @@ describe("TelegramBotClient", () => {
     expect(warnings()).toBe("");
   });
 
+  it("deletes a message, and counts one already gone as deleted", async () => {
+    const bot = client();
+    const sent = await bot.sendMessage(CHAT, "draft to drop");
+    const id = sent.ok ? sent.result.message_id : -1;
+    expect((await bot.deleteMessage(CHAT, id)).ok).toBe(true);
+    expect(fake.sent(CHAT).some((m) => m.message_id === id)).toBe(false);
+    expect(fake.deleted.at(-1)!.text).toBe("draft to drop");
+    expect((await bot.deleteMessage(CHAT, id)).ok).toBe(true);
+    fake.failNext("deleteMessage", { code: 400, description: "Bad Request: message can't be deleted" });
+    expect(await bot.deleteMessage(CHAT, 1)).toMatchObject({ ok: false, errorCode: 400 });
+    expect(warnings()).not.toContain("message to delete not found");
+  });
+
   it("reports a refusal with its code and description only", async () => {
     const res = await client().editMessageText(CHAT, 99_999, "gone", { final: true });
     expect(res).toMatchObject({ ok: false, errorCode: 400, description: "Bad Request: message to edit not found" });

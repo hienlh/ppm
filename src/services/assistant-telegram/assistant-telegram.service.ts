@@ -7,8 +7,11 @@
  * connect-link poller it is reading this bot, and passes `/start <token>` to the connect code
  * before any access check — that message is how a chat becomes allowed at all.
  *
- * Nothing here runs on its own: the server starts it when the Telegram side of the Assistant is
- * switched on.
+ * It also carries what the user asked to hear about other chats (`assistant-telegram-relay.ts`):
+ * a watched chat's cards, and watch reports from Assistant sessions no chat is bound to.
+ *
+ * Nothing here runs on its own: `startAssistantHub()` starts it when the Telegram side of the
+ * Assistant is switched on.
  */
 import { TelegramBotClient, type TelegramBotClientOptions } from "../telegram/telegram-bot-client.ts";
 import { BOT_TOKEN_RE } from "../telegram/telegram-api-base.ts";
@@ -31,11 +34,13 @@ import { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction, CardPress } from "./assistant-telegram-actions.ts";
 import { AssistantTelegramInbound } from "./assistant-telegram-inbound.ts";
 import { AssistantTelegramCards } from "./assistant-telegram-cards.ts";
-import { assistantSessionLink } from "./assistant-telegram-links.ts";
+import { assistantSessionLink, chatLink } from "./assistant-telegram-links.ts";
 import { AssistantTelegramMirror, type MirrorCardSink } from "./assistant-telegram-mirror.ts";
+import { AssistantTelegramRelay } from "./assistant-telegram-relay.ts";
+import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { AssistantTelegramPoller } from "./assistant-telegram-poller.ts";
 import { AssistantTelegramSendQueue, EDIT_INTERVAL_MS, outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
-import { BridgeStateStore } from "./assistant-telegram-state.ts";
+import { BridgeStateStore, readBridgeState } from "./assistant-telegram-state.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -47,6 +52,10 @@ export const RESTARTED_TEXT = "⚠️ PPM restarted — this answer was cut off.
 
 /** Approval and question cards on Telegram (the cards module). */
 export interface BridgeCards extends MirrorCardSink {
+  /** Another chat's card (a watched chat's, or one `/status` lists), answered from here. */
+  relayed(chatId: string, card: RelayedCard): void;
+  /** Whether this chat already shows (or is about to show) that card. */
+  isShowing(chatId: string, requestId: string): boolean;
   /** Acts on a pressed card button; the toast to show. */
   press(chatId: string, press: CardPress, group: string, cq: TelegramCallbackQuery): string;
   forgetChat(chatId: string): void;
@@ -59,6 +68,8 @@ export interface BridgeDeps {
   now: () => number;
   /** The link that opens an Assistant session in PPM. */
   sessionLink: (providerId: string, sessionId: string) => Promise<string>;
+  /** The link that opens any chat of a project in PPM. */
+  chatLink: (project: string, providerId: string | null, sessionId: string) => Promise<string>;
 }
 
 export interface BridgeStartOptions {
@@ -75,6 +86,8 @@ export interface BridgeStartOptions {
   cards?: (deps: BridgeDeps) => BridgeCards;
   /** Defaults to the tunnel / Tailscale / localhost link notifications use; tests pin it. */
   sessionLink?: (providerId: string, sessionId: string) => Promise<string>;
+  /** The same, for a chat of any project (a watched chat's card, `/status`). */
+  chatLink?: (project: string, providerId: string | null, sessionId: string) => Promise<string>;
 }
 
 function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms"> {
@@ -89,6 +102,7 @@ interface Running {
   state: BridgeStateStore;
   inbound: AssistantTelegramInbound;
   mirror: AssistantTelegramMirror;
+  relay: AssistantTelegramRelay;
   cards: BridgeCards;
   codes: ButtonCodes<BridgeAction>;
   offs: Array<() => void>;
@@ -113,10 +127,12 @@ export class AssistantTelegramBridge {
     const now = opts.now ?? Date.now;
     const client = new TelegramBotClient(token, { editIntervalMs: EDIT_INTERVAL_MS, ...opts.client });
     const queue = new AssistantTelegramSendQueue(client, { canSend: canSendTo, now, ...(opts.scaleDelay ? { scaleDelay: opts.scaleDelay } : {}) });
-    const state = new BridgeStateStore();
+    const state = new BridgeStateStore(readBridgeState(client.botId));
     const codes = new ButtonCodes<BridgeAction>({ now });
-    const cards = (opts.cards ?? ((deps) => new AssistantTelegramCards(deps)))({
-      queue, state, codes, now, sessionLink: opts.sessionLink ?? assistantSessionLink,
+    const links = { sessionLink: opts.sessionLink ?? assistantSessionLink, chatLink: opts.chatLink ?? chatLink };
+    const cards = (opts.cards ?? ((deps) => new AssistantTelegramCards(deps)))({ queue, state, codes, now, ...links });
+    const relay = new AssistantTelegramRelay({
+      queue, chatLink: links.chatLink, relayCard: (chatId, card) => cards.relayed(chatId, card),
     });
     const mirror = new AssistantTelegramMirror({
       queue, state, now, cards,
@@ -130,16 +146,18 @@ export class AssistantTelegramBridge {
       delivered: (id) => poller?.delivered(id),
       pressCard: (chatId, press, group, cq) => cards.press(chatId, press, group, cq),
       switchSession: (chatId, sessionId) => this.switchSession(chatId, sessionId),
+      relayCard: (chatId, card) => cards.relayed(chatId, card),
     });
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [
       onBindingChanged(() => mirror.invalidate()),
       addNotificationSuppressor((sessionId) => recentlyTold(queue, sessionId)),
     ];
-    this.run = { poller, queue, state, inbound, mirror, cards, codes, offs };
+    this.run = { poller, queue, state, inbound, mirror, relay, cards, codes, offs };
 
     recoverInterrupted(queue, state);
     mirror.attach();
+    relay.attach();
     ppmbotReading(token);
     void client.setMyCommands(BOT_COMMANDS);
     log.info(`Reading Telegram bot ${client.botId}`);
@@ -151,6 +169,7 @@ export class AssistantTelegramBridge {
     if (!run) return;
     this.run = null;
     for (const off of run.offs) off();
+    run.relay.detach();
     run.mirror.detach();
     run.inbound.stop();
     await run.poller.stop();

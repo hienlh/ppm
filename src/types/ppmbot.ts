@@ -1,10 +1,10 @@
-/** Telegram update object (subset we care about) */
-export interface TelegramUpdate {
-  update_id: number;
-  message?: TelegramMessage;
-  edited_message?: TelegramMessage;
-}
+/**
+ * Row shapes of the tables PPMBot left behind, still read (connected chats, the connect link's
+ * message, legacy memories) or kept for old databases (sessions, tasks). PPMBot itself is gone:
+ * the PPM Assistant's Telegram bridge uses the connected chats and the bot.
+ */
 
+/** A Telegram message, as the connect-link poller reads it. */
 export interface TelegramMessage {
   message_id: number;
   from?: { id: number; first_name: string; username?: string };
@@ -12,13 +12,6 @@ export interface TelegramMessage {
   date: number;
   text?: string;
   caption?: string;
-}
-
-/** Sent message result from Telegram API */
-export interface TelegramSentMessage {
-  message_id: number;
-  chat: { id: number };
-  date: number;
 }
 
 /** PPMBot session row from SQLite */
@@ -53,42 +46,6 @@ export type PPMBotMemoryCategory =
   | "preference"
   | "architecture"
   | "issue";
-
-/** Active session state tracked in memory (not DB) */
-export interface PPMBotActiveSession {
-  telegramChatId: string;
-  sessionId: string;
-  providerId: string;
-  projectName: string;
-  projectPath: string;
-  /** Telegram message ID being edited for streaming */
-  currentMessageId?: number;
-  /** Debounce timer for rapid messages */
-  debounceTimer?: ReturnType<typeof setTimeout>;
-  /** Accumulated debounced text */
-  debouncedText?: string;
-}
-
-/** Parsed command from Telegram message */
-export interface PPMBotCommand {
-  command: string;
-  args: string;
-  chatId: number;
-  messageId: number;
-  userId: number;
-  username?: string;
-}
-
-/** Memory recall result with relevance score */
-export interface MemoryRecallResult {
-  id: number;
-  content: string;
-  category: PPMBotMemoryCategory;
-  importance: number;
-  project: string;
-  /** FTS5 rank score (lower = more relevant) */
-  rank?: number;
-}
 
 /** Bot task row from SQLite */
 export interface BotTask {

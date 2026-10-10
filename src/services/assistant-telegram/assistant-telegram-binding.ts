@@ -7,7 +7,8 @@
  */
 import { chatService } from "../chat.service.ts";
 import { configService } from "../config.service.ts";
-import { getSessionProvider, resolveMigratedSession } from "../db.service.ts";
+import { getSessionProvider, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
+import type { SessionInfo } from "../../types/chat.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
@@ -104,6 +105,35 @@ export async function startNewSession(chatId: string, providerId?: string): Prom
 /** The chat's session, a new one when it has none that still exists. */
 export async function ensureBoundSession(chatId: string): Promise<TelegramBinding> {
   return boundSession(chatId) ?? startNewSession(chatId);
+}
+
+/** How far down a provider's newest sessions a title is looked for when it cannot be asked by id. */
+const TITLE_LOOKUP_LIMIT = 50;
+
+/** A provider that can describe one session without listing them all (Claude's can). */
+type SessionInfoById = { getSessionInfoById?: (sessionId: string, dir?: string) => Promise<SessionInfo | null> };
+
+/**
+ * The name PPM's Assistant session list shows for a session: the user's rename, else the title
+ * its provider derives (summary, first message). Null when neither is known.
+ */
+export async function assistantSessionTitle(sessionId: string, providerId: string): Promise<string | null> {
+  const renamed = getSessionTitle(sessionId);
+  if (renamed) return renamed;
+  const provider = providerRegistry.get(providerId);
+  if (!provider) return null;
+  const dir = ensureAssistantWorkDir();
+  try {
+    // Not on the provider interface: only some providers can look one session up.
+    const byId = (provider as unknown as SessionInfoById).getSessionInfoById;
+    const info = byId ? await byId.call(provider, sessionId, dir) : null;
+    if (info?.title) return info.title;
+    const recent = await chatService.listSessions(providerId, dir, { limit: TITLE_LOOKUP_LIMIT });
+    return recent.find((s) => s.id === sessionId)?.title || null;
+  } catch (e) {
+    log.debug(`No title for Assistant session ${sessionId}: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 /** Removes the chat's binding; false when it had none. */

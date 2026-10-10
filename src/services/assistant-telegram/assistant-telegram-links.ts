@@ -19,6 +19,11 @@ export function assistantSessionLink(providerId: string, sessionId: string): Pro
   return notificationLink({ project: ASSISTANT_PROJECT_NAME, sessionId, providerId });
 }
 
+/** The absolute link that opens a chat of a project in PPM (any project, the Assistant's too). */
+export function chatLink(project: string, providerId: string | null, sessionId: string): Promise<string> {
+  return notificationLink({ project, sessionId, ...(providerId ? { providerId } : {}) });
+}
+
 const PRIVATE_HOST = /^(?:localhost|.*\.localhost|.*\.local|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|0\.0\.0\.0|\[.*\])$/i;
 
 /** True for an https URL on a public host name — the only kind Telegram takes on a button. */
