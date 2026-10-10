@@ -54,7 +54,8 @@ import { parseModelList } from "./codex-model-parser.ts";
 import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { codexUsageSource } from "./codex-usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
-import { redactTruncate } from "./codex-redact.ts";
+import { redactFields, redactTruncate } from "./codex-redact.ts";
+import { approvalInput, approvalToolLabel } from "./codex-approval-input.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
 import { getRolloutMessagesAsync } from "./codex-history-async.ts";
 import {
@@ -329,15 +330,6 @@ function missingRolloutError(sessionId: string): Error {
 function loggableError(err: unknown): string {
   if (err instanceof CodexSignedOutError) return "every enabled Codex account is signed out";
   return redactTruncate((err as Error)?.message ?? String(err), 200);
-}
-
-/** Human label for an approval prompt (dormant in MVP under default bypass). */
-function approvalToolLabel(method: string, params: unknown): string {
-  const p = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
-  if (method.includes("commandExecution") || method === "execCommandApproval") return "Bash";
-  if (method.includes("fileChange") || method === "applyPatchApproval") return "Edit";
-  if (method === "item/tool/requestUserInput") return "AskUserQuestion";
-  return String(p.tool ?? "Tool");
 }
 
 function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestUserInputResponse {
@@ -1213,13 +1205,13 @@ export class CodexAppServerProvider implements AIProvider {
     if (mcpApproval) {
       const ppmReqId = crypto.randomUUID();
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method, mcpApproval });
-      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: mcpApproval.tool, input: redactTruncate(mcpApproval.input) });
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: mcpApproval.tool, input: redactFields(mcpApproval.input) });
       return;
     }
     if (isApprovalMethod(method)) {
       const ppmReqId = crypto.randomUUID();
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method });
-      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: approvalToolLabel(method, req.params), input: redactTruncate(req.params) });
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: approvalToolLabel(method, req.params), input: approvalInput(method, req.params) });
       return;
     }
     if (method === "item/tool/requestUserInput") {

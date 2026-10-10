@@ -16,7 +16,7 @@ import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { isAssistantProject } from "../../shared/assistant-project";
-import { approvalAfterGreeting, approvalFromWire, type ApprovalRequest } from "@/lib/approval-request";
+import { approvalAfterGreeting, approvalDrawsAsCard, approvalFromWire, type ApprovalRequest } from "@/lib/approval-request";
 import { ASSISTANT_TAB_TITLE, openAssistant } from "@/components/assistant/open-assistant";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
@@ -498,6 +498,24 @@ export function useChat(
     });
   }, [syncMessages]);
 
+  /**
+   * Record the answer on a question's card (the only approval request kept in the transcript),
+   * the way the server records it on the request it buffers for replay — so a declined question
+   * reads as declined here, after a reconnect, and in history alike.
+   */
+  const markApprovalAnswered = useCallback((requestId: string, approved: boolean, answers?: unknown) => {
+    const idx = streamingEventsRef.current.findIndex(
+      (e) => e.type === "approval_request" && (e as any).requestId === requestId,
+    );
+    if (idx === -1) return;
+    const req = streamingEventsRef.current[idx] as any;
+    const input = approved && answers && req.input && typeof req.input === "object"
+      ? { ...req.input, answers }
+      : req.input;
+    streamingEventsRef.current[idx] = { ...req, approved, input } as ChatEvent;
+    syncMessages();
+  }, [syncMessages]);
+
   /** Process a single stream event — reused by live events and turn_events replay */
   const processStreamEvent = useCallback((data: unknown) => {
     const ev = data as any;
@@ -645,26 +663,19 @@ export function useChat(
         // Another device (or this one) answered — converge every client:
         // clear the live prompt for this requestId and merge answers into the card.
         const reqId = ev.requestId as string;
-        if (ev.approved && ev.answers) {
-          const askEvt = streamingEventsRef.current.find(
-            (e: ChatEvent) =>
-              e.type === "approval_request" &&
-              (e as any).requestId === reqId &&
-              (e as any).tool === "AskUserQuestion",
-          );
-          const inp = askEvt && (askEvt as any).input;
-          if (inp && typeof inp === "object") {
-            (inp as Record<string, unknown>).answers = ev.answers;
-            setMessages((prev) => [...prev]);
-          }
-        }
+        markApprovalAnswered(reqId, ev.approved === true, ev.answers);
         setPendingApproval((cur) => (cur && cur.requestId === reqId ? null : cur));
         if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
         break;
       }
 
       case "approval_request": {
-        upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
+        // Only a question is kept in the transcript: every other request belongs to a tool call
+        // whose own card is already there, and history never holds the request — keeping it drew
+        // the same call twice, the second card green even after a denial.
+        if (approvalDrawsAsCard(ev)) {
+          upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
+        }
         // During turn_events replay, session_state already set the correct
         // pendingApproval — skip re-setting it for historical (already-answered) events
         if (isReplayingRef.current) break;
@@ -883,7 +894,7 @@ export function useChat(
         break;
       }
     }
-  }, [routeToParent, routeToFinalizedParent, syncMessages, markSubagentStatus, updateTeamActivity, loadTeamDetail]);
+  }, [routeToParent, routeToFinalizedParent, syncMessages, markSubagentStatus, markApprovalAnswered, updateTeamActivity, loadTeamDetail]);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;
@@ -1568,28 +1579,11 @@ export function useChat(
         }),
       );
 
-      // Merge answers into the AskUserQuestion tool_use event so FE shows selected answers
-      if (approved && data) {
-        const evts = streamingEventsRef.current;
-        const askEvt = evts.find(
-          (e: ChatEvent) =>
-            e.type === "approval_request" &&
-            (e as any).requestId === requestId &&
-            (e as any).tool === "AskUserQuestion",
-        );
-        if (askEvt) {
-          const inp = (askEvt as any).input;
-          if (inp && typeof inp === "object") {
-            (inp as Record<string, unknown>).answers = data;
-          }
-        }
-        setMessages((prev) => [...prev]);
-      }
-
+      markApprovalAnswered(requestId, approved, data);
       setPendingApproval(null);
       if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     },
-    [send],
+    [send, markApprovalAnswered],
   );
 
   const cancelStreaming = useCallback(() => {

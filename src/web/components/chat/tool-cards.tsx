@@ -192,14 +192,17 @@ export function ToolCard({
 
   const { toolName, input } = extractToolInfo(tool);
   const hasResult = result?.type === "tool_result";
-  const isError = hasResult && !!(result as any).isError;
+  // An approval request's own card (a question) carries its answer: declined reads as an error,
+  // not as done — "answered" alone is not success.
+  const approvalAnswer = tool.type === "approval_request" ? (tool as any).approved as boolean | undefined : undefined;
+  const isError = (hasResult && !!(result as any).isError) || approvalAnswer === false;
   // Codex sends an exit code for shell tools. Keep it visible: output can contain
   // useful rows even when PowerShell recorded a non-terminating error and exited 1.
   const exitCode = hasResult && typeof (result as any).exitCode === "number"
     ? (result as any).exitCode as number
     : undefined;
   const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
-  const wasApproved = tool.type === "approval_request" && (tool as any).approved != null;
+  const wasApproved = approvalAnswer === true;
   const isSubagent = (toolName === "Agent" || toolName === "Task") && tool.type === "tool_use";
   const children = isSubagent ? (tool as any).children as ChatEvent[] | undefined : undefined;
   const hasChildren = children && children.length > 0;

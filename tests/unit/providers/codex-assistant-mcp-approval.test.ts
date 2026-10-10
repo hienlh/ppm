@@ -112,6 +112,21 @@ describe("Codex provider", () => {
     expect(responses).toEqual([{ id: 9, result: { action: "cancel", content: null, _meta: null } }]);
   });
 
+  it("sends an MCP approval's input as an object, so the card does not show escaped JSON", async () => {
+    const { session, pushed } = await live({ assistantSession: true, assistantInstructions: "# PPM Assistant" });
+    (provider as any).handleServerRequest(session, { id: 11, method: "mcpServer/elicitation/request", params: ELICITATION });
+    expect(pushed[0].input).toEqual({ server: "github", tool: "create_issue", message: ELICITATION.message, arguments: { title: "x" } });
+  });
+
+  it("shows a command approval as its script under the shell that runs it", async () => {
+    const { session, pushed } = await live({ permissionMode: "default" });
+    (provider as any).handleServerRequest(session, {
+      id: 12, method: "item/commandExecution/requestApproval",
+      params: { threadId: "t", turnId: "u", itemId: "i", command: "\"C:\\\\Windows\\\\powershell.exe\" -Command dir", cwd: "C:\\p", commandActions: [{ type: "unknown", command: "dir" }] },
+    });
+    expect(pushed[0]).toMatchObject({ type: "approval_request", tool: "PowerShell", input: { command: "dir", cwd: "C:\\p" } });
+  });
+
   it("declines the same elicitation in an ordinary session, as before", async () => {
     const { session, pushed } = await live({ permissionMode: "default" });
     (provider as any).handleServerRequest(session, { id: 10, method: "mcpServer/elicitation/request", params: ELICITATION });

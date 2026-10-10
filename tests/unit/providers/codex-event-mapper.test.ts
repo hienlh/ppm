@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { mapCodexEvent } from "../../../src/providers/codex-app-server/codex-event-mapper.ts";
+import { DECLINED_COMMAND_OUTPUT, mapCodexEvent } from "../../../src/providers/codex-app-server/codex-event-mapper.ts";
 
 const SID = "thread-1";
 
@@ -92,6 +92,24 @@ describe("mapCodexEvent", () => {
       params: { item: { type: "commandExecution", id: "i2", aggregatedOutput: "ok", exitCode: 0 } },
     }, SID);
     expect(out[0]).toMatchObject({ type: "tool_result", isError: false, exitCode: 0, toolUseId: "i2" });
+  });
+
+  it("item/completed(commandExecution declined) → an error saying it did not run", () => {
+    // A declined command never ran, so it has no exit code; the status alone says so.
+    const out = mapCodexEvent({
+      method: "item/completed",
+      params: { item: { type: "commandExecution", id: "i4", aggregatedOutput: null, exitCode: null, status: "declined" } },
+    }, SID);
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, toolUseId: "i4", output: DECLINED_COMMAND_OUTPUT });
+    expect(out[0]).not.toHaveProperty("exitCode");
+  });
+
+  it("item/completed(fileChange declined) → tool_result isError", () => {
+    const out = mapCodexEvent({
+      method: "item/completed",
+      params: { item: { type: "fileChange", id: "f1", changes: [], status: "declined" } },
+    }, SID);
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, toolUseId: "f1" });
   });
 
   it("turn/completed → done", () => {

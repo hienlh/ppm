@@ -82,6 +82,36 @@ export function commandDisplayText(item: Item): string {
   return parts.length > 0 ? parts.join("\n") : raw;
 }
 
+/**
+ * PPM's shell tool for a codex command. The interpreter appears only in the wrapped form
+ * (`command` as a string, or the argv array a rollout and the legacy approval carry), never
+ * in the unwrapped script that is displayed.
+ */
+export function shellToolName(rawCommand: unknown): "PowerShell" | "Bash" {
+  const raw = Array.isArray(rawCommand) ? rawCommand.join(" ") : String(rawCommand ?? "");
+  return /powershell|pwsh/i.test(raw) ? "PowerShell" : "Bash";
+}
+
+/**
+ * Whether an item's status says it did not succeed: it failed, or the user declined it. A
+ * declined command never ran, so it has no exit code to say so — reading the exit code alone
+ * showed every denial as a success. The live stream sends the status as a string or as
+ * `{ type }`; a rollout as a string.
+ */
+export function itemStatusIsError(status: unknown): boolean {
+  const s = status && typeof status === "object" ? (status as { type?: unknown }).type : status;
+  return typeof s === "string" && (s.toLowerCase() === "failed" || s.toLowerCase() === "declined");
+}
+
+/** Whether an item's status says the user declined it. */
+export function itemStatusIsDeclined(status: unknown): boolean {
+  const s = status && typeof status === "object" ? (status as { type?: unknown }).type : status;
+  return typeof s === "string" && s.toLowerCase() === "declined";
+}
+
+/** A declined command's result: it has no output of its own, and an empty result reads as "ran, printed nothing". */
+export const DECLINED_COMMAND_OUTPUT = "Declined by the user. The command did not run.";
+
 /** Build the tool_use input payload from a ThreadItem (per-variant fields). */
 export function itemToToolUse(item: Item): ChatEvent {
   const type = item.type ?? "tool";
@@ -93,7 +123,7 @@ export function itemToToolUse(item: Item): ChatEvent {
       // (not a raw `commandExecution` JSON blob). Sniff PowerShell vs Bash from
       // the WRAPPED form — the interpreter only appears there, never in the
       // unwrapped script that gets displayed.
-      tool = /powershell|pwsh/i.test(String(item.command ?? "")) ? "PowerShell" : "Bash";
+      tool = shellToolName(item.command);
       input = { command: commandDisplayText(item), cwd: item.cwd };
       break;
     }
@@ -168,15 +198,15 @@ export function itemToToolResult(item: Item): ChatEvent {
     output = redactTruncate(item.aggregatedOutput ?? "");
     const exit = item.exitCode;
     exitCode = typeof exit === "number" ? exit : undefined;
-    isError = exitCode != null && exitCode !== 0;
+    isError = (exitCode != null && exitCode !== 0) || itemStatusIsError(item.status);
+    if (!output && itemStatusIsDeclined(item.status)) output = DECLINED_COMMAND_OUTPUT;
   } else if (type === "mcpToolCall") {
     output = redactTruncate(mcpResultText(item.result) ?? item.error ?? "");
     isError = item.error != null;
   } else if (type === "fileChange") {
     const changes = Array.isArray(item.changes) ? item.changes : [];
     output = changes.map((c) => `${(c as any)?.kind?.type ?? "update"} ${(c as any)?.path ?? ""}`.trim()).join("\n") || "applied";
-    const st = item.status as { type?: string } | string | undefined;
-    isError = (typeof st === "object" ? st?.type : st) === "failed";
+    isError = itemStatusIsError(item.status);
   } else if (type === "dynamicToolCall") {
     output = redactTruncate(item.contentItems ?? "");
     isError = item.success === false;

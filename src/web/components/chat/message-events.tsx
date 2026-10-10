@@ -12,6 +12,7 @@ import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownContent } from "./message-markdown";
+import { approvalDrawsAsCard } from "@/lib/approval-request";
 
 /**
  * Renders events in order — consecutive text events merged into one bubble,
@@ -79,6 +80,10 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
       groups.push({ kind: "tool", tool: event });
     } else if (event.type === "tool_result") {
       // Skip tool_results in first pass — matched below
+    } else if (event.type === "approval_request" && !approvalDrawsAsCard(event)) {
+      // Its tool call's own card already stands for it (see approvalDrawsAsCard). Checked here
+      // too, not only where the chat stores events, so no list of events draws what history would not.
+      continue;
     } else {
       if (textBuffer) {
         groups.push({ kind: "text", content: textBuffer });

@@ -1,7 +1,8 @@
 /**
  * The approval card shows what will actually happen: an Assistant endpoint card leads with the
  * server's summary and shows the SQL or message in full, wrapped rather than scrolled sideways,
- * with its statement count and any warning; a provider's card keeps its raw input, also wrapped.
+ * with its statement count and any warning; a provider's card shows its input, also wrapped — a
+ * shell call as its command and directory, anything else as JSON.
  * A chat's card follows the server: a greeting that names no card takes it away.
  */
 import { afterAll, afterEach, expect, it } from "bun:test";
@@ -52,6 +53,38 @@ it("keeps a provider's card on its raw input, wrapped too", async () => {
   const pre = view.container.querySelector("pre")!;
   expect(pre.textContent).toContain("rm -rf build");
   expect(pre.className).toContain("whitespace-pre-wrap");
+});
+
+it("shows a shell call as its command and directory, not as escaped JSON", async () => {
+  const command = "Get-ChildItem C:\\Users\\PC\nRemove-Item .\\build -Recurse";
+  view = await mount(<ApprovalCard
+    approval={{ requestId: "r7", tool: "PowerShell", input: { command, cwd: "C:\\Users\\PC\\alpha", reason: "List the folder" } }}
+    onRespond={() => {}}
+  />);
+  const pre = view.container.querySelector("pre")!;
+  // Every line and every single backslash, exactly as it runs.
+  expect(pre.textContent).toBe(command);
+  expect(pre.className).toContain("whitespace-pre-wrap");
+  const text = view.container.textContent ?? "";
+  expect(text).toContain("PowerShell");
+  expect(text).toContain("DirectoryC:\\Users\\PC\\alpha");
+  expect(text).toContain("ReasonList the folder");
+  expect(text).not.toContain("\\\\");
+  expect(text).not.toContain("\"command\"");
+});
+
+it("reveals a hidden character in a shell call's directory too", async () => {
+  view = await mount(<ApprovalCard approval={{ requestId: "r8", tool: "Bash", input: { command: "ls", cwd: `/srv/${RLO}app` } }} onRespond={() => {}} />);
+  expect(view.container.textContent).toContain("/srv/⟨U+202E⟩app");
+  expect(view.container.textContent).toContain("invisible or text-direction characters");
+});
+
+it("shows any other input as JSON, and a string input as the string itself", async () => {
+  view = await mount(<ApprovalCard approval={{ requestId: "r9", tool: "mcp__x__y", input: { server: "x", arguments: { a: 1 } } }} onRespond={() => {}} />);
+  expect(view.container.querySelector("pre")!.textContent).toBe(JSON.stringify({ server: "x", arguments: { a: 1 } }, null, 2));
+  await view.unmount();
+  view = await mount(<ApprovalCard approval={{ requestId: "r10", tool: "Tool", input: "{\"kind\":\"command\"}" }} onRespond={() => {}} />);
+  expect(view.container.querySelector("pre")!.textContent).toBe("{\"kind\":\"command\"}");
 });
 
 it("follows the server's greeting: none named means none shown", () => {

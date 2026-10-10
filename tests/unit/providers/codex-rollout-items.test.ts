@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { mapRolloutItem } from "../../../src/providers/codex-app-server/codex-rollout-items.ts";
+import { DECLINED_COMMAND_OUTPUT, mapCodexEvent } from "../../../src/providers/codex-app-server/codex-event-mapper.ts";
 import { parseRolloutJsonl } from "../../../src/providers/codex-app-server/codex-history.ts";
 
 /**
@@ -70,6 +71,17 @@ describe("mapRolloutItem", () => {
     it("marks a non-zero exit as an error", () => {
       const failed = { ...item, exit_code: 1, aggregated_output: "boom" };
       expect((mapRolloutItem(failed) as any).events[1].isError).toBe(true);
+    });
+
+    it("marks a command the user declined as an error, the same as the live stream does", () => {
+      const declined = { ...item, exit_code: undefined, aggregated_output: "", status: "declined" };
+      const [, result] = (mapRolloutItem(declined) as any).events;
+      const [live] = mapCodexEvent({
+        method: "item/completed",
+        params: { item: { type: "commandExecution", id: "call_1", aggregatedOutput: "", status: "declined" } },
+      }, "s");
+      expect(result).toMatchObject({ isError: true, output: DECLINED_COMMAND_OUTPUT });
+      expect({ isError: result.isError, output: result.output }).toEqual({ isError: (live as any).isError, output: (live as any).output });
     });
 
     it("falls back to the raw command when there is no parsed form", () => {

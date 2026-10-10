@@ -40,6 +40,18 @@ export function approvalFromWire(raw: unknown): ApprovalRequest | null {
 }
 
 /**
+ * Whether an approval request has a card of its own in the message list. Only a question does:
+ * its tool call is dropped from the stream and the request carries the questions and, once
+ * answered, the answers. Any other request belongs to a tool call whose own card is already in
+ * the list and shows how it ended; the waiting request is drawn apart from the messages (the
+ * approval card), and history never holds it. A second card for the same call showed it twice,
+ * marked done whatever the answer was.
+ */
+export function approvalDrawsAsCard(event: { type?: unknown; tool?: unknown }): boolean {
+  return event.type === "approval_request" && event.tool === "AskUserQuestion";
+}
+
+/**
  * The card to show after a `session_state` greeting: the one it names, none when it says none,
  * the current one when the greeting does not say (an older server).
  */
