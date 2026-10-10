@@ -4,8 +4,8 @@
  * calls a name a user function shadows — and the check itself runs none of them, which EXPLAIN
  * does. Runs only when `PPM_TEST_PG_URL` names a disposable database, e.g.
  *
- *   docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=x postgres:15
- *   PPM_TEST_PG_URL=postgres://postgres:x@127.0.0.1:55432/postgres bun test tests/integration/assistant-sql-reach-postgres.test.ts
+ *   docker run --rm -d -p 25432:5432 -e POSTGRES_PASSWORD=x postgres:15
+ *   PPM_TEST_PG_URL=postgres://postgres:x@127.0.0.1:25432/postgres bun test tests/integration/assistant-sql-reach-postgres.test.ts
  *
  * Everything it creates lives in one schema named after this run and is dropped at the end. That
  * includes the citext extension (contrib, shipped in the postgres image) when the database does
@@ -73,11 +73,24 @@ describe.skipIf(!PG_URL)("assistant catalog check on Postgres", () => {
         AS $$ BEGIN PERFORM pg_advisory_lock(${KEYS[4]}); RETURN 1; END $$;
       CREATE OR REPLACE FUNCTION public.first(bigint) RETURNS int LANGUAGE plpgsql STABLE
         AS $$ BEGIN PERFORM pg_advisory_lock(${KEYS[5]}); RETURN 1; END $$;
+      CREATE TYPE ${S}.mood AS ENUM ('ok', 'sad');
+      CREATE FUNCTION ${S}.mood_near(${S}.mood, ${S}.mood) RETURNS boolean LANGUAGE plpgsql IMMUTABLE
+        AS $$ BEGIN RETURN true; END $$;
+      CREATE OPERATOR ${S}.@@@ (leftarg = ${S}.mood, rightarg = ${S}.mood, function = ${S}.mood_near);
     `).simple();
     // Installed into this run's schema, so dropping the schema drops the extension with it.
     const installed = await admin!.unsafe(`SELECT 1 FROM pg_extension WHERE extname = 'citext'`);
     if (!installed.length) {
       await admin!.unsafe(`CREATE EXTENSION citext SCHEMA ${S}`).catch((e: Error) => { citextMissing = e.message; });
+    }
+    if (!citextMissing) {
+      const [where] = await admin!.unsafe(`SELECT extnamespace::regnamespace::text AS schema FROM pg_extension WHERE extname = 'citext'`);
+      const citext = `${(where as { schema: string }).schema}.citext`;
+      await admin!.unsafe(`
+        CREATE TABLE ${S}.tc (id int, name text, name_ci ${citext}, m ${S}.mood);
+        CREATE VIEW ${S}.v_ci AS SELECT id, name_ci FROM ${S}.tc;
+        CREATE VIEW ${S}.v_id AS SELECT id FROM ${S}.tc;
+      `).simple();
     }
   });
 
@@ -105,10 +118,35 @@ describe.skipIf(!PG_URL)("assistant catalog check on Postgres", () => {
 
   it("refuses what an installed extension's functions could answer, while Postgres's own stay proven", async () => {
     if (citextMissing) throw new Error(`this test needs the citext extension: ${citextMissing}`);
-    // citext's max(citext) is an aggregate over its own C functions; its = runs one too.
+    // citext's max(citext) is an aggregate over its own C functions.
     expect(await check(`SELECT max(id) FROM ${S}.t`)).toMatchObject({ proven: false, reason: expect.stringContaining("named max") });
-    expect(await check(`SELECT id FROM ${S}.t WHERE id = 1`)).toMatchObject({ proven: false, reason: expect.stringContaining("operator =") });
     expect(await check(`SELECT count(*), upper(name) FROM ${S}.t`)).toEqual({ proven: true });
+  });
+
+  it("asks only where a query uses citext's type or operators, not wherever it writes = < >", async () => {
+    if (citextMissing) throw new Error(`this test needs the citext extension: ${citextMissing}`);
+    for (const sql of [
+      `SELECT count(*) FROM ${S}.tc WHERE id = 1`,
+      `SELECT id FROM ${S}.tc`,
+      `SELECT id, name FROM ${S}.tc WHERE name < 'b' AND id IN (1, 2) AND name LIKE 'a%' ORDER BY name`,
+      `SELECT id FROM ${S}.v_id WHERE id > 0`,
+      `SELECT 'a' = 'A'`,
+      `SELECT m FROM ${S}.tc WHERE m = 'ok'`,
+    ]) {
+      expect({ sql, verdict: await check(sql) }).toEqual({ sql, verdict: { proven: true } });
+    }
+    const asks: [string, string][] = [
+      [`SELECT count(*) FROM ${S}.tc WHERE name_ci = 'x'`, "tc.name_ci"],
+      [`SELECT name_ci FROM ${S}.tc`, "tc.name_ci"],
+      [`SELECT * FROM ${S}.tc`, "tc.name_ci"],
+      [`SELECT r FROM ${S}.tc r`, "tc.name_ci"],
+      [`SELECT 'a'::citext = 'A'`, "names the type"],
+      [`SELECT * FROM ${S}.v_ci`, "name_ci"],
+      [`SELECT m FROM ${S}.tc WHERE m @@@ 'ok'`, "operator @@@"],
+    ];
+    for (const [sql, why] of asks) {
+      expect({ sql, verdict: await check(sql) }).toMatchObject({ sql, verdict: { proven: false, reason: expect.stringContaining(why) } });
+    }
   });
 
   it("refuses a user function written as a column of a row, which has no parenthesis to see", async () => {
