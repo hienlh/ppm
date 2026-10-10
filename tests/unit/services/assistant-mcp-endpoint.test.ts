@@ -10,7 +10,7 @@ import { Hono } from "hono";
 import {
   deleteSessionMetadata, setSessionAssistant, setSessionMetadata, setSessionMigratedTo,
 } from "../../../src/services/db.service.ts";
-import { createAssistantMcpHandler, isLiveAssistantSession } from "../../../src/services/assistant-mcp/assistant-mcp-endpoint.ts";
+import { callAssistantTool, createAssistantMcpHandler, isLiveAssistantSession } from "../../../src/services/assistant-mcp/assistant-mcp-endpoint.ts";
 import { createAssistantMcpTokenStore } from "../../../src/services/assistant-mcp/assistant-mcp-tokens.ts";
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_MCP_TIMEOUT_MS } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
 import { ASSISTANT_TOOLS } from "../../../src/shared/assistant-tool-names.ts";
@@ -60,16 +60,28 @@ describe("assistant MCP endpoint", () => {
     const list = await (await rpc(token, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([...ASSISTANT_TOOLS]);
     // Every tool reads, except the ones that move the user's screen, which change no data, the
-    // two that may change data once the user approves, and the one running PPM's commands, an
+    // ones that may change data once the user approves, and the one running PPM's commands, an
     // extension's among them, which may also reach outside.
     const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab"]);
-    const writes = new Set(["db_query", "chat_send_message"]);
+    const writes = new Set(["db_query", "chat_send_message", "chat_start", "chat_answer_approval"]);
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(expect.arrayContaining(["chats_attention", "chat_start", "chat_answer_approval", "ppm_cli_reference"]));
     for (const tool of list.result.tools) {
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
       else if (writes.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
       else if (tool.name === "ui_run_command") expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: true });
       else expect(tool.annotations.readOnlyHint).toBe(true);
     }
+  });
+
+  it("routes the chat-management tools to their handlers", async () => {
+    const sessionId = assistantSession();
+    const reference = await callAssistantTool({ sessionId }, "ppm_cli_reference", {}) as { content: Array<{ text: string }> };
+    expect(reference.content[0]!.text).toContain("# PPM CLI Reference");
+    const overview = await callAssistantTool({ sessionId }, "chats_attention", { since: "6h" }) as { content: Array<{ text: string }>; isError?: boolean };
+    expect(overview.isError).toBeFalsy();
+    expect(JSON.parse(overview.content[0]!.text)).toMatchObject({ needsDecision: [], running: [] });
+    const refused = await callAssistantTool({ sessionId }, "chats_attention", { since: "last week" }) as { isError?: boolean };
+    expect(refused.isError).toBe(true);
   });
 
   it("refuses a browser request, a wrong token and a body over the cap", async () => {

@@ -19,6 +19,10 @@ export const UI_READ_TAB_TOOL = "ui_read_tab";
 export const UI_LIST_COMMANDS_TOOL = "ui_list_commands";
 export const UI_RUN_COMMAND_TOOL = "ui_run_command";
 export const CHAT_SEND_MESSAGE_TOOL = "chat_send_message";
+export const CHATS_ATTENTION_TOOL = "chats_attention";
+export const CHAT_START_TOOL = "chat_start";
+export const CHAT_ANSWER_APPROVAL_TOOL = "chat_answer_approval";
+export const PPM_CLI_REFERENCE_TOOL = "ppm_cli_reference";
 
 /** Every tool the endpoint serves, in the order `tools/list` gives them. */
 export const ASSISTANT_TOOLS = [
@@ -26,6 +30,7 @@ export const ASSISTANT_TOOLS = [
   DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, UI_GET_STATE_TOOL,
   UI_OPEN_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_SWITCH_PROJECT_TOOL, UI_CLOSE_TAB_TOOL, UI_READ_TAB_TOOL,
   UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL, CHAT_SEND_MESSAGE_TOOL,
+  CHATS_ATTENTION_TOOL, CHAT_START_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
 

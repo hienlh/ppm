@@ -1,6 +1,7 @@
 import type { SessionPhase } from "../../types/api.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { DeliverResult } from "../assistant-mcp/assistant-chat-send.ts";
+import type { AnswersById, NormalizedQuestion } from "../../shared/approval-questions.ts";
 
 /**
  * What the rest of the server may do to a chat that only a browser could do before: send it a
@@ -50,6 +51,19 @@ export interface LiveApprovalCard {
   summary?: ApprovalSummary;
   /** An AskUserQuestion card: answered with choices rather than allow/deny. */
   isQuestion: boolean;
+  /** A question card's questions, the same shape for every provider; answer them by id. */
+  questions?: NormalizedQuestion[];
+}
+
+/**
+ * An answer to a card. A question card is answered with `answersById` (question id → chosen
+ * labels or typed text); the server turns it into what the asking provider expects. `answers`
+ * is the provider's own shape as an older browser tab sends it, still read for a question card.
+ */
+export interface ApprovalAnswer {
+  approved: boolean;
+  answersById?: AnswersById;
+  answers?: unknown;
 }
 
 export interface LiveChatState {
@@ -71,13 +85,12 @@ export interface ChatControl {
    * runs. A message joining a running turn carries its `channel` too.
    */
   sendUserMessage(sessionId: string, text: string, opts: SendUserMessageOpts): Promise<DeliverResult>;
-  /** Answers a card; "stale" when nothing waits on that id any more (answered elsewhere, ended). */
-  answerApproval(
-    sessionId: string,
-    requestId: string,
-    answer: { approved: boolean; answers?: unknown },
-    origin: ServerOrigin,
-  ): "answered" | "stale";
+  /**
+   * Answers a card; "stale" when nothing waits on that id any more (answered elsewhere, ended).
+   * Answers to questions the card does not ask are dropped; check them first with
+   * `answersByIdError` when they come from anywhere but a person's own form.
+   */
+  answerApproval(sessionId: string, requestId: string, answer: ApprovalAnswer, origin: ServerOrigin): "answered" | "stale";
   /** Stops the running turn; false when the chat has no live entry. */
   cancelTurn(sessionId: string, origin: ServerOrigin): boolean;
   /** What a live chat is doing now; null when it has no entry in this process. */

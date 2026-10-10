@@ -55,6 +55,8 @@ import { getOrFetchUsage, registerUsageSource } from "../../services/provider-us
 import { codexUsageSource } from "./codex-usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
 import { redactFields, redactTruncate } from "./codex-redact.ts";
+import { normalizeCodexQuestions } from "../../shared/approval-questions.ts";
+import { assistantShellEnv } from "../../services/assistant/assistant-shell-env.ts";
 import { approvalInput, approvalToolLabel } from "./codex-approval-input.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
 import { getRolloutMessagesAsync } from "./codex-history-async.ts";
@@ -875,7 +877,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
     const codexHome = live.assistant ? assistantSpawnHome(account.home) : account.home;
-    client.start({ cwd: live.cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp) }, purpose: "chat" });
+    client.start({ cwd: live.cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
@@ -982,7 +984,7 @@ export class CodexAppServerProvider implements AIProvider {
     // An Assistant app-server runs on a home of its own that shares only the account's login and
     // sessions folder, so the user's AGENTS.md, config.toml and skills stay behind.
     const codexHome = live.assistant ? assistantSpawnHome(account?.home) : account?.home;
-    client.start({ cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp) }, purpose: "chat" });
+    client.start({ cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
@@ -1218,7 +1220,10 @@ export class CodexAppServerProvider implements AIProvider {
       const ppmReqId = crypto.randomUUID();
       const questions = (req.params as { questions?: unknown })?.questions;
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method, questions });
-      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: "AskUserQuestion", input: redactTruncate(req.params) });
+      // The card is read from the request as received, not from a capped string: its questions
+      // and options are what the user answers, and answers come back keyed by the same ids.
+      const normalized = normalizeCodexQuestions(req.params);
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: "AskUserQuestion", input: { questions: normalized }, questions: normalized });
       return;
     }
     // permissions/* response is a granted-profile, not a decision → decline.

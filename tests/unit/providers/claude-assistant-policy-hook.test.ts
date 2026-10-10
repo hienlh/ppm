@@ -217,6 +217,11 @@ describe("Claude Assistant session", () => {
     expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "# PPM Assistant" });
   });
 
+  it("gives the Assistant's shell this instance's PPM folder, so an approved `ppm` command reaches it", async () => {
+    const opts = await startTurn();
+    expect(opts.env.PPM_HOME).toBe(getPpmDir());
+  });
+
   describe("with a ripgrep config in PPM's environment", () => {
     let saved: string | undefined;
     beforeEach(() => {

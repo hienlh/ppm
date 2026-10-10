@@ -5,8 +5,9 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  chatSendSummary, closeTabSummary, dbWriteSummary, readOutsideSummary,
+  answerApprovalSummary, chatSendSummary, chatStartSummary, closeTabSummary, dbWriteSummary, readOutsideSummary,
 } from "../../../src/services/assistant-mcp/assistant-approval-summary.ts";
+import { decidingInput } from "../../../src/services/chat-control/approval-deciding-input.ts";
 import type { ApprovalSummary } from "../../../src/shared/assistant-approval.ts";
 
 /** Everything on the card except its body. */
@@ -72,5 +73,25 @@ describe("approval summaries", () => {
   it("cuts an over-long fact rather than letting it take over the card", () => {
     const s = closeTabSummary({ tabType: "editor", tabTitle: "x".repeat(1_000), project: null, reason: "unsaved" });
     expect(s.facts[0]!.value.length).toBeLessThanOrEqual(201);
+  });
+
+  it("states a new chat's mode, where it came from, and warns about bypass", () => {
+    const base = { project: "web", providerId: "codex", model: null, title: null, text: "fix it" };
+    const bypass = chatStartSummary({ ...base, mode: "bypassPermissions", modeSource: "new-chat-default" });
+    expect(bypass.headline).toContain("new Codex chat");
+    expect(bypass.facts).toContainEqual({ label: "Model", value: "the provider's default" });
+    expect(bypass.warning).toContain("without asking");
+    expect(chatStartSummary({ ...base, mode: "plan", modeSource: "assistant" }).warning).toBeUndefined();
+  });
+
+  it("repeats another chat's card verbatim, its long facts uncut", () => {
+    const url = `https://example.test/${"p".repeat(400)}`;
+    const s = answerApprovalSummary({
+      project: "web", sessionId: "abcdef0123456789", sessionTitle: null, providerId: "claude", decision: "allow",
+      deciding: decidingInput({ tool: "WebFetch", input: { url, prompt: "read <this> `now`" } }),
+    });
+    expect(s.facts).toContainEqual({ label: "URL", value: url });
+    expect(s.body?.text).toBe("read <this> `now`");
+    expect(s.warning).toContain("as soon as you allow it");
   });
 });

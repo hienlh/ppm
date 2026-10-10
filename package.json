@@ -24,6 +24,7 @@
     "typecheck": "bunx tsc --noEmit",
     "test:docker": "docker compose -f docker-compose.test.yml up --build --renew-anon-volumes --abort-on-container-exit --exit-code-from test",
     "generate:bot": "bun scripts/generate-bot-coordinator.ts --update",
+    "generate:cli-reference": "bun scripts/generate-ppm-cli-reference.ts --update",
     "generate:skill": "bun scripts/generate-ppm-skill.ts",
     "prepublishOnly": "bun run generate:skill && bun run build:web"
   },

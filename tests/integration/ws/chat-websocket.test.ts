@@ -12,6 +12,7 @@ import { CHAT_BUSY, chatControl, type ChatControl } from "../../../src/services/
 import { chatLifecycle, type ChatLifecycleEvents } from "../../../src/services/chat-control/chat-lifecycle.ts";
 import { addNotificationSuppressor } from "../../../src/services/chat-control/notification-suppressor.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../../src/shared/assistant-project.ts";
+import { normalizeCodexQuestions } from "../../../src/shared/approval-questions.ts";
 import type { AIProvider, SendMessageOpts } from "../../../src/types/chat.ts";
 
 const PORT = 19879; // Unique port — avoid conflict with supervisor-resilience (19876)
@@ -1255,5 +1256,103 @@ describe("Chat control from the server, with or without a browser", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("Question cards, answered by question id whichever provider asked", () => {
+  /** What each provider was handed for each answered card. */
+  const given = new Map<string, { approved: boolean; data: unknown }>();
+  const waiting = new Map<string, () => void>();
+
+  /** A provider whose every turn asks one question, waits for the answer, then ends. */
+  function questionProvider(id: string, card: () => Record<string, unknown>): AIProvider {
+    return {
+      id, name: id,
+      async createSession() { return { id: `${id}-${crypto.randomUUID()}`, providerId: id, title: "", createdAt: "" }; },
+      async resumeSession(sid: string) { return { id: sid, providerId: id, title: "", createdAt: "" }; },
+      async listSessions() { return []; },
+      async deleteSession() {},
+      async *sendMessage(sessionId: string) {
+        const requestId = crypto.randomUUID();
+        const answered = new Promise<void>((resolve) => waiting.set(requestId, resolve));
+        yield { type: "approval_request", requestId, tool: "AskUserQuestion", ...card() } as any;
+        await answered;
+        yield { type: "text", content: "Thanks." };
+        yield { type: "done", sessionId };
+      },
+      resolveApproval(requestId: string, approved: boolean, data?: unknown) {
+        given.set(requestId, { approved, data });
+        waiting.get(requestId)?.();
+      },
+    } as AIProvider;
+  }
+
+  // Codex's card as its provider sends it: the questions normalized from the raw request.
+  const CODEX_QUESTIONS = normalizeCodexQuestions({
+    questions: [
+      { id: "env", header: "Target", question: "Deploy where?", isOther: false, isSecret: false, options: [{ label: "staging" }, { label: "prod" }] },
+      { id: "token", header: "Token", question: "Deploy token?", isOther: false, isSecret: true, options: null },
+    ],
+  });
+  const CLAUDE_INPUT = {
+    questions: [
+      { question: "Which database?", header: "DB", options: [{ label: "Postgres" }, { label: "SQLite" }], multiSelect: false },
+      { question: "Which features?", header: "Features", options: [{ label: "Auth" }, { label: "Billing" }], multiSelect: true },
+    ],
+  };
+
+  it("hands Codex the answers under its own question ids, and shows a secret to nobody", async () => {
+    // Registered under codex's id, since that id is what decides the provider's answer shape.
+    const real = providerRegistry.get("codex");
+    providerRegistry.register(questionProvider("codex", () => ({ input: { questions: CODEX_QUESTIONS }, questions: CODEX_QUESTIONS })));
+    try {
+      const session = await chatService.createSession("codex", {});
+      const c = await connectWs(session.id);
+      await c.waitForType("session_state");
+      c.ws.send(JSON.stringify({ type: "message", content: "deploy" }));
+      const card = await c.waitForType("approval_request");
+      expect(card.questions.map((q: any) => q.id)).toEqual(["env", "token"]);
+      expect(chatControl()!.liveState(session.id)?.card?.questions?.map((q) => q.id)).toEqual(["env", "token"]);
+
+      c.ws.send(JSON.stringify({ type: "approval_response", requestId: card.requestId, approved: true, answersById: { env: ["prod"], token: ["s3cret"], bogus: ["x"] } }));
+      const resolved = await c.waitForType("approval_resolved");
+      expect(resolved.answers).toEqual({ "Deploy where?": "prod", "Deploy token?": "(hidden)" });
+      expect(given.get(card.requestId)).toEqual({ approved: true, data: { env: ["prod"], token: ["s3cret"] } });
+      await c.waitForType("done");
+      c.close();
+    } finally {
+      if (real) providerRegistry.register(real);
+      else (providerRegistry as unknown as { providers: Map<string, AIProvider> }).providers.delete("codex");
+    }
+  });
+
+  it("hands Claude its own shape from an id answer, and still reads an older tab's answer by text", async () => {
+    const STUB = "stub-question-claude";
+    providerRegistry.register(questionProvider(STUB, () => ({ input: CLAUDE_INPUT })));
+    const session = await chatService.createSession(STUB, {});
+    const c = await connectWs(session.id);
+    await c.waitForType("session_state");
+
+    c.ws.send(JSON.stringify({ type: "message", content: "set up" }));
+    const first = await c.waitForType("approval_request");
+    // Claude sends no ids; the server reads its questions off the tool input.
+    expect(first.questions.map((q: any) => q.id)).toEqual(["q1", "q2"]);
+    expect(chatControl()!.answerApproval(session.id, first.requestId, { approved: true, answersById: { q1: ["SQLite"], q2: ["Auth", "Billing"] } }, "telegram")).toBe("answered");
+    expect(given.get(first.requestId)?.data).toEqual({ "Which database?": "SQLite", "Which features?": "Auth, Billing" });
+    await c.waitForType("done");
+
+    c.ws.send(JSON.stringify({ type: "message", content: "again" }));
+    const second = await c.waitForNthType("approval_request", 2);
+    c.ws.send(JSON.stringify({ type: "approval_response", requestId: second.requestId, approved: true, data: { "Which database?": "Postgres" } }));
+    await c.waitForNthType("done", 2);
+    expect(given.get(second.requestId)?.data).toEqual({ "Which database?": "Postgres" });
+
+    // A skip is still a skip: no answers reach the provider.
+    c.ws.send(JSON.stringify({ type: "message", content: "once more" }));
+    const third = await c.waitForNthType("approval_request", 3);
+    c.ws.send(JSON.stringify({ type: "approval_response", requestId: third.requestId, approved: false }));
+    await c.waitForNthType("done", 3);
+    expect(given.get(third.requestId)).toEqual({ approved: false, data: undefined });
+    c.close();
   });
 });

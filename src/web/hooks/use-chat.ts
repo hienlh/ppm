@@ -16,7 +16,8 @@ import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { isAssistantProject } from "../../shared/assistant-project";
-import { approvalAfterGreeting, approvalDrawsAsCard, approvalFromWire, type ApprovalRequest } from "@/lib/approval-request";
+import { approvalAfterGreeting, approvalDrawsAsCard, approvalFromWire, approvalQuestions, type ApprovalRequest } from "@/lib/approval-request";
+import { answersForDisplay, type AnswersById } from "../../shared/approval-questions";
 import { ASSISTANT_TAB_TITLE, openAssistant } from "@/components/assistant/open-assistant";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
@@ -149,7 +150,8 @@ interface UseChatReturn {
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
   sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => void;
-  respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
+  /** `answersById` answers a question card by question id; the server converts it for the provider. */
+  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
   refetchMessages: () => void;
@@ -1569,17 +1571,20 @@ export function useChat(
   );
 
   const respondToApproval = useCallback(
-    (requestId: string, approved: boolean, data?: unknown) => {
+    (requestId: string, approved: boolean, answersById?: AnswersById) => {
       send(
         JSON.stringify({
           type: "approval_response",
           requestId,
           approved,
-          data,
+          ...(answersById ? { answersById } : {}),
         }),
       );
 
-      markApprovalAnswered(requestId, approved, data);
+      // The card shows its answers by question text until the server's own resolution arrives.
+      const card = streamingEventsRef.current.find((e) => e.type === "approval_request" && (e as any).requestId === requestId);
+      const shown = answersById && card ? answersForDisplay(approvalQuestions(card as unknown as ApprovalRequest), answersById) : undefined;
+      markApprovalAnswered(requestId, approved, shown);
       setPendingApproval(null);
       if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     },

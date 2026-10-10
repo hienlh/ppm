@@ -1,6 +1,7 @@
 import type { DialectName } from "../../shared/db-types.ts";
 import { splitSqlStatements } from "../../shared/split-sql-statements.ts";
 import type { ApprovalFact, ApprovalSummary } from "../../shared/assistant-approval.ts";
+import type { DecidingInput } from "../chat-control/approval-deciding-input.ts";
 
 /**
  * What an Assistant approval card says, built only from input the endpoint has already
@@ -82,7 +83,92 @@ export function chatSendSummary(input: ChatSendApproval): ApprovalSummary {
       fact("Mode from", SOURCE_LABELS[input.modeSource]),
     ],
     body: { label: "Message", text: input.text, format: "text" },
-    ...(bypass ? { warning: "That chat runs every tool without asking: whatever it does after this message will not ask you first." } : {}),
+    ...(bypass ? { warning: BYPASS_WARNING } : {}),
+  };
+}
+
+/** Where the mode a new chat starts in came from. */
+export type NewChatModeSource = "assistant" | "new-chat-default";
+
+const NEW_CHAT_SOURCE_LABELS: Record<NewChatModeSource, string> = {
+  assistant: "chosen by the Assistant",
+  "new-chat-default": "the mode a new chat gets when you open one in PPM (Settings → AI provider)",
+};
+
+const BYPASS_WARNING = "That chat runs every tool without asking: whatever it does after this message will not ask you first.";
+
+export interface ChatStartApproval {
+  project: string;
+  providerId: string;
+  /** The model asked for; null runs the provider's default. */
+  model: string | null;
+  title: string | null;
+  text: string;
+  mode: string;
+  modeSource: NewChatModeSource;
+}
+
+export function chatStartSummary(input: ChatStartApproval): ApprovalSummary {
+  const bypass = input.mode === "bypassPermissions";
+  return {
+    headline: `Start a new ${providerLabel(input.providerId)} chat in "${input.project}" and send it this message; it runs there as if you sent it`,
+    facts: [
+      fact("Project", input.project),
+      fact("Provider", providerLabel(input.providerId)),
+      fact("Model", input.model ?? "the provider's default"),
+      ...(input.title ? [fact("Title", input.title)] : []),
+      fact("Runs in", modeLabel(input.mode), bypass ? "warning" : undefined),
+      fact("Mode from", NEW_CHAT_SOURCE_LABELS[input.modeSource]),
+    ],
+    body: { label: "Message", text: input.text, format: "text" },
+    ...(bypass ? { warning: BYPASS_WARNING } : {}),
+  };
+}
+
+const providerLabel = (providerId: string): string => (providerId === "codex" ? "Codex" : "Claude");
+
+const DECIDING_LABELS: Record<DecidingInput["kind"], string> = {
+  command: "Command", web: "Request", write: "Content written", edit: "Changes", notebook: "New cell source",
+  patch: "Patch", tool: "Input", endpoint: "Body", question: "Questions",
+};
+
+export interface AnswerApprovalApproval {
+  project: string;
+  sessionId: string;
+  sessionTitle: string | null;
+  providerId: string;
+  /** The waiting card's deciding part, verbatim (`decidingInput`). */
+  deciding: DecidingInput;
+  decision: "allow" | "deny";
+  /** A question card's chosen answers, as question → answer. */
+  answers?: Array<{ question: string; answer: string }>;
+}
+
+/**
+ * The confirmation before the Assistant answers another chat's card. It repeats that card's
+ * deciding part verbatim — not cleaned, not shortened — because the user is approving what that
+ * card will run, and a cleaned copy (markup stripped from `echo x > ~/.bashrc`) is a different
+ * command. Facts naming the target's file, folder or URL are not capped for the same reason.
+ */
+export function answerApprovalSummary(input: AnswerApprovalApproval): ApprovalSummary {
+  const d = input.deciding;
+  const chat = input.sessionTitle ? `${input.sessionTitle} (${input.sessionId.slice(0, 8)})` : input.sessionId;
+  const question = d.kind === "question";
+  const verb = question ? (input.decision === "allow" ? "Answer" : "Skip") : input.decision === "allow" ? "Allow" : "Deny";
+  return {
+    headline: question
+      ? `${verb} a question a ${providerLabel(input.providerId)} chat in "${input.project}" is asking`
+      : `${verb} "${d.title}" in a ${providerLabel(input.providerId)} chat in "${input.project}"`,
+    facts: [
+      fact("Project", input.project),
+      fact("Chat", chat),
+      { label: "Your answer", value: verb, ...(input.decision === "allow" && !question ? { tone: "warning" as const } : {}) },
+      ...(question ? [] : [{ label: "Card", value: d.title }]),
+      ...d.facts.map((f) => ({ label: f.label, value: f.value })),
+      ...(input.answers ?? []).map((a) => ({ label: a.question, value: a.answer })),
+    ],
+    ...(d.text ? { body: { label: DECIDING_LABELS[d.kind], text: d.text, format: d.lang === "sql" ? "sql" as const : "text" as const } } : {}),
+    ...(input.decision === "allow" && !question ? { warning: "That chat runs this as soon as you allow it." } : {}),
   };
 }
 

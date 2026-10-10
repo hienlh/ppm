@@ -1,4 +1,5 @@
 import type { ApprovalSummary } from "../../shared/assistant-approval";
+import { normalizeClaudeQuestions, questionsFromWire, type NormalizedQuestion } from "../../shared/approval-questions";
 
 /**
  * The approval card a chat shows, read from the server's `approval_request` and from
@@ -13,6 +14,8 @@ export interface ApprovalRequest {
   input: unknown;
   /** Set on a PPM Assistant endpoint card: what will happen, as the server built it. */
   summary?: ApprovalSummary;
+  /** Set on a question card: its questions, the same shape whichever provider asked. */
+  questions?: NormalizedQuestion[];
 }
 
 function summaryFromWire(raw: unknown): ApprovalSummary | undefined {
@@ -36,7 +39,17 @@ export function approvalFromWire(raw: unknown): ApprovalRequest | null {
   const r = raw as Record<string, unknown>;
   if (typeof r.requestId !== "string" || !r.requestId) return null;
   const summary = summaryFromWire(r.summary);
-  return { requestId: r.requestId, tool: typeof r.tool === "string" ? r.tool : "Tool", input: r.input, ...(summary ? { summary } : {}) };
+  const questions = questionsFromWire(r.questions);
+  return {
+    requestId: r.requestId, tool: typeof r.tool === "string" ? r.tool : "Tool", input: r.input,
+    ...(summary ? { summary } : {}),
+    ...(questions ? { questions } : {}),
+  };
+}
+
+/** A question card's questions: as the server normalized them, else read off Claude's tool input. */
+export function approvalQuestions(approval: Pick<ApprovalRequest, "input" | "questions">): NormalizedQuestion[] {
+  return approval.questions ?? normalizeClaudeQuestions(approval.input);
 }
 
 /**

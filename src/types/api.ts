@@ -77,7 +77,7 @@ export type ChatWsServerMessage =
   | { type: "bash_output"; toolUseId: string; content: string; lineCount: number }
   | { type: "background_registry"; sessionId: string; shells: BackgroundShell[] }
   | { type: "subagent_status"; toolUseId: string; status: import("../shared/background-agent-status").BackgroundAgentStatus }
-  | { type: "approval_request"; requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary; origin?: "endpoint" }
+  | { type: "approval_request"; requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary; origin?: "endpoint"; questions?: import("../shared/approval-questions").NormalizedQuestion[] }
   /** This device answered an approval nothing waits on any more; nothing ran. */
   | import("../shared/assistant-approval").ApprovalStaleMessage
   | { type: "done"; sessionId: string; contextWindowPct?: number }

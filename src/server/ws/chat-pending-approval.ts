@@ -1,4 +1,5 @@
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
+import type { NormalizedQuestion } from "../../shared/approval-questions.ts";
 
 /**
  * The approval card a chat session is waiting on, one at a time.
@@ -23,6 +24,8 @@ export interface PendingApprovalEvent {
   summary?: ApprovalSummary;
   /** "endpoint" for a request the Assistant's tool endpoint holds; absent for the provider's own. */
   origin?: "endpoint";
+  /** A question card's questions in the shape every surface answers by id, whichever provider asked. */
+  questions?: NormalizedQuestion[];
 }
 
 /** Where a session keeps its cards: the one shown and those queued behind it. */

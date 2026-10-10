@@ -127,6 +127,27 @@ describe("Codex provider", () => {
     expect(pushed[0]).toMatchObject({ type: "approval_request", tool: "PowerShell", input: { command: "dir", cwd: "C:\\p" } });
   });
 
+  it("shows an ordinary question with its full, normalized questions and answers it by id", async () => {
+    const { session, pushed } = await live({ permissionMode: "default" });
+    const longQuestion = `Deploy where? ${"x".repeat(9000)}`;
+    const params = {
+      threadId: "t", turnId: "u", itemId: "i", isBlocking: true, autoResolutionMs: null,
+      questions: [
+        { id: "env", header: "Target", question: longQuestion, isOther: false, isSecret: false, options: [{ label: "staging", description: "" }, { label: "prod", description: "live" }] },
+        { id: "note", header: "Note", question: "Anything else?", isOther: true, isSecret: false, options: null },
+      ],
+    };
+    (provider as any).handleServerRequest(session, { id: 13, method: "item/tool/requestUserInput", params });
+    const card = pushed[0];
+    expect(card).toMatchObject({ type: "approval_request", tool: "AskUserQuestion" });
+    // Read from the request itself: nothing capped, every question keyed by codex's own id.
+    expect(card.questions.map((q: any) => [q.id, q.question.length, q.allowsFreeText])).toEqual([["env", longQuestion.length, false], ["note", 14, true]]);
+    expect(card.input).toEqual({ questions: card.questions });
+    // The server hands back the provider shape: codex's own ids.
+    provider.resolveApproval(card.requestId, true, { env: ["prod"], note: [] });
+    expect(responses).toEqual([{ id: 13, result: { answers: { env: { answers: ["prod"] }, note: { answers: [] } } } }]);
+  });
+
   it("declines the same elicitation in an ordinary session, as before", async () => {
     const { session, pushed } = await live({ permissionMode: "default" });
     (provider as any).handleServerRequest(session, { id: 10, method: "mcpServer/elicitation/request", params: ELICITATION });

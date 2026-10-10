@@ -5,6 +5,7 @@ import { unlink } from "node:fs/promises";
 import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
+import { createProjectChatSession } from "../../services/chat-session-create.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
 import { draftService } from "../../services/draft.service.ts";
@@ -17,7 +18,7 @@ import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, getSessionDesignSlugs, setSessionDesignSlug, copySessionForkSettings } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, listTurnUsage, getSessionProvider, getSessionDesignSlugs, copySessionForkSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
@@ -32,7 +33,7 @@ import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-s
 import { invalidateUsage, refreshUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
-import { setSessionTag, bulkSetSessionTag, getTagById, getProjectDefaultTagId } from "../../services/tag.service.ts";
+import { setSessionTag, bulkSetSessionTag, getTagById } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { listProjectSessions, searchProjectChats } from "../../services/chat-session-queries.service.ts";
 import { readSessionHistory } from "../../services/chat-history-read.service.ts";
@@ -261,24 +262,17 @@ chatRoutes.post("/sessions", async (c) => {
         return c.json(err(`Provider "${provider.id}" does not support design sessions`), 400);
       }
     }
-    const session = await chatService.createSession(body.providerId, {
+    const session = await createProjectChatSession({
+      providerId: body.providerId,
       projectName,
       projectPath,
       title: body.title,
       // A design or Assistant session spawns with its own instructions, so a spare would not fit it.
       adoptWarmSpare: !isValidDesignSlug(designSlug) && !assistant,
+      ...(typeof body.clearedFrom === "string" && body.clearedFrom ? { clearedFrom: body.clearedFrom } : {}),
+      ...(isValidDesignSlug(designSlug) ? { designSlug } : {}),
+      ...(typeof body.accountId === "string" && body.accountId ? { accountId: body.accountId } : {}),
     });
-    if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
-    if (isValidDesignSlug(designSlug)) setSessionDesignSlug(session.id, designSlug);
-    // The tab claimed an account when it opened and showed its name; honour that here so
-    // the first message runs on the account the user was actually looking at. Advisory,
-    // never authoritative: bindPickedAccount re-checks the id against the server's own
-    // pool and simply declines an id it does not recognise, because this arrives from a
-    // client and selecting a token by client-supplied id is not something to allow.
-    if (body.accountId) bindPickedAccount(session.id, session.providerId, body.accountId);
-    // Auto-assign default tag if project has one
-    const defaultTagId = getProjectDefaultTagId(projectPath);
-    if (defaultTagId) setSessionTag(session.id, defaultTagId, projectPath);
     return c.json(ok(session), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 400);

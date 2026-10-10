@@ -1,6 +1,6 @@
 import {
-  CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL,
-  PROJECTS_LIST_TOOL,
+  CHAT_ANSWER_APPROVAL_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, CHAT_START_TOOL,
+  CHATS_ATTENTION_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, PPM_CLI_REFERENCE_TOOL, PROJECTS_LIST_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
 import { UI_COMMAND_TOOL_DEFINITIONS, UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFINITION } from "./assistant-ui-tool-definitions.ts";
@@ -136,5 +136,60 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
       text: { type: "string", minLength: 1, maxLength: MAX_CHAT_MESSAGE_CHARS, description: "The message, exactly as it should be sent." },
     }, ["project", "sessionId", "text"]),
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  },
+  {
+    name: CHATS_ATTENTION_TOOL,
+    title: "What needs the user",
+    description: "Overview of the user's chats across projects, open or not: cards waiting for an answer (with what "
+      + "each would run), chats running, cards lost to a restart, chats stopped on an error, finished chats not yet "
+      + "read, and finished ones already read. Each group lists at most 20. Never asks.",
+    inputSchema: object({
+      project: { ...PROJECT, description: "Only this project's chats." },
+      since: { type: "string", description: "Finished and stopped chats from \"today\" (default) or the last hours, e.g. \"6h\" (up to 168h)." },
+    }),
+    annotations: READ_ONLY,
+  },
+  {
+    name: CHAT_START_TOOL,
+    title: "Start a new chat",
+    description: "Open a new chat in a project and send it a first message, which it then works on as if the user "
+      + "had typed it. Always asks the user first; the card shows the project, provider, model, the permission mode "
+      + "it runs in and the full message. Without `permissionMode` the chat gets the mode a new chat gets in PPM "
+      + "(often bypass, which runs every tool unasked); suggest a safer mode when the user did not say. Answers "
+      + "with the new session id.",
+    inputSchema: object({
+      project: PROJECT,
+      text: { type: "string", minLength: 1, maxLength: MAX_CHAT_MESSAGE_CHARS, description: "The first message, exactly as it should be sent." },
+      providerId: { type: "string", enum: ["claude", "codex"], description: "The chat's provider (default: PPM's default provider)." },
+      model: { type: "string", description: "A model id for the chat; the provider's default when absent." },
+      permissionMode: { type: "string", enum: ["default", "acceptEdits", "plan", "bypassPermissions"], description: "The mode the chat runs in." },
+      title: { type: "string", maxLength: 200, description: "A title for the chat." },
+    }, ["project", "text"]),
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  },
+  {
+    name: CHAT_ANSWER_APPROVAL_TOOL,
+    title: "Answer another chat's card",
+    description: "Answer the card a chat is waiting on (take the ids from chats_attention). Always asks the user first, "
+      + "denying included; the confirmation repeats exactly what the card would run. A question card is answered with "
+      + "`answersById` (question id → list of chosen option labels or typed text; one entry unless the question allows "
+      + "several); `deny` skips it. A card PPM cannot show in full here can only be denied.",
+    inputSchema: object({
+      project: PROJECT,
+      sessionId: { type: "string", description: "The chat's session id." },
+      requestId: { type: "string", description: "The waiting card's id." },
+      decision: { type: "string", enum: ["allow", "deny"], description: "Allow (or answer) the card, or deny (or skip) it." },
+      answersById: { type: "object", additionalProperties: { type: "array", items: { type: "string" } }, description: "A question card's answers." },
+    }, ["project", "sessionId", "requestId", "decision"]),
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  },
+  {
+    name: PPM_CLI_REFERENCE_TOOL,
+    title: "PPM CLI reference",
+    description: "How to run the `ppm` command line against this PPM, which commands go through the running server and "
+      + "which change its data directly, and every command with its options. For what PPM's own tools do not cover "
+      + "(git, schedules, tunnels, extensions). Running a command is a shell call, which asks the user.",
+    inputSchema: object({}),
+    annotations: READ_ONLY,
   },
 ] as const;

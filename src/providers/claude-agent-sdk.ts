@@ -17,6 +17,7 @@ import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { assistantToolDecision } from "../services/assistant/assistant-tool-policy.ts";
+import { assistantShellEnv } from "../services/assistant/assistant-shell-env.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
@@ -434,7 +435,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // one holding `--follow` makes both tools walk through links out of a project. The
     // Assistant's read policy allows a search by the folder it names, so its CLI must never
     // be handed such a file; ordinary chats keep the user's ripgrep setup.
-    if (opts?.assistantSession) delete base.RIPGREP_CONFIG_PATH;
+    if (opts?.assistantSession) {
+      delete base.RIPGREP_CONFIG_PATH;
+      // A `ppm …` command the user approves must reach this instance, not the default folder.
+      Object.assign(base, assistantShellEnv());
+    }
 
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();

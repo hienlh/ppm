@@ -338,7 +338,7 @@ export type ChatEvent =
       arrivalSeq?: number;
     }
   | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string; arrivalSeq?: number }
-  | { type: "approval_request"; requestId: string; tool: string; input: unknown }
+  | { type: "approval_request"; requestId: string; tool: string; input: unknown; questions?: import("../shared/approval-questions").NormalizedQuestion[] }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }
   | { type: "account_info"; accountId: string; accountLabel: string }

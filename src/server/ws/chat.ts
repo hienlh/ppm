@@ -46,8 +46,11 @@ import type { TraceOrigin } from "../../shared/session-trace.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
 import { CHAT_CLIENT_ID_PARAM, chatClientIdFrom } from "../../shared/chat-client-id.ts";
 import {
-  CHAT_BUSY, setChatControl, type ChatMessageOrigin, type LiveApprovalCard, type LiveChatState, type ServerOrigin,
+  CHAT_BUSY, setChatControl, type ApprovalAnswer, type ChatMessageOrigin, type LiveApprovalCard, type LiveChatState, type ServerOrigin,
 } from "../../services/chat-control/chat-control.ts";
+import {
+  answersForDisplay, coerceAnswersById, legacyAnswersToById, normalizeClaudeQuestions, questionsFromWire, toProviderAnswers,
+} from "../../shared/approval-questions.ts";
 import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
 import { isNotificationSuppressed } from "../../services/chat-control/notification-suppressor.ts";
 
@@ -584,6 +587,7 @@ function liveApprovalCard(ev: PendingApprovalEvent): LiveApprovalCard {
     input: ev.input,
     ...(ev.summary ? { summary: ev.summary } : {}),
     isQuestion: ev.tool === "AskUserQuestion",
+    ...(ev.questions ? { questions: ev.questions } : {}),
   };
 }
 
@@ -1279,8 +1283,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // Shown (buffered, broadcast and notified) now, or queued behind the card already
         // shown — e.g. an Assistant endpoint request — and shown once that one is answered.
         // Never anything the provider says: the card's `origin` is the endpoint's alone.
-        const { origin: _origin, summary: _summary, ...providerEvent } = ev;
-        approvals.offer(sessionId, entry, providerEvent as PendingApprovalEvent);
+        const { origin: _origin, summary: _summary, questions: rawQuestions, ...providerEvent } = ev;
+        // A question card carries its questions normalized, so every surface answers it by id:
+        // Codex sends them so (read from its own request); Claude's are read off the tool input.
+        const questions = questionsFromWire(rawQuestions)
+          ?? (ev.tool === "AskUserQuestion" ? normalizeClaudeQuestions(ev.input) : undefined);
+        approvals.offer(sessionId, entry, { ...providerEvent, ...(questions ? { questions } : {}) } as PendingApprovalEvent);
         continue;
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking
@@ -1734,10 +1742,26 @@ function answerApprovalCore(
   sessionId: string,
   entry: SessionEntry,
   requestId: string,
-  approved: boolean,
-  data: unknown,
+  answer: ApprovalAnswer,
   origin: ChatMessageOrigin,
 ): "answered" | "stale" {
+  const approved = answer.approved === true;
+  // A question card is answered by question id, from any surface (an older tab still sends the
+  // provider's own shape); the provider gets its own shape, and every device is shown the
+  // answers keyed by question text, the way the transcript's question card reads them.
+  const card = [entry.pendingApprovalEvent, ...(entry.approvalQueue ?? [])].find((e) => e?.requestId === requestId);
+  const questions = card?.questions;
+  let data: unknown = answer.answers;
+  let shown: unknown = answer.answers;
+  if (questions) {
+    const byId = answer.answersById !== undefined
+      ? coerceAnswersById(questions, answer.answersById)
+      : legacyAnswersToById(questions, answer.answers);
+    // No answer at all is a skip, as it always was: Claude reads a missing answer as "skipped".
+    const answered = approved && Object.keys(byId).length > 0;
+    data = answered ? toProviderAnswers(entry.providerId, questions, byId) : undefined;
+    shown = answered ? answersForDisplay(questions, byId) : undefined;
+  }
   // Answered: the buffered request carries the answer, so a replay renders it answered
   // (an AskUserQuestion card shows its chosen answers).
   const recordAnswer = () => {
@@ -1745,7 +1769,9 @@ function answerApprovalCore(
       const buffered = entry.turnEvents[i] as any;
       if (buffered.type === "approval_request" && buffered.requestId === requestId) {
         buffered.approved = approved;
-        if (buffered.tool === "AskUserQuestion" && data) buffered.input = { ...buffered.input, answers: data };
+        if (buffered.tool === "AskUserQuestion" && shown) {
+          buffered.input = { ...(buffered.input && typeof buffered.input === "object" ? buffered.input : {}), answers: shown };
+        }
         break;
       }
     }
@@ -1769,7 +1795,7 @@ function answerApprovalCore(
     recordAnswer();
     // Tell every connected device this approval was resolved so their live prompt clears —
     // even the device that didn't answer — and show the next card waiting, if any.
-    approvals.clear(sessionId, entry, requestId, APPROVAL_END.answered, { announce: true, approved, answers: data ?? null });
+    approvals.clear(sessionId, entry, requestId, APPROVAL_END.answered, { announce: true, approved, answers: shown ?? null });
     broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
     return "answered";
   } finally {
@@ -1831,7 +1857,7 @@ setChatControl({
     const sessionId = resolveMigratedSession(asked);
     const entry = activeSessions.get(sessionId);
     if (!entry || typeof requestId !== "string" || !requestId) return "stale";
-    return answerApprovalCore(sessionId, entry, requestId, answer.approved === true, answer.answers, origin);
+    return answerApprovalCore(sessionId, entry, requestId, answer, origin);
   },
   cancelTurn(asked, origin) {
     const sessionId = resolveMigratedSession(asked);
@@ -2256,9 +2282,13 @@ export const chatWebSocket = {
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
       const requestId = typeof parsed.requestId === "string" ? parsed.requestId : "";
-      const approved = parsed.approved === true;
-      const respData = (parsed as { data?: unknown }).data;
-      if (answerApprovalCore(sessionId, entry, requestId, approved, respData, "ws") === "stale") {
+      const { data, answersById } = parsed as { data?: unknown; answersById?: unknown };
+      const answer: ApprovalAnswer = {
+        approved: parsed.approved === true,
+        // Coerced against the card's own questions in answerApprovalCore; anything else is dropped there.
+        ...(answersById && typeof answersById === "object" ? { answersById: answersById as Record<string, string[]> } : { answers: data }),
+      };
+      if (answerApprovalCore(sessionId, entry, requestId, answer, "ws") === "stale") {
         const stale: ApprovalStaleMessage = { type: "approval_stale", requestId, message: APPROVAL_NO_LONGER_VALID_MESSAGE };
         try { ws.send(JSON.stringify(stale)); } catch { /* socket gone */ }
       }

@@ -5,7 +5,9 @@ import {
   CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
   DB_QUERY_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
   UI_LIST_COMMANDS_TOOL, UI_READ_TAB_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
+  CHATS_ATTENTION_TOOL, CHAT_START_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
 } from "../../shared/assistant-tool-names.ts";
+import { chatAnswerApproval, chatsAttentionTool, chatStart, ppmCliReferenceTool } from "./assistant-hub-tools.ts";
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_TOOL_DEFINITIONS } from "./assistant-mcp-tools.ts";
 import { assistantMcpTokens, type AssistantMcpTokenBinding } from "./assistant-mcp-tokens.ts";
 import { chatListSessions, chatReadMessages, chatSearch, projectsList } from "./assistant-read-tools.ts";
@@ -73,6 +75,10 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case UI_READ_TAB_TOOL: return uiReadTab(sessionId, args, ask);
     case UI_LIST_COMMANDS_TOOL: return uiListCommands(sessionId, args);
     case UI_RUN_COMMAND_TOOL: return uiRunCommand(sessionId, args, ask);
+    case CHATS_ATTENTION_TOOL: return chatsAttentionTool(args);
+    case CHAT_START_TOOL: return chatStart(args, ask);
+    case CHAT_ANSWER_APPROVAL_TOOL: return chatAnswerApproval(args, ask);
+    case PPM_CLI_REFERENCE_TOOL: return ppmCliReferenceTool();
     default: return errorResult(`Unknown tool: ${name.slice(0, 60)}`);
   }
 };

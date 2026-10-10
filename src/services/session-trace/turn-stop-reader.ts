@@ -8,7 +8,7 @@ import type { TurnStop } from "../../shared/turn-stop.ts";
  * about how the turn ended. `tool_result` is left out as well — it always follows a `tool_use`,
  * and it is the one row that can weigh a megabyte.
  */
-const ROWS_SQL = `
+export const TURN_STOP_ROWS_SQL = `
   SELECT type, ts,
     CASE WHEN type IN ('error', 'run_failed') THEN json_extract(payload_json, '$.message') END AS message,
     CASE WHEN type = 'done' THEN json_extract(payload_json, '$.resultSubtype') END AS subtype
@@ -33,12 +33,12 @@ export interface TurnStopRow {
  * coming back needs to be told. Null for a session with no trace.
  */
 export function readLastTurnStop(sessionId: string): TurnStop | null {
-  const rows = getTraceDb().query(ROWS_SQL).all(resolveTraceId(sessionId)) as TurnStopRow[];
+  const rows = getTraceDb().query(TURN_STOP_ROWS_SQL).all(resolveTraceId(sessionId)) as TurnStopRow[];
   return lastTurnStop(rows);
 }
 
 /**
- * The decision, given `ROWS_SQL`'s rows newest first. A stop is an error with nothing the
+ * The decision, given `TURN_STOP_ROWS_SQL`'s rows newest first. A stop is an error with nothing the
  * model produced after it, in a turn nobody stopped on purpose and nobody has written to since.
  */
 export function lastTurnStop(rows: readonly TurnStopRow[]): TurnStop | null {
