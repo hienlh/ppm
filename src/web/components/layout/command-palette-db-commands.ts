@@ -4,9 +4,12 @@
  * one, and DBGate's Export database and Import data, on the database the sidebar shows when there
  * is one. None on a phone, where neither the table editor nor the Import/Export tab is.
  *
- * Each opens an editor, a dialog or a tab and saves nothing by itself, so none changes data. The
- * list is published to the command registry, which is how the keyboard and the PPM Assistant see
- * the same entries the palette does.
+ * The table editor's commands (Add column, Add index, …) count as changing data: each starts an
+ * edit of the table's structure, and although the edit lands in a draft that only Save changes
+ * applies, a draft is one save away from the table, so the Assistant asks before running one.
+ * The others only open an editor, a dialog or a tab and change nothing by themselves. The list is
+ * published to the command registry, which is how the keyboard and the PPM Assistant see the same
+ * entries the palette does.
  */
 import { useEffect, useMemo, type ElementType } from "react";
 import { ArrowRightFromLine, CheckCircle, Key, Link, ListOrdered, Plus, Table, Upload } from "@/lib/icons";
@@ -40,7 +43,7 @@ export function useDbPaletteCommands(isMobile: boolean): AppCommand[] {
     }] : [];
     const editor: AppCommand[] = editorCommands.map((c) => ({
       id: `table-editor:${c.id}`, label: c.label, hint: "Table editor", icon: EDITOR_ICONS[c.id] ?? Plus,
-      changesData: false, closePaletteFirst: true,
+      changesData: true, closePaletteFirst: true,
       keywords: "table editor structure column index key constraint",
       run: () => c.run(),
     }));

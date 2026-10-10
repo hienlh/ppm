@@ -13,12 +13,14 @@ import { assistantSqlSafety } from "../../../src/services/assistant-mcp/assistan
 import { isReadOnlyQuery } from "../../../src/services/database/readonly-check.ts";
 
 /**
- * The catalog query's answer on Postgres 15 for `SELECT * FROM v5, v6, v7, plain, notes`, where
- * `public.lower(varchar)` and an aggregate `public.count(int)` with a plpgsql transition function
- * exist, v1 filters on a STABLE plpgsql `evil(1)`, v7 unions v1 with a table under a policy
- * calling `pg_backend_pid()`, and citext is installed (its max/min and SQL wrappers are not shadows).
+ * The catalog query's answer on Postgres 15 for `SELECT count(*), lower(name), max(id) FROM v5,
+ * v6, v7, plain, notes`, where `public.lower(varchar)` and an aggregate `public.count(int)` with a
+ * plpgsql transition function exist, v1 filters on a STABLE plpgsql `evil(1)`, v7 unions v1 with a
+ * table under a policy calling `pg_backend_pid()`, and citext is installed in `public`. An
+ * extension's functions are not trusted, so citext's `max(citext)` is a shadow, its comparison
+ * operators are user operators and its type has casts through a user function.
  */
-const CAPTURED = String.raw`{"views" : [["public", "v5", " SELECT public.lower(t.name) AS l\n   FROM public.t;"], ["public", "v6", " SELECT ((t.name)::text OPERATOR(public.@@@) 'x'::text) AS y\n   FROM public.t;"], ["public", "v7", " SELECT v1.id\n   FROM public.v1\nUNION ALL\n SELECT secrets.id\n   FROM public.secrets;"], ["public", "plain", " SELECT t.id,\n    lower((t.name)::text) AS l,\n    count(*) OVER () AS count\n   FROM public.t;"], ["public", "v1", " SELECT t.id\n   FROM public.t\n  WHERE (t.id = public.evil(1));"]], "policies" : [["secrets", "own", "((owner = CURRENT_USER) AND (pg_backend_pid() > 0))"]], "generated" : null, "domains" : [["posint", ["(pg_backend_pid() > 0)", "(VALUE > 0)"]]], "shadowed" : ["count", "lower"], "operators" : ["@@@"], "castTypes" : null, "castColumns" : false}`;
+const CAPTURED = String.raw`{"views" : [["public", "v5", " SELECT public.lower(t.name) AS l\n   FROM public.t;"], ["public", "v6", " SELECT ((t.name)::text OPERATOR(public.@@@) 'x'::text) AS y\n   FROM public.t;"], ["public", "v7", " SELECT v1.id\n   FROM public.v1\nUNION ALL\n SELECT secrets.id\n   FROM public.secrets;"], ["public", "plain", " SELECT t.id,\n    lower((t.name)::text) AS l,\n    count(*) OVER () AS count\n   FROM public.t;"], ["public", "v1", " SELECT t.id\n   FROM public.t\n  WHERE (t.id = public.evil(1));"]], "policies" : [["secrets", "own", "((owner = CURRENT_USER) AND (pg_backend_pid() > 0))"]], "generated" : null, "domains" : [["posint", ["(VALUE > 0)", "(pg_backend_pid() > 0)"]]], "shadowed" : ["count", "lower", "max"], "operators" : ["!~", "!~*", "!~~", "!~~*", "<", "<=", "<>", "=", ">", ">=", "@@@", "~", "~*", "~<=~", "~<~", "~>=~", "~>~", "~~", "~~*"], "castTypes" : ["citext"], "castColumns" : false}`;
 
 const captured = parsePostgresReach(CAPTURED);
 const nothing: PostgresReach = { views: [], policies: [], generated: [], domains: [], shadowed: [], operators: [], castTypes: [], castColumns: false };
@@ -108,6 +110,23 @@ describe("postgresReachVerdict", () => {
     });
     expect(verdict("SELECT pg_catalog.lower(name) FROM t", only({ shadowed: ["lower"] }))).toEqual({ proven: true });
     expect(verdict("SELECT upper(name) FROM t", only({ shadowed: captured.shadowed }))).toEqual({ proven: true });
+  });
+
+  it("does not trust an extension's functions: its aggregate shadows a safe-listed call, its operators and casts are user ones", () => {
+    expect(verdict("SELECT max(id) FROM t", only({ shadowed: captured.shadowed }))).toMatchObject({
+      proven: false, reason: expect.stringContaining("also has a function named max"),
+    });
+    expect(verdict("SELECT id FROM t WHERE id = 1", only({ operators: captured.operators }))).toMatchObject({
+      proven: false, reason: expect.stringContaining("operator ="),
+    });
+    expect(verdict("SELECT 'a'::citext", only({ castTypes: captured.castTypes })).proven).toBe(false);
+  });
+
+  it("counts only Postgres's own IMMUTABLE functions as pure, whatever the language or who installed it", () => {
+    const sql = postgresReachSql(["max"]);
+    expect(sql).toContain("p.provolatile = 'i' AND p.pronamespace IN (SELECT oid FROM sys)");
+    expect(sql).not.toContain("deptype = 'e'");
+    expect(sql).not.toContain("'internal'");
   });
 
   it("does not prove a user function written as a row's column, which Postgres calls with no parenthesis", () => {

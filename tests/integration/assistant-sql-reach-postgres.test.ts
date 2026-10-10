@@ -7,7 +7,9 @@
  *   docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=x postgres:15
  *   PPM_TEST_PG_URL=postgres://postgres:x@127.0.0.1:55432/postgres bun test tests/integration/assistant-sql-reach-postgres.test.ts
  *
- * Everything it creates lives in one schema named after this run and is dropped at the end.
+ * Everything it creates lives in one schema named after this run and is dropped at the end. That
+ * includes the citext extension (contrib, shipped in the postgres image) when the database does
+ * not have it yet; one already installed is used where it is and left alone.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import postgres from "postgres";
@@ -40,6 +42,8 @@ async function check(sql: string) {
 
 describe.skipIf(!PG_URL)("assistant catalog check on Postgres", () => {
   const admin = PG_URL ? postgres(PG_URL, { max: 1, onnotice: () => {} }) : null;
+  /** Why citext could not be installed, when it could not; the extension test then fails with it. */
+  let citextMissing: string | null = null;
   const heldLocks = async (): Promise<number> => {
     const [row] = await admin!.unsafe(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid IN (${KEYS.join(", ")})`);
     return (row as { n: number }).n;
@@ -70,6 +74,11 @@ describe.skipIf(!PG_URL)("assistant catalog check on Postgres", () => {
       CREATE OR REPLACE FUNCTION public.first(bigint) RETURNS int LANGUAGE plpgsql STABLE
         AS $$ BEGIN PERFORM pg_advisory_lock(${KEYS[5]}); RETURN 1; END $$;
     `).simple();
+    // Installed into this run's schema, so dropping the schema drops the extension with it.
+    const installed = await admin!.unsafe(`SELECT 1 FROM pg_extension WHERE extname = 'citext'`);
+    if (!installed.length) {
+      await admin!.unsafe(`CREATE EXTENSION citext SCHEMA ${S}`).catch((e: Error) => { citextMissing = e.message; });
+    }
   });
 
   afterAll(async () => {
@@ -92,6 +101,14 @@ describe.skipIf(!PG_URL)("assistant catalog check on Postgres", () => {
   it("refuses a name a user function shadows, and a user operator", async () => {
     expect(await check(`SELECT lower(name) FROM ${S}.t`)).toMatchObject({ proven: false, reason: expect.stringContaining("named lower") });
     expect(await check(`SELECT name::text @@@ 'x' FROM ${S}.t`)).toMatchObject({ proven: false, reason: expect.stringContaining("@@@") });
+  });
+
+  it("refuses what an installed extension's functions could answer, while Postgres's own stay proven", async () => {
+    if (citextMissing) throw new Error(`this test needs the citext extension: ${citextMissing}`);
+    // citext's max(citext) is an aggregate over its own C functions; its = runs one too.
+    expect(await check(`SELECT max(id) FROM ${S}.t`)).toMatchObject({ proven: false, reason: expect.stringContaining("named max") });
+    expect(await check(`SELECT id FROM ${S}.t WHERE id = 1`)).toMatchObject({ proven: false, reason: expect.stringContaining("operator =") });
+    expect(await check(`SELECT count(*), upper(name) FROM ${S}.t`)).toEqual({ proven: true });
   });
 
   it("refuses a user function written as a column of a row, which has no parenthesis to see", async () => {

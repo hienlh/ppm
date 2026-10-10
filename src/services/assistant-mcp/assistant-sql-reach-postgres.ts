@@ -23,10 +23,15 @@ import { hexJson, mentionsName, operatorRuns } from "./assistant-sql-reach-names
  *  - domains with CHECK constraints, user casts through a function, the user functions named
  *    like any word of the query (called, or used column-style on a row), and the user operators.
  * Each text then goes through the same check as the query. "Pure" below means an IMMUTABLE
- * function that is C/internal (only a superuser installs one), in a system schema, or part of an
- * extension (whose script the server's administrator put in place) — citext's `max(citext)`, say.
- * An aggregate's own row says internal and IMMUTABLE whatever its transition function runs, so
- * an aggregate is pure only when every function it runs is.
+ * function, not an aggregate, in a system schema: Postgres's own built-ins and nothing else.
+ * A function outside them is not pure whatever its language or whoever installed it. That
+ * includes an extension's: being put in place by an administrator says nothing about what the
+ * code does, and C functions — most of an extension — run unchecked inside the server. So
+ * citext's `max(citext)`, an aggregate whose transition function is a C function of the
+ * extension, shadows the safe-listed `max`, and a query writing `max(…)` on a database with
+ * citext is asked about. An aggregate is never pure even in a system schema, because its own
+ * row says internal and IMMUTABLE whatever its transition function runs; none of the uses below
+ * can name one anyway (an operator or a cast names a plain function).
  */
 
 export interface PostgresReach {
@@ -35,7 +40,7 @@ export interface PostgresReach {
   generated: [table: string, column: string, expression: string][];
   domains: [name: string, checks: string[]][];
   /**
-   * Functions outside the system schemas, not pure, named like one of the query's words. Not
+   * Functions outside the system schemas — extensions' included — named like one of the query's words. Not
    * only those it calls as `name(…)`: Postgres also runs a one-argument function written as a
    * column of a row — `t.f` or `(t).f` calls `f(t)` when `t` has no column `f` — with no
    * parenthesis anywhere for the text check to see.
@@ -55,23 +60,10 @@ export function postgresReachSql(names: readonly string[]): string {
 WITH RECURSIVE
 names AS (SELECT json_array_elements_text(convert_from(decode('${hexJson(names)}', 'hex'), 'UTF8')::json) AS name),
 sys AS (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema')),
-pure_fn AS (
-  SELECT p.oid FROM pg_catalog.pg_proc p
-  WHERE p.provolatile = 'i'
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_aggregate a WHERE a.aggfnoid = p.oid)
-    AND (p.prolang IN (SELECT oid FROM pg_catalog.pg_language WHERE lanname IN ('c', 'internal'))
-      OR p.pronamespace IN (SELECT oid FROM sys)
-      OR EXISTS (SELECT 1 FROM pg_catalog.pg_depend d
-        WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))
-),
 pure AS (
-  SELECT oid FROM pure_fn
-  UNION ALL
-  SELECT a.aggfnoid::oid FROM pg_catalog.pg_aggregate a
-  LEFT JOIN pg_catalog.pg_operator o ON o.oid = a.aggsortop
-  WHERE ARRAY[a.aggtransfn, a.aggfinalfn, a.aggcombinefn, a.aggserialfn, a.aggdeserialfn,
-      a.aggmtransfn, a.aggminvtransfn, a.aggmfinalfn, COALESCE(o.oprcode, 0)]::oid[]
-    <@ (SELECT array_agg(oid) || 0::oid FROM pure_fn)
+  SELECT p.oid FROM pg_catalog.pg_proc p
+  WHERE p.provolatile = 'i' AND p.pronamespace IN (SELECT oid FROM sys)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_aggregate a WHERE a.aggfnoid = p.oid)
 ),
 reached(oid) AS (
   SELECT c.oid FROM pg_catalog.pg_class c
@@ -123,7 +115,7 @@ SELECT json_build_object(
     ) x
     WHERE t.typtype = 'd' AND t.typnamespace NOT IN (SELECT oid FROM sys) AND x.checks IS NOT NULL),
   'shadowed', (SELECT json_agg(DISTINCT p.proname) FROM pg_catalog.pg_proc p
-    WHERE p.proname IN (SELECT name FROM names) AND p.pronamespace NOT IN (SELECT oid FROM sys) AND p.oid NOT IN (SELECT oid FROM pure)),
+    WHERE p.proname IN (SELECT name FROM names) AND p.pronamespace NOT IN (SELECT oid FROM sys)),
   'operators', (SELECT json_agg(DISTINCT o.oprname) FROM pg_catalog.pg_operator o
     WHERE o.oprnamespace NOT IN (SELECT oid FROM sys) AND o.oprcode::oid NOT IN (SELECT oid FROM pure)),
   'castTypes', (SELECT json_agg(DISTINCT typname) FROM cast_types),

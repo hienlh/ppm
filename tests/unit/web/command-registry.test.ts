@@ -16,6 +16,10 @@ const { useTabStore } = await import("../../../src/web/stores/tab-store");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
 const { useGlobalKeybindings } = await import("../../../src/web/hooks/use-global-keybindings");
 const { Plus } = await import("../../../src/web/lib/icons");
+const { useDbPaletteCommands } = await import("../../../src/web/components/layout/command-palette-db-commands");
+const { useTableEditorCommands } = await import("../../../src/web/components/database/table-editor/table-editor-commands");
+const { useDbExplorer } = await import("../../../src/web/components/database/explorer/db-explorer-store");
+const { useSettingsStore } = await import("../../../src/web/stores/settings-store");
 const { createElement } = await import("react");
 type CommandContext = import("../../../src/web/lib/commands/command-registry").CommandContext;
 type AppCommand = import("../../../src/web/lib/commands/command-registry").AppCommand;
@@ -74,6 +78,31 @@ describe("the command registry", () => {
     const ctx = contexts()[0]!;
     const changing = composeCommands(ctx, {}).filter((c) => c.changesData && !c.id.startsWith("ext:")).map((c) => c.id);
     expect(changing).toEqual(["voice-input", "word-wrap", "language-server"]);
+  });
+
+  it("counts the table editor's commands as changing data, though each only starts a draft, and the database's others not", async () => {
+    useTableEditorCommands.setState({
+      owner: "tab-1",
+      commands: ["add-column", "add-index", "add-primary-key", "add-foreign-key", "add-unique"].map((id) => ({ id, label: id, run: () => {} })),
+    });
+    useDbExplorer.setState({ connections: [{ id: 1, type: "postgres", name: "app-dev", readonly: 0 }] as never });
+    const settingsBefore = useSettingsStore.getState().dbExplorerView;
+    useSettingsStore.setState((s) => ({ dbExplorerView: { ...s.dbExplorerView, current: { conn: 1, database: "shop" } } }));
+    let db: AppCommand[] = [];
+    function Probe() { db = useDbPaletteCommands(false); return null; }
+    const view = await mount(createElement(Probe));
+    try {
+      expect(db.map((c) => [c.id, c.changesData])).toEqual([
+        ["table-editor:add-column", true], ["table-editor:add-index", true], ["table-editor:add-primary-key", true],
+        ["table-editor:add-foreign-key", true], ["table-editor:add-unique", true],
+        ["db-new-table", false], ["db-export-database", false], ["db-import-data", false],
+      ]);
+    } finally {
+      await view.unmount();
+      useTableEditorCommands.setState({ owner: null, commands: [] });
+      useDbExplorer.setState({ connections: [] });
+      useSettingsStore.setState({ dbExplorerView: settingsBefore });
+    }
   });
 
   it("binds commands only to keybinding actions that exist", () => {
