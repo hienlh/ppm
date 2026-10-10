@@ -5,10 +5,10 @@ import type { NotificationPayload } from "./notification.service.ts";
 import { escapeTelegramHtml as escapeHtml, formatTelegramNotification } from "./notification-format.ts";
 import { notificationLink } from "./notification-link.ts";
 import { createLogger } from "./logger.ts";
+import { BOT_TOKEN_RE, sendTelegramMessage } from "./telegram-bot-api.ts";
+import { scrubToken } from "./telegram/telegram-api-base.ts";
 
 const log = createLogger("telegram");
-
-const BOT_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{30,50}$/;
 
 class TelegramNotificationService {
   /** Why the last send was skipped, so a setup left half done warns once, not on every notification. */
@@ -61,26 +61,16 @@ class TelegramNotificationService {
 
     const results = await Promise.allSettled(
       chats.map(async (chat) => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10_000);
-        try {
-          const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: chat.chatId, text, parse_mode: "HTML" }),
-            signal: controller.signal,
-          });
-          const json = (await res.json()) as { ok: boolean; description?: string };
-          if (!json.ok) throw new Error(json.description || "Unknown error");
-        } finally {
-          clearTimeout(timeout);
-        }
+        const json = await sendTelegramMessage(botToken, chat.chatId, text);
+        if (!json.ok) throw new Error(json.description || "Unknown error");
       }),
     );
 
     const failed = results.filter((r) => r.status === "rejected");
     if (failed.length === results.length) {
-      return { ok: false, error: (failed[0] as PromiseRejectedResult).reason?.message || "All sends failed" };
+      // Shown in Settings: a fetch error can quote the request URL, which holds the token.
+      const reason = (failed[0] as PromiseRejectedResult).reason?.message;
+      return { ok: false, error: reason ? scrubToken(reason, botToken) : "All sends failed" };
     }
     return { ok: true };
   }
@@ -88,32 +78,16 @@ class TelegramNotificationService {
   /** True once Telegram accepted the message. Failures are logged here: the URL holds the token, so never it. */
   private async callApi(token: string, chatId: string, text: string): Promise<boolean> {
     if (!BOT_TOKEN_RE.test(token)) return false;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
     try {
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-        }),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const errBody = await res.text();
-        log.error(`sendMessage to chat ${chatId} failed: ${res.status} ${errBody}`);
+      const json = await sendTelegramMessage(token, chatId, text);
+      if (!json.ok) {
+        log.error(`sendMessage to chat ${chatId} failed: ${json.error_code ?? "?"} ${json.description ?? "(no description)"}`);
         return false;
       }
       return true;
     } catch (e) {
-      log.error(`send to chat ${chatId} error: ${(e as Error).message}`);
+      log.error(`send to chat ${chatId} error: ${scrubToken((e as Error).message, token)}`);
       return false;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }
