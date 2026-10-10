@@ -84,7 +84,7 @@ export type ChatWsServerMessage =
   | { type: "error"; message: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
-  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; turnStop?: import("../shared/turn-stop").TurnStop | null }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; turnStop?: import("../shared/turn-stop").TurnStop | null; permissionMode?: string | null; defaultPermissionMode?: string }
   /** The turn that just ended was ended by an error. Sent just before its `done`. */
   | { type: "turn_stop"; stop: import("../shared/turn-stop").TurnStop }
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }

@@ -14,6 +14,7 @@ import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
+import { sessionPermissionFromGreeting, type SessionPermissionState } from "@/lib/session-permission";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { isAssistantProject } from "../../shared/assistant-project";
 import { approvalAfterGreeting, approvalDrawsAsCard, approvalFromWire, approvalQuestions, type ApprovalRequest } from "@/lib/approval-request";
@@ -99,6 +100,9 @@ interface UseChatReturn {
    *  when everything is loaded or nothing precedes it. */
   historyPredecessorId: string | null;
   isStreaming: boolean;
+  /** The permission mode the server holds for this chat (and the provider default when none
+   *  is stored), from the last connect greeting that carried it; null until one has. */
+  sessionPermission: SessionPermissionState | null;
   phase: SessionPhase;
   isReconnecting: boolean;
   connectingElapsed: number;
@@ -233,6 +237,8 @@ export function useChat(
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
+  /** The permission mode the server holds for the chat, from its connect greeting. */
+  const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -1144,6 +1150,10 @@ export function useChat(
       // The server is the only holder of when the cache was last written and how big the
       // replayed prefix was — neither is in the transcript, so a reload has to be told.
       setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
+      // Only the connect greetings carry it; the others (a model switch) leave it alone.
+      if ("permissionMode" in state) {
+        setSessionPermission(sessionPermissionFromGreeting(state, (data as any).sessionId ?? sessionIdRef.current));
+      }
       setMcpNeedsAuth(Array.isArray(state.mcpNeedsAuth) ? state.mcpNeedsAuth : []);
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
@@ -1826,6 +1836,7 @@ export function useChat(
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    sessionPermission,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

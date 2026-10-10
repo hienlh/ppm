@@ -4,7 +4,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveChatProjectPath } from "../helpers/resolve-chat-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, setSessionPermissionMode, getSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
@@ -37,7 +37,7 @@ import { announceApprovalRequest } from "./chat-approval-notification.ts";
 import { assistantApprovalBroker, setAssistantApprovalDelivery } from "../../services/assistant-mcp/assistant-approval-broker.ts";
 import { APPROVAL_NO_LONGER_VALID_MESSAGE, type ApprovalStaleMessage } from "../../shared/assistant-approval.ts";
 import {
-  effectivePermissionMode, targetChatMode, type ChatDeliveryState,
+  effectivePermissionMode, targetChatMode, providerDefaultMode, type ChatDeliveryState,
 } from "./chat-deliver-user-message.ts";
 import { setAssistantChatDelivery, TARGET_HAS_PENDING_APPROVAL, type DeliverResult } from "../../services/assistant-mcp/assistant-chat-send.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
@@ -1931,6 +1931,23 @@ setChatControl({
 });
 
 /**
+ * The permission fields of a connect greeting. A chat remembers its mode on the server, and
+ * one created elsewhere (the PPM Assistant's `chat_start`, another device) reaches a tab whose
+ * metadata holds no mode at all — so the browser has to be told which mode the chat runs in.
+ * `permissionMode` is only the stored mode, null when none is stored: the browser adopts it,
+ * and adopting a provider default instead would pin that default on the next send.
+ * `defaultPermissionMode` is what a message carrying no mode runs in when nothing is stored —
+ * the browser shows it but never sends it.
+ */
+function greetingPermission(sessionId: string, providerId: string): { permissionMode: string | null; defaultPermissionMode: string } {
+  let stored: string | null = null;
+  try { stored = getSessionPermissionMode(sessionId); } catch (e) {
+    log.warn(`session=${sessionId} could not read the stored permission mode: ${(e as Error).message}`);
+  }
+  return { permissionMode: stored, defaultPermissionMode: providerDefaultMode(providerId) };
+}
+
+/**
  * Chat WebSocket handler for Bun.serve().
  *
  * Session lifecycle: BE owns Claude connection. FE disconnect does NOT abort Claude.
@@ -1986,6 +2003,7 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, existing),
         turnStop: existing.phase === "idle" ? lastTurnStop(sessionId) : null,
+        ...greetingPermission(sessionId, existing.providerId),
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -2035,6 +2053,7 @@ export const chatWebSocket = {
       compactStatus: null,
       model: resolveSessionModel(sessionId),
       turnStop: lastTurnStop(sessionId),
+      ...greetingPermission(sessionId, providerId),
     }));
 
     // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)

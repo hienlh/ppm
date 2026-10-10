@@ -217,7 +217,9 @@ export const MessageInput = memo(function MessageInput({
   const [agentTag, setAgentTag] = useState<string | null>(null);
   const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
   // A locked chat runs in "ask before edits" whatever its metadata says, so that is shown.
-  const chipMode = permissionLocked ? "default" : (permissionMode ?? "bypassPermissions");
+  // An unknown mode shows no chip rather than a guess: falling back to "Bypass permissions"
+  // put that label on chats the server runs in "Ask before edits".
+  const chipMode = permissionLocked ? "default" : permissionMode;
   const [pendingSend, setPendingSend] = useState(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -855,7 +857,8 @@ export const MessageInput = memo(function MessageInput({
         e.preventDefault();
         if (permissionLocked) return;
         const modeIds = ["default", "acceptEdits", "plan", "bypassPermissions"];
-        const idx = modeIds.indexOf(permissionMode ?? "bypassPermissions");
+        // An unknown mode starts the cycle at its first entry.
+        const idx = permissionMode ? modeIds.indexOf(permissionMode) : -1;
         const next = modeIds[(idx + 1) % modeIds.length]!;
         onModeChange?.(next);
       }
@@ -1037,7 +1040,7 @@ export const MessageInput = memo(function MessageInput({
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: mode chip + provider selector row */}
         <div className="flex flex-wrap items-center gap-1 px-2 pt-2 md:hidden relative">
-          {!configurationPending && <>
+          {!configurationPending && chipMode && <>
           <ModeChip
             mode={chipMode}
             locked={permissionLocked}
@@ -1141,7 +1144,7 @@ export const MessageInput = memo(function MessageInput({
               permission chip down to its icon and the model chip giving way first. */}
           <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5 @max-[420px]/chat:flex-nowrap">
             {/* Mode indicator chip */}
-            {!configurationPending && <div className="relative shrink-0">
+            {!configurationPending && chipMode && <div className="relative shrink-0">
               <ModeChip
                 mode={chipMode}
                 locked={permissionLocked}

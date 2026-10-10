@@ -17,6 +17,7 @@ import { useFileStore } from "@/stores/file-store";
 import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
 import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
+import { shownPermissionMode, storedPermissionToAdopt } from "@/lib/session-permission";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { RunningAgentsBar } from "./running-agents-bar";
@@ -159,11 +160,14 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     const current = (tabId ? currentTabMetadata(tabId) : undefined) ?? metadataRef.current;
     return !current?.permissionMode || current.permissionModeSource === "cache";
   }, [tabId]);
+  /** The chat a hand-picked mode was chosen for, so a reconnect greeting does not undo it. */
+  const modePickedForSession = useRef<string | null | undefined>(undefined);
   const handleModeChange = useCallback((mode: string) => {
     permissionChosenByUser.current = true;
+    modePickedForSession.current = sessionId;
     setPermissionMode(mode);
     if (tabId) patchTabMetadata(tabId, { permissionMode: mode, permissionModeSource: "user" });
-  }, [tabId]);
+  }, [tabId, sessionId]);
   useEffect(() => {
     if (!preparation?.pending && !sessionId && metadata?.providerId) {
       setProviderId(metadata.providerId as string);
@@ -455,6 +459,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    sessionPermission,
     statusMessage,
     sessionTitle,
     liveAccount,
@@ -478,6 +483,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     backgroundShells,
     killBackgroundShell,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
+
+  // The chat's stored mode replaces whatever this tab carries, so the chip shows the mode the
+  // chat really runs in and the next send repeats it rather than overwriting it. The metadata
+  // effect above then records it as the session's own ("inherited").
+  useEffect(() => {
+    const adopt = storedPermissionToAdopt(sessionPermission, sessionId, permissionMode, modePickedForSession.current);
+    if (adopt) setPermissionMode(adopt);
+  }, [sessionPermission, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chipPermissionMode = shownPermissionMode(permissionMode, sessionPermission, sessionId);
 
   // No project to review changes against: an empty name keeps the hook idle.
   const sessionChanges = useSessionFileChanges({ projectName: assistant ? "" : projectName, sessionId, messages, isStreaming });
@@ -1493,7 +1507,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             onDisambiguate={handleDisambiguate}
             onContentChange={handleContentChange}
             getUserHistory={getUserHistory}
-            permissionMode={permissionMode}
+            permissionMode={chipPermissionMode}
             onModeChange={!preparation?.pending && !firstSendPending && !assistant ? handleModeChange : undefined}
             permissionLocked={assistant}
             fileMentions={!assistant}

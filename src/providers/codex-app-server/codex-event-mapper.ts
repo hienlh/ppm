@@ -228,15 +228,66 @@ export function itemToToolResult(item: Item): ChatEvent {
 }
 
 /**
- * Pure translation of one codex app-server notification → PPM ChatEvent[].
- * Stateless: the caller owns any per-itemId outputDelta buffering. Never throws;
- * unknown methods and unexpected shapes map to `[]`.
+ * What the mapper remembers across one turn's agent messages, held by the caller per thread.
+ *
+ * A turn can hold several `agentMessage` items (text, a tool call, more text). Each streams as
+ * bare deltas, and the chat appends every text event to one running message — so the last
+ * sentence of one message ran straight into the first word of the next ("…in PPM.PPM has…").
+ * The transcript reader keeps each agent message as a message of its own, so a reload never
+ * showed it; a paragraph break between the two items makes the live view read the same way.
  */
-export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
+export interface CodexTurnText {
+  /** Some agent-message text has already been emitted this turn. */
+  emitted: boolean;
+  /** The agent-message item the last text came from, when codex names it. */
+  itemId?: string;
+  /** An agent-message item started since the last text. */
+  newItem: boolean;
+}
+
+export function newCodexTurnText(): CodexTurnText {
+  return { emitted: false, newItem: false };
+}
+
+function resetTurnText(turn: CodexTurnText | undefined): void {
+  if (!turn) return;
+  turn.emitted = false;
+  turn.itemId = undefined;
+  turn.newItem = false;
+}
+
+/** The delta as text events, preceded by a paragraph break when it opens a later agent message. */
+function agentMessageText(p: Record<string, unknown>, turn: CodexTurnText | undefined): ChatEvent[] {
+  if (typeof p.delta !== "string") return [];
+  // An empty delta carries no text, so it neither opens a message nor counts as one.
+  if (!turn || !p.delta) return [{ type: "text", content: p.delta }];
+  const itemId = typeof p.itemId === "string" ? p.itemId : undefined;
+  // Either signal marks a new message: the item's own start, or a delta naming another item
+  // (for a codex that does not announce agent messages at `item/started`).
+  const opensMessage = turn.newItem || (itemId !== undefined && turn.itemId !== undefined && itemId !== turn.itemId);
+  const events: ChatEvent[] = opensMessage && turn.emitted ? [{ type: "text", content: "\n\n" }] : [];
+  events.push({ type: "text", content: p.delta });
+  turn.emitted = true;
+  turn.newItem = false;
+  if (itemId !== undefined) turn.itemId = itemId;
+  return events;
+}
+
+/**
+ * Translation of one codex app-server notification → PPM ChatEvent[].
+ * The caller owns any per-itemId outputDelta buffering, and passes `turn` (one per thread) so
+ * consecutive agent messages are kept apart; without it each delta maps on its own. Never
+ * throws; unknown methods and unexpected shapes map to `[]`.
+ */
+export function mapCodexEvent(notif: Notif, sessionId: string, turn?: CodexTurnText): ChatEvent[] {
   const p = asObj(notif.params);
   switch (notif.method) {
+    case "turn/started":
+      resetTurnText(turn);
+      return [];
+
     case "item/agentMessage/delta":
-      return typeof p.delta === "string" ? [{ type: "text", content: p.delta }] : [];
+      return agentMessageText(p, turn);
 
     case "item/reasoning/textDelta":
     // Preserve provider text verbatim; summaryTextDelta is the summary stream
@@ -252,6 +303,12 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/started": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compacting" }];
+      // Nothing to show yet; its first delta is where the break goes, so an agent message
+      // that never streams text leaves no blank paragraph behind.
+      if (item.type === "agentMessage") {
+        if (turn) turn.newItem = true;
+        return [];
+      }
       // A spawned agent is a card, not a tool: its start and its completion are
       // two records naming one thread, and the generic mapping rendered each as
       // a card of its own with the raw item as its body.
@@ -288,6 +345,7 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     }
 
     case "turn/completed":
+      resetTurnText(turn);
       return [{ type: "done", sessionId, resultSubtype: "success" }];
 
     case "error": {

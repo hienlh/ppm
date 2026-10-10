@@ -46,7 +46,7 @@ import { assistantSpawnHome } from "./codex-assistant-home.ts";
 import { codexMcpApproval, codexMcpApprovalResponse, type CodexMcpApproval } from "./codex-mcp-approval.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
-import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
+import { mapCodexEvent, newCodexTurnText, parseTokenUsage, type CodexTurnText } from "./codex-event-mapper.ts";
 import { recordFileChangeBaselines } from "./codex-file-baselines.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
@@ -189,6 +189,8 @@ interface LiveSession {
   transcript: ChatMessage[];
   currentAssistant: string;
   currentEvents: ChatEvent[];
+  /** Keeps the root thread's consecutive agent messages apart (see `CodexTurnText`). */
+  turnText: CodexTurnText;
   compactRequested?: boolean;
   /** Token counts from the most recent usage notification, attached to `done`. */
   lastUsage?: import("../../shared/turn-usage.ts").TurnUsage;
@@ -563,6 +565,7 @@ export class CodexAppServerProvider implements AIProvider {
     live.lastTurnInput = { message, opts };
     live.currentAssistant = "";
     live.currentEvents = [];
+    live.turnText = newCodexTurnText();
     live.lastUsage = undefined;
     const input = turnInput(message, opts);
     const turnModel = codexModel(opts?.model);
@@ -968,7 +971,7 @@ export class CodexAppServerProvider implements AIProvider {
       tabToolsMcp: opts?.designSession || assistant ? undefined : opts?.tabToolsMcp,
       assistant: assistant ? { mcp: opts?.assistantMcp, servers: opts?.assistantMcpServers } : undefined,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
-      history: [], transcript: [], currentAssistant: "", currentEvents: [],
+      history: [], transcript: [], currentAssistant: "", currentEvents: [], turnText: newCodexTurnText(),
       pendingTurns: [], subagentThreadIds: new Set(),
     };
     this.live.set(sessionId, live);
@@ -1072,6 +1075,7 @@ export class CodexAppServerProvider implements AIProvider {
         live.discardingTurn = false;
         live.currentAssistant = "";
         live.currentEvents = [];
+        live.turnText = newCodexTurnText();
         this.endTurn(live);
       }
       return;
@@ -1082,15 +1086,22 @@ export class CodexAppServerProvider implements AIProvider {
       const accountId = getSessionCodexAccount(live.threadId);
       if (accountId) clearCodexAccountAuthFailure(accountId);
     }
-    if (!isChild && notif.method === "item/agentMessage/delta") {
-      const d = (notif.params as { delta?: string })?.delta;
-      if (typeof d === "string") live.currentAssistant += d;
-    }
     if (!isChild && notif.method === "thread/tokenUsage/updated") {
       const usage = parseTokenUsage(notif.params, live.model);
       if (usage) live.lastUsage = usage;
     }
-    const events = mapCodexEvent(notif, live.threadId ?? "");
+    // Only the root thread's messages are kept apart: a child's text lands under its card.
+    const events = mapCodexEvent(notif, live.threadId ?? "", isChild ? undefined : live.turnText);
+    // The live transcript is built from the mapped text, not the raw deltas, so a reload
+    // during the session shows the same break between agent messages as the stream did. A
+    // break that would open a transcript message (the answer after a steered follow-up starts
+    // a message of its own) is left out there; the stream still needs it.
+    if (!isChild && notif.method === "item/agentMessage/delta") {
+      for (const ev of events) {
+        if (ev.type !== "text" || (!live.currentAssistant && ev.content === "\n\n")) continue;
+        live.currentAssistant += ev.content;
+      }
+    }
     for (const ev of events) {
       // Child lifecycle notifications must never terminate or change the phase
       // of the root stream. Keep only content and diagnostics under its card.

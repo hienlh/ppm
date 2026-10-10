@@ -5,7 +5,7 @@ import "../../test-setup.ts"; // disable auth
 import { chatService, TELEGRAM_CHANNEL_CONTEXT_ENTRY } from "../../../src/services/chat.service.ts";
 import {
   getSessionEffort, getSessionThinking, getSessionModel, clearSessionUnread, getSessionUnreadCount,
-  setSessionAssistant, setSessionProvider,
+  setSessionAssistant, setSessionProvider, setSessionPermissionMode,
 } from "../../../src/services/db.service.ts";
 import { THINKING_ADAPTIVE } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import { CHAT_BUSY, chatControl, type ChatControl } from "../../../src/services/chat-control/chat-control.ts";
@@ -142,6 +142,23 @@ describe("Chat WebSocket — New Protocol", () => {
     expect(state.pendingApproval).toBeNull();
 
     close();
+  });
+
+  it("tells the browser the chat's stored permission mode, and only the stored one", async () => {
+    // A chat created on the server (chat_start) reaches a tab that knows no mode for it.
+    const stored = await chatService.createSession("mock", {});
+    setSessionPermissionMode(stored.id, "default");
+    const first = await connectWs(stored.id);
+    expect(await first.waitForType("session_state")).toMatchObject({ permissionMode: "default" });
+    first.close();
+
+    // Nothing stored: null, so the browser shows the default without adopting (and pinning) it.
+    const fresh = await chatService.createSession("mock", {});
+    const second = await connectWs(fresh.id);
+    const state = await second.waitForType("session_state");
+    expect(state.permissionMode).toBeNull();
+    expect(typeof state.defaultPermissionMode).toBe("string");
+    second.close();
   });
 
   // ─── phase transitions ───
