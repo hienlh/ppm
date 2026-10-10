@@ -1,124 +1,29 @@
-# Integrations (PPMBot, Jira)
+# Integrations (Telegram, Jira)
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
-## PPMBot Coordinator Service Layer (Telegram-based Team Leader)
-**Component:** PPMBot coordinator orchestrator + delegation executor
+## Telegram
 
-**Responsibilities:**
-- Manage single persistent coordinator session per Telegram chat in `~/.ppm/bot/` workspace
-- Route incoming Telegram messages to coordinator (ask/answer) or delegation tracking
-- Decide when to answer directly vs. delegate to subagents (based on project context)
-- Execute delegated tasks in isolated project sessions
-- Track task status and report results back to Telegram
-- Format responses as Telegram HTML with progressive message editing
+PPM uses Telegram in two unrelated ways, each with **its own bot**:
 
-**Architecture:**
-```
-Telegram → PPMBotTelegramService (polling) → PPMBotService (orchestrator)
-                                                 ↓
-                            PPMBotSessionManager (coordinator session per chat)
-                            coordinatorSession.id → chatService.sendMessage()
-                            Task Poller (5s interval)
-                            ↓
-                    executeDelegation(taskId, telegram, providerId)
-                    ├─ getBotTask(taskId) → prompt
-                    ├─ chatService.createSession(providerId, projectPath)
-                    ├─ run async generator (abort, 900s timeout)
-                    └─ updateBotTaskStatus(taskId, "completed", {result})
-                    ↓
-                    telegram.sendMessage(chatId, result summary)
-```
+- **Notifications** send through `config.telegram` to the chats in the `telegram_notify_chats` row
+  (`src/services/telegram-notification.service.ts`). See `notification.service.ts`.
+- **PPM Assistant on Telegram**: a connected private chat is a second window onto one PPM Assistant
+  session. Design, rules and limitations: [PPM Assistant → Telegram](ppm-assistant.md#telegram).
 
-**Services (src/services/ppmbot/):**
-- **PPMBotService** — Lifecycle (start/stop), message queue, Telegram polling loop, task poller loop
-- **PPMBotSessionManager** — Coordinator session cache per chatID, project resolver (case-insensitive, prefix match)
-- **PPMBotTelegramService** — Telegram Bot API (getUpdates polling, sendMessage, editMessage, setTyping)
-- **PPMBotMemoryService** — SQLite project memories, contextual recall
-- **executeDelegation()** — Task execution in isolated session, result capture, timeout/abort handling
-- **PPMBotFormatterService** — Markdown → Telegram HTML, 4096-char chunking
-- **PPMBotStreamerService** — ChatEvent → progressive Telegram message edits (1s throttle)
+They used to share one bot, so a chat connected for alerts could command the AI. The bots and their
+chat lists are now separate (`src/services/telegram-bots.ts`): the Assistant reads the bot in the
+`ppmbot_telegram` row and answers the chats approved in `clawbot_paired_chats`. An install that
+shared them is split once, on first read. Both go through one Bot API client
+(`src/services/telegram/`), and the one-tap Connect link is `telegram-connect.service.ts`.
 
-**Coordinator Identity (Persistent Cross-Provider):**
-- Location: `~/.ppm/bot/coordinator.md` (loaded on startup, cached in `coordinatorIdentity`)
-- Role definition: Team leader, project coordinator, decision-maker
-- Decision framework: Answer directly (no project context) vs. Delegate (file access needed)
-- Coordination tools: Bash-safe CLI commands (`ppm bot delegate`, `ppm bot task-status`, etc.)
-- Cross-provider: Identity text injected as XML context block, works with Claude SDK + CLI providers
-
-**Delegation Flow:**
-1. User asks task in Telegram
-2. Coordinator decides: delegate? → yes
-3. Coordinator calls bash: `ppm bot delegate --chat <chatId> --project <name> --prompt "<enriched>"`
-4. CLI creates `bot_tasks` row, returns taskId
-5. Service tells user: "Working on it, I'll notify you when done"
-6. Background poller (5s) detects pending task
-7. Executes: `chatService.createSession()` in target project
-8. Streams response, captures summary + full output
-9. Updates task status → "completed"
-10. Sends Telegram notification with result
-
-**Task Execution (Isolation & Safety):**
-- Each task = fresh isolated session (no shared context)
-- Timeout: 900s default (configurable per task)
-- Abort: AbortController on timeout, can be canceled mid-execution
-- Result capture: Both summary (for notification) and full text (for detailed review)
-- Error handling: Task status → "failed", error message stored, user notified
-
-**Database Schema (v14):**
-- `bot_tasks` — id (UUID), chatId, projectName, projectPath, prompt, status, resultSummary, resultFull, sessionId, error, reported, timeoutMs, createdAt, startedAt, completedAt
-- Indexes: `idx_bot_tasks_status` (fast poller lookup), `idx_bot_tasks_chat` (history queries)
-
-**Key Design Decisions:**
-1. **Single coordinator session** — Per chat, persistent, one identity (vs. per-task sessions in ClawBot)
-2. **Delegation via CLI** — Coordinator calls bash commands (safer than direct DB writes, auditable)
-3. **Isolated task execution** — Each delegated task spawns fresh session (no context bleed)
-4. **Background polling** — Task execution decoupled from message handler (non-blocking)
-5. **Result summary + full** — Notification shows short summary; user can fetch full output via CLI
-6. **Cross-provider identity** — Single `coordinator.md` works with any AI provider
-7. **Bash-safe tools only** — Coordinator restricted to Bash, Read, Write, Edit, Glob, Grep (safe delegation)
-
-**CLI Expansion (ppm bot commands):**
-```
-ppm bot delegate --chat <id> --project <name> --prompt "<text>"  # Create task
-ppm bot task-status <id>                                          # Check status
-ppm bot task-result <id>                                          # Get full output
-ppm bot tasks [--chat <id>]                                       # List recent
-ppm bot project list                                              # Available projects
-ppm bot project current                                           # Active project
-ppm bot project switch <name>                                     # Switch project
-ppm bot session new <title>                                       # Create session
-ppm bot session list                                              # List sessions
-ppm bot session resume <id>                                       # Resume session
-ppm bot session stop <id>                                         # Stop session
-ppm bot status                                                    # Bot health
-ppm bot version                                                   # PPM version
-ppm bot restart                                                   # Restart service
-ppm bot help                                                      # Help
-```
-
-**Settings UI (ppmbot-settings-section.tsx, Telegram part in ppmbot-telegram-section.tsx):**
-- PPMBot's own Telegram bot: token with the @BotFather steps, checked with Telegram (`getMe`) before it is kept
-- Turn on PPMBot (saved at once, `PUT /api/settings/clawbot { enabled }`), with whether it is running
-- Chats that can use PPMBot (Disconnect), Connect Telegram (single-use link + QR). The link is the only way in: PPMBot hands out no pairing codes, and a chat that writes to the bot without being connected is told once to connect it from Settings
-- Default project selection
-- System prompt customization
-- Task auto-refresh (poll interval, max history)
-- Delegated tasks panel (status, result preview, delete)
-
-**Legacy `clawbot` naming:** PPMBot replaced an earlier bot called ClawBot, but the config key and
-its REST surface were never renamed. `config.clawbot` (typed `PPMBotConfig`) and
-`GET|PUT /api/settings/clawbot` configure **PPMBot** — toggling `enabled` there starts or stops
-`ppmbotService`. Its Telegram bot is `GET|PUT /api/settings/clawbot/telegram` (status, token) and
-`POST|DELETE /api/settings/clawbot/telegram/connect` (the one-time link).
-
-**Its own bot, not the notifications one:** PPMBot reads the bot in the `ppmbot_telegram` config row
-and answers the chats approved in `clawbot_paired_chats`; notifications send through `config.telegram`
-to the `telegram_notify_chats` row (`src/services/telegram-bots.ts`). They used to share both, so a
-chat connected for alerts could command PPMBot. An install that shared them is split once, on first
-read: alert chats are copied, and PPMBot keeps the shared token only if it was enabled. The old `ClawBotService` / `ClawBotSessionService` / `ClawBotMemoryService` /
-`ClawBotStreamerService` no longer exist; the implementation is `src/services/ppmbot/*`. Treat
-`clawbot` purely as a backward-compatible key name, not as a separate subsystem.
+**Why the names still say PPMBot and ClawBot.** The Assistant replaced PPMBot, which had replaced
+ClawBot, and neither rename touched stored data: the config key `clawbot` (typed `PPMBotConfig`, now
+only `enabled`, `show_tool_calls`, `debounce_ms`), the `ppmbot_telegram` row, the `clawbot_*`
+tables and the `/api/settings/clawbot*` routes all configure the Assistant's Telegram side. Renaming
+them would only force everyone to reconnect. Treat them as key names, not as subsystems. PPMBot's
+coordinator, its `ppm bot` CLI and its `bot_tasks` delegation no longer exist; their tables are
+left in place, unused.
 
 ---
 

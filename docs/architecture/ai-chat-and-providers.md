@@ -655,4 +655,7 @@ reserved `__assistant__` project with their own settings and MCP servers and non
 agent setup; tools come from `/api/assistant-mcp`, screen operations go only to the device that
 sent the latest message, and anything that changes data asks on the session's single approval
 card. Reads run unasked only inside the registered projects, and a SQL query only once it is
-proven to read. Full design, limitations and verification: [PPM Assistant](ppm-assistant.md).
+proven to read. It also runs the user's chats (which ones need them, opening new ones, answering
+their cards after a confirmation, reporting when a watched chat finishes), and a connected
+Telegram chat is a second window onto one Assistant session. Full design, limitations and
+verification: [PPM Assistant](ppm-assistant.md).

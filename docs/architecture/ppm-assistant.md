@@ -5,10 +5,18 @@
 An AI chat that works *on PPM* rather than on a project: it sees the screen of the device the
 user is chatting from, finds and reads chats, reads databases and open tabs, opens and closes
 tabs, switches projects, runs Command Palette commands, and sends messages into the user's
-working chats. It runs on Claude and Codex. It reads content it did not write — other chats,
-database rows, terminal output — so the design rule is: **navigating and reading inside the
-registered projects run unasked; anything that changes data or could carry data off the
-machine asks first**, whatever mode the composer shows.
+working chats. It also runs those chats for the user: it says which ones are waiting on them,
+opens new ones, answers their approval cards (after a confirmation), and reports when a chat it
+was asked to watch finishes. The same conversation can be carried on from **Telegram**, which is
+a second window onto one Assistant session ([Telegram](#telegram)). It runs on Claude and Codex.
+It reads content it did not write — other chats, database rows, terminal output — so the design
+rule is: **navigating and reading inside the registered projects run unasked; anything that
+changes data or could carry data off the machine asks first**, whatever mode the composer shows.
+
+It replaces PPMBot, the earlier Telegram "coordinator": that ran its own session in bypass mode
+and delegated work by running `ppm bot delegate` in a shell, so nothing it did was ever asked.
+The coordinator, the `ppm bot` CLI and task delegation are gone; the bot, its connected chats,
+the connect link and the `clawbot` settings key were kept so nobody has to connect again.
 
 ## Sessions
 
@@ -109,7 +117,13 @@ origin.
     `fs-credential-path-guard.ts`) covers that folder as it covers an account home's, so the
     chat shows them; the home's `auth.json`, marker and `sessions` link stay refused.
 - **Shared context**: the user's shared instructions and memories are not added to Assistant
-  turns, whatever `share_provider_context` says. Only the UI summary rides in that block.
+  turns, whatever `share_provider_context` says. Only PPM's own entries ride in that block: the UI
+  summary, the channel entry (a turn typed on Telegram says so on every message, and the first
+  PPM message after it says the user is back on a screen — `TELEGRAM_CHANNEL_CONTEXT_ENTRY` /
+  `BACK_ON_PPM_CONTEXT_ENTRY` in `chat.service.ts`), and a watch turn's news (below).
+- **Shell**: an Assistant session's shell gets `PPM_HOME` naming this instance's folder
+  (`assistant-shell-env.ts`, both providers), so a `ppm …` command the user approves reaches this
+  PPM and not whatever `~/.ppm` holds.
 - **External resources**: Assistant Markdown never makes the browser fetch anything by itself.
   `markdown-external-resources.ts` turns external images and embeds into links and holds the
   rest to an allowlist (`markdown-assistant-allowlist.ts`), because a rendered
@@ -138,12 +152,17 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 
 - **Read, never ask**: `projects_list`, `chat_list_sessions`, `chat_search`,
   `chat_read_messages`, `db_list_connections`, `db_query` for a proven read, `ui_get_state`,
-  `ui_read_tab` (see below), `ui_list_commands`.
+  `ui_read_tab` (see below), `ui_list_commands`, `chats_attention`, `ppm_cli_reference`,
+  `chat_list_watches`.
+- **Remember, never ask**: `chat_watch` and `chat_unwatch` — a watch only reads and reports, like
+  setting a reminder (see [Watches](#watches)).
 - **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
   `ui_switch_project`, and `ui_close_tab` for a tab that loses nothing. Each answers
   `previousProject` or enough to reopen what it closed, so the agent can undo — there is no
   Undo of PPM's own.
-- **Ask first**: `db_query` for anything not proven to read, `chat_send_message` (always),
+- **Ask first**: `db_query` for anything not proven to read, `chat_send_message`, `chat_start`
+  and `chat_answer_approval` (always — the last even to deny, since a denial changes what that
+  chat does next),
   `ui_run_command` for a command declared `changesData` and for every extension command,
   `ui_close_tab` for a tab that would lose work (unsaved editor text, unsaved SQL or table edits,
   a terminal), and `ui_read_tab` for an editor's unsaved text, a terminal's output or a database
@@ -192,7 +211,10 @@ sends only to the device that sent the session's latest message. If that socket 
 the same browser tab reconnected qualifies, recognised by the per-tab `clientId` it connects
 with (`src/shared/chat-client-id.ts`); otherwise the call answers `no-device`. It never falls
 back to every device, unlike the tab tools, because switching project or running a git pull on a
-screen nobody is talking from is not harmless. The browser half is
+screen nobody is talking from is not harmless. A message that arrives with no socket — typed on
+Telegram, or a watch turn — clears the chatting device, so the screen tools answer `no-device`
+even while PPM is open somewhere: the user is on their phone, and a PPM screen left open on a
+desk is not where they are looking. The browser half is
 `src/web/lib/assistant-ui/` (`answer-assistant-ui.ts` dispatches by `op`), and it answers only
 for an Assistant session.
 
@@ -274,6 +296,254 @@ Any catalog error means asking, never running. A proven read then runs on the co
 read-only path with a 60 s limit (`UNASKED_READ_TIMEOUT_MS`) and is stopped when the MCP call
 closes (`src/services/database/query-stop.ts`). An approved query is the user's to run to the end.
 
+## Running the user's chats
+
+Four tools in `src/services/assistant-mcp/assistant-hub-tools.ts` let the Assistant manage the
+user's working chats instead of only reading them. They are what PPMBot's shell delegation was
+for, rebuilt as tools that ask.
+
+- **`chats_attention`** (`src/services/assistant-hub/chat-attention.service.ts`) answers "which
+  chats need me": chats waiting on a card or question, running, whose card was lost (an unread
+  approval with no live card — PPM restarted under it), stopped by an error, finished unread, and
+  finished and read. It has to merge three sources, because none sees everything: live cards are
+  only in memory (`chatControl().listLive()`), unread marks are in the database (so a chat never
+  opened since the restart still counts), and how a turn ended is in the session trace
+  (`src/services/session-trace/turn-ends-query.ts`). Assistant sessions are left out. Titles and
+  card text come back labelled as data from those chats, not instructions.
+- **`chat_start`** creates a chat in a registered project (`createProjectChatSession` in
+  `src/services/chat-session-create.ts`, which the REST route shares), stores its mode and model,
+  and sends the first message — after a card naming the project, provider, model, the mode the
+  chat **runs in** and where that mode came from. Without an explicit mode it uses
+  `providerDefaultMode`, the mode a chat opened by hand in PPM gets: the Assistant must not open
+  chats that behave differently from the user's own. A bypass mode adds a warning line to the card,
+  on PPM and on Telegram. `watch: true` also sets a watch on the new chat.
+- **`chat_answer_approval`** answers another chat's waiting card. Its confirmation card copies the
+  target card's deciding input (below) verbatim, the turn re-checks that the card is still there
+  before answering, and an answer that lost the race reports that it was answered elsewhere. It
+  refuses Allow when the target's deciding input is incomplete or a question is secret: the
+  confirmation card always fits on Telegram, so wrapping an incomplete card in it would turn
+  "cannot be reviewed here" into a one-tap Allow. Deny still works.
+- **`ppm_cli_reference`** (`src/services/assistant/ppm-cli-reference.ts`, regenerated by
+  `scripts/generate-ppm-cli-reference.ts`) teaches the `ppm` CLI on demand instead of pasting it
+  into every message as PPMBot did. Its header matters more than the reference: how to invoke
+  *this* instance's CLI, which commands go through the running server and which open the database
+  themselves, and — on a server running a non-default database profile — a warning not to run
+  data commands at all, because only `ppm start` can choose a profile and every other command
+  opens `ppm.db`, another instance's data. Anything without a tool of its own (git, schedules,
+  tunnels, extensions) is done through `ppm …` in the shell, which always asks.
+
+**The deciding input** (`src/services/chat-control/approval-deciding-input.ts`) is what a person
+must see to decide a card: the whole command and its folder, the URL and prompt, every byte a
+write puts down, every edit, a patch's whole diff, an MCP call's full arguments, an Assistant card's
+headline, facts and body. One builder serves every place a card is shown away from its chat —
+the confirmation card, Telegram, relayed cards, `chats_attention` — so no surface can approve
+something other than what runs. It escapes and never strips: the older screen-summary cleaner
+removed `<`, `>` and backticks, which turned `echo x > ~/.bashrc` into a different command. It
+answers `complete: false` when PPM does not hold all of it (a Codex patch whose full diff it never
+got).
+
+**One question shape** (`src/shared/approval-questions.ts`). Claude's AskUserQuestion keys answers
+by the question's text, Codex's `requestUserInput` by an id and sends its input as a string. Cards
+now carry normalised questions, every surface answers by question id (`answersById`), and the
+server converts to each provider's form; the older web shape is still accepted. This is also what
+gave Codex questions a working form on the web (it was empty). A secret answer is shown and traced
+as `(hidden)`.
+
+## Server-side chat control
+
+Telegram and watches act on chats with no browser attached, so everything a browser could do to a
+chat is exposed inside the server by `chatControl()` (`src/services/chat-control/chat-control.ts`),
+which `src/server/ws/chat.ts` registers: send a user message, answer a card, stop a turn, read a
+chat's live state. Each runs the same core the WebSocket handler runs, so the first answer to a
+card still wins and nothing gets a second rule set. There is no HTTP route to it, and callers must
+carry a person's decision — a button pressed, a message typed.
+
+Origins say who acts. `telegram` is the user typing elsewhere: like a typed message it supersedes a
+waiting card. `watch` is never the user: it is refused with `busy` while the chat has a card or a
+running turn, rather than cancelling or steering either. `assistant` is a message the Assistant
+sends with approval. All three are trace origins too (`TraceOrigin` in `src/shared/session-trace.ts`).
+
+`chatLifecycle` (`src/services/chat-control/chat-lifecycle.ts`) is the bus the rest listens on; the
+event names and payloads are `ChatLifecycleEvents`. It is emitted whether or not a browser is
+connected — the socket layer drops events when no client is there, and a turn started from
+Telegram has none. Listeners run on the chat's hot path, so they only record or enqueue, and one
+that throws is logged, never felt by the chat. Every way a card can leave
+(`src/server/ws/chat-pending-approval.ts`) emits `approval_resolved` with its reason, so a card
+answered or withdrawn anywhere loses its buttons everywhere.
+
+`addNotificationSuppressor` (`notification-suppressor.ts`) lets the bridge and the watch service
+hold back a push that would repeat what the user was just told; the unread mark is still set.
+
+The binding and watch tables (migration 58) are behind `src/services/assistant-hub/assistant-hub-db.ts`,
+which reads every id through `resolveMigratedSession`, because Codex renames a new session during
+its first turn.
+
+## Watches
+
+"Tell me when that chat is done" (`chat_watch`, `chat_unwatch`, `chat_list_watches` in
+`src/services/assistant-mcp/assistant-watch-tools.ts`; service
+`src/services/assistant-watch/assistant-watch.service.ts`). A watch is a database row, so it
+outlives a restart, and it covers one run of the target chat.
+
+- **What wakes the Assistant**: the watched run finishing, stopping on an error, being interrupted
+  by a restart (the watch was armed while the chat ran and the trace has no end for that run —
+  `watch-turn-end-reader.ts`), or the watch expiring. Each wakes the Assistant session that set it
+  for one short turn so the report arrives as a message in the conversation.
+- **A card does not wake it.** A card in the watched chat only raises `watch_decision`
+  (`watch-events.ts`) and is relayed with buttons (see Telegram). A model turn per card would cost
+  a turn per tool call, and would invite the model to act on a card the user never saw.
+- **Wake turns cannot change anything.** Such a turn carries another chat's words, and a card in
+  it is one tap on a phone at a moment the user did not choose — the shortest path from injected
+  text to an action. So everything that would ask is refused without a card
+  (`WATCH_TURN_REFUSAL`): the endpoint returns that reason, and the provider's own approvals are
+  denied outright. A message the user types into the turn makes it theirs again.
+- **The news is not a message.** The turn's message is the fixed `WATCH_OPENER`; what happened is
+  an entry in the shared-context block (`watch-event-text.ts`), which `stripSharedContext` keeps out
+  of history, titles and search. `<ppm-…` tags typed by a user into an Assistant session are
+  neutralised so nobody can fake one.
+- **Caps.** Active watches per session, the expiry, and wake turns per Assistant session per hour
+  are constants in `watch-state.ts` and `assistant-watch.service.ts`; news beyond the hourly cap,
+  or arriving while the session is busy, waits and goes into the next turn together.
+- **Delivered means answered.** A report counts as delivered only when its turn ends with text.
+  A failed or silent turn is retried; after `MAX_REPORT_ATTEMPTS` a push names the chat instead. A
+  turn the user stopped is closed with no retry and no push.
+- **Who hears it.** A session bound to Telegram reports through that chat (the mirror below). An
+  unbound session gets a push naming the watched chat in place of its generic "Chat completed",
+  and the relay sends the report to every connected Telegram chat.
+
+Deleting an Assistant session deletes its watches. Asking to watch a chat whose run already ended
+after the user asked answers with how it ended instead of creating a watch.
+
+## Telegram
+
+**A second window onto one Assistant session**, not a separate bot: what the user writes on the
+phone goes into the session, and the session's answers, cards and the messages typed in PPM come
+back out. Code in `src/services/assistant-telegram/`, entry `assistant-telegram.service.ts`; the
+shared Bot API client, formatter and fake in `src/services/telegram/` and
+`tests/helpers/fake-telegram-bot-api.ts`. The API base can be pointed only at a loopback address
+(`telegram-api-base.ts`), so a test setting cannot send the token off the machine.
+
+**Who may talk** (`assistant-telegram-access.ts`): a private chat, connected with a link from PPM
+and not revoked, written to by the person who connected it. In a group anyone could command an AI
+that runs on this machine, so groups are refused. The same checks run before **every send**: a
+chat revoked in the middle of a turn must not keep receiving it, and a private chat's id being its
+user's id is what makes that check possible without an incoming update. A refused chat is told
+once. A chat connected before PPM recorded who connected it has to reconnect.
+
+**Binding** (`assistant-telegram-binding.ts`, table `assistant_telegram_bindings`). Each connected
+chat talks to one session; the first message creates one on the Assistant's default provider when
+it can run Assistant sessions, else on the first provider that can. `/new`, `/sessions` and PPM's
+*Use on Telegram* (`POST /api/assistant/telegram/bind`) move it. Changes go out on `/ws/global`
+(`assistant:telegram_binding_changed`, and `sessions:list_changed` when a session was created) so
+PPM's session list marks the bound session without polling. Revoking a chat in Settings unbinds it
+and drops anything still queued for it (`forgetChat`).
+
+**Coming in** (`assistant-telegram-poller.ts`, `assistant-telegram-inbound.ts`). Updates are
+handled in order per chat, so a button press and a message in one batch do not race; a press is
+acknowledged at once and acted on after. Messages are grouped for `clawbot.debounce_ms`. The read
+position advances only after a message has been handed to the session, and is saved in the config
+row `assistant_telegram_state` (tied to the bot, so a new token does not inherit an old offset).
+A message sent while PPM was off and older than `BACKLOG_AGE_MS` asks *Run* / *Skip* instead of
+running unannounced. A forwarded message is wrapped as someone else's words and never read as a
+command. Photos up to `MAX_PHOTO_BYTES` reach the session; other files do not. `/start <token>`
+goes to the connect code before any access check, since it is how a chat becomes allowed.
+
+**Going out** (`assistant-telegram-mirror.ts`, `assistant-telegram-turn-renderer.ts`,
+`assistant-telegram-send-queue.ts`). For each bound session the mirror streams the answer by
+editing one message, shows a message typed in PPM as `🖥 (PPM) …` and a watch turn with a 🔔 line,
+and hands cards to the card module; tool names appear only when `clawbot.show_tool_calls` is on,
+and tool input and output are never sent. Telegram does not notify on an edit, so a turn longer
+than `LONG_TURN_MS`, and every watch turn, ends with a **new** message and the draft is deleted.
+Each chat has its own send lane: it honours `retry_after` without holding up other chats, never
+drops a final answer, splits long answers before Telegram's limit, and re-sends without its URL
+button when Telegram refuses the button. After a restart, drafts that were being written say the
+answer was cut off and open cards lose their buttons.
+
+**What leaves the machine** goes through `redactForTelegram` (`telegram-html-format.ts`): known
+secret shapes (tokens, keys, PEM blocks, cloud and chat-service keys) are hidden. Unlike the log
+redaction it keeps PPM's own tunnel or Tailscale address, because that link is how the user gets
+back, and it still needs PPM's login. Markdown is escaped before it is converted to Telegram HTML;
+PPMBot's formatter did not, and one `<` in an answer made Telegram refuse the whole message.
+
+**Read and quiet.** When a final answer reaches the phone the session is marked read, and its
+"Chat completed" / "Waiting for approval" push is held back only if a message to that chat was
+actually *sent* within `SUPPRESS_WINDOW_MS`. Basing it on successful sends rather than on polling
+means a blocked bot or a failing send still lets the push through.
+
+### Cards and the Allow rule
+
+A session's card appears on Telegram as the same card: whichever answer comes first, in PPM or on
+the phone, wins, and the other copy loses its buttons. **Allow is offered only when the card's
+whole deciding input is on the card** — escaped, secrets hidden (the card says how many), and
+within `REVIEW_FIT_MAX` (`assistant-telegram-card-format.ts`). Otherwise the card shows a preview
+marked "Too long to review here" with Deny and Open in PPM only. Allow is a promise that the
+person saw what they allowed; a phone screen that shows half a command cannot make it.
+
+Questions show their choices as buttons (several at once: toggle, then Send); a question that
+only takes typed text points to PPM. Buttons carry random codes bound to the chat they were sent
+to (`assistant-telegram-button-codes.ts`): pressing one spends every code of that card, and after
+a restart every code is "no longer valid", so nothing pressed on an old card can run.
+
+**Relayed cards** (`assistant-telegram-relay.ts`). A watched chat's card goes to the chats bound to
+the Assistant session that set the watch, or to every connected chat when that session is
+unbound. Pressing a button answers the watched chat directly, with no model turn — safe because a
+person pressed it, and the Allow rule guarantees they saw what it allows. The relay also sends
+reports of unbound sessions' watches to every connected chat. A card is shown once per chat, even
+when two watches and `/status` all want it.
+
+### Commands, links and settings
+
+Commands are `BOT_COMMANDS` in `assistant-telegram-commands.ts` (`/new`, `/sessions`, `/status`,
+`/stop`, `/help`, plus `/start`). `/status` is `chats_attention` in a message
+(`assistant-telegram-status.ts`), followed by the cards it lists with working buttons. There is no
+`/restart`: a restart is a change, and the Assistant can run `ppm restart` in a shell, which asks.
+
+"Open in PPM" links point to `/assistant?session=<provider>/<id>` (`notificationPath` in
+`src/services/notification-format.ts`, parsed by `src/web/lib/assistant-deep-link.ts`), which
+opens the Assistant on whatever project is on screen; the old `/project/__assistant__?openChat=…`
+form opened the first project's chat instead and is redirected. A link is a button only when it is
+public https — a tunnel or Tailscale Service address — because Telegram refuses a whole message
+whose button points at localhost or a LAN address (`assistant-telegram-links.ts`); otherwise it
+sits in the text.
+
+**Settings → PPM Assistant → Telegram** (`src/web/components/settings/assistant-telegram-settings.tsx`)
+holds the Assistant's own bot token (the `ppmbot_telegram` row, separate from the Notifications
+bot, so a chat connected for alerts cannot command the Assistant), the switch, the connected chats
+with the session each talks to, the Connect link, and the two display settings. The old settings
+id `ppmbot` opens it (`assistant-settings-tab-store.ts`). The REST surface stayed where PPMBot had
+it, under `/api/settings/clawbot*` in `src/server/routes/settings.ts`, now taking only `enabled`,
+`show_tool_calls` and `debounce_ms`; `/api/assistant/telegram` (`src/server/routes/assistant-telegram.ts`)
+lists chats and their sessions, binds, and lists PPMBot's old memories. The Assistant's session
+list marks the bound session and offers *Use on Telegram* (`assistant-session-row.tsx`, `src/web/hooks/use-assistant-telegram-binding.ts`).
+
+**From PPMBot** (`ppmbot-migration.ts`, once): only the user-written `system_prompt` is copied into
+the Assistant's instructions. Memories PPMBot's AI wrote for itself (`clawbot_memories`) are not:
+the instructions are the most trusted text a session gets, and an AI-written memory could have
+been planted by what it read. Settings → PPM Assistant → General lists them for the user to copy by
+hand. PPMBot's old tables are left in place, unused.
+
+## Startup
+
+`startAssistantHub()` (`src/services/assistant-hub/assistant-hub-startup.ts`) starts the watch
+service, carries PPMBot's settings over, then starts the Telegram bridge when it is switched on and
+has a bot. `src/server/index.ts` and the e2e fixture call the same function, so a test exercises
+the wiring the server runs. A Telegram failure (bad token, Telegram unreachable) is logged and shown
+in Settings, never stops the server or the watches. Settings calls `syncAssistantTelegram` after a
+change. Telegram allows one `getUpdates` reader per bot, so while the bridge reads a bot it tells
+the connect-link poller to leave that bot alone (`ppmbotReading` in
+`src/services/telegram-connect.service.ts`).
+
+## Rules the hub keeps
+
+- Telegram changes nothing about what asks: an Assistant session is still forced to ask, the cards
+  are the same cards, and PPMBot's bypass path no longer exists anywhere.
+- A watch turn never asks and never acts; a card in a watched chat never starts a model turn.
+- Allow appears only where the whole deciding input is visible; everything else is Deny or PPM.
+- Private chat, still connected, the right person — checked on receipt and on every send.
+- No tool input or output is sent to Telegram; text is redacted before it leaves.
+- Every session key goes through `resolveMigratedSession`; cards wait until answered or until PPM
+  restarts.
+
 ## Known limitations
 
 - **A waiting tool call holds its connection with no idle limit.** That is what lets an approval
@@ -297,6 +567,32 @@ closes (`src/services/database/query-stop.ts`). An approved query is the user's 
   sample rows, not against a live server; the Postgres one has an integration test
   (`tests/integration/assistant-sql-reach-postgres.test.ts`). The MySQL check also does not see
   loadable functions, which only an administrator installs.
+- **Telegram keeps what it is sent.** Bot chats are not end-to-end encrypted: every answer, card
+  (with its full command, file content or diff) and report the Assistant sends is stored on
+  Telegram's servers. Redaction hides only secret shapes it knows; a password written in prose,
+  or a key in an unknown format, goes out as written.
+- **Not tried against real Telegram before handoff.** No bot token was available, so the bridge is
+  tested only against the fake Bot API. What only a phone shows is unchecked: that the final
+  message of a long turn and a card make the phone notify, how Telegram renders the HTML, and that
+  an Open in PPM button reaches PPM through the tunnel or Tailscale.
+- **Long content can only be decided in PPM.** A write, edit or command whose deciding input does
+  not fit on a card, and a Codex patch whose full diff PPM does not hold, get Deny and Open in PPM
+  on Telegram, and `chat_answer_approval` refuses to Allow them.
+- **A restart ends what was in flight.** Cards, button codes and turns live in memory: after a
+  restart the phone's drafts say the answer was cut off, its cards lose their buttons, and messages
+  sent meanwhile ask Run or Skip. Watches survive; the hourly wake count does not (it restarts at
+  zero).
+- **A refused call in a watch turn reaches the provider as a plain denial.** Claude and Codex are
+  not told why; the model knows from its instructions and the turn's context. The endpoint's own
+  tools do return the reason.
+- **Codex and the `ppm` CLI.** A Codex Assistant runs in a read-only sandbox, so an approved
+  `ppm …` command that writes PPM's data may fail there. Not verified yet. Separately, on a server
+  running a non-default database profile, CLI data commands would open another instance's
+  `ppm.db`; `ppm_cli_reference` warns the agent not to run them.
+- **Telegram is text, photos up, and buttons.** No files, no images sent down; a question that
+  takes only typed text is answered in PPM. One program may read a bot at a time: a second reader
+  of the same bot (another PPM, another tool) breaks one of them.
+- **A Codex secret answer** is kept out of PPM's session trace but stays in Codex's own rollout.
 
 ## Verify
 
@@ -304,3 +600,9 @@ closes (`src/services/database/query-stop.ts`). An approved query is the user's 
 Assistant on the production bundle, on a desktop and a phone viewport, against a scripted
 provider (`tests/e2e/fixtures/assistant-server.ts`) that calls the real endpoint with each turn's
 token and an isolated `PPM_HOME`. The header of the test file lists its scenarios and options.
+
+The hub is covered below the browser: `tests/integration/assistant-telegram-bridge.test.ts` and
+`assistant-telegram-relay.test.ts` run the bridge against the fake Bot API
+(`tests/helpers/fake-telegram-bot-api.ts`) and the real chat socket layer with a mock provider, and
+`tests/integration/assistant-watch-flow.test.ts` runs watches end to end; the unit tests are in
+`tests/unit/services/assistant-telegram/`.

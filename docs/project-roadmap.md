@@ -147,10 +147,10 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 | Feature | Priority | Status | Description |
 |---------|----------|--------|-------------|
-| **Telegram Bot (PPMBot Coordinator)** | High | ✅ Done (v0.9.11) | Coordinator session per chat delegates project tasks to subagents. Persistent identity in `~/.ppm/bot/coordinator.md`. CLI-driven delegation via `ppm bot`. Cross-provider. |
+| **PPM Assistant on Telegram** | High | ◐ Built, not yet released | Replaces the PPMBot coordinator: a connected Telegram chat is a second window onto one PPM Assistant session — which chats need you, open a chat, answer its cards (Allow only when the whole request is visible), report when a watched chat finishes. Not yet tried against real Telegram. [PPM Assistant → Telegram](architecture/ppm-assistant.md#telegram). |
 | **Hooks system** | High | — | Event hooks for PPM lifecycle (file save, git commit, chat message). Foundation for a Skills API and deeper extension integration. No implementation yet. |
 | **PPM Skills API** | Medium | ◐ Partial | External surface: `ppm export skill` generates a Claude Code skill that drives PPM through its CLI, HTTP API and SQLite config DB. Internal surface: the PPM Assistant's MCP endpoint (`/api/assistant-mcp`) gives an AI PPM's own tools — projects, chats, databases, the chatting device's screen and tabs, palette commands — with approval before any change ([PPM Assistant](architecture/ppm-assistant.md)). It serves Assistant sessions only; a general internal API for ordinary chats or third parties is still unbuilt. |
-| **Built-in Clawbot** | Medium | — | Lightweight in-process agent on the Messages API. Superseded in practice by the multi-provider registry + PPMBot; keep only if the "AI authors extensions" story is still a goal. |
+| **Built-in Clawbot** | Medium | — | Lightweight in-process agent on the Messages API. Superseded in practice by the multi-provider registry + the PPM Assistant; keep only if the "AI authors extensions" story is still a goal. |
 | **More providers** | Medium | ◐ Partial | Codex ✅, Cursor ✅. Gemini CLI and Tier-3 (any OpenAI-compatible API) not started — note PPM already *serves* an OpenAI-compatible endpoint via the proxy, it just does not *consume* one. |
 
 ### v1.0.0 — "Production Ready" (Q4 2026)
