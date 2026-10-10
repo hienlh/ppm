@@ -20,6 +20,7 @@ import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/
 import { CodexJsonRpcClient } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
 import { ASSISTANT_PERMISSION } from "../../../src/providers/codex-app-server/codex-permission-map.ts";
 import * as accounts from "../../../src/services/codex-account.service.ts";
+import * as assistantHome from "../../../src/providers/codex-app-server/codex-assistant-home.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { ASSISTANT_TOOLS } from "../../../src/shared/assistant-tool-names.ts";
 import { CODEX_ASSISTANT_MCP_TOKEN_ENV } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
@@ -31,12 +32,15 @@ const SERVERS: AssistantMcpServer[] = [
   { id: "2", name: "docs", enabled: true, transport: "http", url: "https://docs.example/mcp", headers: { "X-Key": "secret-docs" } },
   { id: "3", name: "off", enabled: false, transport: "stdio", command: "x", args: [], env: {} },
 ];
-const ISOLATION = { web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true };
+const ISOLATION = {
+  web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true,
+  "skills.include_instructions": false, "skills.bundled.enabled": false,
+};
 
 describe("Claude", () => {
-  it("is an http server named ppm-assistant with a 12-minute timeout, the token in the header", () => {
+  it("is an http server named ppm-assistant with the longest timeout Claude holds (2^31 − 1 ms), the token in the header", () => {
     expect(assistantMcpServers(ACCESS)).toEqual({
-      "ppm-assistant": { type: "http", url: ACCESS.url, headers: { Authorization: "Bearer tok-123" }, timeout: 720_000 },
+      "ppm-assistant": { type: "http", url: ACCESS.url, headers: { Authorization: "Bearer tok-123" }, timeout: 2_147_483_647 },
     });
     expect(assistantMcpServers(null)).toEqual({});
     expect(assistantMcpServers(undefined)).toEqual({});
@@ -52,7 +56,7 @@ describe("Claude", () => {
 });
 
 describe("Codex config", () => {
-  it("turns web search, apps, plugins and hooks off and approves the Assistant's tools up front, with a 720 s tool timeout", () => {
+  it("turns web search, apps, plugins and hooks off and approves the Assistant's tools up front, with the same timeout in seconds", () => {
     expect(assistantSessionConfig({ mcp: ACCESS })).toEqual({
       ...ISOLATION,
       "mcp_servers.ppm_assistant": {
@@ -61,7 +65,7 @@ describe("Codex config", () => {
         enabled_tools: [...ASSISTANT_TOOLS],
         default_tools_approval_mode: "approve",
         startup_timeout_sec: 10,
-        tool_timeout_sec: 720,
+        tool_timeout_sec: 2_147_484,
       },
     });
     // No endpoint: still kept apart from the user's setup.
@@ -133,6 +137,8 @@ describe("Codex Assistant session start", () => {
     previousAi = configService.get("ai");
     configService.set("ai", { ...previousAi, providers: { ...previousAi.providers, codex: { type: "cli", cli_command: "codex" } } });
     spies.push(spyOn(accounts, "resolveCodexAccountForSession").mockResolvedValue(null));
+    // Keeps the machine's real ~/.codex out of the test (no isolated home is made for it).
+    spies.push(spyOn(assistantHome, "assistantSpawnHome").mockImplementation((home) => home));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation((opts: any) => { env = opts.env; }));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "notify").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "close").mockImplementation(() => {}));
@@ -156,7 +162,7 @@ describe("Codex Assistant session start", () => {
     expect(env).toMatchObject({ [CODEX_ASSISTANT_MCP_TOKEN_ENV]: ACCESS.token });
     const start = requests.find((r) => r.method === "thread/start")!.value;
     expect(start.config).toMatchObject({ web_search: "disabled", "mcp_servers.ppm_assistant": { url: ACCESS.url, default_tools_approval_mode: "approve" } });
-    expect(requests.map((r) => r.method)).toEqual(["initialize", "config/read", "thread/start"]);
+    expect(requests.map((r) => r.method)).toEqual(["initialize", "config/read", "skills/list", "thread/start"]);
   });
 
   it("switches the user's own servers off and starts the Assistant's", async () => {

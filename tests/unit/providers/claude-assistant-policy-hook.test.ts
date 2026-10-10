@@ -198,7 +198,7 @@ describe("Claude Assistant session", () => {
     });
     expect(Object.keys(opts.mcpServers)).toEqual(["notes", "ppm-assistant"]);
     expect(opts.mcpServers["ppm-assistant"]).toEqual({
-      type: "http", url: "http://127.0.0.1:8125/api/assistant-mcp", headers: { Authorization: "Bearer tok" }, timeout: 12 * 60_000,
+      type: "http", url: "http://127.0.0.1:8125/api/assistant-mcp", headers: { Authorization: "Bearer tok" }, timeout: 2 ** 31 - 1,
     });
     expect(opts.mcpServers.notes).toEqual({ type: "stdio", command: "notes-mcp", args: [], env: { K: "v" } });
     expect(opts.strictMcpConfig).toBe(true);

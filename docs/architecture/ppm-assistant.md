@@ -89,9 +89,15 @@ One endpoint serves both providers (`src/services/assistant-mcp/assistant-mcp-en
 mounted before PPM's auth). It is built on the same `mcp-http-endpoint.ts` and
 `mcp-session-tokens.ts` as the tab tools: a per-session capability token, held in memory and
 revoked when the session is deleted. A token is honoured only while its session — followed
-through a Codex rename — is still an Assistant session, checked on every request. Calls are held
-open past Bun's 10 s idle cut (`ASSISTANT_MCP_HOLD_OPEN_SECONDS`), and the providers get a
-12-minute tool timeout, because a query may run long and an approval may wait.
+through a Codex rename — is still an Assistant session, checked on every request. A tool call
+lifts Bun's 10 s idle cut for its request altogether (`ASSISTANT_MCP_HOLD_OPEN_SECONDS` = 0,
+Bun's "no limit"), and the providers get the longest tool timeout each holds
+(`ASSISTANT_MCP_TIMEOUT_MS`, 2^31 − 1 ms ≈ 24.8 days; Codex's `tool_timeout_sec` is the same in
+seconds), because an approval waits as long as the user takes. Neither provider takes "no
+limit": Claude clamps a server's `timeout` to that figure, the longest a JS timer holds, and
+leaving it unset is worse — an HTTP server's call is then cut after five minutes of silence. The
+Claude permission hook gets the same treatment (`PERMISSION_HOOK_TIMEOUT_SECONDS`): the CLI's own
+default would stop waiting for it after ten minutes, with the provider's own card still up.
 
 Every tool that takes a project checks it against the registered projects, and every tool
 taking a `sessionId` proves the session belongs to that project and is not an Assistant
@@ -100,7 +106,7 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 
 - **Read, never ask**: `projects_list`, `chat_list_sessions`, `chat_search`,
   `chat_read_messages`, `db_list_connections`, `db_query` for a proven read, `ui_get_state`,
-  `ui_read_tab` inside the registered projects, `ui_list_commands`.
+  `ui_read_tab` (see below), `ui_list_commands`.
 - **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
   `ui_switch_project`, and `ui_close_tab` for a tab that loses nothing. Each answers
   `previousProject` or enough to reopen what it closed, so the agent can undo — there is no
@@ -108,13 +114,40 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 - **Ask first**: `db_query` for anything not proven to read, `chat_send_message` (always),
   `ui_run_command` for a command declared `changesData` and for every extension command,
   `ui_close_tab` for a tab that would lose work (unsaved editor text, unsaved SQL or table edits,
-  a terminal), and `ui_read_tab` for a file or terminal outside every registered project or a
-  file in a credential store.
+  a terminal), and `ui_read_tab` for what would leave from outside every registered project or
+  from a credential store (below).
+
+**Reading a tab** (`assistant-tab-reader.ts`). A file tab answers with the file's absolute path
+and its project, never the file: the agent reads it with its provider's own read tool, so one
+rule decides every file read — Claude's `Read` under the Assistant policy (inside the projects
+unasked, elsewhere and in credential stores with a card), Codex natively. What no read tool can
+reach comes back from `ui_read_tab` itself, under the same rule: an editor's unsaved text, a
+terminal's output, and the SQL and rows of a database tab on a SQLite file opened by path (no
+saved connection, so no *Available to the AI* setting to consult) are returned unasked inside a
+registered project and outside the private roots, and otherwise only after a card
+(`readOutsideSummary`). PPM's own folder and paths on no local drive are refused outright,
+checked before the disk is touched.
 
 Databases follow the user's per-connection choices: a connection with *Available to the AI
 chat* off (`ai_access = 0`) is neither listed, queried, opened nor read through a database tab,
 and a read-only connection never runs a write, approved or not. Every statement is audited with
 `actor = "agent"`.
+
+**Old values of a write** (`assistant-write-old-rows.ts`, `assistant-sql-write-target.ts`). An
+approved UPDATE or DELETE answers `{ rowsAffected, columns, oldRows, oldRowsCapped }`: the rows it
+changes as they were, read by `SELECT * FROM <same table> [AS alias] [WHERE <same condition>]` on
+one query session, inside the write's own transaction (`BEGIN` / `START TRANSACTION` /
+SQLite's `BEGIN IMMEDIATE`, which takes the write lock the UPDATE would take anyway, only first),
+immediately before it; at most 200 rows. Only the plain single-table shape is read that way —
+no `FROM`/`USING`/`JOIN` or comma list, no `ONLY`, `WITH`, modifiers, `WHERE CURRENT OF`,
+`ORDER BY`/`LIMIT`, `RETURNING` or nested write — and the SELECT must be provable like an
+unasked read (safe-listed functions, nothing more reached by the catalog), since it re-runs the
+WHERE. A WHERE that may answer differently a moment later (`random()`; the clock on MySQL and
+SQLite — Postgres fixes it per transaction) is not read either. Anything else runs as typed,
+with `oldRows: null` and an `oldRowsNote` saying why. No locking clause is added, so on Postgres
+and MySQL a commit landing between the two statements can make the rows differ from what the
+write saw; a SELECT that fails (a login allowed to UPDATE but not to SELECT) rolls back and the
+write runs on its own. Only the write is audited; the SELECT is PPM's own.
 
 ## The chatting device
 
@@ -156,11 +189,14 @@ endpoint request with that reason.
 
 **The endpoint's broker** (`assistant-approval-broker.ts`) puts the card on every device showing
 the session (it is a question, not a screen action), sends the usual approval notification, and
-takes the first answer. The answer window is ten minutes from when the card is *shown*; a
-request that never reaches the screen ends before the providers' own tool timeout, and the reply
-says which happened. `PPM_ASSISTANT_APPROVAL_TIMEOUT_MS` can shorten the window for tests, never
-lengthen it. Outcomes are approved, denied, timeout, withdrawn or unavailable, and only approved
-runs anything.
+takes the first answer. A card waits until it is answered — shown or queued behind another,
+with no time limit — or until the turn, the call or PPM itself goes away: a restart drops every
+waiting request with the process, and an answer to one then gets "no longer valid" (below).
+`PPM_ASSISTANT_APPROVAL_TIMEOUT_MS` sets an answer window for tests and e2e fixtures only,
+counted from when the card is *shown* and held under the providers' own tool timeout. Outcomes
+are approved, denied, withdrawn or unavailable (and timeout, only under that variable), and only
+approved runs anything. The device broker under it arms no timer for an unbounded wait
+(`createDeviceBroker`), since a delay past 2^31 − 1 ms would fire at once instead of never.
 
 **What the card shows** is built by the server from the checked input, never from the agent's
 own wording (`assistant-approval-summary.ts`): the full SQL or message, wrapped, with hidden and
@@ -186,7 +222,16 @@ when two checks pass, and anything else goes to an approval card:
    - **Postgres** (`assistant-sql-reach-postgres.ts`): views and row-level policies the query
      can reach, generated columns, domain checks, user casts, user functions named like any word
      of the query, and user operators, each judged by the same rules. `EXPLAIN` is not used, because
-     planning runs user code; the file header records what was measured.
+     planning runs user code; the file header records what was measured. Only Postgres's own
+     `pg_catalog` functions are trusted: an installed extension's count as user functions, so on a
+     database with citext `max(…)` asks (its aggregate shadows the safe-listed one). A user
+     operator asks only where the query can make Postgres choose it, which goes by operand type:
+     on that database `WHERE id = 1` and `SELECT id FROM t` run unasked, while reading a citext
+     column (its output is extension code; also through `*`, a whole-row `t`, a view or a domain
+     or array over it), writing the type (`::citext`, `CAST(… AS citext)`, `citext 'x'`) or using
+     a user operator on a value of its type asks. An operator a built-in type can reach (one on
+     `text`, a domain over a built-in, or a type with an implicit cast from one) still asks
+     wherever its symbol, or a keyword standing for it (`IN`, `LIKE`, `BETWEEN`…), is written.
    - **MySQL/MariaDB** (`assistant-sql-reach-mysql.ts`): any view the query could name, or a
      stored function named like a safe-listed call, sends it to approval.
    - **SQLite**: no catalog read. A view can only call SQLite's built-ins, `load_extension()` is
@@ -198,14 +243,31 @@ closes (`src/services/database/query-stop.ts`). An approved query is the user's 
 
 ## Known limitations
 
+- **A waiting tool call holds its connection with no idle limit.** That is what lets an approval
+  wait for the user, but a provider that vanishes without closing its TCP connection leaves the
+  request waiting until the turn ends or PPM restarts; the card goes when the turn does.
 - **Codex runs commands it deems safe without asking.** Under `untrusted`, its trusted read-only
   commands (`cat`, `ls`, …) run unasked and can read outside the registered projects; there is no
   per-path rule to give it. With Codex, what keeps that content on the machine is that every way
   out (web, shell beyond that set, writes, messages, MCP) asks or is off, and the read-only
   sandbox has no network (not checked by hand on Windows).
-- **Codex still loads the user's global `AGENTS.md`** from `CODEX_HOME`, and the user's Codex
-  skills: codex 0.161 has no setting that leaves them out while keeping the session's own
-  instructions.
+- **Codex leaves out the user's `AGENTS.md` only by running on a home of its own.** No codex
+  setting skips `$CODEX_HOME/AGENTS.md` (`project_doc_max_bytes = 0` and `instructions = ""` do
+  not). So an Assistant app-server runs on `<ppm dir>/assistant/codex-homes/<account>`
+  (`codex-assistant-home.ts`), whose `auth.json` is a hard link to the account's (codex rewrites it
+  in place, so a refreshed token is never forked) and whose `sessions` is a link to the account's.
+  Where that cannot be set up — the account keeps no `auth.json` (a keyring login), or the file
+  system refuses the links — the session runs on the account's own home and gets the user's
+  `AGENTS.md` again, with a warning in the log. Anything only the user's `config.toml` provides (a
+  custom model provider, proxy settings) does not apply to Assistant sessions, and a removed
+  account's Assistant home is deleted on the next Assistant spawn, not at once.
+- **Codex skills are switched off by name.** Skills under the user's home folder
+  (`~/.agents/skills`) are found whatever `CODEX_HOME` says; their catalogue is kept out of the
+  prompt and each one the app-server lists is disabled (`codex-assistant-skills.ts`). If that list
+  cannot be read, a skill the user names with `$name` in a message still loads.
+- **Claude's Glob and Grep ask while `RIPGREP_CONFIG_PATH` is set.** Neither follows a link below
+  its folder (measured on the bundled CLI's ripgrep), but a ripgrep config file can turn
+  following on for every search, and the CLI inherits PPM's environment.
 - **SQLite reads cannot be stopped.** bun:sqlite runs a statement synchronously with no
   interrupt, so the 60 s limit and the abort apply only before a statement starts.
 - **MySQL/MariaDB**: the reach check's catalog query has been verified only by unit tests over

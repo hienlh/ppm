@@ -420,7 +420,7 @@ async function s3(dev) {
   record("s3", dev.name, "ui_open_tab into another project shows the tab and reports previousProject; the Assistant is still there after the switch", { nav });
 }
 
-/** 4. Reading a terminal and an editor's unsaved text; a file outside every project asks first. */
+/** 4. Reading a terminal and an editor's unsaved text; a file tab names its path, and reading a file outside every project is the provider's Read, which asks. */
 async function s4(dev) {
   await openAssistant(dev);
   await newSession(dev);
@@ -457,32 +457,37 @@ async function s4(dev) {
   await dev.page.keyboard.type(unsaved);
   const [readEditor] = await turn(dev, `s4-read-editor-${dev.name}`, [{ mcp: "ui_read_tab", args: { tabId: editorTab } }], "What does notes.txt say now?", sessionId);
   assert.equal(readEditor.isError, false, readEditor.text);
-  assert.equal(parse(readEditor).source, "the editor's unsaved text (not on disk yet)");
+  assert.match(parse(readEditor).source, /^the editor's unsaved text/);
+  assert.equal(parse(readEditor).unsavedChanges, true);
+  assert.equal(parse(readEditor).path, join(alpha, "notes.txt"), "the tab names its file by its absolute path");
   assert.ok(parse(readEditor).text.includes(unsaved), "the unsaved text came back");
   assert.ok(!readFileSync(join(alpha, "notes.txt"), "utf8").includes(unsaved), "nothing was saved");
 
   const [outsideTab] = await turn(dev, `s4-outside-${dev.name}`, [{ mcp: "ui_open_tab", args: { project: "alpha", kind: "file", target: { path: OUTSIDE_FILE } } }], "Open my private notes", sessionId);
   const outsideTabId = parse(outsideTab).tabId;
+  // The tab answers with where its file is, without a card and without its content.
+  const [named] = await turn(dev, `s4-name-outside-${dev.name}`, [{ mcp: "ui_read_tab", args: { tabId: outsideTabId } }], "Where are my private notes?", sessionId);
+  assert.equal(named.isError, false, named.text);
+  assert.equal(parse(named).path, OUTSIDE_FILE);
+  assert.equal(parse(named).project, null);
+  assert.ok(!named.text.includes("OUTSIDE-FILE-CONTENT"), "the file itself is not read by ui_read_tab");
+  assert.equal(await card(dev).count(), 0, "naming the file asks nothing");
+  // Reading it is the provider's own Read, which the Assistant policy puts to the user.
   for (const verb of ["Deny", "Allow"]) {
     const label = `s4-read-outside-${verb}-${dev.name}`;
-    await send(dev, label, [{ mcp: "ui_read_tab", args: { tabId: outsideTabId } }], `Read the private notes (${verb})`, sessionId);
+    await send(dev, label, [{ builtin: "Read", input: { file_path: parse(named).path } }], `Read the private notes (${verb})`, sessionId);
     const shown = await waitCard(dev);
-    assert.match(shown.text, /Read a file outside every registered project/);
+    assert.match(shown.text, /Tool Approval Required/);
     assert.ok(shown.text.includes("private-notes.txt"), "the card names the file");
     if (verb === "Deny") await shot(dev, "s4-outside-file-card");
     await answerCard(dev, verb);
     const [read] = await answered(label, 1);
-    if (verb === "Deny") {
-      assert.equal(read.isError, true);
-      assert.equal(parse(read).outcome, "declined");
-      assert.ok(!read.text.includes("OUTSIDE-FILE-CONTENT"));
-    } else {
-      assert.equal(read.isError, false, read.text);
-      assert.ok(parse(read).text.includes("OUTSIDE-FILE-CONTENT"));
-    }
+    assert.equal(read.decision, "ask", "a Read outside every registered project asks");
+    assert.equal(read.approved, verb === "Allow");
+    assert.equal(read.isError, verb === "Deny");
     await turnDone(dev, label);
   }
-  record("s4", dev.name, "ui_read_tab reads a terminal and an editor's unsaved text; a file outside every project shows a card (Deny: nothing read, Allow: read)");
+  record("s4", dev.name, "ui_read_tab reads a terminal and an editor's unsaved text and names a file tab's path; reading a file outside every project is the provider's Read, which shows a card (Deny: not run, Allow: run)");
 }
 
 /** 5. A read runs unasked; a write and an unprovable statement ask; Deny changes nothing; Allow after 15 s writes and is audited. */
@@ -528,6 +533,9 @@ async function s5(dev, connId) {
   const [allowed] = await answered(label, 1);
   assert.equal(allowed.isError, false, allowed.text);
   assert.equal(parse(allowed).rowsAffected, 1);
+  assert.deepEqual(parse(allowed).columns, ["id", "item", "qty"]);
+  assert.deepEqual(parse(allowed).oldRows, [[1, "apples", before]], "the write answers with the row as it was");
+  assert.equal(parse(allowed).oldRowsCapped, false);
   assert.ok(allowed.ms >= 15_000, `the call stayed open past 15 s (${allowed.ms} ms)`);
   assert.equal(qty(1), 42, "the row changed");
   await turnDone(dev, label);
@@ -537,7 +545,7 @@ async function s5(dev, connId) {
   assert.ok(agentRows.some((h) => h.sql === WRITE(11) && h.status === "blocked"), "the declined write is audited as blocked");
   assert.ok(agentRows.some((h) => h.sql === "PRAGMA user_version = 7" && h.status === "blocked"), "the declined PRAGMA is audited as blocked");
   await shot(dev, "s5-after-allow");
-  record("s5", dev.name, "db_query: a read runs unasked; a write and PRAGMA ask, Deny leaves the data, Allow after >15 s writes and is audited", { allowMs: allowed.ms });
+  record("s5", dev.name, "db_query: a read runs unasked; a write and PRAGMA ask, Deny leaves the data, Allow after >15 s writes, answers with the old row and is audited", { allowMs: allowed.ms });
 }
 
 /** 6. A waiting card: survives a reload, gives way to a new message, times out, and does not survive a restart. */

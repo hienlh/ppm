@@ -66,7 +66,7 @@ export function findAiConnection(ref: unknown): { ok: true; conn: ConnectionRow 
 }
 
 /** A cell as JSON can carry it, long values cut. */
-function cell(value: unknown): unknown {
+export function agentCell(value: unknown): unknown {
   if (value === null || value === undefined) return null;
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "string") return clip(value, MAX_CELL_CHARS);
@@ -82,12 +82,15 @@ function cell(value: unknown): unknown {
   return value;
 }
 
-/** A query's answer as the agent gets it: rows capped and cut, or how many rows a write changed. */
-export function queryResultJson(conn: ConnectionRow, result: QueryRunResponse): Json {
+/**
+ * A query's answer as the agent gets it: rows capped and cut, or how many rows a write changed.
+ * `extra` adds fields after those (what a write says about its old values).
+ */
+export function queryResultJson(conn: ConnectionRow, result: QueryRunResponse, extra: Record<string, unknown> = {}): Json {
   if (result.changeType === "modify" && result.columns.length === 0) {
-    return jsonResult({ connection: conn.name, rowsAffected: result.rowsAffected, executionTimeMs: result.executionTimeMs });
+    return jsonResult({ connection: conn.name, rowsAffected: result.rowsAffected, ...extra, executionTimeMs: result.executionTimeMs });
   }
-  const rows = result.rows.slice(0, MAX_QUERY_ROWS).map((row) => row.map(cell));
+  const rows = result.rows.slice(0, MAX_QUERY_ROWS).map((row) => row.map(agentCell));
   const cut = result.rows.length > MAX_QUERY_ROWS || !!result.truncated;
   return jsonResult({
     connection: conn.name,
@@ -96,6 +99,7 @@ export function queryResultJson(conn: ConnectionRow, result: QueryRunResponse): 
     rowCount: result.rows.length,
     ...(result.changeType === "modify" ? { rowsAffected: result.rowsAffected } : {}),
     ...(cut ? { truncated: `Only the first ${rows.length} rows are shown${result.truncated ? " (the result was already cut short)" : ""}; add a LIMIT or narrow the query.` } : {}),
+    ...extra,
     executionTimeMs: result.executionTimeMs,
   }, { key: "rows", list: rows });
 }
@@ -134,7 +138,7 @@ export async function dbQuery(
   const text = assistantSqlSafety(sql, dialect, called);
   const safety = text.proven ? await assistantSqlReachSafety(sql, dialect, called, read ?? connectionCatalogReader(conn)) : text;
   if (!safety.proven) {
-    return runApprovedQuery(conn, sql, safety.reason, caller, ask ?? noApprover);
+    return runApprovedQuery(conn, sql, safety.reason, caller, ask ?? noApprover, read);
   }
 
   try {

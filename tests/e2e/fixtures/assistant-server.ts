@@ -46,7 +46,7 @@ process.env.SHELL = process.platform === "win32" ? "cmd.exe" : "/bin/bash";
 
 // Import services only after validating environment isolation.
 const { APPROVAL_TIMEOUT_ENV, approvalTimeoutMs } = await import("../../../src/services/assistant-mcp/assistant-approval-broker");
-if (!process.env[APPROVAL_TIMEOUT_ENV]) throw new Error(`${APPROVAL_TIMEOUT_ENV} must be set: no test waits ten minutes`);
+if (!process.env[APPROVAL_TIMEOUT_ENV]) throw new Error(`${APPROVAL_TIMEOUT_ENV} must be set: without it a card nobody answers waits for ever`);
 const { configService } = await import("../../../src/services/config.service");
 configService.load();
 configService.set("auth", { ...configService.get("auth"), enabled: false });

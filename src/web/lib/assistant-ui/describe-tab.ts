@@ -84,13 +84,14 @@ export function describeTabFrom({ tab, area, live, terminalSessionId, offset }: 
   } else if (DB_TAB_TYPES.has(tab.type)) {
     const sql = tab.type === "db-query" && typeof meta.currentSql === "string" ? cut(meta.currentSql, READ_TAB_SQL_CHARS) : undefined;
     const rows = live?.kind === "rows" && live.rows ? capShownRows(live.rows) : undefined;
-    // The server reads the tab only for a saved connection the user made available to the AI,
-    // so it needs to know which one; a database file opened by path names none.
+    // The server decides whether the agent may read the tab: for a saved connection by the
+    // user's "available to the AI" setting, for a database file opened by path by where the file
+    // is. Either way it needs to know which one the tab shows.
     const target = targetOf(meta);
-    const connectionId = target?.kind === "connection" ? target.connectionId : undefined;
-    desc.database = {
-      ...(connectionId !== undefined ? { connectionId } : {}), ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}),
-    };
+    const named = target?.kind === "connection"
+      ? { connectionId: target.connectionId }
+      : target?.kind === "file" ? { file: { path: target.path, ...(target.projectName ? { project: target.projectName } : {}) } } : {};
+    desc.database = { ...named, ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}) };
   }
   return desc;
 }

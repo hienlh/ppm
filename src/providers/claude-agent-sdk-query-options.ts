@@ -201,6 +201,14 @@ export function shellHookCall(hookInput: any): { phase: "begin" | "end"; toolUse
 
 type ToolHook = (...args: any[]) => Promise<any>;
 
+/**
+ * Seconds the CLI waits for the permission hook. Its own default is ten minutes, and the hook
+ * waits for the user's answer to an approval card, which takes as long as the user takes: an
+ * Assistant card in particular waits until it is answered or PPM restarts. The largest value the
+ * CLI can hold — it turns this into a timer, and one past 2^31 − 1 ms fires at once.
+ */
+export const PERMISSION_HOOK_TIMEOUT_SECONDS = Math.floor(2_147_483_647 / 1000);
+
 /** The permission hook, then — for a call it let through — the shell or file-write hook. */
 function thenCapture(preToolUse: ToolHook, shellCommand: ToolHook, fileWrite: ToolHook): ToolHook {
   return async (...args) => {
@@ -232,7 +240,7 @@ export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fil
   return {
     PreToolUse: p.isBypass
       ? [fileWrite, shell]
-      : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite)] }],
+      : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite)], timeout: PERMISSION_HOOK_TIMEOUT_SECONDS }],
     PostToolUse: [shell, fileWrite],
     PostToolUseFailure: [shell, fileWrite],
   };

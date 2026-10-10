@@ -9,7 +9,8 @@ import { UI_COMMAND_TOOL_DEFINITIONS, UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFIN
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
  * provider knows them by are in `assistant-tool-names.ts`. Reading needs no approval; a call that
  * would change something (a database write, a message into a chat, closing a tab with unsaved
- * work, reading outside the registered projects) asks the user inside the endpoint first. The
+ * work) or read a tab's content from outside the registered projects asks the user inside the
+ * endpoint first. The
  * tools that work on the user's screen are defined beside their handlers.
  */
 
@@ -22,12 +23,21 @@ export interface AssistantMcpAccess {
 export const CODEX_ASSISTANT_MCP_TOKEN_ENV = "PPM_ASSISTANT_MCP_TOKEN";
 
 /**
- * The providers' own timeout for one call. Long, because a query may run for minutes and a call
- * that changes data waits for the user to approve it.
+ * The providers' own timeout for one call: the longest either holds, because a call that changes
+ * data waits for the user's approval for as long as the user takes (until PPM restarts), and an
+ * approved query is the user's to run to the end. About 24.8 days, not "no limit", because
+ * neither provider offers one: Claude clamps a server's `timeout` to 2^31 − 1 ms (the longest a
+ * JS timer holds), and leaving it unset is worse — an HTTP server's call is then cut after five
+ * minutes without a byte, which a waiting approval never sends. Codex's `tool_timeout_sec` gets
+ * the same figure in seconds.
  */
-export const ASSISTANT_MCP_TIMEOUT_MS = 12 * 60_000;
-/** How long the endpoint keeps a call's connection open: past the providers' own timeout. */
-export const ASSISTANT_MCP_HOLD_OPEN_SECONDS = ASSISTANT_MCP_TIMEOUT_MS / 1000 + 30;
+export const ASSISTANT_MCP_TIMEOUT_MS = 2_147_483_647;
+/**
+ * How long the endpoint lets a call's connection stay silent, in Bun's `server.timeout` seconds:
+ * 0 lifts its idle limit for that request (measured: a request held 5 s past a 2 s idle limit
+ * still answered), so a call is ended only by its answer or by the caller closing it.
+ */
+export const ASSISTANT_MCP_HOLD_OPEN_SECONDS = 0;
 
 export const MAX_SESSIONS_LISTED = 100;
 export const MAX_SEARCH_RESULTS = 50;

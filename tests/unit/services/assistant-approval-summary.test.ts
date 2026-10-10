@@ -61,8 +61,12 @@ describe("approval summaries", () => {
     const close = closeTabSummary({ tabType: "terminal", tabTitle: "zsh", project: "api", reason: "Closing a terminal ends its shell." });
     expect(close.headline).toBe("Close a terminal and end what runs in it");
     expect(close.warning).toBe("Closing a terminal ends its shell.");
-    const read = readOutsideSummary({ kind: "file", location: "/etc/hosts" });
+    const read = readOutsideSummary({ kind: "unsaved", location: "/etc/hosts" });
+    expect(read.headline).toBe("Read the unsaved text of a file outside every registered project");
     expect(read.facts).toEqual([{ label: "File", value: "/etc/hosts" }]);
+    const db = readOutsideSummary({ kind: "database", location: "/home/u/.aws/x.db", privateStore: true });
+    expect(db.headline).toBe("Read the SQL and rows of a database file where logins or keys are kept");
+    expect(db.facts).toEqual([{ label: "Database file", value: "/home/u/.aws/x.db" }]);
   });
 
   it("cuts an over-long fact rather than letting it take over the card", () => {

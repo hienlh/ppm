@@ -78,15 +78,15 @@ describe("db_query writes", () => {
     expect(listQueryLogs({ connectionId: writable }).map((l) => [l.status, l.actor])).toEqual([["blocked", "agent"], ["blocked", "agent"]]);
   });
 
-  it("runs an approved write on a writable connection, says how many rows changed, and audits it as the agent's", async () => {
-    const runQuery = spyOn(getAdapter("sqlite"), "runQuery");
-    spies.push(runQuery);
+  it("runs an approved write on a writable connection, says how many rows changed and what they held, and audits it as the agent's", async () => {
+    const openSession = spyOn(getAdapter("sqlite"), "openQuerySession");
+    spies.push(openSession);
     const { ask, asked } = asker(APPROVE);
     const result = await dbQuery({ connectionId: "main", sql: "DELETE FROM items WHERE id > 3" }, CALLER, ask);
     expect(result.isError).toBeUndefined();
-    expect(JSON.parse(text(result))).toMatchObject({ connection: "main", rowsAffected: 2 });
+    expect(JSON.parse(text(result))).toMatchObject({ connection: "main", rowsAffected: 2, oldRows: [[4, "item 4"], [5, "item 5"]] });
     expect(count()).toBe(3);
-    expect((runQuery.mock.calls[0]![0] as { readonly?: boolean }).readonly).toBeFalsy();
+    expect((openSession.mock.calls[0]![0] as { readonly?: boolean }).readonly).toBeFalsy();
     expect(asked[0]!.summary.facts).toContainEqual({ label: "Connection", value: "main (sqlite)" });
     expect(listQueryLogs({ connectionId: writable })[0]).toMatchObject({ actor: "agent", status: "ok", caller_ua: CALLER.callerUa });
   });

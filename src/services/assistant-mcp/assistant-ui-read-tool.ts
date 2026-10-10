@@ -11,9 +11,10 @@ import { errorResult, intArg, jsonResult, notApprovedResult } from "./assistant-
  * `ui_read_tab`: what one tab on the chatting device shows, read only when the agent asks —
  * nothing of a tab's content is ever put into a message on its own. The device describes the
  * tab and adds what only it holds (unsaved editor text, a database tab's SQL and rows); the
- * server reads the rest (`assistant-tab-reader.ts`). A file or terminal outside every
- * registered project, or a file in a credential store, is read only once the user approves;
- * each such read asks again.
+ * server reads a terminal's output and a chat's messages (`assistant-tab-reader.ts`). A file tab
+ * answers with its path for the agent's own read tool. What would leave from outside every
+ * registered project, or from a credential store, is sent only once the user approves; each such
+ * read asks again.
  */
 
 /** How long the device has to describe a tab: a store read, milliseconds. */
@@ -40,10 +41,10 @@ export async function uiReadTab(
     const verdict = await ask({
       tool: UI_READ_TAB_TOOL,
       input: { tabId, ...outcome.details },
-      summary: readOutsideSummary({ kind: desc.type === "terminal" ? "terminal" : "file", location, privateStore: outcome.why === "private" }),
+      summary: readOutsideSummary({ kind: outcome.subject, location, privateStore: outcome.why === "private" }),
     });
     if (verdict.verdict !== "approved") return notApprovedResult("read_tab", verdict, { tabId, ...outcome.details });
-    outcome = await readDescribedTab(desc, offset, deps, { outsideApproved: true });
+    outcome = await readDescribedTab(desc, offset, deps, { approved: true });
   }
   if (outcome.kind === "error") return errorResult(outcome.message);
   if (outcome.kind === "needs-approval") return errorResult(outcome.reason);

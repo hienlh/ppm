@@ -63,11 +63,13 @@ describe("describing a tab", () => {
     expect(desc.database!.connectionId).toBe(3);
   });
 
-  it("names the saved connection a database tab shows, and none for a database file", () => {
+  it("names the saved connection or the database file a database tab shows", () => {
     const legacy = describeTabFrom({ tab: tab("database:7::public:t", "database", { connectionId: "7", tableName: "t" }, null), area: "grid", offset: 0 });
     expect(legacy.database).toEqual({ connectionId: 7 });
     const file = describeTabFrom({ tab: tab("database:file", "database", { dbFile: { path: "/x/app.db" }, tableName: "t" }, null), area: "grid", offset: 0 });
-    expect(file.database).toEqual({});
+    expect(file.database).toEqual({ file: { path: "/x/app.db" } });
+    const inProject = describeTabFrom({ tab: tab("database:file2", "database", { dbFile: { path: "data/app.db", projectName: "api" }, tableName: "t" }, null), area: "grid", offset: 0 });
+    expect(inProject.database).toEqual({ file: { path: "data/app.db", project: "api" } });
   });
 
   it("keeps a wide result within what one answer may carry", () => {

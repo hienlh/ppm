@@ -86,13 +86,15 @@ export const UI_READ_TAB_DEFINITION = {
   name: UI_READ_TAB_TOOL,
   title: "Read a tab",
   description: "Read what one open tab shows on the device the user is chatting from (ids from ui_get_state). "
-    + `An editor: the file, or its unsaved text when it has changes not saved yet — up to ${READ_TAB_MAX_LINES} lines `
-    + "a call; read on with `offset` (the line the answer's `nextOffset` gives). A terminal: its newest "
-    + `${READ_TAB_TERMINAL_LINES} lines, colours removed; \`offset\` skips that many newest lines to read further back. `
-    + `A chat: its newest ${READ_TAB_CHAT_MESSAGES} messages; \`offset\` reads the ones before that index. A database tab: `
-    + `its SQL and up to ${READ_TAB_DB_ROWS} of the rows it shows, only for a connection available to the AI. Other tabs: a `
-    + "description only. A file or terminal outside every registered project, or a file where logins or keys are kept, is read "
-    + "only after the user approves the card this shows them. Read only what the task needs.",
+    + "An editor: the file's absolute `path` and its project, never the file itself — read the saved file with your own "
+    + "file-reading tool. When the editor has changes not saved yet, also its unsaved text, up to "
+    + `${READ_TAB_MAX_LINES} lines a call; read on with \`offset\` (the line the answer's \`nextOffset\` gives). A terminal: `
+    + `its newest ${READ_TAB_TERMINAL_LINES} lines, colours removed; \`offset\` skips that many newest lines to read further `
+    + `back. A chat: its newest ${READ_TAB_CHAT_MESSAGES} messages; \`offset\` reads the ones before that index. A database `
+    + `tab: its SQL and up to ${READ_TAB_DB_ROWS} of the rows it shows — for a saved connection only when it is available to `
+    + "the AI. Other tabs: a description only. Unsaved text, a terminal or a database file outside every registered "
+    + "project, or a file where logins or keys are kept, is read only after the user approves the card this shows them. "
+    + "Read only what the task needs.",
   inputSchema: {
     type: "object",
     properties: {

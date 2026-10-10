@@ -1,11 +1,11 @@
 /**
  * Reading a tab's content for the PPM Assistant's `ui_read_tab`: what the device describes
  * (`describe_tab`), the caps every part is held to, and the line windows text is read in.
- * Shared because the device windows an unsaved editor buffer with the same rules the server
- * applies to the file on disk, so `offset` means the same thing for both.
+ * Shared because the device windows an editor's unsaved text and the server a terminal's output
+ * under the same caps, and the server checks again what the device sent.
  */
 
-/** Lines of a file, or of an unsaved buffer, one read returns. */
+/** Lines of an editor's unsaved text one read returns. */
 export const READ_TAB_MAX_LINES = 2000;
 /**
  * Bytes of text one read returns. Smaller than a whole large file on purpose: the answer is
@@ -127,7 +127,7 @@ export interface TabDescription {
   editor?: {
     filePath?: string;
     untitled: boolean;
-    /** A diff, a viewer or inline text: not a file the server can read. */
+    /** A diff, a viewer or inline text: not a file on disk. */
     special: boolean;
     /** Typed and not saved yet. */
     dirty: boolean;
@@ -141,6 +141,11 @@ export interface TabDescription {
      * reads the tab only when this connection is available to the AI.
      */
     connectionId?: number;
+    /**
+     * The database file the tab shows when it names no connection: its path as the tab holds it,
+     * relative to `project` when it has one. The server reads such a tab under the file rule.
+     */
+    file?: { path: string; project?: string };
     /** A Query tab's SQL as typed. */
     sql?: string;
     /** What the tab shows; absent when it has not loaded on this device. */

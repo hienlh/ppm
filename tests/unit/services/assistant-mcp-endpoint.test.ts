@@ -114,16 +114,18 @@ describe("assistant MCP endpoint", () => {
     expect((await call(token)).status).toBe(401);
   });
 
-  it("lifts Bun's idle limit before a tool call runs, past the providers' own timeout", async () => {
+  it("lifts Bun's idle limit altogether before a tool call runs: an approval waits as long as the user takes", async () => {
     const { tokens, call, rpc, timeouts } = setup();
     const token = tokens.mint({ sessionId: assistantSession() });
     await rpc(token, { jsonrpc: "2.0", id: 1, method: "tools/list" });
     expect(timeouts).toEqual([]);
     const res = await call(token, "db_query", { connectionId: 1, sql: "SELECT 1" });
     expect((await res.json()).result.content[0].text).toBe("done");
-    expect(timeouts).toEqual([ASSISTANT_MCP_HOLD_OPEN_SECONDS]);
-    expect(ASSISTANT_MCP_HOLD_OPEN_SECONDS).toBeGreaterThanOrEqual(720);
-    expect(ASSISTANT_MCP_HOLD_OPEN_SECONDS * 1000).toBeGreaterThan(ASSISTANT_MCP_TIMEOUT_MS);
+    // 0 is Bun's "no idle limit" for the request.
+    expect(timeouts).toEqual([0]);
+    expect(ASSISTANT_MCP_HOLD_OPEN_SECONDS).toBe(0);
+    // The providers' own timeout is the longest a timer holds, not a few minutes.
+    expect(ASSISTANT_MCP_TIMEOUT_MS).toBe(2 ** 31 - 1);
   });
 
   it("leaves the idle limit alone for an endpoint that does not ask", async () => {

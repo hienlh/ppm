@@ -45,6 +45,9 @@ export function forgetSessionInDeviceBrokers(sessionId: string): void {
   for (const broker of brokers) broker.forget(sessionId);
 }
 
+/** The longest delay a JS timer holds (2^31 − 1 ms, about 24.8 days); a longer one fires at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 interface Pending<Res> {
   sessionId: string;
   settle: (outcome: DeviceBrokerOutcome<Res>) => void;
@@ -100,8 +103,9 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
   }
 
   /**
-   * Hands `body` to the session's devices and waits up to `waitMs` for the first answer. An
-   * aborted `signal` (the caller stopped waiting) withdraws the call.
+   * Hands `body` to the session's devices and waits up to `waitMs` for the first answer
+   * (`Infinity`: until it is answered, withdrawn or cancelled). An aborted `signal` (the caller
+   * stopped waiting) withdraws the call.
    */
   function request(asked: string, body: Body, waitMs: number, signal?: AbortSignal): Promise<DeviceBrokerOutcome<Res>> {
     const sessionId = canonical(asked);
@@ -142,9 +146,13 @@ export function createDeviceBroker<Req, Res extends { requestId: string }, Body>
       }
       delivered = true;
       signal?.addEventListener("abort", onAbort, { once: true });
-      timer = setTimeout(() => settle({
-        ok: false, reason: "timeout", message: messages.timeout(Math.round(waitMs / 1000)),
-      }), waitMs);
+      // An unbounded wait arms no timer at all: a timer cannot hold one, and a delay past
+      // MAX_TIMER_MS would fire at once instead of never.
+      if (Number.isFinite(waitMs)) {
+        timer = setTimeout(() => settle({
+          ok: false, reason: "timeout", message: messages.timeout(Math.round(waitMs / 1000)),
+        }), Math.min(waitMs, MAX_TIMER_MS));
+      }
     });
   }
 

@@ -132,22 +132,33 @@ export function runCommandSummary(input: RunCommandApproval): ApprovalSummary {
   };
 }
 
+/**
+ * What `ui_read_tab` would send that only the device or PPM holds, so no read tool's own
+ * approval covers it: an editor's unsaved text, a terminal's output, or the SQL and rows a tab
+ * shows for a database file opened by path. A saved file itself is read with the agent's own
+ * read tool, under that tool's approval.
+ */
 export interface ReadOutsideApproval {
-  kind: "file" | "terminal";
+  kind: "unsaved" | "terminal" | "database";
   /** The file's path, or the folder the terminal runs in, as PPM resolved it. */
   location: string;
   /** The file is in a store of logins or keys, which asks even inside a registered project. */
   privateStore?: boolean;
 }
 
+const READ_WHAT: Record<ReadOutsideApproval["kind"], string> = {
+  unsaved: "the unsaved text of a file",
+  terminal: "the output of a terminal running",
+  database: "the SQL and rows of a database file",
+};
+
 export function readOutsideSummary({ kind, location, privateStore }: ReadOutsideApproval): ApprovalSummary {
+  const what = READ_WHAT[kind];
   return {
-    headline: privateStore
-      ? "Read a file where logins or keys are kept"
-      : kind === "file"
-        ? "Read a file outside every registered project"
-        : "Read the output of a terminal running outside every registered project",
-    facts: [fact(kind === "file" ? "File" : "Folder", location)],
+    headline: privateStore && kind !== "terminal"
+      ? `Read ${what} where logins or keys are kept`
+      : `Read ${what} outside every registered project`,
+    facts: [fact(kind === "terminal" ? "Folder" : kind === "database" ? "Database file" : "File", location)],
     warning: "What is read is sent to the AI provider as part of this conversation.",
   };
 }

@@ -55,8 +55,8 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   callTool: (binding: B, name: string, args: unknown, signal: AbortSignal) => Promise<Json>;
   /**
    * How long a `tools/call` may run before it answers, for tools that can outlast Bun.serve's
-   * 10 s idle limit (a slow query, an approval the user has not answered yet). Unset: the
-   * server's own limit applies, as for every other route.
+   * 10 s idle limit (a slow query, an approval the user has not answered yet); 0 lifts the limit
+   * for that request altogether. Unset: the server's own limit applies, as for every other route.
    */
   holdOpenSeconds?: number;
 }) {
@@ -113,7 +113,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
     // A notification (`notifications/initialized`) or a response to a request of ours: no body.
     if (!("id" in message) || message.id === null) return c.body(null, 202);
     // Lifted before the tool runs: nothing is sent until it answers.
-    if (message.method === "tools/call" && opts.holdOpenSeconds) holdRequestOpen(c, opts.holdOpenSeconds);
+    if (message.method === "tools/call" && opts.holdOpenSeconds !== undefined) holdRequestOpen(c, opts.holdOpenSeconds);
     try {
       return c.json(await dispatch(binding, message, c.req.raw.signal));
     } catch (e) {

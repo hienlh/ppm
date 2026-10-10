@@ -1,12 +1,12 @@
 /**
  * The Assistant endpoint's approval broker: a card goes to the session, the first answer from
- * that session settles it, nothing runs on a timeout or once the asking HTTP call closes, an
- * answer from another session is refused, and a Codex session renamed after the question was
- * asked is still the one that answers it.
+ * that session settles it, a card waits for its answer without limit unless a test sets one,
+ * nothing runs once the asking HTTP call closes, an answer from another session is refused, and a
+ * Codex session renamed after the question was asked is still the one that answers it.
  */
 import { describe, expect, it } from "bun:test";
 import {
-  APPROVAL_TIMEOUT_ENV, DEFAULT_APPROVAL_TIMEOUT_MS, MAX_APPROVAL_WAIT_MS, approvalTimeoutMs, createApprovalBroker,
+  APPROVAL_TIMEOUT_ENV, approvalTimeoutMs, createApprovalBroker,
   type ApprovalAsk,
 } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
 import { ASSISTANT_MCP_TIMEOUT_MS } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
@@ -19,7 +19,7 @@ const ASK: ApprovalAsk = {
 };
 
 /** `queued`: the card waits behind another and is not shown until the test says so. */
-function setup(opts: { timeoutMs?: number; maxWaitMs?: number; renamed?: Record<string, string>; reachable?: boolean; queued?: boolean } = {}) {
+function setup(opts: { timeoutMs?: number | null; renamed?: Record<string, string>; reachable?: boolean; queued?: boolean } = {}) {
   const shown: Array<{ sessionId: string; request: EndpointApprovalRequest }> = [];
   const ended: Array<{ sessionId: string; requestId: string; approved: boolean }> = [];
   const canonical = (id: string) => opts.renamed?.[id] ?? id;
@@ -32,8 +32,7 @@ function setup(opts: { timeoutMs?: number; maxWaitMs?: number; renamed?: Record<
     },
     onEnd: (sessionId, requestId, approved) => ended.push({ sessionId, requestId, approved }),
     canonical,
-    timeoutMs: () => opts.timeoutMs ?? 5_000,
-    maxWaitMs: opts.maxWaitMs === undefined ? undefined : () => opts.maxWaitMs!,
+    timeoutMs: () => (opts.timeoutMs === undefined ? 5_000 : opts.timeoutMs),
   });
   return { broker, shown, ended };
 }
@@ -125,7 +124,7 @@ describe("assistant approval broker", () => {
   });
 
   it("starts the answer window when the card is shown, not while it waits in the queue", async () => {
-    const { broker, shown } = setup({ timeoutMs: 60, maxWaitMs: 2_000, queued: true });
+    const { broker, shown } = setup({ timeoutMs: 60, queued: true });
     let settled = false;
     const pending = broker.request("s1", ASK).then((v) => { settled = true; return v; });
     await Bun.sleep(150);
@@ -142,40 +141,29 @@ describe("assistant approval broker", () => {
     if (verdict.verdict !== "approved") expect(verdict.reason).toContain("did not answer");
   });
 
-  it("ends a card that was never shown with a reply that says so", async () => {
-    const { broker, ended, shown } = setup({ timeoutMs: 40, maxWaitMs: 120, queued: true });
-    const verdict = await broker.request("s1", ASK);
-    expect(verdict.verdict).toBe("timeout");
-    if (verdict.verdict !== "approved") {
-      expect(verdict.reason).toContain("never shown");
-      expect(verdict.reason).toContain("Nothing was done");
-    }
-    expect(ended).toEqual([{ sessionId: "s1", requestId: shown[0]!.request.requestId, approved: false }]);
-    expect(broker.pendingCount()).toBe(0);
+  it("without a limit, a card waits shown or queued until it is answered or withdrawn", async () => {
+    const { broker, shown, ended } = setup({ timeoutMs: null });
+    let settled = false;
+    const pending = broker.request("s1", ASK).then((v) => { settled = true; return v; });
+    const queued = setup({ timeoutMs: null, queued: true });
+    let queuedSettled = false;
+    const waiting = queued.broker.request("s1", ASK).then((v) => { queuedSettled = true; return v; });
+    await Bun.sleep(200);
+    expect(settled).toBe(false);
+    expect(queuedSettled).toBe(false);
+    expect(broker.pendingCount()).toBe(1);
+    broker.settle("s1", shown[0]!.request.requestId, true);
+    expect(await pending).toEqual({ verdict: "approved" });
+    expect(ended).toHaveLength(1);
+    queued.broker.withdraw(queued.shown[0]!.request.requestId, "The turn ended.");
+    expect(await waiting).toEqual({ verdict: "withdrawn", reason: "The turn ended." });
   });
 
-  it("cuts a late card's answer window short rather than outlast the whole wait", async () => {
-    const { broker, shown } = setup({ timeoutMs: 5_000, maxWaitMs: 200, queued: true });
-    const asked = Date.now();
-    const pending = broker.request("s1", ASK);
-    await Bun.sleep(120);
-    broker.shown(shown[0]!.request.requestId);
-    const verdict = await pending;
-    expect(Date.now() - asked).toBeLessThan(600);
-    expect(verdict.verdict).toBe("timeout");
-    if (verdict.verdict !== "approved") expect(verdict.reason).toContain("did not answer");
-  });
-
-  it("ends the whole wait before the providers give up on the tool call", () => {
-    expect(MAX_APPROVAL_WAIT_MS).toBeGreaterThan(DEFAULT_APPROVAL_TIMEOUT_MS);
-    expect(MAX_APPROVAL_WAIT_MS).toBeLessThan(ASSISTANT_MCP_TIMEOUT_MS);
-  });
-
-  it("waits ten minutes unless the environment shortens it", () => {
-    expect(DEFAULT_APPROVAL_TIMEOUT_MS).toBe(600_000);
-    expect(approvalTimeoutMs({})).toBe(600_000);
+  it("waits without limit unless the environment sets one under the providers' own timeout", () => {
+    expect(approvalTimeoutMs({})).toBeNull();
     expect(approvalTimeoutMs({ [APPROVAL_TIMEOUT_ENV]: "1500" })).toBe(1_500);
-    expect(approvalTimeoutMs({ [APPROVAL_TIMEOUT_ENV]: "3600000" })).toBe(600_000);
-    expect(approvalTimeoutMs({ [APPROVAL_TIMEOUT_ENV]: "soon" })).toBe(600_000);
+    expect(approvalTimeoutMs({ [APPROVAL_TIMEOUT_ENV]: "soon" })).toBeNull();
+    expect(approvalTimeoutMs({ [APPROVAL_TIMEOUT_ENV]: "50" })).toBeNull();
+    expect(approvalTimeoutMs({ [APPROVAL_TIMEOUT_ENV]: String(ASSISTANT_MCP_TIMEOUT_MS) })).toBeNull();
   });
 });

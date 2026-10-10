@@ -59,6 +59,15 @@ function shownRows(v: unknown): ShownRows | undefined {
   return { columns, rows, more: v.more === true || v.rows.length > READ_TAB_DB_ROWS };
 }
 
+/** A database file a tab names: a bounded path, and the project it is relative to, if any. */
+function dbFile(v: unknown): NonNullable<TabDescription["database"]>["file"] {
+  if (!isObj(v)) return undefined;
+  const path = str(v.path, MAX_PATH_CHARS);
+  if (!path || path.includes("\0")) return undefined;
+  const project = typeof v.project === "string" && v.project ? str(v.project, 200) : undefined;
+  return { path, ...(project ? { project } : {}) };
+}
+
 export function parseTabDescription(raw: unknown): TabDescription | null {
   if (!isObj(raw)) return null;
   const id = str(raw.id, MAX_ID_CHARS);
@@ -90,8 +99,10 @@ export function parseTabDescription(raw: unknown): TabDescription | null {
     const rows = shownRows(raw.database.rows);
     const id = raw.database.connectionId;
     const connectionId = typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : undefined;
+    const file = connectionId === undefined ? dbFile(raw.database.file) : undefined;
     desc.database = {
-      ...(connectionId !== undefined ? { connectionId } : {}), ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}),
+      ...(connectionId !== undefined ? { connectionId } : file ? { file } : {}),
+      ...(sql !== undefined ? { sql } : {}), ...(rows ? { rows } : {}),
     };
   }
   return desc;
