@@ -47,6 +47,8 @@ export interface CodexAssistantSession {
    * since every account has a CODEX_HOME, and so a config.toml, of its own.
    */
   disableUserServers?: string[];
+  /** Every skill this app-server can see (`planAssistantCodexSkills`): each is switched off by name. */
+  disableSkills?: string[];
 }
 
 /**
@@ -144,14 +146,18 @@ export function assistantUserMcpConfig(servers: readonly AssistantMcpServer[] | 
  * that offers no "always allow". Every key is one codex 0.161 recognises: under `--strict-config`
  * it refuses an unknown key, and refuses `notify` unless it is a list.
  *
- * Not covered: the user's global instructions file (`$CODEX_HOME/AGENTS.md`) still reaches the
- * session, since codex 0.161 has no setting that leaves it out while keeping the session's own
- * instructions. It is guidance the user wrote for their own agent, not a tool or a program.
+ * Skills are kept out too: their catalogue leaves the prompt (`skills.include_instructions`),
+ * codex's bundled ones are not loaded, and each skill the app-server reports is disabled by name,
+ * which is what stops a `$skill-name` in a message from pulling a SKILL.md in
+ * (`planAssistantCodexSkills`). The user's global instructions file (`$CODEX_HOME/AGENTS.md`)
+ * has no setting at all; it is left behind by running on a home of the Assistant's own
+ * (`codex-assistant-home.ts`).
  */
 export function assistantSessionConfig(assistant: ThreadParamsInput["assistant"]): CodexConfigOverrides {
   if (!assistant) return {};
   const access = assistant.mcp;
   const disabled = Object.fromEntries((assistant.disableUserServers ?? []).map((name) => [`mcp_servers.${name}.enabled`, false]));
+  const skills = assistant.disableSkills ?? [];
   return {
     web_search: "disabled",
     "features.apps": false,
@@ -159,6 +165,9 @@ export function assistantSessionConfig(assistant: ThreadParamsInput["assistant"]
     "features.hooks": false,
     notify: [],
     "features.tool_call_mcp_elicitation": true,
+    "skills.include_instructions": false,
+    "skills.bundled.enabled": false,
+    ...(skills.length ? { "skills.config": skills.map((name) => ({ name, enabled: false })) } : {}),
     ...disabled,
     ...assistantUserMcpConfig(assistant.servers),
     ...(access ? {

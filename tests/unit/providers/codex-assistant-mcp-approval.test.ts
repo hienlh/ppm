@@ -9,6 +9,7 @@ import { codexMcpApproval, codexMcpApprovalResponse } from "../../../src/provide
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider.ts";
 import { CodexJsonRpcClient } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
 import * as accounts from "../../../src/services/codex-account.service.ts";
+import * as assistantHome from "../../../src/providers/codex-app-server/codex-assistant-home.ts";
 import { configService } from "../../../src/services/config.service.ts";
 
 const ELICITATION = {
@@ -65,6 +66,8 @@ describe("Codex provider", () => {
     previousAi = configService.get("ai");
     configService.set("ai", { ...previousAi, providers: { ...previousAi.providers, codex: { type: "cli", cli_command: "codex" } } });
     spies.push(spyOn(accounts, "resolveCodexAccountForSession").mockResolvedValue(null));
+    // Keeps the machine's real ~/.codex out of the test (no isolated home is made for it).
+    spies.push(spyOn(assistantHome, "assistantSpawnHome").mockImplementation((home) => home));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "notify").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "close").mockImplementation(() => {}));

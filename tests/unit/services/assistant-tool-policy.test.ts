@@ -7,6 +7,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, spyOn } from "bun
 import "../../test-setup.ts";
 import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -44,7 +46,7 @@ afterAll(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-const ctx = (projectRoots: string[]) => ({ cwd: project, projectRoots, home });
+const ctx = (projectRoots: string[]) => ({ cwd: project, projectRoots, home, env: {} });
 
 describe("network and device paths on Windows", () => {
   let realpaths: string[];
@@ -154,5 +156,63 @@ describe("Glob and Grep reach everything below their folder", () => {
       expect(assistantToolDecision("Glob", { pattern, path: join(project, "src") }, ctx([project]))).toBe("ask");
     }
     for (const pattern of ["**/*.{ts,tsx}", "src/{a,b}/*.ts", "{a,{b,c}}/*", "..x/y", "*.ts"]) expect(patternLeavesRoot(pattern)).toBe(false);
+  });
+});
+
+describe("links below a Glob or Grep folder", () => {
+  /** The Claude Code CLI the SDK ships for this machine (it embeds ripgrep), when installed. */
+  function bundledCli(): string | null {
+    try {
+      const sdkDir = dirname(createRequire(import.meta.url).resolve("@anthropic-ai/claude-agent-sdk/package.json"));
+      const exe = join(dirname(sdkDir), `claude-agent-sdk-${process.platform}-${process.arch}`, isWindows ? "claude.exe" : "claude");
+      return fs.existsSync(exe) ? exe : null;
+    } catch { return null; }
+  }
+
+  it("allow a search over a project whose links lead out, since neither tool follows them", () => {
+    // `project/keys` is a link to the home's `.ssh`; ripgrep never walks into it.
+    expect(assistantToolDecision("Grep", { pattern: "x", path: project }, ctx([project]))).toBe("allow");
+    expect(assistantToolDecision("Glob", { pattern: "**/*", path: project }, ctx([project]))).toBe("allow");
+    // Named directly, the link is judged by where it points.
+    expect(assistantToolDecision("Grep", { pattern: "x", path: join(project, "keys") }, ctx([project]))).toBe("ask");
+  });
+
+  it("ask while a ripgrep config file is named, since it can turn following on", () => {
+    const env = { RIPGREP_CONFIG_PATH: join(base, "ripgreprc") };
+    expect(assistantToolDecision("Grep", { pattern: "x", path: join(project, "src") }, { ...ctx([project]), env })).toBe("ask");
+    expect(assistantToolDecision("Glob", { pattern: "*.ts", path: join(project, "src") }, { ...ctx([project]), env })).toBe("ask");
+    expect(assistantToolDecision("Read", { file_path: join(project, "src", "Main.ts") }, { ...ctx([project]), env })).toBe("allow");
+    const unset = { RIPGREP_CONFIG_PATH: "" };
+    expect(assistantToolDecision("Grep", { pattern: "x", path: join(project, "src") }, { ...ctx([project]), env: unset })).toBe("allow");
+  });
+
+  it("are not followed by the bundled CLI's Glob and Grep", () => {
+    const cli = bundledCli();
+    if (!cli) return; // no platform CLI installed here; the policy's comment records the measurement
+    const binary = fs.readFileSync(cli);
+    // Each tool's argument list, as the CLI builds it, carries no --follow / -L.
+    for (const anchor of ['"--sort=modified"', '"--max-columns","500"']) {
+      const at = binary.indexOf(anchor);
+      expect(at).toBeGreaterThan(-1);
+      const around = binary.subarray(Math.max(0, at - 700), at + 900).toString("latin1");
+      expect(around).not.toContain('"--follow"');
+      expect(around).not.toContain('"-L"');
+    }
+    // And its ripgrep, run with those lists, does not reach through a link out of the folder.
+    const tree = join(base, "rg-tree");
+    const outside = join(base, "rg-outside");
+    mkdirSync(join(tree, "src"), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(tree, "src", "in.txt"), "MARKER\n");
+    writeFileSync(join(outside, "out.txt"), "MARKER\n");
+    linkDir(outside, join(tree, "dirlink"));
+    const rg = (args: string[]) => spawnSync(cli, [...args, tree], { argv0: "rg", encoding: "utf8", env: { ...process.env, RIPGREP_CONFIG_PATH: "" } })
+      .stdout.split(/[\0\n]/).filter(Boolean);
+    const glob = rg(["--files", "--null", "--glob", "**/*.txt", "--sort=modified", "--no-ignore", "--hidden"]);
+    const grep = rg(["--hidden", "--glob", "!.git", "--max-columns", "500", "-l", "--null", "MARKER"]);
+    const followed = rg(["--hidden", "--follow", "-l", "--null", "MARKER"]);
+    expect(glob).toEqual([join(tree, "src", "in.txt")]);
+    expect(grep).toEqual([join(tree, "src", "in.txt")]);
+    expect(followed.some((line) => line.includes("dirlink"))).toBe(true); // the link itself works
   });
 });

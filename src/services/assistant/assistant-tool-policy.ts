@@ -24,6 +24,17 @@ import { assistantPrivateRoots, isAssistantPrivatePath, privateRootWithin } from
  * string, cannot be resolved, names no drive on Windows (a network share, which is never
  * resolved), or is relative with no known working directory answers "ask", and symlinks are
  * judged by where they point.
+ *
+ * Links *below* a Glob or Grep folder need no scan: the bundled Claude Code CLI runs both tools
+ * on ripgrep without `--follow` (Glob: `--files --glob <p> --sort=modified --no-ignore --hidden`;
+ * Grep: `--hidden`, VCS excludes, `--max-columns 500`, the output flags), and ripgrep then skips
+ * every link it meets while walking. Measured with the CLI's own ripgrep 14.1.1 (SDK 0.3.280):
+ * a file symlink, a directory symlink and a Windows junction inside a project, each pointing
+ * out of it, are neither listed nor searched, while the same run with `--follow` reaches all
+ * three. Only the folder named on the command line is followed, and that one is judged by its
+ * real location below. The exception is a ripgrep config file, which can add `--follow` to every
+ * search: the embedded ripgrep honours `RIPGREP_CONFIG_PATH` and the CLI inherits this process's
+ * environment, so while that variable names a file, Glob and Grep ask.
  */
 export type AssistantToolDecision = "allow" | "ask";
 
@@ -55,6 +66,8 @@ export interface AssistantPolicyContext {
   projectRoots: readonly string[];
   /** The home folder whose credential stores always ask; the real one unless a test names another. */
   home?: string;
+  /** The environment the CLI inherits; this process's unless a test names another. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export function assistantToolDecision(
@@ -69,6 +82,8 @@ export function assistantToolDecision(
 
   // A Glob pattern is itself a path expression: `/etc/*`, `../**` or `{..,x}/**` enumerates
   // outside whatever `path` names.
+  // A ripgrep config may turn on `--follow`, after which links below the folder lead anywhere.
+  if (toolName !== "Read" && (ctx.env ?? process.env).RIPGREP_CONFIG_PATH) return "ask";
   if (toolName === "Glob") {
     const pattern = record.pattern;
     if (typeof pattern !== "string" || !pattern || patternLeavesRoot(pattern)) return "ask";

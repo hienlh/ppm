@@ -15,6 +15,7 @@ import {
   REQUIRED_INSTRUCTIONS_UNSUPPORTED, RequiredInstructionsError, requestWithInstructionsFallback,
 } from "../../../src/providers/codex-app-server/codex-thread-params.ts";
 import * as accounts from "../../../src/services/codex-account.service.ts";
+import * as assistantHome from "../../../src/providers/codex-app-server/codex-assistant-home.ts";
 import { setSessionMetadata } from "../../../src/services/db.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { createAssistantMcpTokenStore } from "../../../src/services/assistant-mcp/assistant-mcp-tokens.ts";
@@ -72,6 +73,9 @@ describe("Codex Assistant session", () => {
     previousAi = configService.get("ai");
     configService.set("ai", { ...previousAi, providers: { ...previousAi.providers, codex: { type: "cli", cli_command: "codex" } } });
     spies.push(spyOn(accounts, "resolveCodexAccountForSession").mockResolvedValue(null));
+    // The ambient login is the machine's real ~/.codex; its isolated home is covered on temp dirs
+    // in codex-assistant-home.test.ts.
+    spies.push(spyOn(assistantHome, "assistantSpawnHome").mockImplementation((home) => home));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "notify").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "close").mockImplementation(() => {}));
@@ -99,6 +103,7 @@ describe("Codex Assistant session", () => {
     // off (the Assistant's tools come with an endpoint), and MCP approvals asked as elicitations.
     expect(start.config).toEqual({
       web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true,
+      "skills.include_instructions": false, "skills.bundled.enabled": false,
     });
     expect(live.requireInstructions).toBe(true);
     expect(live.tabToolsMcp).toBeUndefined();
