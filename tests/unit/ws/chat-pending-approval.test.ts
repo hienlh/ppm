@@ -235,3 +235,29 @@ it("in an Assistant session, shows the providers' own cards (Claude and Codex al
   await s.say(phone.socket, { type: "approval_response", requestId: "codex-patch", approved: false });
   expect(s.resolved.mock.calls.map((c) => [c[2], c[3]])).toEqual([["claude-webfetch", true], ["codex-patch", false]]);
 });
+
+it("tells server-side listeners of every card that leaves, naming who answered only when someone did", async () => {
+  const { chatLifecycle } = await import("../../../src/services/chat-control/chat-lifecycle.ts");
+  const s = await session([PROVIDER_CARD]);
+  const shown: string[] = [];
+  const gone: Array<{ requestId: string; reason: string; by?: string; approved: boolean }> = [];
+  const offShown = chatLifecycle.on("approval_shown", (p) => { if (p.sessionId === s.id) shown.push(p.card.requestId); });
+  const offGone = chatLifecycle.on("approval_resolved", (p) => {
+    if (p.sessionId === s.id) gone.push({ requestId: p.requestId, reason: p.reason, by: p.by, approved: p.approved });
+  });
+  cleanups.push(offShown, offGone);
+  const phone = s.connect();
+  await s.say(phone.socket, { type: "message", content: "clean up" });
+  await until(() => phone.of("approval_request").length === 1);
+  const verdict = assistantApprovalBroker.request(s.id, ASK);
+  await s.say(phone.socket, { type: "approval_response", requestId: "prov-1", approved: true });
+  const endpointId = phone.of("approval_request")[1].requestId;
+  expect(shown).toEqual(["prov-1", endpointId]);
+  // A typed message pushes the waiting card aside: it goes, answered by nobody.
+  await s.say(phone.socket, { type: "message", content: "never mind" });
+  expect((await verdict).verdict).not.toBe("approved");
+  expect(gone).toEqual([
+    { requestId: "prov-1", reason: "answered", by: "ws", approved: true },
+    { requestId: endpointId, reason: "superseded_by_message", approved: false },
+  ]);
+});

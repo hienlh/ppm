@@ -11,9 +11,9 @@ describe("session assistant mark", () => {
   beforeEach(() => getDb().run("DELETE FROM session_metadata"));
 
   it("migrates to the version that adds the column, defaulting every row to an ordinary session", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(57);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(57);
     const row = getDb().query("PRAGMA user_version").get() as { user_version: number };
-    expect(row.user_version).toBe(57);
+    expect(row.user_version).toBe(CURRENT_SCHEMA_VERSION);
     const column = (getDb().query("PRAGMA table_info(session_metadata)").all() as { name: string; notnull: number; dflt_value: string }[])
       .find((c) => c.name === "assistant");
     expect(column).toMatchObject({ notnull: 1, dflt_value: "0" });
@@ -30,7 +30,7 @@ describe("session assistant mark", () => {
     db.exec("PRAGMA user_version = 56");
     db.query("INSERT INTO session_metadata (session_id, design_slug) VALUES ('old', 'landing')").run();
     runMigrations(db);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(57);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
     expect(db.query("SELECT design_slug, assistant FROM session_metadata WHERE session_id = 'old'").get())
       .toEqual({ design_slug: "landing", assistant: 0 });
     db.close();

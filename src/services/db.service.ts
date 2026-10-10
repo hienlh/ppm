@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 57;
+export const CURRENT_SCHEMA_VERSION = 58;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1267,6 +1267,41 @@ export function runMigrations(database: Database): void {
     // the provider default — usually bypass. 0 = an ordinary session, every existing row.
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN assistant INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
     database.exec(`PRAGMA user_version = 57;`);
+  }
+
+  if (current < 58) {
+    // The PPM Assistant on Telegram. A binding is which Assistant session a Telegram chat talks
+    // to, one per chat. A watch is the user asking to be told when another chat finishes; it is
+    // stored because it has to outlive a restart, and keeps its outcome once it fired so the
+    // report can be delivered later if the Assistant could not take it at once. Session ids are
+    // stored as given and followed through `migrated_to` on read: Codex renames a session on its
+    // first turn. Times are epoch milliseconds.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS assistant_telegram_bindings (
+        telegram_chat_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS assistant_watches (
+        id TEXT PRIMARY KEY,
+        assistant_session_id TEXT NOT NULL,
+        target_session_id TEXT NOT NULL,
+        target_project TEXT NOT NULL,
+        target_provider TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        armed_running INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'fired', 'cancelled', 'expired')),
+        last_event TEXT,
+        fired_at INTEGER,
+        delivered_at INTEGER,
+        event_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_assistant_watches_status ON assistant_watches(status);
+      CREATE INDEX IF NOT EXISTS idx_assistant_watches_target ON assistant_watches(target_session_id);
+      PRAGMA user_version = 58;
+    `);
   }
 }
 

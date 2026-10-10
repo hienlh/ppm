@@ -71,6 +71,12 @@ export interface SendMessageOpts {
    * the shared-context block, and never handed to a provider; ignored for any other session.
    */
   uiSummary?: import("../shared/assistant-ui-protocol.ts").UiSummary;
+  /**
+   * The channel the user typed this message on, when it is not a PPM screen. Consumed by
+   * `chatService.prepareSendOptions`, which tells an Assistant session that no screen is attached
+   * to the turn, and never handed to a provider.
+   */
+  channel?: "telegram";
 }
 
 export interface AIProvider {

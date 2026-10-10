@@ -18,6 +18,10 @@ export type TraceOrigin =
   | "browser"
   /** A message the PPM Assistant sent into a chat, with the user's approval. */
   | "assistant"
+  /** The user, typing or pressing a button on Telegram. */
+  | "telegram"
+  /** The server reporting on a chat the PPM Assistant was asked to watch. */
+  | "watch"
   | "unknown";
 
 /** Most entries one `POST /api/trace` may carry; a larger batch is refused whole. */

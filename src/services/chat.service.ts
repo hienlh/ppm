@@ -45,6 +45,18 @@ export type ChatSendOpts = SendMessageOpts & { origin?: TraceOrigin };
 type SentContext = Partial<Record<SharedContextPart, string>>;
 
 /**
+ * What an Assistant session is told on every message typed on Telegram. Sent each time rather
+ * than once: the same conversation is also typed into from PPM, and each message must say where
+ * its writer is. The UI tools would answer "no device" anyway; saying so up front saves the
+ * model a wasted call and keeps it from describing a screen it cannot see.
+ */
+export const TELEGRAM_CHANNEL_CONTEXT_ENTRY = [
+  "Channel: this message was sent from Telegram on the user's phone.",
+  "No PPM screen is attached to this turn: the UI tools (ui_*) will answer no-device, so use the data tools instead.",
+  "Keep the reply short; it is read on a phone.",
+].join("\n");
+
+/**
  * What the "turn start" / "turn end" log lines need about one run, which can span many turns.
  * Kept for those lines only — the session trace holds the turns themselves.
  */
@@ -338,7 +350,7 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<{ opts: SendMessageOpts; sent: SentContext }> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    const { uiSummary, ...callerOpts } = opts ?? {};
+    const { uiSummary, channel, ...callerOpts } = opts ?? {};
     // Like the design fields, the tab tools are only ever server-built. An Assistant session is
     // never also a design session: its policy replaces the design one outright.
     const { tabToolsMcp: _tabTools, ...design } = this.resolveAssistantOptions(providerId, sessionId, callerOpts)
@@ -372,11 +384,17 @@ class ChatService {
     // What the Assistant's user is looking at rides in the same block, whatever the sharing
     // setting says: it is how the Assistant knows which screen it is talking about.
     let ui: string | undefined;
-    if (design.assistantSession && !slash) {
+    let channelEntry: string | undefined;
+    if (design.assistantSession && channel === "telegram") {
+      // No screen is attached to this turn. The screen the model last saw is forgotten, so the
+      // next message typed in PPM sends it again instead of the model assuming it is unchanged.
+      this.sharedSnapshots.forget(key, "ui");
+      if (!slash) channelEntry = TELEGRAM_CHANNEL_CONTEXT_ENTRY;
+    } else if (design.assistantSession && !slash) {
       ui = uiSummaryContextEntry(uiSummary);
       if (ui && this.sharedSnapshots.unchanged(key, "ui", ui)) ui = undefined;
     }
-    const sharedContext = joinSharedContextEntries(shared, ui);
+    const sharedContext = joinSharedContextEntries(shared, ui, channelEntry);
     return { opts: { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), sharedContext }, sent: { shared, ui } };
   }
 

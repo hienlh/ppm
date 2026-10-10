@@ -58,6 +58,11 @@ export interface PendingApprovalOps {
   denyProvider(sessionId: string, requestId: string, reason: ApprovalEndReason): void;
   /** Ends an endpoint request without running what it asked for; a no-op once it has ended. */
   endEndpoint(requestId: string, reason: ApprovalEndReason): void;
+  /**
+   * Told of every card that leaves, shown or queued, announced or not, after its request was
+   * finished — the one place a listener hears that a card is gone, whatever took it.
+   */
+  ended?(sessionId: string, event: PendingApprovalEvent, reason: ApprovalEndReason, how: ClearHow): void;
 }
 
 export const isEndpointApproval = (event: PendingApprovalEvent): boolean => event.origin === "endpoint";
@@ -95,6 +100,7 @@ export function createPendingApprovals(ops: PendingApprovalOps) {
     if (endpoint) ops.endEndpoint(event.requestId, reason);
     else if (how.deny) ops.denyProvider(sessionId, event.requestId, reason);
     if (endpoint || how.announce) ops.announceResolved(sessionId, event.requestId, how.approved ?? false, how.answers ?? null);
+    ops.ended?.(sessionId, event, reason, how);
   }
 
   /** Removes one card; false when the session holds no card with that id. */
@@ -136,4 +142,5 @@ export const APPROVAL_END = {
   turnEnded: { code: "turn_ended", message: "The turn ended before the user answered; not run." },
   superseded: { code: "superseded_by_message", message: "The user sent another message instead of answering; not run." },
   cancelled: { code: "ws_cancel", message: "The user stopped the turn; not run." },
+  sessionClosed: { code: "session_closed", message: "The chat was closed before the user answered; not run." },
 } satisfies Record<string, ApprovalEndReason>;
