@@ -202,8 +202,21 @@ export function answersForDisplay(questions: readonly NormalizedQuestion[], byId
   const out: Record<string, string> = {};
   for (const q of questions) {
     const list = byId[q.id];
-    if (list?.length) out[q.question] = q.secret ? "(hidden)" : list.join(", ");
+    if (list?.length) out[q.question] = q.secret ? HIDDEN_ANSWER : list.join(", ");
   }
+  return out;
+}
+
+/** What a secret answer reads as anywhere it is kept or shown after the asking provider got it. */
+export const HIDDEN_ANSWER = "(hidden)";
+
+/**
+ * `byId` with each secret question's answer replaced by {@link HIDDEN_ANSWER}, for a record that
+ * outlives the answer (the session trace): it keeps that the question was answered, not what with.
+ */
+export function withSecretAnswersHidden(questions: readonly NormalizedQuestion[], byId: AnswersById): AnswersById {
+  const out: AnswersById = { ...byId };
+  for (const q of questions) if (q.secret && out[q.id]?.length) out[q.id] = [HIDDEN_ANSWER];
   return out;
 }
 

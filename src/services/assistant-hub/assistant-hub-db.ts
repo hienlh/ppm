@@ -193,6 +193,20 @@ export function listAssistantWatches(filter: {
     (assistant === null || w.assistantSessionId === assistant) && (target === null || w.targetSessionId === target));
 }
 
+/**
+ * Deletes every watch a session set or is the target of, under any of its ids; the number
+ * removed. For a deleted session, which can neither report nor be reported on any more.
+ */
+export function deleteAssistantWatchesFor(sessionId: string): number {
+  const current = resolveMigratedSession(requireId(sessionId, "sessionId"));
+  const ids = listAssistantWatches()
+    .filter((w) => w.assistantSessionId === current || w.targetSessionId === current)
+    .map((w) => w.id);
+  const remove = getDb().query("DELETE FROM assistant_watches WHERE id = ?");
+  for (const id of ids) remove.run(id);
+  return ids.length;
+}
+
 const PATCH_COLUMNS: Record<keyof AssistantWatchPatch, string> = {
   status: "status",
   armedRunning: "armed_running",

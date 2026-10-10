@@ -77,6 +77,35 @@ export interface SendMessageOpts {
    * to the turn, and never handed to a provider.
    */
   channel?: "telegram";
+  /**
+   * What a chat the Assistant was asked to watch did, when PPM itself wakes an Assistant session
+   * to report it. Consumed by `chatService.prepareSendOptions`, which renders it into the
+   * shared-context block — never into the stored message, which is a fixed opener — and never
+   * handed to a provider; ignored for any other session.
+   */
+  watchEvents?: WatchEventNotice[];
+}
+
+/** How a watched chat's run ended, as the Assistant is told it. */
+export type WatchEventKind = "done" | "stopped" | "interrupted" | "expired";
+
+/**
+ * One watched chat's news. Everything here except `kind` and the ids comes from that chat or its
+ * user, so it is data: `watch-event-text.ts` cleans and labels it before a model sees it.
+ */
+export interface WatchEventNotice {
+  watchId: string;
+  kind: WatchEventKind;
+  project: string;
+  sessionId: string;
+  providerId: string;
+  title: string;
+  /** The opening of the chat's final answer, for `done`. */
+  finalText?: string;
+  /** What stopped the chat, for `stopped`. */
+  stopReason?: string;
+  /** When it happened, epoch milliseconds. */
+  at: number;
 }
 
 export interface AIProvider {

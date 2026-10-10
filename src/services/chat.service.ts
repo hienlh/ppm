@@ -34,6 +34,8 @@ import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
 import { createLogger } from "./logger.ts";
+import { watchEventsContextEntry } from "./assistant-watch/watch-event-text.ts";
+import { deleteAssistantWatchesFor } from "./assistant-hub/assistant-hub-db.ts";
 
 const log = createLogger("chat");
 const designLog = createLogger("design");
@@ -55,6 +57,18 @@ export const TELEGRAM_CHANNEL_CONTEXT_ENTRY = [
   "No PPM screen is attached to this turn: the UI tools (ui_*) will answer no-device, so use the data tools instead.",
   "Keep the reply short; it is read on a phone.",
 ].join("\n");
+
+/**
+ * What an Assistant session is told on the first message typed in PPM after one from Telegram:
+ * the "no screen" it was told before no longer holds.
+ */
+export const BACK_ON_PPM_CONTEXT_ENTRY = [
+  "Channel: this message was typed in PPM, on a screen. The user's earlier messages came from Telegram;",
+  "the UI tools (ui_*) work again for this device, and replies no longer need to be phone-sized.",
+].join(" ");
+
+/** How many sessions' last channel is remembered; the least recently written go first. */
+const MAX_CHANNEL_RECORDS = 512;
 
 /**
  * What the "turn start" / "turn end" log lines need about one run, which can span many turns.
@@ -111,6 +125,18 @@ class ChatService {
   private sharedSnapshots = new SharedContextSnapshots();
   /** Runs in flight, by every id they answer to — read only by the turn log lines. */
   private turnLogs = new Map<string, TurnLog>();
+  /**
+   * Where each Assistant session's user last wrote from, by `provider:session`, so the first
+   * message typed in PPM after Telegram says the screen is back. Not cleared with the snapshots:
+   * an error or a compaction does not move the user. Lost on restart, which costs one line.
+   */
+  private lastChannel = new Map<string, "telegram" | "ppm">();
+
+  private noteChannel(key: string, channel: "telegram" | "ppm"): void {
+    this.lastChannel.delete(key);
+    this.lastChannel.set(key, channel);
+    if (this.lastChannel.size > MAX_CHANNEL_RECORDS) this.lastChannel.delete(this.lastChannel.keys().next().value!);
+  }
 
   private rememberSharedContext(providerId: string, sessionId: string, sent: SentContext): void {
     this.sharedSnapshots.remember(`${providerId}:${sessionId}`, sent);
@@ -200,6 +226,13 @@ class ChatService {
     assistantMcpTokens.revoke(sessionId);
     // The tab tools', the Assistant's screen and its approval brokers each keep a rate window.
     forgetSessionInDeviceBrokers(sessionId);
+    this.lastChannel.delete(`${providerId}:${sessionId}`);
+    // Watches the session set, and watches on it: neither can report to anyone any more.
+    try {
+      deleteAssistantWatchesFor(sessionId);
+    } catch (e) {
+      log.warn(`session=${sessionId} could not drop its watches: ${(e as Error).message}`);
+    }
     return provider.deleteSession(sessionId);
   }
 
@@ -313,6 +346,11 @@ class ChatService {
         const migratedId = event.type === "session_migrated" ? event.newSessionId : event.type === "done" ? event.sessionId : undefined;
         if (migratedId && migratedId !== activeSessionId) {
           this.sharedSnapshots.move(`${providerId}:${activeSessionId}`, `${providerId}:${migratedId}`);
+          const channel = this.lastChannel.get(`${providerId}:${activeSessionId}`);
+          if (channel) {
+            this.lastChannel.delete(`${providerId}:${activeSessionId}`);
+            this.noteChannel(`${providerId}:${migratedId}`, channel);
+          }
           activeSessionId = migratedId;
         }
         if (endsDesignWork(event)) {
@@ -350,7 +388,7 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<{ opts: SendMessageOpts; sent: SentContext }> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    const { uiSummary, channel, ...callerOpts } = opts ?? {};
+    const { uiSummary, channel, watchEvents, ...callerOpts } = opts ?? {};
     // Like the design fields, the tab tools are only ever server-built. An Assistant session is
     // never also a design session: its policy replaces the design one outright.
     const { tabToolsMcp: _tabTools, ...design } = this.resolveAssistantOptions(providerId, sessionId, callerOpts)
@@ -385,14 +423,23 @@ class ChatService {
     // setting says: it is how the Assistant knows which screen it is talking about.
     let ui: string | undefined;
     let channelEntry: string | undefined;
-    if (design.assistantSession && channel === "telegram") {
+    if (design.assistantSession && watchEvents?.length) {
+      // PPM woke the session to report on watched chats: the entry carries the news, says that
+      // nobody typed and no screen is attached, and is news once — never compared with a
+      // previous one. Where the user last wrote from is unchanged: they did not write.
+      channelEntry = watchEventsContextEntry(watchEvents);
+    } else if (design.assistantSession && channel === "telegram") {
       // No screen is attached to this turn. The screen the model last saw is forgotten, so the
       // next message typed in PPM sends it again instead of the model assuming it is unchanged.
       this.sharedSnapshots.forget(key, "ui");
+      this.noteChannel(key, "telegram");
       if (!slash) channelEntry = TELEGRAM_CHANNEL_CONTEXT_ENTRY;
     } else if (design.assistantSession && !slash) {
       ui = uiSummaryContextEntry(uiSummary);
       if (ui && this.sharedSnapshots.unchanged(key, "ui", ui)) ui = undefined;
+      // The model was told the user is on their phone; without this it would go on believing it.
+      if (this.lastChannel.get(key) === "telegram") channelEntry = BACK_ON_PPM_CONTEXT_ENTRY;
+      this.noteChannel(key, "ppm");
     }
     const sharedContext = joinSharedContextEntries(shared, ui, channelEntry);
     return { opts: { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), sharedContext }, sent: { shared, ui } };
@@ -547,11 +594,17 @@ class ChatService {
     requestId: string,
     approved: boolean,
     data?: unknown,
-    extra: { reason?: string; origin?: TraceOrigin } = {},
+    extra: {
+      reason?: string;
+      origin?: TraceOrigin;
+      /** What the trace records in place of `data`, when `data` holds something it must not keep (a secret answer). */
+      traceData?: unknown;
+    } = {},
   ): void {
     const provider = providerRegistry.get(providerId);
     if (typeof provider?.resolveApproval !== "function") return;
-    traceApproval(sessionId, providerId, requestId, approved, { data, ...extra });
+    const { traceData, ...rest } = extra;
+    traceApproval(sessionId, providerId, requestId, approved, { data: "traceData" in extra ? traceData : data, ...rest });
     provider.resolveApproval(requestId, approved, data);
   }
 

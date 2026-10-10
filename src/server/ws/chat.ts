@@ -46,13 +46,16 @@ import type { TraceOrigin } from "../../shared/session-trace.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
 import { CHAT_CLIENT_ID_PARAM, chatClientIdFrom } from "../../shared/chat-client-id.ts";
 import {
-  CHAT_BUSY, setChatControl, type ApprovalAnswer, type ChatMessageOrigin, type LiveApprovalCard, type LiveChatState, type ServerOrigin,
+  CHAT_BUSY, WATCH_TURN_REFUSAL, setChatControl, type ApprovalAnswer, type ChatMessageOrigin, type LiveApprovalCard, type LiveChatState, type ServerOrigin,
 } from "../../services/chat-control/chat-control.ts";
 import {
   answersForDisplay, coerceAnswersById, legacyAnswersToById, normalizeClaudeQuestions, questionsFromWire, toProviderAnswers,
+  withSecretAnswersHidden,
 } from "../../shared/approval-questions.ts";
 import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
 import { isNotificationSuppressed } from "../../services/chat-control/notification-suppressor.ts";
+import { neutralizePpmTags, parseWatchEventNotices } from "../../services/assistant-watch/watch-event-text.ts";
+import type { WatchEventNotice } from "../../types/chat.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -285,6 +288,11 @@ interface SessionEntry {
   lastSenderClientId?: string;
   /** Events broadcast with no client attached since the session last went idle — logged then, as one count. */
   droppedEvents?: number;
+  /**
+   * Who sent the latest message, i.e. whose turn the running one is: a message typed mid-turn
+   * takes it over. In a `watch` turn nothing is asked of the user — every approval is refused.
+   */
+  turnOrigin?: ChatMessageOrigin;
 }
 
 /** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
@@ -925,7 +933,7 @@ function emitTurnEnded(
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], uiSummary?: UiSummary, origin: TraceOrigin = "ws", channel?: "telegram"): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], uiSummary?: UiSummary, origin: TraceOrigin = "ws", channel?: "telegram", watchEvents?: WatchEventNotice[]): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -995,7 +1003,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(uiSummary && { uiSummary }), ...(channel && { channel }), origin })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(uiSummary && { uiSummary }), ...(channel && { channel }), ...(watchEvents?.length && { watchEvents }), origin })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1284,6 +1292,14 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // shown — e.g. an Assistant endpoint request — and shown once that one is answered.
         // Never anything the provider says: the card's `origin` is the endpoint's alone.
         const { origin: _origin, summary: _summary, questions: rawQuestions, ...providerEvent } = ev;
+        // A turn PPM started to report on a watched chat asks the user nothing: it carries that
+        // chat's words, and a card here would be one tap away from acting on them. The provider
+        // hears a plain denial; the turn's context already told the model why.
+        if (entry.turnOrigin === "watch") {
+          chatService.resolveApproval(entry.providerId, sessionId, ev.requestId, false, undefined, { reason: "watch_turn", origin: "watch" });
+          logSessionEvent(sessionId, "INFO", `Approval for ${String(ev.tool).slice(0, 60)} refused without asking: ${WATCH_TURN_REFUSAL}`);
+          continue;
+        }
         // A question card carries its questions normalized, so every surface answers it by id:
         // Codex sends them so (read from its own request); Claude's are read off the tool input.
         const questions = questionsFromWire(rawQuestions)
@@ -1444,7 +1460,12 @@ interface DeliverOpts {
   /** The mode a turn this message starts runs in; the chat's sticky mode when absent. */
   permissionMode?: string;
   receivedAt?: number;
+  /** A `watch` message's news, rendered into the turn's shared context. */
+  watchEvents?: WatchEventNotice[];
 }
+
+/** A watch message finds the chat quiet, or does not go in: see {@link DeliverOpts.origin}. */
+const busyForWatch = (entry: SessionEntry): boolean => !!entry.pendingApprovalEvent || entry.phase !== "idle";
 
 /**
  * A user's message, from the point it is valid and its sticky settings are stored: rewritten
@@ -1462,7 +1483,7 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
   if (fromAssistant && entry.pendingApprovalEvent) return { ok: false, error: TARGET_HAS_PENDING_APPROVAL };
   // A watch report waits for a quiet chat: pushed into a running turn it would steer the user's
   // work mid-way, and with a card waiting it would cancel the card.
-  if (opts.origin === "watch" && (entry.pendingApprovalEvent || entry.phase !== "idle")) return { ok: false, error: CHAT_BUSY };
+  if (opts.origin === "watch" && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
 
   // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
   // name the runtime never registers — it names plugin items after the plugin
@@ -1481,6 +1502,12 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
   // run. Rewritten before the echo for the same reason as the alias above:
   // other devices and the stored transcript must show what actually ran.
   await rewriteProviderSkillSigil(parsed, providerId, sessionId);
+  // Asked again after the awaits above: a message may have started a turn meanwhile, and a watch
+  // message going in now would be pushed into it.
+  if (opts.origin === "watch" && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
+  // Only the server writes PPM's own tags (the shared-context block, a watch report). Typed or
+  // pasted into an Assistant session, one would read to the model as the server speaking.
+  if (fromUser && isAssistantSession(sessionId, entry.projectPath)) parsed.content = neutralizePpmTags(parsed.content);
   parsed.content = encodeReply(parsed.content, opts.replyTo);
 
   // Echo the user message to the clients that did not type it (a second device or tab).
@@ -1536,6 +1563,9 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
 
   // Store user message for reconnect replay (turn_events includes only assistant events)
   entry.currentUserMessage = parsed.content;
+  // Whose turn this is from now on: the user typing into a watch turn makes it theirs, and the
+  // approvals it then asks for are shown again.
+  entry.turnOrigin = opts.origin;
   if (opts.sender) {
     entry.lastSender = opts.sender;
     // A tab that sends no id (an older bundle) must not inherit the previous sender's.
@@ -1585,7 +1615,7 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
     const msgModel = entry.model;
     entry.streamPromise = new Promise<void>((resolve) => {
       setTimeout(() => {
-        startSessionConsumer(sessionId, providerId, parsed.content, permMode, opts.images, msgModel, opts.imagePaths, uiSummary, opts.origin, opts.channel).then(resolve, resolve);
+        startSessionConsumer(sessionId, providerId, parsed.content, permMode, opts.images, msgModel, opts.imagePaths, uiSummary, opts.origin, opts.channel, opts.watchEvents).then(resolve, resolve);
       }, 0);
     });
   } else {
@@ -1597,6 +1627,7 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
         await chatService.pushMessage(providerId, sessionId, parsed.content, {
           origin: opts.origin,
           ...(opts.channel ? { channel: opts.channel } : {}),
+          ...(opts.watchEvents?.length ? { watchEvents: opts.watchEvents } : {}),
           priority: opts.priority ?? "next",
           images: opts.images,
           imagePaths: opts.imagePaths,
@@ -1753,6 +1784,9 @@ function answerApprovalCore(
   const questions = card?.questions;
   let data: unknown = answer.answers;
   let shown: unknown = answer.answers;
+  // What the session trace keeps of the answer: a secret answer (a Codex question marked secret)
+  // goes to the provider and nowhere else, so the trace records only that it was answered.
+  let traced: unknown = answer.answers;
   if (questions) {
     const byId = answer.answersById !== undefined
       ? coerceAnswersById(questions, answer.answersById)
@@ -1761,6 +1795,7 @@ function answerApprovalCore(
     const answered = approved && Object.keys(byId).length > 0;
     data = answered ? toProviderAnswers(entry.providerId, questions, byId) : undefined;
     shown = answered ? answersForDisplay(questions, byId) : undefined;
+    traced = answered ? toProviderAnswers(entry.providerId, questions, withSecretAnswersHidden(questions, byId)) : undefined;
   }
   // Answered: the buffered request carries the answer, so a replay renders it answered
   // (an AskUserQuestion card shows its chosen answers).
@@ -1791,7 +1826,7 @@ function answerApprovalCore(
       logSessionEvent(sessionId, "INFO", `approval_response${origin === "ws" ? "" : ` (${origin})`} for unknown request ${requestId.slice(0, 64)} refused as no longer valid`);
       return "stale";
     }
-    chatService.resolveApproval(entry.providerId, sessionId, requestId, approved, data, { origin });
+    chatService.resolveApproval(entry.providerId, sessionId, requestId, approved, data, { origin, traceData: traced });
     recordAnswer();
     // Tell every connected device this approval was resolved so their live prompt clears —
     // even the device that didn't answer — and show the next card waiting, if any.
@@ -1823,6 +1858,7 @@ function liveChatState(entry: SessionEntry): LiveChatState {
     providerId: entry.providerId,
     ...(entry.pendingApprovalEvent ? { card: liveApprovalCard(entry.pendingApprovalEvent) } : {}),
     queuedCards: entry.approvalQueue?.length ?? 0,
+    ...(entry.turnOrigin ? { turnOrigin: entry.turnOrigin } : {}),
   };
 }
 
@@ -1838,6 +1874,14 @@ setChatControl({
     if (opts.permissionMode && !VALID_PERMISSION_MODES.includes(opts.permissionMode as typeof VALID_PERMISSION_MODES[number])) {
       return { ok: false, error: `Unknown permission mode "${opts.permissionMode}".` };
     }
+    // Only a watch message carries watch news, and only in the shape the watch service builds.
+    let watchEvents: WatchEventNotice[] | undefined;
+    if (opts.watchEvents !== undefined) {
+      if (opts.origin !== "watch") return { ok: false, error: "Only a watch message carries watch events." };
+      const parsed = parseWatchEventNotices(opts.watchEvents);
+      if (!parsed) return { ok: false, error: "The watch events are malformed." };
+      watchEvents = parsed;
+    }
     const sessionId = resolveMigratedSession(asked);
     const ensured = ensureServerEntry(sessionId, opts.projectName, opts.providerId);
     if (!ensured.ok) return ensured;
@@ -1847,6 +1891,7 @@ setChatControl({
       ...(opts.images?.length ? { images: opts.images } : {}),
       ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
+      ...(watchEvents ? { watchEvents } : {}),
       receivedAt: Date.now(),
     });
     // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).

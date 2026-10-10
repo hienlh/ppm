@@ -21,6 +21,7 @@ import type { AskApproval } from "./assistant-approval-broker.ts";
 import { resolveAssistantProject, resolveAssistantSessionTarget } from "./assistant-project-scope.ts";
 import { errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 import { MAX_CHAT_MESSAGE_CHARS } from "./assistant-mcp-tools.ts";
+import type { ChatStartWatcher } from "./assistant-watch-tools.ts";
 
 /**
  * The Assistant's tools for running the user's chats: the overview of what needs them
@@ -42,6 +43,8 @@ export interface HubToolDeps {
   create?: typeof createProjectChatSession;
   broadcast?: (event: unknown) => void;
   title?: (sessionId: string) => string | null;
+  /** How `chat_start` watches the chat it opens, when asked to; absent, it cannot. */
+  watch?: ChatStartWatcher;
 }
 
 /** `chats_attention`: never asks. */
@@ -74,6 +77,7 @@ export async function chatStart(args: Record<string, unknown>, ask: AskApproval,
     return errorResult(`\`permissionMode\` must be one of ${VALID_PERMISSION_MODES.join(", ")}.`);
   }
   if (args.title !== undefined && typeof args.title !== "string") return errorResult("`title` must be text.");
+  if (args.watch !== undefined && typeof args.watch !== "boolean") return errorResult("`watch` must be true or false.");
   const title = typeof args.title === "string" ? cleanSummaryText(args.title, MAX_TITLE_CHARS) || null : null;
   const delivery = deps.delivery === undefined ? assistantChatDelivery() : deps.delivery;
   if (!delivery) return errorResult("Starting chats is not available in this PPM process.");
@@ -106,14 +110,23 @@ export async function chatStart(args: Record<string, unknown>, ask: AskApproval,
   }
   (deps.broadcast ?? broadcastGlobalEvent)({ type: "sessions:list_changed", projectName: project.value.name });
 
+  // Watched before its first message goes: a run that ends at once must still be heard.
+  const watched = args.watch === true
+    ? (deps.watch?.({ sessionId, projectName: project.value.name, providerId }) ?? { ok: false as const, error: "Watching chats is not available here." })
+    : null;
   const sent = await delivery.deliver({ sessionId, projectName: project.value.name, providerId }, text, mode);
   if (!sent.ok) {
+    if (watched?.ok) watched.cancel();
     return textResult(JSON.stringify({ started: true, sent: false, sessionId, project: project.value.name, providerId, error: sent.error,
       note: "The chat exists but did not get its message. Tell the user; do not create another." }, null, 1), true);
   }
   return jsonResult({
     started: true, project: project.value.name, sessionId: sent.sessionId, providerId, permissionMode: mode, ...(model ? { model } : {}),
-    note: "The chat is working on it. Read its reply later with chat_read_messages, or check chats_attention.",
+    ...(watched?.ok ? { watchId: watched.watchId } : {}),
+    ...(watched && !watched.ok ? { watchError: watched.error } : {}),
+    note: watched?.ok
+      ? "The chat is working on it. You will be woken to report when its run ends."
+      : "The chat is working on it. Read its reply later with chat_read_messages, or check chats_attention.",
   });
 }
 

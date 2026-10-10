@@ -1,8 +1,10 @@
 import {
   CHAT_ANSWER_APPROVAL_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, CHAT_START_TOOL,
   CHATS_ATTENTION_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, PPM_CLI_REFERENCE_TOOL, PROJECTS_LIST_TOOL,
+  CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
+import { MAX_ACTIVE_WATCHES } from "../assistant-watch/watch-state.ts";
 import { UI_COMMAND_TOOL_DEFINITIONS, UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFINITION } from "./assistant-ui-tool-definitions.ts";
 
 /**
@@ -164,6 +166,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
       model: { type: "string", description: "A model id for the chat; the provider's default when absent." },
       permissionMode: { type: "string", enum: ["default", "acceptEdits", "plan", "bypassPermissions"], description: "The mode the chat runs in." },
       title: { type: "string", maxLength: 200, description: "A title for the chat." },
+      watch: { type: "boolean", description: "Also watch the new chat, as chat_watch does: you are woken to report when its run ends." },
     }, ["project", "text"]),
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   },
@@ -189,6 +192,41 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     description: "How to run the `ppm` command line against this PPM, which commands go through the running server and "
       + "which change its data directly, and every command with its options. For what PPM's own tools do not cover "
       + "(git, schedules, tunnels, extensions). Running a command is a shell call, which asks the user.",
+    inputSchema: object({}),
+    annotations: READ_ONLY,
+  },
+  {
+    name: CHAT_WATCH_TOOL,
+    title: "Watch a chat",
+    description: "Ask PPM to tell you when one of a project's chats finishes its run: when it ends (finished, stopped "
+      + "by an error, or cut off by a PPM restart) PPM wakes this conversation for a short report, even after a "
+      + "restart. Its approval cards go to the user directly and do not wake you. A chat that already finished after "
+      + "the user asked is reported at once instead; an idle chat is watched through its next run. Expires after 24 "
+      + `hours; at most ${MAX_ACTIVE_WATCHES} at a time. Never asks.`,
+    inputSchema: object({
+      project: PROJECT,
+      sessionId: { type: "string", description: "The chat's session id." },
+      providerId: { type: "string", enum: ["claude", "codex"], description: "The chat's provider, when known." },
+      notifyOn: {
+        type: "array", minItems: 1, uniqueItems: true, items: { type: "string", enum: ["done", "stopped", "decision"] },
+        description: "What to tell the user about (default all): `done` a finished run, `stopped` one ended by an error or a restart, `decision` its approval cards.",
+      },
+    }, ["project", "sessionId"]),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: CHAT_UNWATCH_TOOL,
+    title: "Stop watching a chat",
+    description: "Stop a watch this conversation set, including news it has not reported yet. Never asks.",
+    inputSchema: object({
+      watchId: { type: "string", description: "The watch's id, from chat_watch or chat_list_watches." },
+    }, ["watchId"]),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: CHAT_LIST_WATCHES_TOOL,
+    title: "List watched chats",
+    description: "The chats this conversation watches, with what happened to each: watching, reported, or waiting to be reported.",
     inputSchema: object({}),
     annotations: READ_ONLY,
   },

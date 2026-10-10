@@ -62,7 +62,8 @@ describe("assistant MCP endpoint", () => {
     // Every tool reads, except the ones that move the user's screen, which change no data, the
     // ones that may change data once the user approves, and the one running PPM's commands, an
     // extension's among them, which may also reach outside.
-    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab"]);
+    // Setting and stopping a watch changes only PPM's own record of what to report, like navigation.
+    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch"]);
     const writes = new Set(["db_query", "chat_send_message", "chat_start", "chat_answer_approval"]);
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(expect.arrayContaining(["chats_attention", "chat_start", "chat_answer_approval", "ppm_cli_reference"]));
     for (const tool of list.result.tools) {
@@ -82,6 +83,10 @@ describe("assistant MCP endpoint", () => {
     expect(JSON.parse(overview.content[0]!.text)).toMatchObject({ needsDecision: [], running: [] });
     const refused = await callAssistantTool({ sessionId }, "chats_attention", { since: "last week" }) as { isError?: boolean };
     expect(refused.isError).toBe(true);
+    // The watch tools reach the watch service, which says when this process does not run it.
+    const watches = await callAssistantTool({ sessionId }, "chat_list_watches", {}) as { content: Array<{ text: string }>; isError?: boolean };
+    expect(watches.isError).toBe(true);
+    expect(watches.content[0]!.text).toContain("not available");
   });
 
   it("refuses a browser request, a wrong token and a body over the cap", async () => {

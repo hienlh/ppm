@@ -2,6 +2,7 @@ import type { SessionPhase } from "../../types/api.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { DeliverResult } from "../assistant-mcp/assistant-chat-send.ts";
 import type { AnswersById, NormalizedQuestion } from "../../shared/approval-questions.ts";
+import type { WatchEventNotice } from "../../types/chat.ts";
 
 /**
  * What the rest of the server may do to a chat that only a browser could do before: send it a
@@ -29,6 +30,17 @@ export type ChatMessageOrigin = "ws" | ServerOrigin;
  */
 export const CHAT_BUSY = "busy";
 
+/**
+ * Why a call in a `watch` turn was refused without a card. Such a turn carries another chat's
+ * words, and an approval card there — one tap on a phone, at a moment the user did not choose —
+ * is the shortest path from injected text to an action, so nothing in it is asked at all.
+ */
+export const WATCH_TURN_REFUSAL = "Refused without asking the user: PPM started this turn on its own to report on a watched "
+  + "chat, so nothing that changes data or needs approval runs in it. Tell the user what you would do and let them ask for it.";
+
+/** Whether the session's running turn was started by a watch and nobody has written in it since. */
+export const isWatchTurn = (sessionId: string): boolean => control?.liveState(sessionId)?.turnOrigin === "watch";
+
 export interface SendUserMessageOpts {
   origin: ServerOrigin;
   /** The chat's project; used only when the chat has no live entry yet. */
@@ -40,6 +52,11 @@ export interface SendUserMessageOpts {
   permissionMode?: string;
   /** The channel the user typed on, when it is not a PPM screen. */
   channel?: "telegram";
+  /**
+   * With `watch` only, and required by it: what the watched chats did. Rendered into the turn's
+   * shared context, never into the stored message.
+   */
+  watchEvents?: WatchEventNotice[];
 }
 
 /** The approval card a chat shows, as far as a non-browser caller needs it. */
@@ -75,6 +92,12 @@ export interface LiveChatState {
   card?: LiveApprovalCard;
   /** Cards waiting behind the shown one. */
   queuedCards: number;
+  /**
+   * Who sent the chat's latest message, which is whose turn the running one is. A message the
+   * user types mid-turn makes it theirs. A `watch` turn is nobody's: nothing in it may ask the
+   * user to approve anything.
+   */
+  turnOrigin?: ChatMessageOrigin;
 }
 
 export interface ChatControl {
