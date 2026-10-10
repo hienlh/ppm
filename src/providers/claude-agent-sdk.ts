@@ -1321,6 +1321,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     let assistantContent = "";
     let resultSubtype: string | undefined;
+    /**
+     * The turn was ended by an API error PPM already surfaced (authentication, billing, a
+     * refusal, an exhausted retry budget). The CLI closes such a turn with a result whose
+     * subtype is still "success" — the API error is an assistant message, not an execution
+     * fault — so without this the `done` would call a turn that produced nothing a success,
+     * and notifications, schedules and PPMBot would all read it that way.
+     */
+    let turnEndedInError = false;
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
     let resultCostUsd: number | undefined;
@@ -1972,6 +1980,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
               // All recovery exhausted — tear down streaming session
               log.error(`session=${sessionId} turn failed: authentication failed after ${authRetryCount} recovery attempts account=${account.id}`);
+              turnEndedInError = true;
               yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
               break;
             }
@@ -2010,6 +2019,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // No fresh account left — stop. One clear error, no retry loop.
               const resetSuffix = usageLimitResetText ? ` Resets ${usageLimitResetText}.` : "";
               log.error(`session=${sessionId} turn failed: usage limit, no fresh account left accountsTried=${usageLimitedAccounts.size}`);
+              turnEndedInError = true;
               yield { type: "error", message: `All accounts have hit their usage limit.${resetSuffix} Add another account in Settings → Accounts or wait for the reset.` };
               break;
             }
@@ -2052,6 +2062,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 continue retryLoop;
               }
               log.error(`session=${sessionId} turn failed: rate limited, all accounts exhausted accountsTried=${rateLimitedAccounts.size}`);
+              turnEndedInError = true;
               yield { type: "error", message: "All accounts are rate limited right now. Add another account in Settings → Accounts, or wait for the limit to reset." };
               break;
             }
@@ -2086,6 +2097,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (!stripped || stripped.removed === 0) {
                 const reason = stripped?.reason || "no images left to remove";
                 log.error(`session=${sessionId} turn failed: the API refused an image and nothing was left to strip (${reason})`);
+                turnEndedInError = true;
                 yield { type: "error", message: `The API refused an image in this conversation, but nothing could be removed automatically (${reason}). Open Session debug to remove images yourself, start a new session, or use /compact to summarise the history away.` };
                 break;
               }
@@ -2106,6 +2118,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             // that says why and what to do next (rephrase in a new session, or change the model).
             const refusalText = (msg as any).message?.stop_reason === "refusal" ? this.extractAssistantText(msg) : "";
             const hint = refusalText || (errorHints[assistantError] ?? `API error: ${assistantError}`);
+            turnEndedInError = true;
             yield { type: "error", message: hint };
             // Skip emitting the raw 401 error as text content — already shown as error event
             continue;
@@ -2233,7 +2246,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // Only mark success when the result is actually successful,
               // not for unrecognized error subtypes (e.g. quota exhaustion)
               const resultSub = (msg as any).subtype as string | undefined;
-              if (!resultSub || resultSub === "success") {
+              if ((!resultSub || resultSub === "success") && !turnEndedInError) {
                 accountSelector.onSuccess(account.id);
               }
             }
@@ -2339,7 +2352,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           // Detect empty/suspicious success — SDK returned "success" but no real assistant content
-          if ((!subtype || subtype === "success") && (result.num_turns ?? 0) === 0 && !assistantContent) {
+          // Not after an API error already reported: that error is the reason nothing came back,
+          // and a second, vaguer one would replace it as the turn's last word.
+          if ((!subtype || subtype === "success") && !turnEndedInError && (result.num_turns ?? 0) === 0 && !assistantContent) {
             // SDK success result has `result: string` containing final text
             const resultText = typeof result.result === "string" ? result.result : "";
             log.error(`session=${sessionId} turn produced no response (0 turns) result=${JSON.stringify(resultText.slice(0, 200))}`);
@@ -2350,8 +2365,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             yield { type: "error", message: hint };
           }
 
-          // Store subtype and numTurns for the done event
-          resultSubtype = subtype;
+          // Store subtype and numTurns for the done event. A "success" result closing a turn
+          // the API failed is reported as failed, the subtype Codex gives the same turn, so
+          // every consumer of `done` agrees with the error the user was shown. `is_error` is
+          // the CLI's own flag for a turn whose last message was an API error.
+          resultSubtype = (!subtype || subtype === "success") && (turnEndedInError || result.is_error === true)
+            ? "error_during_execution"
+            : subtype;
           resultNumTurns = result.num_turns as number | undefined;
 
           // Extract context window usage from modelUsage.
@@ -2435,6 +2455,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           pendingToolCount = 0;
           assistantContent = "";
           resultSubtype = undefined;
+          turnEndedInError = false;
           resultNumTurns = undefined;
           resultContextWindowPct = undefined;
           resultCostUsd = undefined;
@@ -2513,7 +2534,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       yield {
         type: "done",
         sessionId,
-        resultSubtype: resultSubtype as any,
+        // A turn given up on after its retries (auth, usage or rate limit) breaks out before
+        // any result arrives, and still has to say it failed.
+        resultSubtype: (resultSubtype ?? (turnEndedInError ? "error_during_execution" : undefined)) as any,
         numTurns: resultNumTurns,
         contextWindowPct: resultContextWindowPct,
         costUsd: resultCostUsd,
