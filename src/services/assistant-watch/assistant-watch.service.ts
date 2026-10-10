@@ -1,5 +1,5 @@
 import { createLogger } from "../logger.ts";
-import { getSessionProvider, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
+import { getSessionProvider, resolveMigratedSession } from "../db.service.ts";
 import {
   getAssistantWatch, insertAssistantWatch, listAssistantWatches, telegramChatsBoundTo, updateAssistantWatch,
   type AssistantWatch,
@@ -16,6 +16,7 @@ import { watchEvents } from "./watch-events.ts";
 import { readTurnEndSince, type TraceTurnEnd } from "./watch-turn-end-reader.ts";
 import { awaitsDelivery, MAX_ACTIVE_WATCHES, readWatchState, wakesFor, watchView, writeWatchState, type NotifyKind, type WatchView } from "./watch-state.ts";
 import { firstLine, reportedPush, unreportedPush } from "./watch-push.ts";
+import { unnamedChat, watchedChatTitle } from "./watched-chat-title.ts";
 
 /**
  * "Tell me when that chat finishes": watches an Assistant session set on the user's chats, kept
@@ -27,7 +28,8 @@ import { firstLine, reportedPush, unreportedPush } from "./watch-push.ts";
  *   context; nothing in it may ask the user to approve anything (`WATCH_TURN_REFUSAL`).
  * - A watched chat showing a card wakes nothing: `watch_decision` lets the Telegram relay show
  *   the card with buttons. A model turn per card would cost a turn per tool call, and invite the
- *   model to act on a card the user never saw.
+ *   model to act on a card the user never saw. Every watch relays its chat's cards; `notifyOn`
+ *   only picks which ends of the run wake the Assistant.
  * - Watch turns are capped per Assistant session per hour; news that arrives over the cap, or
  *   while the session is busy, waits and goes into the next turn together.
  * - A report counts as delivered only when its turn ends with an answer. A turn that fails is
@@ -130,7 +132,7 @@ export class AssistantWatchService {
     this.control = deps.control ?? chatControl;
     this.lifecycle = deps.lifecycle ?? chatLifecycle;
     this.now = deps.now ?? Date.now;
-    this.titleOf = deps.title ?? getSessionTitle;
+    this.titleOf = deps.title ?? watchedChatTitle;
     this.providerOf = deps.provider ?? getSessionProvider;
     this.boundChats = deps.boundChats ?? telegramChatsBoundTo;
     this.notify = deps.notify ?? ((payload) => { sendPush(payload).catch((e) => log.warn(`push failed: ${(e as Error).message}`)); });
@@ -210,8 +212,9 @@ export class AssistantWatchService {
     });
     updateAssistantWatch(row.id, { eventJson: writeWatchState({ notifyOn: req.notifyOn }) });
     const watch = getAssistantWatch(row.id)!;
-    // A card already up is one the user should see now, not at the next one.
-    if (live?.card && req.notifyOn.includes("decision")) this.relayCard(watch, live.card);
+    // A card already up is one the user should see now, not at the next one. Relayed whatever
+    // `notifyOn` says: the run cannot end while its card waits unseen.
+    if (live?.card) this.relayCard(watch, live.card);
     return { ok: true, created: true, watch: this.view(watch) };
   }
 
@@ -246,8 +249,10 @@ export class AssistantWatchService {
   }
 
   private onApprovalShown(p: ChatLifecycleEvents["approval_shown"]): void {
+    // Every watch on the chat relays it: `notifyOn` picks which ends wake the Assistant, and a
+    // card nobody sees would keep the run from reaching any of them.
     for (const w of listAssistantWatches({ status: "active", targetSessionId: this.canon(p.sessionId) })) {
-      if (readWatchState(w).notifyOn.includes("decision")) this.relayCard(w, p.card);
+      this.relayCard(w, p.card);
     }
   }
 
@@ -289,7 +294,7 @@ export class AssistantWatchService {
       project: w.targetProject,
       sessionId: w.targetSessionId,
       providerId: w.targetProvider,
-      title: this.titleOf(w.targetSessionId) ?? `Session ${w.targetSessionId.slice(0, 8)}`,
+      title: this.nameOf(w.targetSessionId),
       ...e,
     };
   }
@@ -320,7 +325,7 @@ export class AssistantWatchService {
       targetSessionId: w.targetSessionId,
       targetProject: w.targetProject,
       targetProvider: w.targetProvider,
-      targetTitle: this.titleOf(w.targetSessionId) ?? `Session ${w.targetSessionId.slice(0, 8)}`,
+      targetTitle: this.nameOf(w.targetSessionId),
       card,
     });
   }
@@ -517,7 +522,17 @@ export class AssistantWatchService {
   }
 
   private view(w: AssistantWatch): WatchView {
-    return watchView(w, this.titleOf(w.targetSessionId) ?? `Session ${w.targetSessionId.slice(0, 8)}`);
+    return watchView(w, this.nameOf(w.targetSessionId));
+  }
+
+  /** One name per chat on every surface a watch feeds: the card relay, the report, the list. */
+  private nameOf(sessionId: string): string {
+    try {
+      return this.titleOf(sessionId) ?? unnamedChat(sessionId);
+    } catch (e) {
+      log.warn(`session=${sessionId} could not read its title: ${(e as Error).message}`);
+      return unnamedChat(sessionId);
+    }
   }
 }
 

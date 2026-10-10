@@ -1,5 +1,7 @@
 import type { Json } from "../mcp-http-endpoint.ts";
-import { getSessionTitle } from "../db.service.ts";
+// The watch's lookup also finds a title stored under the id a chat had before Codex renamed it,
+// so the card names the chat as every other Assistant surface does.
+import { watchedChatTitle } from "../assistant-watch/watched-chat-title.ts";
 import { CHAT_SEND_MESSAGE_TOOL } from "../../shared/assistant-tool-names.ts";
 import { resolveAssistantProject, resolveAssistantSessionTarget } from "./assistant-project-scope.ts";
 import { chatSendSummary, type ModeSource } from "./assistant-approval-summary.ts";
@@ -60,7 +62,7 @@ export async function chatSendMessage(
   if (state.pendingApproval) return errorResult(TARGET_HAS_PENDING_APPROVAL);
 
   const summary = chatSendSummary({
-    project: project.value.name, sessionId, providerId, sessionTitle: (deps.title ?? getSessionTitle)(sessionId),
+    project: project.value.name, sessionId, providerId, sessionTitle: (deps.title ?? watchedChatTitle)(sessionId),
     text, mode: state.mode, modeSource: state.source,
   });
   const verdict = await ask({

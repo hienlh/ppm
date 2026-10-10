@@ -391,7 +391,9 @@ outlives a restart, and it covers one run of the target chat.
   for one short turn so the report arrives as a message in the conversation.
 - **A card does not wake it.** A card in the watched chat only raises `watch_decision`
   (`watch-events.ts`) and is relayed with buttons (see Telegram). A model turn per card would cost
-  a turn per tool call, and would invite the model to act on a card the user never saw.
+  a turn per tool call, and would invite the model to act on a card the user never saw. Every
+  watch relays its chat's cards whatever `notifyOn` says; `notifyOn` only picks which ends of the
+  run (`done`, `stopped`) wake the Assistant.
 - **Wake turns cannot change anything.** Such a turn carries another chat's words, and a card in
   it is one tap on a phone at a moment the user did not choose — the shortest path from injected
   text to an action. So everything that would ask is refused without a card
@@ -585,8 +587,10 @@ the connect-link poller to leave that bot alone (`assistantBridgeReading` in
 - **A refused call in a watch turn reaches the provider as a plain denial.** Claude and Codex are
   not told why; the model knows from its instructions and the turn's context. The endpoint's own
   tools do return the reason.
-- **Codex and the `ppm` CLI.** A Codex Assistant runs in a read-only sandbox, so an approved
-  `ppm …` command that writes PPM's data may fail there. Not verified yet. Separately, on a server
+- **Codex and the `ppm` CLI.** A Codex Assistant runs in a read-only sandbox; an approved
+  `ppm …` command that writes PPM's data asks to leave it, and after Allow it runs (verified with a
+  real Codex: `ppm projects add` wrote the project, and the running server listed it without a
+  restart and kept it through its next save — `config-projects-sync.ts`). Separately, on a server
   running a non-default database profile, CLI data commands would open another instance's
   `ppm.db`; `ppm_cli_reference` warns the agent not to run them.
 - **Telegram is text, photos up, and buttons.** No files, no images sent down; a question that

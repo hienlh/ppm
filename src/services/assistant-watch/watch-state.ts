@@ -10,9 +10,19 @@ import type { WatchEventKind, WatchEventNotice } from "../../types/chat.ts";
 /** Watches one Assistant session may have running at once. */
 export const MAX_ACTIVE_WATCHES = 20;
 
-/** What a watch may wake the Assistant for (`decision` never wakes it: the card is relayed). */
-export const NOTIFY_KINDS = ["done", "stopped", "decision"] as const;
+/**
+ * Which ends of a watched run wake the Assistant. Nothing here decides whether the chat's cards
+ * reach the user: a watch always relays them, because a card left unseen blocks the run, and
+ * then the end the Assistant is waiting for can never come.
+ */
+export const NOTIFY_KINDS = ["done", "stopped"] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number];
+
+/**
+ * A kind `notifyOn` used to have, when cards were relayed only on request. Still accepted, and
+ * ignored, so a model or a stored watch that names it is not refused for it.
+ */
+const LEGACY_DECISION = "decision";
 
 export interface WatchState {
   notifyOn: NotifyKind[];
@@ -22,13 +32,23 @@ export interface WatchState {
   attempts?: number;
 }
 
-/** `notifyOn` as an agent sent it: a non-empty list of known kinds, each once; all of them when absent. */
-export function parseNotifyOn(raw: unknown): { ok: true; value: NotifyKind[] } | { ok: false; error: string } {
+/**
+ * `notifyOn` as an agent sent it: a non-empty list of known kinds, each once; all of them when
+ * absent. A list naming only the legacy `decision` would wake the Assistant for nothing, which is
+ * never what was meant, so it is refused with the reason. A stored watch is read with
+ * `allowEmpty`: such a row asked to hear about no end, and that is what it still gets.
+ */
+export function parseNotifyOn(raw: unknown, opts: { allowEmpty?: boolean } = {}): { ok: true; value: NotifyKind[] } | { ok: false; error: string } {
   if (raw === undefined || raw === null) return { ok: true, value: [...NOTIFY_KINDS] };
-  if (!Array.isArray(raw) || raw.length === 0 || raw.some((k) => !NOTIFY_KINDS.includes(k as NotifyKind))) {
+  const known = (k: unknown) => k === LEGACY_DECISION || NOTIFY_KINDS.includes(k as NotifyKind);
+  if (!Array.isArray(raw) || raw.length === 0 || !raw.every(known)) {
     return { ok: false, error: `\`notifyOn\` must be a non-empty list of ${NOTIFY_KINDS.map((k) => `"${k}"`).join(", ")}.` };
   }
-  return { ok: true, value: NOTIFY_KINDS.filter((k) => raw.includes(k)) };
+  const value = NOTIFY_KINDS.filter((k) => raw.includes(k));
+  if (value.length === 0 && !opts.allowEmpty) {
+    return { ok: false, error: `\`notifyOn\` must name "done", "stopped" or both. The watched chat's approval cards go to the user whatever it says.` };
+  }
+  return { ok: true, value };
 }
 
 /** The state of a stored watch; a row with none, or one that does not parse, asks for everything. */
@@ -36,7 +56,7 @@ export function readWatchState(watch: Pick<AssistantWatch, "eventJson">): WatchS
   if (!watch.eventJson) return { notifyOn: [...NOTIFY_KINDS] };
   try {
     const parsed = JSON.parse(watch.eventJson) as Partial<WatchState>;
-    const notifyOn = parseNotifyOn(parsed.notifyOn);
+    const notifyOn = parseNotifyOn(parsed.notifyOn, { allowEmpty: true });
     return {
       notifyOn: notifyOn.ok ? notifyOn.value : [...NOTIFY_KINDS],
       ...(parsed.event && typeof parsed.event === "object" ? { event: parsed.event as WatchEventNotice } : {}),

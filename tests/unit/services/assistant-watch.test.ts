@@ -154,9 +154,29 @@ describe("a watched chat ending", () => {
     }
   });
 
+  it("relays the chat's cards whatever notifyOn names: it only picks the ends that wake the model", async () => {
+    const h = started(harness());
+    const decisions = heard("watch_decision");
+    try {
+      // A card already up when the watch is set goes out at once, even for a watch on "stopped" only.
+      h.chat.live.set("target-e", { running: true, card: { requestId: "up", tool: "Bash", input: { command: "git init" }, isQuestion: false } });
+      h.watch("target-e", ["stopped"]);
+      h.watch("target-f", ["done", "stopped"]);
+      h.emit("approval_shown", {
+        sessionId: "target-f", projectName: "api", providerId: "claude",
+        card: { requestId: "next", tool: "Bash", input: { command: "ls" }, isQuestion: false },
+      });
+      await h.settle();
+      expect(decisions.list.map((d) => [d.targetSessionId, d.card.requestId])).toEqual([["target-e", "up"], ["target-f", "next"]]);
+      expect(h.chat.sent).toHaveLength(0);
+    } finally {
+      decisions.stop();
+    }
+  });
+
   it("ends quietly on news nobody asked for", async () => {
     const h = started(harness());
-    h.watch("target-d", ["decision"]);
+    h.watch("target-d", ["stopped"]);
     h.ended("target-d", "done", "ok");
     await h.settle();
     expect(h.chat.sent).toHaveLength(0);
@@ -317,6 +337,26 @@ describe("watches across a restart and over time", () => {
     const h = started(harness());
     await h.settle();
     expect(h.chat.sent).toHaveLength(1);
+  });
+
+  it("reads a watch stored with the old decision-only notifyOn: relays its cards, wakes for no end", async () => {
+    const id = storedWatch("legacy", false, Date.UTC(2026, 9, 11, 0, 59, 0));
+    updateAssistantWatch(id, { eventJson: JSON.stringify({ notifyOn: ["decision"] }) });
+    const h = started(harness());
+    const decisions = heard("watch_decision");
+    try {
+      h.emit("approval_shown", {
+        sessionId: "legacy", projectName: "api", providerId: "claude",
+        card: { requestId: "r1", tool: "Bash", input: { command: "ls" }, isQuestion: false },
+      });
+      h.ended("legacy", "done", "ok");
+      await h.settle();
+      expect(decisions.list.map((d) => d.card.requestId)).toEqual(["r1"]);
+      expect(h.chat.sent).toHaveLength(0);
+      expect(getAssistantWatch(id)!.deliveredAt).not.toBeNull();
+    } finally {
+      decisions.stop();
+    }
   });
 
   it("expires after 24 hours and wakes the Assistant once to say so", async () => {

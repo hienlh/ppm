@@ -4,6 +4,7 @@ import { decidingInput } from "../chat-control/approval-deciding-input.ts";
 import { turnEndsSince, type TurnEnd } from "../session-trace/turn-ends-query.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { cleanSummaryText } from "../assistant/assistant-ui-summary.ts";
+import { watchedChatTitle } from "../assistant-watch/watched-chat-title.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
 import type { NormalizedQuestion } from "../../shared/approval-questions.ts";
 
@@ -75,7 +76,9 @@ function recordedMeta(ids: string[]): Map<string, { project: string | null; prov
   );
   for (const id of ids) {
     const r = q.get(id) as { project_name: string | null; provider_id: string | null; title: string | null } | null;
-    out.set(id, { project: r?.project_name ?? null, providerId: r?.provider_id ?? null, title: r?.title ?? null });
+    // A title stored under the id a chat had before Codex renamed it is found by the watch's
+    // lookup, so the overview names the chat as its relayed cards and reports do.
+    out.set(id, { project: r?.project_name ?? null, providerId: r?.provider_id ?? null, title: r?.title ?? watchedChatTitle(id) });
   }
   return out;
 }

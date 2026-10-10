@@ -10,7 +10,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { configService } from "../../../src/services/config.service.ts";
-import { getSessionModel, getSessionPermissionMode } from "../../../src/services/db.service.ts";
+import {
+  getSessionModel, getSessionPermissionMode, getSessionTitle, resolveMigratedSession, setSessionMigratedTo,
+} from "../../../src/services/db.service.ts";
+import { watchedChatTitle } from "../../../src/services/assistant-watch/watched-chat-title.ts";
 import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/claude-projects-root.ts";
 import { chatAnswerApproval, chatStart } from "../../../src/services/assistant-mcp/assistant-hub-tools.ts";
 import type { AssistantChatDelivery } from "../../../src/services/assistant-mcp/assistant-chat-send.ts";
@@ -116,6 +119,30 @@ describe("chat_start", () => {
       expect(asked).toHaveLength(0);
     }
     expect(f.created).toHaveLength(0);
+  });
+
+  it("stores the approved title, so the chat goes by it everywhere a watch names it", async () => {
+    const f = fakes();
+    const out = JSON.parse(text(await chatStart({ project: "api", text: "hi", title: "List the root folder" }, asker(APPROVE).ask, f.deps)));
+    expect(out.title).toBe("List the root folder");
+    expect(getSessionTitle(out.sessionId)).toBe("List the root folder");
+    expect(watchedChatTitle(out.sessionId)).toBe("List the root folder");
+    // No title asked for, none stored: the chat keeps the one its provider gives it.
+    const untitled = JSON.parse(text(await chatStart({ project: "api", text: "hi" }, asker(APPROVE).ask, f.deps)));
+    expect(getSessionTitle(untitled.sessionId)).toBeNull();
+  });
+
+  it("answers with the id the chat keeps once its provider renames it, still carrying the title", async () => {
+    const f = fakes();
+    const thread = crypto.randomUUID();
+    let draft = "";
+    // What Codex does to a new chat during its first turn: a thread id replaces the draft id.
+    const canonicalId = async (id: string) => { draft = id; setSessionMigratedTo(id, thread); return resolveMigratedSession(id); };
+    const out = JSON.parse(text(await chatStart({ project: "api", text: "hi", title: "List the root folder" }, asker(APPROVE).ask, { ...f.deps, canonicalId })));
+    expect(out.sessionId).toBe(thread);
+    expect(f.sent[0]!.sessionId).toBe(draft);
+    expect(getSessionTitle(thread)).toBe("List the root folder");
+    expect(watchedChatTitle(draft)).toBe("List the root folder");
   });
 
   it("says which chat exists when its first message could not be sent", async () => {

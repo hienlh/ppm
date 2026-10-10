@@ -72,6 +72,18 @@ describe("chat_watch", () => {
     expect(isError(chatUnwatchTool(ASSISTANT, { watchId: body.watchId }, { service, watchTurn: notWatchTurn }))).toBe(true);
   });
 
+  it("tells the model notifyOn picks only the ends that wake it, never whether cards reach the user", () => {
+    const deps = { service, watchTurn: notWatchTurn };
+    const body = JSON.parse(text(chatWatchTool(ASSISTANT, { project: "api", sessionId: SESSION, notifyOn: ["done", "stopped"] }, deps)));
+    expect(body.notifyOn).toEqual(["done", "stopped"]);
+    expect(body.note).toContain("cards and questions go to the user directly whatever notifyOn says");
+    chatUnwatchTool(ASSISTANT, { watchId: body.watchId }, deps);
+    // The old "decision" kind is accepted and ignored; on its own it would wake for nothing.
+    expect(JSON.parse(text(chatWatchTool(ASSISTANT, { project: "api", sessionId: SESSION, notifyOn: ["decision", "done"] }, deps))).notifyOn).toEqual(["done"]);
+    const alone = chatWatchTool(ASSISTANT, { project: "api", sessionId: SESSION, notifyOn: ["decision"] }, deps);
+    expect(text(alone)).toContain("cards go to the user whatever it says");
+  });
+
   it("refuses to set or stop watches in a turn a watch started", () => {
     const watchTurn = () => true;
     const set = chatWatchTool(ASSISTANT, { project: "api", sessionId: SESSION }, { service, watchTurn });

@@ -1,6 +1,7 @@
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { configService } from "../config.service.ts";
-import { getSessionTitle, setSessionModel, setSessionPermissionMode } from "../db.service.ts";
+import { setSessionModel, setSessionPermissionMode, setSessionTitle } from "../db.service.ts";
+import { watchedChatTitle } from "../assistant-watch/watched-chat-title.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { providerDefaultMode } from "../../server/ws/chat-deliver-user-message.ts";
@@ -22,6 +23,7 @@ import { resolveAssistantProject, resolveAssistantSessionTarget } from "./assist
 import { errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 import { MAX_CHAT_MESSAGE_CHARS } from "./assistant-mcp-tools.ts";
 import type { ChatStartWatcher } from "./assistant-watch-tools.ts";
+import { awaitCanonicalSessionId } from "./assistant-chat-start-session-id.ts";
 
 /**
  * The Assistant's tools for running the user's chats: the overview of what needs them
@@ -45,6 +47,9 @@ export interface HubToolDeps {
   title?: (sessionId: string) => string | null;
   /** How `chat_start` watches the chat it opens, when asked to; absent, it cannot. */
   watch?: ChatStartWatcher;
+  setTitle?: (sessionId: string, title: string) => void;
+  /** The id a just-started chat will keep (Codex renames a new chat during its first turn). */
+  canonicalId?: (sessionId: string, providerId: string) => Promise<string>;
 }
 
 /** `chats_attention`: never asks. */
@@ -105,6 +110,9 @@ export async function chatStart(args: Record<string, unknown>, ask: AskApproval,
     sessionId = session.id;
     setSessionPermissionMode(sessionId, mode);
     if (model) setSessionModel(sessionId, model);
+    // The provider keeps the title only in memory; stored, it is the name the chat goes by on
+    // every surface — the chat list, a relayed card, a watch report — as the card promised.
+    if (title) (deps.setTitle ?? setSessionTitle)(sessionId, title);
   } catch (e) {
     return errorResult(`Not started: the chat could not be created (${(e as Error)?.message ?? String(e)}).`);
   }
@@ -120,8 +128,15 @@ export async function chatStart(args: Record<string, unknown>, ask: AskApproval,
     return textResult(JSON.stringify({ started: true, sent: false, sessionId, project: project.value.name, providerId, error: sent.error,
       note: "The chat exists but did not get its message. Tell the user; do not create another." }, null, 1), true);
   }
+  // The id the chat keeps, so the one the Assistant is told is the one its reports will name.
+  const current = await (deps.canonicalId ?? awaitCanonicalSessionId)(sent.sessionId, providerId);
+  if (title && current !== sessionId) {
+    try {
+      (deps.setTitle ?? setSessionTitle)(current, title);
+    } catch { /* the earlier id still carries it, and watches follow the rename back to it */ }
+  }
   return jsonResult({
-    started: true, project: project.value.name, sessionId: sent.sessionId, providerId, permissionMode: mode, ...(model ? { model } : {}),
+    started: true, project: project.value.name, sessionId: current, providerId, permissionMode: mode, ...(title ? { title } : {}), ...(model ? { model } : {}),
     ...(watched?.ok ? { watchId: watched.watchId } : {}),
     ...(watched && !watched.ok ? { watchError: watched.error } : {}),
     note: watched?.ok
@@ -172,7 +187,7 @@ export async function chatAnswerApproval(args: Record<string, unknown>, ask: Ask
     tool: CHAT_ANSWER_APPROVAL_TOOL,
     input: { project: project.value.name, sessionId, requestId, decision, ...(answersById ? { answersById } : {}) },
     summary: answerApprovalSummary({
-      project: project.value.name, sessionId, providerId, sessionTitle: (deps.title ?? getSessionTitle)(sessionId),
+      project: project.value.name, sessionId, providerId, sessionTitle: (deps.title ?? watchedChatTitle)(sessionId),
       deciding, decision, ...(shown ? { answers: Object.entries(shown).map(([question, answer]) => ({ question, answer })) } : {}),
     }),
   });

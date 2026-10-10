@@ -258,7 +258,10 @@ class ChatService {
       turn = { sessionId, providerId, origin: origin ?? "unknown", startedAt: Date.now() };
       this.turnLogs.set(sessionId, turn);
     } else if (live.startedAt === null) {
+      // A follow-up into an idle live stream starts a turn of its own, so its end line names
+      // who asked for it — not whoever opened the stream turns ago.
       live.startedAt = Date.now();
+      live.origin = origin ?? live.origin;
     }
     let outcome: "completed" | "consumer_closed" | "failed" = "consumer_closed";
     try {
@@ -564,7 +567,12 @@ class ChatService {
     streaming.pushMessage(sessionId,
       provider.supportsSharedContext ? message : withSharedContext(message, prepared.sharedContext),
       { ...prepared, sharedContext: provider.supportsSharedContext ? prepared.sharedContext : undefined });
-    if (live && live.startedAt === null) live.startedAt = Date.now();
+    // Only a push that starts a turn takes it over: one sent mid-turn may be folded into the
+    // running turn, which keeps the origin it started with.
+    if (live && live.startedAt === null) {
+      live.startedAt = Date.now();
+      live.origin = origin ?? live.origin;
+    }
     this.rememberSharedContext(providerId, sessionId, sent);
   }
 

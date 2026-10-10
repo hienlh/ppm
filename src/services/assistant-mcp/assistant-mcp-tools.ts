@@ -4,7 +4,7 @@ import {
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
-import { MAX_ACTIVE_WATCHES } from "../assistant-watch/watch-state.ts";
+import { MAX_ACTIVE_WATCHES, NOTIFY_KINDS } from "../assistant-watch/watch-state.ts";
 import { UI_COMMAND_TOOL_DEFINITIONS, UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFINITION } from "./assistant-ui-tool-definitions.ts";
 
 /**
@@ -200,7 +200,8 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     title: "Watch a chat",
     description: "Ask PPM to tell you when one of a project's chats finishes its run: when it ends (finished, stopped "
       + "by an error, or cut off by a PPM restart) PPM wakes this conversation for a short report, even after a "
-      + "restart. Its approval cards go to the user directly and do not wake you. A chat that already finished after "
+      + "restart. While watched, the chat's approval cards and questions always go to the user directly, whatever "
+      + "`notifyOn` says, and never wake you. A chat that already finished after "
       + "the user asked is reported at once instead; an idle chat is watched through its next run. Expires after 24 "
       + `hours; at most ${MAX_ACTIVE_WATCHES} at a time. Never asks.`,
     inputSchema: object({
@@ -208,8 +209,9 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
       sessionId: { type: "string", description: "The chat's session id." },
       providerId: { type: "string", enum: ["claude", "codex"], description: "The chat's provider, when known." },
       notifyOn: {
-        type: "array", minItems: 1, uniqueItems: true, items: { type: "string", enum: ["done", "stopped", "decision"] },
-        description: "What to tell the user about (default all): `done` a finished run, `stopped` one ended by an error or a restart, `decision` its approval cards.",
+        type: "array", minItems: 1, uniqueItems: true, items: { type: "string", enum: [...NOTIFY_KINDS] },
+        description: "Which ends of the run wake you for a report (default both): `done` a finished run, `stopped` one ended by an "
+          + "error or a restart. It does not affect the chat's approval cards, which always go to the user.",
       },
     }, ["project", "sessionId"]),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },

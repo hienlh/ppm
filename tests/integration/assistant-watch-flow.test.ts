@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { providerRegistry } from "../../src/providers/registry.ts";
 import { configService } from "../../src/services/config.service.ts";
-import { setSessionAssistant, setSessionProvider } from "../../src/services/db.service.ts";
+import { setSessionAssistant, setSessionProvider, setSessionTitle } from "../../src/services/db.service.ts";
+import { awaitCanonicalSessionId } from "../../src/services/assistant-mcp/assistant-chat-start-session-id.ts";
 import { getAssistantWatch, listAssistantWatches } from "../../src/services/assistant-hub/assistant-hub-db.ts";
 import { chatControl, isWatchTurn, WATCH_TURN_REFUSAL } from "../../src/services/chat-control/chat-control.ts";
 import { chatLifecycle, type ChatLifecycleEvents } from "../../src/services/chat-control/chat-lifecycle.ts";
@@ -35,6 +36,8 @@ const resolvedApprovals: Array<{ requestId: string; approved: boolean; data: unk
 const gates = new Map<string, () => void>();
 const pushes = new Map<string, () => void>();
 const aborts = new Map<string, () => void>();
+/** The thread id each Codex-shaped draft chat is renamed to on its first turn. */
+const threadIds = new Map<string, string>();
 
 const waitAnswer = (requestId: string) => new Promise<{ approved: boolean; data: unknown }>((resolve) => answers.set(requestId, resolve));
 const aborted = (sessionId: string) => new Promise<null>((resolve) => aborts.set(sessionId, () => resolve(null)));
@@ -72,7 +75,15 @@ providerRegistry.register({
       const go = await Promise.race([new Promise<true>((resolve) => gates.set(sessionId, () => resolve(true))), aborted(sessionId)]);
       if (!go) return;
       yield { type: "text", content: " — done." };
-    } else if (message.startsWith("approve:")) {
+    } else if (message.startsWith("approve:") || message.startsWith("codex-approve:")) {
+      // Codex-shaped: the chat was created under a draft id, and its first turn renames it to
+      // the thread id before anything else; every later event carries the thread id.
+      if (message.startsWith("codex-")) {
+        const thread = threadIds.get(sessionId)!;
+        yield { type: "session_migrated", oldSessionId: sessionId, newSessionId: thread };
+        sessionId = thread;
+        message = message.slice("codex-".length);
+      }
       const requestId = crypto.randomUUID();
       const answer = waitAnswer(requestId);
       yield { type: "approval_request", requestId, tool: "Bash", input: { command: message.slice(8) } };
@@ -219,24 +230,65 @@ describe("a watched chat finishing", () => {
     }
   });
 
-  it("relays the watched chat's cards without waking the model", async () => {
+  it("relays the watched chat's cards without waking the model, whatever notifyOn names", async () => {
     const service = startService();
     const assistant = assistantSession("report");
     const target = targetChat();
     const decisions = heard("watch_decision");
     try {
-      watch(service, assistant, target, ["decision"]);
+      // What a model picked in a live trial: only the ends. The card must still reach the user,
+      // or the run never ends and the report it asked for never comes.
+      watch(service, assistant, target, ["done", "stopped"]);
       await sendTo(target, "approve:make deploy");
       await until(() => decisions.list.length === 1);
       expect(decisions.list[0]!.card.input).toEqual({ command: "make deploy" });
-      expect(ctl().answerApproval(target, decisions.list[0]!.card.requestId, { approved: true }, "telegram")).toBe("answered");
-      await idle(target);
       await quiet();
       expect(toAssistant(assistant)).toHaveLength(0);
-      // A finished run nobody asked about ends the watch without a turn.
-      expect(listAssistantWatches({ assistantSessionId: assistant })[0]!.deliveredAt).not.toBeNull();
+      expect(ctl().answerApproval(target, decisions.list[0]!.card.requestId, { approved: true }, "telegram")).toBe("answered");
+      await idle(target);
+      // The end it did ask for wakes it, once.
+      await until(() => watchTurns(assistant).length === 1);
+      await until(() => listAssistantWatches({ assistantSessionId: assistant })[0]!.deliveredAt !== null);
+      expect(decisions.list).toHaveLength(1);
     } finally {
       decisions.stop();
+    }
+  });
+
+  it("follows a Codex chat's rename: one name and the id the Assistant was given resolve to the same chat", async () => {
+    const service = startService();
+    const assistant = assistantSession("report");
+    const draft = targetChat();
+    const thread = `thread-${crypto.randomUUID()}`;
+    threadIds.set(draft, thread);
+    // What chat_start does: the approved title stored under the draft id, and the watch set on it
+    // before the first message goes.
+    setSessionTitle(draft, "List the root folder");
+    const decisions = heard("watch_decision");
+    const reported = heard("watch_reported");
+    try {
+      const set = service.watch({ assistantSessionId: assistant, targetSessionId: draft, targetProject: PROJECT, targetProvider: P, notifyOn: ["done", "stopped"], armed: true });
+      expect(set.ok && "watch" in set).toBe(true);
+      // chat_start's answer waits for the rename, so the Assistant is told the id the chat keeps.
+      const canonical = awaitCanonicalSessionId(draft, "codex", { timeoutMs: 5000 });
+      expect((await sendTo(draft, "codex-approve:Get-ChildItem")).ok).toBe(true);
+      expect(await canonical).toBe(thread);
+
+      await until(() => decisions.list.length === 1);
+      expect(decisions.list[0]).toEqual(expect.objectContaining({ targetSessionId: thread, targetTitle: "List the root folder" }));
+      // The draft id the Assistant may still hold finds the same watch.
+      const again = service.watch({ assistantSessionId: assistant, targetSessionId: draft, targetProject: PROJECT, targetProvider: P, notifyOn: ["done", "stopped"] });
+      expect(again.ok && "created" in again && again.created).toBe(false);
+
+      expect(ctl().answerApproval(thread, decisions.list[0]!.card.requestId, { approved: true }, "telegram")).toBe("answered");
+      await until(() => reported.list.length === 1);
+      expect(reported.list[0]).toEqual(expect.objectContaining({ targetSessionId: thread, targetTitle: "List the root folder", kind: "done" }));
+      const [turn] = watchTurns(assistant);
+      expect(turn!.opts?.sharedContext).toContain("List the root folder");
+      expect(turn!.opts?.sharedContext).not.toContain(`Session ${thread.slice(0, 8)}`);
+    } finally {
+      decisions.stop();
+      reported.stop();
     }
   });
 

@@ -134,7 +134,7 @@ const sendTo = (sessionId: string, text: string) =>
   ctl().sendUserMessage(sessionId, text, { origin: "telegram", projectName: PROJECT, providerId: P });
 const idle = (sessionId: string) => until(() => ctl().liveState(sessionId)?.phase === "idle");
 const watch = (assistant: string, target: string) =>
-  service.watch({ assistantSessionId: assistant, targetSessionId: target, targetProject: PROJECT, targetProvider: P, notifyOn: ["done", "stopped", "decision"] });
+  service.watch({ assistantSessionId: assistant, targetSessionId: target, targetProject: PROJECT, targetProvider: P, notifyOn: ["done", "stopped"] });
 
 describe("a watched chat, followed from Telegram", () => {
   it("reaches every connected phone when no chat is bound, is answered from one, and reports to all", async () => {

@@ -48,7 +48,8 @@ export function chatWatchTool(sessionId: string, args: Record<string, unknown>, 
     watching: true,
     ...result.watch,
     note: result.created
-      ? "PPM will wake you with a short report when that chat's run ends (or the watch expires after 24 hours). Its approval cards go to the user directly; they do not wake you."
+      ? `PPM will wake you with a short report when that chat's run ends (notifyOn: ${result.watch.notifyOn.join(", ")}), `
+        + "or when the watch expires after 24 hours. Its approval cards and questions go to the user directly whatever notifyOn says; they do not wake you."
       : "This conversation was already watching that chat; nothing changed.",
   });
 }
