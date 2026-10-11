@@ -4,6 +4,10 @@
  * `mcp__<server>__<tool>`; Codex takes the server name from its config key, where a hyphen is
  * not a safe character, hence the separate name, and its tool cards read `<server>:<tool>`.
  */
+import { GIT_TOOLS } from "./assistant-git-tool-names.ts";
+import { SCHEDULE_TOOLS } from "./assistant-schedule-tool-names.ts";
+import { TUNNEL_TOOLS } from "./assistant-tunnel-tool-names.ts";
+
 export const PROJECTS_LIST_TOOL = "projects_list";
 export const CHAT_LIST_SESSIONS_TOOL = "chat_list_sessions";
 export const CHAT_SEARCH_TOOL = "chat_search";
@@ -27,7 +31,11 @@ export const CHAT_WATCH_TOOL = "chat_watch";
 export const CHAT_UNWATCH_TOOL = "chat_unwatch";
 export const CHAT_LIST_WATCHES_TOOL = "chat_list_watches";
 
-/** Every tool the endpoint serves, in the order `tools/list` gives them. */
+/**
+ * Every tool the endpoint serves, in the order `tools/list` gives them. The git, schedule and
+ * tunnel families keep their names in their own files and come last, in that order — the order
+ * `ASSISTANT_TOOL_DEFINITIONS` spreads their definitions in.
+ */
 export const ASSISTANT_TOOLS = [
   PROJECTS_LIST_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_SEARCH_TOOL, CHAT_READ_MESSAGES_TOOL,
   DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, UI_GET_STATE_TOOL,
@@ -35,6 +43,7 @@ export const ASSISTANT_TOOLS = [
   UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL, CHAT_SEND_MESSAGE_TOOL,
   CHATS_ATTENTION_TOOL, CHAT_START_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
+  ...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
 

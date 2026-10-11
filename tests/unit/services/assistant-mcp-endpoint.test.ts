@@ -14,6 +14,9 @@ import { callAssistantTool, createAssistantMcpHandler, isLiveAssistantSession } 
 import { createAssistantMcpTokenStore } from "../../../src/services/assistant-mcp/assistant-mcp-tokens.ts";
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_MCP_TIMEOUT_MS } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
 import { ASSISTANT_TOOLS } from "../../../src/shared/assistant-tool-names.ts";
+import { GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
+import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
+import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
 import { createMcpHttpHandler, textResult } from "../../../src/services/mcp-http-endpoint.ts";
 
 const id = () => `s-${crypto.randomUUID()}`;
@@ -66,7 +69,10 @@ describe("assistant MCP endpoint", () => {
     const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch"]);
     const writes = new Set(["db_query", "chat_send_message", "chat_start", "chat_answer_approval"]);
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(expect.arrayContaining(["chats_attention", "chat_start", "chat_answer_approval", "ppm_cli_reference"]));
+    // The git, schedule and tunnel families annotate their own tools, checked beside each family.
+    const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS]);
     for (const tool of list.result.tools) {
+      if (familyTools.has(tool.name)) continue;
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
       else if (writes.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
       else if (tool.name === "ui_run_command") expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: true });

@@ -21,6 +21,7 @@ import { uiReadTab } from "./assistant-ui-read-tool.ts";
 import { uiListCommands, uiRunCommand } from "./assistant-ui-command-tools.ts";
 import { approvalAskerFor } from "./assistant-approval-broker.ts";
 import { chatSendMessage } from "./assistant-chat-send.ts";
+import { callFamilyTool } from "./assistant-tool-family.ts";
 
 /**
  * `/api/assistant-mcp` — the PPM Assistant's own tools, for one Assistant session's agent (the
@@ -84,7 +85,9 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case CHAT_WATCH_TOOL: return chatWatchTool(sessionId, args);
     case CHAT_UNWATCH_TOOL: return chatUnwatchTool(sessionId, args);
     case CHAT_LIST_WATCHES_TOOL: return chatListWatchesTool(sessionId);
-    default: return errorResult(`Unknown tool: ${name.slice(0, 60)}`);
+    // The git, schedule and tunnel tools: each family dispatches its own, with a route caller
+    // confined to the routes that family declared.
+    default: return callFamilyTool(name, { sessionId, ask, signal }, args) ?? errorResult(`Unknown tool: ${name.slice(0, 60)}`);
   }
 };
 

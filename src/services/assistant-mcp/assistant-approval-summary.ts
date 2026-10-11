@@ -12,9 +12,21 @@ import type { DecidingInput } from "../chat-control/approval-deciding-input.ts";
  */
 
 const MAX_FACT_CHARS = 200;
-const fact = (label: string, value: string, tone?: "warning"): ApprovalFact => ({
+/** A card fact, cut at 200 characters: for labels and descriptions, never for what decides the answer. */
+export const fact = (label: string, value: string, tone?: "warning"): ApprovalFact => ({
   label,
   value: value.length > MAX_FACT_CHARS ? `${value.slice(0, MAX_FACT_CHARS)}…` : value,
+  ...(tone ? { tone } : {}),
+});
+
+/**
+ * A card fact shown whole: a path, a branch, a repository, an address — anything where a cut
+ * copy could name something else than what will be acted on. Whatever is long and agent-written
+ * (a message, a prompt) belongs in the card's body instead.
+ */
+export const exactFact = (label: string, value: string, tone?: "warning"): ApprovalFact => ({
+  label,
+  value,
   ...(tone ? { tone } : {}),
 });
 

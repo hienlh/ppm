@@ -6,6 +6,9 @@ import {
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
 import { MAX_ACTIVE_WATCHES, NOTIFY_KINDS } from "../assistant-watch/watch-state.ts";
 import { UI_COMMAND_TOOL_DEFINITIONS, UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFINITION } from "./assistant-ui-tool-definitions.ts";
+import { GIT_TOOL_DEFINITIONS } from "./assistant-git-tool-definitions.ts";
+import { SCHEDULE_TOOL_DEFINITIONS } from "./assistant-schedule-tool-definitions.ts";
+import { TUNNEL_TOOL_DEFINITIONS } from "./assistant-tunnel-tool-definitions.ts";
 
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
@@ -232,4 +235,8 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     inputSchema: object({}),
     annotations: READ_ONLY,
   },
+  // The families that work through PPM's own routes, in the order of their names in `ASSISTANT_TOOLS`.
+  ...GIT_TOOL_DEFINITIONS,
+  ...SCHEDULE_TOOL_DEFINITIONS,
+  ...TUNNEL_TOOL_DEFINITIONS,
 ] as const;
