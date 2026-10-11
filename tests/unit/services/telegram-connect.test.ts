@@ -11,11 +11,11 @@ import {
 } from "../../../src/services/db.service.ts";
 import { listNotifyChats, setPPMBotBot } from "../../../src/services/telegram-bots.ts";
 import {
+  assistantBridgeReading,
   CONNECT_TTL_MS,
   handleConnectMessage,
   notifyConnect,
   ppmbotConnect,
-  ppmbotReading,
   TelegramConnectError,
 } from "../../../src/services/telegram-connect.service.ts";
 import type { TelegramMessage } from "../../../src/types/ppmbot.ts";
@@ -25,11 +25,11 @@ const PPMBOT_TOKEN = `555666777:${"B".repeat(35)}`;
 const originals = { telegram: configService.get("telegram"), clawbot: configService.get("clawbot") };
 const realFetch = globalThis.fetch;
 
-/** Close every link before PPMBot "stops", or the stop starts a poller against the real Telegram. */
+/** Close every link before the bridge "stops", or the stop starts a poller against the real Telegram. */
 function quiet(): void {
   notifyConnect.cancel();
   ppmbotConnect.cancel();
-  ppmbotReading(null);
+  assistantBridgeReading(null);
 }
 
 afterAll(() => {
@@ -51,7 +51,7 @@ function tokenOf(url: string): string {
   return new URL(url).searchParams.get("start")!;
 }
 
-/** The chat's row in PPMBot's list, whatever its state. */
+/** The chat's row in the Assistant's list (`clawbot_paired_chats`), whatever its state. */
 function pairingRow(chatId: string): unknown {
   return getDb().query("SELECT status, pairing_code FROM clawbot_paired_chats WHERE telegram_chat_id = ?").get(chatId);
 }
@@ -96,8 +96,8 @@ async function until(check: () => boolean): Promise<void> {
 }
 
 describe("the notifications link", () => {
-  // These drive handleConnectMessage directly: with PPMBot "reading" the bot, nothing polls it.
-  beforeEach(() => ppmbotReading(NOTIFY_TOKEN));
+  // These drive handleConnectMessage directly: with the bridge "reading" the bot, nothing polls it.
+  beforeEach(() => assistantBridgeReading(NOTIFY_TOKEN));
 
   it("needs a bot token", async () => {
     configService.set("telegram", { bot_token: "" });
@@ -115,7 +115,7 @@ describe("the notifications link", () => {
     expect(listNotifyChats().map((c) => [c.chatId, c.name])).toEqual([["42", "Thang (@thang)"]]);
     expect(replies[0]!.html).toContain("PPM notifications will arrive");
     expect(notifyConnect.status().active).toBe(false);
-    // The whole point of two lists: an alert chat cannot command PPMBot.
+    // The whole point of two lists: an alert chat cannot talk to the Assistant.
     expect(isPairedChat("42")).toBe(false);
     expect(pairingRow("42")).toBeNull();
 
@@ -155,24 +155,24 @@ describe("the notifications link", () => {
 
   it("is not answered by another bot", async () => {
     const { url } = await notifyConnect.start();
-    // A token for the notification bot, sent to PPMBot's: nothing there is waiting for it.
+    // A token for the notification bot, sent to the Assistant's: nothing there is waiting for it.
     expect(await handleConnectMessage(message(`/start ${tokenOf(url)}`), PPMBOT_TOKEN, reply)).toBe(true);
     expect(listNotifyChats()).toHaveLength(0);
-    expect(replies[0]!.html).toContain("Settings → PPMBot");
+    expect(replies[0]!.html).toContain("Settings → PPM Assistant → Telegram");
     expect(notifyConnect.status().active).toBe(true);
   });
 });
 
-describe("the PPMBot link", () => {
-  beforeEach(() => ppmbotReading(PPMBOT_TOKEN));
+describe("the Assistant's link", () => {
+  beforeEach(() => assistantBridgeReading(PPMBOT_TOKEN));
 
-  it("lets the chat that opens it use PPMBot, and does not sign it up for alerts", async () => {
+  it("lets the chat that opens it use the Assistant, and does not sign it up for alerts", async () => {
     const { url } = await ppmbotConnect.start();
     expect(url).toStartWith("https://t.me/ppm_ai_bot?start=");
     expect(await handleConnectMessage(message(`/start ${tokenOf(url)}`), PPMBOT_TOKEN, reply)).toBe(true);
     expect(getApprovedPairedChats().map((c) => [c.telegram_chat_id, c.display_name])).toEqual([["42", "Thang (@thang)"]]);
     expect(listNotifyChats()).toHaveLength(0);
-    expect(replies[0]!.html).toContain("chat with PPMBot here");
+    expect(replies[0]!.html).toContain("chat with PPM Assistant here");
   });
 
   it("connects again a chat that was disconnected, or left waiting by an old pairing code", async () => {
@@ -190,9 +190,9 @@ describe("the PPMBot link", () => {
     expect(pairingRow("43")).toEqual({ status: "approved", pairing_code: null });
   });
 
-  it("says PPMBot will answer once it is on, while it is off", async () => {
+  it("says the Assistant will answer once it is on, while it is off", async () => {
     fakeTelegram(() => null);
-    ppmbotReading(null);
+    assistantBridgeReading(null);
     const { url } = await ppmbotConnect.start();
     await handleConnectMessage(message(`/start ${tokenOf(url)}`), PPMBOT_TOKEN, reply);
     expect(replies[0]!.html).toContain("once it is turned on");
@@ -202,13 +202,13 @@ describe("the PPMBot link", () => {
 describe("one bot shared by both", () => {
   beforeEach(() => {
     setPPMBotBot({ bot_token: NOTIFY_TOKEN, bot_username: "ppm_noti_bot" });
-    ppmbotReading(NOTIFY_TOKEN);
+    assistantBridgeReading(NOTIFY_TOKEN);
   });
 
   it("gives each link's /start to its own list", async () => {
     const forAlerts = await notifyConnect.start();
-    const forPPMBot = await ppmbotConnect.start();
-    await handleConnectMessage(message(`/start ${tokenOf(forPPMBot.url)}`, 1), NOTIFY_TOKEN, reply);
+    const forAssistant = await ppmbotConnect.start();
+    await handleConnectMessage(message(`/start ${tokenOf(forAssistant.url)}`, 1), NOTIFY_TOKEN, reply);
     await handleConnectMessage(message(`/start ${tokenOf(forAlerts.url)}`, 2), NOTIFY_TOKEN, reply);
     expect(getApprovedPairedChats().map((c) => c.telegram_chat_id)).toEqual(["1"]);
     expect(listNotifyChats().map((c) => c.chatId)).toEqual(["2"]);
@@ -220,7 +220,7 @@ describe("one bot shared by both", () => {
 });
 
 describe("reading a bot nobody else reads", () => {
-  it("polls the notification bot itself while PPMBot is off, and confirms what it read", async () => {
+  it("polls the notification bot itself while the bridge is off, and confirms what it read", async () => {
     let link = "";
     // The poller starts inside start(), before the link is known here: nothing arrives until it is.
     const calls = fakeTelegram((token, offset) => (token === NOTIFY_TOKEN && offset === 0 && link
@@ -271,27 +271,27 @@ describe("reading a bot nobody else reads", () => {
     expect(listNotifyChats().map((c) => c.chatId)).toEqual(["2", "1"]);
   });
 
-  it("keeps polling the notification bot while PPMBot reads a different one", async () => {
+  it("keeps polling the notification bot while the bridge reads a different one", async () => {
     let link = "";
     const calls = fakeTelegram((token, offset) => (token === NOTIFY_TOKEN && offset === 0 && link
       ? [{ update_id: 20, message: message(`/start ${tokenOf(link)}`) }]
       : null));
-    ppmbotReading(PPMBOT_TOKEN);
+    assistantBridgeReading(PPMBOT_TOKEN);
     link = (await notifyConnect.start()).url;
     await until(() => listNotifyChats().length > 0);
     expect(listNotifyChats().map((c) => c.chatId)).toEqual(["42"]);
-    // And never PPMBot's bot: PPMBot reads that one.
+    // And never the Assistant's bot: the bridge reads that one.
     expect(calls.some((c) => c.token === PPMBOT_TOKEN)).toBe(false);
   });
 
-  it("leaves a bot PPMBot reads to PPMBot, and takes it back when PPMBot stops", async () => {
+  it("leaves a bot the bridge reads to the bridge, and takes it back when the bridge stops", async () => {
     const calls = fakeTelegram(() => null);
-    ppmbotReading(PPMBOT_TOKEN);
+    assistantBridgeReading(PPMBOT_TOKEN);
     await ppmbotConnect.start();
     await Bun.sleep(30);
     expect(calls).toHaveLength(0);
 
-    ppmbotReading(null);
+    assistantBridgeReading(null);
     await until(() => calls.some((c) => c.token === PPMBOT_TOKEN && c.method === "getUpdates"));
     expect(calls.some((c) => c.token === PPMBOT_TOKEN && c.method === "getUpdates")).toBe(true);
   });

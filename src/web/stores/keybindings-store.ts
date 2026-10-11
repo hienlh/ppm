@@ -35,6 +35,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "open-chat", label: "Open Chat", category: "tabs", defaultKey: "Mod+L" },
   { id: "open-terminal", label: "Open Terminal Tab", category: "tabs", defaultKey: "", note: "No default shortcut — Mod+' now toggles the terminal panel; still available via the command palette" },
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
+  { id: "open-assistant", label: "PPM Assistant", category: "tabs", defaultKey: "", note: "No default shortcut — also in the command palette" },
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
   { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
   { id: "open-problems", label: "Problems", category: "tabs", defaultKey: "Mod+Shift+M", note: "Errors and warnings across the open files, in the panel — VS Code's shortcut" },

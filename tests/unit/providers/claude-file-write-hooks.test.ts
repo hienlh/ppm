@@ -4,6 +4,7 @@ import {
   buildToolHooks,
   FILE_WRITE_TOOLS_MATCHER,
   fileWriteTarget,
+  PERMISSION_HOOK_TIMEOUT_SECONDS,
   preToolUseDecision,
   SHELL_TOOLS_MATCHER,
   shellHookCall,
@@ -34,6 +35,10 @@ describe("buildToolHooks", () => {
       shellCommand: async (input: { tool_name: string }) => { log.push(`shell:${input.tool_name}`); return {}; },
     });
     expect(hooks.PreToolUse.map((m) => m.matcher)).toEqual([".*"]);
+    // The CLI's ten-minute default would cut an approval the user has not answered yet.
+    expect(hooks.PreToolUse[0]).toMatchObject({ timeout: PERMISSION_HOOK_TIMEOUT_SECONDS });
+    expect(PERMISSION_HOOK_TIMEOUT_SECONDS * 1000).toBeLessThanOrEqual(2 ** 31 - 1);
+    expect(PERMISSION_HOOK_TIMEOUT_SECONDS).toBeGreaterThan(24 * 3600);
     expect(hooks.PostToolUse.map((m) => m.matcher)).toEqual([SHELL_TOOLS_MATCHER, FILE_WRITE_TOOLS_MATCHER]);
     const gate = hooks.PreToolUse[0]!.hooks[0]!;
     const bash = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_1", tool_input: { command: "ls" } };

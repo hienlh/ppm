@@ -2,6 +2,7 @@ import type { DatabaseAdapter, DbConnectionConfig, DbTableInfo, DbColumnInfo, Db
 import { readonlySqliteService, sqliteService } from "../sqlite.service.ts";
 import { existsSync } from "node:fs";
 import { Database } from "bun:sqlite";
+import { throwIfAborted } from "./query-stop.ts";
 
 /** A readonly connection opens the file read-only, so SQLite itself refuses writes. */
 function service(config: DbConnectionConfig) {
@@ -97,7 +98,10 @@ export const sqliteAdapter: DatabaseAdapter = {
     return null;
   },
 
-  async runQuery(config, sql) {
+  async runQuery(config, sql, opts) {
+    // bun:sqlite runs a statement synchronously and offers no interrupt, so nothing can stop one
+    // once started: only a caller that has already gone is honoured.
+    throwIfAborted(opts);
     return service(config).runQuery(path(config), path(config), sql, config.maxQueryRows);
   },
 

@@ -13,8 +13,22 @@ import {
 import { nextFireAt } from "../../services/scheduler-core.ts";
 import { schedulerService } from "../../services/scheduler.service.ts";
 import { configService } from "../../services/config.service.ts";
+import { broadcastGlobalEvent } from "../ws/global.ts";
 
 export const schedulesRoutes = new Hono();
+
+/**
+ * Tells every open PPM that the schedules changed, after any write this router carried out —
+ * whoever made it (the Settings form, the Assistant's tools, another device) — so an open
+ * Settings → Schedules re-reads at once instead of on its next poll. Runs after the handler and
+ * never touches its answer; registered first so it wraps every route below.
+ */
+schedulesRoutes.use("*", async (c, next) => {
+  await next();
+  if (c.req.method !== "GET" && c.res.status >= 200 && c.res.status < 300) {
+    broadcastGlobalEvent({ type: "schedules:changed" });
+  }
+});
 
 function validateCron(expr: string): string | null {
   try { new Cron(expr); return null; } catch (e) { return (e as Error).message; }

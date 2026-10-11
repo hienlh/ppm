@@ -2,6 +2,9 @@ import { useEffect, useRef } from "react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { openSettings } from "@/components/settings/open-settings";
+import { openAssistant } from "@/components/assistant/open-assistant";
+import { isAssistantProject } from "../../shared/assistant-project";
+import { assistantLinkFromLocation, type AssistantDeepLink } from "@/lib/assistant-deep-link";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
 import { designTabMetadata } from "@/lib/design/design-tab-metadata";
@@ -16,12 +19,17 @@ export interface UrlState {
   tabType: TabType | null;
   tabIdentifier: string | null;
   openChat: string | null;
+  /**
+   * An address that opens the PPM Assistant (`/assistant?session=…`, or the older
+   * `/project/__assistant__?openChat=…`), and the session it names. Never a project to open.
+   */
+  assistant: AssistantDeepLink | null;
 }
 
 const VALID_TAB_TYPES: TabType[] = [
   "terminal", "chat", "editor", "database", "db-structure", "db-sql", "sqlite",
   "git-diff", "settings",
-  "extension", "group", "design",
+  "extension", "group", "design", "assistant",
 ];
 
 // ---------------------------------------------------------------------------
@@ -51,8 +59,13 @@ export function parseUrlState(): UrlState {
   const params = new URLSearchParams(window.location.search);
   const openChat = params.get("openChat");
 
+  // The Assistant's virtual project is never a workspace to open, whatever an address says:
+  // an address naming it opens the Assistant instead, and its `openChat` is the Assistant's.
+  const assistant = assistantLinkFromLocation(path, window.location.search);
+  if (assistant) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant };
+
   const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);
-  if (!match) return { projectName: null, tabType: null, tabIdentifier: null, openChat };
+  if (!match) return { projectName: null, tabType: null, tabIdentifier: null, openChat, assistant: null };
 
   const projectName = decodePathSegment(match[1]!);
   const rawType = match[2] ?? null;
@@ -60,12 +73,12 @@ export function parseUrlState(): UrlState {
 
   // Legacy fallback: /project/{name}/tab/{tabId}
   if (rawType === "tab") {
-    return { projectName, tabType: null, tabIdentifier: null, openChat };
+    return { projectName, tabType: null, tabIdentifier: null, openChat, assistant: null };
   }
 
   const tabType = VALID_TAB_TYPES.includes(rawType as TabType) ? (rawType as TabType) : null;
 
-  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat };
+  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat, assistant: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +89,7 @@ export function parseUrlState(): UrlState {
  * Build URL path from project name and deterministic tab ID.
  */
 export function buildUrl(projectName: string | null, tabId: string | null): string {
-  if (!projectName || projectName === "__global__") return "/";
+  if (!projectName || projectName === "__global__" || isAssistantProject(projectName)) return "/";
 
   let url = `/project/${encodeURIComponent(projectName)}`;
   if (!tabId) return url;
@@ -175,8 +188,9 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
 }
 
 /**
- * Settings has no desktop tab — it opens as its own floating window, so a URL naming it has
- * to go through the same router every other entry point uses.
+ * Settings has no desktop tab — it opens as its own floating window — and the Assistant opens
+ * in a window too, so a URL naming either has to go through the same router every other entry
+ * point uses.
  *
  * The wait matters: `restoreAll` REPLACES the window map when the desktop layer mounts, so a
  * window opened before that runs is silently discarded and the URL looks like it did nothing.
@@ -184,16 +198,26 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
  * which can beat the layer's layout effect. Mobile needs no wait — it gets a tab, and the
  * window layer never mounts (so `restored` would never flip and this would hang).
  */
-function openSettingsOnceWindowLayerIsReady(): void {
+function onceWindowLayerIsReady(open: () => void): void {
   if (isMobileDevice() || useWindowStore.getState().restored) {
-    openSettings();
+    open();
     return;
   }
   const unsubscribe = useWindowStore.subscribe((state) => {
     if (!state.restored) return;
     unsubscribe();
-    openSettings();
+    open();
   });
+}
+
+/**
+ * Opens the Assistant an address asked for, on the session it names, over whichever project is
+ * on screen — never as a chat of some project. The address itself is dropped: it names no
+ * workspace, so the workspace's own address takes over from here.
+ */
+export function openAssistantFromAddress(link: AssistantDeepLink): void {
+  window.history.replaceState(null, "", "/");
+  onceWindowLayerIsReady(() => openAssistant(link));
 }
 
 /** Auto-open or focus a tab based on URL state */
@@ -203,7 +227,13 @@ export function autoOpenFromUrl(
   projectName: string,
 ): void {
   if (tabType === "settings") {
-    openSettingsOnceWindowLayerIsReady();
+    onceWindowLayerIsReady(() => openSettings());
+    return;
+  }
+  // The Assistant opens in a window on a desktop, so it waits for the layer the same way.
+  // Its address names only the tab (`/assistant`), never a session or its virtual project.
+  if (tabType === "assistant") {
+    onceWindowLayerIsReady(() => openAssistant());
     return;
   }
 

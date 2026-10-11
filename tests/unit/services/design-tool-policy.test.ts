@@ -83,6 +83,10 @@ describe("designToolDecision — anything that leaves the project asks", () => {
     expect(designToolDecision("Glob", { pattern: "../**/*" }, project)).toBe("ask");
     expect(designToolDecision("Glob", { pattern: "/etc/*" }, project)).toBe("ask");
     expect(designToolDecision("Glob", { pattern: "~/.ssh/*" }, project)).toBe("ask");
+    // Glob expands braces first, so an alternative can spell the parent or a root.
+    expect(designToolDecision("Glob", { pattern: "{..,designs}/**" }, project)).toBe("ask");
+    expect(designToolDecision("Glob", { pattern: "{/etc,designs}/*" }, project)).toBe("ask");
+    expect(designToolDecision("Glob", { pattern: "designs/**/*.{html,css}" }, project)).toBe("allow");
     expect(designToolDecision("Glob", {}, project)).toBe("ask");
   });
 });

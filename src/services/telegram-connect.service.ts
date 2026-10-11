@@ -3,15 +3,19 @@
  * Telegram opens the bot and sends `/start <token>`, and that chat is connected.
  *
  * There is one link per bot owner (see `telegram-bots.ts`): Notifications' adds the chat
- * to the alert list and grants nothing else; PPMBot's lets the chat command PPMBot. The
- * token is the proof of ownership a pairing code used to be: it is minted only for a
- * signed-in PPM user, is 128 random bits, works once, and expires in ten minutes.
+ * to the alert list and grants nothing else; the Assistant's lets the chat talk to PPM
+ * Assistant. The token is the proof of ownership a pairing code used to be: it is minted
+ * only for a signed-in PPM user, is 128 random bits, works once, and expires in ten minutes.
  *
- * Someone has to read the bot's messages for the `/start` to arrive. PPMBot, while it
- * runs, reads its own bot and passes every message to `handleConnectMessage` first. Any
- * other bot with a link open is polled here, one poller per bot. Telegram allows one
- * reader per bot, so a bot PPMBot is reading — Notifications' too, on an install that
- * still shares one — is left to PPMBot (`ppmbotReading`).
+ * Someone has to read the bot's messages for the `/start` to arrive. The Assistant's
+ * Telegram bridge, while it runs, reads its own bot and passes every message to
+ * `handleConnectMessage` first. Any other bot with a link open is polled here, one poller
+ * per bot. Telegram allows one reader per bot, so a bot the bridge is reading —
+ * Notifications' too, on an install that still shares one — is left to the bridge
+ * (`assistantBridgeReading`).
+ *
+ * The Assistant's link keeps PPMBot's names (`ppmbotConnect`, the `ppmbot_telegram` row,
+ * `clawbot_paired_chats`): the bridge took over PPMBot's bot and chats as they were.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { configService } from "./config.service.ts";
@@ -60,8 +64,8 @@ function sameToken(a: string, b: string): boolean {
 }
 
 const links: TelegramConnect[] = [];
-/** The bot PPMBot is reading, while it runs. */
-let ppmbotBotId: string | null = null;
+/** The bot the Assistant's Telegram bridge is reading, while it runs. */
+let bridgeBotId: string | null = null;
 
 export class TelegramConnect {
   private pending: { token: string; expiresAt: number } | null = null;
@@ -145,15 +149,15 @@ export const notifyConnect = new TelegramConnect({
   connectedText: (device) => `✅ Connected to <b>${device}</b>. PPM notifications will arrive in this chat.`,
 });
 
-/** The one link that lets a chat command PPMBot, which runs AI with access to this machine. */
+/** The one link that lets a chat talk to PPM Assistant, which runs AI with access to this machine. */
 export const ppmbotConnect = new TelegramConnect({
-  where: "Settings → PPMBot",
+  where: "Settings → PPM Assistant → Telegram",
   bot: getPPMBotBot,
   saveBot: setPPMBotBot,
   connect: upsertApprovedPairing,
-  connectedText: (device) => ppmbotBotId
-    ? `✅ Connected to <b>${device}</b>. You can chat with PPMBot here — send /start to begin.`
-    : `✅ Connected to <b>${device}</b>. PPMBot will answer here once it is turned on in PPM.`,
+  connectedText: (device) => bridgeBotId
+    ? `✅ Connected to <b>${device}</b>. You can chat with PPM Assistant here — just send a message.`
+    : `✅ Connected to <b>${device}</b>. PPM Assistant will answer here once it is turned on in PPM.`,
 });
 
 /**
@@ -181,12 +185,12 @@ export async function handleConnectMessage(message: TelegramMessage, botToken: s
 }
 
 /**
- * PPMBot is about to read `token`'s bot (null: it stopped). Telegram answers 409 to one
- * of two readers, so a poller here on that bot must stop first — and once PPMBot stops,
- * a link still open on its bot has to be read here again.
+ * The Assistant's Telegram bridge is about to read `token`'s bot (null: it stopped).
+ * Telegram answers 409 to one of two readers, so a poller here on that bot must stop
+ * first — and once the bridge stops, a link still open on its bot has to be read here again.
  */
-export function ppmbotReading(token: string | null): void {
-  ppmbotBotId = token ? botIdOf(token) : null;
+export function assistantBridgeReading(token: string | null): void {
+  bridgeBotId = token ? botIdOf(token) : null;
   syncPollers();
 }
 
@@ -197,14 +201,14 @@ interface Poller {
 
 const pollers = new Map<string, Poller>();
 
-/** Poll each bot that has a link open and is not PPMBot's to read; stop every other poller. */
+/** Poll each bot that has a link open and is not the bridge's to read; stop every other poller. */
 function syncPollers(): void {
   const wanted = new Map<string, string>();
   for (const link of links) {
     if (!link.isOpen()) continue;
     const token = link.botToken();
     const id = botIdOf(token);
-    if (id && id !== ppmbotBotId && BOT_TOKEN_RE.test(token)) wanted.set(id, token);
+    if (id && id !== bridgeBotId && BOT_TOKEN_RE.test(token)) wanted.set(id, token);
   }
   for (const [id, poller] of pollers) {
     if (wanted.get(id) === poller.token) continue;
@@ -248,7 +252,7 @@ async function runPoller(botId: string, poller: Poller): Promise<void> {
     }
   } finally {
     // Confirm the last batch, or the next reader gets the same /start again and answers it
-    // as an expired link. Not when stopped from outside: PPMBot took the bot over and reads
+    // as an expired link. Not when stopped from outside: the bridge took the bot over and reads
     // it now, or a link was cancelled and a new poller may already be reading.
     if (offset > 0 && !controller.signal.aborted) await getTelegramUpdates(token, offset, 0).catch(() => {});
     if (pollers.get(botId) === poller) {

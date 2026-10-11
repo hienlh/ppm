@@ -27,7 +27,7 @@ import { mcpRoutes } from "./routes/mcp.ts";
 import { portForwardingRoutes } from "./routes/port-forwarding.ts";
 import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
-import { chatWebSocket } from "./ws/chat.ts";
+import { chatSocketData, chatWebSocket } from "./ws/chat.ts";
 import { extensionWebSocket } from "./ws/extensions.ts";
 import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
@@ -237,6 +237,9 @@ app.all("/api/design-mcp", designMcpHandler);
 // Tab tools (`open_file`, `open_preview`): the same arrangement, for any chat session.
 import { tabToolsMcpHandler } from "../services/tab-tools-mcp/tab-tools-mcp-endpoint.ts";
 app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
+// The PPM Assistant's own tools: the same arrangement, for Assistant sessions only.
+import { assistantMcpHandler } from "../services/assistant-mcp/assistant-mcp-endpoint.ts";
+app.all("/api/assistant-mcp", assistantMcpHandler);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
@@ -299,6 +302,9 @@ app.route("/api/mcp-auth", mcpAuthRoutes);
 app.route("/api/settings/themes", settingsThemesRoutes);
 import { designSettingsRoutes } from "./routes/design-settings.ts";
 app.route("/api/settings/design", designSettingsRoutes);
+// Settings → PPM Assistant, kept apart from every other chat's settings.
+import { assistantSettingsRoutes } from "./routes/assistant-settings.ts";
+app.route("/api/assistant", assistantSettingsRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
 app.route("/api/tunnel/named", namedTunnelRoutes);
@@ -1108,14 +1114,7 @@ if (process.argv.includes("__serve__")) {
         }
 
         if (wsType === "chat") {
-          const sessionId = id;
-          // A hint only — the handler adopts it when the session has no stored
-          // provider, so a tab that knows it is a claude chat cannot be resumed
-          // as whatever the install's default provider happens to be.
-          const providerHint = url.searchParams.get("providerId") ?? undefined;
-          const upgraded = server.upgrade(req, {
-            data: { type: "chat", sessionId, projectName, providerHint },
-          });
+          const upgraded = server.upgrade(req, { data: chatSocketData(id, projectName, url.searchParams) });
           if (upgraded) return undefined;
           return upgradeFailed(url);
         }
@@ -1219,11 +1218,11 @@ if (process.argv.includes("__serve__")) {
     console.error("[ExtService] Startup error:", e);
   });
 
-  // Start PPMBot Telegram poller (if enabled)
-  import("../services/ppmbot/ppmbot-service.ts")
-    .then(({ ppmbotService }) => ppmbotService.start())
+  // PPM Assistant's hub: chat watches, and the Telegram bridge when it is switched on
+  import("../services/assistant-hub/assistant-hub-startup.ts")
+    .then(({ startAssistantHub }) => startAssistantHub())
     .catch((e) => {
-      console.error("[ppmbot] Startup error:", e);
+      console.error("[assistant-telegram] Startup error:", e);
     });
 
   // Start Jira watchers (non-blocking, cleanup on exit)

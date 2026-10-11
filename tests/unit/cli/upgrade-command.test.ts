@@ -6,7 +6,11 @@ let applyResult: { success: boolean; error?: string; newVersion?: string };
 let signalResult: { sent: boolean; error?: string };
 const calls = { check: 0, apply: 0, signal: 0 };
 
+// Bun keeps a mocked module for the rest of the test process, so the mock carries the real
+// exports too: a later file importing the whole server needs the ones this test does not stub.
+const realUpgrade = await import("../../../src/services/upgrade.service.ts");
 mock.module("../../../src/services/upgrade.service.ts", () => ({
+  ...realUpgrade,
   checkForUpdate: async () => { calls.check++; return checkResult; },
   applyUpgrade: async () => { calls.apply++; return applyResult; },
   signalSupervisorUpgrade: () => { calls.signal++; return signalResult; },

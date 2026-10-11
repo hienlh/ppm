@@ -6,10 +6,13 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 | Document | Covers |
 |---|---|
 | [AI Chat & Providers](architecture/ai-chat-and-providers.md) | Provider adapters, AI configuration, the persistent chat streaming session |
+| [Session changes and review](architecture/session-changes-and-review.md) | What one chat session changed: the pre-session baselines, the changes bar and per-answer pill, the block-by-block Review tab, keep/revert/undo and Revert turn |
+| [AI tab tools](architecture/ai-tab-tools.md) | `open_file` and `open_preview`: the AI opening a file or a page in a PPM tab on the chatting device, and the preview's self-check |
+| [PPM Assistant](architecture/ppm-assistant.md) | The chat that operates PPM itself: its virtual project and isolation, `/api/assistant-mcp`, chatting-device delivery, approvals, proving a SQL read |
 | [Extension System](architecture/extensions.md) | Manifest, lifecycle, RPC, worker isolation, contribution registry, dev workflow |
 | [Data & Storage](architecture/data-and-storage.md) | SQLite schema and access, database viewer, MCP server management, group-chat model |
 | [Workspace & UI](architecture/workspace-and-ui.md) | Workspace switching, editor, terminal, git, file service, Design mode, OS File Explorer, tab-host windows and Document PiP |
-| [Integrations](architecture/integrations.md) | PPMBot Telegram coordinator, Jira watcher auto-debug |
+| [Integrations](architecture/integrations.md) | Telegram (notifications bot vs the PPM Assistant's bot), Jira watcher auto-debug |
 | [Plugins & Tracing](architecture/plugins-and-tracing.md) | *Design, not built.* The append-only session-event log (including browser errors) and the seam inventory behind "Everything is a Plugin. Every run is traceable." |
 
 ## High-Level Architecture
@@ -230,23 +233,14 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **AccountSelectorService** | Select active account based on config + pre-flight retry loop | next(excludeIds?), peek(), onPreflightFail(), onRateLimit(), onAuthError(), onSuccess() |
 | **UpgradeService** | Version checking, installation, self-replace signaling | checkForUpdate, applyUpgrade, getInstallMethod, compareSemver |
 | **SlashDiscoveryService** | Modular command discovery (skills, builtin commands) | discoverSkillRoots, loadSkills, searchSkills, resolveOverrides, fuzzySearch |
-| **PPMBotService** | Coordinator orchestrator (team leader, delegation mgmt) | start, stop, handleUpdate, checkPendingTasks |
-| **PPMBotSessionManager** | Coordinator session per chat, project resolver | getCoordinatorSession, rotateCoordinatorSession, resolveProject |
-| **PPMBotTelegramService** | Telegram long-polling, message ops | getUpdates, sendMessage, editMessage, setTyping, handleCommands |
-| **PPMBotMemoryService** | SQLite project memory persistence | saveMemory, recallMemories, searchByProject |
-| **executeDelegation()** | Task execution in isolated session, result capture | (async function, manages ChatService + result storage) |
-| **PPMBotFormatterService** | Markdown → Telegram HTML + chunking | formatMarkdown, chunkMessage |
-| **PPMBotStreamerService** | ChatEvent → progressive Telegram edits | streamMessageEdits |
+| **ChatControl / chatLifecycle** (`src/services/chat-control/`) | Act on and listen to a chat with no browser attached (send, answer a card, stop, live state; lifecycle events) | chatControl(), chatLifecycle.on |
+| **AssistantWatchService** (`src/services/assistant-watch/`) | "Tell me when that chat finishes" for the PPM Assistant | start, stop |
+| **AssistantTelegramBridge** (`src/services/assistant-telegram/`) | A connected Telegram chat as a second window onto one Assistant session | start, stop, forgetChat |
+| **startAssistantHub** (`src/services/assistant-hub/assistant-hub-startup.ts`) | Starts watches + Telegram bridge; shared by server and e2e fixture | startAssistantHub, syncAssistantTelegram |
 | **JiraConfigService** | Jira config CRUD, token encryption | getConfigByProjectId, upsertConfig, deleteConfig, getDecryptedCredentials |
 | **JiraWatcherDbService** | Jira watchers + results queries | getAllEnabledWatchers, insertResult, updateResultStatus, getWatcherById |
 | **JiraApiClient** | Jira Cloud REST API v3 integration | searchIssues, getIssue, updateIssue, testConnection, getProjects, getFieldOptions |
 | **JiraWatcherService** | Poll orchestrator, timer management | startAll, startWatcher, pollWatcher, syncResultStatuses |
-| **ClawBotService** | LEGACY Telegram bot (deprecated v0.9.11) | (direct-chat model, replaced by coordinator) |
-| **ClawBotTelegramService** | LEGACY Telegram API | (deprecated v0.9.11) |
-| **ClawBotSessionService** | LEGACY chatID mapping | (deprecated v0.9.11) |
-| **ClawBotMemoryService** | LEGACY FTS5 memory | (deprecated v0.9.11) |
-| **ClawBotFormatterService** | LEGACY formatter | (deprecated v0.9.11) |
-| **ClawBotStreamerService** | LEGACY streamer | (deprecated v0.9.11) |
 | **BashOutputSpy** | Monitor bash tool output in real-time via /proc/PID/fd (Linux/WSL2) or lsof (macOS) | startSpy, stopSpy, stopAllForSession |
 | **GroupChatStore** | Group-chat CRUD + windowed message-bus reads (`src/services/group-chat/group-chat.store.ts`) | createGroup, listGroups, addMember, appendMessage, readMessages |
 | **GroupChatService** | Live per-group runtime: detached turn loop, abort handle, WS broadcast + reconnect buffer, Option A+ archive on completion | start, stop, resume, addClient, removeClient |
@@ -265,7 +259,7 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
-- SQLite: WAL mode, foreign keys, lazy init, schema v28 (20+ tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, bot_tasks, proxy_requests, session_metadata)
+- SQLite: WAL mode, foreign keys, lazy init, schema version `CURRENT_SCHEMA_VERSION` (tables include config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, proxy_requests, session_metadata, assistant_telegram_bindings, assistant_watches; see `src/services/db.service.ts` for the full set)
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)

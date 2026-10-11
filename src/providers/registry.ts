@@ -13,6 +13,11 @@ export interface ProviderInfo {
   name: string;
 }
 
+export interface ProviderCapabilityInfo extends ProviderInfo {
+  supportsDesignInstructions: boolean;
+  supportsAssistantSessions: boolean;
+}
+
 class ProviderRegistry {
   private providers = new Map<string, AIProvider>();
 
@@ -29,6 +34,18 @@ class ProviderRegistry {
     return Array.from(this.providers.values())
       .filter((p) => p.id !== "mock")
       .map((p) => ({ id: p.id, name: p.name }));
+  }
+
+  /**
+   * {@link list} with the capabilities a client needs to offer a design or Assistant session
+   * only on a provider that will deliver its instructions and enforce its policy.
+   */
+  listWithCapabilities(): ProviderCapabilityInfo[] {
+    return this.list().map((p) => ({
+      ...p,
+      supportsDesignInstructions: !!this.providers.get(p.id)?.supportsDesignInstructions,
+      supportsAssistantSessions: !!this.providers.get(p.id)?.supportsAssistantSessions,
+    }));
   }
 
   /** List all registered providers including internal ones (for ChatService aggregation) */

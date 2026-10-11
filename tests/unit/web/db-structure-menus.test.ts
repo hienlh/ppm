@@ -21,6 +21,8 @@ const { useDbExplorer } = await import("../../../src/web/components/database/exp
 const { TEMPLATE_SOURCE, gridExportForm } = await import("../../../src/web/components/database/impexp/impexp-state");
 const { openExportOfCurrentDatabase, openImpExpTab, openImportIntoCurrentDatabase, openTreeImport } = await import("../../../src/web/components/database/impexp/open-impexp-tab");
 const { useDbPaletteCommands } = await import("../../../src/web/components/layout/command-palette-db-commands");
+const { paletteItemFromCommand } = await import("../../../src/web/components/layout/command-palette-items");
+const { readCommandContext } = await import("../../../src/web/lib/commands/read-command-context");
 const { createElement } = await import("react");
 type MenuEntry = import("../../../src/web/components/database/explorer/explorer-menu").MenuEntry;
 type TreeConnection = import("../../../src/web/components/database/explorer/explorer-model").TreeConnection;
@@ -281,9 +283,9 @@ describe("Export and Import", () => {
 
   /** What the palette offers, as it would render it. */
   async function paletteCommands(isMobile: boolean, onClose: () => void) {
-    let items: ReturnType<typeof useDbPaletteCommands> = [];
+    let items: ReturnType<typeof paletteItemFromCommand>[] = [];
     function Probe() {
-      items = useDbPaletteCommands(isMobile, onClose);
+      items = useDbPaletteCommands(isMobile).map((cmd) => paletteItemFromCommand(cmd, readCommandContext(), onClose));
       return null;
     }
     const mounted = await mount(createElement(Probe));

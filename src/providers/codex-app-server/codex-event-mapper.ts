@@ -82,6 +82,36 @@ export function commandDisplayText(item: Item): string {
   return parts.length > 0 ? parts.join("\n") : raw;
 }
 
+/**
+ * PPM's shell tool for a codex command. The interpreter appears only in the wrapped form
+ * (`command` as a string, or the argv array a rollout and the legacy approval carry), never
+ * in the unwrapped script that is displayed.
+ */
+export function shellToolName(rawCommand: unknown): "PowerShell" | "Bash" {
+  const raw = Array.isArray(rawCommand) ? rawCommand.join(" ") : String(rawCommand ?? "");
+  return /powershell|pwsh/i.test(raw) ? "PowerShell" : "Bash";
+}
+
+/**
+ * Whether an item's status says it did not succeed: it failed, or the user declined it. A
+ * declined command never ran, so it has no exit code to say so — reading the exit code alone
+ * showed every denial as a success. The live stream sends the status as a string or as
+ * `{ type }`; a rollout as a string.
+ */
+export function itemStatusIsError(status: unknown): boolean {
+  const s = status && typeof status === "object" ? (status as { type?: unknown }).type : status;
+  return typeof s === "string" && (s.toLowerCase() === "failed" || s.toLowerCase() === "declined");
+}
+
+/** Whether an item's status says the user declined it. */
+export function itemStatusIsDeclined(status: unknown): boolean {
+  const s = status && typeof status === "object" ? (status as { type?: unknown }).type : status;
+  return typeof s === "string" && s.toLowerCase() === "declined";
+}
+
+/** A declined command's result: it has no output of its own, and an empty result reads as "ran, printed nothing". */
+export const DECLINED_COMMAND_OUTPUT = "Declined by the user. The command did not run.";
+
 /** Build the tool_use input payload from a ThreadItem (per-variant fields). */
 export function itemToToolUse(item: Item): ChatEvent {
   const type = item.type ?? "tool";
@@ -93,7 +123,7 @@ export function itemToToolUse(item: Item): ChatEvent {
       // (not a raw `commandExecution` JSON blob). Sniff PowerShell vs Bash from
       // the WRAPPED form — the interpreter only appears there, never in the
       // unwrapped script that gets displayed.
-      tool = /powershell|pwsh/i.test(String(item.command ?? "")) ? "PowerShell" : "Bash";
+      tool = shellToolName(item.command);
       input = { command: commandDisplayText(item), cwd: item.cwd };
       break;
     }
@@ -168,15 +198,15 @@ export function itemToToolResult(item: Item): ChatEvent {
     output = redactTruncate(item.aggregatedOutput ?? "");
     const exit = item.exitCode;
     exitCode = typeof exit === "number" ? exit : undefined;
-    isError = exitCode != null && exitCode !== 0;
+    isError = (exitCode != null && exitCode !== 0) || itemStatusIsError(item.status);
+    if (!output && itemStatusIsDeclined(item.status)) output = DECLINED_COMMAND_OUTPUT;
   } else if (type === "mcpToolCall") {
     output = redactTruncate(mcpResultText(item.result) ?? item.error ?? "");
     isError = item.error != null;
   } else if (type === "fileChange") {
     const changes = Array.isArray(item.changes) ? item.changes : [];
     output = changes.map((c) => `${(c as any)?.kind?.type ?? "update"} ${(c as any)?.path ?? ""}`.trim()).join("\n") || "applied";
-    const st = item.status as { type?: string } | string | undefined;
-    isError = (typeof st === "object" ? st?.type : st) === "failed";
+    isError = itemStatusIsError(item.status);
   } else if (type === "dynamicToolCall") {
     output = redactTruncate(item.contentItems ?? "");
     isError = item.success === false;
@@ -198,15 +228,66 @@ export function itemToToolResult(item: Item): ChatEvent {
 }
 
 /**
- * Pure translation of one codex app-server notification → PPM ChatEvent[].
- * Stateless: the caller owns any per-itemId outputDelta buffering. Never throws;
- * unknown methods and unexpected shapes map to `[]`.
+ * What the mapper remembers across one turn's agent messages, held by the caller per thread.
+ *
+ * A turn can hold several `agentMessage` items (text, a tool call, more text). Each streams as
+ * bare deltas, and the chat appends every text event to one running message — so the last
+ * sentence of one message ran straight into the first word of the next ("…in PPM.PPM has…").
+ * The transcript reader keeps each agent message as a message of its own, so a reload never
+ * showed it; a paragraph break between the two items makes the live view read the same way.
  */
-export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
+export interface CodexTurnText {
+  /** Some agent-message text has already been emitted this turn. */
+  emitted: boolean;
+  /** The agent-message item the last text came from, when codex names it. */
+  itemId?: string;
+  /** An agent-message item started since the last text. */
+  newItem: boolean;
+}
+
+export function newCodexTurnText(): CodexTurnText {
+  return { emitted: false, newItem: false };
+}
+
+function resetTurnText(turn: CodexTurnText | undefined): void {
+  if (!turn) return;
+  turn.emitted = false;
+  turn.itemId = undefined;
+  turn.newItem = false;
+}
+
+/** The delta as text events, preceded by a paragraph break when it opens a later agent message. */
+function agentMessageText(p: Record<string, unknown>, turn: CodexTurnText | undefined): ChatEvent[] {
+  if (typeof p.delta !== "string") return [];
+  // An empty delta carries no text, so it neither opens a message nor counts as one.
+  if (!turn || !p.delta) return [{ type: "text", content: p.delta }];
+  const itemId = typeof p.itemId === "string" ? p.itemId : undefined;
+  // Either signal marks a new message: the item's own start, or a delta naming another item
+  // (for a codex that does not announce agent messages at `item/started`).
+  const opensMessage = turn.newItem || (itemId !== undefined && turn.itemId !== undefined && itemId !== turn.itemId);
+  const events: ChatEvent[] = opensMessage && turn.emitted ? [{ type: "text", content: "\n\n" }] : [];
+  events.push({ type: "text", content: p.delta });
+  turn.emitted = true;
+  turn.newItem = false;
+  if (itemId !== undefined) turn.itemId = itemId;
+  return events;
+}
+
+/**
+ * Translation of one codex app-server notification → PPM ChatEvent[].
+ * The caller owns any per-itemId outputDelta buffering, and passes `turn` (one per thread) so
+ * consecutive agent messages are kept apart; without it each delta maps on its own. Never
+ * throws; unknown methods and unexpected shapes map to `[]`.
+ */
+export function mapCodexEvent(notif: Notif, sessionId: string, turn?: CodexTurnText): ChatEvent[] {
   const p = asObj(notif.params);
   switch (notif.method) {
+    case "turn/started":
+      resetTurnText(turn);
+      return [];
+
     case "item/agentMessage/delta":
-      return typeof p.delta === "string" ? [{ type: "text", content: p.delta }] : [];
+      return agentMessageText(p, turn);
 
     case "item/reasoning/textDelta":
     // Preserve provider text verbatim; summaryTextDelta is the summary stream
@@ -222,6 +303,12 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/started": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compacting" }];
+      // Nothing to show yet; its first delta is where the break goes, so an agent message
+      // that never streams text leaves no blank paragraph behind.
+      if (item.type === "agentMessage") {
+        if (turn) turn.newItem = true;
+        return [];
+      }
       // A spawned agent is a card, not a tool: its start and its completion are
       // two records naming one thread, and the generic mapping rendered each as
       // a card of its own with the raw item as its body.
@@ -258,6 +345,7 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     }
 
     case "turn/completed":
+      resetTurnText(turn);
       return [{ type: "done", sessionId, resultSubtype: "success" }];
 
     case "error": {

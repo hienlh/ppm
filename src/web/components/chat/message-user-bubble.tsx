@@ -23,6 +23,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { api } from "@/lib/api-client";
 import { MarkdownContent } from "./message-markdown";
 import { AuthImageThumbnail, isImagePath } from "./message-media";
+import { isAssistantProject } from "../../../shared/assistant-project";
 
 /** Detect if tags contain system-injected content (not real user input) */
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
@@ -313,7 +314,8 @@ function FilePathChip({ path, projectName }: { path: string; projectName?: strin
     const pName = projectName ?? useProjectStore.getState().activeProject?.name;
     const fileName = basename(path);
     const meta: Record<string, unknown> = { filePath: path };
-    if (pName) meta.projectName = pName;
+    // The Assistant's virtual project owns no files; the path opens on its own.
+    if (pName && !isAssistantProject(pName)) meta.projectName = pName;
     // Try to verify file exists, then open; fallback: open directly
     api.get(`/api/fs/read?path=${encodeURIComponent(path)}`).then(() => {
       openTab({ type: "editor", title: fileName, metadata: meta, projectId: null, closable: true });

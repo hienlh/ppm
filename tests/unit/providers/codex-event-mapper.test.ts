@@ -1,7 +1,48 @@
 import { describe, it, expect } from "bun:test";
-import { mapCodexEvent } from "../../../src/providers/codex-app-server/codex-event-mapper.ts";
+import { DECLINED_COMMAND_OUTPUT, mapCodexEvent, newCodexTurnText } from "../../../src/providers/codex-app-server/codex-event-mapper.ts";
 
 const SID = "thread-1";
+
+describe("mapCodexEvent: several agent messages in one turn", () => {
+  /** The text a chat shows for a turn: every text event appended, as the live view does. */
+  function streamedText(notifs: Array<{ method: string; params?: unknown }>): string {
+    const turn = newCodexTurnText();
+    return notifs.flatMap((n) => mapCodexEvent(n, SID, turn))
+      .map((ev) => (ev.type === "text" ? ev.content : "")).join("");
+  }
+  const started = (id: string, type = "agentMessage") => ({ method: "item/started", params: { item: { type, id } } });
+  const delta = (itemId: string, text: string) => ({ method: "item/agentMessage/delta", params: { itemId, delta: text } });
+
+  it("keeps two messages around a tool call apart, as the transcript reader does", () => {
+    const text = streamedText([
+      { method: "turn/started", params: { turn: { id: "t1" } } },
+      started("m1"), delta("m1", "Đã đăng ký trong "), delta("m1", "PPM."),
+      started("call", "mcpToolCall"),
+      started("m2"), delta("m2", "PPM hiện có 2 project."),
+    ]);
+    expect(text).toBe("Đã đăng ký trong PPM.\n\nPPM hiện có 2 project.");
+  });
+
+  it("splits on a new item id even when codex does not announce the message", () => {
+    expect(streamedText([delta("m1", "One."), delta("m2", "Two.")])).toBe("One.\n\nTwo.");
+  });
+
+  it("never opens a turn, or follows an empty message, with a blank paragraph", () => {
+    expect(streamedText([started("m0"), started("m1"), delta("m1", "First.")])).toBe("First.");
+  });
+
+  it("starts each turn afresh", () => {
+    const turn = newCodexTurnText();
+    mapCodexEvent(delta("m1", "Earlier turn."), SID, turn);
+    mapCodexEvent({ method: "turn/completed", params: {} }, SID, turn);
+    mapCodexEvent(started("m2"), SID, turn);
+    expect(mapCodexEvent(delta("m2", "Next."), SID, turn)).toEqual([{ type: "text", content: "Next." }]);
+  });
+
+  it("maps each delta on its own when the caller keeps no turn state (a child thread)", () => {
+    expect(mapCodexEvent(delta("m2", "Two."), SID)).toEqual([{ type: "text", content: "Two." }]);
+  });
+});
 
 describe("mapCodexEvent", () => {
   it("maps a fileChange over several files to one call that lists every file", () => {
@@ -92,6 +133,24 @@ describe("mapCodexEvent", () => {
       params: { item: { type: "commandExecution", id: "i2", aggregatedOutput: "ok", exitCode: 0 } },
     }, SID);
     expect(out[0]).toMatchObject({ type: "tool_result", isError: false, exitCode: 0, toolUseId: "i2" });
+  });
+
+  it("item/completed(commandExecution declined) → an error saying it did not run", () => {
+    // A declined command never ran, so it has no exit code; the status alone says so.
+    const out = mapCodexEvent({
+      method: "item/completed",
+      params: { item: { type: "commandExecution", id: "i4", aggregatedOutput: null, exitCode: null, status: "declined" } },
+    }, SID);
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, toolUseId: "i4", output: DECLINED_COMMAND_OUTPUT });
+    expect(out[0]).not.toHaveProperty("exitCode");
+  });
+
+  it("item/completed(fileChange declined) → tool_result isError", () => {
+    const out = mapCodexEvent({
+      method: "item/completed",
+      params: { item: { type: "fileChange", id: "f1", changes: [], status: "declined" } },
+    }, SID);
+    expect(out[0]).toMatchObject({ type: "tool_result", isError: true, toolUseId: "f1" });
   });
 
   it("turn/completed → done", () => {

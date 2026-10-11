@@ -150,7 +150,10 @@ export interface TelegramChatInfo {
 export interface TelegramNotifyStatus {
   configured: boolean;
   botUsername: string | null;
-  /** PPMBot answers through this same bot, so alerts land in its chats. */
+  /**
+   * PPM Assistant answers through this same bot, so alerts land in its chats. (Named after
+   * PPMBot, the bot the Assistant's Telegram side replaced; the field name is API.)
+   */
   sharedWithPPMBot: boolean;
   chats: TelegramChatInfo[];
   connect: { active: boolean; expiresAt: number | null; error: string | null };

@@ -1,21 +1,14 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import type { AnswersById, NormalizedQuestion } from "../../../shared/approval-questions";
 
 /* ── Types ── */
-export interface QuestionOption {
-  label: string;
-  description?: string;
-}
-
-export interface Question {
-  question: string;
-  header?: string;
-  options: QuestionOption[];
-  multiSelect?: boolean;
-}
+// One shape for Claude's and Codex's questions; the answer goes back by question id and the
+// server turns it into what the asking provider expects.
+export type Question = NormalizedQuestion;
 
 interface QuestionCardProps {
   questions: Question[];
-  onSubmit: (answers: Record<string, string>) => void;
+  onSubmit: (answersById: AnswersById) => void;
   onSkip: () => void;
 }
 
@@ -50,10 +43,10 @@ function useQuestionForm(questions: Question[]) {
   const allAnswered = useMemo(() => questions.every((_, i) => hasAnswer(i)), [questions, hasAnswer]);
 
   const getFinalAnswer = useCallback(
-    (qi: number) => {
+    (qi: number): string[] => {
       const custom = customInputs[qi]?.trim();
-      if (custom) return custom;
-      return (answers[qi] ?? []).join(", ");
+      if (custom) return [custom];
+      return answers[qi] ?? [];
     },
     [answers, customInputs],
   );
@@ -72,7 +65,11 @@ function useQuestionForm(questions: Question[]) {
 function useQuestionKeyboard(config: {
   questions: Question[];
   activeTab: number;
+  /** Rows the arrows move over: the options, plus the typed-answer row when there is one. */
   totalOptions: number;
+  /** Listed options only (the number keys pick among these). */
+  optionCount: number;
+  hasCustom: boolean;
   allAnswered: boolean;
   hasAnswer: (i: number) => boolean;
   onSelectOption: (i: number) => void;
@@ -100,11 +97,11 @@ function useQuestionKeyboard(config: {
       if (!isTyping && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const idx = parseInt(e.key) - 1;
-        if (idx < config.totalOptions - 1) { setFocusedOption(idx); config.onSelectOption(idx); }
+        if (idx < config.optionCount) { setFocusedOption(idx); config.onSelectOption(idx); }
         return;
       }
       // O/0 → focus custom input
-      if (!isTyping && (e.key === "o" || e.key === "O" || e.key === "0")) {
+      if (!isTyping && config.hasCustom && (e.key === "o" || e.key === "O" || e.key === "0")) {
         e.preventDefault();
         config.customInputRef.current?.focus();
         setFocusedOption(config.totalOptions - 1);
@@ -152,13 +149,16 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
   const customInputRef = useRef<HTMLInputElement>(null);
   const form = useQuestionForm(questions);
   const currentQ = questions[form.activeTab];
-  const totalOptions = currentQ ? currentQ.options.length + 1 : 0;
+  const optionCount = currentQ?.options.length ?? 0;
+  // A question that takes no typed answer (a Codex choice without "other") has no typed row.
+  const hasCustom = !!currentQ?.allowsFreeText;
+  const totalOptions = optionCount + (hasCustom ? 1 : 0);
   const hasMultiple = questions.length > 1;
 
   const handleSubmit = useCallback(() => {
     if (!form.allAnswered) return;
-    const result: Record<string, string> = {};
-    questions.forEach((q, i) => { result[q.question] = form.getFinalAnswer(i); });
+    const result: AnswersById = {};
+    questions.forEach((q, i) => { result[q.id] = form.getFinalAnswer(i); });
     onSubmit(result);
   }, [form.allAnswered, form.getFinalAnswer, questions, onSubmit]);
 
@@ -170,7 +170,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
         if (!label) return;
         if (currentQ.multiSelect) form.handleMultiSelect(form.activeTab, label);
         else form.handleSingleSelect(form.activeTab, label);
-      } else if (index === currentQ.options.length) {
+      } else if (index === currentQ.options.length && currentQ.allowsFreeText) {
         customInputRef.current?.focus();
       }
     },
@@ -178,7 +178,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
   );
 
   const kb = useQuestionKeyboard({
-    questions, activeTab: form.activeTab, totalOptions,
+    questions, activeTab: form.activeTab, totalOptions, optionCount, hasCustom,
     allAnswered: form.allAnswered, hasAnswer: form.hasAnswer,
     onSelectOption: handleSelectOption,
     goToNextTab: form.goToNextTab, goToPrevTab: form.goToPrevTab,
@@ -201,7 +201,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
           AI has {hasMultiple ? `${questions.length} questions` : "a question"}
         </span>
         <span className="text-[10px] text-text-secondary font-normal">
-          {hasMultiple ? "←→ tabs · " : ""}↑↓ options · 1-{Math.min(totalOptions - 1, 9)} select · Enter submit
+          {hasMultiple ? "←→ tabs · " : ""}{optionCount > 0 ? `↑↓ options · 1-${Math.min(optionCount, 9)} select · ` : ""}Enter submit
         </span>
       </div>
 
@@ -277,24 +277,28 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
             })}
 
             {/* Other / custom input */}
-            <div
-              className={`flex items-start gap-2.5 rounded px-2.5 py-2 text-xs border border-dashed transition-all border-border bg-transparent ${
-                kb.focusedOption === totalOptions - 1 ? "ring-2 ring-primary/40 ring-offset-1 ring-offset-background" : ""
-              }`}
-            >
-              <span className="flex items-center justify-center w-4.5 h-4.5 rounded bg-surface-elevated text-text-secondary text-[10px] font-semibold shrink-0 mt-px">
-                O
-              </span>
-              <input
-                ref={customInputRef}
-                type="text"
-                className="flex-1 px-2 py-1 text-xs bg-surface border border-border rounded text-text-primary outline-none placeholder:text-text-subtle focus:border-primary"
-                placeholder="Other (press O to type)..."
-                value={form.customInputs[form.activeTab] || ""}
-                onChange={(e) => form.handleCustomInput(form.activeTab, e.target.value)}
-                onFocus={() => kb.setFocusedOption(totalOptions - 1)}
-              />
-            </div>
+            {hasCustom && (
+              <div
+                className={`flex items-start gap-2.5 rounded px-2.5 py-2 text-xs border border-dashed transition-all border-border bg-transparent ${
+                  kb.focusedOption === totalOptions - 1 ? "ring-2 ring-primary/40 ring-offset-1 ring-offset-background" : ""
+                }`}
+              >
+                <span className="flex items-center justify-center w-4.5 h-4.5 rounded bg-surface-elevated text-text-secondary text-[10px] font-semibold shrink-0 mt-px">
+                  O
+                </span>
+                <input
+                  ref={customInputRef}
+                  // A secret (a token Codex asks for) is typed unseen, like any password field.
+                  type={currentQ.secret ? "password" : "text"}
+                  autoComplete="off"
+                  className="flex-1 px-2 py-1 text-xs bg-surface border border-border rounded text-text-primary outline-none placeholder:text-text-subtle focus:border-primary"
+                  placeholder={optionCount > 0 ? "Other (press O to type)..." : "Type your answer..."}
+                  value={form.customInputs[form.activeTab] || ""}
+                  onChange={(e) => form.handleCustomInput(form.activeTab, e.target.value)}
+                  onFocus={() => kb.setFocusedOption(totalOptions - 1)}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}

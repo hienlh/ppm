@@ -6,8 +6,11 @@
  * streaming dots, notification clearing — has to ask this instead of testing
  * `type === "chat"`. A check written against `chat` alone makes a design session look
  * unopened, and re-opening it then starts a plain chat tab outside design mode.
+ *
+ * The PPM Assistant tab is the same case: it shows one Assistant session at a time, and
+ * that session must be found there rather than reopened as a plain chat.
  */
-const SESSION_TAB_TYPES: ReadonlySet<string> = new Set(["chat", "design"]);
+const SESSION_TAB_TYPES: ReadonlySet<string> = new Set(["chat", "design", "assistant"]);
 
 export function tabSessionId(tab: { type: string; metadata?: Record<string, unknown> } | null | undefined): string | undefined {
   if (!tab || !SESSION_TAB_TYPES.has(tab.type)) return undefined;

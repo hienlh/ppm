@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { projectService } from "../../services/project.service.ts";
+import { configService } from "../../services/config.service.ts";
 import type { ProjectConfig } from "../../types/config.ts";
 
 /**
@@ -7,6 +8,9 @@ import type { ProjectConfig } from "../../types/config.ts";
  * Used by CLI commands that operate on a specific project.
  */
 export function resolveProject(options: { project?: string }): ProjectConfig {
+  // A `ppm` process holds only the defaults — no projects — until it reads the database, so
+  // without this every `-p <name>` answered "Project not found".
+  configService.load();
   // Explicit -p flag
   if (options.project) {
     return projectService.resolve(options.project);

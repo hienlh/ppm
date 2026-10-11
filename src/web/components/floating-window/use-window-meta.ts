@@ -66,11 +66,13 @@ const TAB_LABELS: Partial<Record<TabType, string>> = {
   android: "Android",
   extension: "Extension",
   "extension-webview": "Extension",
+  assistant: "Assistant",
 };
 
 const TAB_TONES: Partial<Record<TabType, string>> = {
   terminal: tone("success"),
   chat: tone("accent-2"),
+  assistant: tone("accent-2"),
   "git-log": tone("warning"),
   "git-diff": tone("warning"),
   "git-review": tone("warning"),

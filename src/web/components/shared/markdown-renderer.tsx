@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useContext } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -11,9 +11,11 @@ import { useDiagramOverlay } from "@/stores/diagram-overlay-store";
 import { getAuthToken } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { normalizeMathDelimiters } from "@/lib/markdown-math-delimiters";
-import { MdContext, useMdContext, LOCAL_PATH_RE, markdownUrlTransform, parseMarkdownFileTarget } from "./markdown-context";
+import { MdContext, useMdContext, AssistantContentContext, LOCAL_PATH_RE, markdownUrlTransform, parseMarkdownFileTarget } from "./markdown-context";
 import { useMarkdownFileNavigation } from "./use-markdown-file-navigation";
 import { MdPre, MdCode } from "./markdown-code-block";
+import { isExternalResourceUrl, rehypeBlockExternalResources } from "./markdown-external-resources";
+import { isAssistantProject } from "../../../shared/assistant-project";
 
 interface MarkdownRendererProps {
   content: string;
@@ -21,34 +23,41 @@ interface MarkdownRendererProps {
   className?: string;
   codeActions?: boolean;
   isStreaming?: boolean;
+  /** Written by the PPM Assistant: see `MdContextValue.assistantContent`. */
+  assistantContent?: boolean;
 }
 
 /** Plugin arrays — stable references to avoid re-creating on each render */
 const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
 const rehypePlugins = [rehypeRaw, rehypeKatex] as any;
+/** Last, so it also sees what KaTeX produced. */
+const assistantRehypePlugins = [rehypeRaw, rehypeKatex, rehypeBlockExternalResources] as any;
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
-export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false, assistantContent: assistantProp }: MarkdownRendererProps) {
+  const inAssistantChat = useContext(AssistantContentContext);
+  const assistantContent = Boolean(assistantProp || inAssistantChat || isAssistantProject(projectName));
   const openImageOverlayFn = useImageOverlay((s) => s.open);
   const openDiagramOverlayFn = useDiagramOverlay((s) => s.open);
-  const openFileOrSearch = useMarkdownFileNavigation(projectName);
+  // The Assistant's virtual project has no files: its links name absolute paths, opened as such.
+  const openFileOrSearch = useMarkdownFileNavigation(isAssistantProject(projectName) ? undefined : projectName);
   // Before parsing, because Markdown reads `\[` as an escaped bracket and the backslash is
   // gone by the time there is a tree to walk.
   const source = useMemo(() => normalizeMathDelimiters(content), [content]);
 
   const ctx = useMemo(() => ({
-    projectName, codeActions, isStreaming, openFileOrSearch,
+    projectName, codeActions, isStreaming, assistantContent, openFileOrSearch,
     openImageOverlay: openImageOverlayFn,
     openDiagramOverlay: openDiagramOverlayFn,
-  }), [projectName, codeActions, isStreaming, openFileOrSearch, openImageOverlayFn, openDiagramOverlayFn]);
+  }), [projectName, codeActions, isStreaming, assistantContent, openFileOrSearch, openImageOverlayFn, openDiagramOverlayFn]);
 
   return (
     <MdContext.Provider value={ctx}>
       <div className={`markdown-content prose-sm ${isStreaming ? "is-streaming" : ""} ${className}`}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
+          rehypePlugins={assistantContent ? assistantRehypePlugins : rehypePlugins}
           urlTransform={markdownUrlTransform}
           components={mdComponents}
         >
@@ -74,12 +83,15 @@ function MdLink({ href, children, node, ...props }: any) {
 
 /** Image — auth-loads local file paths via API, click to open overlay */
 function MdImage({ src, alt, node, ...props }: any) {
-  const { openImageOverlay } = useMdContext();
+  const { openImageOverlay, assistantContent } = useMdContext();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // `//host/x` passes LOCAL_PATH_RE, and the plain `src` below is rendered while the local
+  // load runs — so in Assistant content an external source must never reach the <img>.
+  const blocked = assistantContent && typeof src === "string" && isExternalResourceUrl(src);
 
   useEffect(() => {
-    if (!src || !LOCAL_PATH_RE.test(src)) return;
+    if (blocked || !src || !LOCAL_PATH_RE.test(src)) return;
     setLoading(true);
     let cancelled = false;
     let url: string | null = null;
@@ -96,10 +108,13 @@ function MdImage({ src, alt, node, ...props }: any) {
       })
       .catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
-  }, [src]);
+  }, [src, blocked]);
 
-  const displaySrc = blobUrl || src || "";
   const name = alt || (src ? basename(src) : "");
+  if (blocked) {
+    return <a href={src} target="_blank" rel="noopener noreferrer" title={`Not loaded automatically: ${src}`}>Image: {alt || src}</a>;
+  }
+  const displaySrc = blobUrl || src || "";
 
   return (
     <img

@@ -51,7 +51,9 @@ export const AREA_BY_TAG: Readonly<Record<string, LogSourceId>> = {
   // Files
   "file-watcher": "files", "file-index": "files", fs: "files", git: "files", transcode: "files",
   // Automation
-  scheduler: "auto", ppmbot: "auto", "ppmbot-stream": "auto", jira: "auto", "jira-debug": "auto",
+  // `ppmbot` and `ppmbot-stream` are kept for logs written before PPMBot became the Assistant's bridge.
+  scheduler: "auto", ppmbot: "auto", "ppmbot-stream": "auto", "assistant-telegram": "auto", "assistant-watch": "auto",
+  jira: "auto", "jira-debug": "auto",
   telegram: "auto", notify: "auto", "web-push": "auto",
   // PPM's own side of remote access, next to cloudflared's file
   tunnel: "tunnel", tunnels: "tunnel", "named-tunnel": "tunnel", cloudflared: "tunnel", tailscale: "tunnel",

@@ -17,7 +17,8 @@ import { isReadOnlyQuery } from "./database/readonly-check.ts";
 import type { ResultColumn } from "../shared/db-grid.ts";
 import type { DbColumnRef, DbForeignKey, DbObjectList, DbObjectRef, DbTableStructure } from "../shared/db-structure.ts";
 import { pgObjectSql } from "./database/object-sql-postgres.ts";
-import type { DbCatalogTable, DbProbe, DbQuerySession, DbRowSet, DbRunResult, DbStatement, DbStatementOutcome, DbWriteSession, StreamRowsOptions } from "../types/database.ts";
+import type { DbCatalogTable, DbProbe, DbQuerySession, DbRowSet, DbRunResult, DbStatement, DbStatementOutcome, DbWriteSession, RunQueryOptions, StreamRowsOptions } from "../types/database.ts";
+import { armQueryStop, QueryStoppedError, throwIfAborted } from "./database/query-stop.ts";
 import { installTlsIdentityCheck } from "./database/tls-identity-check.ts";
 import { connectionLogTarget as logTarget } from "./database/connection-endpoint.ts";
 import { createLogger } from "./logger.ts";
@@ -150,6 +151,24 @@ const PG_TYPE_NAMES: Record<number, string> = {
 
 /** Postgres SQLSTATE for a statement cancelled by `statement_timeout`. */
 const QUERY_CANCELED = "57014";
+
+/**
+ * Awaits a postgres.js query, cancelling it on the server when `opts` says to stop: its time
+ * limit passes, or its signal aborts. A cancelled statement fails with 57014 (as does one that
+ * hit a `statement_timeout`), which is reported as the stop it was rather than as a failure.
+ */
+async function stoppable<T>(opts: RunQueryOptions | undefined, query: Promise<T> & { cancel(): unknown }): Promise<T> {
+  if (!opts?.timeoutMs && !opts?.signal) return query;
+  const stop = armQueryStop(opts, () => { query.cancel(); });
+  try {
+    return await query;
+  } catch (e) {
+    if ((e as { code?: string }).code === QUERY_CANCELED) throw new QueryStoppedError(stop.reason() ?? "timeout", opts.timeoutMs);
+    throw e;
+  } finally {
+    stop.dispose();
+  }
+}
 
 /**
  * `unsafe()` sends a statement with no parameters over the simple protocol,
@@ -835,7 +854,8 @@ class PostgresService {
    * is a SELECT shows that SELECT. Transaction control keeps going through
    * `executeScript`, like `executeQuery` does.
    */
-  async runQuery(connectionString: string, sqlText: string): Promise<DbRunResult> {
+  async runQuery(connectionString: string, sqlText: string, opts?: RunQueryOptions): Promise<DbRunResult> {
+    throwIfAborted(opts);
     const txPattern = /^(BEGIN|COMMIT|ROLLBACK|END)(;|\s|$)/i;
     const statements = splitSqlStatements(sqlText.trim());
     if (statements.some((st) => txPattern.test(st.trim()))) {
@@ -845,7 +865,8 @@ class PostgresService {
 
     return this.withConnection(connectionString, async (sql) => {
       const start = performance.now();
-      const raw = await sql.unsafe(sqlText).values() as unknown as PgResult | PgResult[];
+      const query = sql.unsafe(sqlText).values();
+      const raw = await stoppable(opts, query) as unknown as PgResult | PgResult[];
       const executionTimeMs = Math.round(performance.now() - start);
       // One statement answers with a Result; several answer with a plain array of them.
       const results: PgResult[] = (raw as PgResult).command !== undefined ? [raw as PgResult] : raw as PgResult[];
@@ -1019,14 +1040,17 @@ class ReadonlyPostgresService extends PostgresService {
     }
   }
 
-  override async runQuery(connectionString: string, sqlText: string): Promise<DbRunResult> {
+  override async runQuery(connectionString: string, sqlText: string, opts?: RunQueryOptions): Promise<DbRunResult> {
     const statements = this.statementsOf(sqlText);
+    throwIfAborted(opts);
     return this.readOnly(connectionString, async (tx) => {
+      // The server's own limit as well as the client's: it holds even if PPM stops listening.
+      if (opts?.timeoutMs) await tx.unsafe(`SET LOCAL statement_timeout = ${Math.max(1, Math.round(opts.timeoutMs))}`);
       const start = performance.now();
       let withRows: PgResult | null = null;
       let rowsAffected = 0;
       for (const statement of statements) {
-        const result = await tx.unsafe(statement, [], EXTENDED_PROTOCOL).values() as unknown as PgResult;
+        const result = await stoppable(opts, tx.unsafe(statement, [], EXTENDED_PROTOCOL).values()) as unknown as PgResult;
         if (result.columns) withRows = result;
         else rowsAffected += Number(result.count ?? 0);
       }

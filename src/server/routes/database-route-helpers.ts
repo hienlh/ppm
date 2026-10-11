@@ -15,15 +15,7 @@ import type { DbConnectionConfig } from "../../types/database.ts";
 import type { AuditFields } from "./query-audit-hook.ts";
 import { fileConnectionConfig, isFileConnection, type FileConnectionRow } from "../../services/database/file-database.ts";
 
-/**
- * Let one request stay silent for up to `seconds`. Bun.serve closes a connection that sends nothing
- * for 10 s, and a COUNT(*) or a sorted page of a big table sends nothing until it is done, so the
- * browser got a dropped connection instead of the answer. `c.env` is the server `app.fetch` was
- * handed; a test calling `app.fetch(req)` has none, and nothing needs lifting there.
- */
-export function holdRequestOpen(c: Context, seconds: number): void {
-  (c.env as { timeout?: (req: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, seconds);
-}
+export { holdRequestOpen } from "../helpers/hold-request-open.ts";
 
 /** Look a connection up by the `:id` path segment; null when missing or not a number. */
 export function resolveConn(id: string): ConnectionRow | null {

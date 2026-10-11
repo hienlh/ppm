@@ -49,6 +49,19 @@ export function syncAllKnownProjects(): void {
   }
 }
 
+/**
+ * The server says a project's session list changed without a browser asking — a session the
+ * Assistant started, or one a Telegram `/new` made. Only a project this browser already holds
+ * a list for is re-synced: one nobody has read is fetched when something first shows it, so
+ * syncing it here would only spend a request on a list no screen is waiting for.
+ */
+export function syncKnownProject(name: string): void {
+  const state = useSessionListStore.getState();
+  for (const entry of Object.values(state.byProject)) {
+    if (entry.project?.name === name) void state.sync(entry.project);
+  }
+}
+
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;

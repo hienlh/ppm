@@ -18,6 +18,26 @@ interface Entry<B> {
 
 const digestOf = (token: string): Buffer => createHash("sha256").update(token, "utf8").digest();
 
+/** Asked, before any store evicts a token to make room, whether a running process still carries it. */
+const holders = new Set<(token: string) => boolean>();
+
+/**
+ * Registers `isHeld`, which every store asks before evicting a token to make room. A Codex
+ * app-server is handed its tokens in its environment when it is spawned and cannot be given
+ * new ones, so a token evicted under it would fail every tool call that process makes until it
+ * is restarted; a held token is skipped instead. It still goes when its session is revoked.
+ * Returns the function that unregisters `isHeld`.
+ */
+export function holdTokens(isHeld: (token: string) => boolean): () => void {
+  holders.add(isHeld);
+  return () => { holders.delete(isHeld); };
+}
+
+function isHeld(token: string): boolean {
+  for (const held of holders) if (held(token)) return true;
+  return false;
+}
+
 export function createSessionTokenStore<B extends { sessionId: string }>(opts: {
   max: number;
   /** Whether a session's existing token still fits a new binding; when not, it is replaced. */
@@ -50,10 +70,11 @@ export function createSessionTokenStore<B extends { sessionId: string }>(opts: {
       }
       revoke(binding.sessionId);
     }
-    while (tokenBySession.size >= opts.max) {
-      const oldest = tokenBySession.keys().next().value;
-      if (oldest === undefined) break;
-      revoke(oldest);
+    // Least recently used first, skipping tokens a running process still carries. When every
+    // one is held the store grows past `max`: the running processes bound it instead.
+    for (const [sessionId, token] of tokenBySession) {
+      if (tokenBySession.size < opts.max) break;
+      if (!isHeld(token)) revoke(sessionId);
     }
     const token = randomBytes(32).toString("base64url");
     const digest = digestOf(token);

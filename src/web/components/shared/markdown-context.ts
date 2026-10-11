@@ -40,6 +40,12 @@ export function parseMarkdownFileTarget(href: string) {
 export interface MdContextValue {
   projectName?: string;
   codeActions: boolean;
+  /**
+   * Written by the PPM Assistant, which reads untrusted content: nothing in it may fetch from
+   * outside PPM until the user clicks (external images are links, embeds are not loaded,
+   * diagrams stay source), and code is not offered to a terminal it has no project for.
+   */
+  assistantContent: boolean;
   /** True while the message is still streaming — defer async Shiki highlight until done. */
   isStreaming: boolean;
   openFileOrSearch: (path: string, line?: SourceLine) => void;
@@ -49,3 +55,11 @@ export interface MdContextValue {
 
 export const MdContext = createContext<MdContextValue>(null!);
 export const useMdContext = () => useContext(MdContext);
+
+/**
+ * Set by the Assistant's chat around everything it renders, so Markdown drawn without a
+ * project name — tool cards, agent output, a user bubble's result — is treated as Assistant
+ * content too. `MarkdownRenderer` also infers it from the Assistant's project name, which
+ * covers what is drawn outside that subtree (an agent's session window).
+ */
+export const AssistantContentContext = createContext(false);

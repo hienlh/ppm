@@ -7,6 +7,8 @@ import { useTabStore } from "@/stores/tab-store";
 import { Bell, BellOff } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { resolveProjectColor } from "@/lib/project-palette";
+import { ASSISTANT_TAB_TITLE, openAssistant } from "@/components/assistant/open-assistant";
+import { isAssistantProject } from "../../../shared/assistant-project";
 
 /** Bell button with unread count badge + popover listing unread sessions */
 export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
@@ -29,6 +31,12 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
   };
 
   const handleGoToSession = (sessionId: string, projectName: string) => {
+    // An Assistant session belongs to no project: it opens in the Assistant.
+    if (isAssistantProject(projectName)) {
+      openAssistant({ sessionId });
+      setOpen(false);
+      return;
+    }
     const target = projects.find((p) => p.name === projectName);
     // projectName is a grouping key, and notifications with no project fall into the
     // "Unknown" bucket. Opening a tab stamped with a project that does not exist makes
@@ -112,7 +120,7 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
                   <div key={projectName}>
                     <div className="px-3 py-1 text-[10px] font-medium text-text-subtle uppercase tracking-wider flex items-center gap-1.5">
                       <span className="size-2 rounded-full shrink-0" style={{ background: getProjectColor(projectName) || "currentColor" }} />
-                      {projectName}
+                      {isAssistantProject(projectName) ? ASSISTANT_TAB_TITLE : projectName}
                     </div>
                     {sessions.map(({ sessionId, type, sessionTitle }) => (
                       <button

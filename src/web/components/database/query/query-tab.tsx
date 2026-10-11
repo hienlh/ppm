@@ -45,6 +45,7 @@ import { HistoryPanel } from "./history-panel";
 import { queryFileTitle, savedFileOf, savedQueryTab } from "./query-file";
 import { useQueryFileSave } from "./use-query-file-save";
 import { formatSqlScript } from "./format-sql";
+import { useTabLiveContent } from "@/lib/assistant-ui/tab-live-content";
 
 interface Props { metadata?: Record<string, unknown>; tabId?: string }
 
@@ -120,6 +121,16 @@ export function QueryTab({ metadata, tabId }: Props) {
   const [picked, setPicked] = useState<{ runId: string; key: string } | null>(null);
   const shown = shownResultTab(run, picked && run && picked.runId === run.runId ? picked.key : null);
   const pick = useCallback((key: string) => { if (run) setPicked({ runId: run.runId, key }); }, [run]);
+
+  // The result in front (else the first), for the PPM Assistant to read.
+  useTabLiveContent(tabId, () => {
+    const resultTab = run ? run.tabs.find((t) => t.key === shown) ?? run.tabs[0] : undefined;
+    const found = run && resultTab ? resultOfTab(run, resultTab) : null;
+    return {
+      kind: "rows",
+      rows: found ? { columns: found.set.columns.map((c) => c.name), rows: found.set.rows, more: found.set.truncated === true } : null,
+    };
+  });
 
   // Export advanced...: the Import/Export tab on the statement's query — only one that reads, which
   // running again for the file is safe; a phone has no such tab.

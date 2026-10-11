@@ -1,10 +1,11 @@
-/** Telegram update object (subset we care about) */
-export interface TelegramUpdate {
-  update_id: number;
-  message?: TelegramMessage;
-  edited_message?: TelegramMessage;
-}
+/**
+ * Shapes PPM Assistant's Telegram side still reads under PPMBot's names: the connect link's
+ * message and the connected chats (`clawbot_paired_chats`). PPMBot itself is gone; its other
+ * tables stay in old databases unwritten, and the legacy-memories route reads its memories
+ * with a query of its own.
+ */
 
+/** A Telegram message, as the connect-link poller reads it. */
 export interface TelegramMessage {
   message_id: number;
   from?: { id: number; first_name: string; username?: string };
@@ -14,104 +15,7 @@ export interface TelegramMessage {
   caption?: string;
 }
 
-/** Sent message result from Telegram API */
-export interface TelegramSentMessage {
-  message_id: number;
-  chat: { id: number };
-  date: number;
-}
-
-/** PPMBot session row from SQLite */
-export interface PPMBotSessionRow {
-  id: number;
-  telegram_chat_id: string;
-  session_id: string;
-  provider_id: string;
-  project_name: string;
-  project_path: string;
-  is_active: number;
-  created_at: number;
-  last_message_at: number;
-}
-
-/** PPMBot memory row from SQLite */
-export interface PPMBotMemoryRow {
-  id: number;
-  project: string;
-  content: string;
-  category: PPMBotMemoryCategory;
-  importance: number;
-  created_at: number;
-  updated_at: number;
-  session_id: string | null;
-  superseded_by: number | null;
-}
-
-export type PPMBotMemoryCategory =
-  | "fact"
-  | "decision"
-  | "preference"
-  | "architecture"
-  | "issue";
-
-/** Active session state tracked in memory (not DB) */
-export interface PPMBotActiveSession {
-  telegramChatId: string;
-  sessionId: string;
-  providerId: string;
-  projectName: string;
-  projectPath: string;
-  /** Telegram message ID being edited for streaming */
-  currentMessageId?: number;
-  /** Debounce timer for rapid messages */
-  debounceTimer?: ReturnType<typeof setTimeout>;
-  /** Accumulated debounced text */
-  debouncedText?: string;
-}
-
-/** Parsed command from Telegram message */
-export interface PPMBotCommand {
-  command: string;
-  args: string;
-  chatId: number;
-  messageId: number;
-  userId: number;
-  username?: string;
-}
-
-/** Memory recall result with relevance score */
-export interface MemoryRecallResult {
-  id: number;
-  content: string;
-  category: PPMBotMemoryCategory;
-  importance: number;
-  project: string;
-  /** FTS5 rank score (lower = more relevant) */
-  rank?: number;
-}
-
-/** Bot task row from SQLite */
-export interface BotTask {
-  id: string;
-  chatId: string;
-  projectName: string;
-  projectPath: string;
-  prompt: string;
-  status: BotTaskStatus;
-  resultSummary: string | null;
-  resultFull: string | null;
-  sessionId: string | null;
-  error: string | null;
-  reported: boolean;
-  timeoutMs: number;
-  createdAt: number;
-  startedAt: number | null;
-  completedAt: number | null;
-}
-
-export type BotTaskStatus = "pending" | "running" | "completed" | "failed" | "timeout";
-
-/** Paired chat row from SQLite */
+/** A row of `clawbot_paired_chats`: a Telegram chat connected to PPM Assistant. */
 export interface PPMBotPairedChat {
   id: number;
   telegram_chat_id: string;

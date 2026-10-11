@@ -6,6 +6,8 @@
  * and dropping a client from every hub it touches at once.
  */
 import { configService } from "../config.service.ts";
+import { assistantWorkDir } from "../assistant/assistant-work-dir.ts";
+import { isAssistantProject } from "../../shared/assistant-project.ts";
 import type { OwnedSession } from "./session-ownership.ts";
 import type { AgentTranscriptWsLike } from "./agent-transcript-ws-like.ts";
 import {
@@ -42,7 +44,13 @@ export function totalActivitySubs(): number {
   return n;
 }
 
+/**
+ * The directory a project name stands for. The PPM Assistant's virtual project is its work
+ * directory, so Agent cards inside an Assistant chat stream like any other; ownership is then
+ * proven against that directory, which no registered project's sessions live in.
+ */
 export function projectPathFor(projectName: string): string | null {
+  if (isAssistantProject(projectName)) return assistantWorkDir();
   return configService.get("projects").find((p) => p.name === projectName)?.path ?? null;
 }
 

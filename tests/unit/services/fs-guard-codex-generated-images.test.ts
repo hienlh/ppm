@@ -83,6 +83,27 @@ describe("isCodexGeneratedImagePath", () => {
   });
 });
 
+describe("the PPM Assistant's Codex homes", () => {
+  const assistantHome = (...rest: string[]) => join(getPpmDir(), "assistant", "codex-homes", "acct-1-0123456789", ...rest);
+
+  it("accepts a picture their app-server generated", () => {
+    expect(isCodexGeneratedImagePath(assistantHome("generated_images", "thread-1", "call_abc.png"))).toBe(true);
+    expect(() => assertNotPpmDir(assistantHome("generated_images", "thread-1", "call_abc.png"))).not.toThrow();
+  });
+
+  it("refuses the linked login, the sessions link and the rest of the Assistant's folder", () => {
+    for (const path of [
+      assistantHome("auth.json"), assistantHome(".ppm-source"), assistantHome("sessions", "rollout.jsonl"),
+      assistantHome("generated_images"), assistantHome(),
+      join(getPpmDir(), "assistant", "generated_images", "x", "y.png"),
+      join(getPpmDir(), "assistant", "work", "generated_images", "x.png"),
+    ]) {
+      expect(isCodexGeneratedImagePath(path)).toBe(false);
+    }
+    expect(() => assertNotPpmDir(assistantHome("auth.json"))).toThrow("Access denied");
+  });
+});
+
 describe("guard doors", () => {
   it("still classifies a generated image as a credential path", () => {
     // The exception lives in the read door, not in the classification — so any

@@ -1,5 +1,5 @@
 import { configService } from "../config.service.ts";
-import { providerRegistry } from "../../providers/registry.ts";
+import { providerRegistry, type ProviderCapabilityInfo } from "../../providers/registry.ts";
 import { resolveNewChatProvider } from "../../shared/new-chat-provider.ts";
 import type { ChatPreparationSettings } from "../../shared/chat-preparation-settings.ts";
 import { pickClaudeAccount, pickCodexAccount, type PickedAccount } from "../account-pick.service.ts";
@@ -38,7 +38,7 @@ export interface PrepareChatResult {
   resolvedProviderId: string;
   providerId: string;
   settings: ChatPreparationSettings;
-  providers: { id: string; name: string }[];
+  providers: ProviderCapabilityInfo[];
   pickedAccount: PickedAccount | null | "timeout" | "skipped";
   usage: ChatUsageSnapshot | null;
   draft: DraftData | null;
@@ -81,7 +81,8 @@ export async function prepareNewChat(projectPath: string, body: PrepareChatBody)
   const providerId = body.providerId || resolvedProviderId;
   if (!providerRegistry.get(providerId)) throw new UnknownProviderError(providerId);
 
-  const providers = providerRegistry.list();
+  // With the capabilities, like `/chat/providers`: the list seeds the same client cache.
+  const providers = providerRegistry.listWithCapabilities();
 
   const [draft, tags, slash, account] = await Promise.all([
     settleWithinBudget(

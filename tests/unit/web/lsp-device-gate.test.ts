@@ -100,7 +100,8 @@ describe("what the editor and the setting gate on", () => {
 
   it("gates the command-palette entry on the device, not the viewport", () => {
     // A wide tablet is not a phone by width, so a viewport test offered the toggle there.
-    const palette = SRC("components/layout/command-palette.tsx");
+    // The palette's actions are the command registry's built-in commands.
+    const palette = SRC("lib/commands/built-in-commands.ts");
     expect(palette).toContain("...(isTouchOnly ? [] : [{");
     expect(palette).not.toContain("...(isMobile ? [] : [{");
   });

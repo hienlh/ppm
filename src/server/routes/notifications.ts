@@ -133,7 +133,7 @@ notificationRoutes.delete("/telegram/connect", (c) => {
   return c.json(ok({ cancelled: true }));
 });
 
-/** Stop sending alerts to a chat. PPMBot's chats are not this list: see Settings → PPMBot. */
+/** Stop sending alerts to a chat. The Assistant's chats are not this list: see Settings → PPM Assistant → Telegram. */
 notificationRoutes.delete("/telegram/chats/:chatId", (c) => {
   if (!removeNotifyChat(c.req.param("chatId"))) return c.json(err("That chat is not connected"), 404);
   return c.json(ok({ removed: true }));

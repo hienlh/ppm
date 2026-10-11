@@ -7,30 +7,32 @@ import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { answerTabOpen } from "@/lib/open-ai-tab";
+import { answerAssistantUi, readUiSummary } from "@/lib/assistant-ui/answer-assistant-ui";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
+import { sessionPermissionFromGreeting, type SessionPermissionState } from "@/lib/session-permission";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
+import { isAssistantProject } from "../../shared/assistant-project";
+import { approvalAfterGreeting, approvalDrawsAsCard, approvalFromWire, approvalQuestions, type ApprovalRequest } from "@/lib/approval-request";
+import { answersForDisplay, type AnswersById } from "../../shared/approval-questions";
+import { ASSISTANT_TAB_TITLE, openAssistant } from "@/components/assistant/open-assistant";
 import { prefixTokens } from "../../shared/turn-usage";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
+import { getChatClientId } from "@/lib/chat-client-id";
+import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
 
 /** Slim every Agent/Task card a provider stamped `transcriptAvailable` on, walking
  *  in from the REST history response before it ever reaches React state. */
 function slimHistoryMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((m) => (m.events ? { ...m, events: slimHistoryEvents(m.events) } : m));
-}
-
-interface ApprovalRequest {
-  requestId: string;
-  tool: string;
-  input: unknown;
 }
 
 export interface TeamMessageItem {
@@ -98,6 +100,9 @@ interface UseChatReturn {
    *  when everything is loaded or nothing precedes it. */
   historyPredecessorId: string | null;
   isStreaming: boolean;
+  /** The permission mode the server holds for this chat (and the provider default when none
+   *  is stored), from the last connect greeting that carried it; null until one has. */
+  sessionPermission: SessionPermissionState | null;
   phase: SessionPhase;
   isReconnecting: boolean;
   connectingElapsed: number;
@@ -149,7 +154,8 @@ interface UseChatReturn {
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
   sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => void;
-  respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
+  /** `answersById` answers a question card by question id; the server converts it for the provider. */
+  respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
   refetchMessages: () => void;
@@ -231,6 +237,8 @@ export function useChat(
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
+  /** The permission mode the server holds for the chat, from its connect greeting. */
+  const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -498,6 +506,24 @@ export function useChat(
     });
   }, [syncMessages]);
 
+  /**
+   * Record the answer on a question's card (the only approval request kept in the transcript),
+   * the way the server records it on the request it buffers for replay — so a declined question
+   * reads as declined here, after a reconnect, and in history alike.
+   */
+  const markApprovalAnswered = useCallback((requestId: string, approved: boolean, answers?: unknown) => {
+    const idx = streamingEventsRef.current.findIndex(
+      (e) => e.type === "approval_request" && (e as any).requestId === requestId,
+    );
+    if (idx === -1) return;
+    const req = streamingEventsRef.current[idx] as any;
+    const input = approved && answers && req.input && typeof req.input === "object"
+      ? { ...req.input, answers }
+      : req.input;
+    streamingEventsRef.current[idx] = { ...req, approved, input } as ChatEvent;
+    syncMessages();
+  }, [syncMessages]);
+
   /** Process a single stream event — reused by live events and turn_events replay */
   const processStreamEvent = useCallback((data: unknown) => {
     const ev = data as any;
@@ -645,34 +671,23 @@ export function useChat(
         // Another device (or this one) answered — converge every client:
         // clear the live prompt for this requestId and merge answers into the card.
         const reqId = ev.requestId as string;
-        if (ev.approved && ev.answers) {
-          const askEvt = streamingEventsRef.current.find(
-            (e: ChatEvent) =>
-              e.type === "approval_request" &&
-              (e as any).requestId === reqId &&
-              (e as any).tool === "AskUserQuestion",
-          );
-          const inp = askEvt && (askEvt as any).input;
-          if (inp && typeof inp === "object") {
-            (inp as Record<string, unknown>).answers = ev.answers;
-            setMessages((prev) => [...prev]);
-          }
-        }
+        markApprovalAnswered(reqId, ev.approved === true, ev.answers);
         setPendingApproval((cur) => (cur && cur.requestId === reqId ? null : cur));
         if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
         break;
       }
 
       case "approval_request": {
-        upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
+        // Only a question is kept in the transcript: every other request belongs to a tool call
+        // whose own card is already there, and history never holds the request — keeping it drew
+        // the same call twice, the second card green even after a denial.
+        if (approvalDrawsAsCard(ev)) {
+          upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
+        }
         // During turn_events replay, session_state already set the correct
         // pendingApproval — skip re-setting it for historical (already-answered) events
         if (isReplayingRef.current) break;
-        setPendingApproval({
-          requestId: ev.requestId,
-          tool: ev.tool,
-          input: ev.input,
-        });
+        setPendingApproval(approvalFromWire(ev));
         if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
           const nType = ev.tool === "AskUserQuestion" ? "question" : "approval_request";
           // Unread state added via server-side session:unread_changed broadcast — only play sound + toast here
@@ -680,14 +695,18 @@ export function useChat(
           // Persistent toast with action to navigate to the waiting session
           const sid = sessionIdRef.current;
           const isQuestion = ev.tool === "AskUserQuestion";
+          const assistant = isAssistantProject(projectNameRef.current);
           approvalToastRef.current = toast[isQuestion ? "info" : "warning"](
             isQuestion ? "AI has a question" : `${ev.tool} needs permission`,
             {
-              description: projectNameRef.current || `Session ${sid.slice(0, 8)}`,
+              description: assistant ? ASSISTANT_TAB_TITLE : projectNameRef.current || `Session ${sid.slice(0, 8)}`,
               duration: Infinity,
               action: {
                 label: "Go to session",
                 onClick: () => {
+                  // The Assistant may sit in a window or in a grid that is not on screen;
+                  // opening it brings it forward wherever it is.
+                  if (assistant) { openAssistant({ sessionId: sid }); return; }
                   const { panels } = usePanelStore.getState();
                   for (const [panelId, panel] of Object.entries(panels)) {
                     const tab = panel.tabs.find((t) => t.metadata?.sessionId === sid);
@@ -883,7 +902,7 @@ export function useChat(
         break;
       }
     }
-  }, [routeToParent, routeToFinalizedParent, syncMessages, markSubagentStatus, updateTeamActivity, loadTeamDetail]);
+  }, [routeToParent, routeToFinalizedParent, syncMessages, markSubagentStatus, markApprovalAnswered, updateTeamActivity, loadTeamDetail]);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;
@@ -898,6 +917,21 @@ export function useChat(
     if (data.type === "tab_open") {
       void answerTabOpen(data, { sessionId: sessionIdRef.current ?? "", projectName: projectNameRef.current || undefined },
         (message) => sendRef.current(message));
+      return;
+    }
+    // The same for a PPM Assistant UI tool; refused unless this chat is an Assistant session.
+    if (data.type === "assistant_ui") {
+      void answerAssistantUi(data, { projectName: projectNameRef.current || undefined, sessionId: sessionIdRef.current ?? undefined },
+        (message) => sendRef.current(message));
+      return;
+    }
+
+    // This device answered a card nothing waits on any more (answered elsewhere, timed out,
+    // withdrawn, or from before a restart). Nothing ran; say so instead of looking done.
+    if ((data as any).type === "approval_stale") {
+      const reqId = (data as any).requestId as string;
+      setPendingApproval((cur) => (cur && cur.requestId === reqId ? null : cur));
+      toast.warning(typeof (data as any).message === "string" ? (data as any).message : "This approval request is no longer valid. Nothing was run.");
       return;
     }
 
@@ -1099,13 +1133,13 @@ export function useChat(
       if (typeof state.thinking === "boolean") {
         setThinkingState(state.thinking);
       }
-      if (state.pendingApproval) {
-        setPendingApproval({
-          requestId: state.pendingApproval.requestId,
-          tool: state.pendingApproval.tool,
-          input: state.pendingApproval.input,
-        });
-      }
+      // The server's word on which card waits: none means none, even one shown before a
+      // reconnect — after a restart nothing is waiting on it any more.
+      setPendingApproval((cur) => {
+        const next = approvalAfterGreeting(cur, state);
+        if (!next && cur && approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
+        return next;
+      });
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
@@ -1116,6 +1150,10 @@ export function useChat(
       // The server is the only holder of when the cache was last written and how big the
       // replayed prefix was — neither is in the transcript, so a reload has to be told.
       setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
+      // Only the connect greetings carry it; the others (a model switch) leave it alone.
+      if ("permissionMode" in state) {
+        setSessionPermission(sessionPermissionFromGreeting(state, (data as any).sessionId ?? sessionIdRef.current));
+      }
       setMcpNeedsAuth(Array.isArray(state.mcpNeedsAuth) ? state.mcpNeedsAuth : []);
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
@@ -1232,8 +1270,10 @@ export function useChat(
   // codex-default install is then resumed as codex — which answers "transcript not
   // found" and drops every message with the composer already emptied. It is only a
   // hint: the server adopts it when nothing is stored, never over a stored value.
+  // The client id tells the server a reconnected socket is still this tab (see chat-client-id.ts).
   const wsUrl = sessionId && projectName
     ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}?providerId=${encodeURIComponent(providerId)}`
+      + `&${CHAT_CLIENT_ID_PARAM}=${encodeURIComponent(getChatClientId())}`
     : "";
 
   const { send, connect: wsReconnect } = useWebSocket({
@@ -1505,6 +1545,8 @@ export function useChat(
         imagePaths: opts?.imagePaths,
         replyTo: opts?.replyTo,
         ...turnSettings(),
+        // An Assistant session tells the agent what this device shows, with every message.
+        ...(isAssistantProject(projectNameRef.current) ? { uiSummary: readUiSummary() } : {}),
       }));
     },
     [send, isConnected, connectedSessionId, turnSettings],
@@ -1539,38 +1581,24 @@ export function useChat(
   );
 
   const respondToApproval = useCallback(
-    (requestId: string, approved: boolean, data?: unknown) => {
+    (requestId: string, approved: boolean, answersById?: AnswersById) => {
       send(
         JSON.stringify({
           type: "approval_response",
           requestId,
           approved,
-          data,
+          ...(answersById ? { answersById } : {}),
         }),
       );
 
-      // Merge answers into the AskUserQuestion tool_use event so FE shows selected answers
-      if (approved && data) {
-        const evts = streamingEventsRef.current;
-        const askEvt = evts.find(
-          (e: ChatEvent) =>
-            e.type === "approval_request" &&
-            (e as any).requestId === requestId &&
-            (e as any).tool === "AskUserQuestion",
-        );
-        if (askEvt) {
-          const inp = (askEvt as any).input;
-          if (inp && typeof inp === "object") {
-            (inp as Record<string, unknown>).answers = data;
-          }
-        }
-        setMessages((prev) => [...prev]);
-      }
-
+      // The card shows its answers by question text until the server's own resolution arrives.
+      const card = streamingEventsRef.current.find((e) => e.type === "approval_request" && (e as any).requestId === requestId);
+      const shown = answersById && card ? answersForDisplay(approvalQuestions(card as unknown as ApprovalRequest), answersById) : undefined;
+      markApprovalAnswered(requestId, approved, shown);
       setPendingApproval(null);
       if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     },
-    [send],
+    [send, markApprovalAnswered],
   );
 
   const cancelStreaming = useCallback(() => {
@@ -1808,6 +1836,7 @@ export function useChat(
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    sessionPermission,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

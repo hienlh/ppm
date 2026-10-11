@@ -8,7 +8,7 @@ const log = createLogger("scheduler");
 
 const HEAD_CAP = 16 * 1024;
 const TAIL_CAP = 16 * 1024;
-const CONTEXT_ROTATION_THRESHOLD = 80; // % — same as ppmbot coordinator rotation
+const CONTEXT_ROTATION_THRESHOLD = 80; // % of the context window used before a fresh session is started
 
 /** Head+tail bounded buffer — keeps first/last 16KB, drops the middle. */
 class BoundedBuffer {

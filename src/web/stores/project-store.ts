@@ -5,6 +5,7 @@ import { useProjectFrameworkStore } from "@/stores/project-framework-store";
 import { idbDeletePrefix } from "@/lib/browser-cache/idb-keyval-cache";
 import { projectCacheId, providers as providersKey, type ProjectCacheRef } from "@/lib/browser-cache/cache-keys";
 import { forgetProjectHydration } from "@/lib/browser-cache/project-cache-hydration";
+import { isAssistantProject } from "../../shared/assistant-project";
 
 export interface Project {
   name: string;
@@ -193,7 +194,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   fetchProjects: async () => {
     set({ loading: true, error: null });
     try {
-      const projects = await api.get<ProjectInfo[]>("/api/projects");
+      // The Assistant's virtual project is never a project the user can pick, even if a
+      // server ever listed it.
+      const projects = (await api.get<ProjectInfo[]>("/api/projects")).filter((p) => !isAssistantProject(p.name));
       set({ projects, loading: false });
     } catch (err) {
       set({

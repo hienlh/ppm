@@ -28,12 +28,13 @@ Both rules are aspirational right now, and the gaps are specific.
 `~/.claude/projects/`, which PPM reads (`jsonl-transcript-parser.ts`) and even rewrites
 (`transcript-images-file.ts`).
 
-Six callers reach `chatService.sendMessage()` without going through the browser path at all:
+These callers reach `chatService.sendMessage()` without going through the browser path at all
+(the Telegram side of the PPM Assistant does not: it enters through `chatControl()`, the same
+path the chat socket runs):
 
 | Caller | Runs |
 |---|---|
 | `src/services/scheduler-runner.ts:72` | scheduled jobs |
-| `src/services/ppmbot/ppmbot-service.ts:422`, `ppmbot-delegation.ts:46` | Telegram bot |
 | `src/services/group-chat/group-chat.service.ts:330` | group chat |
 | `src/services/jira-debug-session.service.ts:187` | Jira auto-debug |
 | `src/cli/commands/chat-cmd.ts:170,213` | CLI |
@@ -116,7 +117,8 @@ CREATE TABLE session_events (
   turn_id      TEXT,             -- NULL outside a turn
   ts           INTEGER NOT NULL, -- epoch ms
   source       TEXT NOT NULL,    -- 'agent' | 'server' | 'browser'
-  origin       TEXT NOT NULL,    -- 'ws' | 'scheduler' | 'ppmbot' | 'group-chat' | 'jira' | 'cli' | 'unknown'
+  origin       TEXT NOT NULL,    -- TraceOrigin in src/shared/session-trace.ts ('ws', 'scheduler',
+                                 -- 'telegram', 'watch', …; 'ppmbot' only on old rows)
   provider_id  TEXT,
   ref_id       TEXT,             -- browser rows: the chat session the tab was viewing
   type         TEXT NOT NULL,    -- ChatEvent['type'], or user_message | approval_resolved |

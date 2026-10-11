@@ -11,3 +11,13 @@ export function stripSharedContext(message: string): string {
   const end = message.indexOf(`${END}\n\n`);
   return end < 0 ? "" : message.slice(end + END.length + 2);
 }
+
+/**
+ * One `<ppm-shared-context>` block from several entries — the project's shared instructions,
+ * the PPM Assistant's picture of the screen — so every place that strips the block from
+ * history, titles and search strips all of them. Undefined when there is nothing to send.
+ */
+export function joinSharedContextEntries(...entries: Array<string | undefined>): string | undefined {
+  const present = entries.filter((entry): entry is string => !!entry && !!entry.trim());
+  return present.length ? present.join("\n\n") : undefined;
+}

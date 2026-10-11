@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { Hono } from "hono";
 import { configService } from "../../../src/services/config.service.ts";
 import { getDb, isPairedChat, openTestDb, setDb, upsertApprovedPairing } from "../../../src/services/db.service.ts";
-import { notifyConnect, ppmbotConnect, ppmbotReading } from "../../../src/services/telegram-connect.service.ts";
+import { assistantBridgeReading, notifyConnect, ppmbotConnect } from "../../../src/services/telegram-connect.service.ts";
 import { addNotifyChat, getPPMBotBot, listNotifyChats, setPPMBotBot } from "../../../src/services/telegram-bots.ts";
 import { notificationRoutes } from "../../../src/server/routes/notifications.ts";
 import { settingsRoutes } from "../../../src/server/routes/settings.ts";
@@ -13,11 +13,11 @@ import { READER_TOKEN, startFakeNtfy, WRITER_TOKEN, type FakeNtfy } from "../../
 const TOKEN = `123456789:${"A".repeat(35)}`;
 const PPMBOT_TOKEN = `555666777:${"B".repeat(35)}`;
 
-/** No link open and no bot "read by PPMBot": nothing left to poll the real Telegram. */
+/** No link open and no bot "read by the Assistant's bridge": nothing left to poll the real Telegram. */
 function closeLinks(): void {
   notifyConnect.cancel();
   ppmbotConnect.cancel();
-  ppmbotReading(null);
+  assistantBridgeReading(null);
 }
 const originals = {
   telegram: configService.get("telegram"),
@@ -114,7 +114,7 @@ describe("/api/notifications/telegram", () => {
 
   it("lists its own chats, not PPMBot's, and makes a one-time link", async () => {
     configService.set("telegram", { bot_token: TOKEN, bot_username: "ppm_test_bot" });
-    ppmbotReading(TOKEN); // no poller in a unit test
+    assistantBridgeReading(TOKEN); // no poller in a unit test
     addNotifyChat({ chatId: "42", userId: "42", name: "Thang" });
     upsertApprovedPairing("44", "44", "PPMBot only");
 
@@ -252,7 +252,7 @@ describe("/api/settings/clawbot/telegram", () => {
 
   it("lists the chats that may use PPMBot, and no alert chat", async () => {
     setPPMBotBot({ bot_token: PPMBOT_TOKEN, bot_username: "ppm_ai_bot" });
-    ppmbotReading(PPMBOT_TOKEN); // no poller in a unit test
+    assistantBridgeReading(PPMBOT_TOKEN); // no poller in a unit test
     addNotifyChat({ chatId: "40", userId: "40", name: "Alerts only" });
     upsertApprovedPairing("42", "42", "Thang");
 

@@ -65,6 +65,15 @@ describe("the fonts every surface asks for", () => {
     expect(globals).toMatch(/--font-mono:\s*"Monaspace Argon"/);
   });
 
+  it("fetches no font from a third party", () => {
+    // The shell used to link Google Fonts for Geist and Geist Mono after both stopped being
+    // named by anything: a request on every page load that told Google where PPM was opened,
+    // and failed offline, for faces the bundle already ships.
+    const shell = readFileSync(join(WEB, "index.html"), "utf8");
+    expect(shell).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
+    expect(globals).not.toMatch(/@import\s+url\(\s*["']?https?:/);
+  });
+
   it("still names a font per platform behind the bundled one", () => {
     // A face can fail to load, and `monospace` alone is not a coding font —
     // it is whatever fc-match answers, which is the state this replaced.

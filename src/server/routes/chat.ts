@@ -2,11 +2,12 @@ import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { resolveSessionDir } from "../../services/subagent-transcript-merger.ts";
 import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
+import { createProjectChatSession } from "../../services/chat-session-create.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
+import { isAssistantProject } from "../../shared/assistant-project.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
@@ -17,7 +18,7 @@ import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, listTurnUsage, getSessionProvider, getSessionDesignSlugs, copySessionForkSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
@@ -32,16 +33,11 @@ import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-s
 import { invalidateUsage, refreshUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
-import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
-import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
-import {
-  search as chatSearchQuery,
-  startBackfill as chatSearchStartBackfill,
-  getIndexStatus as chatSearchGetIndexStatus,
-  getKnownSessionCount as chatSearchKnownCount,
-} from "../../services/chat-search.service.ts";
-import { compareSessionsByActivity, type ChatMessage, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
-import { pageHistory, parseHistoryPageQuery } from "./chat-history-page.ts";
+import { setSessionTag, bulkSetSessionTag, getTagById } from "../../services/tag.service.ts";
+import { recordBranch, resolveVersionGroup, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
+import { listProjectSessions, searchProjectChats } from "../../services/chat-session-queries.service.ts";
+import { readSessionHistory } from "../../services/chat-history-read.service.ts";
+import { parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
@@ -141,12 +137,9 @@ chatRoutes.get("/usage", async (c) => {
 /** GET /chat/providers — list available AI providers */
 chatRoutes.get("/providers", (c) => {
   try {
-    // The capability rides along so a client offering design sessions can list only the
-    // providers that will actually deliver the instructions.
-    return c.json(ok(providerRegistry.list().map((p) => ({
-      ...p,
-      supportsDesignInstructions: !!providerRegistry.get(p.id)?.supportsDesignInstructions,
-    }))));
+    // The capabilities ride along so a client offering design or Assistant sessions can list
+    // only the providers that will actually deliver the instructions and enforce the policy.
+    return c.json(ok(providerRegistry.listWithCapabilities()));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -168,57 +161,15 @@ chatRoutes.get("/providers/:providerId/models", async (c) => {
 /** GET /chat/sessions — list chat sessions filtered by project from context */
 chatRoutes.get("/sessions", async (c) => {
   try {
-    const projectPath = c.get("projectPath");
-    const providerId = c.req.query("providerId");
     const tagIdParam = c.req.query("tag_id");
-    const filterTagId = tagIdParam ? parseInt(tagIdParam, 10) : null;
-    const searchQuery = c.req.query("q")?.toLowerCase().trim() || "";
-    const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
-    const offset = parseInt(c.req.query("offset") ?? "0", 10) || 0;
-
-    const sessions = await chatService.listSessions(providerId, projectPath, { limit, offset });
-    const pinnedIds = getPinnedSessionIds();
-
-    // On first page, fetch pinned sessions that may be outside the current page
-    let pinnedSessions: typeof sessions = [];
-    if (offset === 0 && pinnedIds.size > 0) {
-      const pageIds = new Set(sessions.map((s) => s.id));
-      const missingPinnedIds = [...pinnedIds].filter((id) => !pageIds.has(id));
-      if (missingPinnedIds.length > 0) {
-        // Fetch individual pinned sessions by ID via SDK
-        const claudeProvider = providerRegistry.get("claude") as any;
-        if (claudeProvider?.getSessionInfoById) {
-          const results = await Promise.all(
-            missingPinnedIds.map((id) => claudeProvider.getSessionInfoById(id, projectPath)),
-          );
-          pinnedSessions = results.filter((s: any): s is NonNullable<typeof s> => s != null);
-        }
-      }
-    }
-
-    // Merge and enrich with pin status
-    const merged = [...pinnedSessions, ...sessions];
-    const seen = new Set<string>();
-    const deduped = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
-    const tagMap = getSessionTags(deduped.map((s) => s.id));
-    const designSlugs = getSessionDesignSlugs(deduped.map((s) => s.id));
-    const enriched = deduped.map((s) => ({
-      ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null,
-    }));
-
-    // Collapse edit-message branch trees: each tree shows a single row (its
-    // most recently active node). Pinned sessions are never collapsed.
-    const collapsed = collapseTreesToHeads(enriched);
-
-    // Pinned first, then most recently active (not merely most recently created).
-    collapsed.sort(compareSessionsByActivity);
-
-    // Server-side search + tag filter
-    let filtered = collapsed;
-    if (searchQuery) filtered = filtered.filter((s) => (s.title || "").toLowerCase().includes(searchQuery));
-    if (filterTagId !== null) filtered = filtered.filter((s) => s.tag?.id === filterTagId);
-    const hasMore = sessions.length >= limit;
-    return c.json(ok({ sessions: filtered, hasMore }));
+    const result = await listProjectSessions(c.get("projectPath"), {
+      providerId: c.req.query("providerId"),
+      tagId: tagIdParam ? parseInt(tagIdParam, 10) : null,
+      query: c.req.query("q")?.toLowerCase().trim() || "",
+      limit: Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200),
+      offset: parseInt(c.req.query("offset") ?? "0", 10) || 0,
+    });
+    return c.json(ok(result));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -227,93 +178,14 @@ chatRoutes.get("/sessions", async (c) => {
 /** GET /chat/search — unified title + full-text content search for a project */
 chatRoutes.get("/search", async (c) => {
   try {
-    const projectPath = c.get("projectPath");
     const rawQuery = c.req.query("q")?.trim() || "";
     const limit = Math.min(parseInt(c.req.query("limit") ?? "30", 10) || 30, 100);
-
-    // An empty query has nothing to match, so it must not pay to enumerate: a
-    // dir-scoped `listSessions` pages the SDK until exhausted, and all this
-    // answer carries is the indexing chip's two numbers, which the index knows
-    // by itself.
-    if (!rawQuery) {
-      const indexing = { total: chatSearchKnownCount(projectPath), ...chatSearchGetIndexStatus(projectPath) };
-      return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
-    }
-
-    // Enumerate sessions once (also drives title matches + metadata for content hits).
-    const sessions = await chatService.listSessions(undefined, projectPath);
-    const indexing = { total: sessions.length, ...chatSearchGetIndexStatus(projectPath) };
-
-    // Lazy self-refresh; UI shows an indexing indicator while this runs. The
-    // sessions are handed over rather than enumerated again: a dir-scoped list
-    // with no limit pages the SDK until exhausted, and this route was paying
-    // for that twice on every search.
-    chatSearchStartBackfill(projectPath, sessions);
-
-    const pinnedIds = getPinnedSessionIds();
-    const tagMap = getSessionTags(sessions.map((s) => s.id));
-    const byId = new Map(sessions.map((s) => [s.id, s]));
-
-    const results: ChatSearchResult[] = [];
-    const seen = new Set<string>();
-
-    // Title matches first — a title hit is a stronger relevance signal than a
-    // body hit, so collect these ahead of content to guarantee they survive the
-    // limit (a flood of content hits must never starve out a title match).
-    const q = rawQuery.toLowerCase();
-    for (const s of sessions) {
-      if (results.length >= limit) break;
-      if (!(s.title || "").toLowerCase().includes(q)) continue;
-      seen.add(s.id);
-      results.push({
-        sessionId: s.id,
-        providerId: s.providerId,
-        title: s.title ?? null,
-        snippet: s.title ?? "",
-        messageId: "",
-        matchedIn: "title",
-        ts: s.updatedAt || s.createdAt || "",
-        pinned: pinnedIds.has(s.id),
-        tag: tagMap[s.id] ?? null,
-      });
-    }
-
-    // Content matches (best bm25 rank) for sessions not already surfaced by title.
-    for (const hit of chatSearchQuery(projectPath, rawQuery, limit * 3)) {
-      if (results.length >= limit) break;
-      if (seen.has(hit.sessionId)) continue;
-      seen.add(hit.sessionId);
-      const s = byId.get(hit.sessionId);
-      results.push({
-        sessionId: hit.sessionId,
-        providerId: s?.providerId,
-        title: s?.title ?? null,
-        snippet: hit.snippet,
-        messageId: hit.messageId,
-        matchedIn: "content",
-        ts: s?.updatedAt || s?.createdAt || hit.ts || "",
-        pinned: pinnedIds.has(hit.sessionId),
-        tag: tagMap[hit.sessionId] ?? null,
-      });
-    }
-
-    const designSlugs = getSessionDesignSlugs(results.map((r) => r.sessionId));
-    for (const r of results) r.designSlug = designSlugs[r.sessionId] ?? null;
-
-    // Pinned first, then title matches above content, then most-recent within group.
-    results.sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      if (a.matchedIn !== b.matchedIn) return a.matchedIn === "title" ? -1 : 1;
-      return new Date(b.ts).getTime() - new Date(a.ts).getTime();
-    });
-
-    return c.json(ok({ results, indexing } satisfies ChatSearchResponse));
+    return c.json(ok(await searchProjectChats(c.get("projectPath"), rawQuery, limit)));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
 });
 
-/** GET /chat/sessions/:id/messages — get message history */
 /**
  * The design a session belongs to, if any. A chat tab asks on open: every surface that opens
  * sessions as plain chats (a notification, a search hit, a link) would otherwise take a design
@@ -324,156 +196,12 @@ chatRoutes.get("/sessions/:id/design", (c) => {
   return c.json(ok({ designSlug: getSessionDesignSlugs([id])[id] ?? null }));
 });
 
-/**
- * The parsed history of recently read sessions, reused for as long as the transcript on disk
- * is the one it was parsed from.
- *
- * Re-reading a transcript is not only slow, it LEAKS on Windows: Bun keeps the memory of a
- * large read committed after the strings are collected (measured on a 30 MB transcript:
- * `Bun.file().text()` alone +12 MB a call, a full history read +40 MB, never returned —
- * mimalloc's purge options change nothing). Every tab open, older page and post-turn refetch
- * re-parsed, so a day of long chats took the server to 14 GB RSS / 59 GB committed and Bun
- * aborted. Keyed by what the parse reads — the transcript's size and mtime, its subagent
- * transcripts, and the fork root's, whose timestamps are overlaid — a session is now parsed
- * once per change instead of once per ask.
- *
- * An older page (`before`) does not need the newest parse: between turns the list only grows
- * at its end (the paging indexes rely on that), so it reuses the first page's parse for a short
- * while whatever the stamp says — otherwise every page scrolled up mid-turn, while the file
- * changes every few seconds, would be a whole parse. Only Claude transcripts are stamped;
- * anything else is otherwise parsed per request as before.
- */
-const HISTORY_CACHE_MAX = 6;
-const OLDER_PAGE_TTL_MS = 5 * 60_000;
-const historyCache = new Map<string, { stamp: string | null; messages: ChatMessage[]; at: number }>();
-
-function rememberHistory(key: string, stamp: string | null, messages: ChatMessage[]): void {
-  historyCache.delete(key);
-  historyCache.set(key, { stamp, messages, at: Date.now() });
-  while (historyCache.size > HISTORY_CACHE_MAX) historyCache.delete(historyCache.keys().next().value!);
-}
-
-function cachedHistory(key: string, stamp: string | null, olderPage: boolean): ChatMessage[] | null {
-  const hit = historyCache.get(key);
-  if (!hit) return null;
-  if (stamp !== null && hit.stamp === stamp) {
-    // Most recently used last, so the cap drops the session read longest ago.
-    historyCache.delete(key);
-    historyCache.set(key, hit);
-    return hit.messages;
-  }
-  if (olderPage && Date.now() - hit.at <= OLDER_PAGE_TTL_MS) return hit.messages;
-  return null;
-}
-
-/**
- * What a Claude session's parse reads on disk: its transcript, and the subagent transcripts
- * under `<id>/subagents/` that fill its Agent cards — those keep growing while the main file
- * sits waiting on an agent (one wrote 545 records through 57 minutes of main-file silence),
- * so stamping the main file alone froze a card on reload. Null when there is no transcript.
- */
-function claudeTranscriptStamp(sessionId: string): string | null {
-  const dir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
-  if (!dir) return null;
-  try {
-    const s = statSync(`${dir}.jsonl`);
-    let n = 0, bytes = 0, newest = 0;
-    try {
-      for (const f of readdirSync(join(dir, "subagents"))) {
-        const a = statSync(join(dir, "subagents", f));
-        n++; bytes += a.size; newest = Math.max(newest, a.mtimeMs);
-      }
-    } catch { /* no subagents/ yet */ }
-    return `${s.size}:${s.mtimeMs}:${n}:${bytes}:${newest}`;
-  } catch {
-    return null;
-  }
-}
-
-/** What the parsed history depends on on disk; null when that cannot be told. */
-function historyStamp(providerId: string, id: string): string | null {
-  if (providerId !== "claude") return null;
-  const own = claudeTranscriptStamp(id);
-  if (!own) return null;
-  const rootId = getRootId(id);
-  if (!rootId || rootId === id) return own;
-  const root = claudeTranscriptStamp(rootId);
-  return root ? `${own}|${root}` : null;
-}
-
-/**
- * Parses of a session's history that are running now, so a request arriving mid-parse waits
- * for that one instead of starting another. A client cannot cancel a parse — aborting the
- * fetch leaves it running here — and a tab that re-asked every few seconds while a 30 MB
- * transcript took 30 s to parse had a dozen of them going at once (368 requests in half an
- * hour, measured), which is what took the server to 23 GB committed. Shared only while in
- * flight: a request after it settles parses afresh, so a finished turn is never served stale.
- */
-const historyInFlight = new Map<string, Promise<ChatMessage[]>>();
-
-function loadFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
-  const key = `${providerId}\0${id}`;
-  const running = historyInFlight.get(key);
-  if (running) return running;
-  const parse = parseFullHistory(providerId, id).finally(() => historyInFlight.delete(key));
-  historyInFlight.set(key, parse);
-  return parse;
-}
-
-async function parseFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
-  const messages = await chatService.getMessages(providerId, id);
-  // Forking re-timestamps the copied prefix (both the Claude SDK and codex
-  // stamp the fork moment), so a version's inherited history would render as
-  // "just now" and shift when switching versions. Overlay the branch root's
-  // real timestamps across the identical prefix, stopping at the divergent
-  // (edited) message beyond which the messages are genuinely new to this fork.
-  const rootId = getRootId(id);
-  if (rootId && rootId !== id) {
-    const rootMsgs = await chatService.getMessages(providerId, rootId).catch(() => [] as typeof messages);
-    for (let i = 0; i < messages.length && i < rootMsgs.length; i++) {
-      const r = rootMsgs[i], m = messages[i];
-      if (!r || !m || r.role !== m.role || r.content !== m.content) break;
-      m.timestamp = r.timestamp;
-    }
-  }
-  return messages;
-}
-
+/** GET /chat/sessions/:id/messages — one page of a session's message history */
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
-    const requestedId = c.req.param("id");
-    // A provider that mints its own session id leaves the id PPM created behind,
-    // owning no transcript. Follow the recorded move so a tab that still holds
-    // the old id reads the conversation instead of an empty list.
-    const id = resolveMigratedSession(requestedId);
     const providerId = c.req.query("providerId") ?? "claude";
     const query = parseHistoryPageQuery((name) => c.req.query(name));
-    const cacheKey = `${providerId}\0${id}`;
-    const stamp = historyStamp(providerId, id);
-    let all = cachedHistory(cacheKey, stamp, query.before !== undefined);
-    if (!all) {
-      // A parse joined in flight may have read the file before the change this request's
-      // stamp saw, so only the request that started it stores it — otherwise the end of a
-      // turn could be cached away under a stamp that says it is there, for good.
-      const joined = historyInFlight.has(cacheKey);
-      all = await loadFullHistory(providerId, id);
-      if (!joined && (stamp !== null || query.limit !== undefined || query.from !== undefined)) rememberHistory(cacheKey, stamp, all);
-    }
-    const page = pageHistory(all, query);
-    // versionMap ships with the history so the `‹ n/m ›` switcher needs no
-    // per-message request. Ordinals absent from the map have no edited versions.
-    // Hand back the id that actually owns this transcript so the client can
-    // adopt it — otherwise every future read, and the next turn, still targets
-    // the abandoned one.
-    return c.json(ok({
-      messages: page.messages,
-      start: page.start,
-      total: page.total,
-      userOrdinalOffset: page.userOrdinalOffset,
-      predecessorId: page.predecessorId,
-      versionMap: resolveVersionMap(id),
-      ...(id !== requestedId ? { canonicalSessionId: id } : {}),
-    }));
+    return c.json(ok(await readSessionHistory(providerId, c.req.param("id"), query)));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -511,10 +239,21 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown; assistant?: unknown }>();
+    // An Assistant session lives only in the Assistant's virtual project, and every session
+    // there is one (`chatService.createSession` marks it); the flag only has to agree.
+    const assistant = isAssistantProject(projectName);
+    if (body.assistant !== undefined && body.assistant !== assistant) {
+      return c.json(err(assistant
+        ? "Every session in the PPM Assistant project is an Assistant session"
+        : "Assistant sessions can only be created in the PPM Assistant project"), 400);
+    }
     // A design session is only created on a provider that will carry its instructions;
     // anywhere else it would silently be an ordinary chat that believes it is not.
     const designSlug = body.designSlug;
+    if (assistant && designSlug !== undefined && designSlug !== null) {
+      return c.json(err("An Assistant session cannot be a design session"), 400);
+    }
     if (designSlug !== undefined && designSlug !== null) {
       if (!isValidDesignSlug(designSlug)) return c.json(err("Invalid designSlug"), 400);
       const provider = body.providerId ? providerRegistry.get(body.providerId) : providerRegistry.getDefault();
@@ -523,24 +262,17 @@ chatRoutes.post("/sessions", async (c) => {
         return c.json(err(`Provider "${provider.id}" does not support design sessions`), 400);
       }
     }
-    const session = await chatService.createSession(body.providerId, {
+    const session = await createProjectChatSession({
+      providerId: body.providerId,
       projectName,
       projectPath,
       title: body.title,
-      // A design session spawns with its own instructions, so a spare would not fit it.
-      adoptWarmSpare: !isValidDesignSlug(designSlug),
+      // A design or Assistant session spawns with its own instructions, so a spare would not fit it.
+      adoptWarmSpare: !isValidDesignSlug(designSlug) && !assistant,
+      ...(typeof body.clearedFrom === "string" && body.clearedFrom ? { clearedFrom: body.clearedFrom } : {}),
+      ...(isValidDesignSlug(designSlug) ? { designSlug } : {}),
+      ...(typeof body.accountId === "string" && body.accountId ? { accountId: body.accountId } : {}),
     });
-    if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
-    if (isValidDesignSlug(designSlug)) setSessionDesignSlug(session.id, designSlug);
-    // The tab claimed an account when it opened and showed its name; honour that here so
-    // the first message runs on the account the user was actually looking at. Advisory,
-    // never authoritative: bindPickedAccount re-checks the id against the server's own
-    // pool and simply declines an id it does not recognise, because this arrives from a
-    // client and selecting a token by client-supplied id is not something to allow.
-    if (body.accountId) bindPickedAccount(session.id, session.providerId, body.accountId);
-    // Auto-assign default tag if project has one
-    const defaultTagId = getProjectDefaultTagId(projectPath);
-    if (defaultTagId) setSessionTag(session.id, defaultTagId, projectPath);
     return c.json(ok(session), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 400);
@@ -853,8 +585,8 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         });
         // Register forked session with provider + DB so it's tracked in memory
         setSessionMetadata(result.sessionId, projectName, projectPath);
-        // Before the resume below: a fork of a design chat must stay a design chat.
-        copySessionDesignSettings(sourceId, result.sessionId);
+        // Before the resume below: a fork of a design or Assistant chat must stay one.
+        copySessionForkSettings(sourceId, result.sessionId);
         // Persist the inherited user-set title so the collapsed-tree head shows
         // it regardless of the SDK-derived summary.
         if (inheritedTitle) setSessionTitle(result.sessionId, inheritedTitle);
@@ -918,7 +650,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         projectName, projectPath, title: inheritedTitle ?? "Forked Chat",
       });
       if (inheritedTitle) setSessionTitle(session.id, inheritedTitle);
-      copySessionDesignSettings(sourceId, session.id);
+      copySessionForkSettings(sourceId, session.id);
       return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     }
   } catch (e) {

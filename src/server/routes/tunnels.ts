@@ -55,12 +55,20 @@ function tailscaleEntries(): TunnelEntry[] {
   }));
 }
 
-/** GET /api/tunnels — unified tunnel list */
+/**
+ * GET /api/tunnels — unified tunnel list.
+ *
+ * `?detail=1` answers `{ tunnels, scanFailed }` instead of the bare list. `scanFailed` says the
+ * machine-wide cloudflared scan did not finish, so other programs' tunnels are only as last seen
+ * (PPM's own forwards are always exact). The bare list stays the default for the screens that
+ * already read it as an array.
+ */
 tunnelRegistryRoutes.get("/", async (c) => {
-  // ?force=1 bypasses the 2s TTL cache (manual refresh from the panel).
+  // ?force=1 bypasses the short TTL cache (manual refresh from the panel).
   const force = c.req.query("force") === "1";
-  const list = await listTunnels(ppmSnapshot(), { force });
-  return c.json(ok([...list, ...tailscaleEntries()]));
+  const { tunnels, scanFailed } = await listTunnels(ppmSnapshot(), { force });
+  const all = [...tunnels, ...tailscaleEntries()];
+  return c.json(ok(c.req.query("detail") === "1" ? { tunnels: all, scanFailed } : all));
 });
 
 /** GET /api/tunnels/transports — can a forward go over Tailscale from this host? */
@@ -121,7 +129,7 @@ tunnelRegistryRoutes.delete("/:pid{[0-9]+}", async (c) => {
   if (stopTailscaleForwardByPid(pid)) return c.json(ok({ pid }));
 
   // Fresh list (force) so protection + identity reflect current state.
-  const list = await listTunnels(ppmSnapshot(), { force: true });
+  const { tunnels: list } = await listTunnels(ppmSnapshot(), { force: true });
   const entry = list.find((t) => t.pid === pid);
   if (!entry) return c.json(err("No tunnel found for this PID"), 404);
 
@@ -132,7 +140,7 @@ tunnelRegistryRoutes.delete("/:pid{[0-9]+}", async (c) => {
 
   // Re-verify the image is really cloudflared immediately before killing —
   // guards PID reuse between enumeration and kill.
-  if (!isCloudflaredPid(pid)) {
+  if (!(await isCloudflaredPid(pid))) {
     return c.json(err("PID is no longer a cloudflared process"), 409);
   }
 

@@ -349,11 +349,8 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/settings/clawbot`
 - `POST   /api/settings/clawbot/telegram/connect`
 - `DELETE /api/settings/clawbot/telegram/connect`
-- `GET    /api/settings/clawbot/memories`
-- `DELETE /api/settings/clawbot/memories/:id`
 - `GET    /api/settings/files`
 - `PATCH  /api/settings/files`
-- `GET    /api/settings/clawbot/tasks`
 
 ## /api/settings/design
 

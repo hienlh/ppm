@@ -156,6 +156,22 @@ export function isAppTunnel(entry: TunnelEntry, app: AppShare): boolean {
   return false;
 }
 
+/**
+ * The list to serve when the process scan failed (a WMI query timing out on a busy Windows host):
+ * other programs' tunnels as last seen, and this process's own exactly as they are now. Those
+ * come from PPM's own registry and need no scan, so a failed scan must neither hide a forward
+ * just started — the panel, the stop route and the Assistant's tools would all lose it — nor keep
+ * showing one just stopped.
+ */
+export function withCurrentPpmTunnels(lastServed: TunnelEntry[], ppm: TunnelEntry[]): TunnelEntry[] {
+  const own = new Set(ppm.map((t) => t.pid));
+  return mergeTunnelSources({
+    external: lastServed.filter((e) => e.source !== "ppm" && !own.has(e.pid)),
+    ppm,
+    app: [],
+  });
+}
+
 export function mergeTunnelSources(sources: {
   external: TunnelEntry[];
   ppm: TunnelEntry[];

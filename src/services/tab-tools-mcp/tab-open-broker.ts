@@ -2,33 +2,216 @@ import { randomBytes } from "node:crypto";
 import type { TabOpenRequest, TabOpenResult } from "../../shared/tab-open-protocol.ts";
 
 /**
- * The server half of the tab tools. Only a browser can open a tab, so a call is a round trip:
- * hand `tab_open` to the session's devices (`ws/chat.ts` decides which) and wait for the
- * first `tab_open_result`.
+ * A round trip to the user's device for an AI tool: only a browser can open a tab or say what
+ * it is showing, so a call hands a request to the session's devices (`ws/chat.ts` decides
+ * which) and waits for the first answer.
  *
  * A pending request is bound to its session; an answer from any other session is refused, so
  * a device cannot settle a call it was never asked about. A session is known by the id it goes
  * by now: Codex renames a new chat to its thread id during the first turn, after the call's
  * token was issued under the old one, and the chat's sockets move to the new id with it. Every entry leaves the map on its
  * own timer, answered or not, and a session is held to a few calls at once and a few dozen a
- * minute — an agent talked into opening tabs in a loop stops there.
+ * minute — an agent talked into calling in a loop stops there.
+ *
+ * {@link createDeviceBroker} is the mechanism; the tab tools' {@link tabOpenBroker} and the
+ * Assistant's UI broker are instances of it with their own wire messages and wording.
  */
+
+export type DeviceBrokerFailure = "no-device" | "timeout" | "busy" | "rate-limited" | "withdrawn";
+
+export type DeviceBrokerOutcome<Res> =
+  | { ok: true; result: Res }
+  | { ok: false; reason: DeviceBrokerFailure; message: string };
+
+/** What a failed call tells the agent, worded for what the broker carries. */
+export interface DeviceBrokerMessages {
+  noDevice: string;
+  busy: string;
+  rateLimited: (perMinute: number) => string;
+  timeout: (seconds: number) => string;
+  /** When the caller stops waiting before an answer. */
+  withdrawn?: string;
+}
+
+/**
+ * Every broker made, so a deleted session can be forgotten by all of them at once: the tab
+ * tools, the Assistant's screen requests and its approvals each keep a rate window per session,
+ * and one left behind by a deleted session is never read again.
+ */
+const brokers = new Set<{ forget: (sessionId: string) => void }>();
+
+/** Drops a session's rate window in every broker, e.g. when the session is deleted. */
+export function forgetSessionInDeviceBrokers(sessionId: string): void {
+  for (const broker of brokers) broker.forget(sessionId);
+}
+
+/** The longest delay a JS timer holds (2^31 − 1 ms, about 24.8 days); a longer one fires at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+interface Pending<Res> {
+  sessionId: string;
+  settle: (outcome: DeviceBrokerOutcome<Res>) => void;
+}
+
+export function createDeviceBroker<Req, Res extends { requestId: string }, Body>(opts: {
+  /** Sends the request to the session's devices; the number of sockets it went to. */
+  deliver: (sessionId: string, request: Req) => number;
+  /** The wire request for one call. */
+  build: (requestId: string, body: Body) => Req;
+  messages: DeviceBrokerMessages;
+  /** Prefix of the warning logged when a delivery throws. */
+  logTag: string;
+  /** Told once whenever a delivered call ends, however it ended: answered, timed out or cancelled. */
+  onEnd?: (sessionId: string, requestId: string, outcome: DeviceBrokerOutcome<Res>) => void;
+  /** The id a session goes by now, following a provider's rename; the id itself by default. */
+  canonical?: (sessionId: string) => string;
+  now?: () => number;
+  maxPending: number;
+  maxInFlightPerSession: number;
+  perMinute: number;
+}) {
+  const now = opts.now ?? Date.now;
+  const canonical = opts.canonical ?? ((sessionId: string) => sessionId);
+  const { maxPending, maxInFlightPerSession: maxInFlight, perMinute, messages } = opts;
+  const pending = new Map<string, Pending<Res>>();
+  const recent = new Map<string, number[]>();
+
+  /** Calls waiting on `sessionId` (already canonical), including any asked under its old name. */
+  function inFlight(sessionId: string): number {
+    let n = 0;
+    for (const p of pending.values()) if (canonical(p.sessionId) === sessionId) n++;
+    return n;
+  }
+
+  /** Records a call in the session's last-minute window; false when the window is full. */
+  function admit(sessionId: string): boolean {
+    const cutoff = now() - 60_000;
+    const times = (recent.get(sessionId) ?? []).filter((t) => t > cutoff);
+    // Calls made before a rename were counted under the old name; they still count.
+    for (const [key, earlier] of recent) {
+      if (key === sessionId || canonical(key) !== sessionId) continue;
+      times.push(...earlier.filter((t) => t > cutoff));
+      recent.delete(key);
+    }
+    if (times.length >= perMinute) {
+      recent.set(sessionId, times);
+      return false;
+    }
+    times.push(now());
+    recent.set(sessionId, times);
+    return true;
+  }
+
+  /**
+   * Hands `body` to the session's devices and waits up to `waitMs` for the first answer
+   * (`Infinity`: until it is answered, withdrawn or cancelled). An aborted `signal` (the caller
+   * stopped waiting) withdraws the call.
+   */
+  function request(asked: string, body: Body, waitMs: number, signal?: AbortSignal): Promise<DeviceBrokerOutcome<Res>> {
+    const sessionId = canonical(asked);
+    if (signal?.aborted) return Promise.resolve({ ok: false, reason: "withdrawn", message: messages.withdrawn ?? "The call was withdrawn." });
+    if (pending.size >= maxPending || inFlight(sessionId) >= maxInFlight) {
+      return Promise.resolve({ ok: false, reason: "busy", message: messages.busy });
+    }
+    if (!admit(sessionId)) {
+      return Promise.resolve({ ok: false, reason: "rate-limited", message: messages.rateLimited(perMinute) });
+    }
+    const requestId = randomBytes(12).toString("base64url");
+    return new Promise<DeviceBrokerOutcome<Res>>((done) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let delivered = false;
+      const onAbort = (): void => settle({ ok: false, reason: "withdrawn", message: messages.withdrawn ?? "The call was withdrawn." });
+      const settle = (outcome: DeviceBrokerOutcome<Res>): void => {
+        if (!pending.delete(requestId)) return;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        done(outcome);
+        if (!delivered || !opts.onEnd) return;
+        try {
+          opts.onEnd(sessionId, requestId, outcome);
+        } catch (e) {
+          console.warn(`[${opts.logTag}] onEnd failed for session=${sessionId}: ${(e as Error).message}`);
+        }
+      };
+      pending.set(requestId, { sessionId, settle });
+      let reached = 0;
+      try {
+        reached = opts.deliver(sessionId, opts.build(requestId, body));
+      } catch (e) {
+        console.warn(`[${opts.logTag}] delivery failed for session=${sessionId}: ${(e as Error).message}`);
+      }
+      if (reached === 0) {
+        settle({ ok: false, reason: "no-device", message: messages.noDevice });
+        return;
+      }
+      delivered = true;
+      signal?.addEventListener("abort", onAbort, { once: true });
+      // An unbounded wait arms no timer at all: a timer cannot hold one, and a delay past
+      // MAX_TIMER_MS would fire at once instead of never.
+      if (Number.isFinite(waitMs)) {
+        timer = setTimeout(() => settle({
+          ok: false, reason: "timeout", message: messages.timeout(Math.round(waitMs / 1000)),
+        }), Math.min(waitMs, MAX_TIMER_MS));
+      }
+    });
+  }
+
+  /** Settles a pending call with a device's answer; false when none is pending for this session. */
+  function settle(sessionId: string, result: Res): boolean {
+    const entry = pending.get(result.requestId);
+    if (!entry || canonical(entry.sessionId) !== canonical(sessionId)) return false;
+    entry.settle({ ok: true, result });
+    return true;
+  }
+
+  /** Whether a call with this id is still waiting. */
+  function owns(requestId: string): boolean {
+    return pending.has(requestId);
+  }
+
+  /** Ends a waiting call without an answer, whichever session it is for; false when none is waiting. */
+  function cancel(requestId: string, outcome: { reason: DeviceBrokerFailure; message: string }): boolean {
+    const entry = pending.get(requestId);
+    if (!entry) return false;
+    entry.settle({ ok: false, ...outcome });
+    return true;
+  }
+
+  /** The ids of the calls waiting on a session. */
+  function pendingFor(sessionId: string): string[] {
+    const id = canonical(sessionId);
+    return [...pending].filter(([, p]) => canonical(p.sessionId) === id).map(([requestId]) => requestId);
+  }
+
+  /**
+   * Drops a session's rate window, e.g. when the session is deleted — under every name it went
+   * by, since calls made before a rename were counted under the old one.
+   */
+  function forget(sessionId: string): void {
+    const id = canonical(sessionId);
+    for (const key of [...recent.keys()]) if (key === sessionId || canonical(key) === id) recent.delete(key);
+  }
+
+  const broker = { request, settle, owns, cancel, pendingFor, forget, pendingCount: () => pending.size };
+  brokers.add(broker);
+  return broker;
+}
 
 /** Sends the request to the session's devices; the number of sockets it went to. */
 export type TabOpenDelivery = (sessionId: string, request: TabOpenRequest) => number;
 
-export type TabOpenOutcome =
-  | { ok: true; result: TabOpenResult }
-  | { ok: false; reason: "no-device" | "timeout" | "busy" | "rate-limited"; message: string };
+export type TabOpenOutcome = DeviceBrokerOutcome<TabOpenResult>;
 
 export const MAX_PENDING_TAB_OPENS = 64;
 export const MAX_TAB_OPENS_IN_FLIGHT_PER_SESSION = 4;
 export const MAX_TAB_OPENS_PER_MINUTE = 20;
 
-interface Pending {
-  sessionId: string;
-  settle: (outcome: TabOpenOutcome) => void;
-}
+const TAB_OPEN_MESSAGES: DeviceBrokerMessages = {
+  noDevice: "No PPM window has this chat open, so nothing was shown.",
+  busy: "Too many tabs are already being opened for this chat; wait for them, then call again.",
+  rateLimited: (perMinute) => `Tabs were opened ${perMinute} times in the last minute; wait before opening more.`,
+  timeout: (seconds) => `The user's device did not confirm within ${seconds} s; the tab may or may not have opened.`,
+};
 
 export function createTabOpenBroker(opts: {
   deliver: TabOpenDelivery;
@@ -39,82 +222,17 @@ export function createTabOpenBroker(opts: {
   maxInFlightPerSession?: number;
   perMinute?: number;
 }) {
-  const now = opts.now ?? Date.now;
-  const canonical = opts.canonical ?? ((sessionId: string) => sessionId);
-  const maxPending = opts.maxPending ?? MAX_PENDING_TAB_OPENS;
-  const maxInFlight = opts.maxInFlightPerSession ?? MAX_TAB_OPENS_IN_FLIGHT_PER_SESSION;
-  const perMinute = opts.perMinute ?? MAX_TAB_OPENS_PER_MINUTE;
-  const pending = new Map<string, Pending>();
-  const recent = new Map<string, number[]>();
-
-  function inFlight(sessionId: string): number {
-    let n = 0;
-    for (const p of pending.values()) if (p.sessionId === sessionId) n++;
-    return n;
-  }
-
-  /** Records a call in the session's last-minute window; false when the window is full. */
-  function admit(sessionId: string): boolean {
-    const cutoff = now() - 60_000;
-    const times = (recent.get(sessionId) ?? []).filter((t) => t > cutoff);
-    if (times.length >= perMinute) {
-      recent.set(sessionId, times);
-      return false;
-    }
-    times.push(now());
-    recent.set(sessionId, times);
-    return true;
-  }
-
-  function request(asked: string, req: Omit<TabOpenRequest, "type" | "requestId">, waitMs: number): Promise<TabOpenOutcome> {
-    const sessionId = canonical(asked);
-    if (pending.size >= maxPending || inFlight(sessionId) >= maxInFlight) {
-      return Promise.resolve({ ok: false, reason: "busy", message: "Too many tabs are already being opened for this chat; wait for them, then call again." });
-    }
-    if (!admit(sessionId)) {
-      return Promise.resolve({ ok: false, reason: "rate-limited", message: `Tabs were opened ${perMinute} times in the last minute; wait before opening more.` });
-    }
-    const requestId = randomBytes(12).toString("base64url");
-    return new Promise<TabOpenOutcome>((done) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const settle = (outcome: TabOpenOutcome): void => {
-        if (!pending.delete(requestId)) return;
-        if (timer) clearTimeout(timer);
-        done(outcome);
-      };
-      pending.set(requestId, { sessionId, settle });
-      let reached = 0;
-      try {
-        reached = opts.deliver(sessionId, { type: "tab_open", requestId, ...req });
-      } catch (e) {
-        console.warn(`[tab-tools] delivery failed for session=${sessionId}: ${(e as Error).message}`);
-      }
-      if (reached === 0) {
-        settle({ ok: false, reason: "no-device", message: "No PPM window has this chat open, so nothing was shown." });
-        return;
-      }
-      timer = setTimeout(() => settle({
-        ok: false, reason: "timeout",
-        message: `The user's device did not confirm within ${Math.round(waitMs / 1000)} s; the tab may or may not have opened.`,
-      }), waitMs);
-    });
-  }
-
-  /** Settles a pending call with a device's answer; false when none is pending for this session. */
-  function settle(sessionId: string, result: TabOpenResult): boolean {
-    const entry = pending.get(result.requestId);
-    if (!entry || canonical(entry.sessionId) !== canonical(sessionId)) return false;
-    entry.settle({ ok: true, result });
-    return true;
-  }
-
-  /** Drops a session's rate window, e.g. when the session is deleted. */
-  function forget(sessionId: string): void {
-    recent.delete(sessionId);
-    recent.delete(canonical(sessionId));
-  }
-
-  return { request, settle, forget, pendingCount: () => pending.size };
+  return createDeviceBroker<TabOpenRequest, TabOpenResult, Omit<TabOpenRequest, "type" | "requestId">>({
+    deliver: opts.deliver,
+    build: (requestId, req) => ({ type: "tab_open", requestId, ...req }),
+    messages: TAB_OPEN_MESSAGES,
+    logTag: "tab-tools",
+    canonical: opts.canonical,
+    now: opts.now,
+    maxPending: opts.maxPending ?? MAX_PENDING_TAB_OPENS,
+    maxInFlightPerSession: opts.maxInFlightPerSession ?? MAX_TAB_OPENS_IN_FLIGHT_PER_SESSION,
+    perMinute: opts.perMinute ?? MAX_TAB_OPENS_PER_MINUTE,
+  });
 }
 
 let delivery: TabOpenDelivery | null = null;

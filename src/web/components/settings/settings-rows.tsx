@@ -1,5 +1,5 @@
 /**
- * The rows the Notifications and PPMBot panes are built from, so the two Telegram
+ * The rows the Notifications and PPM Assistant → Telegram panes are built from, so the two Telegram
  * sections look and behave the same: a titled section, a switch whose whole label is
  * tappable, and an icon button with a 44px touch target.
  */

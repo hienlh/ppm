@@ -6,6 +6,7 @@ import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
 import { useTabStore } from "@/stores/tab-store";
 import { copyToClipboard } from "@/lib/clipboard";
 import { basename } from "@/lib/utils";
+import { isAssistantProject } from "../../../shared/assistant-project";
 import { ImagePreviewFailure, ImagePreviewSkeleton } from "./image-preview-states";
 import {
   cacheNatural,
@@ -95,11 +96,13 @@ export function ToolImagePreview({
 
   function openInEditor() {
     if (!projectName) return;
+    // An Assistant tool names an absolute path, and its virtual project owns no files or grid.
+    const own = !isAssistantProject(projectName);
     openTab({
       type: "editor",
       title: name,
-      metadata: { filePath, projectName },
-      projectId: projectName,
+      metadata: own ? { filePath, projectName } : { filePath },
+      projectId: own ? projectName : null,
       closable: true,
     });
   }

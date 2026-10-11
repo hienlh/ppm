@@ -63,15 +63,16 @@ function hastToText(node: any): string {
 
 /** Pre — code block wrapper with mermaid detection, Shiki highlighting, action buttons */
 export function MdPre({ children, node, ...rest }: any) {
-  const { codeActions, projectName, isStreaming } = useMdContext();
+  const { codeActions, projectName, isStreaming, assistantContent } = useMdContext();
 
   const codeNode = node?.children?.[0];
   const langClass = (codeNode?.properties?.className ?? []).find((c: string) => c.startsWith("language-"));
   const lang = langClass?.replace("language-", "");
   const text = hastToText(codeNode);
 
-  // Mermaid detection
-  if (lang === "mermaid" || (!lang && MERMAID_KEYWORDS.test(text.trim()))) {
+  // Mermaid detection. Not for Assistant content: diagrams render with HTML labels, and an
+  // `<img>` in a label would load from anywhere, so the source is shown as code instead.
+  if (!assistantContent && (lang === "mermaid" || (!lang && MERMAID_KEYWORDS.test(text.trim())))) {
     return <MermaidDiagram source={text.trim()} />;
   }
 
@@ -92,7 +93,7 @@ export function MdPre({ children, node, ...rest }: any) {
       {codeActions && (
         <div className="code-actions absolute top-1 right-1 flex gap-1">
           <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => void copyToClipboard(text)} />
-          {isBash && projectName && (
+          {isBash && projectName && !assistantContent && (
             <ActionBtn
               title="Send to terminal"
               icon={<PlayIcon />}

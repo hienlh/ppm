@@ -131,6 +131,13 @@ interface MessageInputProps {
   permissionMode?: string;
   /** Permission mode change handler */
   onModeChange?: (mode: string) => void;
+  /**
+   * The chat's permission is fixed by the server (the PPM Assistant always asks first):
+   * the chip shows that mode, disabled, and Shift+Tab does not cycle it.
+   */
+  permissionLocked?: boolean;
+  /** `@` opens the project-file picker. Off for a chat with no project files to mention. */
+  fileMentions?: boolean;
   /** Current provider ID */
   providerId?: string;
   /** Live session id, when the tab has one. Scopes the slash list to the session's
@@ -185,6 +192,8 @@ export const MessageInput = memo(function MessageInput({
   autoFocus,
   permissionMode,
   onModeChange,
+  permissionLocked = false,
+  fileMentions = true,
   providerId,
   sessionId,
   onProviderChange,
@@ -207,6 +216,10 @@ export const MessageInput = memo(function MessageInput({
   // language on send so the model delegates via the Task tool.
   const [agentTag, setAgentTag] = useState<string | null>(null);
   const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
+  // A locked chat runs in "ask before edits" whatever its metadata says, so that is shown.
+  // An unknown mode shows no chip rather than a guess: falling back to "Bypass permissions"
+  // put that label on chats the server runs in "Ask before edits".
+  const chipMode = permissionLocked ? "default" : permissionMode;
   const [pendingSend, setPendingSend] = useState(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -512,7 +525,7 @@ export const MessageInput = memo(function MessageInput({
   // Reads fileIndex on mount + whenever fileIndex/indexStatus changes in the store.
   useEffect(() => {
     const syncFromStore = () => {
-      if (!projectName) {
+      if (!projectName || !fileMentions) {
         fileItemsRef.current = [];
         onFileItemsLoaded?.([]);
         return;
@@ -540,7 +553,7 @@ export const MessageInput = memo(function MessageInput({
         syncFromStore();
       }
     });
-  }, [projectName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectName, fileMentions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle parent selecting a slash item
   useEffect(() => {
@@ -839,16 +852,18 @@ export const MessageInput = memo(function MessageInput({
         if (recallHistory(e.key === "ArrowUp" ? 1 : -1)) e.preventDefault();
         return;
       }
-      // Shift+Tab: cycle permission mode
+      // Shift+Tab: cycle permission mode (nothing to cycle when the server fixes it)
       if (e.shiftKey && e.key === "Tab") {
         e.preventDefault();
+        if (permissionLocked) return;
         const modeIds = ["default", "acceptEdits", "plan", "bypassPermissions"];
-        const idx = modeIds.indexOf(permissionMode ?? "bypassPermissions");
+        // An unknown mode starts the cycle at its first entry.
+        const idx = permissionMode ? modeIds.indexOf(permissionMode) : -1;
         const next = modeIds[(idx + 1) % modeIds.length]!;
         onModeChange?.(next);
       }
     },
-    [handleSend, permissionMode, onModeChange, recallHistory, agentTag],
+    [handleSend, permissionMode, onModeChange, permissionLocked, recallHistory, agentTag],
   );
 
   const updatePickerState = useCallback(
@@ -878,7 +893,7 @@ export const MessageInput = memo(function MessageInput({
       }
 
       // Check for @ anywhere in text (after whitespace or at start)
-      if (hasAt) {
+      if (hasAt && fileMentions) {
         const atMatch = textBefore.match(/@(\S*)$/);
         if (atMatch) {
           // The index is refreshed only when something opens to read it — see `indexStale`.
@@ -894,7 +909,7 @@ export const MessageInput = memo(function MessageInput({
       if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
       if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
     },
-    [onSlashStateChange, onFileStateChange, loadSlashItems, projectName],
+    [onSlashStateChange, onFileStateChange, loadSlashItems, projectName, fileMentions],
   );
 
   /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */
@@ -1025,15 +1040,16 @@ export const MessageInput = memo(function MessageInput({
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: mode chip + provider selector row */}
         <div className="flex flex-wrap items-center gap-1 px-2 pt-2 md:hidden relative">
-          {!configurationPending && <>
+          {!configurationPending && chipMode && <>
           <ModeChip
-            mode={permissionMode ?? "bypassPermissions"}
+            mode={chipMode}
+            locked={permissionLocked}
             onClick={() => setModeSelectorOpen((v) => !v)}
           />
           <ModeSelector
-            value={permissionMode ?? "bypassPermissions"}
+            value={chipMode}
             onChange={(m) => onModeChange?.(m)}
-            open={modeSelectorOpen}
+            open={modeSelectorOpen && !permissionLocked}
             onOpenChange={setModeSelectorOpen}
           />
           </>}
@@ -1128,15 +1144,16 @@ export const MessageInput = memo(function MessageInput({
               permission chip down to its icon and the model chip giving way first. */}
           <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5 @max-[420px]/chat:flex-nowrap">
             {/* Mode indicator chip */}
-            {!configurationPending && <div className="relative shrink-0">
+            {!configurationPending && chipMode && <div className="relative shrink-0">
               <ModeChip
-                mode={permissionMode ?? "bypassPermissions"}
+                mode={chipMode}
+                locked={permissionLocked}
                 onClick={() => setModeSelectorOpen((v) => !v)}
               />
               <ModeSelector
-                value={permissionMode ?? "bypassPermissions"}
+                value={chipMode}
                 onChange={(m) => onModeChange?.(m)}
-                open={modeSelectorOpen}
+                open={modeSelectorOpen && !permissionLocked}
                 onOpenChange={setModeSelectorOpen}
               />
             </div>}
@@ -1231,17 +1248,23 @@ export const MessageInput = memo(function MessageInput({
   );
 });
 
+/** Why a locked chip cannot be changed — its tooltip and its accessible description. */
+const LOCKED_MODE_REASON = "PPM Assistant always asks before it changes anything, so its permission mode cannot be changed.";
+
 /** Small chip showing current permission mode */
-function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
+function ModeChip({ mode, locked = false, onClick }: { mode: string; locked?: boolean; onClick: () => void }) {
   const Icon = getModeIcon(mode);
   const label = getModeLabel(mode);
   return (
     <button
       type="button"
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors @max-[420px]/chat:px-[7px]"
-      aria-label={`Permission mode: ${label}`}
-      title={`Permission mode: ${label}`}
+      // `aria-disabled` rather than `disabled`: a disabled button shows no tooltip and is
+      // skipped by screen readers, which are exactly where the reason has to be found.
+      aria-disabled={locked || undefined}
+      onClick={(e) => { e.stopPropagation(); if (!locked) onClick(); }}
+      className={`inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft transition-colors @max-[420px]/chat:px-[7px] ${locked ? "cursor-not-allowed opacity-70" : "hover:text-text-primary hover:border-border"}`}
+      aria-label={locked ? `Permission mode: ${label} (fixed). ${LOCKED_MODE_REASON}` : `Permission mode: ${label}`}
+      title={locked ? `${label} — ${LOCKED_MODE_REASON}` : `Permission mode: ${label}`}
     >
       <Icon className="size-3" />
       <span className="max-w-[100px] truncate @max-[420px]/chat:hidden">{label}</span>

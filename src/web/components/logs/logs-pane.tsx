@@ -48,7 +48,7 @@ const SOURCE_SUB: Readonly<Record<LogSourceId, string>> = {
   server: "supervisor, startup, stderr",
   ext: "extensions, language servers",
   files: "file-watcher, file-index, git",
-  auto: "scheduler, ppmbot, jira",
+  auto: "scheduler, assistant-telegram, jira",
   tunnel: "cloudflared.log",
   browser: "Console",
 };

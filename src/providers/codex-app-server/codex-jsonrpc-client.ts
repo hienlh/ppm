@@ -34,6 +34,19 @@ const ENV_PREFIX_ALLOWLIST = ["CODEX_", "XDG_", "RUST_"];
 export const CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 
 /**
+ * Bound for the `initialize` that opens a chat's app-server, which is the first thing a freshly
+ * spawned process answers. A cold start — the first after the server starts or after the machine
+ * has been idle, with `bun x` resolving the package and the OS scanning a ~100 MB binary it has
+ * not mapped yet — has been measured at 6.9 s on one run and past 15 s on another, and failing
+ * there costs the user the turn they just sent. A longer wait on the same process is preferred to
+ * a retry: a retry would have to kill it and spawn another, which starts the same cold work over,
+ * and re-sending `initialize` to a process that may still be about to answer the first is not
+ * something the protocol allows. A process that has died still fails at once (its close rejects
+ * every pending request), so the extra time is only spent on one that is alive and starting.
+ */
+export const CHAT_INITIALIZE_TIMEOUT_MS = 45_000;
+
+/**
  * The allowlisted part of PPM's environment, plus AI_CHAT_MARK: `ppm db` run by the model then
  * keeps to the connections available to the AI chat.
  */

@@ -1,6 +1,16 @@
 import { randomId } from "@/lib/utils";
 import { dbTabId, upgradeDbTab } from "@/lib/db-tabs";
+import { isAssistantProject } from "../../shared/assistant-project";
 import type { Tab, TabType } from "./tab-store";
+
+/**
+ * A layout key with no server-side workspace behind it: the `__global__` sentinel used when
+ * no project is open, and the Assistant's virtual project, which the server refuses on every
+ * route but chat. Neither may be synced to or fetched from `/workspace`.
+ */
+export function isVirtualWorkspaceName(projectName: string): boolean {
+  return projectName === "__global__" || isAssistantProject(projectName);
+}
 
 // ---------------------------------------------------------------------------
 // Panel types
@@ -260,6 +270,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // One set of logs: on a phone a second open focuses the first, as the desktop window does.
     case "logs":
       return "logs";
+    // One Assistant: it switches between its sessions inside the tab rather than opening more.
+    case "assistant":
+      return "assistant";
     case "group":
       return `group:${metadata?.groupId ?? "unknown"}`;
     // One tab per design: the chat, the canvas and its history all belong to the design.
@@ -381,8 +394,8 @@ export function savePanelLayout(projectName: string, layout: PanelLayout): void 
     // dock and dockPanel are passed through directly — callers set them explicitly.
     const withTimestamp = { ...layout, updatedAt: new Date().toISOString() };
     localStorage.setItem(storageKey(projectName), JSON.stringify(withTimestamp));
-    // Debounced server sync — skip virtual __global__ project (not a real server project)
-    if (projectName !== "__global__") syncWorkspaceToServer(projectName, layout);
+    // Debounced server sync — skip virtual layout keys (not real server projects)
+    if (!isVirtualWorkspaceName(projectName)) syncWorkspaceToServer(projectName, layout);
   } catch { /* ignore */ }
 }
 
@@ -445,7 +458,7 @@ export interface PanelLayoutWithTimestamp extends PanelLayout {
 export async function fetchWorkspaceFromServer(
   projectName: string,
 ): Promise<PanelLayoutWithTimestamp | null> {
-  if (projectName === "__global__") return null;
+  if (isVirtualWorkspaceName(projectName)) return null;
   try {
     const headers: Record<string, string> = {};
     const token = localStorage.getItem("ppm-auth-token");
@@ -520,7 +533,7 @@ export function resolveWorkspaceConflict(
  * overwritten with server data.
  */
 export async function hydrateWorkspaceFromServer(projectName: string): Promise<boolean> {
-  if (projectName === "__global__") return false;
+  if (isVirtualWorkspaceName(projectName)) return false;
   const server = await fetchWorkspaceFromServer(projectName);
   if (!server) return false;
   const key = `${STORAGE_PREFIX}${projectName}`;

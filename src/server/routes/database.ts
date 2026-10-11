@@ -19,20 +19,18 @@ import type { PasswordMode, StoredConnectionConfig } from "../../shared/db-conne
 import { parseDbUrl } from "../../shared/db-connection-url.ts";
 import { getAdapter } from "../../services/database/adapter-registry.ts";
 import { syncTables, searchTables, getTablesFromCache } from "../../services/table-cache.service.ts";
-import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
-import { isReadonlyRefusal, readonlyRefusalMessage } from "../../services/database/db-errors.ts";
-import { detectOperation, type QueryOperation } from "../../services/query-audit/query-audit.service.ts";
+import type { QueryOperation } from "../../services/query-audit/query-audit.service.ts";
+import { runConnectionQuery } from "../../services/database/run-connection-query.ts";
 import { ChangesetRequestError, changesetScript, parseChangeset, type ValidChangeset } from "../../services/database/changeset.ts";
 import { prepareChangeset, type PreparedChangeset } from "../../services/database/changeset.service.ts";
 import { defaultSchemaFor } from "../../services/database/grid.service.ts";
 import type { Changeset, ChangesetApplyResult, RowKey } from "../../shared/db-changeset.ts";
-import { logQuery } from "./query-audit-hook.ts";
+import { auditCaller, logQuery, reportAuditError } from "./query-audit-hook.ts";
 import { ok, err } from "../../types/api.ts";
-import { rowsToRecords } from "../../shared/db-grid.ts";
 import { dialectFor } from "../../services/database/dialects.ts";
 import { DB_TYPES, isDbType, type DbType } from "../../shared/db-types.ts";
 import {
-  connAudit, connConfig, connTarget, connTimeoutMs, databaseParam, driverMissingResponse, holdRequestOpen, requestDatabase, resolveConn,
+  connAudit, connConfig, connTarget, connTimeoutMs, driverMissingResponse, holdRequestOpen, requestDatabase, resolveConn,
   resolveTargetConn, setRequestFileConnection, withTimeout,
 } from "./database-route-helpers.ts";
 import {
@@ -607,7 +605,6 @@ databaseRoutes.get("/connections/:id/data", async (c) => {
 
 /** POST /api/db/connections/:id/query — body: { sql } — enforces readonly */
 databaseRoutes.post("/connections/:id/query", async (c) => {
-  const startedAt = Date.now();
   try {
     const conn = resolveTargetConn(c);
     if (!conn) return c.json(err("Connection not found"), 404);
@@ -616,44 +613,16 @@ databaseRoutes.post("/connections/:id/query", async (c) => {
     // A query sends nothing until it is done, however long that takes.
     holdRequestOpen(c, 0);
 
-    const audit = {
-      ...connAudit(conn),
-      // The grid reuses this endpoint for column filters, so it says when the SQL is not user-typed.
-      source: body.source === "filter" ? ("filter" as const) : ("editor" as const),
-      operation: detectOperation(body.sql),
+    const outcome = await runConnectionQuery({
+      conn,
       sql: body.sql,
-      ...(requestDatabase(c) !== undefined ? { params: databaseParam(c) } : {}),
-    };
-
-    if (conn.readonly && !isReadOnlyQuery(body.sql, dialectFor(conn.type).name)) {
-      const message = "Connection is readonly — only SELECT queries allowed. Change this in PPM web UI.";
-      logQuery(c, { ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
-      return c.json(err(message), 403);
-    }
-
-    const config = connConfig(conn, requestDatabase(c));
-    const adapter = getAdapter(conn.type);
-    try {
-      const result = await adapter.runQuery(config, body.sql);
-      logQuery(c, {
-        ...audit,
-        status: "ok",
-        rows: rowsToRecords(result.columns, result.rows).records,
-        rowCount: result.changeType === "select" ? result.rows.length : result.rowsAffected,
-        durationMs: Date.now() - startedAt,
-      });
-      return c.json(ok(result));
-    } catch (e) {
-      // A read that writes (`SELECT nextval('s')`, a function that deletes)
-      // passes the first check and is refused by the database itself.
-      if (isReadonlyRefusal(e)) {
-        const message = readonlyRefusalMessage(e);
-        logQuery(c, { ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
-        return c.json(err(message), 403);
-      }
-      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
-      throw e;
-    }
+      caller: auditCaller(c),
+      database: requestDatabase(c),
+      // The grid reuses this endpoint for column filters, so it says when the SQL is not user-typed.
+      source: body.source === "filter" ? "filter" : "editor",
+      onAuditError: (message) => reportAuditError(c, message),
+    });
+    return outcome.ok ? c.json(ok(outcome.result)) : c.json(err(outcome.message), outcome.status);
   } catch (e) {
     // SQL refused before it reached the database — ATTACH on SQLite — is the request's own mistake.
     const refused = e as { status?: number; code?: string };

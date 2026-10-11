@@ -11,6 +11,7 @@ import { Hono, type Context } from "hono";
 import { homedir } from "node:os";
 import { ok, err } from "../../types/api.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { assertNotAssistantProject } from "../helpers/resolve-chat-project.ts";
 import { mcpOAuthFlows, McpAuthFlowNotFoundError, type McpOAuthFlows } from "../../services/mcp-oauth/mcp-oauth-flows.ts";
 import { mcpStatusProbe } from "../../services/mcp-oauth/mcp-status-probe.ts";
 import { callbackUrlFor, customRedirectUri } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
@@ -22,6 +23,7 @@ export const mcpAuthRoutes = new Hono();
 
 /** Directory whose MCP configuration applies: the project's, or the home directory. */
 function cwdFor(project: string | undefined): string {
+  assertNotAssistantProject(project);
   return project ? resolveProjectPath(project) : homedir();
 }
 

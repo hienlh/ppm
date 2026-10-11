@@ -30,7 +30,6 @@ import { RenderErrorBoundary } from "@/components/shared/markdown-error-boundary
 
 import {
   AlertCircle,
-  ShieldAlert,
   Bot,
   Copy,
   Check,
@@ -41,7 +40,9 @@ import { ChatWelcome } from "./chat-welcome";
 import { ChatScrollNav } from "./chat-scroll-nav";
 import type { VersionGroup } from "../../../types/api";
 import { QuestionCard } from "./question-card";
-import type { Question } from "./question-card";
+import { ApprovalCard } from "./approval-card";
+import { approvalQuestions, type ApprovalRequest } from "@/lib/approval-request";
+import type { AnswersById } from "../../../shared/approval-questions";
 import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 
 interface MessageListProps {
@@ -52,8 +53,9 @@ interface MessageListProps {
    * full-screen loading state — used for same-tree version swaps where the
    * prefix is identical, so only the divergent tail visibly changes. */
   keepStaleWhileLoading?: boolean;
-  pendingApproval: { requestId: string; tool: string; input: unknown } | null;
-  onApprovalResponse: (requestId: string, approved: boolean, data?: unknown) => void;
+  pendingApproval: ApprovalRequest | null;
+  /** `answersById` answers a question card, by question id. */
+  onApprovalResponse: (requestId: string, approved: boolean, answersById?: AnswersById) => void;
   isStreaming: boolean;
   phase?: SessionPhase;
   connectingElapsed?: number;
@@ -626,7 +628,7 @@ export function MessageList({
               {pendingApproval && (
                 pendingApproval.tool === "AskUserQuestion"
                   ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
-                  : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
+                  : <ApprovalCard approval={pendingApproval} onRespond={(id, approved) => onApprovalResponse(id, approved)} />
               )}
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
             </div>
@@ -748,58 +750,22 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
 
 /* ToolCard, ToolSummary, ToolDetails extracted to ./tool-cards.tsx */
 
-function ApprovalCard({
-  approval,
-  onRespond,
-}: {
-  approval: { requestId: string; tool: string; input: unknown };
-  onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
-}) {
-  return (
-    <div className="rounded-lg border-2 border-warning/40 bg-warning/10 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-warning text-sm font-medium">
-        <ShieldAlert className="size-4" />
-        <span>Tool Approval Required</span>
-      </div>
-      <div className="text-xs text-text-primary">
-        <span className="font-medium">{approval.tool}</span>
-      </div>
-      <pre className="text-xs font-mono text-text-secondary overflow-x-auto bg-background rounded p-2 border border-border">
-        {JSON.stringify(approval.input, null, 2)}
-      </pre>
-      <div className="flex gap-2">
-        <button
-          onClick={() => onRespond(approval.requestId, true)}
-          className="px-4 py-1.5 rounded bg-success text-white text-xs font-medium hover:bg-success/80 transition-colors"
-        >
-          Allow
-        </button>
-        <button
-          onClick={() => onRespond(approval.requestId, false)}
-          className="px-4 py-1.5 rounded bg-error text-white text-xs font-medium hover:bg-error/80 transition-colors"
-        >
-          Deny
-        </button>
-      </div>
-    </div>
-  );
-}
-
 /** Interactive quiz form for AskUserQuestion — renders questions with selectable options + Other */
 function AskUserQuestionCard({
   approval,
   onRespond,
 }: {
-  approval: { requestId: string; tool: string; input: unknown };
-  onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
+  approval: ApprovalRequest;
+  onRespond: (requestId: string, approved: boolean, answersById?: AnswersById) => void;
 }) {
-  const input = approval.input as { questions?: Question[] };
-  const questions = input.questions ?? [];
+  // Codex's questions arrive normalized beside an input the form cannot read; Claude's are read
+  // off its tool input when the server sent none (an older server).
+  const questions = approvalQuestions(approval);
 
   return (
     <QuestionCard
       questions={questions}
-      onSubmit={(answers) => onRespond(approval.requestId, true, answers)}
+      onSubmit={(answersById) => onRespond(approval.requestId, true, answersById)}
       onSkip={() => onRespond(approval.requestId, false)}
     />
   );

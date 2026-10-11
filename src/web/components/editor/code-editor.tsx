@@ -43,6 +43,7 @@ import { AUDIO_EXTS, IMAGE_EXTS, SQLITE_EXTS, VIDEO_EXTS } from "@/components/os
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
 import { reserveLightbulbGutter } from "@/lib/monaco-lightbulb-gutter";
+import { useTabLiveContent } from "@/lib/assistant-ui/tab-live-content";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -109,6 +110,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const [unsaved, setUnsaved] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestContentRef = useRef<string>("");
+  // The text as typed, and whether it is saved, for the PPM Assistant to read and to know a close loses work.
+  useTabLiveContent(tabId, () => ({ kind: "editor", dirty: unsaved, text: latestContentRef.current }));
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   // Mirrors editorRef as state, so hooks that must react to the editor existing
   // (inline blame) re-run on mount instead of reading a ref that is still null.

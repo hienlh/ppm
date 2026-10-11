@@ -195,7 +195,7 @@ class JiraDebugSessionService {
       updateResultStatus(resultId, "running", { sessionId: session.id });
       this.broadcastStatusChange(resultId, result.issueKey, "running", session.id);
 
-      // bypassPermissions: automated debug sessions run without user approval (same as PPMBot)
+      // bypassPermissions: automated debug sessions run without user approval
       const opts = { permissionMode: "bypassPermissions" as PermissionMode };
       const events = chatService.sendMessage(session.providerId, session.id, prompt, { ...opts, origin: "jira" });
 

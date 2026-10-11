@@ -851,6 +851,68 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(done.numTurns).toBe(1);
     });
 
+    // What the CLI sends when the API rejects the credentials: a synthetic assistant message
+    // carrying `error`, then a result that still says "success" (with `is_error` set). Read as
+    // is, the turn's `done` called a turn that produced nothing a success.
+    const authFailure = () => ({
+      type: "assistant",
+      error: "authentication_failed",
+      message: {
+        model: "<synthetic>",
+        role: "assistant",
+        content: [{ type: "text", text: "Failed to authenticate. API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}" }],
+      },
+    });
+
+    async function drainTurn(items: Array<{ type: string; message?: unknown }>): Promise<ChatEvent[]> {
+      mockQueryFn.mockReturnValue(createMockQueryIterator(items));
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) events.push(event);
+      return events;
+    }
+
+    it("reports a turn that failed authentication as failed, not as a success", async () => {
+      const events = await drainTurn([
+        authFailure(),
+        { type: "result", subtype: "success", is_error: true, num_turns: 1, total_cost_usd: 0 } as any,
+      ]);
+
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+      expect(errors).toEqual(["API authentication failed. Check your account credentials in Settings → Accounts."]);
+      const dones = events.filter((e) => e.type === "done") as any[];
+      expect(dones).toHaveLength(1);
+      expect(dones[0].resultSubtype).toBe("error_during_execution");
+    });
+
+    it("reports the failure even when the result carries no is_error flag", async () => {
+      // The 401 is recognised from the text alone, and the result says nothing either way.
+      const { error: _error, ...textOnly } = authFailure();
+      const events = await drainTurn([textOnly, { type: "result", subtype: "success", num_turns: 0 } as any]);
+
+      // The auth error is the reason nothing came back; no second "0 turns" error replaces it.
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as any).message);
+      expect(errors).toEqual(["API authentication failed. Check your account credentials in Settings → Accounts."]);
+      expect((events.find((e) => e.type === "done") as any).resultSubtype).toBe("error_during_execution");
+    });
+
+    it("treats a success result flagged is_error as a failed turn", async () => {
+      const events = await drainTurn([{ type: "result", subtype: "success", is_error: true, num_turns: 1 } as any]);
+      expect((events.find((e) => e.type === "done") as any).resultSubtype).toBe("error_during_execution");
+    });
+
+    it("does not carry a failed turn over to the next turn of the same subprocess", async () => {
+      const events = await drainTurn([
+        authFailure(),
+        { type: "result", subtype: "success", is_error: true, num_turns: 1 } as any,
+        { type: "assistant", message: { content: [{ type: "text", text: "Hello" }] } },
+        { type: "result", subtype: "success", num_turns: 1 } as any,
+      ]);
+
+      const dones = events.filter((e) => e.type === "done") as any[];
+      expect(dones.map((d) => d.resultSubtype)).toEqual(["error_during_execution", "success"]);
+    });
+
     it("still reports an empty result that has no background origin", async () => {
       const iter = createMockQueryIterator([
         { type: "result", subtype: "success", num_turns: 0 },

@@ -32,8 +32,9 @@ import type { DbColumnRef, DbForeignKey, DbObjectList, DbObjectRef, DbTableStruc
 import { mysqlObjectSql } from "./database/object-sql-mysql.ts";
 import type {
   DbCatalogTable, DbColumnInfo, DbPagedData, DbProbe, DbQuerySession, DbQueryResult, DbRowSet, DbRunResult, DbStatement, DbStatementOutcome,
-  DbTableInfo, DbWriteSession, StreamRowsOptions,
+  DbTableInfo, DbWriteSession, RunQueryOptions, StreamRowsOptions,
 } from "../types/database.ts";
+import { armQueryStop, QueryStoppedError, throwIfAborted } from "./database/query-stop.ts";
 import {
   MYSQL_SYSTEM_SCHEMAS, mysqlDescribeTable, mysqlGetStructure, mysqlListColumns, mysqlListForeignKeys, mysqlListObjects, mysqlListTables,
   mysqlServerInfo, mysqlTableColumns, parseServerVersion, type MysqlRead, type MysqlServerInfo,
@@ -87,6 +88,10 @@ const RETRYABLE_CONNECT_ERRORS = new Set(["ECONNREFUSED", "ETIMEDOUT", "EHOSTUNR
 
 /** `KILL QUERY` from another session, and MySQL's `max_execution_time`. */
 const ER_QUERY_INTERRUPTED = 1317;
+/** MySQL: a SELECT ran past the session's `max_execution_time`. */
+const ER_QUERY_TIMEOUT = 3024;
+/** MariaDB: a statement ran past the session's `max_statement_time`. */
+const ER_STATEMENT_TIMEOUT = 1969;
 /** Server status flag: the session is inside a transaction. */
 const SERVER_STATUS_IN_TRANS = 0x0001;
 
@@ -727,6 +732,19 @@ class MysqlService {
     }
   }
 
+  /**
+   * The server's own time limit for every statement of this session, so a read stops even if PPM
+   * is no longer there to kill it: `max_execution_time` (milliseconds, SELECT only) on MySQL,
+   * `max_statement_time` (seconds) on MariaDB. Only on a session that is closed afterwards. It is
+   * set a second past PPM's own limit: a `SLEEP()` the server's limit interrupts ends
+   * *successfully*, so PPM's `KILL QUERY` should land first, where the stop is known and reported.
+   */
+  private async limitStatementTime(connectionString: string, conn: PoolConnection, timeoutMs: number): Promise<void> {
+    const info = await this.serverInfo(connectionString, this.reader(conn));
+    const ms = Math.max(1, Math.round(timeoutMs)) + 1_000;
+    await conn.query(info.mariadb ? `SET SESSION max_statement_time = ${ms / 1000}` : `SET SESSION max_execution_time = ${ms}`);
+  }
+
   private async killQuery(connectionString: string, threadId: number): Promise<void> {
     if (!Number.isInteger(threadId) || threadId <= 0) return;
     try {
@@ -816,16 +834,38 @@ class MysqlService {
    * A transaction left open is rolled back and reported rather than silently
    * lost with the session.
    */
-  async runQuery(connectionString: string, sqlText: string): Promise<DbRunResult> {
+  async runQuery(connectionString: string, sqlText: string, opts?: RunQueryOptions): Promise<DbRunResult> {
+    throwIfAborted(opts);
     return this.withConnection(connectionString, async (conn) => {
       const statements = await this.statementsFor(connectionString, conn, sqlText);
+      if (opts?.timeoutMs) await this.limitStatementTime(connectionString, conn, opts.timeoutMs);
+      // `KILL QUERY` from a second session, the one way both servers share to stop a statement.
+      // The session is closed afterwards (`discard`), so the kill cannot reach a later borrower.
+      const killing: { done: Promise<void> | null } = { done: null };
+      const stop = armQueryStop(opts, () => { killing.done = this.killQuery(connectionString, conn.threadId); });
       const start = performance.now();
       let last: { rows: unknown[][]; fields: FieldPacket[] } | null = null;
       let rowsAffected = 0;
-      for (const statement of statements) {
-        const answer = readAnswer(await this.runStatement(conn, statement));
-        rowsAffected += answer.affected;
-        if (answer.rowSets.length > 0) last = answer.rowSets[answer.rowSets.length - 1]!;
+      try {
+        for (const statement of statements) {
+          stop.throwIfStopped();
+          const answer = readAnswer(await this.runStatement(conn, statement));
+          rowsAffected += answer.affected;
+          if (answer.rowSets.length > 0) last = answer.rowSets[answer.rowSets.length - 1]!;
+        }
+        // A `SLEEP()` that `KILL QUERY` reached ends successfully on MySQL: only the stop knows.
+        stop.throwIfStopped();
+      } catch (e) {
+        if (e instanceof QueryStoppedError) throw e;
+        const reason = stop.reason();
+        if (reason) throw new QueryStoppedError(reason, opts?.timeoutMs);
+        // The server's own limit (`limitStatementTime`) can land before the client's timer.
+        const errno = (e as { errno?: number }).errno;
+        if (opts?.timeoutMs && (errno === ER_QUERY_TIMEOUT || errno === ER_STATEMENT_TIMEOUT)) throw new QueryStoppedError("timeout", opts.timeoutMs);
+        throw e;
+      } finally {
+        stop.dispose();
+        if (killing.done) await killing.done;
       }
       const executionTimeMs = Math.round(performance.now() - start);
       await this.refuseOpenTransaction(conn);
@@ -1028,9 +1068,9 @@ class ReadonlyMysqlService extends MysqlService {
     return this.readOnly(conn, () => super.count(conn, stmt));
   }
 
-  override async runQuery(connectionString: string, sqlText: string): Promise<DbRunResult> {
+  override async runQuery(connectionString: string, sqlText: string, opts?: RunQueryOptions): Promise<DbRunResult> {
     this.statementsOf(sqlText);
-    return super.runQuery(connectionString, sqlText);
+    return super.runQuery(connectionString, sqlText, opts);
   }
 
   /** A Query tab statement that is not a plain read is refused before it is sent; a read runs READ ONLY (`runStatement`). */

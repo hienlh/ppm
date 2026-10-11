@@ -4,6 +4,7 @@ import {
   extractMetricsPort,
   parseQuickTunnelResponse,
   mergeTunnelSources,
+  withCurrentPpmTunnels,
   isAppTunnel,
   type TunnelEntry,
 } from "../../../src/services/tunnel-registry-parse.ts";
@@ -132,6 +133,32 @@ describe("mergeTunnelSources", () => {
     });
     expect(merged[0]!.port).toBe(9000);
     expect(merged[0]!.url).toBe("https://y.trycloudflare.com");
+  });
+});
+
+describe("withCurrentPpmTunnels (the process scan failed)", () => {
+  const entry = (pid: number, source: TunnelEntry["source"], port: number | null = null): TunnelEntry => ({
+    pid, port, url: null, source, protected: source === "app", status: "running",
+  });
+
+  it("lists a forward PPM started since the last good scan, with other programs' tunnels as last seen", () => {
+    const served = withCurrentPpmTunnels([entry(10, "external", 3000), entry(20, "app", 8080)], [entry(30, "ppm", 5173)]);
+    expect(served.map((t) => [t.pid, t.source]).sort()).toEqual([[10, "external"], [20, "app"], [30, "ppm"]]);
+  });
+
+  it("drops a PPM forward stopped since the last good scan", () => {
+    const served = withCurrentPpmTunnels([entry(10, "external"), entry(40, "ppm", 4000)], []);
+    expect(served.map((t) => t.pid)).toEqual([10]);
+  });
+
+  it("serves only PPM's own when no scan ever succeeded", () => {
+    expect(withCurrentPpmTunnels([], [entry(30, "ppm", 5173)]).map((t) => t.pid)).toEqual([30]);
+  });
+
+  it("a pid now known as PPM's is listed once, as PPM's", () => {
+    const served = withCurrentPpmTunnels([entry(50, "external", 6000)], [entry(50, "ppm", 6000)]);
+    expect(served).toHaveLength(1);
+    expect(served[0]!.source).toBe("ppm");
   });
 });
 

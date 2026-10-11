@@ -42,7 +42,12 @@ export function logQueryAs(caller: AuditCaller, fields: AuditFields): string | n
  */
 export function logQuery(c: Context, fields: AuditFields): void {
   const failed = logQueryAs(auditCaller(c), fields);
-  if (failed !== null) c.header("x-ppm-audit-error", failed.slice(0, 200).replace(/[\r\n]+/g, " "));
+  if (failed !== null) reportAuditError(c, failed);
+}
+
+/** Tell the client its statement ran but could not be logged. */
+export function reportAuditError(c: Context, message: string): void {
+  c.header("x-ppm-audit-error", message.slice(0, 200).replace(/[\r\n]+/g, " "));
 }
 
 /**

@@ -6,6 +6,7 @@ import { ok, err } from "../../types/api.ts";
 import { browserFacingHost, guardPreviewAsset as guardAsset, isInsideRoot as inside, previewDenied as denied } from "../helpers/preview-asset-guard.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { assertNotAssistantProject } from "../helpers/resolve-chat-project.ts";
 import { buildDesignCsp } from "../../services/design/preview/design-csp.ts";
 import { injectPlain } from "../../services/design/preview/design-preview-html.ts";
 import { decodeDesignText } from "../../services/design/source/design-source-file.ts";
@@ -55,6 +56,7 @@ export function createHtmlPreviewRoutes(now = Date.now) {
         candidate = resolvePath(body.filePath);
       } else {
         if (!body.projectName) return c.json(err("projectName is required for relative paths"), 400);
+        assertNotAssistantProject(body.projectName);
         const projectRoot = resolveProjectPath(body.projectName);
         candidate = resolve(projectRoot, body.filePath);
         if (!inside(projectRoot, candidate)) denied();
