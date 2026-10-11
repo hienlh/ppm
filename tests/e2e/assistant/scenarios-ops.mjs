@@ -356,7 +356,9 @@ export function plan(ctx) {
       const pid = own.pid;
       if (dev.kind === "desktop") {
         const row = dev.page.locator('[data-testid="forward-row"]', { hasText: `:${port}` }).first();
-        await row.waitFor({ timeout: Math.max(1000, 11000 - (Date.now() - startedAt)) });
+        // The panel polls every 10 s, and each poll's process scan may take its full 12 s on a
+        // loaded host before falling back to this PPM's own forwards.
+        await row.waitFor({ timeout: Math.max(1000, 25000 - (Date.now() - startedAt)) });
         await shot(dev, "s18-port-forwarding-panel");
       }
 
