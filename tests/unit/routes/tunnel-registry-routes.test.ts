@@ -8,6 +8,7 @@ import type { TunnelEntry } from "../../../src/services/tunnel-registry-parse.ts
 // SyntaxError. Spreading the real exports keeps every non-overridden export intact.
 import * as RealWindowsProcessTree from "../../../src/services/windows-process-tree.ts";
 import * as RealTailscaleForward from "../../../src/services/port-forward/tailscale-forward.ts";
+import * as RealTunnelSpawn from "../../../src/server/routes/tunnel-spawn.ts";
 import type { TailscaleForward } from "../../../src/services/port-forward/tailscale-forward.ts";
 import { forgetFramingOriginsForTest, framingOrigins } from "../../../src/services/port-forward/frame-ancestors.ts";
 
@@ -36,6 +37,9 @@ mock.module("../../../src/services/windows-process-tree.ts", () => ({
 }));
 
 mock.module("../../../src/server/routes/tunnel-spawn.ts", () => ({
+  // The real exports first: `port-forwarding.ts` imports `MAX_PROBE_FAILURES` from this module,
+  // and a test file loading the whole server after this one would otherwise fail to link it.
+  ...RealTunnelSpawn,
   activeTunnels: new Map(),
   spawnTunnelProcess: async (_port: number) => ({
     process: { pid: 111 } as any,
