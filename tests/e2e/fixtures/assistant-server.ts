@@ -22,7 +22,8 @@
  * first turn whose message contains its `match`, or on whichever turn comes next.
  *
  * With PPM_ASSISTANT_FAKE_TELEGRAM=1 the Assistant's bot points at a fake Bot API and the bridge
- * runs (`assistant-telegram-fixture-setup.ts`).
+ * runs (`assistant-telegram-fixture-setup.ts`). With PPM_ASSISTANT_FAKE_CLOUDFLARED=1 the fixture
+ * refuses to start unless `<PPM_HOME>/bin/cloudflared` is `tests/fixtures/fake-cloudflared.ts`.
  * The "codex" provider renames each new session on its first turn (`session_migrated`), as Codex
  * does when its thread id replaces PPM's draft id. Sessions and transcripts are kept in a JSON
  * file (PPM_ASSISTANT_FIXTURE_STATE) and Claude's are also written where the CLI writes them, so
@@ -71,6 +72,14 @@ configService.set("ai", {
     codex: { type: "mock", permission_mode: "bypassPermissions" },
   },
 });
+
+// A forward spawns whatever sits where PPM looks for cloudflared, and downloads the real one when
+// nothing does. A run that forwards ports must have put the stand-in there first.
+if (process.env.PPM_ASSISTANT_FAKE_CLOUDFLARED === "1") {
+  const { getCloudflaredPath } = await import("../../../src/services/cloudflared.service");
+  const binary = getCloudflaredPath();
+  if (!existsSync(binary) || !readFileSync(binary).includes("https://e2e-")) throw new Error(`${binary} is not the fake cloudflared`);
+}
 
 const telegram = process.env.PPM_ASSISTANT_FAKE_TELEGRAM === "1"
   ? await (await import("./assistant-telegram-fixture-setup")).setupFakeTelegram({ resuming })
@@ -501,6 +510,13 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     process.env[APPROVAL_TIMEOUT_ENV] = String(ms);
     return json({ ok: true, effective: approvalTimeoutMs() });
   }
+  // PPM's own tunnel settings (the public link's switch, a named tunnel), read or replaced whole:
+  // the e2e restores a switch it turned off and plants a stand-in named-tunnel token whose
+  // absence from every answer it then checks. Only this scratch database is written.
+  if (path === "/__assistant-test/tunnel-config") {
+    if (req.method === "POST") configService.set("tunnel", await req.json() as never);
+    return json({ tunnel: configService.get("tunnel") ?? null });
+  }
   // A restart, or the end of the run: the shells this process started go with it rather than
   // outliving it, then the process ends without any of its pending calls answering.
   if (path === "/__assistant-test/exit" && req.method === "POST") {
@@ -536,7 +552,10 @@ const server = Bun.serve<SocketData>({
     if (url.pathname.startsWith("/ws/")) return new Response("Socket disabled in fixture", { status: 404 });
     // The Assistant's own bot settings are what the Telegram e2e drives (its Bot API is the fake).
     const assistantBot = telegram !== null && /^\/api\/settings\/clawbot(?:\/|$)/.test(url.pathname);
-    if (/^\/api\/(?:accounts|tunnels?|preview|upgrade|codex-accounts|proxy|mcp|remote-desktop)(?:\/|$)/.test(url.pathname) ||
+    // What the Port Forwarding panel reads, so it can show a forward the Assistant started. Reads
+    // only: starting or stopping anything from the browser stays refused.
+    const tunnelRead = req.method === "GET" && /^\/api\/(?:tunnels(?:\/transports)?|tunnel(?:\/named\/status)?)$/.test(url.pathname);
+    if ((!tunnelRead && /^\/api\/(?:accounts|tunnels?|preview|upgrade|codex-accounts|proxy|mcp|remote-desktop)(?:\/|$)/.test(url.pathname)) ||
         (!assistantBot && /^\/api\/settings\/(?:telegram|clawbot|ppmbot)/.test(url.pathname))) return new Response("Disabled in fixture", { status: 403 });
     if (!url.pathname.startsWith("/api/")) {
       const webDir = process.env.PPM_ASSISTANT_WEB_DIR;

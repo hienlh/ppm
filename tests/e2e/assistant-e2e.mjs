@@ -5,8 +5,10 @@
 // scenario on a desktop and a phone viewport: separate sessions, the chatting device's screen,
 // navigation across projects, reading tabs, a real SQLite database behind approval cards, cards
 // that survive a reload / give way to a new message / time out / do not survive a server restart,
-// sending into another chat, a Codex-style session rename, external images and WebFetch.
-// No live credentials, no real PPM data.
+// sending into another chat, a Codex-style session rename, external images and WebFetch; then the
+// git, schedule and tunnel tools (scenarios 12–20, tests/e2e/assistant/scenarios-ops.mjs) against a
+// temp repository with a bare `file://` remote, PPM's schedules table and a fake cloudflared
+// compiled into the scratch PPM_HOME. No live credentials, no real PPM data, no network.
 //
 //   PPM_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node tests/e2e/assistant-e2e.mjs
 //
@@ -18,7 +20,7 @@
 // A check the product fails because of a reported, not-yet-fixed bug prints BLOCKED-BY-BUG (see
 // KNOWN_BUGS) instead of failing the run; any other outcome of that check fails as usual.
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
@@ -27,12 +29,14 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
+import * as ops from "./assistant/scenarios-ops.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-assistant-e2e-"));
 const artifacts = process.env.PPM_ASSISTANT_ARTIFACTS ? resolve(process.env.PPM_ASSISTANT_ARTIFACTS) : join(sandbox, "artifacts");
 const shots = process.env.PPM_ASSISTANT_SCREENSHOTS ? resolve(process.env.PPM_ASSISTANT_SCREENSHOTS) : join(artifacts, "screenshots");
 const ppm = join(sandbox, "ppm"), home = join(sandbox, "home");
 const alpha = join(sandbox, "alpha"), beta = join(sandbox, "beta"), outside = join(sandbox, "outside");
+const remote = join(sandbox, "alpha-remote.git");
 await Promise.all([artifacts, shots, ppm, home, alpha, beta, outside, join(alpha, "data")].map((p) => mkdir(p, { recursive: true })));
 const ONLY = new Set((process.env.PPM_ASSISTANT_E2E_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 const wanted = (id) => ONLY.size === 0 || ONLY.has(id);
@@ -59,7 +63,6 @@ await writeFile(join(alpha, "notes.txt"), "saved line one\n");
 await writeFile(join(beta, "README.md"), "# Beta\n\nBETA-README-CONTENT\n");
 const OUTSIDE_FILE = join(outside, "private-notes.txt");
 await writeFile(OUTSIDE_FILE, "OUTSIDE-FILE-CONTENT\n");
-for (const dir of [alpha, beta]) await command("git", ["init", "-q", dir]);
 const SHOP_DB = join(alpha, "data", "shop.sqlite");
 {
   const db = new DatabaseSync(SHOP_DB);
@@ -67,6 +70,15 @@ const SHOP_DB = join(alpha, "data", "shop.sqlite");
   db.exec("INSERT INTO orders (id, item, qty) VALUES (1, 'apples', 3), (2, 'pears', 5), (3, 'plums', 8)");
   db.close();
 }
+// alpha: a repository with a first commit and a bare remote; beta: a container of two repositories.
+await ops.setupRepositories({ command, alpha, beta, remote });
+
+// The forwards spawn whatever sits where PPM looks for cloudflared — and download the real one when
+// nothing does — so the stand-in is compiled there first and checked to be the stand-in.
+const FAKE_CLOUDFLARED = join(ppm, "bin", process.platform === "win32" ? "cloudflared.exe" : "cloudflared");
+await mkdir(join(ppm, "bin"), { recursive: true });
+await command("bun", ["build", "--compile", "tests/fixtures/fake-cloudflared.ts", "--outfile", FAKE_CLOUDFLARED]);
+assert(readFileSync(FAKE_CLOUDFLARED).includes("https://e2e-"), "the compiled cloudflared is the fake");
 /** Reads the shop database directly, outside PPM: what really changed. */
 function shop(sql) {
   const db = new DatabaseSync(SHOP_DB, { readOnly: true });
@@ -91,6 +103,7 @@ const env = {
   PPM_HTML_TEST_PORT: String(port), PPM_ASSISTANT_WEB_DIR: webDir,
   PPM_ASSISTANT_FIXTURE_STATE: join(sandbox, "scripted-provider-state.json"),
   PPM_ASSISTANT_APPROVAL_TIMEOUT_MS: String(APPROVAL_TIMEOUT_MS),
+  PPM_ASSISTANT_FAKE_CLOUDFLARED: "1",
 };
 delete env.PPM_ALLOW_PROD_DB;
 delete env.PPM_ASSISTANT_FIXTURE_RESUME;
@@ -133,6 +146,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fixtureState = () => api("/__assistant-test/calls");
 /** Queues the ops the next turn of `sessionId` (or, without one, the next new session) runs. */
 const script = (label, ops, sessionId) => api("/__assistant-test/script", { method: "POST", body: JSON.stringify({ label, ops, ...(sessionId ? { sessionId } : {}) }) });
+/** Queues the ops of the first turn, in any session, whose message contains `match`. */
+const scriptMatch = (label, ops, match) => api("/__assistant-test/script", { method: "POST", body: JSON.stringify({ label, ops, match }) });
 const recordsOf = async (label) => (await fixtureState()).calls.filter((c) => c.label === label);
 const turnOf = async (label) => (await fixtureState()).turns.find((t) => t.label === label);
 /** Every call of the turn, once each has its answer. */
@@ -264,7 +279,7 @@ async function openDevice(name, kind, opts = {}) {
     if (window.top !== window) return;
     localStorage.setItem("ppm-onboarding-v1", JSON.stringify({ version: 1, status: "dismissed", familiarity: null, goal: null, currentStep: null, completed: [], skipped: [], projectName: null, sessionId: null }));
   });
-  const dev = { name, kind, context, page: null, frames: [], errors: [], shots: [], terminalOut: "", plain: opts.plain === true };
+  const dev = { name, kind, context, page: null, frames: [], globalFrames: [], errors: [], shots: [], terminalOut: "", plain: opts.plain === true };
   await newPage(dev);
   devices[name] = dev;
   return dev;
@@ -276,6 +291,11 @@ async function newPage(dev) {
   page.on("websocket", (ws) => {
     // A terminal's output, as its socket delivered it: readable whatever renders the terminal.
     if (ws.url().includes("/terminal/")) ws.on("framereceived", (f) => { dev.terminalOut += String(f.payload); });
+    // App-wide news (`git:changed`, `schedules:changed`): what lets an open panel refresh by itself.
+    if (/\/ws\/global(?:\?|$)/.test(ws.url())) {
+      ws.on("framereceived", (f) => { try { const data = JSON.parse(String(f.payload)); dev.globalFrames.push({ type: data.type, at: Date.now(), data }); } catch { /* not JSON */ } });
+      return;
+    }
     if (!ws.url().includes("/chat/")) return;
     ws.on("framereceived", (f) => { try { const data = JSON.parse(String(f.payload)); dev.frames.push({ type: data.type, at: Date.now(), data }); } catch { /* not JSON */ } });
   });
@@ -802,6 +822,11 @@ try {
       try { await d.page.screenshot({ path: join(artifacts, `failure-${dev}-${id}.png`) }); } catch { /* page gone */ }
     }
   };
+  const opsScenarios = ops.plan({
+    web, port, paths: { alpha, beta, remote, ppm }, command, api, until, sleep, script, scriptMatch, turnOf, recordsOf, answered,
+    send, turn, turnDone, waitCard, answerCard, card, newSession, openAssistant, shot, record, parse,
+    backendPid: () => backend.pid,
+  });
   for (const dev of [desk, phone]) {
     await run("s1", dev.name, () => s1(dev));
     if (dev === desk) await run("s2", "desktop+phone", () => s2(desk, phone));
@@ -813,6 +838,7 @@ try {
     await run("s8", dev.name, () => s8(dev));
     await run("s9", dev.name, () => s9(dev));
     await run("s10", dev.name, () => s10(dev));
+    for (const [id, fn] of opsScenarios) await run(id, dev.name, () => fn(dev));
   }
   // Expected: Playwright's service-worker blocking, which a sandboxed frame refuses.
   for (const dev of Object.values(devices)) {
@@ -831,5 +857,15 @@ try {
   for (const f of failures) console.error(`FAILED [${f.viewport}] ${f.id}: ${f.error.split("\n")[0]}`);
   for (const b of blocked) console.log(`BLOCKED-BY-BUG [${b.viewport}] ${b.id} ${b.bug}`);
   console.log(`${results.length} passed, ${failures.length} failed, ${blocked.length} blocked by known product bugs; artifacts in ${artifacts}`);
-  if (failures.length) process.exitCode = 1;
+  // The fake cloudflared is ~100 MB and tells nothing about a failure: it goes either way.
+  try { rmSync(join(ppm, "bin"), { recursive: true, force: true }); } catch (e) { console.error(`could not remove the fake cloudflared: ${e.message}`); }
+  if (failures.length) {
+    process.exitCode = 1;
+  } else if (process.env.PPM_ASSISTANT_KEEP !== "1") {
+    // Green: the scratch PPM (the fake cloudflared alone is ~100 MB), home and repositories go;
+    // the artifacts stay where the summary line points.
+    for (const dir of [ppm, home, alpha, beta, outside, remote, ...(process.env.PPM_ASSISTANT_WEB_DIR ? [] : [webDir])]) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch (e) { console.error(`could not remove ${dir}: ${e.message}`); }
+    }
+  }
 }

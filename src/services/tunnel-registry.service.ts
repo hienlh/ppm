@@ -21,6 +21,7 @@ import {
   extractMetricsPort,
   parseQuickTunnelResponse,
   mergeTunnelSources,
+  withCurrentPpmTunnels,
   isAppTunnel,
   type AppShare,
   type TunnelEntry,
@@ -228,14 +229,19 @@ export async function listTunnels(
 ): Promise<TunnelEntry[]> {
   if (!opts.force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.data;
 
+  const ppm: TunnelEntry[] = ppmTunnels.map((t) => ({
+    pid: t.pid, port: t.port, url: t.url, source: "ppm" as const,
+    protected: false, status: "running" as const, startedAt: t.startedAt,
+  }));
+
   let raw: RawProc[];
   try {
     raw = enumerateCloudflared();
   } catch (e) {
     // Transient WMI/powershell timeout — keep showing the last known tunnels
-    // rather than flickering the panel to empty.
+    // rather than flickering the panel to empty; PPM's own are known without a scan.
     console.warn("[tunnel-registry] enumerate failed, serving last-good:", (e as Error)?.message ?? e);
-    return lastGood ?? cache?.data ?? [];
+    return withCurrentPpmTunnels(lastGood ?? cache?.data ?? [], ppm);
   }
   const external: TunnelEntry[] = raw.map((p) => {
     const parsed = parseCloudflaredCmdline(p.cmdline);
@@ -253,11 +259,6 @@ export async function listTunnels(
   // Keep the parsed metrics addr per pid for URL recovery (not on the entry — secret hygiene).
   const metricsByPid = new Map<number, string | null>();
   for (const p of raw) metricsByPid.set(p.pid, parseCloudflaredCmdline(p.cmdline).metricsAddr);
-
-  const ppm: TunnelEntry[] = ppmTunnels.map((t) => ({
-    pid: t.pid, port: t.port, url: t.url, source: "ppm" as const,
-    protected: false, status: "running" as const, startedAt: t.startedAt,
-  }));
 
   const merged = mergeTunnelSources({ external, ppm, app: [] });
 

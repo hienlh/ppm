@@ -134,6 +134,37 @@ describe("scheduler-core SchedulerService", () => {
     expect(runs[0]!.error).toBe("kaboom");
   });
 
+  it("tells the run-finished listener once the run is stored, on success", async () => {
+    const id = makeDueSchedule();
+    const heard: Array<{ scheduleId: number; runId: number; status: string; lastRunAt: string | null }> = [];
+    const announcing = new SchedulerService(mockRunner, (scheduleId, runId) => {
+      heard.push({ scheduleId, runId, status: listScheduleRuns(scheduleId)[0]!.status, lastRunAt: getSchedule(scheduleId)!.last_run_at });
+    });
+    const { runId } = announcing.runJobNow(id);
+    await settle();
+    expect(heard).toEqual([]); // still running: nothing to announce yet
+    await finishRun();
+    expect(heard).toHaveLength(1);
+    expect(heard[0]).toMatchObject({ scheduleId: id, runId, status: "done" });
+    expect(heard[0]!.lastRunAt).not.toBeNull();
+  });
+
+  it("tells the run-finished listener on failure too, and a throwing listener changes nothing", async () => {
+    const id = makeDueSchedule();
+    const heard: number[] = [];
+    const failing = new SchedulerService({
+      ensureScheduleSession: () => Promise.reject(new Error("no session")),
+      runScheduleOnce: mockRunner.runScheduleOnce,
+    }, (_scheduleId, runId) => { heard.push(runId); throw new Error("listener broke"); });
+    const { runId } = failing.runJobNow(id);
+    await Bun.sleep(10);
+    expect(heard).toEqual([runId]);
+    const runs = listScheduleRuns(id);
+    expect(runs[0]!.status).toBe("error");
+    expect(runs[0]!.error).toBe("no session");
+    expect(failing.isRunning(id)).toBe(false);
+  });
+
   it("records error run when ensureScheduleSession rejects", async () => {
     const id = makeDueSchedule();
     const failing = new SchedulerService({

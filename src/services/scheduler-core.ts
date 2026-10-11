@@ -27,13 +27,20 @@ export function nextFireAt(cronExpr: string): string | null {
   return new Cron(cronExpr).nextRun()?.toISOString() ?? null;
 }
 
+/**
+ * Told once a run's outcome and the schedule's `last_run_at` are stored, whether the run
+ * succeeded or failed — so an open run history can be read again. Must not throw; a throw is
+ * logged and ignored, never recorded against the run.
+ */
+export type RunFinishedListener = (scheduleId: number, runId: number) => void;
+
 export class SchedulerService {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   // Refcount, not a Set: run-now can overlap a tick-run for the same id, and the
   // first finisher must not drop the guard while the second is still executing.
   private active = new Map<number, number>();
 
-  constructor(private runner: SchedulerRunner) {}
+  constructor(private runner: SchedulerRunner, private onRunFinished?: RunFinishedListener) {}
 
   start(): void {
     if (this.tickTimer) return;
@@ -145,6 +152,11 @@ export class SchedulerService {
         });
       } catch (e) {
         log.warn(`failed to advance schedule ${schedule.id}: ${(e as Error).message}`);
+      }
+      try {
+        this.onRunFinished?.(schedule.id, runId);
+      } catch (e) {
+        log.warn(`run-finished listener failed for schedule ${schedule.id}: ${(e as Error).message}`);
       }
     }
   }

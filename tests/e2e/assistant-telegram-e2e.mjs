@@ -12,6 +12,8 @@
 // runs the installed Chrome. Screenshots and one transcript of the fake Telegram chats per scenario
 // go to PPM_ASSISTANT_TG_SHOTS (default: the plan's visuals/e2e); PPM_ASSISTANT_TG_ONLY=s1,s5 runs a
 // subset. No real Telegram, no real model, no real PPM data: PPM_HOME and HOME are scratch folders.
+// Scenarios 23–27 (assistant-telegram/scenarios-ops.mjs) ask for git, schedule and tunnel changes
+// from Telegram, against alpha as a temp repository.
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -23,6 +25,7 @@ import { browserKit, fixtureApi, phone, startChild, transcript, until } from "./
 import * as sync from "./assistant-telegram/scenarios-sync.mjs";
 import * as watch from "./assistant-telegram/scenarios-watch.mjs";
 import * as bot from "./assistant-telegram/scenarios-bot.mjs";
+import * as ops from "./assistant-telegram/scenarios-ops.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-assistant-tg-e2e-"));
 const shotsDir = resolve(process.env.PPM_ASSISTANT_TG_SHOTS ?? "plans/261010-2243-ppm-assistant-telegram-hub/visuals/e2e");
@@ -32,6 +35,8 @@ const alpha = join(sandbox, "alpha"), beta = join(sandbox, "beta");
 await Promise.all([shotsDir, logs, ppm, home, alpha, beta].map((p) => mkdir(p, { recursive: true })));
 await writeFile(join(alpha, "README.md"), "# Alpha\n\nThe alpha project.\n");
 await writeFile(join(beta, "README.md"), "# Beta\n\nBETA-README-CONTENT\n");
+// The git tools' scenarios commit in alpha.
+await ops.setupRepository(alpha);
 const ONLY = new Set((process.env.PPM_ASSISTANT_TG_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 const wanted = (id) => ONLY.size === 0 || ONLY.has(id);
 // A full run replaces every screenshot and transcript, so none left over from an older run is mistaken for this one's.
@@ -57,6 +62,7 @@ async function freePort() {
 const CHATS = {
   owner: 1001, second: 1002, noUser: 1003, phoneRun: 1005, restartDraft: 1006, restartCard: 1007,
   commands: 1008, cards: 1009, failedWake: 1010, quietWake: 1011, longTurn: 1012, codexRename: 1013,
+  ops: 1014, opsLong: 1015,
 };
 const SEEDED = [
   ...Object.entries(CHATS).filter(([k]) => k !== "noUser").map(([k, id]) => [String(id), String(id), `Phone ${k}`]),
@@ -166,6 +172,7 @@ try {
   await run("s4", "phone", [CHATS.phoneRun], () => sync.s4(ctx, mobile, CHATS.phoneRun, state.phoneRun));
   await run("s21", "desktop+phone", [CHATS.owner], () => sync.s21(ctx, CHATS.owner, state.owner, state.phoneRun));
   for (const [id, viewport, chats, fn] of watch.plan(ctx, state, { desk, mobile })) await run(id, viewport, chats, fn);
+  for (const [id, viewport, chats, fn] of ops.plan(ctx, state, { desk, mobile })) await run(id, viewport, chats, fn);
   for (const [id, viewport, chats, fn] of bot.plan(ctx, state, { desk, mobile })) await run(id, viewport, chats, fn);
 
   for (const dev of Object.values(kit.devices)) {
