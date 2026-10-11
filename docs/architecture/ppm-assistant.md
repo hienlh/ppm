@@ -438,9 +438,10 @@ call by itself.
   opens its session, so a schedule firing every few minutes could never be approved. An unchanged
   `updated_at` passes; a changed one compares the fields the card showed (`unchangedSince`).
 - **`schedules:changed`**: a middleware in `src/server/routes/schedules.ts` broadcasts it on
-  `/ws/global` after every successful write, whoever made it, and `use-schedules.ts` re-reads the
-  list and the open run history. Tunnels get no event: the Port Forwarding panel already polls
-  every 10 s.
+  `/ws/global` after every successful write, whoever made it, and the scheduler sends it again
+  when a run finishes (`onRunFinished`); `use-schedules.ts` re-reads the list and the open run
+  history. Tunnels get no event: the Port Forwarding panel already polls every 10 s, and a slow
+  process scan keeps the forwards this PPM started in the list (`withCurrentPpmTunnels`).
 - Run output comes back capped and labelled as another chat's data, not instructions.
 
 **Tunnels.** `assistant-tunnel-host.ts` answers what only this process knows (the forwards it
@@ -716,9 +717,8 @@ the connect-link poller to leave that bot alone (`assistantBridgeReading` in
   push; the Tailscale Service and the named tunnel are read only. Those stay in Source Control, the
   Git Graph and Settings → Remote Access, or `ppm …` in the shell behind a card. In a working tree
   too large for `/git/changes` to list whole, commit and stash save are refused.
-- **`schedules:changed` covers writes through the route only.** `ppm schedule …` writes the
-  database directly and a run ending emits nothing, so an open Settings → Schedules shows those on
-  its next read, and an open run history on the next write or when reopened.
+- **`schedules:changed` misses CLI writes.** `ppm schedule …` writes the database directly, so
+  an open Settings → Schedules shows those on its next read.
 
 ## Verify
 
