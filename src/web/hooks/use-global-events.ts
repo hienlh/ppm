@@ -41,6 +41,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  * - `assistant:*` → re-dispatched as window events (`assistant:telegram_binding_changed`,
  *   which moves the "Telegram" label in the Assistant's session list).
  * - `jira:*` → re-dispatched as window events.
+ * - `schedules:*` → re-dispatched as window events (`schedules:changed` after any write to
+ *   `/api/schedules`, from this device, another one or the Assistant's tools).
  * - `tunnel:*` → re-dispatched as window events (named-tunnel setup flow —
  *   login URL/state, setup progress/done/pending/error).
  * - `git:*` → re-dispatched as window events (`git:changed` after any write PPM
@@ -159,6 +161,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("agent-transcript:")
         || type.startsWith("logs:")
         || type.startsWith("assistant:")
+        || type.startsWith("schedules:")
         || type === "agent-activity"
       ) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));
