@@ -179,7 +179,7 @@ export function answerApprovalSummary(input: AnswerApprovalApproval): ApprovalSu
       ...d.facts.map((f) => ({ label: f.label, value: f.value })),
       ...(input.answers ?? []).map((a) => ({ label: a.question, value: a.answer })),
     ],
-    ...(d.text ? { body: { label: DECIDING_LABELS[d.kind], text: d.text, format: d.lang === "sql" ? "sql" as const : "text" as const } } : {}),
+    ...(d.text ? { body: { label: d.label ?? DECIDING_LABELS[d.kind], text: d.text, format: d.lang === "sql" ? "sql" as const : "text" as const } } : {}),
     ...(input.decision === "allow" && !question ? { warning: "That chat runs this as soon as you allow it." } : {}),
   };
 }

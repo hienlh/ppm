@@ -14,10 +14,11 @@ import { forgetFramingOriginsForTest, framingOrigins } from "../../../src/servic
 
 // Shared mutable state the mocks read from.
 const state: {
-  list: TunnelEntry[]; isCf: boolean; killed: number[];
+  list: TunnelEntry[]; scanFailed: boolean; isCf: boolean; killed: number[];
   tailscale: TailscaleForward[]; tailscaleError: string | null; tailscaleStopped: number[];
 } = {
   list: [],
+  scanFailed: false,
   isCf: true,
   killed: [],
   tailscale: [],
@@ -26,8 +27,8 @@ const state: {
 };
 
 mock.module("../../../src/services/tunnel-registry.service.ts", () => ({
-  listTunnels: async () => state.list,
-  isCloudflaredPid: (_pid: number) => state.isCf,
+  listTunnels: async () => ({ tunnels: state.list, scanFailed: state.scanFailed }),
+  isCloudflaredPid: async (_pid: number) => state.isCf,
   invalidateTunnelCache: () => {},
 }));
 
@@ -76,6 +77,7 @@ const entry = (over: Partial<TunnelEntry>): TunnelEntry => ({
 
 beforeEach(() => {
   state.list = [];
+  state.scanFailed = false;
   state.isCf = true;
   state.killed = [];
   state.tailscale = [];
@@ -104,6 +106,27 @@ describe("GET /api/tunnels", () => {
     const json = await (await app().request("/api/tunnels")).json();
     expect(json.data.map((t: TunnelEntry) => [t.pid, t.via])).toEqual([[42, undefined], [77, "tailscale"]]);
     expect(json.data[1]).toMatchObject({ port: 5173, url: "https://host.tail.ts.net:5173/", source: "ppm", protected: false });
+  });
+
+  it("with detail=1 says whether the machine-wide scan finished, alongside every row", async () => {
+    state.list = [entry({ pid: 42, source: "ppm" })];
+    state.tailscale = [{ port: 5173, servePort: 5173, url: "https://host.tail.ts.net:5173/", pid: 77, startedAt: 5 }];
+    const ok = await (await app().request("/api/tunnels?detail=1")).json();
+    expect(ok.data.scanFailed).toBe(false);
+    expect(ok.data.tunnels.map((t: TunnelEntry) => t.pid)).toEqual([42, 77]);
+
+    state.scanFailed = true;
+    const failed = await (await app().request("/api/tunnels?force=1&detail=1")).json();
+    expect(failed.data).toMatchObject({ scanFailed: true });
+    expect(failed.data.tunnels.map((t: TunnelEntry) => t.pid)).toEqual([42, 77]);
+  });
+
+  it("keeps the bare list for the screens that read an array, even when the scan failed", async () => {
+    state.list = [entry({ pid: 42, source: "ppm" })];
+    state.scanFailed = true;
+    const json = await (await app().request("/api/tunnels")).json();
+    expect(Array.isArray(json.data)).toBe(true);
+    expect(json.data.map((t: TunnelEntry) => t.pid)).toEqual([42]);
   });
 });
 

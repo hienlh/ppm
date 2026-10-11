@@ -16,7 +16,7 @@ import { errorResult } from "./assistant-tool-output.ts";
  * take (a Cloudflare or Tailscale sign-in, an admin's approval), so they stay in Settings.
  */
 export const TUNNEL_ROUTES: readonly RouteRule[] = [
-  allowRoute("GET", "/api/tunnels", ["force"]),
+  allowRoute("GET", "/api/tunnels", ["force", "detail"]),
   allowRoute("GET", "/api/tunnels/transports"),
   allowRoute("POST", "/api/tunnels"),
   allowRoute("DELETE", "/api/tunnels/:pid"),

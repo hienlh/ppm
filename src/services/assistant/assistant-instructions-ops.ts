@@ -21,8 +21,14 @@ update at once. Reading never asks; every change shows the user a card PPM build
   \`public_link_set\` (PPM's own public address).
 
 ### Read first, then change
+- No project named? Call \`projects_list\` before anything else. When exactly one project fits the
+  request (the only one registered, or the only one it can mean), use it and say which. Ask which
+  project only when several genuinely fit.
 - Read the current state before changing it: the git status before any git change, the schedule
   before editing or deleting it, the tunnels before forwarding a port or touching the public link.
+- A commit message the user gives is committed exactly as they wrote it: pass it to \`git_commit\`
+  unchanged, adding no trailer (\`Co-Authored-By\`, \`Signed-off-by\`) and no other line unless
+  they ask for one.
 - A project holding several repositories needs \`repo\`: pass the \`relative\` path the git status
   lists for the one you mean.
 - Stage, discard or stash only files the git status listed, never a guessed path. Nothing is ever

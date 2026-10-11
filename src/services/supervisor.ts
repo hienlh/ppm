@@ -1419,7 +1419,7 @@ async function checkAvailableVersion() {
 }
 
 /** Try to adopt an existing tunnel process from status.json (survives upgrade) */
-function adoptTunnel(): boolean {
+async function adoptTunnel(): Promise<boolean> {
   try {
     const status = readStatus();
     const pid = status.tunnelPid as number;
@@ -1432,7 +1432,7 @@ function adoptTunnel(): boolean {
     // Liveness alone is not proof of identity — Windows/Linux both reuse PIDs,
     // and a recycled PID happening to belong to some unrelated process would
     // get "adopted" as the tunnel while the real one (if any) sits orphaned.
-    if (!isCloudflaredPid(pid)) {
+    if (!(await isCloudflaredPid(pid))) {
       log("WARN", `adoptTunnel: PID ${pid} is alive but its executable is not cloudflared — refusing to adopt`);
       return false;
     }
@@ -2383,7 +2383,7 @@ export async function runSupervisor(opts: {
     namedProbeRestartAttempted = false;
     startTunnelProbe();
     // Try adopting tunnel kept alive from previous upgrade; spawn new if dead
-    tunnelAdopted = adoptTunnel();
+    tunnelAdopted = await adoptTunnel();
     if (tunnelAdopted) {
       log("INFO", "Tunnel adopted from previous instance — public URL preserved");
     } else {

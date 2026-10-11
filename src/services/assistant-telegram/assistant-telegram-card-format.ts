@@ -30,13 +30,14 @@ export interface FormattedCard {
 const esc = escapeTelegramHtml;
 
 /** The deciding part of a card, redacted, as plain strings. */
-function redacted(d: DecidingInput): { title: string; facts: Array<{ label: string; value: string }>; text: string; hidden: number } {
+function redacted(d: DecidingInput): { title: string; facts: Array<{ label: string; value: string }>; text: string; label: string; hidden: number } {
   let hidden = 0;
   const r = (s: string) => { const out = redactSecretsForTelegram(s); hidden += out.hidden; return out.text; };
   const title = r(d.title);
   const facts = d.facts.map((f) => ({ label: f.label, value: r(f.value) }));
   const text = r(d.text);
-  return { title, facts, text, hidden };
+  // The body's heading is PPM's own wording ("Prompt", "Message"), never user data, so nothing to hide.
+  return { title, facts, text, label: d.label ?? "", hidden };
 }
 
 function codeBlock(text: string, lang: DecidingInput["lang"]): string {
@@ -46,7 +47,7 @@ function codeBlock(text: string, lang: DecidingInput["lang"]): string {
 
 /** The visible length Telegram counts for the deciding part: what `fits` is measured on. */
 function decidingLength(p: ReturnType<typeof redacted>): number {
-  return p.title.length + p.facts.reduce((n, f) => n + f.label.length + f.value.length + 3, 0) + p.text.length;
+  return p.title.length + p.facts.reduce((n, f) => n + f.label.length + f.value.length + 3, 0) + p.label.length + p.text.length;
 }
 
 export function formatApprovalCard(card: LiveApprovalCard, headline: string): FormattedCard {
@@ -56,7 +57,12 @@ export function formatApprovalCard(card: LiveApprovalCard, headline: string): Fo
   const lines = [`🔐 <b>${esc(headline)}</b>`, `<b>${esc(p.title)}</b>`];
   for (const f of p.facts) lines.push(`<b>${esc(f.label)}:</b> ${esc(f.value)}`);
   const body = fits ? p.text : `${p.text.slice(0, PREVIEW_MAX).trimEnd()}\n…`;
-  if (body) lines.push(codeBlock(body, d.lang));
+  if (body) {
+    // Without its heading the verbatim block (a schedule's prompt, the newest commit a push sends)
+    // reads as one more line of the facts above it.
+    if (p.label) lines.push(`<b>${esc(p.label)}:</b>`);
+    lines.push(codeBlock(body, d.lang));
+  }
   if (p.hidden > 0) lines.push(`<i>🔒 ${p.hidden} secret-looking value${p.hidden === 1 ? "" : "s"} hidden.</i>`);
   if (!d.complete) lines.push(`⚠️ ${esc(d.incompleteReason ?? "Only part of this request reached PPM.")}`);
   else if (!fits) lines.push(`⚠️ ${esc(TOO_LONG_NOTE)}`);

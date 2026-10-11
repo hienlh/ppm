@@ -40,7 +40,7 @@ export interface AttentionCard {
   kind: string;
   tool: string;
   headline: string;
-  deciding: { facts: Array<{ label: string; value: string }>; text: string; shortened: boolean; complete: boolean; incompleteReason?: string };
+  deciding: { facts: Array<{ label: string; value: string }>; label?: string; text: string; shortened: boolean; complete: boolean; incompleteReason?: string };
   questions?: NormalizedQuestion[];
 }
 
@@ -117,6 +117,7 @@ function attentionCard(card: LiveApprovalCard): AttentionCard {
     headline: d.title,
     deciding: {
       facts: d.facts,
+      ...(d.label ? { label: d.label } : {}),
       text: shortened ? `${d.text.slice(0, ATTENTION_DECIDING_CHARS)}…` : d.text,
       shortened,
       complete: d.complete,

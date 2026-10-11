@@ -136,6 +136,7 @@ async function s25(ctx, chat) {
   const card = await tg.waitFor(chat, "schedule card", (m) => m.text.includes(name) && buttonsOf(m).length > 0);
   assert.ok(card.text.includes("Every run executes every tool without asking, with nobody watching."), "the bypass warning is on the Telegram card");
   assert.ok(card.text.includes("Say hello to the team."), "the prompt in full");
+  assert.ok(card.text.includes("Prompt:\nSay hello to the team."), "the prompt headed by its label, not a bare line after the facts");
   assert.deepEqual(labelsOf(card), ["Allow", "Deny"]);
   const n = (await tg.answers()).length;
   await tg.pressLabel(chat, card, "Allow");

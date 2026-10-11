@@ -460,7 +460,9 @@ started, PPM's own ports, the database profile, whether login is on), loaded laz
   can be switched back from there.
 - `tunnels_status` returns a field whitelist: no masked token, certificate state, sign-in link, IP,
   OS user or device DNS name, and a tailnet named by an email address is replaced by its MagicDNS
-  suffix or left out.
+  suffix or left out. When the process scan for other programs' tunnels fails it says so
+  (`forwardsIncomplete`, from `GET /api/tunnels?detail=1`) rather than reporting none; the
+  forwards this PPM started are always listed.
 - The Tailscale Service and the named tunnel are read, never changed: both need a sign-in or an
   admin's approval only the user can give, in Settings → Remote Access.
 

@@ -37,7 +37,7 @@ import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { holdTokens } from "../../services/mcp-session-tokens.ts";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
+import { CodexJsonRpcClient, CHAT_INITIALIZE_TIMEOUT_MS, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
 import { assistantMcpEnv, buildThreadParams, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams } from "./codex-thread-params.ts";
 import { planAssistantCodexMcp } from "./codex-assistant-mcp-guard.ts";
@@ -883,7 +883,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.start({ cwd: live.cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
     live.client = client;
 
-    await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
+    await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
     client.notify("initialized");
     if (live.assistant) await this.planAssistantMcp(live, client);
 
@@ -989,7 +989,8 @@ export class CodexAppServerProvider implements AIProvider {
     const codexHome = live.assistant ? assistantSpawnHome(account?.home) : account?.home;
     client.start({ cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
 
-    await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
+    // A cold first start can outlast a control call's bound; failing here would cost the user's turn.
+    await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
     client.notify("initialized");
     if (live.assistant) await this.planAssistantMcp(live, client);
 

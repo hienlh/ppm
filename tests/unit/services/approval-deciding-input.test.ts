@@ -116,6 +116,19 @@ describe("Assistant cards and questions", () => {
     expect(decidingInput({ tool: "db_query", input: {}, summary: { headline: "h", facts: [], body: { label: "SQL", text: "x", format: "sql" } } }).lang).toBe("sql");
   });
 
+  it("carries the body's label, so a surface can head the verbatim block with it", () => {
+    const d = decidingInput({
+      tool: "schedule_create", input: {},
+      summary: { headline: "Create a schedule", facts: [{ label: "Enabled", value: "On" }], body: { label: "Prompt", text: "Trả lời đúng một chữ: ok", format: "text" } },
+    });
+    expect(d).toMatchObject({ label: "Prompt", text: "Trả lời đúng một chữ: ok" });
+    // An empty body has nothing to head; a card with no body has no label either.
+    expect(decidingInput({ tool: "x", input: {}, summary: { headline: "h", facts: [], body: { label: "Prompt", text: "", format: "text" } } }).label).toBeUndefined();
+    expect(decidingInput({ tool: "x", input: {}, summary: { headline: "h", facts: [] } }).label).toBeUndefined();
+    // A tool card's body is never labelled here; the surfaces name it by kind.
+    expect(decidingInput({ tool: "Bash", input: { command: "ls" } }).label).toBeUndefined();
+  });
+
   it("lists a question's options, from the normalized questions or Claude's input", () => {
     const d = decidingInput({ tool: "AskUserQuestion", input: { questions: [{ question: "Which?", header: "Pick", options: [{ label: "A", description: "first" }, { label: "B" }], multiSelect: true }] } });
     expect(d.kind).toBe("question");

@@ -92,6 +92,15 @@ describe("approval summaries", () => {
     });
     expect(s.facts).toContainEqual({ label: "URL", value: url });
     expect(s.body?.text).toBe("read <this> `now`");
+    expect(s.body?.label).toBe("Request");
     expect(s.warning).toContain("as soon as you allow it");
+  });
+
+  it("keeps another Assistant card's own body label rather than a generic one", () => {
+    const s = answerApprovalSummary({
+      project: "web", sessionId: "abcdef0123456789", sessionTitle: null, providerId: "codex", decision: "deny",
+      deciding: decidingInput({ tool: "schedule_create", input: {}, summary: { headline: "Create", facts: [], body: { label: "Prompt", text: "say ok", format: "text" } } }),
+    });
+    expect(s.body).toEqual({ label: "Prompt", text: "say ok", format: "text" });
   });
 });

@@ -24,11 +24,14 @@ function routeAnswers(over: Partial<Record<string, unknown>> = {}): Record<strin
       enabled: true, ppmPort: 3210, login: { state: "waiting", url: "https://login.tailscale.com/a/abc", message: null }, authEnabled: true,
     },
     "GET /api/tunnels/transports": { tailscale: { available: true, dnsName: "devbox.tail1234.ts.net" } },
-    "GET /api/tunnels?force=1": [
-      { pid: 100, port: 5173, url: "https://mine.trycloudflare.com", source: "ppm", protected: false, status: "running" },
-      { pid: 200, port: 8000, url: "https://theirs.trycloudflare.com", source: "external", protected: false, status: "running", runRef: "named-x" },
-      { pid: 300, port: 3210, url: "https://ppm-now.trycloudflare.com", source: "app", protected: true, status: "running" },
-    ],
+    "GET /api/tunnels?force=1&detail=1": {
+      tunnels: [
+        { pid: 100, port: 5173, url: "https://mine.trycloudflare.com", source: "ppm", protected: false, status: "running" },
+        { pid: 200, port: 8000, url: "https://theirs.trycloudflare.com", source: "external", protected: false, status: "running", runRef: "named-x" },
+        { pid: 300, port: 3210, url: "https://ppm-now.trycloudflare.com", source: "app", protected: true, status: "running" },
+      ],
+      scanFailed: false,
+    },
     "POST /api/tunnels": { port: 5173, url: "https://fresh.trycloudflare.com", via: "cloudflare" },
     "POST /api/tunnel/enabled": { enabled: false, reload: "no-supervisor" },
     ...over,
@@ -123,6 +126,28 @@ describe("tunnels_status", () => {
     const out = jsonOf(await run(noSuffix, "tunnels_status"));
     expect("tailnet" in out.tailscale).toBe(false);
     expect(JSON.stringify(out)).not.toContain("@");
+  });
+
+  test("a complete scan says nothing about being incomplete", async () => {
+    const out = jsonOf(await run(harness(), "tunnels_status"));
+    expect("forwardsIncomplete" in out).toBe(false);
+    expect("forwardsNote" in out).toBe(false);
+  });
+
+  test("a failed process scan is said, so an empty list is not read as 'no forwards'", async () => {
+    // What the route answers when the machine-wide scan failed and nothing was seen before:
+    // only this PPM's own forward, known from its own registry.
+    const answers = routeAnswers({
+      "GET /api/tunnels?force=1&detail=1": {
+        tunnels: [{ pid: 100, port: 5173, url: "https://mine.trycloudflare.com", source: "ppm", protected: false, status: "running" }],
+        scanFailed: true,
+      },
+    });
+    const out = jsonOf(await run(harness({ answers }), "tunnels_status"));
+    expect(out.forwardsIncomplete).toBe(true);
+    expect(out.forwardsNote).toContain("could not list the other programs' tunnels");
+    expect(out.forwardsNote).toContain("never that there are none");
+    expect(out.forwards.map((f: { pid: number; ownedByThisPpm: boolean }) => [f.pid, f.ownedByThisPpm])).toEqual([[100, true]]);
   });
 
   test("one route failing leaves the other sections answered", async () => {

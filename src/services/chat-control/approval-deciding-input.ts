@@ -34,6 +34,12 @@ export interface DecidingInput {
   facts: DecidingFact[];
   /** The body to show in full; may be empty when the facts say everything. */
   text: string;
+  /**
+   * What the body is ("Prompt", "Message", "Newest commit pushed"), when the card names it. A
+   * verbatim block with no heading reads as one more line of the facts above it, so every surface
+   * that shows `text` shows this above it.
+   */
+  label?: string;
   lang?: "bash" | "diff" | "json" | "sql" | "text";
   /** False when this is not everything that will run, so no surface may offer Allow on it alone. */
   complete: boolean;
@@ -76,6 +82,7 @@ function finish(d: Omit<DecidingInput, "complete" | "facts"> & { facts?: Decidin
     title: show(d.title),
     facts: (d.facts ?? []).map((f) => ({ label: f.label, value: show(f.value) })),
     text: show(d.text),
+    ...(d.label ? { label: show(d.label) } : {}),
     complete,
     ...(complete ? {} : { incompleteReason: d.incompleteReason ?? (cut ? CAPPED_REASON : UNREADABLE_REASON) }),
   };
@@ -122,6 +129,7 @@ export function decidingInput(card: DecidingCard): DecidingInput {
       title: summary.headline,
       facts,
       text: summary.body?.text ?? "",
+      ...(summary.body?.text && summary.body.label ? { label: summary.body.label } : {}),
       lang: summary.body?.format === "sql" ? "sql" : "text",
       // The summary is the server's own; its fields are never capped on the way here.
       complete: true,

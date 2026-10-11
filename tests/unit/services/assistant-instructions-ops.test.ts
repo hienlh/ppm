@@ -12,7 +12,7 @@ import {
 import { TOOLS_INSTEAD_OF_CLI } from "../../../src/services/assistant/ppm-cli-reference.ts";
 import { ASSISTANT_TOOL_DEFINITIONS } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
 import { PPM_CLI_REFERENCE_TOOL } from "../../../src/shared/assistant-tool-names.ts";
-import { GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
+import { GIT_COMMIT_TOOL, GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
 
@@ -49,6 +49,21 @@ describe("ASSISTANT_OPS_SECTION", () => {
     expect(ASSISTANT_OPS_SECTION).toContain("never a guessed path");
   });
 
+  it("looks the project up before asking which one, and asks only when it is ambiguous", () => {
+    expect(ASSISTANT_OPS_SECTION).toContain("No project named? Call `projects_list` before anything else.");
+    expect(ASSISTANT_OPS_SECTION).toContain("When exactly one project fits the\n  request (the only one registered");
+    expect(ASSISTANT_OPS_SECTION).toContain("Ask which\n  project only when several genuinely fit.");
+  });
+
+  it("commits the user's own message exactly, with no trailer added", () => {
+    expect(ASSISTANT_OPS_SECTION).toContain("A commit message the user gives is committed exactly as they wrote it");
+    expect(ASSISTANT_OPS_SECTION).toContain("adding no trailer (`Co-Authored-By`, `Signed-off-by`) and no other line unless\n  they ask for one.");
+    const commit = ASSISTANT_TOOL_DEFINITIONS.find((d) => d.name === GIT_COMMIT_TOOL)!;
+    expect(commit.description).toContain("`message` is committed verbatim, byte for byte");
+    expect(commit.description).toContain("no Co-Authored-By or other trailer, no extra line");
+    expect(JSON.stringify(commit.inputSchema)).toContain("Only when the user asks for one.");
+  });
+
   it("states where the tools stop and where to go instead", () => {
     for (const s of ["merging", "rebasing", "deleting branches", "Tailscale", "Settings → Remote", "`ppm_cli_reference`"]) {
       expect(ASSISTANT_OPS_SECTION).toContain(s);
@@ -68,6 +83,15 @@ describe("ASSISTANT_OPS_SECTION", () => {
 describe("the rest of the instructions", () => {
   const all = buildAssistantInstructions({
     sections: [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION, ASSISTANT_OPS_SECTION],
+  });
+
+  it("tell the agent to look for the project before asking which one, even without the tools", () => {
+    // The base rules are in every turn, including one with no PPM tools, so they name the tool conditionally.
+    const base = buildAssistantInstructions();
+    expect(base).toContain("look before you ask: list the registered\n  projects (`projects_list`, when you have it).");
+    expect(base).toContain("If exactly one fits the request");
+    expect(base).toContain("Ask only when several\n  genuinely fit.");
+    expect(base).not.toContain("and it is not obvious, ask before acting");
   });
 
   it("no longer send git, schedules or tunnels to the command line", () => {

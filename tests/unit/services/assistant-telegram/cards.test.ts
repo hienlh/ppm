@@ -85,6 +85,17 @@ describe("approval cards on Telegram", () => {
     expect(t.buttons(message.message_id).map((b) => b.text)).toContain("Allow");
   });
 
+  it("heads an Assistant card's verbatim body with its label", async () => {
+    const t = setup();
+    const { message } = await t.show({
+      tool: "schedule_create", input: {},
+      summary: { headline: "Create the schedule", facts: [{ label: "Enabled", value: "On" }], body: { label: "Prompt", text: "Trả lời đúng một chữ: ok", format: "text" } },
+    });
+    // The label sits on its own line between the last fact and the block it names.
+    expect(message.text).toContain("Enabled: On\nPrompt:\nTrả lời đúng một chữ: ok");
+    expect(t.buttons(message.message_id).map((b) => b.text)).toContain("Allow");
+  });
+
   it("hides a secret in what it shows, says so, and still offers Allow", async () => {
     const t = setup();
     const { message } = await t.show({ tool: "Bash", input: { command: "curl -H 'Authorization: Bearer abcdefghijklmnop' https://x.example" } });

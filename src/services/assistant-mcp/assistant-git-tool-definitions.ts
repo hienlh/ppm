@@ -94,12 +94,14 @@ export const GIT_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
   {
     name: GIT_COMMIT_TOOL,
     title: "Commit staged changes",
-    description: "Commit what is staged, with this exact message; the repository's hooks run. `amend` replaces the last "
+    description: "Commit what is staged; the repository's hooks run. `message` is committed verbatim, byte for byte: when "
+      + "the user gave the message, pass exactly what they wrote and add nothing to it (no Co-Authored-By or other "
+      + "trailer, no extra line) unless they ask. `amend` replaces the last "
       + `commit (with no message it keeps its message).${ASKS}`,
     inputSchema: object({
-      message: { type: "string", description: "The commit message, used verbatim." },
+      message: { type: "string", description: "The commit message, committed verbatim. The user's own words when they gave them, with nothing added." },
       amend: { type: "boolean" },
-      signoff: { type: "boolean", description: "Add a Signed-off-by line." },
+      signoff: { type: "boolean", description: "Add a Signed-off-by line. Only when the user asks for one." },
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },

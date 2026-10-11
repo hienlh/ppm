@@ -17,7 +17,9 @@ import {
   AssistantMcpConfigUnreadableError, AssistantMcpNameConflictError, planAssistantCodexMcp,
 } from "../../../src/providers/codex-app-server/codex-assistant-mcp-guard.ts";
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider.ts";
-import { CodexJsonRpcClient } from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
+import {
+  CHAT_INITIALIZE_TIMEOUT_MS, CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS,
+} from "../../../src/providers/codex-app-server/codex-jsonrpc-client.ts";
 import { ASSISTANT_PERMISSION } from "../../../src/providers/codex-app-server/codex-permission-map.ts";
 import * as accounts from "../../../src/services/codex-account.service.ts";
 import * as assistantHome from "../../../src/providers/codex-app-server/codex-assistant-home.ts";
@@ -124,7 +126,7 @@ describe("Codex user servers", () => {
 describe("Codex Assistant session start", () => {
   const spies: Array<{ mockRestore(): void }> = [];
   let provider: CodexAppServerProvider;
-  let requests: Array<{ method: string; value: any }>;
+  let requests: Array<{ method: string; value: any; timeoutMs?: number }>;
   let env: Record<string, string> | undefined;
   let userServers: Record<string, unknown>;
   let previousAi: ReturnType<typeof configService.get<"ai">>;
@@ -142,8 +144,8 @@ describe("Codex Assistant session start", () => {
     spies.push(spyOn(CodexJsonRpcClient.prototype, "start").mockImplementation((opts: any) => { env = opts.env; }));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "notify").mockImplementation(() => {}));
     spies.push(spyOn(CodexJsonRpcClient.prototype, "close").mockImplementation(() => {}));
-    spies.push(spyOn(CodexJsonRpcClient.prototype, "request").mockImplementation(async (method: string, value: any) => {
-      requests.push({ method, value });
+    spies.push(spyOn(CodexJsonRpcClient.prototype, "request").mockImplementation(async (method: string, value: any, timeoutMs?: number) => {
+      requests.push({ method, value, timeoutMs });
       if (method === "config/read") return { config: { mcp_servers: userServers } };
       if (method === "thread/start") return { thread: { id: `thread-${crypto.randomUUID()}` } };
       return {};
@@ -186,5 +188,15 @@ describe("Codex Assistant session start", () => {
     await (provider as any).connect((await provider.createSession({})).id, { permissionMode: "default" });
     expect(requests.map((r) => r.method)).toEqual(["initialize", "thread/start"]);
     expect(env?.[CODEX_ASSISTANT_MCP_TOKEN_ENV]).toBeUndefined();
+  });
+
+  it("gives a chat's cold app-server the longer initialize budget, not a control call's", async () => {
+    await (provider as any).connect((await provider.createSession({})).id, OPTS);
+    const init = requests.find((r) => r.method === "initialize")!;
+    expect(init.timeoutMs).toBe(CHAT_INITIALIZE_TIMEOUT_MS);
+    expect(CHAT_INITIALIZE_TIMEOUT_MS).toBe(45_000);
+    expect(CHAT_INITIALIZE_TIMEOUT_MS).toBeGreaterThan(CONTROL_REQUEST_TIMEOUT_MS);
+    // The control calls after it keep the short bound: only the cold start needs the long one.
+    expect(requests.find((r) => r.method === "config/read")!.timeoutMs).toBe(CONTROL_REQUEST_TIMEOUT_MS);
   });
 });
