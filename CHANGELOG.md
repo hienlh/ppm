@@ -12,6 +12,8 @@
 - **"Tell me when that chat is done."** The Assistant watches a chat and reports in the conversation when it finishes or stops, even across a PPM restart. If a report cannot get through, a push notification names the chat.
 - **PPM Assistant on Telegram.** A connected private chat continues one Assistant conversation, and messages, answers and approval cards show up in both places. The bot has `/new`, `/sessions`, `/status`, `/stop` and `/help`, and you can send it photos. Allow is offered only when the whole request fits on the card.
 - **Settings → PPM Assistant → Telegram** holds the bot, the connected chats and the Connect link. The Assistant's session list marks the conversation that is on Telegram and has *Use on Telegram*. `/assistant?session=…` links open that conversation.
+- **The Assistant handles git, schedules and port forwarding with tools of its own** instead of `ppm` shell commands: it reads without asking, and every change (commit, push, discard with Undo, a schedule, a forward, the public link) asks with a card showing exactly what will happen. It never force-pushes.
+- **Settings → Schedules updates live** when a schedule is created, changed or deleted anywhere, including by the Assistant.
 
 ### Changed
 
@@ -24,6 +26,7 @@
 
 ### Fixed
 
+- **A project's avatar is kept across restarts.** Two projects sharing a picture no longer lose it together when one is removed.
 - **Codex question cards on the web now show their questions and choices.** Before, the form was empty.
 - **A Telegram reply that contains `<` or `&` is no longer refused,** and long replies split without breaking their formatting.
 - **A Claude turn that ends in an API error is now reported as failed,** not as done.

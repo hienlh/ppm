@@ -153,7 +153,9 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 - **Read, never ask**: `projects_list`, `chat_list_sessions`, `chat_search`,
   `chat_read_messages`, `db_list_connections`, `db_query` for a proven read, `ui_get_state`,
   `ui_read_tab` (see below), `ui_list_commands`, `chats_attention`, `ppm_cli_reference`,
-  `chat_list_watches`.
+  `chat_list_watches`, and the read half of the git, schedule and tunnel families
+  (`git_status`, `git_log`, `git_diff`, `git_branches`, `schedules_list`, `schedule_get`,
+  `tunnels_status`; see [Git, schedules and tunnels](#git-schedules-and-tunnels)).
 - **Remember, never ask**: `chat_watch` and `chat_unwatch` — a watch only reads and reports, like
   setting a reminder (see [Watches](#watches)).
 - **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
@@ -168,6 +170,7 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   a terminal), and `ui_read_tab` for an editor's unsaved text, a terminal's output or a database
   file's rows from outside every registered project or from a credential store (below) — a file
   tab itself answers with its path, and reading the file is the provider's read tool's call.
+  Every git, schedule and tunnel tool that changes something asks too, stage and fetch included.
 
 **Reading a tab** (`assistant-tab-reader.ts`). A file tab answers with the file's absolute path
 and its project, never the file: the agent reads it with its provider's own read tool, so one
@@ -329,8 +332,9 @@ for, rebuilt as tools that ask.
   *this* instance's CLI, which commands go through the running server and which open the database
   themselves, and — on a server running a non-default database profile — a warning not to run
   data commands at all, because only `ppm start` can choose a profile and every other command
-  opens `ppm.db`, another instance's data. Anything without a tool of its own (git, schedules,
-  tunnels, extensions) is done through `ppm …` in the shell, which always asks.
+  opens `ppm.db`, another instance's data. Git, schedules and tunnels have tools of their own,
+  which the header lists first (`TOOLS_INSTEAD_OF_CLI`); extensions and the git operations those
+  tools leave out are done through `ppm …` in the shell, which always asks.
 
 **The deciding input** (`src/services/chat-control/approval-deciding-input.ts`) is what a person
 must see to decide a card: the whole command and its folder, the URL and prompt, every byte a
@@ -348,6 +352,116 @@ now carry normalised questions, every surface answers by question id (`answersBy
 server converts to each provider's form; the older web shape is still accepted. This is also what
 gave Codex questions a working form on the web (it was empty). A secret answer is shown and traced
 as `(hidden)`.
+
+## Git, schedules and tunnels
+
+Three tool families do what Source Control, Settings → Schedules and Port Forwarding do (names in
+`src/shared/assistant-{git,schedule,tunnel}-tool-names.ts`, spread into `ASSISTANT_TOOLS`; code in
+`src/services/assistant-mcp/assistant-{git,schedule,tunnel}-*.ts`). Before them the agent typed
+`ppm …` in a shell: the card was one command line the user had to decode, and `ppm schedule`
+writes the database directly, so an open PPM never heard of the change.
+
+| Family | Read, never ask | Ask first |
+|---|---|---|
+| Git | `git_status`, `git_log`, `git_diff`, `git_branches` | `git_stage`, `git_discard`, `git_undo`, `git_commit`, `git_sync`, `git_branch`, `git_stash` |
+| Schedules | `schedules_list`, `schedule_get` | `schedule_save`, `schedule_delete`, `schedule_run_now` |
+| Tunnels | `tunnels_status` | `port_forward_start`, `port_forward_stop`, `public_link_set` |
+
+Stage, unstage, fetch and pausing a schedule ask too: the rule is that every change of state, and
+everything that reaches the network, asks.
+
+**The UI's own routes, called in-process.** A tool runs neither git, the scheduler nor cloudflared,
+and does not call the services behind the routes either, because what matters lives in the routes:
+the discard's Undo copy, clearing the shared commit message, the `?repo=` check that follows
+symlinks, `git:changed` after every git POST. `createRouteCaller` (`assistant-route-call.ts`) hands a
+`Request` to a Hono app that mounts only the six routers the families use, at the paths and in the
+order `src/server/index.ts` mounts them, imported on first call (a static import closes a cycle
+through the chat routes while the server starts). That app has no `authMiddleware` — the caller
+already proved itself with the session's MCP token — so the allowlist is the whole boundary:
+
+- **One list per family**: `GIT_ROUTES`, `SCHEDULE_ROUTES` and `TUNNEL_ROUTES`, each beside its
+  handlers in `assistant-<family>-tools.ts`, bound by `routeCallerFor` (`assistant-tool-family.ts`).
+  A git tool cannot reach a schedule or tunnel route even by building the path itself, and the list
+  names only the routes the tools call — nothing for merge, branch deletion or named-tunnel setup.
+- **Templates, never regular expressions** (`allowRoute` in `assistant-route-rules.ts`, a leaf
+  module that imports nothing, so a family file cannot close an import cycle): literal segments,
+  `:name` placeholders of exactly one segment, and the query keys the route may be sent. A rule that
+  cannot be enforced as written is dropped, refusing its calls rather than widening them.
+- **Refused before any router runs**, with `route_not_allowed`: a path a router would read
+  differently from the template (dot segments raw or encoded, encoded slashes or backslashes, double
+  encoding, control characters, a non-canonical form, a second `?`), an unlisted or repeated query
+  key, a body on GET or DELETE. A project segment must be a registered project's exact name, so
+  `__assistant__` and unregistered names answer `project_not_found` without reaching the router.
+
+A rule written wrongly still cannot reach `/api/fs` or `/api/settings`: those routers are not
+mounted.
+
+**Cards** are built by pure functions (`assistant-approval-summary-{git,schedule,tunnel}.ts`) from
+state read through the same routes. What decides the card — a file list, a commit message, a
+schedule's prompt, a cron, a port, an address — sits in the body verbatim and escaped, because a
+fact is cut at 200 characters. A commit card lists the files *before* the message, with a count, so
+a message cannot pose as the list. Every write goes through `ask`, so a watch turn changes nothing,
+and a card too long for Telegram is decided in PPM like any other.
+
+**Re-checked after Allow.** A card can wait for hours, so where what it showed can move the tool
+reads the state again and answers `stale` without running if it changed: a commit (staged files and
+HEAD), a push (branch, HEAD and upstream), stash apply/pop/drop (index and hash), an undo (the route
+answers 409), every schedule save, delete and run-now, stopping a forward (still this PPM's), and
+switching the public link on (login still on). The instructions tell the agent not to retry a stale
+call by itself.
+
+**Git.**
+- *Which repository*: `resolveGitRepo` (`assistant-git-repo-scope.ts`) asks discovery
+  (`GET /git/repos`). A project folder that is a repository gets no `repo` parameter, so every URL is
+  what the UI sends; one repository below it is used; several with none named is an error listing
+  their `relative` paths — never a guess. A named repository must be one discovery listed, and goes
+  out as discovery's absolute path, because the route resolves `repo` against the server process's
+  directory, not the project's. Every card names project, repository and branch.
+- *Remotes by name only.* A remote URL can carry a token (`https://user:token@…`), and git repeats it
+  in stderr, so route errors pass through `hideRemoteUrls` (`assistant-git-tool-helpers.ts`).
+- *Never a force push*; a push while behind warns it will likely be refused. A branch with no
+  upstream goes to `/git/publish`.
+- *Undo*: a discard keeps the route's one-day copy and `git_undo` restores it, as Source Control
+  does; an unpushed commit can be undone, a pushed one is refused before any card. Commit and stash
+  save refuse while `/git/changes` is truncated, since the card could not list every file.
+
+**Schedules.**
+- Reads see every schedule; writes only those whose folder *is* a registered project (real path,
+  case-insensitive on Windows). The tools take project names, because the route itself accepts any
+  raw path.
+- With no mode given, a schedule runs in `bypassPermissions`, as the Settings form creates it; the
+  card warns that every run executes every tool with nobody watching, and the instructions have the
+  agent propose `default` or `acceptEdits` — while saying that a `default` run waits on cards nobody
+  is there to see. A new schedule is sent with every value explicit, so what is stored is what the
+  card showed.
+- The stale check cannot rest on `updated_at`: the scheduler bumps it after every run and when a run
+  opens its session, so a schedule firing every few minutes could never be approved. An unchanged
+  `updated_at` passes; a changed one compares the fields the card showed (`unchangedSince`).
+- **`schedules:changed`**: a middleware in `src/server/routes/schedules.ts` broadcasts it on
+  `/ws/global` after every successful write, whoever made it, and `use-schedules.ts` re-reads the
+  list and the open run history. Tunnels get no event: the Port Forwarding panel already polls
+  every 10 s.
+- Run output comes back capped and labelled as another chat's data, not instructions.
+
+**Tunnels.** `assistant-tunnel-host.ts` answers what only this process knows (the forwards it
+started, PPM's own ports, the database profile, whether login is on), loaded lazily.
+- A Cloudflare forward card says that anyone with the address can open the port and PPM's login
+  does not protect it; a Tailscale one names the tailnet.
+- PPM's own port is never forwarded: a second public address for PPM would outlive anyone's memory
+  of it, and `public_link_set` is the managed one.
+- `port_forward_stop` stops only forwards this process started, checked before
+  `DELETE /api/tunnels/:pid` is called — that route kills any cloudflared on the machine not marked
+  protected, and once took down a production tunnel.
+- `public_link_set` refuses on a non-default database profile, which shares `.supervisor-cmd` and
+  `status.json` with the instance owning the folder and would restart *its* tunnel; and refuses to
+  switch on while PPM's login is off. Switching off warns that whoever reaches PPM through that
+  address loses it, Telegram's Open in PPM buttons included; Telegram itself keeps working, so it
+  can be switched back from there.
+- `tunnels_status` returns a field whitelist: no masked token, certificate state, sign-in link, IP,
+  OS user or device DNS name, and a tailnet named by an email address is replaced by its MagicDNS
+  suffix or left out.
+- The Tailscale Service and the named tunnel are read, never changed: both need a sign-in or an
+  admin's approval only the user can give, in Settings → Remote Access.
 
 ## Server-side chat control
 
@@ -597,6 +711,14 @@ the connect-link poller to leave that bot alone (`assistantBridgeReading` in
   takes only typed text is answered in PPM. One program may read a bot at a time: a second reader
   of the same bot (another PPM, another tool) breaks one of them.
 - **A Codex secret answer** is kept out of PPM's session trace but stays in Codex's own rollout.
+- **Git, schedules and tunnels do less here than in PPM.** No merge, rebase, cherry-pick, revert,
+  tags, worktrees, branch deletion, block-level staging or aborting an operation, and never a force
+  push; the Tailscale Service and the named tunnel are read only. Those stay in Source Control, the
+  Git Graph and Settings → Remote Access, or `ppm …` in the shell behind a card. In a working tree
+  too large for `/git/changes` to list whole, commit and stash save are refused.
+- **`schedules:changed` covers writes through the route only.** `ppm schedule …` writes the
+  database directly and a run ending emits nothing, so an open Settings → Schedules shows those on
+  its next read, and an open run history on the next write or when reopened.
 
 ## Verify
 
@@ -614,4 +736,7 @@ The hub is covered below the browser: `tests/integration/assistant-telegram-brid
 `assistant-telegram-relay.test.ts` run the bridge against the fake Bot API
 (`tests/helpers/fake-telegram-bot-api.ts`) and the real chat socket layer with a mock provider, and
 `tests/integration/assistant-watch-flow.test.ts` runs watches end to end; the unit tests are in
-`tests/unit/services/assistant-telegram/`.
+`tests/unit/services/assistant-telegram/`. The git, schedule and tunnel families run against their
+real routes in `tests/integration/assistant-{git,schedule,tunnel}-tools.test.ts` (a scratch repo with
+a bare `file://` remote, a scratch database, and `tests/fixtures/fake-cloudflared.ts` in place of
+cloudflared); the allowlist itself is `tests/unit/services/assistant-mcp/assistant-route-call.test.ts`.
