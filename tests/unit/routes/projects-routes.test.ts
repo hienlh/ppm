@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openTestDb, setDb } from "../../../src/services/db.service.ts";
+import { getDb, openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { projectRoutes } from "../../../src/server/routes/projects.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -11,6 +11,11 @@ import { avatarPath } from "../../../src/services/avatar-storage.service.ts";
 
 function createApp() {
   return new Hono().route("/projects", projectRoutes);
+}
+
+/** The avatar column of a project's row, as a restarted server would read it. */
+function storedImage(name: string): string | null | undefined {
+  return (getDb().query("SELECT image FROM projects WHERE name = ?").get(name) as { image: string | null } | null)?.image;
 }
 
 beforeEach(() => {
@@ -389,6 +394,8 @@ describe("project image (upload / serve / delete)", () => {
     expect(json.ok).toBe(true);
     expect(json.data.image).toBeDefined();
     expect(existsSync(avatarPath(json.data.image))).toBe(true);
+    // Stored with the project, not only held in memory, so a restart keeps it.
+    expect(storedImage("proj")).toBe(json.data.image);
   });
 
   it("serves the image with webp + immutable cache headers", async () => {
@@ -435,6 +442,7 @@ describe("project image (upload / serve / delete)", () => {
     const json = await res.json() as any;
     expect(json.data.image).toBeUndefined();
     expect(existsSync(file)).toBe(false);
+    expect(storedImage("proj")).toBeNull();
   });
 
   it("replacing an image removes the old file", async () => {
@@ -474,5 +482,78 @@ describe("project image (upload / serve / delete)", () => {
 
     await app.request("/projects/proj", { method: "DELETE" });
     expect(existsSync(file)).toBe(false);
+  });
+
+  describe("two projects sharing one picture (avatars are content-addressed)", () => {
+    let dirs: string[] = [];
+
+    /** Two projects at real, distinct paths, both given the same bytes. Returns the shared file. */
+    async function twoWithSameImage(app: Hono): Promise<string> {
+      dirs = [mkdtempSync(join(tmpdir(), "ppm-av-a-")), mkdtempSync(join(tmpdir(), "ppm-av-b-"))];
+      for (const [i, name] of ["a", "b"].entries()) {
+        const res = await app.request("/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: dirs[i], name }),
+        });
+        expect(res.status).toBe(201);
+      }
+      const a = await (await app.request("/projects/a/image", { method: "POST", body: uploadForm([7, 7, 7]) })).json() as any;
+      const b = await (await app.request("/projects/b/image", { method: "POST", body: uploadForm([7, 7, 7]) })).json() as any;
+      expect(a.data.image).toBe(b.data.image);
+      return a.data.image;
+    }
+
+    afterEach(() => {
+      for (const d of dirs) rmSync(d, { recursive: true, force: true });
+      dirs = [];
+    });
+
+    it("removing one keeps the file for the other, and removing both deletes it", async () => {
+      const app = createApp();
+      const image = await twoWithSameImage(app);
+
+      await app.request("/projects/a/image", { method: "DELETE" });
+      expect(existsSync(avatarPath(image))).toBe(true);
+      expect((await app.request("/projects/b/image")).status).toBe(200);
+
+      await app.request("/projects/b/image", { method: "DELETE" });
+      expect(existsSync(avatarPath(image))).toBe(false);
+    });
+
+    it("replacing one keeps the file for the other", async () => {
+      const app = createApp();
+      const image = await twoWithSameImage(app);
+
+      await app.request("/projects/a/image", { method: "POST", body: uploadForm([8, 8, 8, 8]) });
+      expect(existsSync(avatarPath(image))).toBe(true);
+      expect((await app.request("/projects/b/image")).status).toBe(200);
+    });
+
+    it("deleting one project keeps the file for the other", async () => {
+      const app = createApp();
+      const image = await twoWithSameImage(app);
+
+      await app.request("/projects/a", { method: "DELETE" });
+      expect(existsSync(avatarPath(image))).toBe(true);
+      expect((await app.request("/projects/b/image")).status).toBe(200);
+    });
+
+    it("a reference only the database knows about (another process's row) keeps the file", async () => {
+      const app = createApp();
+      dirs = [mkdtempSync(join(tmpdir(), "ppm-av-a-"))];
+      await app.request("/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dirs[0], name: "a" }),
+      });
+      const up = await (await app.request("/projects/a/image", { method: "POST", body: uploadForm([6, 6, 6]) })).json() as any;
+      // Written on the server's own connection, so the in-memory list never hears of it.
+      getDb().query("INSERT INTO projects (path, name, image, sort_order) VALUES ('/elsewhere', 'elsewhere', ?, 99)").run(up.data.image);
+      expect(configService.get("projects").some((p) => p.name === "elsewhere")).toBe(false);
+
+      await app.request("/projects/a/image", { method: "DELETE" });
+      expect(existsSync(avatarPath(up.data.image))).toBe(true);
+    });
   });
 });

@@ -19,7 +19,7 @@ const tables = (db: Database) =>
 
 describe("migration 58", () => {
   it("brings a new database to the current version with both tables and their indexes", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(58);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(58);
     expect((getDb().query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
     expect(tables(getDb())).toEqual(expect.arrayContaining([
       "assistant_telegram_bindings", "assistant_watches", "idx_assistant_watches_status", "idx_assistant_watches_target",
@@ -33,7 +33,7 @@ describe("migration 58", () => {
     db.exec("DROP TABLE assistant_telegram_bindings; DROP TABLE assistant_watches; PRAGMA user_version = 57");
     db.query("INSERT INTO session_metadata (session_id, assistant) VALUES ('kept', 1)").run();
     runMigrations(db);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(58);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
     expect(tables(db)).toEqual(expect.arrayContaining(["assistant_telegram_bindings", "assistant_watches"]));
     expect(db.query("SELECT assistant FROM session_metadata WHERE session_id = 'kept'").get()).toEqual({ assistant: 1 });
     db.close();

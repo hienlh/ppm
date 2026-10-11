@@ -12,7 +12,7 @@ import {
   getProjectSettingsJson,
   patchProjectSettingsJson,
 } from "./db.service.ts";
-import { readDataVersion, readProjectRows, rowsToProjects, writeProjectChanges } from "./config-projects-sync.ts";
+import { readDataVersion, readProjectRows, rowsToProjects, sameStored, writeProjectChanges } from "./config-projects-sync.ts";
 
 /**
  * Top-level config keys stored in the config table (not projects), written by `save()` when this
@@ -62,12 +62,9 @@ interface ProjectsSyncState {
   base: ProjectConfig[];
 }
 
-/** Whether two lists hold the same stored fields (path, name, colour) in the same order. */
+/** Whether two lists hold the same stored fields (path, name, colour, avatar) in the same order. */
 function sameProjectRows(a: ProjectConfig[], b: ProjectConfig[]): boolean {
-  return a.length === b.length && a.every((p, i) => {
-    const q = b[i]!;
-    return p.path === q.path && p.name === q.name && (p.color ?? null) === (q.color ?? null);
-  });
+  return a.length === b.length && a.every((p, i) => sameStored(p, b[i]!));
 }
 
 class ConfigService {
@@ -110,7 +107,7 @@ class ConfigService {
     // Before the rows: a write landing in between then shows as a change on the next read.
     const dataVersion = readDataVersion(db);
     const dbConfig = getAllConfig();
-    const dbProjects = rowsToProjects(readProjectRows(db), []);
+    const dbProjects = rowsToProjects(readProjectRows(db));
     this.storedJson = new Map(CONFIG_TABLE_KEYS.map((k) => [String(k), canonicalJson(dbConfig[String(k)])]));
     this.storedJsonDb = db;
     this.projectsSync = { db, dataVersion, base: structuredClone(dbProjects) };
@@ -277,7 +274,7 @@ class ConfigService {
     // the list given as the whole intended list, as before.
     const base = this.projectsSync?.db === db ? this.projectsSync.base : null;
     const { rows, dataVersion } = writeProjectChanges(db, base, projects);
-    const adopted = rowsToProjects(rows, [projects, this.projectsSync?.base ?? []]);
+    const adopted = rowsToProjects(rows);
     this.config.projects = adopted;
     this.projectsSync = { db, dataVersion, base: structuredClone(adopted) };
   }
@@ -300,7 +297,7 @@ class ConfigService {
     if (dataVersion === sync.dataVersion) return;
     // An edit made to the list here but not saved yet would be lost; the save merges it instead.
     if (!sameProjectRows(this.config.projects, sync.base)) return;
-    const fresh = rowsToProjects(readProjectRows(db), [this.config.projects]);
+    const fresh = rowsToProjects(readProjectRows(db));
     this.config.projects = fresh;
     this.projectsSync = { db, dataVersion, base: structuredClone(fresh) };
   }

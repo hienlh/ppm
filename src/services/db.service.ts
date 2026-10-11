@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 58;
+export const CURRENT_SCHEMA_VERSION = 59;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1302,6 +1302,14 @@ export function runMigrations(database: Database): void {
       CREATE INDEX IF NOT EXISTS idx_assistant_watches_target ON assistant_watches(target_session_id);
       PRAGMA user_version = 58;
     `);
+  }
+
+  if (current < 59) {
+    // A project's custom avatar: the filename `writeAvatar` returned (`<sha256>.webp` under the
+    // avatars directory). It used to live only in the server's memory, so every restart dropped
+    // it while the file stayed on disk. Null on existing rows: none of them has one stored.
+    try { database.exec("ALTER TABLE projects ADD COLUMN image TEXT"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 59;`);
   }
 }
 

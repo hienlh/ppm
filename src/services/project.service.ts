@@ -129,7 +129,8 @@ class ProjectService {
     configService.set("projects", filtered);
     configService.save();
     log.info(`Removed "${removed?.name ?? nameOrPath}" path=${removed?.path ?? abs}`);
-    // Best-effort: drop the avatar file after the config entry is gone.
+    // Best-effort: drop the avatar file after the config entry is gone, unless another project
+    // still uses the same picture.
     deleteAvatar(removed?.image);
   }
 

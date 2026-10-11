@@ -19,6 +19,8 @@ export interface StoredProjectRow {
   path: string;
   name: string;
   color: string | null;
+  /** Avatar filename under the avatars directory (`<sha256>.webp`), or null for none. */
+  image: string | null;
 }
 
 /** What one write left in the table, and the data version it corresponds to. */
@@ -28,7 +30,7 @@ export interface ProjectsWriteResult {
 }
 
 export function readProjectRows(db: Database): StoredProjectRow[] {
-  return db.query("SELECT path, name, color FROM projects ORDER BY sort_order, id").all() as StoredProjectRow[];
+  return db.query("SELECT path, name, color, image FROM projects ORDER BY sort_order, id").all() as StoredProjectRow[];
 }
 
 /**
@@ -39,29 +41,20 @@ export function readDataVersion(db: Database): number {
   return (db.query("PRAGMA data_version").get() as { data_version: number }).data_version;
 }
 
-/**
- * Turn stored rows into the in-memory shape. `image` is not stored in the table, so it is carried
- * over by path from the lists given: the first list that has the path decides, so a list that
- * dropped an avatar is not overruled by an older one that still had it.
- */
-export function rowsToProjects(rows: StoredProjectRow[], carryFrom: ProjectConfig[][]): ProjectConfig[] {
-  const images = new Map<string, string | undefined>();
-  for (const list of carryFrom) {
-    for (const p of list) if (!images.has(p.path)) images.set(p.path, p.image);
-  }
-  return rows.map((r) => {
-    const image = images.get(r.path);
-    return {
-      path: r.path,
-      name: r.name,
-      ...(r.color ? { color: r.color } : {}),
-      ...(image ? { image } : {}),
-    };
-  });
+/** Turn stored rows into the in-memory shape; an empty colour or avatar is left out, not kept as null. */
+export function rowsToProjects(rows: StoredProjectRow[]): ProjectConfig[] {
+  return rows.map((r) => ({
+    path: r.path,
+    name: r.name,
+    ...(r.color ? { color: r.color } : {}),
+    ...(r.image ? { image: r.image } : {}),
+  }));
 }
 
-const sameStored = (a: ProjectConfig, b: ProjectConfig): boolean =>
-  a.path === b.path && a.name === b.name && (a.color ?? null) === (b.color ?? null);
+/** Whether two entries hold the same stored fields — every column a write sets. */
+export const sameStored = (a: ProjectConfig, b: ProjectConfig): boolean =>
+  a.path === b.path && a.name === b.name &&
+  (a.color || null) === (b.color || null) && (a.image || null) === (b.image || null);
 
 /**
  * Apply the difference between `base` and `mine` to the table. `base` null means this process
@@ -75,7 +68,7 @@ export function writeProjectChanges(db: Database, base: ProjectConfig[] | null, 
     // Read under the lock: nothing can commit before this transaction ends, so the version read
     // here is exactly the state the result describes.
     const dataVersion = readDataVersion(db);
-    const before = base ?? rowsToProjects(readProjectRows(db), []);
+    const before = base ?? rowsToProjects(readProjectRows(db));
     const minePaths = new Set(mine.map((p) => p.path));
 
     // Which row each entry of `mine` came from (by its path in `base`), if any.
@@ -98,20 +91,22 @@ export function writeProjectChanges(db: Database, base: ProjectConfig[] | null, 
 
     const nextOrder = () => (db.query("SELECT COALESCE(MAX(sort_order), -1) AS m FROM projects").get() as { m: number }).m + 1;
     const upsert = db.query(
-      "INSERT INTO projects (path, name, color, sort_order) VALUES (?, ?, ?, ?) " +
-        "ON CONFLICT(path) DO UPDATE SET name = excluded.name, color = excluded.color",
+      "INSERT INTO projects (path, name, color, image, sort_order) VALUES (?, ?, ?, ?, ?) " +
+        "ON CONFLICT(path) DO UPDATE SET name = excluded.name, color = excluded.color, image = excluded.image",
     );
-    const move = db.query("UPDATE projects SET path = ?, name = ?, color = ? WHERE path = ?");
+    const move = db.query("UPDATE projects SET path = ?, name = ?, color = ?, image = ? WHERE path = ?");
     for (const m of mine) {
       const b = origin.get(m);
       // Untouched here: whatever the table holds for it now stands, including an edit or a
       // removal another process made.
       if (b && sameStored(b, m)) continue;
+      const color = m.color || null;
+      const image = m.image || null;
       if (b && b.path !== m.path) {
-        const moved = move.run(m.path, m.name, m.color ?? null, b.path) as { changes: number };
+        const moved = move.run(m.path, m.name, color, image, b.path) as { changes: number };
         if (moved.changes > 0) continue;
       }
-      upsert.run(m.path, m.name, m.color ?? null, nextOrder());
+      upsert.run(m.path, m.name, color, image, nextOrder());
     }
 
     // A reorder made here is applied in full; additions from elsewhere follow it. Without one,

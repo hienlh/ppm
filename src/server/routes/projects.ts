@@ -149,6 +149,7 @@ projectRoutes.post("/:name/image", async (c) => {
     projects[idx] = updated;
     configService.set("projects", projects);
     configService.save();
+    // Only if no other project shares the file (avatars are content-addressed).
     if (old && old !== filename) deleteAvatar(old);
 
     return c.json(ok(updated));
@@ -166,11 +167,13 @@ projectRoutes.delete("/:name/image", (c) => {
     if (idx === -1) return c.json(err(`Project not found: ${name}`), 404);
 
     const updated = { ...projects[idx]! };
-    deleteAvatar(updated.image);
+    const old = updated.image;
     delete updated.image;
     projects[idx] = updated;
     configService.set("projects", projects);
     configService.save();
+    // After the save: until then this project's own row still names the file.
+    deleteAvatar(old);
     return c.json(ok(updated));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
