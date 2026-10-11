@@ -35,14 +35,35 @@ export function currentPpmInstance(): PpmInstance {
   return { ppmDir: getPpmDir(), dbFile, profile, command };
 }
 
-const VIA_SERVER = ["status", "restart", "stop", "open", "schedule run-now"];
+/**
+ * The Assistant's own tools that replace whole command groups. They call the routes PPM's screens
+ * call (same checks, same live updates) and show a card PPM builds, where a shell call shows only
+ * the command line — so the reference sends the Assistant to them first.
+ */
+export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly string[] }[] = [
+  {
+    area: "Git (instead of `ppm git`)",
+    tools: ["git_status", "git_log", "git_diff", "git_branches", "git_stage", "git_discard", "git_undo",
+      "git_commit", "git_sync", "git_branch", "git_stash"],
+  },
+  {
+    area: "Schedules (instead of `ppm schedule`)",
+    tools: ["schedules_list", "schedule_get", "schedule_save", "schedule_delete", "schedule_run_now"],
+  },
+  {
+    area: "Port forwards and PPM's own public link",
+    tools: ["tunnels_status", "port_forward_start", "port_forward_stop", "public_link_set"],
+  },
+];
+
+const VIA_SERVER = ["status", "restart", "stop", "open", "schedule run-now (prefer the schedule_run_now tool)"];
 /**
  * Written directly, but the server re-reads the projects table when another process changed it
  * and its own saves apply only what it changed itself (`config-projects-sync.ts`).
  */
 const DIRECT_SEEN_LIVE = ["projects"];
-const DIRECT = ["config", "db", "schedule (all but run-now)", "cloud", "ext", "jira", "backup", "autostart",
-  "chat (also runs an AI turn inside the command itself)"];
+const DIRECT = ["config", "db", "schedule (all but run-now; prefer the schedule tools)", "cloud", "ext", "jira", "backup",
+  "autostart", "chat (also runs an AI turn inside the command itself)"];
 
 export function ppmCliReferenceHeader(instance: PpmInstance): string {
   const lines = [
@@ -63,6 +84,12 @@ export function ppmCliReferenceHeader(instance: PpmInstance): string {
     );
   }
   lines.push(
+    "## Use the Assistant's tools instead",
+    "These areas have tools of their own. They go through the running server's own checks, update PPM's",
+    "screens at once, and show the user a card that says what will change. Use them, not the commands below:",
+    ...TOOLS_INSTEAD_OF_CLI.map(({ area, tools }) => `- ${area}: ${tools.join(", ")}`),
+    "Run `ppm git` only for what the git tools leave out (merging or deleting a branch, for instance).",
+    "",
     "## Commands that go through the running server (prefer these)",
     VIA_SERVER.map((c) => `- ppm ${c}`).join("\n"),
     "",

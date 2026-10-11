@@ -194,7 +194,8 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     title: "PPM CLI reference",
     description: "How to run the `ppm` command line against this PPM, which commands go through the running server and "
       + "which change its data directly, and every command with its options. For what PPM's own tools do not cover "
-      + "(git, schedules, tunnels, extensions). Running a command is a shell call, which asks the user.",
+      + "(extensions, rarer git operations such as merging or deleting a branch); git, schedules and tunnels have "
+      + "tools of their own. Running a command is a shell call, which asks the user.",
     inputSchema: object({}),
     annotations: READ_ONLY,
   },

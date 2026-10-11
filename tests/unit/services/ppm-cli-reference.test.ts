@@ -7,7 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import {
-  PPM_CLI_REFERENCE, currentPpmInstance, ppmCliReference, ppmCliReferenceHeader,
+  PPM_CLI_REFERENCE, TOOLS_INSTEAD_OF_CLI, currentPpmInstance, ppmCliReference, ppmCliReferenceHeader,
 } from "../../../src/services/assistant/ppm-cli-reference.ts";
 import { generatePpmCliReference } from "../../../scripts/generate-ppm-cli-reference.ts";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
@@ -54,6 +54,22 @@ describe("the header", () => {
     expect(projects).toBeGreaterThan(live);
     expect(projects).toBeLessThan(direct);
     expect(header.indexOf("- ppm projects", direct)).toBe(-1);
+  });
+
+  it("sends git, schedules and tunnels to the Assistant's tools first, each tool listed once", () => {
+    const header = ppmCliReferenceHeader(base);
+    const start = header.indexOf("## Use the Assistant's tools instead");
+    const end = header.indexOf("## Commands that go through the running server");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const instead = header.slice(start, end);
+    for (const name of TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools)) {
+      // Whole words: `git_branch` must not count inside `git_branches`.
+      expect({ name, n: instead.match(new RegExp(`\\b${name}\\b`, "g"))?.length ?? 0 }).toEqual({ name, n: 1 });
+    }
+    expect(instead).toContain("Run `ppm git` only for what the git tools leave out");
+    // run-now stays listed as a server command, pointing at its tool.
+    expect(header).toContain("- ppm schedule run-now (prefer the schedule_run_now tool)");
   });
 
   it("warns that a profile server's data is out of the CLI's reach", () => {

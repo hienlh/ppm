@@ -28,6 +28,7 @@ import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
 import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
 import { ASSISTANT_APPROVAL_SECTION, ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, assistantUserMcpSection, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
+import { ASSISTANT_OPS_SECTION } from "./assistant/assistant-instructions-ops.ts";
 import { enabledAssistantMcpServers, getAssistantSettings } from "./assistant/assistant-settings.service.ts";
 import { assistantMcpAccessFor, assistantMcpTokens } from "./assistant-mcp/assistant-mcp-tokens.ts";
 import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
@@ -480,7 +481,7 @@ class ChatService {
     const defaults = settings.providers[providerId] ?? {};
     const servers = enabledAssistantMcpServers();
     const sections = [
-      ...(assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION] : []),
+      ...(assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION, ASSISTANT_OPS_SECTION] : []),
       ...(servers.length > 0 ? [assistantUserMcpSection(servers.map((s) => s.name))] : []),
     ];
     return {
