@@ -111,6 +111,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 ## /api/db
 
 - `GET    /api/db/ssh/agent`
+- `POST   /api/db/ai-approvals/:requestId`
 - `GET    /api/db/connections`
 - `GET    /api/db/connections/export`
 - `POST   /api/db/connections/import`
