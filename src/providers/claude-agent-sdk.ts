@@ -926,18 +926,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   /**
-   * One prompt, one text answer: no tools, no session on disk, no project. For PPM's own small
-   * jobs (sorting the log's errors, drafting a bug report), not for chats. It runs on the
-   * account the router would pick next and authenticates exactly as a turn does
-   * (`buildQueryEnv`), in a directory of its own with `settingSources: []`, so no project's
-   * CLAUDE.md, settings or `.env` reaches it.
+   * One prompt, one answer: no tools, no MCP server, no session on disk, no project. For PPM's
+   * own small jobs (sorting the log's errors, drafting a bug report) and a script schedule's
+   * `ctx.ai.ask`, not for chats. It runs on the account the router would pick next and
+   * authenticates exactly as a turn does (`buildQueryEnv`), in a directory of its own with
+   * `settingSources: []`, so no project's CLAUDE.md, settings or `.env` reaches it.
+   * With `jsonSchema` the answer is also `json`, through the SDK's structured output; that is
+   * a tool call of its own, so the one-turn cap is lifted for it.
    */
   async completeOnce(input: {
     prompt: string;
-    systemPrompt: string;
+    systemPrompt?: string;
     model: string;
     timeoutMs?: number;
-  }): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+    effort?: "low" | "medium" | "high";
+    jsonSchema?: Record<string, unknown>;
+  }): Promise<{ text: string; json?: unknown; costUsd: number; inputTokens: number; outputTokens: number }> {
     let account: AccountWithTokens | null = null;
     if (accountSelector.isEnabled()) {
       const picked = accountSelector.next();
@@ -959,11 +963,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
           cwd,
           model: input.model,
-          systemPrompt: input.systemPrompt,
+          ...(input.systemPrompt !== undefined && { systemPrompt: input.systemPrompt }),
+          ...(input.effort && { effort: input.effort }),
+          ...(input.jsonSchema ? { outputFormat: { type: "json_schema" as const, schema: input.jsonSchema } } : { maxTurns: 1 }),
           tools: [],
+          mcpServers: {},
+          strictMcpConfig: true,
           settingSources: [],
           persistSession: false,
-          maxTurns: 1,
           env: this.buildQueryEnv(undefined, account),
           abortController,
         },
@@ -974,9 +981,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const detail = message.subtype === "success" ? message.result : message.subtype;
           throw new Error(`Claude did not answer: ${String(detail).slice(0, 200)}`);
         }
+        if (input.jsonSchema && message.structured_output === undefined) {
+          throw new Error("Claude did not answer in the requested JSON shape");
+        }
         if (account) accountSelector.onSuccess(account.id);
         return {
           text: message.result,
+          ...(input.jsonSchema && { json: message.structured_output }),
+          costUsd: message.total_cost_usd,
           inputTokens: (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0),
           outputTokens: message.usage.output_tokens ?? 0,
         };
