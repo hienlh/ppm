@@ -9,6 +9,7 @@ import { describeApprovalInput } from "../../services/notification-format.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
+import type { TraceOrigin } from "../../shared/session-trace.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
 // — a chat socket is not guaranteed to exist now that chat tabs mount lazily.
 import { broadcastGlobalEvent } from "./global.ts";
@@ -159,7 +160,8 @@ const BUFFERABLE_TYPES = new Set([
 ]);
 
 type ChatWsSocket = {
-  data: { type: string; sessionId: string; projectName?: string; providerHint?: string };
+  /** `origin` is set only by an in-process caller (a script schedule); a browser socket leaves it unset, i.e. `ws`. */
+  data: { type: string; sessionId: string; projectName?: string; providerHint?: string; origin?: TraceOrigin };
   send: (data: string) => void;
   ping?: (data?: string | ArrayBuffer) => void;
 };
@@ -870,7 +872,7 @@ function startCleanupTimer(sessionId: string): void {
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[]): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], origin: TraceOrigin = "ws"): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -935,7 +937,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin: "ws" })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1737,7 +1739,7 @@ export const chatWebSocket = {
         const msgImagePaths = parsed.type === "message" ? parsed.imagePaths : undefined;
         entry.streamPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
-            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths).then(resolve, resolve);
+            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths, ws.data.origin).then(resolve, resolve);
           }, 0);
         });
       } else {
@@ -1747,7 +1749,7 @@ export const chatWebSocket = {
           const thinkingBudget = getSessionThinking(sessionId);
           try {
             await chatService.pushMessage(providerId, sessionId, parsed.content, {
-              origin: "ws",
+              origin: ws.data.origin ?? "ws",
               priority: parsed.priority ?? 'next',
               images: parsed.images,
               imagePaths: parsed.imagePaths,
@@ -1851,7 +1853,7 @@ export const chatWebSocket = {
       log.info(`session=${sessionId} WS cancel received from FE (phase=${phase})`);
       logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
       dbApprovalBroker.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
-      chatService.abortQuery(providerId, sessionId, "ws_cancel", "ws");
+      chatService.abortQuery(providerId, sessionId, "ws_cancel", ws.data.origin ?? "ws");
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
       // Cross-platform and safe (no OS-PID guessing). Runs when the AI is idle

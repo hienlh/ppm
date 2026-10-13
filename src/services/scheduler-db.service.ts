@@ -20,10 +20,19 @@ export function getDueSchedules(nowIso: string): Schedule[] {
   ).all(nowIso) as Schedule[];
 }
 
+/** When the earliest enabled schedule is due, or null when none is waiting on a cron. */
+export function getEarliestFireAt(): string | null {
+  const row = getDb().query(
+    "SELECT MIN(next_fire_at) AS at FROM schedules WHERE enabled = 1 AND next_fire_at IS NOT NULL",
+  ).get() as { at: string | null } | null;
+  return row?.at ?? null;
+}
+
 export function insertSchedule(s: NewSchedule): number {
   const res = getDb().query(
-    `INSERT INTO schedules (name, cron_expr, provider_id, project_path, prompt, permission_mode, max_turns, timeout_ms, enabled, next_fire_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO schedules (name, cron_expr, provider_id, project_path, prompt, permission_mode, max_turns, timeout_ms, enabled, next_fire_at,
+       kind, mode, description, script, inputs_json, input_values_json, secrets_enc)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     s.name, s.cron_expr, s.provider_id, s.project_path, s.prompt,
     s.permission_mode ?? "bypassPermissions",
@@ -31,6 +40,13 @@ export function insertSchedule(s: NewSchedule): number {
     s.timeout_ms ?? 1_800_000,
     s.enabled === false ? 0 : 1,
     s.next_fire_at ?? null,
+    s.kind ?? "prompt",
+    s.mode ?? "tick",
+    s.description ?? "",
+    s.script ?? null,
+    s.inputs_json ?? "[]",
+    s.input_values_json ?? "{}",
+    s.secrets_enc ?? null,
   );
   return Number(res.lastInsertRowid);
 }
@@ -62,6 +78,23 @@ export function insertScheduleRun(scheduleId: number, sessionId: string | null, 
   return Number(res.lastInsertRowid);
 }
 
+/**
+ * A run recorded once it is over — a script tick, which keeps a row only when it has something
+ * to show. `started_at` in SQLite's own format, as the column's default writes it.
+ */
+export function insertFinishedRun(scheduleId: number, run: {
+  status: Extract<RunStatus, "done" | "error">; startedAt: number; output: string; error: string | null; costUsd?: number;
+}): number {
+  const res = getDb().query(
+    `INSERT INTO schedule_runs (schedule_id, status, output_truncated, error, cost_usd, started_at, ended_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    scheduleId, run.status, run.output || null, run.error, run.costUsd ?? null,
+    new Date(run.startedAt).toISOString().replace("T", " ").slice(0, 19), new Date().toISOString(),
+  );
+  return Number(res.lastInsertRowid);
+}
+
 export function updateScheduleRun(
   runId: number,
   fields: Partial<Pick<ScheduleRun, "status" | "session_id" | "output_truncated" | "context_window_pct" | "cost_usd" | "error" | "rotated_to_session_id" | "ended_at">>,
@@ -79,11 +112,16 @@ export function listScheduleRuns(scheduleId: number, limit = 20): ScheduleRun[] 
   ).all(scheduleId, limit) as ScheduleRun[];
 }
 
-/** Boot hygiene: orphan stale running rows (>2h) and prune runs older than 30 days. */
+/**
+ * Boot hygiene: orphan stale running rows (>2h) and prune runs older than 30 days. A script's
+ * running row is the life of an always-on process, hours long by design: the always-on
+ * supervisor closes those itself.
+ */
 export function cleanupScheduleRuns(): void {
   getDb().exec(`
     UPDATE schedule_runs SET status = 'error', error = 'orphaned: server restart', ended_at = datetime('now')
-      WHERE status = 'running' AND started_at < datetime('now', '-2 hours');
+      WHERE status = 'running' AND started_at < datetime('now', '-2 hours')
+        AND schedule_id NOT IN (SELECT id FROM schedules WHERE kind = 'script');
     DELETE FROM schedule_runs WHERE started_at < datetime('now', '-30 days');
   `);
 }
