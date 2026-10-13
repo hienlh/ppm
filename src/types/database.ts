@@ -164,6 +164,12 @@ export interface DbQuerySession {
   cancel(): void;
   /** Roll back a transaction the script began and did not end; true when there was one. */
   rollbackOpenTransaction(): Promise<boolean>;
+  /**
+   * Whether a transaction is open now. Only MySQL and MariaDB answer: a CREATE, ALTER, DROP or
+   * TRUNCATE there commits by itself and ends the transaction it ran in. Elsewhere a transaction
+   * ends only when told to.
+   */
+  transactionOpen?(): Promise<boolean>;
   close(): Promise<void>;
 }
 

@@ -185,7 +185,10 @@ export function createDbToolsMcpHandler(deps: {
       rowCount: report.rowsChanged, durationMs: Date.now() - startedAt,
     });
     const detail = formatStatementResults(report.results, statements, DB_EXECUTE_RESULT_ROWS);
-    if (!report.committed) return textResult(`The user approved the change, but it was not kept. ${report.reason}\n\n${detail}`.trim(), true);
+    if (!report.committed) {
+      const kept = report.kept > 0 ? "only part of it was kept" : "it was not kept";
+      return textResult(`The user approved the change, but ${kept}. ${report.reason}\n\n${detail}`.trim(), true);
+    }
     const changed = `${report.rowsChanged} ${report.rowsChanged === 1 ? "row" : "rows"} changed in all`;
     return textResult(`The user approved the change. It ran on ${conn.name}${database ? ` (database ${database})` : ""} in one transaction and was committed: ${changed}.\n\n${detail}`);
   }

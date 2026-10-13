@@ -12,7 +12,9 @@ import { QueryScriptRun, type QueryScriptSummary } from "../database/query-scrip
  *   hidden in a function call is refused by the database itself, as it is everywhere in PPM.
  * - `db_execute` runs the script the user approved, once, inside one transaction PPM opens and
  *   ends itself: committed only when every statement succeeded and the rows changed in all are
- *   the ones the AI said to expect, rolled back otherwise.
+ *   the ones the AI said to expect, rolled back otherwise. MySQL and MariaDB commit a CREATE,
+ *   ALTER, DROP or TRUNCATE by itself, with everything before it, so there the transaction is
+ *   opened again after one, and a run rolled back says which statements were kept all the same.
  */
 
 export interface AiQueryRun {
@@ -48,12 +50,21 @@ export function transactionControlIn(sql: string, dialect: DialectName): string 
 
 export type ApprovedRunReport =
   | { committed: true; results: QueryStatementResult[]; rowsChanged: number }
-  /** Rolled back, or never begun: nothing the script did was kept. */
-  | { committed: false; results: QueryStatementResult[]; rowsChanged: number; reason: string };
+  /**
+   * Rolled back, or never begun. `kept` counts the statements, from the first, that the database
+   * had committed by itself before then — only MySQL and MariaDB do — and is 0 when nothing the
+   * script did was kept.
+   */
+  | { committed: false; results: QueryStatementResult[]; rowsChanged: number; kept: number; reason: string };
 
 const BEGIN: Record<DialectName, string> = { postgres: "BEGIN", sqlite: "BEGIN", mysql: "START TRANSACTION" };
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+const COMMITS_BY_ITSELF = "MySQL and MariaDB commit a CREATE, ALTER, DROP or TRUNCATE by itself, with everything before it";
+
+/** `statement 2`, or `statements 1–3`. */
+const statementsLabel = (from: number, to: number): string => (from === to ? `statement ${from}` : `statements ${from}–${to}`);
 
 /**
  * Runs the approved script inside one transaction on `session` (writable), and closes the
@@ -71,6 +82,27 @@ export async function runApprovedScript(session: DbQuerySession, opts: {
   const results: QueryStatementResult[] = [];
   let rowsChanged = 0;
   let begun = false;
+  /**
+   * Statements, from the first, that are in the database whatever happens next: MySQL and MariaDB
+   * commit a CREATE, ALTER, DROP or TRUNCATE by itself, with everything before it, and end the
+   * transaction there. PPM then opens it again, so that what follows can still be rolled back.
+   */
+  let kept = 0;
+  /** False once a statement has ended the transaction, which only MySQL and MariaDB do. */
+  const stillOpen = async (): Promise<boolean> => !session.transactionOpen || await session.transactionOpen();
+  /** `cause`, and what the run left behind: nothing, or the first `kept` statements. */
+  const notKept = (cause: string): string => {
+    if (kept === 0) return `${cause}, so the transaction was rolled back and nothing changed.`;
+    const ran = results.filter((r) => r.error === undefined).length;
+    const keptPart = `${statementsLabel(1, kept)} ${kept === 1 ? "was" : "were"} kept`;
+    if (ran <= kept) return `${cause}, but nothing could be rolled back: ${keptPart}, because ${COMMITS_BY_ITSELF}.`;
+    return `${cause}, so ${statementsLabel(kept + 1, ran)} ${ran - kept === 1 ? "was" : "were"} rolled back, but ${keptPart}, because ${COMMITS_BY_ITSELF}.`;
+  };
+  /**
+   * Always `return await`ed: a promise returned unawaited from inside `try` does not hold back its
+   * `finally`, which closes the session under the rollback — and on MySQL the rollback then never
+   * answers, so the tool call hung.
+   */
   const rolledBack = async (reason: string): Promise<ApprovedRunReport> => {
     let why = reason;
     if (begun) {
@@ -80,16 +112,16 @@ export async function runApprovedScript(session: DbQuerySession, opts: {
         why += ` Rolling back failed too (${errorText(e)}); the database ends the transaction when the connection closes.`;
       }
     }
-    return { committed: false, results, rowsChanged, reason: why };
+    return { committed: false, results, rowsChanged, kept, reason: why };
   };
   try {
     const statements = splitSqlScript(opts.sql, opts.dialect, session.splitOptions);
-    if (statements.length === 0) return { committed: false, results, rowsChanged, reason: "The script has no statements to run." };
+    if (statements.length === 0) return { committed: false, results, rowsChanged, kept, reason: "The script has no statements to run." };
     try {
       await session.run(BEGIN[opts.dialect], 1);
       begun = true;
     } catch (e) {
-      return { committed: false, results, rowsChanged, reason: `The transaction could not be started: ${errorText(e)}` };
+      return { committed: false, results, rowsChanged, kept, reason: `The transaction could not be started: ${errorText(e)}` };
     }
     for (const [index, statement] of statements.entries()) {
       const started = performance.now();
@@ -114,24 +146,29 @@ export async function runApprovedScript(session: DbQuerySession, opts: {
         const message = e instanceof QueryStatementError || e instanceof Error ? e.message : String(e);
         const error = timedOut ? `Stopped after ${Math.round(opts.timeoutMs! / 1000)} s: ${message}` : message;
         results.push({ ...base, resultSets: [], durationMs: Math.round(performance.now() - started), error, ...(timedOut ? { stopped: "timeout" as const } : {}) });
-        return rolledBack(`Statement ${index + 1} failed, so the transaction was rolled back and nothing changed.`);
+        // A statement that ends the transaction ends it before it runs, so even one that then fails
+        // keeps what came before it. Not knowing (the connection is gone) means the server rolls back.
+        if (!(await stillOpen().catch(() => true))) kept = index;
+        return await rolledBack(notKept(`Statement ${index + 1} failed`));
       } finally {
         if (timer) clearTimeout(timer);
       }
+      if (!(await stillOpen())) {
+        kept = index + 1;
+        if (index < statements.length - 1) await session.run(BEGIN[opts.dialect], 1);
+      }
     }
     if (opts.expectedRows !== undefined && rowsChanged !== opts.expectedRows) {
-      return rolledBack(
-        `The script changed ${rowsChanged} ${rowsChanged === 1 ? "row" : "rows"} in all, not the ${opts.expectedRows} expected, so the transaction was rolled back and nothing changed.`,
-      );
+      return await rolledBack(notKept(`The script changed ${rowsChanged} ${rowsChanged === 1 ? "row" : "rows"} in all, not the ${opts.expectedRows} expected`));
     }
     try {
       await session.run("COMMIT", 1);
     } catch (e) {
-      return rolledBack(`COMMIT failed (${errorText(e)}), so nothing changed.`);
+      return await rolledBack(notKept(`COMMIT failed (${errorText(e)})`));
     }
     return { committed: true, results, rowsChanged };
   } catch (e) {
-    return rolledBack(`The run broke off: ${errorText(e)}`);
+    return await rolledBack(notKept(`The run broke off (${errorText(e)})`));
   } finally {
     await session.close().catch(() => {});
   }

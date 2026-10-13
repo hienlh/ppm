@@ -3,13 +3,17 @@
  * reads inside a read-only transaction, `open_query` hands the script to the user's device, and
  * `db_execute` runs only what the user approved, once, in one transaction — committed, or rolled
  * back when a statement fails or the rows changed are not the ones expected. Every call is in the
- * query audit log as the AI's. The Postgres part runs only when a server is given, e.g.
+ * query audit log as the AI's. The Postgres, MySQL and MariaDB parts run only when a server is
+ * given, e.g.
  *
- *   PPM_TEST_PG_URL=postgres://postgres:x@127.0.0.1:25432/postgres bun test tests/integration/db-ai-tools.test.ts
+ *   PPM_TEST_PG_URL=postgres://postgres:x@127.0.0.1:25432/postgres \
+ *   PPM_TEST_MYSQL_URL=mysql://root:x@127.0.0.1:23306 PPM_TEST_MARIADB_URL=mariadb://root:x@127.0.0.1:23307 \
+ *   bun test tests/integration/db-ai-tools.test.ts
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { Database } from "bun:sqlite";
+import mysql2 from "mysql2/promise";
 import postgres from "postgres";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +21,8 @@ import { join } from "node:path";
 import { insertConnection, openTestDb, setDb, updateConnection } from "../../src/services/db.service.ts";
 import { _resetPpmDir } from "../../src/services/ppm-dir.ts";
 import { initAdapters } from "../../src/services/database/init-adapters.ts";
+import { installDbDriver } from "../../src/services/database/drivers/db-driver-install.ts";
+import { mysqlService, readonlyMysqlService } from "../../src/services/mysql.service.ts";
 import { postgresService, readonlyPostgresService } from "../../src/services/postgres.service.ts";
 import { closeAuditDb, getAuditDb } from "../../src/services/query-audit/query-audit-db.ts";
 import { listQueryLogs } from "../../src/services/query-audit/query-audit.service.ts";
@@ -28,24 +34,34 @@ import { OPEN_QUERY_WAIT_MS } from "../../src/services/db-ai-tools/db-ai-tools-t
 import type { DbApprovalOutcome } from "../../src/services/db-ai-tools/db-approval-broker.ts";
 import type { TabOpenOutcome } from "../../src/services/tab-tools-mcp/tab-open-broker.ts";
 import type { DbExecuteApprovalInput } from "../../src/shared/db-ai-tools.ts";
+import type { DbType } from "../../src/shared/db-types.ts";
 import type { TabOpenAsk } from "../../src/shared/tab-open-protocol.ts";
+import { copyingRunner } from "../helpers/db-driver-offline-install.ts";
 
 const tempDirs: string[] = [];
 const originalPpmHome = process.env.PPM_HOME;
+const RUN = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+const MYSQL_ENGINES: { type: Extract<DbType, "mysql" | "mariadb">; url: string | undefined }[] = [
+  { type: "mysql", url: process.env.PPM_TEST_MYSQL_URL },
+  { type: "mariadb", url: process.env.PPM_TEST_MARIADB_URL },
+];
 
-beforeAll(() => {
+beforeAll(async () => {
   const home = mkdtempSync(join(tmpdir(), "ppm-db-ai-tools-home-"));
   tempDirs.push(home);
   process.env.PPM_HOME = home;
   closeAuditDb();
   _resetPpmDir();
   initAdapters();
+  if (MYSQL_ENGINES.some((e) => e.url)) await installDbDriver("mysql", { run: copyingRunner("mysql") });
 });
 
 afterAll(async () => {
   closeAuditDb();
   await postgresService.closeAll();
   await readonlyPostgresService.closeAll();
+  await mysqlService.closeAll();
+  await readonlyMysqlService.closeAll();
   if (originalPpmHome === undefined) delete process.env.PPM_HOME;
   else process.env.PPM_HOME = originalPpmHome;
   _resetPpmDir();
@@ -336,3 +352,93 @@ describe.skipIf(!PG_URL)("database tools on Postgres", () => {
     expect(open[0]!.n).toBe(0);
   });
 });
+
+for (const engine of MYSQL_ENGINES) {
+  describe.skipIf(!engine.url)(`database tools on ${engine.type}`, () => {
+    const DB = `ppm_ai_${engine.type}_${RUN}`;
+    const KEPT_BECAUSE = "because MySQL and MariaDB commit a CREATE, ALTER, DROP or TRUNCATE by itself, with everything before it.";
+    let admin: mysql2.Connection;
+    const names = async () => ((await admin.query(`SELECT name FROM ${DB}.ai_items ORDER BY id`))[0] as { name: string }[]).map((r) => r.name);
+    const moreRows = async () => {
+      const [tables] = await admin.query("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = ? AND table_name = 'ai_more'", [DB]);
+      if (Number((tables as { n: number }[])[0]!.n) === 0) return null;
+      return Number(((await admin.query(`SELECT COUNT(*) AS n FROM ${DB}.ai_more`))[0] as { n: number }[])[0]!.n);
+    };
+
+    beforeAll(async () => {
+      admin = await mysql2.createConnection({ uri: engine.url!.replace(/^mariadb:/, "mysql:"), multipleStatements: true });
+      await admin.query(`CREATE DATABASE ${DB}`);
+    });
+
+    beforeEach(async () => {
+      setDb(openTestDb());
+      getAuditDb().exec("DELETE FROM query_log");
+      await admin.query(`
+        DROP TABLE IF EXISTS ${DB}.ai_items, ${DB}.ai_more;
+        CREATE TABLE ${DB}.ai_items (id INT PRIMARY KEY, name VARCHAR(10)) ENGINE=InnoDB;
+        INSERT INTO ${DB}.ai_items VALUES (1, 'a'), (2, 'b'), (3, 'c');`);
+      insertConnection(engine.type, "MyProd", { type: engine.type, connectionString: `${engine.url!.replace(/\/$/, "")}/${DB}` });
+    });
+
+    afterAll(async () => {
+      await admin?.query(`DROP DATABASE IF EXISTS ${DB}`);
+      await admin?.end();
+    });
+
+    const execute = (sql: string, extra: object = {}) => setup().call("db_execute", { connection: "MyProd", reason: "Change it", sql, ...extra });
+
+    it("a failure after a CREATE says the CREATE and everything before it were kept", async () => {
+      const result = await execute("INSERT INTO ai_items VALUES (4, 'd');\nCREATE TABLE ai_more (id INT);\nINSERT INTO nosuch VALUES (1)");
+      expect(result.isError).toBe(true);
+      expect(result.content[0]!.text).toStartWith(
+        `The user approved the change, but only part of it was kept. Statement 3 failed, but nothing could be rolled back: statements 1–2 were kept, ${KEPT_BECAUSE}`,
+      );
+      expect(await names()).toEqual(["a", "b", "c", "d"]);
+      expect(await moreRows()).toBe(0);
+      expect(listQueryLogs()[0]!.error).toContain("statements 1–2 were kept");
+    });
+
+    it("opens the transaction again after a CREATE, so what follows it is still rolled back", async () => {
+      const result = await execute("CREATE TABLE ai_more (id INT);\nINSERT INTO ai_items VALUES (4, 'd');\nINSERT INTO nosuch VALUES (1)");
+      expect(result.content[0]!.text).toStartWith(
+        `The user approved the change, but only part of it was kept. Statement 3 failed, so statement 2 was rolled back, but statement 1 was kept, ${KEPT_BECAUSE}`,
+      );
+      expect(await names()).toEqual(["a", "b", "c"]);
+      expect(await moreRows()).toBe(0);
+    });
+
+    it("rolls back what follows a CREATE when the rows changed are not the expected ones", async () => {
+      const result = await execute("CREATE TABLE ai_more (id INT);\nUPDATE ai_items SET name = 'x'", { expected_rows: 1 });
+      expect(result.content[0]!.text).toStartWith(
+        `The user approved the change, but only part of it was kept. The script changed 3 rows in all, not the 1 expected, so statement 2 was rolled back, but statement 1 was kept, ${KEPT_BECAUSE}`,
+      );
+      expect(await names()).toEqual(["a", "b", "c"]);
+      expect(await moreRows()).toBe(0);
+    });
+
+    it("an ALTER that fails has already committed what came before it", async () => {
+      const result = await execute("INSERT INTO ai_items VALUES (4, 'd');\nALTER TABLE nosuch ADD c INT");
+      expect(result.content[0]!.text).toStartWith(
+        `The user approved the change, but only part of it was kept. Statement 2 failed, but nothing could be rolled back: statement 1 was kept, ${KEPT_BECAUSE}`,
+      );
+      expect(await names()).toEqual(["a", "b", "c", "d"]);
+    });
+
+    it("rolls back all of a script with no such statement, a TEMPORARY table included", async () => {
+      const result = await execute("CREATE TEMPORARY TABLE ai_tmp (id INT);\nUPDATE ai_items SET name = 'y';\nINSERT INTO nosuch VALUES (1)");
+      expect(result.content[0]!.text).toStartWith(
+        "The user approved the change, but it was not kept. Statement 3 failed, so the transaction was rolled back and nothing changed.",
+      );
+      expect(await names()).toEqual(["a", "b", "c"]);
+    });
+
+    it("commits a script with a CREATE in it, and leaves no transaction open", async () => {
+      const result = await execute("CREATE TABLE ai_more (id INT);\nINSERT INTO ai_more VALUES (1), (2)", { expected_rows: 2 });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0]!.text).toContain("was committed: 2 rows changed in all");
+      expect(await moreRows()).toBe(2);
+      const [open] = await admin.query("SELECT COUNT(*) AS n FROM information_schema.innodb_trx WHERE trx_mysql_thread_id <> CONNECTION_ID()");
+      expect(Number((open as { n: number }[])[0]!.n)).toBe(0);
+    });
+  });
+}
