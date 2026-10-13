@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Push could not be turned on in Brave, and the pane said only "Registration failed - push service error".** Brave delivers push through Google's service and keeps it off until "Use Google services for push messaging" is turned on in brave://settings/privacy; the pane now says so, and to restart Brave and turn push on again. In other browsers that cannot reach their push service, the pane names the service (Google's for Chrome, Mozilla's for Firefox, Apple's for Safari) and what may be blocking it, and gives up after a minute: Chrome never answers on a network that blocks Google's service, which left the switch stuck for good. Firefox with `dom.push.enabled` off in about:config is told to turn it on. The message stays under the switch instead of in a toast that was gone in four seconds, and while the browser registers the pane says it is waiting, which just after the browser starts takes about half a minute.
+
 ## [0.23.19] - 2026-10-26
 
 ### Fixed

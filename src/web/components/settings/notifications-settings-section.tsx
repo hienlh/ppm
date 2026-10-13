@@ -144,6 +144,8 @@ function PushSection() {
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [enabling, setEnabling] = useState(false);
+  const [enableError, setEnableError] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const support = pushSupport();
 
@@ -174,6 +176,8 @@ function PushSection() {
   const toggle = async (on: boolean) => {
     if (!status) return;
     setBusy(true);
+    setEnabling(on);
+    setEnableError(null);
     try {
       if (on) {
         await enablePush(status.publicKey);
@@ -182,9 +186,12 @@ function PushSection() {
         await disablePush();
       }
     } catch (e) {
-      toast.error(on ? "Could not turn push on" : "Could not turn push off", { description: errorText(e) });
+      // Kept on screen rather than in a toast: the fix is usually a browser setting to go and change.
+      if (on) setEnableError(errorText(e));
+      else toast.error("Could not turn push off", { description: errorText(e) });
     } finally {
       setBusy(false);
+      setEnabling(false);
       await load();
     }
   };
@@ -231,6 +238,12 @@ function PushSection() {
         />
       </div>
       {support.state !== "available" && <p className="text-xs leading-relaxed text-warning">{support.message}</p>}
+      {enabling && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Waiting for the browser's push service. Just after the browser starts, this can take up to a minute.
+        </p>
+      )}
+      {enableError && <p className="break-words text-xs leading-relaxed text-error">{enableError}</p>}
       {loadError && <p className="text-xs text-error">{loadError}</p>}
 
       {status && status.devices.length > 0 && (
