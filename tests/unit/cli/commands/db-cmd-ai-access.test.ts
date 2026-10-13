@@ -1,15 +1,23 @@
 /**
- * "Available to the AI chat" off: `ppm db` run from a chat — which carries PPM_AI_CHAT, set by
- * every chat provider — neither lists the connection nor opens it, while a person at a terminal
- * still can. The CLI runs as a process of its own against this file's own PPM directory, on
- * SQLite connections, so no database server is needed.
+ * What `ppm db` does when it runs from a chat — which carries PPM_AI_CHAT, set by every chat
+ * provider — and what it does for a person at a terminal, which is unchanged throughout.
+ *
+ * Two refusals, in that order of specificity. A connection with "Available to the AI chat" off is
+ * neither listed nor opened. A connection the chat may use is still not read or written here: the
+ * data commands hand over to the MCP tools, which are the path the user can switch off per tool
+ * and the one whose writes wait for an approval.
+ *
+ * The CLI runs as a process of its own against this file's own PPM directory, on SQLite
+ * connections, so no database server is needed.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { closeDb, getConnectionByName, insertConnection, updateConnection } from "../../../../src/services/db.service.ts";
+import {
+  closeDb, deleteConfigValue, getConnectionByName, insertConnection, setConfigValue, updateConnection,
+} from "../../../../src/services/db.service.ts";
 import { _resetPpmDir } from "../../../../src/services/ppm-dir.ts";
 import { _resetKeyPath, setKeyPath } from "../../../../src/lib/account-crypto.ts";
 
@@ -116,8 +124,64 @@ describe("opening a connection that is not available to the AI chat", () => {
     expect(json(out).rows).toHaveLength(1);
   }, SLOW);
 
-  it("leaves the connections an AI chat may use alone", async () => {
-    const { code } = await ppmDb(["query", "open", "SELECT count(*) AS n FROM orders"], true);
+});
+
+describe("a data command run inside an AI chat", () => {
+  it("is handed to the tool that serves it, named", async () => {
+    for (const [args, tool] of [
+      [["tables", "open"], "db_query"],
+      [["schema", "open", "orders"], "db_query"],
+      [["data", "open", "orders"], "db_query"],
+      [["query", "open", "SELECT 1"], "db_query"],
+      [["run", "open", join(data, "count.sql")], "db_execute"],
+    ] as const) {
+      const { code, out, err } = await ppmDb([...args], true);
+      const said = out + err;
+      expect({ args, code, handed: said.includes("does not run inside an AI chat"), named: said.includes(tool) })
+        .toEqual({ args, code: 1, handed: true, named: true });
+    }
+  }, SLOW);
+
+  it("records the handover in the audit log as blocked", async () => {
+    await ppmDb(["query", "open", "SELECT 7"], true);
+    const audit = new Database(join(home, "query-audit.db"), { readonly: true });
+    try {
+      const rows = audit.query("SELECT status, error FROM query_log WHERE connection_name = 'open' AND sql = 'SELECT 7'").all();
+      expect(rows).toEqual([{ status: "blocked", error: expect.stringContaining("use the db_query tool") }]);
+    } finally {
+      audit.close();
+    }
+  }, SLOW);
+
+  it("leaves a person at a terminal alone", async () => {
+    const { code, out } = await ppmDb(["query", "open", "SELECT count(*) AS n FROM orders", "--json"], false);
     expect(code).toBe(0);
+    expect(json(out).rows).toHaveLength(1);
+  }, SLOW);
+
+  it("leaves the commands that are not a way into the data alone", async () => {
+    const { code, out, err } = await ppmDb(["test", "open"], true);
+    expect({ code, handed: (out + err).includes("does not run inside an AI chat") }).toEqual({ code: 0, handed: false });
+  }, SLOW);
+});
+
+describe("a data command run inside an AI chat whose tool the user switched off", () => {
+  beforeAll(() => {
+    closeDb();
+    setConfigValue("ai", JSON.stringify({ ppm_tools: { db_query: false } }));
+    closeDb();
+  });
+
+  afterAll(() => {
+    closeDb();
+    deleteConfigValue("ai");
+    closeDb();
+  });
+
+  it("says the chat cannot reach the database at all, rather than falling back here", async () => {
+    const { code, out, err } = await ppmDb(["query", "open", "SELECT 1"], true);
+    const said = out + err;
+    expect({ code, off: said.includes("turned db_query off in Settings"), fellBack: said.includes("use the db_query tool") })
+      .toEqual({ code: 1, off: true, fellBack: false });
   }, SLOW);
 });
