@@ -1,0 +1,25 @@
+{
+  "ppmScheduleTemplate": 1,
+  "name": "weekly-summary",
+  "description": "Every Monday at 9:00, asks Claude to sum up the week in this project, always in the same PPM chat so it can compare with the weeks before, and sends you the answer as a notification that opens the chat.",
+  "kind": "script",
+  "mode": "tick",
+  "cron": "0 0 9 * * 1",
+  "script": "// Every week, asks Claude to sum up the project in one PPM chat. Each week's turn goes to the\n// same chat (one key), so it can compare with the weeks before; the answer comes to you as a\n// notification that opens that chat.\nexport default async function main(ctx) {\n  const { prompt, title } = ctx.inputs;\n  const turn = await ctx.ai.chat(\"weekly-summary\", prompt, { title, timeoutMs: 20 * 60_000 });\n  if (turn.busy) throw new Error(\"the summary chat is busy: a turn is still running in it\");\n  if (!turn.ok) throw new Error(turn.error || \"the summary turn failed\");\n  await ctx.notify({ title, body: turn.text.slice(0, 500), ...(turn.sessionId && { sessionId: turn.sessionId }) });\n}\n",
+  "inputs": [
+    {
+      "key": "prompt",
+      "label": "What to ask",
+      "type": "text",
+      "default": "Sum up what changed in this project over the last 7 days: read `git log --since='7 days ago' --stat` and the work in progress. Say what is done, what is still open and what looks risky, in under 15 lines. If you summed up an earlier week in this chat, say what moved since."
+    },
+    {
+      "key": "title",
+      "label": "Chat and notification title",
+      "type": "text",
+      "default": "Weekly summary"
+    }
+  ],
+  "timeoutMs": 1800000,
+  "permissionMode": "bypassPermissions"
+}
