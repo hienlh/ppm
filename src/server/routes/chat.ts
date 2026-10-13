@@ -6,10 +6,10 @@ import { resolveSessionDir } from "../../services/subagent-transcript-merger.ts"
 import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
+import { deleteChatSession, renameChatSession } from "../../services/chat-session-admin.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
-import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
 import { invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
 import { listSlashItemsForProvider } from "../../services/slash-items-for-provider.ts";
@@ -617,18 +617,7 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     if (hasChildren(id)) {
       return c.json(err("Cannot delete: this session has edited versions branched from it"), 409);
     }
-    // Provider-specific cleanup (JSONL, process, etc.)
-    await chatService.deleteSession(providerId, id);
-    // Shared DB cleanup
-    deleteSessionMapping(id); // legacy cleanup
-    setSessionTag(id, null, c.get("projectPath"));
-    deleteSessionMetadata(id);
-    deleteSessionTitle(id);
-    unpinSession(id);
-    deleteBranchesFor(id);
-    deleteSessionBaselines(id);
-    // Fire-and-forget draft cleanup
-    try { draftService.delete(c.get("projectPath"), id); } catch { /* ignore */ }
+    await deleteChatSession(providerId, id, c.get("projectPath"));
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 404);
@@ -642,17 +631,7 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const body = await c.req.json<{ title?: string }>();
     if (!body.title?.trim()) return c.json(err("title is required"), 400);
     const title = body.title.trim();
-    const projectPath = c.get("projectPath");
-    // Persist to PPM DB (authoritative source for user-set titles)
-    setSessionTitle(id, title);
-    // Codex owns its rollout title and has no Claude SDK session to rename.
-    // PPM's title table is the authoritative title for both providers.
-    if (getSessionProvider(id) !== "codex") {
-      await sdkRenameSession(id, title, { dir: projectPath });
-    }
-    // Also update in-memory session
-    const session = chatService.getSession(id);
-    if (session) session.title = title;
+    await renameChatSession(id, title, c.get("projectPath"));
     return c.json(ok({ id, title }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
