@@ -3,7 +3,7 @@ import { ShieldAlert } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";
 import { DB_TYPE_LABELS } from "../../../shared/db-types";
-import type { DbApprovalAnswer, DbExecuteApprovalInput } from "../../../shared/db-ai-tools";
+import { selfCommitNote, type DbApprovalAnswer, type DbExecuteApprovalInput } from "../../../shared/db-ai-tools";
 
 /**
  * The prompt for a change the AI asked to make with `db_execute`: the connection, the AI's reason
@@ -18,6 +18,7 @@ export function DbExecuteApprovalCard({ requestId, input }: { requestId: string;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canApprove = !busy && (!input.passwordRequired || password.length > 0);
+  const selfCommit = selfCommitNote(input.dbType, input.sql);
 
   const answer = async (approved: boolean) => {
     setBusy(true);
@@ -54,6 +55,7 @@ export function DbExecuteApprovalCard({ requestId, input }: { requestId: string;
         Runs once, in one transaction.
         {input.expectedRows != null && ` Rolled back unless exactly ${input.expectedRows} row${input.expectedRows === 1 ? "" : "s"} change.`}
       </p>
+      {selfCommit && <p className="text-[11px] text-warning">{selfCommit}</p>}
       <form
         className="flex flex-col gap-2 md:flex-row md:items-center"
         onSubmit={(e) => {

@@ -105,8 +105,9 @@ export function dbToolDefinitions(connections: string, on: (tool: string) => boo
         + `password; nothing runs if they decline or do not answer within ${Math.round(DB_APPROVAL_WAIT_MS / 60_000)} minutes. `
         + "An approval covers exactly this SQL, once: a changed script needs a new approval. The script runs in one "
         + "transaction PPM opens and ends, so do not put BEGIN, COMMIT or ROLLBACK in it; if a statement fails, or the "
-        + "rows changed in all are not expected_rows, everything is rolled back. On MySQL and MariaDB, DDL commits by "
-        + "itself and cannot be rolled back. Look at what the change will touch with db_query first, and pass "
+        + "rows changed in all are not expected_rows, everything is rolled back. On MySQL and MariaDB, a CREATE, "
+        + "ALTER, DROP or TRUNCATE commits by itself, with everything before it, so only what follows the last one "
+        + "can be rolled back. Look at what the change will touch with db_query first, and pass "
         + "expected_rows whenever you know it. Readonly connections can be changed this way too: the approval is what "
         + `lifts it, for this one script.\n\n${connections}`,
       inputSchema: {

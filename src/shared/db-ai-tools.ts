@@ -1,4 +1,5 @@
-import type { DbType } from "./db-types.ts";
+import { DB_TYPE_LABELS, dialectNameOf, type DbType } from "./db-types.ts";
+import { splitSqlScript, sqlCode } from "./split-sql-statements.ts";
 
 /**
  * PPM's database tools for an AI chat: `db_query` reads, `open_query` hands the user a script in
@@ -43,6 +44,33 @@ export interface DbExecuteApprovalInput {
   expectedRows?: number;
   /** Approving asks for PPM's password; false only when PPM runs without one. */
   passwordRequired: boolean;
+}
+
+/**
+ * Statements MySQL and MariaDB commit by themselves, with everything before them, by first word:
+ * MySQL's "Statements That Cause an Implicit Commit" — DDL (a TEMPORARY table aside), accounts and
+ * grants, table locks and table maintenance.
+ */
+const COMMITS_BY_ITSELF = /^(alter|create|drop|rename|truncate|grant|revoke|lock|unlock|analyze|optimize|repair|check|cache|flush|reset|install|uninstall)\b/i;
+const TEMPORARY_TABLE = /^(create|drop)\s+(or\s+replace\s+)?temporary\b/i;
+
+/**
+ * What a `db_execute` approval adds when part of a MySQL or MariaDB script cannot be rolled back:
+ * the last statement that commits by itself takes everything before it along. Null on the other
+ * databases, and for a script with none. Read from the SQL; what the server actually kept is in
+ * the run's own report (`runApprovedScript`).
+ */
+export function selfCommitNote(dbType: DbType, sql: string): string | null {
+  if (dialectNameOf(dbType) !== "mysql") return null;
+  const statements = splitSqlScript(sql, "mysql");
+  for (let i = statements.length - 1; i >= 0; i--) {
+    const code = sqlCode(statements[i]!.sql, "mysql").trim();
+    const keyword = COMMITS_BY_ITSELF.exec(code)?.[1];
+    if (!keyword || TEMPORARY_TABLE.test(code)) continue;
+    const what = `${DB_TYPE_LABELS[dbType]} commits the ${keyword.toUpperCase()}${statements.length > 1 ? ` in statement ${i + 1}` : ""} by itself`;
+    return i === 0 ? `${what}, so it cannot be rolled back.` : `${what}, together with everything before it, so statements 1–${i + 1} cannot be rolled back.`;
+  }
+  return null;
 }
 
 /** `POST /api/db/ai-approvals/:requestId` — the user's answer to a `db_execute` approval. */
