@@ -4,7 +4,9 @@ import {
   bytesToBase64Url,
   deviceLabelFrom,
   isIosDevice,
+  pushServiceFailureMessage,
   pushSupportFrom,
+  withinDeadline,
   type PushEnvironment,
 } from "../../../src/web/lib/web-push-support.ts";
 import { routeNotificationClick, type NotificationWindow } from "../../../src/web/sw-notification-click.ts";
@@ -35,6 +37,58 @@ describe("pushSupportFrom", () => {
   it("tells a browser with no push apart from a blocked permission", () => {
     expect(pushSupportFrom({ ...capable, pushManager: false }).state).toBe("unavailable");
     expect(pushSupportFrom({ ...capable, permission: "denied" }).state).toBe("blocked");
+  });
+
+  // Measured on Firefox 157: dom.push.enabled = false removes PushManager and nothing else.
+  it("sends Firefox with push switched off to about:config", () => {
+    const off = pushSupportFrom({ ...capable, pushManager: false, browser: "Firefox" });
+    expect(off.state !== "available" && off.message).toContain("dom.push.enabled");
+    const chrome = pushSupportFrom({ ...capable, pushManager: false, browser: "Chrome" });
+    expect(chrome.state !== "available" && chrome.message).toBe("This browser cannot receive push notifications.");
+  });
+});
+
+describe("pushServiceFailureMessage", () => {
+  // What Brave 1.97 rejects with while "Use Google services for push messaging" is off.
+  const refused = new DOMException("Registration failed - push service error", "AbortError");
+  const silent = new DOMException("The push service did not answer.", "TimeoutError");
+
+  it("walks Brave users to the setting that turns push on", () => {
+    const message = pushServiceFailureMessage("Brave", refused);
+    expect(message).toContain("brave://settings/privacy");
+    expect(message).toContain("Use Google services for push messaging");
+  });
+
+  it("names the push service a browser could not register with", () => {
+    expect(pushServiceFailureMessage("Chrome", refused))
+      .toStartWith("Chrome could not register with Google's push service (Registration failed - push service error).");
+    expect(pushServiceFailureMessage("Firefox", new DOMException("Error retrieving push subscription.", "AbortError")))
+      .toContain("Mozilla's push service");
+    const unknown = pushServiceFailureMessage("Browser", refused);
+    expect(unknown).toStartWith("This browser could not register with its push service");
+    expect(unknown).toContain("push is turned off in this browser");
+  });
+
+  it("explains a push service that never answered, in Brave too", () => {
+    expect(pushServiceFailureMessage("Brave", silent)).toStartWith("Brave got no answer from Google's push service within a minute.");
+    expect(pushServiceFailureMessage("Edge", silent)).toStartWith("Edge got no answer from its push service within a minute.");
+  });
+
+  it("leaves every other failure in the browser's own words", () => {
+    expect(pushServiceFailureMessage("Brave", new DOMException("Registration failed - permission denied", "NotAllowedError"))).toBeNull();
+    expect(pushServiceFailureMessage("Chrome", new TypeError("reg.pushManager is undefined"))).toBeNull();
+    expect(pushServiceFailureMessage("Chrome", undefined)).toBeNull();
+  });
+});
+
+describe("withinDeadline", () => {
+  it("gives up on a push service that never answers", async () => {
+    const error = await withinDeadline(new Promise(() => {}), 5).catch((e: unknown) => e);
+    expect((error as DOMException).name).toBe("TimeoutError");
+  });
+
+  it("passes the subscription through", async () => {
+    expect(await withinDeadline(Promise.resolve("subscription"), 1000)).toBe("subscription");
   });
 });
 
