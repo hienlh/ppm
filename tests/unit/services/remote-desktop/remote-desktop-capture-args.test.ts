@@ -161,11 +161,13 @@ describe("captureEncoderArgs", () => {
     expect(a[a.indexOf("-bf") + 1]).toBe("0");
   });
 
-  it("falls back to low-latency libx264 with sliced-threads disabled when no hw encoder", () => {
+  it("falls back to low-latency libx264, threading within each frame, when no hw encoder", () => {
     const a = captureEncoderArgs();
     expect(a).toContain("libx264");
     expect(a).toContain("zerolatency");
-    expect(a.join(" ")).toContain("sliced-threads=0");
+    // `sliced-threads=0` trades zerolatency's per-slice threads for per-frame ones, and x264
+    // then holds a frame per thread: measured ~1.1 s of added lag on a 24-thread host.
+    expect(a.join(" ")).not.toContain("sliced-threads=0");
   });
 });
 

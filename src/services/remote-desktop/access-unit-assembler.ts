@@ -2,13 +2,17 @@
  * Groups the raw NAL units from `NalSplitter` into WebCodecs-ready access units.
  *
  * `VideoDecoder` decodes one access unit (one frame) per `EncodedVideoChunk`, not one
- * NAL — feeding SPS/PPS/slice as three separate chunks throws or corrupts decode. libx264
- * (no B-frames, `-bf 0`) emits at most one slice NAL per frame, optionally preceded by
- * SPS/PPS on a keyframe, so an AU boundary is simply "the next VCL NAL after we already
- * buffered one" — everything non-VCL (SPS/PPS/AUD/SEI) that arrived first attaches to the
- * AU it precedes.
+ * NAL — feeding SPS/PPS/slice as three separate chunks throws or corrupts decode. With no
+ * B-frames (`-bf 0`) an AU boundary is "the next slice that opens a new picture after we
+ * already buffered one" (`startsPicture`) — everything non-VCL (SPS/PPS/AUD/SEI) that arrived
+ * first attaches to the AU it precedes.
+ *
+ * A frame may be several slices, and all of them belong in its one chunk. Cutting at *every*
+ * slice — this file's rule until #48 — turned x264's `tune=zerolatency` output into ~17 chunks a
+ * frame: Chrome decoded none of them ("Decoding error.", a black canvas) and a Wayland host
+ * reported a solid green one.
  */
-import { NalSplitter, nalType, isVclNal, NAL_TYPE_IDR, NAL_TYPE_SPS, NAL_TYPE_PPS } from "./nal-splitter.ts";
+import { NalSplitter, nalType, isVclNal, startsPicture, NAL_TYPE_IDR, NAL_TYPE_SPS, NAL_TYPE_PPS } from "./nal-splitter.ts";
 
 export interface AccessUnit {
   /** Annex-B encoded bytes (start codes + NAL payloads) — one `EncodedVideoChunk` worth. */
@@ -48,7 +52,7 @@ export class AccessUnitAssembler {
       else if (type === NAL_TYPE_PPS) this.pps = nal;
 
       const vcl = isVclNal(nal);
-      if (vcl && this.pendingHasVcl) {
+      if (this.pendingHasVcl && startsPicture(nal)) {
         const au = this.flush();
         if (au) aus.push(au);
       }
