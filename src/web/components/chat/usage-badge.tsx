@@ -93,8 +93,8 @@ export function UsageDetailPanel({
   // One strip for anything that went wrong in this panel — a refused switch or a refused
   // toggle. Two separate messages in two places would be harder to notice, not clearer.
   const [panelError, setPanelError] = useState<string | null>(null);
-  /** Label of the account whose "Sign in again" chip was pressed; opens the sign-in dialog. */
-  const [signInAgainFor, setSignInAgainFor] = useState<string | null>(null);
+  /** The account whose "Sign in again" chip was pressed; opens the sign-in dialog. */
+  const [signInAgainFor, setSignInAgainFor] = useState<{ id: string; label: string } | null>(null);
 
   if (!visible) return null;
 
@@ -226,7 +226,7 @@ export function UsageDetailPanel({
             selecting={selectingId === entry.accountId}
             onToggle={handleToggle}
             toggling={togglingId === entry.accountId}
-            onReauth={() => setSignInAgainFor(entry.accountLabel ?? entry.accountId.slice(0, 8))}
+            onReauth={() => setSignInAgainFor({ id: entry.accountId, label: entry.accountLabel ?? entry.accountId.slice(0, 8) })}
           />
         );
       })}

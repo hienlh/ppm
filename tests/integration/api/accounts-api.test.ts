@@ -257,6 +257,18 @@ describe("GET /api/accounts/oauth/callback", () => {
   });
 });
 
+describe("POST /api/accounts/oauth/exchange", () => {
+  it("answers 410 for a link the server no longer holds, which sends the dialog back to a new link", async () => {
+    const res = await req("/api/accounts/oauth/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code: `abc#${"0".repeat(32)}`, state: "0".repeat(32) }),
+    });
+    const json = await res.json() as any;
+    expect(res.status).toBe(410);
+    expect(json.error).toContain("Login with Claude");
+  });
+});
+
 describe("POST /api/accounts/export + POST /api/accounts/import", () => {
   it("export requires password", async () => {
     const res = await req("/api/accounts/export", { method: "POST", body: JSON.stringify({}) });

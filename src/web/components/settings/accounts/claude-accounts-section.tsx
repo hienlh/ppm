@@ -40,8 +40,8 @@ export function ClaudeAccountsSection() {
   const [profileView, setProfileView] = useState<{ profile: OAuthProfileData; accountId: string } | null>(null);
   const [exportPreselect, setExportPreselect] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"add" | "export" | "import" | "rotation" | "token-test" | null>(null);
-  /** Label of the account whose "Sign in again" chip opened the add dialog. */
-  const [signInAgainFor, setSignInAgainFor] = useState<string | undefined>(undefined);
+  /** The account whose "Sign in again" chip opened the add dialog. */
+  const [signInAgainFor, setSignInAgainFor] = useState<{ id: string; label: string } | undefined>(undefined);
 
   function handleSuccess(msg?: string) {
     void reload();
@@ -140,7 +140,7 @@ export function ClaudeAccountsSection() {
                 onDelete={(id, display) => setDeleteTarget({ id, display })}
                 onExport={(id) => { setExportPreselect(id); setDialog("export"); }}
                 onViewProfile={(profile, accountId) => setProfileView({ profile, accountId })}
-                onReauth={() => { setSignInAgainFor(entry.accountLabel ?? entry.accountId.slice(0, 8)); setDialog("add"); }}
+                onReauth={() => { setSignInAgainFor({ id: entry.accountId, label: entry.accountLabel ?? entry.accountId.slice(0, 8) }); setDialog("add"); }}
                 flash={flashIds.has(entry.accountId)}
               />
             ))}
