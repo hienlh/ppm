@@ -1163,11 +1163,13 @@ chatRoutes.get("/sessions/:id/tasks", async (c) => {
 /**
  * The transcript a compact summary points at, when the path it names is not there.
  *
- * Claude Code builds that path from the cwd the session had when it compacted, so a session
- * that had `cd`'d into a subdirectory names a project folder that was never created
- * (`…-app-tools--runtime-checkout/<id>.jsonl`) while its transcript stayed in the folder of the
- * project it started in, and every scroll to the top answered "File not found". The file name
- * is still the session's own, so it is looked for in this project's folder, and only there.
+ * Claude Code builds that path from the folder the session was started or resumed in (a `cd`
+ * does not change it), so a session resumed in a subdirectory names a project folder that was
+ * never created (`…-app-tools--runtime-checkout/<id>.jsonl`) while its transcript stayed in the
+ * folder of the project it started in, and every scroll to the top answered "File not found".
+ * The file name is still the session's own, so when the named file is missing it is looked for
+ * in this project's folder, and only there. A named file that does exist is returned unchanged,
+ * as before: this scopes the fallback, not the route.
  */
 function compactTranscriptPath(jsonlPath: string, projectPath: string): string {
   if (existsSync(jsonlPath)) return jsonlPath;
