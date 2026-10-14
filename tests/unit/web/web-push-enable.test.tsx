@@ -168,6 +168,22 @@ describe("enablePush", () => {
     await drain();
     expect((outcome as Error).message).toStartWith("Chrome got no answer from Google's push service within a minute.");
   });
+
+  // The saved name is what the device list shows, and Brave's user agent is Chrome's.
+  it("saves a Brave device as Brave, not Chrome", async () => {
+    const brave = browser("Brave");
+    serve(on("POST", "/api/notifications/push/subscribe", ok({})));
+    const done = enablePush(KEY);
+    await brave.asked;
+    const endpoint = "https://fcm.googleapis.com/fcm/send/brave-device";
+    brave.push.resolve({
+      endpoint,
+      toJSON: () => ({ endpoint, keys: { p256dh: "p256dh", auth: "auth" } }),
+    } as unknown as PushSubscription);
+    await done;
+
+    expect(sent("POST", "/api/notifications/push/subscribe").map((r) => (r.body as { label?: string }).label)).toEqual(["Brave on macOS"]);
+  });
 });
 
 describe("Settings → Notifications → Push", () => {
