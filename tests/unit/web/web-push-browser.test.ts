@@ -116,6 +116,12 @@ describe("deviceLabelFrom", () => {
     expect(isIosDevice(ua, "MacIntel", 0)).toBe(false);
     expect(deviceLabelFrom(ua, true)).toBe("Safari on iPad");
   });
+
+  it("calls Brave Brave although its user agent is Chrome's", () => {
+    const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
+    expect(deviceLabelFrom(ua)).toBe("Chrome on macOS");
+    expect(deviceLabelFrom(ua, false, "Brave")).toBe("Brave on macOS");
+  });
 });
 
 describe("base64url", () => {
