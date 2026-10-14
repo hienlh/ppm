@@ -109,9 +109,11 @@ export function browserNameFrom(userAgent: string): string {
     : "Browser";
 }
 
-/** "Chrome on Android" — enough to tell a phone from a laptop in the list. */
-export function deviceLabelFrom(userAgent: string, ipadOs = false): string {
-  const browser = browserNameFrom(userAgent);
+/**
+ * "Chrome on Android" — enough to tell a phone from a laptop in the list. `browser` is for
+ * what the user agent cannot say: Brave's is Chrome's.
+ */
+export function deviceLabelFrom(userAgent: string, ipadOs = false, browser = browserNameFrom(userAgent)): string {
   const os =
     /Android/.test(userAgent) ? "Android"
     : /iPhone|iPod/.test(userAgent) ? "iPhone"

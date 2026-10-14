@@ -46,7 +46,7 @@ export function pushSupport(): PushSupport {
 }
 
 export function thisDeviceLabel(): string {
-  return deviceLabelFrom(navigator.userAgent, ipadOs());
+  return deviceLabelFrom(navigator.userAgent, ipadOs(), "brave" in navigator ? "Brave" : undefined);
 }
 
 /** This browser's subscription, if it has one. Never prompts. */
