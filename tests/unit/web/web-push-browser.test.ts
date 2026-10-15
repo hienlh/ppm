@@ -45,6 +45,11 @@ describe("pushSupportFrom", () => {
     expect(off.state !== "available" && off.message).toContain("dom.push.enabled");
     const chrome = pushSupportFrom({ ...capable, pushManager: false, browser: "Chrome" });
     expect(chrome.state !== "available" && chrome.message).toBe("This browser cannot receive push notifications.");
+    // The setting hides PushManager alone; a Firefox missing more than that is not fixed by it.
+    const noWorker = pushSupportFrom({ ...capable, pushManager: false, serviceWorker: false, browser: "Firefox" });
+    expect(noWorker.state !== "available" && noWorker.message).toBe("This browser cannot receive push notifications.");
+    const noNotification = pushSupportFrom({ ...capable, pushManager: false, notification: false, browser: "Firefox" });
+    expect(noNotification.state !== "available" && noNotification.message).toBe("This browser cannot receive push notifications.");
   });
 });
 
