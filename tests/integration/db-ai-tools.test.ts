@@ -424,6 +424,24 @@ for (const engine of MYSQL_ENGINES) {
       expect(await names()).toEqual(["a", "b", "c", "d"]);
     });
 
+    it("a connection killed under a CREATE says what may have been kept, not that nothing changed", async () => {
+      // The CREATE commits the INSERT before it runs, and sleeps long enough to be killed from here.
+      const running = execute("INSERT INTO ai_items VALUES (4, 'd');\nCREATE TABLE ai_more AS SELECT SLEEP(10) AS s");
+      let victim: number | undefined;
+      for (let tries = 0; victim === undefined && tries < 100; tries++) {
+        await Bun.sleep(50);
+        const [rows] = await admin.query("SELECT id FROM information_schema.processlist WHERE info LIKE 'CREATE TABLE ai_more AS SELECT SLEEP%'");
+        victim = (rows as { id: number }[])[0]?.id;
+      }
+      expect(victim).toBeDefined();
+      await admin.query(`KILL ${victim}`);
+      const result = await running;
+      expect(result.content[0]!.text).toStartWith(
+        `The user approved the change, but part of it may have been kept. Statement 2 failed, and the database could not be asked what it kept: statement 1 may have been kept, ${KEPT_BECAUSE}`,
+      );
+      expect(await names()).toEqual(["a", "b", "c", "d"]);
+    });
+
     it("rolls back all of a script with no such statement, a TEMPORARY table included", async () => {
       const result = await execute("CREATE TEMPORARY TABLE ai_tmp (id INT);\nUPDATE ai_items SET name = 'y';\nINSERT INTO nosuch VALUES (1)");
       expect(result.content[0]!.text).toStartWith(

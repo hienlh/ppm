@@ -177,7 +177,7 @@ export function createDbToolsMcpHandler(deps: {
       audit(conn, { ...base, params: { ...base.params, approved: true }, status: "error", error: errorText(e), durationMs: Date.now() - startedAt });
       return textResult(`The user approved, but ${conn.name} could not be opened, so nothing ran: ${errorText(e)}`, true);
     }
-    const report = await runApprovedScript(session, { sql, dialect, maxRows: DB_EXECUTE_RESULT_ROWS, expectedRows, timeoutMs });
+    const report = await runApprovedScript(session, { sql, dbType: conn.type, maxRows: DB_EXECUTE_RESULT_ROWS, expectedRows, timeoutMs });
     const statements = splitSqlScript(sql, dialect).length;
     audit(conn, {
       ...base, params: { ...base.params, approved: true, committed: report.committed },
@@ -186,7 +186,7 @@ export function createDbToolsMcpHandler(deps: {
     });
     const detail = formatStatementResults(report.results, statements, DB_EXECUTE_RESULT_ROWS);
     if (!report.committed) {
-      const kept = report.kept > 0 ? "only part of it was kept" : "it was not kept";
+      const kept = report.kept > 0 ? "only part of it was kept" : report.mayHaveKept ? "part of it may have been kept" : "it was not kept";
       return textResult(`The user approved the change, but ${kept}. ${report.reason}\n\n${detail}`.trim(), true);
     }
     const changed = `${report.rowsChanged} ${report.rowsChanged === 1 ? "row" : "rows"} changed in all`;

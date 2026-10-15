@@ -1,5 +1,6 @@
+import { commitsByItself } from "../../shared/db-ai-tools.ts";
 import { splitSqlScript, sqlCode } from "../../shared/split-sql-statements.ts";
-import type { DialectName } from "../../shared/db-types.ts";
+import { dialectNameOf, type DbType, type DialectName } from "../../shared/db-types.ts";
 import type { QueryStatementResult } from "../../shared/db-query-script.ts";
 import type { DbQuerySession } from "../../types/database.ts";
 import { QueryStatementError } from "../database/db-errors.ts";
@@ -53,9 +54,11 @@ export type ApprovedRunReport =
   /**
    * Rolled back, or never begun. `kept` counts the statements, from the first, that the database
    * had committed by itself before then — only MySQL and MariaDB do — and is 0 when nothing the
-   * script did was kept.
+   * script did was kept. `mayHaveKept`, more than `kept`, is set when the connection went before
+   * the database could say whether the statement then running had ended the transaction: read
+   * from the SQL, statements 1 to it may be in the database too.
    */
-  | { committed: false; results: QueryStatementResult[]; rowsChanged: number; kept: number; reason: string };
+  | { committed: false; results: QueryStatementResult[]; rowsChanged: number; kept: number; mayHaveKept?: number; reason: string };
 
 const BEGIN: Record<DialectName, string> = { postgres: "BEGIN", sqlite: "BEGIN", mysql: "START TRANSACTION" };
 
@@ -73,12 +76,13 @@ const statementsLabel = (from: number, to: number): string => (from === to ? `st
  */
 export async function runApprovedScript(session: DbQuerySession, opts: {
   sql: string;
-  dialect: DialectName;
+  dbType: DbType;
   maxRows: number;
   expectedRows?: number;
   /** How long one statement may run before it is cancelled. */
   timeoutMs?: number;
 }): Promise<ApprovedRunReport> {
+  const dialect = dialectNameOf(opts.dbType);
   const results: QueryStatementResult[] = [];
   let rowsChanged = 0;
   let begun = false;
@@ -88,10 +92,21 @@ export async function runApprovedScript(session: DbQuerySession, opts: {
    * transaction there. PPM then opens it again, so that what follows can still be rolled back.
    */
   let kept = 0;
+  /**
+   * Set above `kept` when the connection went before the database could say whether the statement
+   * then running had ended the transaction. The SQL says whether it may have (`commitsByItself`),
+   * so the report says what may be in the database instead of claiming that nothing is.
+   */
+  let mayHaveKept = 0;
   /** False once a statement has ended the transaction, which only MySQL and MariaDB do. */
   const stillOpen = async (): Promise<boolean> => !session.transactionOpen || await session.transactionOpen();
-  /** `cause`, and what the run left behind: nothing, or the first `kept` statements. */
+  /** `cause`, and what the run left behind: nothing, the first `kept` statements, or maybe more. */
   const notKept = (cause: string): string => {
+    if (mayHaveKept > kept) {
+      const unsure = `${statementsLabel(kept + 1, mayHaveKept)} may have been kept`;
+      const keptPart = kept === 0 ? unsure : `${statementsLabel(1, kept)} ${kept === 1 ? "was" : "were"} kept, and ${unsure} too`;
+      return `${cause}, and the database could not be asked what it kept: ${keptPart}, because ${COMMITS_BY_ITSELF}.`;
+    }
     if (kept === 0) return `${cause}, so the transaction was rolled back and nothing changed.`;
     const ran = results.filter((r) => r.error === undefined).length;
     const keptPart = `${statementsLabel(1, kept)} ${kept === 1 ? "was" : "were"} kept`;
@@ -112,13 +127,13 @@ export async function runApprovedScript(session: DbQuerySession, opts: {
         why += ` Rolling back failed too (${errorText(e)}); the database ends the transaction when the connection closes.`;
       }
     }
-    return { committed: false, results, rowsChanged, kept, reason: why };
+    return { committed: false, results, rowsChanged, kept, ...(mayHaveKept > kept ? { mayHaveKept } : {}), reason: why };
   };
   try {
-    const statements = splitSqlScript(opts.sql, opts.dialect, session.splitOptions);
+    const statements = splitSqlScript(opts.sql, dialect, session.splitOptions);
     if (statements.length === 0) return { committed: false, results, rowsChanged, kept, reason: "The script has no statements to run." };
     try {
-      await session.run(BEGIN[opts.dialect], 1);
+      await session.run(BEGIN[dialect], 1);
       begun = true;
     } catch (e) {
       return { committed: false, results, rowsChanged, kept, reason: `The transaction could not be started: ${errorText(e)}` };
@@ -147,15 +162,24 @@ export async function runApprovedScript(session: DbQuerySession, opts: {
         const error = timedOut ? `Stopped after ${Math.round(opts.timeoutMs! / 1000)} s: ${message}` : message;
         results.push({ ...base, resultSets: [], durationMs: Math.round(performance.now() - started), error, ...(timedOut ? { stopped: "timeout" as const } : {}) });
         // A statement that ends the transaction ends it before it runs, so even one that then fails
-        // keeps what came before it. Not knowing (the connection is gone) means the server rolls back.
-        if (!(await stillOpen().catch(() => true))) kept = index;
+        // keeps what came before it. When the connection went before the database could say, the
+        // SQL tells whether it may have; any other statement leaves the server to roll back.
+        const open = await stillOpen().catch(() => null);
+        if (open === false) kept = index;
+        else if (open === null && commitsByItself(opts.dbType, statement.sql)) mayHaveKept = index;
         return await rolledBack(notKept(`Statement ${index + 1} failed`));
       } finally {
         if (timer) clearTimeout(timer);
       }
-      if (!(await stillOpen())) {
+      const open = await stillOpen().catch((e: unknown) => {
+        // It ran, and the connection went before the database could say whether it ended the
+        // transaction: when the SQL says it does, it and everything before it may be in.
+        if (commitsByItself(opts.dbType, statement.sql)) mayHaveKept = index + 1;
+        throw e;
+      });
+      if (!open) {
         kept = index + 1;
-        if (index < statements.length - 1) await session.run(BEGIN[opts.dialect], 1);
+        if (index < statements.length - 1) await session.run(BEGIN[dialect], 1);
       }
     }
     if (opts.expectedRows !== undefined && rowsChanged !== opts.expectedRows) {
