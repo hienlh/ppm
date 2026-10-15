@@ -6,16 +6,29 @@ import { api } from "@/lib/api-client";
 import type { PushDeviceInfo } from "../../shared/notification-settings";
 import {
   PUSH_BLOCKED_MESSAGE,
+  PUSH_SUBSCRIBE_DEADLINE_MS,
   base64UrlToBytes,
+  browserNameFrom,
   bytesToBase64Url,
   deviceLabelFrom,
   isIosDevice,
+  pushServiceFailureMessage,
   pushSupportFrom,
+  withinDeadline,
   type PushSupport,
 } from "./web-push-support";
 
 function ipadOs(): boolean {
   return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+}
+
+/** Brave says "Chrome" in its user agent; Vivaldi and Chromium do too, but list no Chrome brand. */
+function thisBrowser(): string {
+  if ("brave" in navigator) return "Brave";
+  const name = browserNameFrom(navigator.userAgent);
+  const brands = (navigator as Navigator & { userAgentData?: { brands: { brand: string }[] } }).userAgentData?.brands;
+  if (name === "Chrome" && brands && !brands.some((b) => b.brand === "Google Chrome")) return "Browser";
+  return name;
 }
 
 export function pushSupport(): PushSupport {
@@ -28,11 +41,12 @@ export function pushSupport(): PushSupport {
     standalone: window.matchMedia?.("(display-mode: standalone)").matches
       || (navigator as Navigator & { standalone?: boolean }).standalone === true,
     permission: "Notification" in window ? Notification.permission : null,
+    browser: thisBrowser(),
   });
 }
 
 export function thisDeviceLabel(): string {
-  return deviceLabelFrom(navigator.userAgent, ipadOs());
+  return deviceLabelFrom(navigator.userAgent, ipadOs(), "brave" in navigator ? "Brave" : undefined);
 }
 
 /** This browser's subscription, if it has one. Never prompts. */
@@ -68,10 +82,16 @@ export async function enablePush(publicKey: string): Promise<PushDeviceInfo> {
     await subscription.unsubscribe();
     subscription = null;
   }
-  subscription ??= await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: base64UrlToBytes(publicKey),
-  });
+  try {
+    subscription ??= await withinDeadline(registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlToBytes(publicKey),
+    }), PUSH_SUBSCRIBE_DEADLINE_MS);
+  } catch (e) {
+    const hint = pushServiceFailureMessage(thisBrowser(), e);
+    if (hint) throw new Error(hint);
+    throw e;
+  }
   return api.post<PushDeviceInfo>("/api/notifications/push/subscribe", {
     subscription: subscription.toJSON(),
     label: thisDeviceLabel(),
