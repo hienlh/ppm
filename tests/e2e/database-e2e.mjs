@@ -41,7 +41,10 @@ const RUN = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toStrin
 await Promise.all([HOME, PPM, PROJECT, ARTIFACTS].map((p) => mkdir(p, { recursive: true })));
 
 const env = { ...process.env, PPM_HOME: PPM, HOME, USERPROFILE: HOME, CLAUDE_CONFIG_DIR: join(HOME, ".claude"), CODEX_HOME: join(HOME, ".codex") };
-for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "CURSOR_API_KEY", "PPM_ALLOW_PROD_DB"]) delete env[key];
+// PPM_AI_CHAT is the mark a shell inside an AI chat carries. Under it `ppm db` hands its data
+// commands to the AI tools before any other check, so a run started from a chat would get that
+// refusal where the readonly scenario expects its own.
+for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "CURSOR_API_KEY", "PPM_ALLOW_PROD_DB", "PPM_AI_CHAT"]) delete env[key];
 
 // ---------------------------------------------------------------------------
 // Reporting
