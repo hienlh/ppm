@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Schedules can run JavaScript, not only a prompt.** A script schedule runs on a cron with seconds, as often as every 5 seconds, or stays on as one process that PPM restarts after a crash. The script gets `ctx`: its inputs (secrets stored encrypted), a state kept between runs, a log, notifications, and the AI, either as a one-off answer (`ctx.ai.ask`) or as a turn in a real PPM chat (`ctx.ai.chat`). Settings → Schedules has a script editor, input declarations, a live log and a status for each schedule; the CLI gains `ppm schedule export`, `import`, `state` and `set-state`.
+
+- **Schedules can be shared as a file.** Export writes `<name>.ppm-schedule.json` with the script and its inputs, but no secret, path or state. Import shows the whole script, asks you to confirm you trust it, and creates the schedule turned off. Two examples ship in `templates/schedules/`: watch a web page for a change, and a weekly summary written in a chat.
+
 ### Fixed
 
 - **Scrolling up past a compaction showed "File not found" in a chat whose session had changed folder.** Claude Code names the transcript in a compaction summary after the folder the session was started or resumed in, so a session resumed in a subfolder (a bot reopening it inside a checkout, say) pointed at a project folder that was never created. When the file a summary names does not exist, PPM now looks for that session's transcript in the folder of the chat's own project instead, and in no other project's.

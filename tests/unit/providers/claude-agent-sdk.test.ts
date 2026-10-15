@@ -1530,4 +1530,46 @@ describe("ClaudeAgentSdkProvider", () => {
       });
     });
   });
+
+  describe("completeOnce", () => {
+    let selectorOff: ReturnType<typeof spyOn>;
+    beforeEach(() => { selectorOff = spyOn(accountSelector, "isEnabled").mockReturnValue(false); });
+    afterEach(() => selectorOff.mockRestore());
+
+    const result = (extra: Record<string, unknown> = {}) => ({
+      type: "result", subtype: "success", is_error: false, result: "fine", total_cost_usd: 0.0123,
+      usage: { input_tokens: 10, output_tokens: 5 }, ...extra,
+    });
+
+    // Ported from pr-review-bot: "Sonnet judges with no tools, no customizations and no session left behind".
+    it("asks with no tools, no MCP server, no settings and no session left behind", async () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([result()], 0));
+      const answer = await provider.completeOnce({ prompt: "hi", model: "haiku" });
+      expect(answer).toMatchObject({ text: "fine", costUsd: 0.0123 });
+      expect(answer.json).toBeUndefined();
+      const { options } = mockQueryFn.mock.calls[0]![0];
+      expect(options).toMatchObject({ model: "haiku", tools: [], mcpServers: {}, strictMcpConfig: true, settingSources: [], persistSession: false, maxTurns: 1 });
+      expect(options.cwd).toEndWith("one-shot");
+      expect("systemPrompt" in options).toBe(false);
+      expect("effort" in options).toBe(false);
+      expect("outputFormat" in options).toBe(false);
+    });
+
+    it("passes effort and a JSON schema, and answers with the structured output", async () => {
+      const schema = { type: "object", properties: { ask: { type: "boolean" } }, required: ["ask"] };
+      mockQueryFn.mockReturnValue(createMockQueryIterator([result({ structured_output: { ask: true } })], 0));
+      const answer = await provider.completeOnce({ prompt: "hi", model: "sonnet", systemPrompt: "Judge.", effort: "low", jsonSchema: schema });
+      expect(answer).toMatchObject({ text: "fine", json: { ask: true }, costUsd: 0.0123 });
+      const { options } = mockQueryFn.mock.calls[0]![0];
+      expect(options).toMatchObject({ systemPrompt: "Judge.", effort: "low", outputFormat: { type: "json_schema", schema } });
+      // The structured answer is a tool call: a one-turn cap would end the run before it.
+      expect("maxTurns" in options).toBe(false);
+    });
+
+    it("fails when a schema was asked for and no structured output came back", async () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([result()], 0));
+      await expect(provider.completeOnce({ prompt: "hi", model: "haiku", jsonSchema: { type: "object" } }))
+        .rejects.toThrow("Claude did not answer in the requested JSON shape");
+    });
+  });
 });

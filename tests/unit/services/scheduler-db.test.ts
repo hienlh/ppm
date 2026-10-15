@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { openTestDb, setDb, getDb } from "../../../src/services/db.service.ts";
+import { openTestDb, setDb, getDb, CURRENT_SCHEMA_VERSION } from "../../../src/services/db.service.ts";
 import {
   getSchedules,
   getSchedule,
@@ -12,6 +12,7 @@ import {
   updateScheduleRun,
   listScheduleRuns,
   cleanupScheduleRuns,
+  getEarliestFireAt,
 } from "../../../src/services/scheduler-db.service.ts";
 
 const baseSchedule = {
@@ -120,5 +121,77 @@ describe("scheduler-db.service (SQLite v31)", () => {
     expect(runs.find((r) => r.id === staleRunning)!.status).toBe("error");
     expect(runs.find((r) => r.id === staleRunning)!.error).toContain("orphaned");
     expect(runs.find((r) => r.id === freshRunning)!.status).toBe("running");
+  });
+
+  it("cleanupScheduleRuns leaves a script's long-running row to the always-on supervisor", () => {
+    const id = insertSchedule({ ...baseSchedule, kind: "script", mode: "always-on", cron_expr: "", prompt: "", script: "x" });
+    const life = insertScheduleRun(id, null);
+    getDb().query("UPDATE schedule_runs SET started_at = datetime('now', '-5 hours') WHERE id = ?").run(life);
+    cleanupScheduleRuns();
+    expect(listScheduleRuns(id)[0]!.status).toBe("running");
+  });
+});
+
+describe("scheduler-db.service: script schedules (v57)", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+  });
+
+  it("the database ends at the current schema version", () => {
+    const { user_version } = getDb().query("PRAGMA user_version").get() as { user_version: number };
+    expect(user_version).toBe(CURRENT_SCHEMA_VERSION);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(57);
+  });
+
+  it("a schedule saved without the new fields is a prompt run on a cron, as every older one was", () => {
+    const id = insertSchedule(baseSchedule);
+    const s = getSchedule(id)!;
+    expect(s.kind).toBe("prompt");
+    expect(s.mode).toBe("tick");
+    expect(s.description).toBe("");
+    expect(s.script).toBeNull();
+    expect(JSON.parse(s.inputs_json)).toEqual([]);
+    expect(JSON.parse(s.input_values_json)).toEqual({});
+    expect(s.secrets_enc).toBeNull();
+    expect(s.state_json).toBeNull();
+  });
+
+  it("stores a script schedule's fields", () => {
+    const id = insertSchedule({
+      ...baseSchedule, prompt: "", cron_expr: "", kind: "script", mode: "always-on", description: "d",
+      script: "export default async () => {}", inputs_json: '[{"key":"a","label":"A","type":"text"}]',
+      input_values_json: '{"a":"x"}', secrets_enc: "enc",
+    });
+    const s = getSchedule(id)!;
+    expect([s.kind, s.mode, s.description, s.script, s.secrets_enc]).toEqual(["script", "always-on", "d", "export default async () => {}", "enc"]);
+    expect(JSON.parse(s.input_values_json)).toEqual({ a: "x" });
+  });
+
+  it("refuses a kind or mode it does not know", () => {
+    const id = insertSchedule(baseSchedule);
+    expect(() => getDb().query("UPDATE schedules SET kind = 'shell' WHERE id = ?").run(id)).toThrow();
+    expect(() => getDb().query("UPDATE schedules SET mode = 'daily' WHERE id = ?").run(id)).toThrow();
+  });
+
+  it("deleting a schedule deletes its chats, background turns and runtime row", () => {
+    const id = insertSchedule({ ...baseSchedule, kind: "script", script: "x", prompt: "" });
+    const db = getDb();
+    db.query("INSERT INTO schedule_chats (schedule_id, key, session_id) VALUES (?, 'k', 's1')").run(id);
+    db.query("INSERT INTO schedule_ai_turns (schedule_id, key, session_id, status) VALUES (?, 'k', 's1', 'running')").run(id);
+    db.query("INSERT INTO schedule_runtime (schedule_id, pid, token) VALUES (?, 123, 't')").run(id);
+    deleteSchedule(id);
+    for (const table of ["schedule_chats", "schedule_ai_turns", "schedule_runtime"]) {
+      const { n } = db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+      expect(n).toBe(0);
+    }
+  });
+
+  it("getEarliestFireAt is the soonest fire among enabled schedules", () => {
+    expect(getEarliestFireAt()).toBeNull();
+    insertSchedule({ ...baseSchedule, next_fire_at: "2026-10-12T10:00:30.000Z" });
+    insertSchedule({ ...baseSchedule, next_fire_at: "2026-10-12T10:00:05.000Z", enabled: false });
+    insertSchedule({ ...baseSchedule, next_fire_at: "2026-10-12T10:00:10.000Z" });
+    insertSchedule({ ...baseSchedule, mode: "always-on", next_fire_at: null });
+    expect(getEarliestFireAt()).toBe("2026-10-12T10:00:10.000Z");
   });
 });
