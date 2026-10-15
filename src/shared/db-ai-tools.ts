@@ -47,12 +47,28 @@ export interface DbExecuteApprovalInput {
 }
 
 /**
- * Statements MySQL and MariaDB commit by themselves, with everything before them, by first word:
- * MySQL's "Statements That Cause an Implicit Commit" — DDL (a TEMPORARY table aside), accounts and
- * grants, table locks and table maintenance.
+ * Statements MySQL and MariaDB commit by themselves, with everything before them, by first words:
+ * MySQL's "Statements That Cause an Implicit Commit" as both servers behave (measured on MySQL 8.4
+ * and MariaDB 11.8) — DDL (a TEMPORARY table aside), accounts, passwords and grants, table locks and
+ * table maintenance. Not LOAD DATA, which that list names for NDB tables only (it commits nothing
+ * on InnoDB or MyISAM), and not RESET PERSIST, which commits nothing either.
  */
-const COMMITS_BY_ITSELF = /^(alter|create|drop|rename|truncate|grant|revoke|lock|unlock|analyze|optimize|repair|check|cache|flush|reset|install|uninstall)\b/i;
+const COMMITS_BY_ITSELF = /^(alter|create|drop|rename|truncate|grant|revoke|set\s+password|lock|unlock|analyze|optimize|repair|check|flush|reset(?!\s+persist\b)|install|uninstall)\b/i;
+/** The key-cache statements, which MySQL commits by itself and MariaDB runs inside the transaction. */
+const MYSQL_COMMITS_BY_ITSELF = /^(cache\s+index|load\s+index)\b/i;
 const TEMPORARY_TABLE = /^(create|drop)\s+(or\s+replace\s+)?temporary\b/i;
+
+/**
+ * The words that make MySQL or MariaDB commit `statement` by itself, with everything before it
+ * (`ALTER`, `SET PASSWORD`), or null — always null on the other databases. Read from the SQL.
+ */
+export function commitsByItself(dbType: DbType, statement: string): string | null {
+  if (dialectNameOf(dbType) !== "mysql") return null;
+  const code = sqlCode(statement, "mysql").trim();
+  if (TEMPORARY_TABLE.test(code)) return null;
+  const words = (COMMITS_BY_ITSELF.exec(code) ?? (dbType === "mysql" ? MYSQL_COMMITS_BY_ITSELF.exec(code) : null))?.[1];
+  return words ? words.replace(/\s+/g, " ").toUpperCase() : null;
+}
 
 /**
  * What a `db_execute` approval adds when part of a MySQL or MariaDB script cannot be rolled back:
@@ -64,10 +80,9 @@ export function selfCommitNote(dbType: DbType, sql: string): string | null {
   if (dialectNameOf(dbType) !== "mysql") return null;
   const statements = splitSqlScript(sql, "mysql");
   for (let i = statements.length - 1; i >= 0; i--) {
-    const code = sqlCode(statements[i]!.sql, "mysql").trim();
-    const keyword = COMMITS_BY_ITSELF.exec(code)?.[1];
-    if (!keyword || TEMPORARY_TABLE.test(code)) continue;
-    const what = `${DB_TYPE_LABELS[dbType]} commits the ${keyword.toUpperCase()}${statements.length > 1 ? ` in statement ${i + 1}` : ""} by itself`;
+    const words = commitsByItself(dbType, statements[i]!.sql);
+    if (!words) continue;
+    const what = `${DB_TYPE_LABELS[dbType]} commits the ${words}${statements.length > 1 ? ` in statement ${i + 1}` : ""} by itself`;
     return i === 0 ? `${what}, so it cannot be rolled back.` : `${what}, together with everything before it, so statements 1–${i + 1} cannot be rolled back.`;
   }
   return null;

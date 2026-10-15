@@ -19,6 +19,21 @@ describe("selfCommitNote", () => {
     expect(selfCommitNote("mysql", "ALTER TABLE a ADD c INT")).toBe("MySQL commits the ALTER by itself, so it cannot be rolled back.");
   });
 
+  it("goes by what each server was measured to commit by itself", () => {
+    expect(selfCommitNote("mysql", "UPDATE a SET b = 1;\nSET PASSWORD FOR 'u'@'%' = 'secret'"))
+      .toBe("MySQL commits the SET PASSWORD in statement 2 by itself, together with everything before it, so statements 1–2 cannot be rolled back.");
+    expect(selfCommitNote("mariadb", "SET PASSWORD FOR 'u'@'%' = PASSWORD('secret')")).toBe("MariaDB commits the SET PASSWORD by itself, so it cannot be rolled back.");
+    expect(selfCommitNote("mysql", "LOAD  INDEX INTO CACHE a")).toBe("MySQL commits the LOAD INDEX by itself, so it cannot be rolled back.");
+    expect(selfCommitNote("mysql", "CACHE INDEX a IN hot_cache")).toBe("MySQL commits the CACHE INDEX by itself, so it cannot be rolled back.");
+    // MariaDB keeps the transaction open across the key-cache statements; neither server ends it
+    // for LOAD DATA into InnoDB or MyISAM, nor for RESET PERSIST.
+    expect(selfCommitNote("mariadb", "LOAD INDEX INTO CACHE a;\nCACHE INDEX a IN hot_cache")).toBeNull();
+    expect(selfCommitNote("mysql", "LOAD DATA INFILE '/tmp/a.csv' INTO TABLE a;\nRESET PERSIST")).toBeNull();
+    expect(selfCommitNote("mariadb", "UPDATE a SET b = 1;\nRESET QUERY CACHE")).toBe(
+      "MariaDB commits the RESET in statement 2 by itself, together with everything before it, so statements 1–2 cannot be rolled back.",
+    );
+  });
+
   it("says nothing for a script with none, a TEMPORARY table, or a database that rolls DDL back", () => {
     expect(selfCommitNote("mysql", "UPDATE a SET b = 1;\nDELETE FROM a WHERE id = 2")).toBeNull();
     expect(selfCommitNote("mariadb", "CREATE TEMPORARY TABLE t (id INT);\nDROP TEMPORARY TABLE t;\nUPDATE a SET created = 'CREATE'")).toBeNull();
