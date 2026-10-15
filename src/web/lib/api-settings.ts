@@ -1,6 +1,7 @@
 import { api } from "./api-client";
 import { clearChatPreparationCache } from "./chat-preparation-cache";
 import { writeChatPreparationSettings } from "./chat-preference-local-cache";
+import type { PpmToolSwitches } from "../../shared/ppm-tools";
 
 export interface OAuthProfileData {
   account?: {
@@ -222,6 +223,7 @@ export interface AISettings {
   new_chat_provider_mode?: "default" | "follow-focus";
   share_provider_context?: boolean;
   tab_tools?: boolean;
+  ppm_tools?: PpmToolSwitches;
   providers: Record<string, AIProviderSettings>;
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from "bun:test";
 import { Hono } from "hono";
 import { openTestDb, setDb, getConfigValue } from "../../../src/services/db.service.ts";
 import { settingsRoutes } from "../../../src/server/routes/settings.ts";
@@ -8,6 +8,18 @@ import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 function createApp() {
   return new Hono().route("/settings", settingsRoutes);
 }
+
+// Each test swaps in a fresh database (`setDb` closes the one before) and reloads config, which
+// turns auth back on with a new token. The files that run after this one in the same process get
+// a fresh database again and the config they had, auth off as `test-setup.ts` leaves it.
+let processConfig: unknown;
+beforeAll(() => {
+  processConfig = structuredClone((configService as any).config);
+});
+afterAll(() => {
+  setDb(openTestDb());
+  (configService as any).config = processConfig;
+});
 
 /** Set config to known defaults — uses in-memory DB to avoid corrupting prod */
 function resetConfig() {
@@ -213,6 +225,27 @@ describe("PUT /settings/ai", () => {
       expect((await put({ tab_tools: value })).status).toBe(400);
       expect(configService.get("ai").tab_tools).toBe(true);
     }
+  });
+
+  it("switches PPM's tools one at a time, and refuses tool names and values it does not know", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const res = await put({ ppm_tools: { db_execute: false } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.ppm_tools).toEqual({ db_execute: false });
+    expect((await put({ ppm_tools: { open_file: true } })).status).toBe(200);
+    expect(configService.load().ai.ppm_tools).toEqual({ db_execute: false, open_file: true });
+    for (const value of [{ Bash: false }, { db_query: "off" }, [], null, "db_query"]) {
+      expect((await put({ ppm_tools: value })).status).toBe(400);
+    }
+    // An own `__proto__` key, as JSON.parse makes one (an object literal would set the prototype).
+    const raw = await app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: '{"ppm_tools":{"__proto__":false}}',
+    });
+    expect(raw.status).toBe(400);
+    expect(configService.load().ai.ppm_tools).toEqual({ db_execute: false, open_file: true });
   });
 
   it("updates provider config and returns merged result", async () => {

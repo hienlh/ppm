@@ -52,6 +52,12 @@ ppm db test staging
 
 ## Task 5: Query a saved DB connection
 
+Inside a PPM chat, use the `db_query` tool (and `db_execute` for a change, which the user
+approves). `ppm db query` refuses there and names the tool, because the CLI obeys neither the
+per-tool switch in Settings → Tools nor the approval.
+
+For a person at a terminal:
+
 ```bash
 # Run a SQL query against a registered connection
 ppm db query staging "SELECT count(*) AS total FROM users"

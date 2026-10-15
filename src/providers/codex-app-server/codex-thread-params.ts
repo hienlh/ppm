@@ -5,9 +5,12 @@ import {
   type DesignMcpAccess,
 } from "../../services/design/mcp/design-mcp-tool.ts";
 import {
-  CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, TAB_TOOLS_TIMEOUT_MS,
-  type TabToolsMcpAccess,
+  CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import { TAB_TOOLS } from "../../shared/ppm-tools.ts";
+import {
+  CODEX_DB_TOOLS_MCP_SERVER, CODEX_DB_TOOLS_MCP_TOKEN_ENV, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess,
+} from "../../services/db-ai-tools/db-ai-tools-tool.ts";
 
 /** Config overrides, keyed like `-c key=value` on codex's command line (dotted paths). */
 export type CodexConfigOverrides = Record<string, unknown>;
@@ -26,6 +29,8 @@ export interface ThreadParamsInput {
   designMcp?: DesignMcpAccess;
   /** The tab tools (`open_file`, `open_preview`) while the user has them on; likewise. */
   tabToolsMcp?: TabToolsMcpAccess;
+  /** The database tools (`db_query`, `open_query`, `db_execute`); likewise. */
+  dbToolsMcp?: DbToolsMcpAccess;
 }
 
 /**
@@ -57,7 +62,8 @@ export function designMcpEnv(access: DesignMcpAccess | undefined): Record<string
 
 /**
  * The tab-tools MCP server, shaped and approved exactly like {@link designMcpConfig}: the
- * tools only open a tab for the user to look at.
+ * tools open a tab for the user to look at, read the project's terminals, or type a command
+ * that runs only when the user presses Enter.
  */
 export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexConfigOverrides {
   if (!access) return {};
@@ -65,7 +71,7 @@ export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexC
     [`mcp_servers.${CODEX_TAB_TOOLS_MCP_SERVER}`]: {
       url: access.url,
       bearer_token_env_var: CODEX_TAB_TOOLS_MCP_TOKEN_ENV,
-      enabled_tools: [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL],
+      enabled_tools: [...TAB_TOOLS],
       default_tools_approval_mode: "approve",
       startup_timeout_sec: 10,
       tool_timeout_sec: Math.ceil(TAB_TOOLS_TIMEOUT_MS / 1000),
@@ -76,6 +82,29 @@ export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexC
 /** The environment the app-server needs for {@link tabToolsMcpConfig}; `{}` without the tools. */
 export function tabToolsMcpEnv(access: TabToolsMcpAccess | undefined): Record<string, string> {
   return access ? { [CODEX_TAB_TOOLS_MCP_TOKEN_ENV]: access.token } : {};
+}
+
+/**
+ * The database tools' MCP server, shaped like {@link tabToolsMcpConfig} and approved up front
+ * too: `db_execute` asks the user itself, in PPM's chat, with the SQL and PPM's password.
+ */
+export function dbToolsMcpConfig(access: DbToolsMcpAccess | undefined): CodexConfigOverrides {
+  if (!access) return {};
+  return {
+    [`mcp_servers.${CODEX_DB_TOOLS_MCP_SERVER}`]: {
+      url: access.url,
+      bearer_token_env_var: CODEX_DB_TOOLS_MCP_TOKEN_ENV,
+      enabled_tools: [...DB_TOOLS],
+      default_tools_approval_mode: "approve",
+      startup_timeout_sec: 10,
+      tool_timeout_sec: Math.ceil(DB_TOOLS_TIMEOUT_MS / 1000),
+    },
+  };
+}
+
+/** The environment the app-server needs for {@link dbToolsMcpConfig}; `{}` without the tools. */
+export function dbToolsMcpEnv(access: DbToolsMcpAccess | undefined): Record<string, string> {
+  return access ? { [CODEX_DB_TOOLS_MCP_TOKEN_ENV]: access.token } : {};
 }
 
 /**
@@ -90,6 +119,7 @@ export function buildThreadParams(input: ThreadParamsInput): CodexThreadParams {
     ...(input.configOverrides?.config ?? {}),
     ...designMcpConfig(input.designMcp),
     ...tabToolsMcpConfig(input.tabToolsMcp),
+    ...dbToolsMcpConfig(input.dbToolsMcp),
   };
   return {
     ...(Object.keys(config).length ? { config } : {}),

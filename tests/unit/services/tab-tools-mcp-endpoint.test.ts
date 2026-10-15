@@ -4,8 +4,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { configService } from "../../../src/services/config.service.ts";
-import { createTabToolsMcpHandler, tabToolsMcpHandler } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-endpoint.ts";
+import { setSessionMetadata } from "../../../src/services/db.service.ts";
+import { terminalService } from "../../../src/services/terminal.service.ts";
+import { createTabToolsMcpHandler, existingForwardFor, tabToolsMcpHandler } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-endpoint.ts";
 import { createTabToolsMcpTokenStore, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { activeTunnels } from "../../../src/server/routes/tunnel-spawn.ts";
 import type { TabOpenOutcome } from "../../../src/services/tab-tools-mcp/tab-open-broker.ts";
 import type { TabTargetOutcome } from "../../../src/services/tab-tools-mcp/tab-target.ts";
 import { OPEN_FILE_WAIT_MS, OPEN_PREVIEW_WAIT_MS } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tool.ts";
@@ -17,11 +20,21 @@ const REPORT = {
   screenshot: { dataUrl: "data:image/jpeg;base64,QUJD", width: 1280, height: 720 },
 };
 
+/** The tools that take no `path` answer from their own modules; here they only record the call. */
+function otherTools(seen: Array<{ tool: string; binding: unknown; args: unknown }>) {
+  const reply = (tool: string) => async (binding: unknown, args: unknown) => {
+    seen.push({ tool, binding, args });
+    return { content: [{ type: "text", text: `${tool} answered` }] };
+  };
+  return { terminal: { read: reply("read_terminal"), run: reply("run_in_terminal") }, openUrl: reply("open_url") };
+}
+
 function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enabled?: boolean } = {}) {
   const tokens = createTabToolsMcpTokenStore();
   const calls: Array<{ sessionId: string; req: Record<string, unknown>; waitMs: number }> = [];
   const targets: unknown[] = [];
-  let enabled = opts.enabled ?? true;
+  const others: Array<{ tool: string; binding: unknown; args: unknown }> = [];
+  let enabled: boolean | ((tool: string) => boolean) = opts.enabled ?? true;
   const handler = createTabToolsMcpHandler({
     resolveToken: (t) => tokens.resolve(t),
     sessionProject: async () => ({ projectPath: "/proj", projectName: "demo" }),
@@ -29,7 +42,8 @@ function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enab
       calls.push({ sessionId, req, waitMs });
       return opts.outcome ?? { ok: true, result: { type: "tab_open_result", requestId: "r".repeat(16), opened: true } };
     },
-    enabled: () => enabled,
+    enabled: (tool) => (typeof enabled === "function" ? enabled(tool) : enabled),
+    ...otherTools(others),
     resolveTarget: async (input, binding) => {
       expect(binding).toEqual({ sessionId: "s1", projectPath: "/proj", projectName: "demo" });
       targets.push(input);
@@ -43,7 +57,7 @@ function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enab
     app.request("http://localhost/api/tab-tools-mcp", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
   const call = async (name: string, args: unknown) =>
     (await (await rpc({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } })).json()).result;
-  return { tokens, token, calls, targets, rpc, call, setEnabled: (v: boolean) => { enabled = v; } };
+  return { tokens, token, calls, targets, others, rpc, call, setEnabled: (v: boolean | ((tool: string) => boolean)) => { enabled = v; } };
 }
 
 describe("tab tools MCP endpoint", () => {
@@ -56,14 +70,17 @@ describe("tab tools MCP endpoint", () => {
     expect((await rpc(ping)).status).toBe(200);
   });
 
-  it("lists open_file and open_preview, each requiring a path", async () => {
+  it("lists the file tools requiring a path, then open_url and the terminal tools", async () => {
     const { rpc } = setup();
     const init = await (await rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })).json();
     expect(init.result.serverInfo.name).toBe("ppm-tabs");
     const list = await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
-    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["open_file", "open_preview"]);
-    for (const tool of list.result.tools) expect(tool.inputSchema.required).toEqual(["path"]);
-    expect(list.result.tools[1].description).toContain("cdn.jsdelivr.net");
+    const tools = list.result.tools as Array<{ name: string; inputSchema: { required?: string[] }; description: string }>;
+    expect(tools.map((t) => [t.name, t.inputSchema.required])).toEqual([
+      ["open_file", ["path"]], ["open_preview", ["path"]], ["open_url", ["url"]], ["read_terminal", undefined], ["run_in_terminal", ["command"]],
+    ]);
+    expect(tools[1]!.description).toContain("cdn.jsdelivr.net");
+    expect(tools[4]!.description).toContain("Nothing runs until the user presses Enter");
     const unknown = await (await rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "Artifact", arguments: {} } })).json();
     expect(unknown.error.code).toBe(-32602);
   });
@@ -140,6 +157,7 @@ describe("tab tools MCP endpoint", () => {
       sessionProject: async () => ({ projectPath: null, projectName: null }),
       request: async () => ({ ok: false, reason: "no-device", message: "none" }),
       enabled: () => true,
+      ...otherTools([]),
     }));
     // Chunked, so there is no Content-Length to refuse it by.
     const post = (body: ReadableStream<Uint8Array>) => app.request("http://localhost/api/tab-tools-mcp", {
@@ -171,6 +189,42 @@ describe("tab tools MCP endpoint", () => {
     expect(offResult.content[0].text).toContain("turned off");
     expect(off.targets).toEqual([]);
   });
+
+  it("hands open_url and the terminal tools the session's binding and their arguments, and never a path lookup", async () => {
+    const { call, others, targets } = setup();
+    expect((await call("open_url", { url: "http://localhost:5173/" })).content[0].text).toBe("open_url answered");
+    await call("read_terminal", { lines: 50 });
+    await call("run_in_terminal", "not an object");
+    const binding = { sessionId: "s1", projectPath: "/proj", projectName: "demo" };
+    expect(others).toEqual([
+      { tool: "open_url", binding, args: { url: "http://localhost:5173/" } },
+      { tool: "read_terminal", binding, args: { lines: 50 } },
+      { tool: "run_in_terminal", binding, args: {} },
+    ]);
+    expect(targets).toEqual([]);
+  });
+
+  it("lists only the tools the user has on, and refuses one turned off since the chat listed it", async () => {
+    const { rpc, call, calls, setEnabled } = setup();
+    setEnabled((tool) => tool === "open_file");
+    const list = await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["open_file"]);
+    expect(await call("open_preview", { path: "report.html" })).toEqual({
+      content: [{ type: "text", text: "The user turned off open_preview in PPM's settings (Settings → Tools), so it did nothing." }],
+      isError: true,
+    });
+    expect(calls).toEqual([]);
+    expect((await call("open_file", { path: "report.html" })).isError).toBeUndefined();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses a terminal tool turned off before its module sees the call", async () => {
+    const { call, others, setEnabled } = setup();
+    setEnabled((tool) => tool !== "run_in_terminal");
+    expect((await call("run_in_terminal", { command: "sudo apt install ffmpeg" })).content[0].text).toContain("turned off run_in_terminal");
+    expect(others).toEqual([]);
+    expect((await call("read_terminal", {})).isError).toBeUndefined();
+  });
 });
 
 describe("tab tools MCP endpoint as the server mounts it", () => {
@@ -198,13 +252,89 @@ describe("tab tools MCP endpoint as the server mounts it", () => {
       // A real file goes as far as the session's devices; no window shows this chat.
       expect(await text(await open(`Bearer ${token}`, page))).toContain(`nothing was shown. The file is at ${page}`);
       ai.tab_tools = false;
-      expect(await text(await open(`Bearer ${token}`, page))).toContain("turned off");
+      expect(await text(await open(`Bearer ${token}`, page))).toContain("turned off open_file");
+      // A switch of its own (Settings → Tools) wins over the older one.
+      ai.ppm_tools = { open_file: true };
+      expect(await text(await open(`Bearer ${token}`, page))).toContain("nothing was shown");
     } finally {
       ai.tab_tools = previous;
+      delete ai.ppm_tools;
       tabToolsMcpTokens.revoke("tab-tools-wired");
       rmSync(secret, { force: true });
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("tab tools MCP endpoint's terminal tools as the server mounts them", () => {
+  it("reads the chat project's terminals from the terminal service, and follows Settings → Tools", async () => {
+    const app = new Hono();
+    app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
+    const token = tabToolsMcpTokens.mint({ sessionId: "tab-tools-wired-term" });
+    const call = async (name: string, args: unknown) => {
+      const res = await app.request("http://localhost/api/tab-tools-mcp", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+      });
+      return (await res.json()).result as { content: Array<{ text: string }>; isError?: boolean };
+    };
+    const dir = mkdtempSync(join(tmpdir(), "ppm-tab-tools-term-"));
+    setSessionMetadata("tab-tools-wired-term", undefined, dir);
+    const id = terminalService._createWithPty({ write() {}, resize() {}, kill() {}, closed: false }, dir);
+    (terminalService as any).appendBuffer(id, "$ bun dev\r\nerror: port 5173 is in use\r\n");
+    const ai = (configService as any).config.ai;
+    try {
+      const read = await call("read_terminal", {});
+      expect(read.isError).toBeUndefined();
+      expect(read.content[0]!.text).toContain(`Terminal ${id.slice(0, 8)}: started in the project folder`);
+      expect(read.content[0]!.text).toContain("error: port 5173 is in use");
+      // Refused before any shell starts: nothing a tool types may run by itself.
+      expect((await call("run_in_terminal", { command: "echo a\nrm -rf ~" })).isError).toBe(true);
+      expect(terminalService.list().filter((t) => t.projectPath === dir)).toHaveLength(1);
+      ai.ppm_tools = { read_terminal: false };
+      expect((await call("read_terminal", {})).content[0]!.text).toContain("turned off read_terminal");
+    } finally {
+      delete ai.ppm_tools;
+      terminalService.kill(id);
+      tabToolsMcpTokens.revoke("tab-tools-wired-term");
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("tab tools MCP endpoint's open_url as the server mounts it", () => {
+  it("takes the user's quick tunnel for the port, asks the chat's devices once a server listens, and never opens PPM's own port", async () => {
+    const app = new Hono();
+    app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
+    const token = tabToolsMcpTokens.mint({ sessionId: "tab-tools-wired-url" });
+    const call = async (url: string) => {
+      const res = await app.request("http://localhost/api/tab-tools-mcp", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "open_url", arguments: { url } } }),
+      });
+      return ((await res.json()).result.content[0].text as string);
+    };
+    const dev = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("app") });
+    const port = dev.port!;
+    activeTunnels.set(port, { port, url: "https://calm-river.trycloudflare.com", process: { kill() {} }, pid: 0, startedAt: 0, probeFailures: 0 } as never);
+    try {
+      expect(existingForwardFor(port)).toEqual({ url: "https://calm-river.trycloudflare.com", via: "cloudflare" });
+      // No window shows this chat, so the call ends at asking for one: past the port checks.
+      expect(await call(`http://localhost:${port}/admin`)).toBe(`No PPM window has this chat open, so nothing was shown. The page is http://localhost:${port}/admin.`);
+      expect(await call(`http://localhost:${configService.get("port")}/`)).toContain("is PPM itself");
+    } finally {
+      activeTunnels.delete(port);
+      dev.stop(true);
+      tabToolsMcpTokens.revoke("tab-tools-wired-url");
+    }
+  });
+
+  it("prefers the user's private Tailscale forward to a public quick tunnel on the same port", () => {
+    const tailscale = [{ port: 5173, url: "https://devbox.tail1234.ts.net:5173/" }];
+    const quick = new Map([[5173, { url: "https://calm-river.trycloudflare.com" }], [3000, { url: "https://other.trycloudflare.com" }]]);
+    expect(existingForwardFor(5173, tailscale, quick)).toEqual({ url: "https://devbox.tail1234.ts.net:5173/", via: "tailscale" });
+    expect(existingForwardFor(3000, tailscale, quick)).toEqual({ url: "https://other.trycloudflare.com", via: "cloudflare" });
+    expect(existingForwardFor(8000, tailscale, quick)).toBeNull();
   });
 });
 
