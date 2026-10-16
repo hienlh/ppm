@@ -446,6 +446,40 @@ export function numberedRows(part: BlockPart): ReviewRow[] {
   }));
 }
 
+/** One line across of the side-by-side view: indexes into the rows, `null` where a side has no line. */
+export interface SplitRow {
+  left: number | null;
+  right: number | null;
+}
+
+/**
+ * Rows laid out side by side, the way a split diff reads: an unchanged line on
+ * both sides, and within each run of changes the n-th removed line beside the
+ * n-th added one, the longer side's extra lines opposite nothing.
+ */
+export function splitRows(rows: readonly ReviewRow[]): SplitRow[] {
+  const out: SplitRow[] = [];
+  let removed: number[] = [];
+  let added: number[] = [];
+  const flush = () => {
+    for (let i = 0; i < Math.max(removed.length, added.length); i++) {
+      out.push({ left: removed[i] ?? null, right: added[i] ?? null });
+    }
+    removed = [];
+    added = [];
+  };
+  rows.forEach((row, i) => {
+    if (row.kind === "-") removed.push(i);
+    else if (row.kind === "+") added.push(i);
+    else {
+      flush();
+      out.push({ left: i, right: i });
+    }
+  });
+  flush();
+  return out;
+}
+
 /** "Lines 12–20", "Line 7", "Lines 30–31, removed": where the block is, on the side it leaves behind. */
 export function rangeText(block: ReviewBlock): string {
   const part = block.parts?.[0];

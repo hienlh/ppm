@@ -61,6 +61,12 @@ interface SettingsState {
    */
   lspEnabled: boolean;
   /**
+   * The Review changes tab draws a block's old and new lines side by side
+   * rather than interleaved. Device-local: two columns of code are what a wide
+   * monitor affords and a narrow window does not.
+   */
+  gitReviewSplit: boolean;
+  /**
    * Which engine the chat mic uses. Device-local for the same reason as
    * `lspEnabled`: it answers "what can this browser do" — Firefox and Brave
    * have no Web Speech API at all — and a phone must not be switched to the
@@ -183,6 +189,7 @@ interface SettingsState {
   setDesignWindows: (enabled: boolean) => void;
   toggleWordWrap: () => void;
   toggleMobileWordWrap: () => void;
+  toggleGitReviewSplit: () => void;
   setLspEnabled: (enabled: boolean) => void;
   setVoiceEngine: (engine: VoiceEngine) => void;
   toggleTabWrap: () => void;
@@ -225,6 +232,7 @@ interface PersistedSettings {
   wordWrap?: boolean;
   mobileWordWrap?: boolean;
   lspEnabled?: boolean;
+  gitReviewSplit?: boolean;
   voiceEngine?: VoiceEngine;
   tabWrap?: boolean;
   editorTabStyle?: EditorTabStyle;
@@ -452,6 +460,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   remoteDesktopCodec: typeof _initial.remoteDesktopCodec === "string" ? _initial.remoteDesktopCodec : null,
   mobileWordWrap: _initial.mobileWordWrap ?? true,
   lspEnabled: _initial.lspEnabled ?? false,
+  gitReviewSplit: _initial.gitReviewSplit ?? false,
   voiceEngine: _initial.voiceEngine === "whisper" ? "whisper" : "browser",
   tabWrap: _initial.tabWrap ?? false,
   editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
@@ -596,6 +605,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().mobileWordWrap;
     persistDevicePref({ mobileWordWrap: next });
     set({ mobileWordWrap: next });
+  },
+
+  toggleGitReviewSplit: () => {
+    const next = !get().gitReviewSplit;
+    persistDevicePref({ gitReviewSplit: next });
+    set({ gitReviewSplit: next });
   },
 
   setLspEnabled: (enabled) => {

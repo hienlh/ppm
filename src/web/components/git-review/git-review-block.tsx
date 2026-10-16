@@ -12,7 +12,7 @@ import type { ThemedToken } from "shiki";
 import { Check, CheckCircle2, Loader2, TextSelect, Trash2, Undo2 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { changedSpans } from "@/lib/session-review-model";
-import { numberedRows, pickableLines, rangeText, type BlockPart, type ReviewBlock, type ReviewRow } from "@/lib/git-review-model";
+import { numberedRows, pickableLines, rangeText, splitRows, type BlockPart, type ReviewBlock, type ReviewRow } from "@/lib/git-review-model";
 import { CheckBox, LineCounts } from "@/components/git/git-change-parts";
 import { Kbd } from "@/components/session-review/review-code";
 import { CodeLine, useTokenLines } from "@/components/session-review/review-tokens";
@@ -53,7 +53,7 @@ const linkButton =
 const keyButton =
   "inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[7px] border pl-2.5 text-[12.5px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-45";
 
-export const ReviewBlockCard = memo(function ReviewBlockCard({ name, oldPath, block, index, total, focused, pick, compact, lang, busy, actions }: {
+export const ReviewBlockCard = memo(function ReviewBlockCard({ name, oldPath, block, index, total, focused, pick, compact, split = false, lang, busy, actions }: {
   /** The file's name, for what a whole-file block says. */
   name: string;
   oldPath?: string;
@@ -65,6 +65,8 @@ export const ReviewBlockCard = memo(function ReviewBlockCard({ name, oldPath, bl
   pick: ReadonlySet<number> | null;
   /** The phone layout: narrower gutters, and the answers live in the bottom bar. */
   compact: boolean;
+  /** Old and new lines side by side. Ignored when `compact`: a phone has no room for two columns. */
+  split?: boolean;
   lang: string | undefined;
   /** A write is in flight: the answers wait for it. */
   busy: boolean;
@@ -195,17 +197,18 @@ export const ReviewBlockCard = memo(function ReviewBlockCard({ name, oldPath, bl
           gone && "shadow-[inset_2px_0_0_color-mix(in_srgb,var(--error)_60%,transparent)]",
         )}
       >
-        <BlockBody name={name} oldPath={oldPath} block={block} compact={compact} lang={lang} pick={picking ? pick : null} onToggle={act.togglePickLine} />
+        <BlockBody name={name} oldPath={oldPath} block={block} compact={compact} split={split && !compact} lang={lang} pick={picking ? pick : null} onToggle={act.togglePickLine} />
       </div>
     </div>
   );
 });
 
-function BlockBody({ name, oldPath, block, compact, lang, pick, onToggle }: {
+function BlockBody({ name, oldPath, block, compact, split, lang, pick, onToggle }: {
   name: string;
   oldPath?: string;
   block: ReviewBlock;
   compact: boolean;
+  split: boolean;
   lang: string | undefined;
   pick: ReadonlySet<number> | null;
   onToggle: (line: number) => void;
@@ -216,7 +219,7 @@ function BlockBody({ name, oldPath, block, compact, lang, pick, onToggle }: {
         <WholeNote name={name} oldPath={oldPath} block={block} />
         {block.parts?.map((part, i) => (
           <div key={i} className={cn(i > 0 && "mt-1 border-t border-dashed border-border-soft pt-1")}>
-            <DiffRows part={part} state={block.state} compact={compact} lang={lang} pick={null} onToggle={onToggle} />
+            <DiffRows part={part} state={block.state} compact={compact} split={split} lang={lang} pick={null} onToggle={onToggle} />
           </div>
         ))}
       </>
@@ -230,7 +233,7 @@ function BlockBody({ name, oldPath, block, compact, lang, pick, onToggle }: {
       </div>
     );
   }
-  return <DiffRows part={part} state={block.state} compact={compact} lang={lang} pick={pick} onToggle={onToggle} />;
+  return <DiffRows part={part} state={block.state} compact={compact} split={split} lang={lang} pick={pick} onToggle={onToggle} />;
 }
 
 /** What a block that stands for the whole file says instead of lines. */
@@ -286,10 +289,12 @@ function WholeNote({ name, oldPath, block }: { name: string; oldPath?: string; b
  * shows only the lines it left behind; a pick puts a tick in each changed
  * line's sign column, and an unticked line loses its tint.
  */
-function DiffRows({ part, state, compact, lang, pick, onToggle }: {
+function DiffRows({ part, state, compact, split, lang, pick, onToggle }: {
   part: BlockPart;
   state: ReviewBlock["state"];
   compact: boolean;
+  /** Old and new side by side instead of interleaved. */
+  split: boolean;
   lang: string | undefined;
   pick: ReadonlySet<number> | null;
   onToggle: (line: number) => void;
@@ -314,40 +319,80 @@ function DiffRows({ part, state, compact, lang, pick, onToggle }: {
     return out;
   }, [rows, oldTokens, newTokens]);
 
-  const grid = compact ? "grid-cols-[30px_30px_16px_minmax(0,1fr)]" : "grid-cols-[44px_44px_22px_minmax(0,1fr)]";
+  const pairs = useMemo(() => (split ? splitRows(rows) : null), [split, rows]);
+
   // A discarded block still shows what was thrown away, dimmed, so Undo has something to answer for.
   const gone = state === "discarded";
   const tint = state === "staged" ? { add: "bg-diff-added/60", del: "bg-diff-removed/60" } : { add: "bg-diff-added", del: "bg-diff-removed" };
+  const number = cn("select-none text-right text-[0.92em] text-text-3", compact ? "pr-[5px]" : "pr-2");
+
+  /** One line's tint, click and pick state, shared by the inline row and a split half. */
+  const lineProps = (row: ReviewRow) => {
+    const changed = row.kind !== " ";
+    const ticked = !!pick && changed && pick.has(row.at);
+    const off = !!pick && changed && !ticked;
+    return {
+      ticked,
+      off,
+      className: cn(row.kind === "+" && !off && tint.add, row.kind === "-" && !off && tint.del, pick && changed && "cursor-pointer"),
+      onClick: pick && changed ? () => onToggle(row.at) : undefined,
+      role: pick && changed ? "checkbox" : undefined,
+      "aria-checked": pick && changed ? ticked : undefined,
+    };
+  };
+  const sign = (row: ReviewRow, ticked: boolean) => (
+    <span className={cn("grid h-[1lh] select-none place-items-center self-start", row.kind === "+" ? "text-success" : row.kind === "-" ? "text-error" : "text-text-3")}>
+      {pick && row.kind !== " " ? <CheckBox state={ticked ? "all" : "none"} className="size-3.5 md:size-3.5 rounded-[3.5px] md:rounded-[3.5px]" /> : row.kind === "+" ? "+" : row.kind === "-" ? "−" : ""}
+    </span>
+  );
+  const code = ({ row, tokens, i }: (typeof drawn)[number], off: boolean) => (
+    <span className={cn("min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]", compact ? "pr-2.5" : "pr-3.5", off && "opacity-55", gone && "opacity-70")}>
+      <CodeLine
+        text={row.text}
+        tokens={tokens}
+        span={spans?.[i] ?? null}
+        spanClass={cn("rounded-[2px]", row.kind === "+" ? "bg-diff-added-word" : "bg-diff-removed-word")}
+      />
+    </span>
+  );
+
+  if (pairs) {
+    // Each half is its own grid so its tint fills it; the outer row stretches both to the taller one.
+    const half = (index: number | null, side: "old" | "new") => {
+      if (index === null) return <span aria-hidden className="bg-text/[0.035]" />;
+      const line = drawn[index]!;
+      const { ticked, off, ...props } = lineProps(line.row);
+      return (
+        <div {...props} className={cn("grid grid-cols-[44px_22px_minmax(0,1fr)]", props.className)}>
+          <span className={number}>{(side === "old" ? line.row.old : line.row.new) ?? ""}</span>
+          {sign(line.row, ticked)}
+          {code(line, off)}
+        </div>
+      );
+    };
+    return (
+      <>
+        {pairs.map((pair, i) => (
+          <div key={i} data-split-row className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] divide-x divide-border-soft">
+            {half(pair.left, "old")}
+            {half(pair.right, "new")}
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  const grid = compact ? "grid-cols-[30px_30px_16px_minmax(0,1fr)]" : "grid-cols-[44px_44px_22px_minmax(0,1fr)]";
   return (
     <>
-      {drawn.map(({ row, tokens, i }) => {
-        const changed = row.kind !== " ";
-        const ticked = !!pick && changed && pick.has(row.at);
-        const off = !!pick && changed && !ticked;
-        const add = row.kind === "+" && !off;
-        const del = row.kind === "-" && !off;
-        const number = cn("select-none text-right text-[0.92em] text-text-3", compact ? "pr-[5px]" : "pr-2");
+      {drawn.map((line) => {
+        const { ticked, off, ...props } = lineProps(line.row);
         return (
-          <div
-            key={i}
-            className={cn("grid", grid, add && tint.add, del && tint.del, pick && changed && "cursor-pointer")}
-            onClick={pick && changed ? () => onToggle(row.at) : undefined}
-            role={pick && changed ? "checkbox" : undefined}
-            aria-checked={pick && changed ? ticked : undefined}
-          >
-            <span className={number}>{row.old ?? ""}</span>
-            <span className={number}>{row.new ?? ""}</span>
-            <span className={cn("grid h-[1lh] select-none place-items-center self-start", row.kind === "+" ? "text-success" : row.kind === "-" ? "text-error" : "text-text-3")}>
-              {pick && changed ? <CheckBox state={ticked ? "all" : "none"} className="size-3.5 md:size-3.5 rounded-[3.5px] md:rounded-[3.5px]" /> : row.kind === "+" ? "+" : row.kind === "-" ? "−" : ""}
-            </span>
-            <span className={cn("min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]", compact ? "pr-2.5" : "pr-3.5", off && "opacity-55", gone && "opacity-70")}>
-              <CodeLine
-                text={row.text}
-                tokens={tokens}
-                span={spans?.[i] ?? null}
-                spanClass={cn("rounded-[2px]", row.kind === "+" ? "bg-diff-added-word" : "bg-diff-removed-word")}
-              />
-            </span>
+          <div key={line.i} {...props} className={cn("grid", grid, props.className)}>
+            <span className={number}>{line.row.old ?? ""}</span>
+            <span className={number}>{line.row.new ?? ""}</span>
+            {sign(line.row, ticked)}
+            {code(line, off)}
           </div>
         );
       })}
