@@ -7,6 +7,7 @@ import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts"
 import { getAllAccountUsages, getUsageForAccount, refreshUsageForAccount, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { createLogger } from "../../services/logger.ts";
+import { checkPpmPassword } from "../../services/ppm-password.ts";
 
 const log = createLogger("accounts");
 
@@ -190,12 +191,20 @@ accountsRoutes.post("/oauth/refresh/:id", async (c) => {
   }
 });
 
+/**
+ * Both routes that let account tokens leave the machine ask for PPM's password first. The
+ * backup's own password only encrypts the file — whoever exports chooses it — so without
+ * this anyone at an unlocked PPM could walk off with every account.
+ */
+const WRONG_PPM_PASSWORD = "Wrong PPM password";
+
 /** POST /api/accounts/export — download password-encrypted accounts backup */
 accountsRoutes.post("/export", async (c) => {
   try {
-    const { password, accountIds, includeRefreshToken, refreshBeforeExport } = await c.req.json() as {
-      password: string; accountIds?: string[]; includeRefreshToken?: boolean; refreshBeforeExport?: boolean;
+    const { password, ppmPassword, accountIds, includeRefreshToken, refreshBeforeExport } = await c.req.json() as {
+      password: string; ppmPassword?: string; accountIds?: string[]; includeRefreshToken?: boolean; refreshBeforeExport?: boolean;
     };
+    if (!checkPpmPassword(ppmPassword)) return c.json(err(WRONG_PPM_PASSWORD), 403);
     if (!password) return c.json(err("Password required"), 400);
     if (refreshBeforeExport) await accountService.refreshBeforeExport(accountIds);
     const blob = accountService.exportEncrypted(password, accountIds, includeRefreshToken ?? false);
@@ -260,7 +269,11 @@ accountsRoutes.post("/:id/verify", async (c) => {
 /** POST /api/accounts/test-export — simulate export: returns decrypted tokens + current DB tokens for comparison */
 accountsRoutes.post("/test-export", async (c) => {
   try {
-    const { accountIds, includeRefreshToken } = await c.req.json() as { accountIds: string[]; includeRefreshToken?: boolean };
+    const { accountIds, includeRefreshToken, ppmPassword } = await c.req.json() as {
+      accountIds: string[]; includeRefreshToken?: boolean; ppmPassword?: string;
+    };
+    // This one answers with the raw tokens, unencrypted.
+    if (!checkPpmPassword(ppmPassword)) return c.json(err(WRONG_PPM_PASSWORD), 403);
     if (!accountIds?.length) return c.json(err("accountIds required"), 400);
 
     // Snapshot current tokens BEFORE export (export calls refreshBeforeExport which may change tokens)
