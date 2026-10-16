@@ -191,8 +191,9 @@ export interface ExportedTokenInfo {
   tokenChanged: boolean;
 }
 
-export function testExport(accountIds: string[], includeRefreshToken = false): Promise<ExportedTokenInfo[]> {
-  return api.post<ExportedTokenInfo[]>("/api/accounts/test-export", { accountIds, includeRefreshToken });
+/** `ppmPassword` is PPM's own password, typed again: the server refuses to hand tokens out without it. */
+export function testExport(accountIds: string[], includeRefreshToken: boolean, ppmPassword: string): Promise<ExportedTokenInfo[]> {
+  return api.post<ExportedTokenInfo[]>("/api/accounts/test-export", { accountIds, includeRefreshToken, ppmPassword });
 }
 
 export function testRawToken(token: string): Promise<{ status: string; code?: number; error?: string }> {
