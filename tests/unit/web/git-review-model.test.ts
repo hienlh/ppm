@@ -17,6 +17,7 @@ import {
   rangeText,
   resolveFocus,
   reviewTotals,
+  splitRows,
   stepFocus,
   type DiscardedEntry,
   type FileReview,
@@ -241,6 +242,24 @@ describe("lines", () => {
 
   it("numbers each line on both sides", () => {
     expect(numberedRows(block!.parts![0]!).map((r) => [r.old, r.new])).toEqual([[12, 12], [13, null], [null, 13], [null, 14], [14, 15]]);
+  });
+
+  it("lays lines side by side: unchanged on both sides, each removed line beside an added one", () => {
+    const rows = numberedRows(block!.parts![0]!);
+    expect(splitRows(rows)).toEqual([
+      { left: 0, right: 0 },
+      { left: 1, right: 2 },
+      { left: null, right: 3 },
+      { left: 4, right: 4 },
+    ]);
+    const kinds = (text: string) => text.split("").map((k, i) => ({ kind: k as ChangeLine["kind"], text: String(i), old: null, new: null, at: i }));
+    // More removed than added, and a run that ends the block.
+    expect(splitRows(kinds("--+ -"))).toEqual([
+      { left: 0, right: 2 },
+      { left: 1, right: null },
+      { left: 3, right: 3 },
+      { left: 4, right: null },
+    ]);
   });
 
   it("names the range a block covers", () => {

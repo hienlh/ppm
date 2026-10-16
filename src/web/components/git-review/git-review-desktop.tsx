@@ -10,8 +10,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { FileIcon } from "@/lib/file-icons";
-import { ArrowRight, Check, ChevronDown, ChevronUp, ExternalLink, FolderTree, GitBranch, Keyboard, Trash2 } from "@/lib/icons";
+import { ArrowRight, Check, ChevronDown, ChevronUp, Columns2, ExternalLink, FolderTree, GitBranch, Keyboard, Trash2 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { useSettingsStore } from "@/stores/settings-store";
 import { changeLetter, discardSummary, splitPath } from "@/lib/git-changes-view";
 import { reviewLanguage } from "@/components/session-review/review-tokens";
 import { Kbd } from "@/components/session-review/review-code";
@@ -33,6 +34,8 @@ export function GitReviewDesktop({ view }: { view: GitReviewView }) {
   const [keys, setKeys] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [confirm, setConfirm] = useState<GitConfirmRequest | null>(null);
+  const split = useSettingsStore((s) => s.gitReviewSplit);
+  const toggleSplit = useSettingsStore((s) => s.toggleGitReviewSplit);
   const actions = useBlockActions(view);
 
   // The keys stay with the tab when an answer takes away the button that had focus,
@@ -151,6 +154,16 @@ export function GitReviewDesktop({ view }: { view: GitReviewView }) {
           <button
             type="button"
             className={toolButton}
+            aria-pressed={split}
+            title={split ? "Show changes inline" : "Show changes side by side"}
+            aria-label="Side by side"
+            onClick={toggleSplit}
+          >
+            <Columns2 className="size-4" />
+          </button>
+          <button
+            type="button"
+            className={toolButton}
             aria-pressed={keys}
             title="Keyboard shortcuts"
             aria-label="Keyboard shortcuts"
@@ -193,7 +206,7 @@ export function GitReviewDesktop({ view }: { view: GitReviewView }) {
             <>
               <FileHeader view={view} />
               <div className="relative flex min-h-0 flex-1 flex-col">
-                <CodePane view={view} actions={actions} />
+                <CodePane view={view} actions={actions} split={split} />
                 {review.toast && <ReviewToastView toast={review.toast} mobile={false} onClose={review.dismissToast} />}
               </div>
               <BottomBar view={view} onDiscardFile={setConfirm} />
@@ -256,7 +269,7 @@ function FileHeader({ view }: { view: GitReviewView }) {
   );
 }
 
-function CodePane({ view, actions }: { view: GitReviewView; actions: { current: BlockActions } }) {
+function CodePane({ view, actions, split }: { view: GitReviewView; actions: { current: BlockActions }; split: boolean }) {
   const { review } = view;
   const focused = review.focused!;
   const scroller = useRef<HTMLDivElement>(null);
@@ -295,6 +308,7 @@ function CodePane({ view, actions }: { view: GitReviewView; actions: { current: 
           focused={item.block.key === focused.block.key}
           pick={item.block.key === focused.block.key ? review.pick : null}
           compact={false}
+          split={split}
           lang={lang}
           busy={busy}
           actions={actions}
