@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { getAuthToken } from "../../../lib/api-client";
 import {
   testExport, testRawToken,
   type AccountInfo, type ExportedTokenInfo,
@@ -46,20 +48,27 @@ export function AccountExportSimulation({ accounts }: { accounts: AccountInfo[] 
   const [running, setRunning] = useState(false);
   const [includeRefresh, setIncludeRefresh] = useState(false);
   const [rawTests, setRawTests] = useState<Map<string, RawTest>>(new Map());
+  // The server answers this run with raw tokens, so it asks for PPM's password every time.
+  const ppmPasswordRequired = !!getAuthToken();
+  const [ppmPassword, setPpmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const exportable = accounts.filter((a) => a.hasRefreshToken);
+  const canRun = !running && (!ppmPasswordRequired || ppmPassword.length > 0);
 
   async function run() {
-    if (exportable.length === 0) return;
+    if (exportable.length === 0 || !canRun) return;
     setRunning(true);
+    setError(null);
     try {
-      const items = await testExport(exportable.map((a) => a.id), includeRefresh);
+      const items = await testExport(exportable.map((a) => a.id), includeRefresh, ppmPassword);
       setRounds((prev) => [
         ...prev,
         { round: prev.length + 1, time: new Date().toLocaleTimeString(), includeRefresh, items },
       ]);
-    } catch {
-      /* the rounds already on screen stay useful; a failed run just adds nothing */
+    } catch (e) {
+      // The rounds already on screen stay useful; a failed run just adds nothing.
+      setError((e as Error).message);
     }
     setRunning(false);
   }
@@ -107,7 +116,19 @@ export function AccountExportSimulation({ accounts }: { accounts: AccountInfo[] 
       {exportable.length === 0 ? (
         <p className="text-xs text-muted-foreground">No OAuth account with a refresh token to export.</p>
       ) : (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {ppmPasswordRequired && (
+            <Input
+              type="password"
+              placeholder="PPM password"
+              aria-label="PPM password"
+              value={ppmPassword}
+              onChange={(e) => { setPpmPassword(e.target.value); setError(null); }}
+              onKeyDown={(e) => { if (e.key === "Enter") void run(); }}
+              className="h-7 w-40 text-xs"
+              autoComplete="current-password"
+            />
+          )}
           <div className="flex items-center gap-1.5">
             <Switch
               id="sim-include-refresh"
@@ -119,11 +140,12 @@ export function AccountExportSimulation({ accounts }: { accounts: AccountInfo[] 
               Include refresh tokens
             </Label>
           </div>
-          <Button size="sm" className="h-7 text-xs cursor-pointer" disabled={running} onClick={() => void run()}>
+          <Button size="sm" className="h-7 text-xs cursor-pointer" disabled={!canRun} onClick={() => void run()}>
             {running ? <><Loader2 className="size-3 animate-spin mr-1" /> Exporting...</> : `Run export #${rounds.length + 1}`}
           </Button>
         </div>
       )}
+      {error && <p role="alert" className="text-[11px] text-error">{error}</p>}
 
       {rounds.length > 0 && (
         <div className="space-y-3">

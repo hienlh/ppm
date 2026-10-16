@@ -23,6 +23,10 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
   const exportable = accounts.filter((a) => a.hasRefreshToken);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [password, setPassword] = useState("");
+  // PPM's own password, typed again: the backup's password above only encrypts the file.
+  const ppmPasswordRequired = !!getAuthToken();
+  const [ppmPassword, setPpmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [fullTransfer, setFullTransfer] = useState(false);
   const [refreshBefore, setRefreshBefore] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -40,6 +44,8 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
   function handleClose() {
     onOpenChange(false);
     setPassword("");
+    setPpmPassword("");
+    setError(null);
     setFullTransfer(false);
     setRefreshBefore(false);
   }
@@ -47,6 +53,7 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
   async function doExport(toClipboard: boolean) {
     if (selected.size === 0) return;
     setExporting(true);
+    setError(null);
     const effectivePassword = password.trim() || DEFAULT_PASSWORD;
     try {
       const headers: HeadersInit = { "Content-Type": "application/json" };
@@ -55,7 +62,7 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
       const res = await fetch("/api/accounts/export", {
         method: "POST",
         headers,
-        body: JSON.stringify({ password: effectivePassword, accountIds: [...selected], includeRefreshToken: fullTransfer, refreshBeforeExport: refreshBefore }),
+        body: JSON.stringify({ password: effectivePassword, ppmPassword, accountIds: [...selected], includeRefreshToken: fullTransfer, refreshBeforeExport: refreshBefore }),
       });
       if (!res.ok) { const j = await res.json() as any; throw new Error(j.error ?? `Export failed: ${res.status}`); }
       const text = await res.text();
@@ -71,11 +78,13 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
         onMessage?.("Backup downloaded.");
       }
       handleClose();
-    } catch { /* silent */ }
+    } catch (e) {
+      setError((e as Error).message);
+    }
     setExporting(false);
   }
 
-  const valid = selected.size > 0 && !exporting;
+  const valid = selected.size > 0 && !exporting && (!ppmPasswordRequired || ppmPassword.length > 0);
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
@@ -138,6 +147,23 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
             </div>
           )}
           <p className="text-[10px] text-muted-foreground">Encrypted with AES-256-GCM + scrypt.</p>
+          {ppmPasswordRequired && (
+            <div className="space-y-1.5">
+              <Label htmlFor="exp-ppm-password" className="text-xs">PPM password</Label>
+              <Input
+                id="exp-ppm-password"
+                type="password"
+                placeholder="The password you sign in to PPM with"
+                value={ppmPassword}
+                onChange={(e) => { setPpmPassword(e.target.value); setError(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && valid) void doExport(false); }}
+                className="text-xs h-8"
+                autoComplete="current-password"
+              />
+              <p className="text-[10px] text-muted-foreground">Confirms it is you before account tokens leave this machine.</p>
+            </div>
+          )}
+          {error && <p role="alert" className="text-[11px] text-error">{error}</p>}
         </div>
         <DialogFooter className="gap-1.5 flex-col sm:flex-row">
           <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={handleClose}>Cancel</Button>
