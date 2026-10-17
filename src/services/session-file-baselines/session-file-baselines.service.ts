@@ -195,6 +195,21 @@ export function listBaselines(sessionId: string): FileBaseline[] {
 }
 
 /**
+ * How many files the session has a "before" for, from the directory listing alone: cheap enough
+ * to ask after every turn, where `listBaselines` parses every record (a session that touched
+ * thousands of files holds tens of MB of them).
+ */
+export function countBaselines(sessionId: string): number {
+  const dir = sessionDir(sessionId);
+  if (!dir) return 0;
+  try {
+    return readdirSync(dir).filter((n) => n.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Whether PPM keeps anything the session itself wrote: a "before" (`<hash>.json`) or a file's
  * history (`history/`). Review marks and undo journals are the user's answers, not its writes.
  */

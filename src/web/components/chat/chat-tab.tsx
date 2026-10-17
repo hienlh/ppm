@@ -1370,9 +1370,13 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       {/* Every file this session has changed, across all its turns */}
       <SessionChangesBar
         files={sessionChanges.files}
+        loaded={sessionChanges.loaded}
+        loading={sessionChanges.loading}
+        unloadedCount={sessionChanges.unloadedCount}
         projectName={projectName}
         providerId={providerId}
         onOpen={sessionChanges.refresh}
+        onRefresh={sessionChanges.refresh}
         onSetReviewed={sessionChanges.setReviewed}
         onReview={openReview}
       />

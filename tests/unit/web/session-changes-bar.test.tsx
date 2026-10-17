@@ -53,6 +53,38 @@ describe("session changes bar", () => {
     expect(container.querySelector('[data-testid="session-changes-bar"]')).toBeNull();
   });
 
+  it("before the list is asked for, counts the transcript's files and asks only when opened", async () => {
+    const { container, opened } = await render({ files: [], loaded: false, unloadedCount: 3 });
+    const bar = container.querySelector('[data-testid="session-changes-bar"]')!;
+    expect(bar.textContent).toContain("3 files changed");
+    expect(bar.textContent).not.toContain("+");
+    expect(byText(container, "Mark all reviewed")).toBeNull();
+    expect(opened()).toBe(0);
+    await click(byText(container, "3 files changed"));
+    expect(opened()).toBe(1);
+  });
+
+  it("asks again only from its refresh button, which waits while a list is on its way", async () => {
+    let refreshed = 0;
+    const { container, opened } = await render({ onRefresh: () => { refreshed++; } });
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="session-changes-refresh"]')!;
+    await click(button);
+    expect(refreshed).toBe(1);
+    // Refreshing is not opening: the list stays closed.
+    expect(opened()).toBe(0);
+    expect(container.querySelectorAll('[data-testid="session-change-row"]')).toHaveLength(0);
+    await view!.unmount();
+    view = null;
+    const busy = await render({ onRefresh: () => {}, loading: true });
+    expect(busy.container.querySelector<HTMLButtonElement>('[data-testid="session-changes-refresh"]')!.disabled).toBe(true);
+  });
+
+  it("says the list is being worked out while the first answer is on its way", async () => {
+    const { container } = await render({ files: [], loaded: false, loading: true, unloadedCount: 3 });
+    await click(byText(container, "3 files changed"));
+    expect(container.textContent).toContain("Working out what changed");
+  });
+
   it("sums the whole session and opens the review on its own button", async () => {
     const { container, reviewed } = await render();
     const bar = container.querySelector('[data-testid="session-changes-bar"]')!;

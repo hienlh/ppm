@@ -246,8 +246,29 @@ export function markReviewed(sessionId: string, compared: Compared): boolean {
     : writeReviewMark(sessionId, { path, existed: false });
 }
 
+/**
+ * Lists being worked out, by session, project and paths asked. A session that touched
+ * thousands of files takes minutes, and a browser that gives up on a request does not stop
+ * the server working on it — so an identical ask joins the one running instead of starting
+ * another beside it.
+ */
+const inFlight = new Map<string, Promise<SessionFileChange[]>>();
+
 /** Every file the session changed: those it kept a "before" for, then any other `paths`. */
-export async function sessionFileChanges(p: {
+export function sessionFileChanges(p: {
+  sessionId: string;
+  projectPath: string;
+  paths?: string[];
+}): Promise<SessionFileChange[]> {
+  const key = [p.sessionId, p.projectPath, ...[...(p.paths ?? [])].sort()].join("\n");
+  const running = inFlight.get(key);
+  if (running) return running;
+  const job = computeSessionFileChanges(p).finally(() => inFlight.delete(key));
+  inFlight.set(key, job);
+  return job;
+}
+
+async function computeSessionFileChanges(p: {
   sessionId: string;
   projectPath: string;
   paths?: string[];

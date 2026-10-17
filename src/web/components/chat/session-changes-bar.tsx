@@ -16,7 +16,7 @@ import { useId, useState } from "react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useProjectStore } from "@/stores/project-store";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
-import { CheckCircle2, ChevronRight, Eye, EyeOff, FileDiff, ListChecks, X } from "@/lib/icons";
+import { CheckCircle2, ChevronRight, Eye, EyeOff, FileDiff, ListChecks, RefreshCw, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { fileCount, sessionChangeTotals, splitReviewed } from "@/lib/session-file-changes";
 import { ChangeCounts } from "./change-file-row";
@@ -55,14 +55,23 @@ export function ReviewedToggle({ count, shown, dense, onToggle }: {
   );
 }
 
-export function SessionChangesBar({ files, projectName, providerId, onReview, onOpen, onSetReviewed }: {
+export function SessionChangesBar({ files, loaded = true, loading = false, unloadedCount = 0, projectName, providerId, onReview, onOpen, onRefresh, onSetReviewed }: {
   files: SessionFileChange[];
+  /**
+   * Whether `files` is the server's answer. The list is worked out only when opened, so until
+   * then the bar counts the `unloadedCount` files the transcript names, with no line totals.
+   */
+  loaded?: boolean;
+  loading?: boolean;
+  unloadedCount?: number;
   projectName: string;
   providerId?: string;
   /** Open the Review tab, on `path` when one was picked. */
   onReview: (path?: string) => void;
   /** The list was opened: worth asking the server again, the disk may have moved. */
   onOpen?: () => void;
+  /** Ask the server again on demand: the list never refreshes on its own. */
+  onRefresh?: () => void;
   /** Mark files reviewed (hidden until they change again), or bring them back. */
   onSetReviewed?: (files: SessionFileChange[], reviewed: boolean) => void;
 }) {
@@ -72,14 +81,16 @@ export function SessionChangesBar({ files, projectName, providerId, onReview, on
   const listId = useId();
   const projectPath = useProjectStore((s) => s.projects.find((p) => p.name === projectName)?.path);
 
-  if (files.length === 0) return null;
+  if (loaded ? files.length === 0 && !(loading && open) : unloadedCount === 0) return null;
 
   const { pending, reviewed } = splitReviewed(files);
-  const allReviewed = pending.length === 0;
+  const allReviewed = loaded && files.length > 0 && pending.length === 0;
   // Nothing else to show once every file is reviewed.
   const reviewedShown = showReviewed || allReviewed;
   const totals = sessionChangeTotals(pending);
-  const label = allReviewed ? `All ${fileCount(reviewed.length)} reviewed` : `${fileCount(pending.length)} changed`;
+  const label = !loaded
+    ? `${fileCount(unloadedCount)} changed`
+    : allReviewed ? `All ${fileCount(reviewed.length)} reviewed` : `${fileCount(pending.length)} changed`;
   const toggle = () => {
     if (!open) onOpen?.();
     setOpen(!open);
@@ -105,6 +116,9 @@ export function SessionChangesBar({ files, projectName, providerId, onReview, on
   );
   const rows = (dense: boolean) => (
     <>
+      {loading && files.length === 0 && (
+        <p className={cn("text-text-subtle", dense ? "px-2.5 py-1.5 text-[11px]" : "px-4 py-3 text-xs")}>Working out what changed…</p>
+      )}
       {pending.map((file) => row(file, dense))}
       {reviewed.length > 0 && !allReviewed && (
         <ReviewedToggle count={reviewed.length} shown={showReviewed} dense={dense} onToggle={() => setShowReviewed(!showReviewed)} />
@@ -128,12 +142,25 @@ export function SessionChangesBar({ files, projectName, providerId, onReview, on
           />
           {allReviewed && <CheckCircle2 className="size-3.5 shrink-0 text-success" />}
           <span className={cn("truncate font-medium", allReviewed ? "text-text-secondary" : "text-text-primary")}>{label}</span>
-          {!allReviewed && <ChangeCounts added={totals.added} removed={totals.removed} className="shrink-0 font-mono text-[11px]" />}
+          {loaded && !allReviewed && <ChangeCounts added={totals.added} removed={totals.removed} className="shrink-0 font-mono text-[11px]" />}
           {!allReviewed && reviewed.length > 0 && (
             <span className="shrink-0 text-[11px] text-text-subtle @max-[420px]/chat:hidden">· {reviewed.length} reviewed</span>
           )}
         </button>
-        {!isMobile && !allReviewed && onSetReviewed && (
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            aria-label="Refresh changes"
+            title="Refresh changes"
+            data-testid="session-changes-refresh"
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded text-text-secondary transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-60 md:min-h-8 md:min-w-8"
+          >
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+          </button>
+        )}
+        {!isMobile && loaded && !allReviewed && onSetReviewed && (
           <button
             type="button"
             onClick={markAll}
@@ -179,7 +206,7 @@ export function SessionChangesBar({ files, projectName, providerId, onReview, on
         <BottomSheet open={open} onClose={() => setOpen(false)} className="flex max-h-[85%] flex-col">
           <div className="flex items-center gap-2 border-b border-border-soft pb-1 pl-4 pr-1">
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">Changed in this chat</span>
-            {!allReviewed && <ChangeCounts added={totals.added} removed={totals.removed} className="shrink-0 font-mono text-xs" />}
+            {loaded && !allReviewed && <ChangeCounts added={totals.added} removed={totals.removed} className="shrink-0 font-mono text-xs" />}
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -195,7 +222,7 @@ export function SessionChangesBar({ files, projectName, providerId, onReview, on
             <p className="text-xs leading-relaxed text-text-subtle">{shellChangesHint(providerId)}</p>
             {!allReviewed && (
               <div className="flex gap-2">
-                {onSetReviewed && (
+                {loaded && onSetReviewed && (
                   <button
                     type="button"
                     onClick={markAll}
@@ -211,7 +238,7 @@ export function SessionChangesBar({ files, projectName, providerId, onReview, on
                   className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                 >
                   <FileDiff className="size-4" />
-                  Review all {fileCount(pending.length)}
+                  Review all {fileCount(loaded ? pending.length : unloadedCount)}
                 </button>
               </div>
             )}
