@@ -8,6 +8,7 @@
 import { useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useTurnReview } from "@/hooks/use-turn-review";
+import { useSessionChanges } from "./session-changes-context";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
 import type { SessionTurn } from "@/lib/session-turns";
 import { turnReviewLabel } from "@/lib/turn-review";
@@ -30,6 +31,8 @@ export function TurnChangeRollup({ timestamp, content, changes, turn, onJumpToEd
   const isMobile = useIsMobile();
   const pillRef = useRef<HTMLButtonElement>(null);
   const review = useTurnReview({ changes, turn });
+  // The session's list is worked out only when someone looks; opening a turn's changes is that.
+  const sessionChanges = useSessionChanges();
 
   // Without this, closing drops focus to <body> and the next Tab restarts from the
   // top of a very long transcript.
@@ -52,7 +55,11 @@ export function TurnChangeRollup({ timestamp, content, changes, turn, onJumpToEd
           totals={changeTotals(changes)}
           status={turnReviewLabel(review.summary)}
           open={open}
-          onToggle={() => (open ? close() : setOpen(true))}
+          onToggle={() => {
+            if (open) return close();
+            sessionChanges?.refresh();
+            setOpen(true);
+          }}
         />
       )}
     </MessageActionBar>

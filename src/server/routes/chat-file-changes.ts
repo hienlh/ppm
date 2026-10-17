@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { resolve } from "node:path";
 import { ok, err } from "../../types/api.ts";
 import { getSessionProjectPath, resolveMigratedSession } from "../../services/db.service.ts";
-import { isValidBaselineSessionId, keepsSessionWrites } from "../../services/session-file-baselines/session-file-baselines.service.ts";
+import { countBaselines, isValidBaselineSessionId, keepsSessionWrites } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import {
   lineage,
   MAX_SESSION_CHANGE_PATHS,
@@ -75,6 +75,20 @@ chatFileChangesRoutes.post("/sessions/:id/file-changes", async (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
+});
+
+/**
+ * GET /chat/sessions/:id/file-changes/count
+ *
+ * How many files the session (and those it was branched from) kept a "before" for — an upper
+ * bound on the list, read off directory listings only. The changes bar shows it until the list
+ * itself is asked for, which can take minutes on a session that touched thousands of files.
+ */
+chatFileChangesRoutes.get("/sessions/:id/file-changes/count", (c) => {
+  const sessionId = sessionOf(c);
+  if (typeof sessionId !== "string") return sessionId;
+  const count = lineage(sessionId).reduce((n, id) => n + countBaselines(id), 0);
+  return c.json(ok({ count: Math.min(count, MAX_SESSION_CHANGE_PATHS) }));
 });
 
 /**

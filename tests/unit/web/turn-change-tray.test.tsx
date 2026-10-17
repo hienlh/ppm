@@ -150,7 +150,8 @@ describe("the change tray", () => {
     expect(posted.map((p) => [route(p), p.body])).toEqual([
       ["answer", { answer: "keep", files: [{ path: "/work/proj/src/a.ts", version: "va", keys: ["ka1"] }] }],
     ]);
-    expect(refreshed).toBe(1);
+    // Once for opening the pill (the list is only worked out when someone looks), once after the answer.
+    expect(refreshed).toBe(2);
   });
 
   it("reverts an edit's blocks, says so, and undoes it", async () => {
