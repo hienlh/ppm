@@ -7,12 +7,15 @@ const access = { url: "http://127.0.0.1:8080/api/tab-tools-mcp", token: "tok-sec
 const permission = { sandbox: "workspace-write", approvalPolicy: "never" } as any;
 
 describe("tab tools provider options", () => {
-  it("gives Claude one http server with the token in its header, and pre-approves both tools", () => {
+  it("gives Claude one http server with the token in its header, and pre-approves every tool", () => {
     expect(tabToolsMcpServers(undefined)).toEqual({});
     expect(tabToolsMcpServers(access)).toEqual({
       "ppm-tabs": { type: "http", url: access.url, headers: { Authorization: "Bearer tok-secret" }, timeout: 60_000 },
     });
-    expect(CLAUDE_TAB_TOOLS).toEqual(["mcp__ppm-tabs__open_file", "mcp__ppm-tabs__open_preview"]);
+    expect(CLAUDE_TAB_TOOLS).toEqual([
+      "mcp__ppm-tabs__open_file", "mcp__ppm-tabs__open_preview", "mcp__ppm-tabs__open_url",
+      "mcp__ppm-tabs__read_terminal", "mcp__ppm-tabs__run_in_terminal",
+    ]);
   });
 
   it("lets a warm spare started before its session's token match the session's own turns", () => {
@@ -31,7 +34,7 @@ describe("tab tools provider options", () => {
   it("gives Codex a dotted mcp_servers override beside the design one, with the token only in the environment", () => {
     const params = buildThreadParams({ cwd: "/p", permission, tabToolsMcp: access, designMcp: { url: "http://d", token: "d" } });
     expect(params.config!["mcp_servers.ppm_tabs"]).toEqual({
-      url: access.url, bearer_token_env_var: "PPM_TAB_TOOLS_MCP_TOKEN", enabled_tools: ["open_file", "open_preview"],
+      url: access.url, bearer_token_env_var: "PPM_TAB_TOOLS_MCP_TOKEN", enabled_tools: ["open_file", "open_preview", "open_url", "read_terminal", "run_in_terminal"],
       default_tools_approval_mode: "approve", startup_timeout_sec: 10, tool_timeout_sec: 60,
     });
     expect(Object.keys(params.config!)).toEqual(["mcp_servers.ppm_design", "mcp_servers.ppm_tabs"]);

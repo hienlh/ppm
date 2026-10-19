@@ -1,13 +1,15 @@
 import { Command } from "commander";
 import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
 import { isReadonlyRefusal, readonlyRefusalMessage } from "../../services/database/db-errors.ts";
-import { decryptConfig, type ConnectionRow } from "../../services/db.service.ts";
+import { decryptConfig, getConfigValue, type ConnectionRow } from "../../services/db.service.ts";
 import { savedLoginUser, withLogin } from "../../services/database/connection-config.ts";
 import { serviceConnectionString } from "../../services/database/connection-endpoint.ts";
 import { asksForPassword } from "../../shared/db-connection-config.ts";
 import { DEFAULT_USER } from "../../shared/db-connection-url.ts";
 import { askOnTerminal, canAskOnTerminal } from "../utils/tty-prompt.ts";
 import { inAiChat } from "../../services/ai-chat-env.ts";
+import { DB_EXECUTE_TOOL, DB_QUERY_TOOL } from "../../shared/db-ai-tools.ts";
+import { ppmToolOn, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
 import { defaultSchemaFor } from "../../services/database/grid.service.ts";
 import { DB_TYPES, dialectNameOf, isDbType, type DbType } from "../../shared/db-types.ts";
 import type { DbColumnInfo, DbPagedData, DbQueryResult, DbTableInfo } from "../../types/database.ts";
@@ -107,6 +109,61 @@ function hiddenFromAiMessage(conn: ConnectionRow): string {
 /** Stop before a command opens a connection the AI chat it runs in may not use. */
 function assertAvailable(conn: ConnectionRow): void {
   if (hiddenFromAi(conn)) throw new Error(hiddenFromAiMessage(conn));
+}
+
+/**
+ * The tool that serves each data command inside an AI chat, where this command does not.
+ *
+ * A chat reaches a database through the tools and nowhere else. They are the path the user can
+ * switch off per tool in Settings → Tools, and the one whose writes wait for an approval card
+ * and PPM's password. This command obeys neither, and the PPM skill documents it — so leaving it
+ * open to a chat would make both the switch and the approval decorative, one Bash call away.
+ *
+ * Nothing changes for a person at a terminal: the mark is only on the processes a chat provider
+ * starts, and PPM's own terminal takes it back out.
+ */
+const AI_CHAT_TOOL_FOR = {
+  tables: DB_QUERY_TOOL,
+  schema: DB_QUERY_TOOL,
+  data: DB_QUERY_TOOL,
+  query: DB_QUERY_TOOL,
+  run: DB_EXECUTE_TOOL,
+} as const;
+
+/** The data commands, so a typo in a call site is a compile error rather than a command left open. */
+type DataCommand = keyof typeof AI_CHAT_TOOL_FOR;
+
+/**
+ * The AI settings as the server saved them. Read from the row rather than through
+ * `configService`, which answers with blank defaults until `load()` has run — and no `ppm db`
+ * command loads the config, so asking it would report every tool on whatever the user chose.
+ */
+function savedAiSettings(): { tab_tools?: boolean; ppm_tools?: PpmToolSwitches } {
+  try {
+    const raw = getConfigValue("ai");
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? (parsed as { ppm_tools?: PpmToolSwitches }) : {};
+  } catch {
+    return {}; // Unreadable settings: name the tool rather than claim the user turned it off.
+  }
+}
+
+/** Why `ppm db <command>` will not run here, or null when it may. */
+function handedToToolInAiChat(command: DataCommand): string | null {
+  if (!inAiChat()) return null;
+  const tool = AI_CHAT_TOOL_FOR[command];
+  // A tool the user switched off means the database is closed to this chat, not that it should
+  // fall back here — that is what switching it off asks for.
+  return ppmToolOn(savedAiSettings(), tool)
+    ? `ppm db ${command} does not run inside an AI chat: use the ${tool} tool, which the user can see and switch off.`
+    : `ppm db ${command} does not run inside an AI chat, and the user has turned ${tool} off in Settings → Tools, `
+      + "so this chat cannot reach the database. Ask the user to run it themselves, or to turn that tool back on.";
+}
+
+/** Stop a data command that an AI chat must take to a tool instead. */
+function assertNotHandedToTool(command: DataCommand): void {
+  const message = handedToToolInAiChat(command);
+  if (message) throw new Error(message);
 }
 
 /** Mask password in postgres connection string: postgresql://user:pass@host → postgresql://user:***@host */
@@ -344,6 +401,7 @@ export function registerDbCommands(program: Command): void {
           process.exit(1);
         }
         assertAvailable(conn);
+        assertNotHandedToTool("tables");
         const cfg = parseConfig(conn);
 
         if (conn.type !== "sqlite") {
@@ -395,6 +453,7 @@ export function registerDbCommands(program: Command): void {
           process.exit(1);
         }
         assertAvailable(conn);
+        assertNotHandedToTool("schema");
         const cfg = parseConfig(conn);
 
         if (conn.type !== "sqlite") {
@@ -441,6 +500,7 @@ export function registerDbCommands(program: Command): void {
           process.exit(1);
         }
         assertAvailable(conn);
+        assertNotHandedToTool("data");
         const cfg = parseConfig(conn);
         const page = parseInt(options.page, 10);
         const limit = parseInt(options.limit, 10);
@@ -499,6 +559,15 @@ export function registerDbCommands(program: Command): void {
           const message = hiddenFromAiMessage(conn);
           logCliQuery({ ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
           console.error(`${C.red}Error:${C.reset} ${message}`);
+          process.exit(1);
+        }
+
+        // After the line above, so a connection this chat may not use is told that, which is the
+        // more specific answer; this one is for the connections it may.
+        const handover = handedToToolInAiChat("query");
+        if (handover) {
+          logCliQuery({ ...audit, status: "blocked", error: handover, durationMs: Date.now() - startedAt });
+          console.error(`${C.red}Error:${C.reset} ${handover}`);
           process.exit(1);
         }
 
@@ -671,6 +740,15 @@ export function registerDbCommands(program: Command): void {
           const message = hiddenFromAiMessage(conn);
           logCliQuery({ ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
           console.error(`${C.red}Error:${C.reset} ${message}`);
+          process.exit(1);
+        }
+
+        // After the line above, so a connection this chat may not use is told that, which is the
+        // more specific answer; this one is for the connections it may.
+        const handover = handedToToolInAiChat("run");
+        if (handover) {
+          logCliQuery({ ...audit, status: "blocked", error: handover, durationMs: Date.now() - startedAt });
+          console.error(`${C.red}Error:${C.reset} ${handover}`);
           process.exit(1);
         }
 

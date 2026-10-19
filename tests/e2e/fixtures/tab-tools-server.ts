@@ -1,4 +1,5 @@
-/** Served-production fixture for the AI's tab tools (`open_file`, `open_preview`). Adapted from
+/** Served-production fixture for the AI's tab tools (`open_file`, `open_preview`, `open_url`,
+ * `read_terminal`, `run_in_terminal`), with PPM's terminal socket mounted. Adapted from
  * session-changes-server. Requires an isolated home and PPM directory, serves the scratch Vite
  * bundle named by PPM_TAB_TOOLS_WEB_DIR, and answers every turn with a scripted provider that
  * calls the real `/api/tab-tools-mcp` endpoint the way the Claude CLI does — with the bearer
@@ -47,7 +48,12 @@ type ChatMessage = import("../../../src/providers/provider.interface").ChatMessa
  * One tool call a scripted turn makes; `as` picks which provider's tool name the card sees, and
  * `wait` is how long the agent "thinks" before calling it.
  */
-type ScriptOp = { tool: "open_file" | "open_preview"; args: Record<string, unknown>; as?: "claude" | "codex"; wait?: number };
+type ScriptOp = {
+  tool: "open_file" | "open_preview" | "open_url" | "read_terminal" | "run_in_terminal";
+  args: Record<string, unknown>;
+  as?: "claude" | "codex";
+  wait?: number;
+};
 interface CallRecord {
   sessionId: string;
   op: ScriptOp;
@@ -147,11 +153,17 @@ providerRegistry.getDefault = (() => claude) as typeof providerRegistry.getDefau
 const { app } = await import("../../../src/server/index");
 const { chatWebSocket } = await import("../../../src/server/ws/chat");
 const { globalWebSocket } = await import("../../../src/server/ws/global");
+const { terminalWebSocket } = await import("../../../src/server/ws/terminal");
+const { terminalService } = await import("../../../src/services/terminal.service");
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 async function testRoute(req: Request, path: string): Promise<Response> {
   if (path === "/__tab-test/calls") return json({ calls });
+  // What PPM's own terminals hold, as the server keeps it: the e2e's view of what was typed and run.
+  if (path === "/__tab-test/terminals") {
+    return json({ terminals: terminalService.list().map((t) => ({ ...t, buffer: terminalService.getBuffer(t.id) })) });
+  }
   if (path === "/__tab-test/script" && req.method === "POST") {
     script = (await req.json() as { ops: ScriptOp[] }).ops;
     return json({ ok: true, ops: script.length });
@@ -159,7 +171,7 @@ async function testRoute(req: Request, path: string): Promise<Response> {
   return json({ error: "unknown test route" }, 404);
 }
 
-type SocketData = { type: "health" | "global" | "chat"; sessionId?: string; projectName?: string };
+type SocketData = { type: "health" | "global" | "chat" | "terminal"; sessionId?: string; projectName?: string; id?: string; cwd?: string };
 const server = Bun.serve<SocketData>({
   hostname: "127.0.0.1", port,
   fetch(req, instance) {
@@ -171,6 +183,9 @@ const server = Bun.serve<SocketData>({
     else if (url.pathname.startsWith("/ws/project/")) {
       const parts = url.pathname.split("/");
       if (parts[4] === "chat") data = { type: "chat", sessionId: parts[5] ?? "", projectName: decodeURIComponent(parts[3] ?? "") };
+      else if (parts[4] === "terminal") {
+        data = { type: "terminal", id: parts[5] ?? "", projectName: decodeURIComponent(parts[3] ?? ""), cwd: url.searchParams.get("cwd") ?? undefined };
+      }
     }
     if (data) return instance.upgrade(req, { data }) ? undefined : new Response("Upgrade failed", { status: 400 });
     if (url.pathname.startsWith("/ws/")) return new Response("Socket disabled in fixture", { status: 404 });
@@ -191,21 +206,28 @@ const server = Bun.serve<SocketData>({
     open(ws) {
       if (ws.data.type === "chat") chatWebSocket.open(ws as never);
       else if (ws.data.type === "global") globalWebSocket.open(ws);
+      else if (ws.data.type === "terminal") terminalWebSocket.open(ws as never);
     },
     message(ws, message) {
       if (ws.data.type === "chat") chatWebSocket.message(ws as never, message as string);
       else if (ws.data.type === "global") globalWebSocket.message(ws, message as string);
+      else if (ws.data.type === "terminal") terminalWebSocket.message(ws as never, message as string);
       else ws.send("pong");
     },
     close(ws) {
       if (ws.data.type === "chat") chatWebSocket.close(ws as never);
       else if (ws.data.type === "global") globalWebSocket.close(ws);
+      else if (ws.data.type === "terminal") terminalWebSocket.close(ws as never);
     },
   },
 });
 // What `src/server/index.ts` records once it listens: the tab tools' URL is built from it.
 setServerListenAddress(server.port ?? port, "127.0.0.1");
-function shutdown() { server.stop(true); process.exit(0); }
+function shutdown() {
+  for (const t of terminalService.list()) terminalService.kill(t.id);
+  server.stop(true);
+  process.exit(0);
+}
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 console.log(`Tab-tools fixture ready at http://127.0.0.1:${server.port}; scripted provider only.`);

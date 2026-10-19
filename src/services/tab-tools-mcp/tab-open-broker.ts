@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import type { TabOpenRequest, TabOpenResult } from "../../shared/tab-open-protocol.ts";
+import type { TabOpenAsk, TabOpenRequest, TabOpenResult } from "../../shared/tab-open-protocol.ts";
+import { neutralizeFences } from "../../shared/untrusted-text.ts";
 
 /**
  * The server half of the tab tools. Only a browser can open a tab, so a call is a round trip:
@@ -20,6 +21,10 @@ export type TabOpenDelivery = (sessionId: string, request: TabOpenRequest) => nu
 export type TabOpenOutcome =
   | { ok: true; result: TabOpenResult }
   | { ok: false; reason: "no-device" | "timeout" | "busy" | "rate-limited"; message: string };
+
+/** What a device said went wrong; it may quote a page, which the page's scripts wrote. */
+export const deviceError = (error: string | undefined): string =>
+  error ? neutralizeFences(error.replace(/[\u0000-\u001f\u007f]/g, " ")) : "it gave no reason";
 
 export const MAX_PENDING_TAB_OPENS = 64;
 export const MAX_TAB_OPENS_IN_FLIGHT_PER_SESSION = 4;
@@ -66,7 +71,7 @@ export function createTabOpenBroker(opts: {
     return true;
   }
 
-  function request(asked: string, req: Omit<TabOpenRequest, "type" | "requestId">, waitMs: number): Promise<TabOpenOutcome> {
+  function request(asked: string, req: TabOpenAsk, waitMs: number): Promise<TabOpenOutcome> {
     const sessionId = canonical(asked);
     if (pending.size >= maxPending || inFlight(sessionId) >= maxInFlight) {
       return Promise.resolve({ ok: false, reason: "busy", message: "Too many tabs are already being opened for this chat; wait for them, then call again." });
@@ -85,7 +90,7 @@ export function createTabOpenBroker(opts: {
       pending.set(requestId, { sessionId, settle });
       let reached = 0;
       try {
-        reached = opts.deliver(sessionId, { type: "tab_open", requestId, ...req });
+        reached = opts.deliver(sessionId, { type: "tab_open", requestId, ...req } as TabOpenRequest);
       } catch (e) {
         console.warn(`[tab-tools] delivery failed for session=${sessionId}: ${(e as Error).message}`);
       }
@@ -129,7 +134,10 @@ export function setTabOpenDelivery(fn: TabOpenDelivery | null, canonical?: (sess
   resolveSession = canonical ?? ((sessionId) => sessionId);
 }
 
+/** The chat a session id names now, after any rename its provider made. */
+export const canonicalTabSession = (sessionId: string): string => resolveSession(sessionId);
+
 export const tabOpenBroker = createTabOpenBroker({
   deliver: (sessionId, req) => delivery?.(sessionId, req) ?? 0,
-  canonical: (sessionId) => resolveSession(sessionId),
+  canonical: canonicalTabSession,
 });

@@ -39,10 +39,16 @@ export interface SendMessageOpts {
   designMcp?: { url: string; token: string };
   /**
    * The tab-tools MCP endpoint (`open_file`, `open_preview`) for this session, present while
-   * the user has "Let the AI open tabs in PPM" on and never for a design session. Server-built
+   * the user has either on in Settings → Tools and never for a design session. Server-built
    * like `designMcp`.
    */
   tabToolsMcp?: { url: string; token: string };
+  /**
+   * The database tools' MCP endpoint (`db_query`, `open_query`, `db_execute`) for this session,
+   * present while a saved connection is available to the AI chat and one of the three is on in
+   * Settings → Tools, and never for a design session. Server-built like `designMcp`.
+   */
+  dbToolsMcp?: { url: string; token: string };
 }
 
 export interface AIProvider {

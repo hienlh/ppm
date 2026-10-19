@@ -26,6 +26,7 @@ import {
   Zap,
   Monitor,
   MonitorSmartphone,
+  Wrench,
 } from "@/lib/icons";
 
 /**
@@ -41,6 +42,7 @@ export type SettingsCategoryId =
   | "remote-desktop"
   | "database-drivers"
   | "ai-provider"
+  | "tools"
   | "accounts"
   | "design"
   | "voice"
@@ -91,6 +93,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "database-drivers", group: "core", label: "Database Drivers", subtitle: "MySQL and MariaDB support, installed on request", icon: Database },
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
+  { id: "tools", group: "ai", label: "Tools", subtitle: "PPM tools the AI can use", icon: Wrench },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },
   { id: "design", group: "ai", label: "Design", subtitle: "Design instructions and skills", icon: LayoutGrid },
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },

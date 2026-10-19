@@ -38,9 +38,10 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
 import { recordFileChangeBaselines } from "./codex-file-baselines.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
@@ -162,6 +163,8 @@ interface LiveSession {
   designMcp?: DesignMcpAccess;
   /** The tab tools' endpoint, when the user has them on; kept for the same reason. */
   tabToolsMcp?: TabToolsMcpAccess;
+  /** The database tools' endpoint, while a connection is available to the AI chat; likewise. */
+  dbToolsMcp?: DbToolsMcpAccess;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -858,7 +861,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd: live.cwd, codexHome: account.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) }, purpose: "chat" });
+    client.start({ cwd: live.cwd, codexHome: account.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp) }, purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
@@ -872,6 +875,7 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: live.developerInstructions,
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
+      dbToolsMcp: live.dbToolsMcp,
     });
     await requestWithInstructionsFallback(resumeBase,
       (params) => this.resumeThread(client, threadId, found, account.home, params));
@@ -938,6 +942,7 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: opts?.designInstructions,
       designMcp: opts?.designSession ? opts.designMcp : undefined,
       tabToolsMcp: opts?.designSession ? undefined : opts?.tabToolsMcp,
+      dbToolsMcp: opts?.designSession ? undefined : opts?.dbToolsMcp,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -952,7 +957,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd, codexHome: account?.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp) }, purpose: "chat" });
+    client.start({ cwd, codexHome: account?.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp) }, purpose: "chat" });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
@@ -963,6 +968,7 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: live.developerInstructions,
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
+      dbToolsMcp: live.dbToolsMcp,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.

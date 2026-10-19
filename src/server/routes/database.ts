@@ -48,6 +48,8 @@ import {
 import { databaseStructureRoutes } from "./database-structure.ts";
 import { databaseImpExpRoutes, impExpJobRoutes } from "./database-impexp.ts";
 import { databaseQueryRoutes } from "./database-query.ts";
+import { dbApprovalBroker } from "../../services/db-ai-tools/db-approval-broker.ts";
+import type { DbApprovalAnswer } from "../../shared/db-ai-tools.ts";
 
 export const databaseRoutes = new Hono();
 
@@ -60,6 +62,18 @@ databaseRoutes.route("/drivers", databaseDriverRoutes);
 databaseRoutes.get("/ssh/agent", (c) => {
   const socket = findSshAgent();
   return c.json(ok({ found: socket !== null, socket, user: localSshUser() }));
+});
+
+/**
+ * POST /api/db/ai-approvals/:requestId — body: `DbApprovalAnswer`. The user's answer to an AI
+ * chat's `db_execute`, from its approval card. Approving takes PPM's password; a wrong one is a
+ * 403 that leaves the approval waiting, so the card can say so and be answered again.
+ */
+databaseRoutes.post("/ai-approvals/:requestId", async (c) => {
+  const body = await c.req.json<Partial<DbApprovalAnswer>>().catch(() => null);
+  const answered = dbApprovalBroker.answer(c.req.param("requestId"), body);
+  if (!answered.ok) return c.json(err(answered.error), answered.status);
+  return c.json(ok({ approved: answered.approved }));
 });
 
 /**

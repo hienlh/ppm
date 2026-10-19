@@ -1,5 +1,6 @@
 import {
-  CLAUDE_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_SERVER, MAX_TAB_LINE, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, type TabTool,
+  CLAUDE_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_SERVER, MAX_TAB_LINE, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL,
+  READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL, type TabTool,
 } from "../../shared/tab-open-protocol";
 import { isImagePlaceholderText } from "../../shared/tool-result-content";
 
@@ -23,6 +24,16 @@ const TOOL_NAME = new RegExp(
   `^(?:mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__|${CODEX_TAB_TOOLS_MCP_SERVER}:)(${OPEN_FILE_TOOL}|${OPEN_PREVIEW_TOOL})$`,
 );
 
+/** The tab server's other tools, which take no file: their calls show in the generic card. */
+export type DeviceToolCall =
+  | { tool: typeof OPEN_URL_TOOL; url: string }
+  | { tool: typeof READ_TERMINAL_TOOL; terminal?: string; lines?: number }
+  | { tool: typeof RUN_IN_TERMINAL_TOOL; command: string; cwd?: string };
+
+const DEVICE_TOOL_NAME = new RegExp(
+  `^(?:mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__|${CODEX_TAB_TOOLS_MCP_SERVER}:)(${OPEN_URL_TOOL}|${READ_TERMINAL_TOOL}|${RUN_IN_TERMINAL_TOOL})$`,
+);
+
 /** How Codex's events label an image block of a result (`mcpResultText`). */
 const CODEX_IMAGE_LABEL = /^\[image(?: [^\]\s]+)?\]$/;
 
@@ -37,6 +48,31 @@ export function tabToolCall(toolName: string, input: unknown): TabToolCall | nul
   const line = args.line;
   const validLine = tool === OPEN_FILE_TOOL && typeof line === "number" && Number.isInteger(line) && line >= 1 && line <= MAX_TAB_LINE;
   return { tool, path: args.path, ...(validLine ? { line } : {}) };
+}
+
+/** The `open_url` / `read_terminal` / `run_in_terminal` tool a tool name is, under either provider's name, or null. */
+export function deviceToolOf(toolName: string): DeviceToolCall["tool"] | null {
+  return (DEVICE_TOOL_NAME.exec(toolName)?.[1] as DeviceToolCall["tool"] | undefined) ?? null;
+}
+
+/** The `open_url` / `read_terminal` / `run_in_terminal` call an event is, under either provider's name, or null. */
+export function deviceToolCall(toolName: string, input: unknown): DeviceToolCall | null {
+  const tool = deviceToolOf(toolName);
+  if (!tool || !isObj(input)) return null;
+  const args = "arguments" in input && isObj(input.arguments) ? input.arguments : input;
+  const text = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined);
+  if (tool === OPEN_URL_TOOL) {
+    const url = text(args.url);
+    return url ? { tool, url } : null;
+  }
+  if (tool === RUN_IN_TERMINAL_TOOL) {
+    const command = text(args.command);
+    const cwd = text(args.cwd);
+    return command ? { tool, command, ...(cwd ? { cwd } : {}) } : null;
+  }
+  const terminal = text(args.terminal);
+  const lines = typeof args.lines === "number" && Number.isInteger(args.lines) && args.lines > 0 ? args.lines : undefined;
+  return { tool: READ_TERMINAL_TOOL, ...(terminal ? { terminal } : {}), ...(lines ? { lines } : {}) };
 }
 
 /** A tool result's text as the AI read it, without the stand-in for the screenshot. */

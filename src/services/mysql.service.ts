@@ -885,6 +885,10 @@ class MysqlService {
       const wrote = resultSets.length === 0 && WRITE_STATEMENT.test(sqlCode(text, "mysql", splitOptions));
       return { resultSets, ...(wrote ? { rowsAffected: answer.affected } : {}), notices: [] };
     };
+    const transactionOpen = async () => {
+      const [status] = await conn.query<ResultSetHeader>("DO 0");
+      return (Number(status.serverStatus) & SERVER_STATUS_IN_TRANS) !== 0;
+    };
     return {
       splitOptions,
       run: (text, maxRows) => this.inQueryStatement(text, () => runStatement(text, maxRows)),
@@ -892,11 +896,11 @@ class MysqlService {
         if (running) void this.killQuery(connectionString, conn.threadId);
       },
       rollbackOpenTransaction: async () => {
-        const [status] = await conn.query<ResultSetHeader>("DO 0");
-        if ((Number(status.serverStatus) & SERVER_STATUS_IN_TRANS) === 0) return false;
+        if (!(await transactionOpen())) return false;
         await conn.query("ROLLBACK");
         return true;
       },
+      transactionOpen,
       close: async () => {
         if (ended) return;
         ended = true;
