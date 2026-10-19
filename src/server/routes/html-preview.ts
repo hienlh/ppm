@@ -97,7 +97,7 @@ export function createHtmlPreviewRoutes(now = Date.now) {
       const info = await stat(path);
       if (!info.isFile()) return c.json(err("File not found"), 404);
       const host = browserFacingHost(c.req.header("host"), c.req.url);
-      // A scheme-less host source follows the document's actual scheme through tunnels.
+      // The browser's Host, which tunnels keep; the policy adds both schemes to it.
       const source = `${host}${PREFIX}/${token}/`;
       const headers = {
         // The design canvas's policy: the same sandbox, plus scripts, styles, fonts and images

@@ -87,7 +87,8 @@ export async function stepCanvasSecurity(ctx) {
   const res = await fetch(`${ctx.harness.api}${load.url.pathname}${load.url.search}`);
   assert.equal(res.status, 200);
   const csp = res.headers.get("content-security-policy");
-  const source = /(?:^|; )connect-src (\S+)$/m.exec(csp.split("; ").find((d) => d.startsWith("connect-src")) ?? "")?.[1];
+  const own = /^connect-src https:\/\/(\S+) http:\/\/(\S+)$/.exec(csp.split("; ").find((d) => d.startsWith("connect-src")) ?? "");
+  const source = own && own[1] === own[2] ? own[1] : undefined;
   assert.ok(source && source.endsWith(`/api/design-preview/content/${load.token}/`), `connect-src is own-source: ${csp}`);
   const expected = (await apiJson(ctx, `/__design-test/csp?source=${encodeURIComponent(source)}`)).body;
   assert.equal(csp, expected.canvas, "the canvas CSP is the builder's output");
