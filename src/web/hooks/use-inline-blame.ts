@@ -27,6 +27,7 @@ import {
 import { buildBlameHoverMarkdown } from "@/lib/blame-hover";
 import { registerBlameHoverCommands } from "@/lib/blame-hover-commands";
 import { registerDiffLanguage } from "@/lib/monaco-diff-language";
+import { repoRelativePath } from "@/lib/git-repo-scope";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { useProjectStore } from "@/stores/project-store";
 
@@ -108,14 +109,18 @@ export function useInlineBlame({
   // which is what those commands take. Looked up here rather than passed in, so
   // the three call sites do not each have to find it.
   const projectPath = useProjectStore((s) => s.projects.find((p) => p.name === projectName)?.path);
-  // Which repository the project's git actually lives in: itself, or a subfolder
-  // the user picked. Every path below is expressed relative to *that*, because
+  // The repository that holds *this file*: the project itself, or one of the
+  // checkouts in a container folder. Not the one picked in Source Control — a
+  // file has exactly one repository, and going by the pick left blame silent
+  // until the right one was chosen, or ran git in the container (not a
+  // repository) when nothing was. Every path below is relative to it, because
   // that is where git runs.
   const gitRepo = useGitRepo(projectName);
-  const gitRoot = gitRepo.repo?.path ?? projectPath;
-  // `null` means the open file is outside the chosen repository — there is
+  const fileRepo = filePath ? gitRepo.fileRepo(filePath) : null;
+  const gitRoot = fileRepo?.path ?? projectPath;
+  // `null` while discovery is pending, or when no repository holds the file —
   // nothing to blame, which is a quiet no-annotation rather than an error.
-  const repoFile = filePath ? gitRepo.repoPath(filePath) : null;
+  const repoFile = filePath && fileRepo ? repoRelativePath(filePath, fileRepo) : null;
 
   const refresh = useCallback(() => setReloadToken((n) => n + 1), []);
 
@@ -140,7 +145,7 @@ export function useInlineBlame({
     const query = new URLSearchParams({ path: repoFile });
     if (rev) query.set("rev", rev);
     api
-      .get<BlameResult>(gitRepo.gitUrl(`/blame?${query}`))
+      .get<BlameResult>(gitRepo.gitUrl(`/blame?${query}`, fileRepo))
       .then((result) => {
         if (cancelled) return;
         setBlame(result);
@@ -153,7 +158,7 @@ export function useInlineBlame({
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectName, filePath, repoFile, rev, reloadToken, gitRepo]);
+  }, [enabled, projectName, filePath, repoFile, rev, reloadToken, gitRepo, fileRepo]);
 
   // Follow the cursor, and notice edits.
   useEffect(() => {
@@ -247,7 +252,7 @@ export function useInlineBlame({
     let cancelled = false;
     const query = new URLSearchParams({ hash: detailHash, path: detailPath, line: String(detailLine) });
     api
-      .get<BlameLineDetail | null>(gitRepo.gitUrl(`/commit-line?${query}`))
+      .get<BlameLineDetail | null>(gitRepo.gitUrl(`/commit-line?${query}`, fileRepo))
       .then((result) => {
         if (cancelled) return;
         // Bounded: `tab-pool` keeps editors mounted for the life of the session,
@@ -264,7 +269,7 @@ export function useInlineBlame({
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectName, detailHash, detailPath, detailLine, detailKey, gitRepo]);
+  }, [enabled, projectName, detailHash, detailPath, detailLine, detailKey, gitRepo, fileRepo]);
 
   // Draw it.
   useEffect(() => {

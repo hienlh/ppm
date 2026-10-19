@@ -19,6 +19,7 @@ import {
   needsPick,
   projectRelativePath,
   rebaseStatusPaths,
+  repoContainingFile,
   repoRelativePath,
   resolveRepo,
   withRepoParam,
@@ -37,8 +38,14 @@ export interface UseGitRepo {
   needsPick: boolean;
   /** True when nothing under the project is a repository. */
   noRepo: boolean;
-  /** `gitUrl("/status")`, `gitUrl("/graph?max=50")` — scope included. */
-  gitUrl: (suffix: string) => string;
+  /**
+   * `gitUrl("/status")`, `gitUrl("/graph?max=50")` — scope included. Pass
+   * `scope` to address another repository than the chosen one, as file-scoped
+   * calls do with `fileRepo`.
+   */
+  gitUrl: (suffix: string, scope?: GitRepoCandidate | null) => string;
+  /** The repository holding a project-relative file, regardless of the choice. */
+  fileRepo: (projectRelative: string) => GitRepoCandidate | null;
   /** Project-relative → repository-relative; null when outside the repository. */
   repoPath: (projectRelative: string) => string | null;
   /** Repository-relative → project-relative, for paths git reported. */
@@ -62,8 +69,14 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
   const repo = resolveRepo(discovery, chosen);
 
   const gitUrl = useCallback(
-    (suffix: string) => withRepoParam(`${projectUrl(projectName ?? "")}/git${suffix}`, repo),
+    (suffix: string, scope?: GitRepoCandidate | null) =>
+      withRepoParam(`${projectUrl(projectName ?? "")}/git${suffix}`, scope === undefined ? repo : scope),
     [projectName, repo],
+  );
+
+  const fileRepo = useCallback(
+    (projectRelative: string) => repoContainingFile(discovery, projectRelative),
+    [discovery],
   );
 
   const repoPath = useCallback(
@@ -113,12 +126,13 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
       needsPick: needsPick(discovery, chosen),
       noRepo: hasNoRepo(discovery),
       gitUrl,
+      fileRepo,
       repoPath,
       projectFile,
       rebaseStatus,
       choose,
       reload,
     }),
-    [repo, discovery, chosen, gitUrl, repoPath, projectFile, rebaseStatus, choose, reload],
+    [repo, discovery, chosen, gitUrl, fileRepo, repoPath, projectFile, rebaseStatus, choose, reload],
   );
 }
