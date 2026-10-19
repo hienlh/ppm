@@ -29,7 +29,7 @@ describe("design share guest files", () => {
     expect(html).toContain('data-css-gens="{}"');
     const csp = res.headers.get("content-security-policy")!;
     expect(csp).toStartWith("sandbox allow-scripts;");
-    expect(csp).toContain(`connect-src localhost/s/${f.code}/f/`);
+    expect(csp).toContain(`connect-src https://localhost/s/${f.code}/f/ http://localhost/s/${f.code}/f/`);
     expect(csp).not.toContain("allow-modals");
     expect(res.headers.get("access-control-allow-origin")).toBe("null");
     expect(res.headers.get("cache-control")).toBe("no-store");
