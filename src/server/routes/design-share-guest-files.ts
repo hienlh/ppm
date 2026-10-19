@@ -70,7 +70,7 @@ export function registerGuestFileRoutes(app: Hono): void {
       }
       const asset = await resolveGuestFile(resolved, path);
       if (!(await stat(asset.abs)).isFile()) return c.json(err("File not found"), 404);
-      // Scheme-less, so the source follows the document's real scheme through a tunnel.
+      // The browser's Host, which tunnels keep; the policy adds both schemes to it.
       const source = `${browserFacingHost(c.req.header("host"), c.req.url)}${prefix}`;
       const headers: Record<string, string> = {
         // The sandboxed frame is an opaque origin and sends `Origin: null` for module scripts

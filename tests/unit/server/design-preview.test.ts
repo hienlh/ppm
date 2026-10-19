@@ -106,7 +106,7 @@ describe("design preview route", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("null");
     expect(response.headers.get("cache-control")).toBe("no-store");
     const csp = response.headers.get("content-security-policy")!;
-    expect(csp).toContain(`connect-src localhost:5173${base(url)}/;`);
+    expect(csp).toContain(`connect-src https://localhost:5173${base(url)}/ http://localhost:5173${base(url)}/;`);
     expect(csp).toContain("'unsafe-eval'");
     expect(csp).not.toContain("allow-modals");
     const html = await response.text();
