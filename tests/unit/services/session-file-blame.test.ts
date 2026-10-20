@@ -48,7 +48,7 @@ async function call(file: string, id: string, next: string): Promise<void> {
   await observeFile(SESSION, file, id, "after");
 }
 
-function blame(file: string, base: string, current: string, markedAt?: number): string[][] | null {
+function blame(file: string, base: string, current: string, markedAt?: number): Promise<string[][] | null> {
   const diff = computeBlocks(base, current)!;
   return blockCalls({ sessionId: SESSION, path: file, baseText: base, currentText: current, blocks: diff.blocks, markedAt });
 }
@@ -61,7 +61,7 @@ describe("blockCalls", () => {
     await call(file, "toolu_1", one);
     const two = replaceLine(one, 30, "");
     await call(file, "toolu_2", two);
-    expect(blame(file, BASE, two)).toEqual([["toolu_1"], ["toolu_2"]]);
+    expect(await blame(file, BASE, two)).toEqual([["toolu_1"], ["toolu_2"]]);
   });
 
   test("names every call that touched a block, in the order they ran", async () => {
@@ -71,7 +71,7 @@ describe("blockCalls", () => {
     await call(file, "toolu_1", one);
     const two = replaceLine(one, 11, "eleven\n");
     await call(file, "toolu_2", two);
-    expect(blame(file, BASE, two)).toEqual([["toolu_1", "toolu_2"]]);
+    expect(await blame(file, BASE, two)).toEqual([["toolu_1", "toolu_2"]]);
   });
 
   test("names nobody for a change made between two calls", async () => {
@@ -84,7 +84,7 @@ describe("blockCalls", () => {
     writeFileSync(file, byHand);
     const two = replaceLine(byHand, 35, "thirty-five\n");
     await call(file, "toolu_2", two);
-    expect(blame(file, BASE, two)).toEqual([["toolu_1"], [], ["toolu_2"]]);
+    expect(await blame(file, BASE, two)).toEqual([["toolu_1"], [], ["toolu_2"]]);
   });
 
   test("names nobody for what changed after the last call", async () => {
@@ -93,7 +93,7 @@ describe("blockCalls", () => {
     const one = replaceLine(BASE, 5, "five\n");
     await call(file, "toolu_1", one);
     const now = replaceLine(one, 30, "thirty, later\n");
-    expect(blame(file, BASE, now)).toEqual([["toolu_1"], []]);
+    expect(await blame(file, BASE, now)).toEqual([["toolu_1"], []]);
   });
 
   test("names nobody for a change whose call was never seen starting", async () => {
@@ -105,7 +105,7 @@ describe("blockCalls", () => {
     const two = replaceLine(replaceLine(one, 20, "twenty by hand\n"), 35, "thirty-five\n");
     writeFileSync(file, two);
     await observeFile(SESSION, file, "toolu_2", "after");
-    expect(blame(file, BASE, two)).toEqual([["toolu_1"], [], []]);
+    expect(await blame(file, BASE, two)).toEqual([["toolu_1"], [], []]);
   });
 
   test("names nobody for a change across a state that was not text", async () => {
@@ -114,7 +114,7 @@ describe("blockCalls", () => {
     await call(file, "toolu_1", "\0binary\0");
     const back = replaceLine(BASE, 5, "five\n");
     await call(file, "toolu_2", back);
-    expect(blame(file, BASE, back)).toEqual([[]]);
+    expect(await blame(file, BASE, back)).toEqual([[]]);
   });
 
   test("finds a call's lines where they moved to after the last call", async () => {
@@ -124,7 +124,7 @@ describe("blockCalls", () => {
     await call(file, "toolu_1", one);
     // A line put on top by hand moves the call's own line one down.
     const now = `added on top\n${one}`;
-    expect(blame(file, BASE, now)).toEqual([[], ["toolu_1"]]);
+    expect(await blame(file, BASE, now)).toEqual([[], ["toolu_1"]]);
   });
 
   test("follows a log as it grows", async () => {
@@ -132,10 +132,10 @@ describe("blockCalls", () => {
     writeFileSync(file, BASE);
     const one = replaceLine(BASE, 5, "five\n");
     await call(file, "toolu_1", one);
-    expect(blame(file, BASE, one)).toEqual([["toolu_1"]]);
+    expect(await blame(file, BASE, one)).toEqual([["toolu_1"]]);
     const two = replaceLine(one, 30, "thirty\n");
     await call(file, "toolu_2", two);
-    expect(blame(file, BASE, two)).toEqual([["toolu_1"], ["toolu_2"]]);
+    expect(await blame(file, BASE, two)).toEqual([["toolu_1"], ["toolu_2"]]);
   });
 
   test("against a review mark, names only the calls after it", async () => {
@@ -149,7 +149,7 @@ describe("blockCalls", () => {
     const two = replaceLine(one, 6, "six\n");
     await call(file, "toolu_2", two);
     // Cut against the marked state, only line 6 is a change, and only toolu_2 made it.
-    expect(blame(file, one, two, markedAt)).toEqual([["toolu_2"]]);
+    expect(await blame(file, one, two, markedAt)).toEqual([["toolu_2"]]);
   });
 
   test("against a review mark, names the call that took out a line written before the mark", async () => {
@@ -162,11 +162,37 @@ describe("blockCalls", () => {
     await Bun.sleep(5);
     await call(file, "toolu_2", BASE);
     // Cut against the marked state, the only change is the line toolu_2 took out.
-    expect(blame(file, one, BASE, markedAt)).toEqual([["toolu_2"]]);
+    expect(await blame(file, one, BASE, markedAt)).toEqual([["toolu_2"]]);
   });
 
-  test("has nothing to say for a file with no history", () => {
+  test("hands the event loop back while it replays a long log", async () => {
+    // A restart forgets every replay, and the first ask then replays each log from its start:
+    // one diff per observation. Held in one go, that stopped the server for over a minute.
+    const lines = Array.from({ length: 3000 }, (_, i) => `line ${i + 1}\n`);
+    const base = lines.join("");
+    const file = join(work, "long.ts");
+    writeFileSync(file, base);
+    let text = base;
+    for (let i = 0; i < 150; i++) {
+      text = text.replace(`line ${i * 20 + 1}\n`, `edited ${i}\n`);
+      await call(file, `toolu_${i}`, text);
+    }
+    _resetSessionFileBlame();
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 1);
+    const started = performance.now();
+    const calls = await blame(file, base, text);
+    const took = performance.now() - started;
+    clearInterval(timer);
+    expect(calls).toHaveLength(150);
+    expect(calls![149]).toEqual(["toolu_149"]);
+    // Timers ran while it worked; with nothing handed back they would only run after.
+    expect(took).toBeGreaterThan(40);
+    expect(ticks).toBeGreaterThan(0);
+  });
+
+  test("has nothing to say for a file with no history", async () => {
     const file = join(work, "none.ts");
-    expect(blame(file, BASE, replaceLine(BASE, 1, "one\n"))).toBeNull();
+    expect(await blame(file, BASE, replaceLine(BASE, 1, "one\n"))).toBeNull();
   });
 });

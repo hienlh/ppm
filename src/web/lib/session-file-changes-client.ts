@@ -31,6 +31,12 @@ export async function fetchSessionFileChanges(
   return Array.isArray(res?.files) ? res.files : [];
 }
 
+/** How many files the session kept a "before" for: cheap, an upper bound on the list. */
+export async function fetchSessionChangeCount(projectName: string, sessionId: string, signal?: AbortSignal): Promise<number> {
+  const res = await api.get<{ count?: number }>(`${changesUrl(projectName, sessionId)}/count`, { signal });
+  return typeof res?.count === "number" ? res.count : 0;
+}
+
 export function fetchSessionFileDiff(
   projectName: string,
   sessionId: string,
