@@ -716,7 +716,7 @@ an answer, an editor, a checkout). A list is worked out one ask at a time and ha
 loop back every 20 ms, on a 0 ms timer rather than `setImmediate`, and so does the first replay
 of a long history in `session-file-blame.ts`. Past 500 files the newest are listed.
 `GET …/file-changes/count` answers how many files have a record, off directory listings, for the
-bar to show until the first list arrives.
+bar to show until the list is asked for.
 
 When a call is done with a file — `observeFile`'s "after", which every file tool, shell command
 and Codex patch goes through — `session-file-writes.ts` announces it, every kept list along whose
@@ -724,13 +724,16 @@ lineage it was written works the file out again (what lands within 150 ms goes o
 and the rows that moved, with the paths that are no longer changes, go out as
 `session:file-changes` on `/ws/global`. A session whose list nobody asked for is pushed nothing.
 
-In the browser, `use-session-file-changes.ts` asks for the list when the chat opens and when a
-turn ends, never because the transcript moved, and puts pushed rows in place in between
-(`withPushedChanges`). A row pushed while a list or a review mark is on its way is set aside and
-the list asked for again once they are in, since it may be older than what they bring. Each
-answer and each push is broadcast as `SESSION_CHANGES_EVENT` so an open Review tab follows
-along; the tab also fetches on its own
-with the paths stored in its metadata, because after a reload its chat may never have
+In the browser, `use-session-file-changes.ts` asks for the list only when someone opens it — the
+changes bar, its refresh button, its Review button, a turn's change pill, or an answer given from
+any of them — never because the transcript moved or a turn ended; until then the bar shows the
+count, asked again when a turn ends. Once asked for, the list takes pushed rows in place
+(`withPushedChanges`) and is asked for again whenever `/ws/global` connects (`onGlobalReady`),
+since a push sent while the socket was down is lost and a restarted server keeps no list. A row
+pushed while a list or a review mark is on its way is set aside and the list asked for again
+once they are in, since it may be older than what they bring. Each answer and each push is
+broadcast as `SESSION_CHANGES_EVENT` so an open Review tab follows along; the tab also fetches on
+its own with the paths stored in its metadata, because after a reload its chat may never have
 mounted. A diff on screen is refetched on `changeKey` (path, status, baseline kind, version
 and review state), since one edit undoing another changes the content without changing the
 counts.

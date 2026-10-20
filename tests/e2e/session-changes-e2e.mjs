@@ -302,6 +302,9 @@ async function desktopReview(page, name, sessionId, dir) {
   await until("all reviewed in the bar", async () => /All 6 files reviewed/.test(await barText(page)));
   await page.reload();
   await chatTab().click();
+  // The list is asked for only once the bar is opened: until then the bar counts the files.
+  await until("count after a reload", async () => /6 files changed/.test(await barText(page)));
+  await page.locator('[data-testid="session-changes-bar"]:visible button', { hasText: "files changed" }).click();
   await until("marks survive a reload", async () => /All 6 files reviewed/.test(await barText(page)));
 }
 
@@ -390,10 +393,12 @@ async function desktopTray(page, name, sessionId, dir) {
   const pills = page.locator('button[aria-label*="changed this turn"]:visible');
   await until("a pill per turn", async () => (await pills.count()) === 2);
   const [pillOne, pillTwo] = [pills.nth(0), pills.nth(1)];
+  // Nothing is worked out until someone looks: opening a pill asks for the session's list.
+  assert(!/to review/.test(await pillTwo.innerText()), await pillTwo.innerText());
+  await pillTwo.click();
   await until("turn two to review", async () => /3 edits to review/.test(await pillTwo.innerText()));
   assert(/3 edits to review/.test(await pillOne.innerText()), await pillOne.innerText());
 
-  await pillTwo.click();
   const tray = page.locator('[data-testid="turn-change-tray"]:visible');
   await tray.waitFor();
   const edit = (file, n) => tray.locator(`[data-file-group$="${file}"] [data-edit-key]`).nth(n);

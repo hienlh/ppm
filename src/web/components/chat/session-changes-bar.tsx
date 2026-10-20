@@ -97,6 +97,8 @@ export function SessionChangesBar({ files, loaded = true, loading = false, unloa
   };
   const review = (path?: string) => {
     setOpen(false);
+    // The Review tab follows the agent through this list, so opening it is opening the list.
+    if (!loaded) onOpen?.();
     onReview(path);
   };
   const markAll = () => {

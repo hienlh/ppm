@@ -64,6 +64,21 @@ describe("session changes bar", () => {
     expect(opened()).toBe(1);
   });
 
+  it("asks for the list when the review is opened before it: the review follows the agent through it", async () => {
+    const named = (root: ParentNode, text: string) => [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === text)!;
+    const unloaded = await render({ files: [], loaded: false, unloadedCount: 3 });
+    await click(named(unloaded.container, "Review"));
+    expect(unloaded.reviewed).toEqual([undefined]);
+    expect(unloaded.opened()).toBe(1);
+    await view!.unmount();
+    view = null;
+
+    const loaded = await render();
+    await click(named(loaded.container, "Review"));
+    expect(loaded.reviewed).toEqual([undefined]);
+    expect(loaded.opened()).toBe(0);
+  });
+
   it("asks again only from its refresh button, which waits while a list is on its way", async () => {
     let refreshed = 0;
     const { container, opened } = await render({ onRefresh: () => { refreshed++; } });
