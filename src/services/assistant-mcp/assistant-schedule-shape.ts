@@ -82,13 +82,14 @@ const DECIDED: ReadonlyArray<keyof Schedule> = [
 ];
 
 /**
- * Whether `now` is still the schedule the card described. `updated_at` is the quick answer, but
- * the scheduler also bumps it after every run (`last_run_at`, `next_fire_at`) and when a run
- * opens its chat, so a schedule that ran while the card waited is compared field by field
- * instead — otherwise any schedule firing every few minutes could never be approved.
+ * Whether `now` is still the schedule the card described, compared field by field over what a
+ * person decides. `updated_at` cannot answer it either way: it has one-second resolution, so an
+ * edit in the same second as the card's read leaves it equal, and the scheduler bumps it after
+ * every run (`last_run_at`, `next_fire_at`) and when a run opens its chat, so a schedule firing
+ * every few minutes would never look unchanged.
  */
 export function unchangedSince(seen: Schedule, now: Schedule): boolean {
-  return seen.updated_at === now.updated_at || DECIDED.every((k) => seen[k] === now[k]);
+  return DECIDED.every((k) => seen[k] === now[k]);
 }
 
 export const schedulePath = (id: number, sub = ""): string => `/api/schedules/${id}${sub ? `/${sub}` : ""}`;

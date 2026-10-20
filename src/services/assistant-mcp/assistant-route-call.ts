@@ -56,6 +56,15 @@ export function internalRouteApp(): Promise<RouteApp> {
       import("../../server/routes/schedules.ts"),
     ]);
     const app = new Hono();
+    // `projectScopedRouter` also carries the chat, file, workspace, LSP and design routes, and no
+    // tool needs any of them: past the project's name only `git/` is let through, so one wrong
+    // git rule cannot reach a file read or write.
+    app.use("/api/project/*", async (c, next) => {
+      if (!isProjectGitPath(new URL(c.req.url).pathname)) {
+        return c.json({ ok: false, error: "Only the git routes of a project are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
+      }
+      await next();
+    });
     app.route("/api/tunnels", tunnels.tunnelRegistryRoutes);
     app.route("/api/tunnel", tunnel.tunnelRoutes);
     app.route("/api/tunnel/named", named.namedTunnelRoutes);
@@ -69,6 +78,12 @@ export function internalRouteApp(): Promise<RouteApp> {
     throw e;
   });
   return appPromise;
+}
+
+/** `/api/project/<name>/git/...`: the only project routes any tool family reaches. */
+export function isProjectGitPath(pathname: string): boolean {
+  const segments = pathname.split("/");
+  return segments[1] === "api" && segments[2] === "project" && !!segments[3] && segments[4] === "git" && segments.length > 5;
 }
 
 const LITERAL_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
@@ -92,6 +107,7 @@ export function ruleProblem(rule: RouteRule): string | null {
     if (!LITERAL_SEGMENT.test(segment) && !PARAM_SEGMENT.test(segment)) return `bad segment "${segment}"`;
   }
   if (segments[1] === "project" && segments[2] !== ":project") return "a project route names its project with :project";
+  if (segments[1] === "project" && !isProjectGitPath(rule.path)) return "a project route may only reach the project's git routes";
   const keys = new Set<string>();
   for (const key of rule.query) {
     if (!QUERY_KEY.test(key) || keys.has(key)) return `bad or repeated query key "${key}"`;

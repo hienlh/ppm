@@ -163,6 +163,58 @@ describe("publish", () => {
   it("says why when there is no remote", async () => {
     await expect(gitWorkflowService.publish(repo)).rejects.toThrow(/no remote/);
   });
+
+  it("publishes a branch named +main as itself, never as a forced push of main", async () => {
+    const remote = join(root, "remote.git");
+    await git(["init", "-q", "--bare", "-b", "main", remote], root);
+    await git(["remote", "add", "origin", remote]);
+    await git(["push", "-q", "origin", "main"]);
+    // A teammate's commit lands on the remote's main meanwhile.
+    const mate = join(root, "mate");
+    await git(["clone", "-q", remote, mate], root);
+    await git(["commit", "-q", "--allow-empty", "-m", "teammate commit"], mate);
+    await git(["push", "-q", "origin", "main"], mate);
+    const remoteMain = (await git(["rev-parse", "main"], remote)).trim();
+
+    await git(["checkout", "-q", "-b", "+main"]);
+    await git(["commit", "-q", "--allow-empty", "-m", "on +main"]);
+    expect(await gitWorkflowService.publish(repo)).toEqual({ remote: "origin", branch: "+main" });
+    expect((await git(["rev-parse", "main"], remote)).trim()).toBe(remoteMain);
+    expect((await git(["rev-parse", "refs/heads/+main"], remote)).trim()).toBe(await head());
+    expect((await git(["config", "--get", "branch.+main.merge"])).trim()).toBe("refs/heads/+main");
+  });
+});
+
+describe("upstreamPushTarget", () => {
+  const setUp = async () => {
+    await git(["init", "-q", "--bare", "-b", "main", join(root, "remote.git")], root);
+    await git(["remote", "add", "origin", join(root, "remote.git")]);
+    await git(["push", "-q", "-u", "origin", "main"]);
+  };
+
+  it("names the upstream's remote and branch in a fully qualified refspec", async () => {
+    await setUp();
+    await git(["checkout", "-q", "-b", "topic", "--track", "origin/main"]);
+    expect(await gitWorkflowService.upstreamPushTarget(repo)).toEqual({
+      branch: "topic", remote: "origin", remoteBranch: "main", refspec: "refs/heads/topic:refs/heads/main",
+    });
+  });
+
+  it("ignores the push configuration a bare push would follow", async () => {
+    await setUp();
+    await git(["config", "remote.pushDefault", "fork"]);
+    await git(["config", "push.default", "matching"]);
+    await git(["config", "remote.origin.push", "+refs/heads/main:refs/heads/main"]);
+    expect(await gitWorkflowService.upstreamPushTarget(repo)).toMatchObject({ remote: "origin", refspec: "refs/heads/main:refs/heads/main" });
+  });
+
+  it("refuses a branch with no upstream, a local upstream, and a detached HEAD", async () => {
+    await expect(gitWorkflowService.upstreamPushTarget(repo)).rejects.toThrow(/no upstream/);
+    await git(["checkout", "-q", "-b", "topic", "--track", "main"]);
+    await expect(gitWorkflowService.upstreamPushTarget(repo)).rejects.toThrow(/local branch/);
+    await git(["checkout", "-q", "--detach"]);
+    await expect(gitWorkflowService.upstreamPushTarget(repo)).rejects.toThrow(/detached/);
+  });
 });
 
 describe("stash", () => {

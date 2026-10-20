@@ -39,7 +39,87 @@ async function pullStrategyConfigured(cwd: string): Promise<boolean> {
   return false;
 }
 
+const HEADS = "refs/heads/";
+
+/** HEAD's full ref (`refs/heads/<name>`), or null when HEAD is detached. */
+async function currentBranchRef(cwd: string): Promise<string | null> {
+  const res = await runGit(cwd, ["symbolic-ref", "-q", "HEAD"]);
+  const ref = res.exitCode === 0 ? toDisplay(res.stdout).trim() : "";
+  return ref.startsWith(HEADS) && ref.length > HEADS.length ? ref : null;
+}
+
+async function configValue(cwd: string, key: string): Promise<string> {
+  const res = await runGit(cwd, ["config", "--get", key]);
+  return res.exitCode === 0 ? toDisplay(res.stdout).trim() : "";
+}
+
+/** The configured remotes, less any whose name git would read as an option on a command line. */
+async function remoteNames(cwd: string): Promise<string[]> {
+  return (await git(cwd, ["remote"])).split("\n").map((r) => r.trim()).filter((r) => r && !r.startsWith("-"));
+}
+
+/**
+ * Where a push goes, spelled out in full so that nothing in the repository's
+ * configuration can change it: `remote.pushDefault`, `branch.<b>.pushRemote`,
+ * `remote.<r>.push`, `push.default = matching` and `remote.<r>.mirror` all
+ * apply only to a push that names no refspec, and a refspec with both sides
+ * qualified as `refs/heads/…` cannot be read as forced, whatever the branch is
+ * called (`+main` as a bare argument is a forced push of `main`).
+ */
+export interface PushTarget {
+  /** The local branch pushed. */
+  branch: string;
+  /** The remote, by name. */
+  remote: string;
+  /** The branch on the remote that is updated or created. */
+  remoteBranch: string;
+  /** `refs/heads/<branch>:refs/heads/<remoteBranch>`, exactly as git receives it. */
+  refspec: string;
+}
+
 export const gitWorkflowService = {
+  /**
+   * Where pushing the current branch to its upstream goes: the upstream's own
+   * remote (`branch.<b>.remote`) and branch (`branch.<b>.merge`). Refused when
+   * HEAD is detached, there is no upstream, or the upstream is not a branch of
+   * a named remote (a local upstream, or a remote given as a URL).
+   */
+  async upstreamPushTarget(cwd: string): Promise<PushTarget> {
+    const ref = await currentBranchRef(cwd);
+    if (!ref) throw new Error("HEAD is detached: check out a branch to push it.");
+    const branch = ref.slice(HEADS.length);
+    const [remote, merge] = await Promise.all([configValue(cwd, `branch.${branch}.remote`), configValue(cwd, `branch.${branch}.merge`)]);
+    if (!remote || !merge) throw new Error(`${branch} has no upstream to push to.`);
+    if (remote === ".") throw new Error(`${branch}'s upstream is a local branch, not a remote one.`);
+    if (!(await remoteNames(cwd)).includes(remote)) throw new Error(`${branch}'s upstream remote "${remote}" is not a configured remote.`);
+    if (!merge.startsWith(HEADS) || merge.length === HEADS.length) throw new Error(`${branch}'s upstream (${merge}) is not a branch.`);
+    return { branch, remote, remoteBranch: merge.slice(HEADS.length), refspec: `${ref}:${merge}` };
+  },
+
+  /**
+   * The staged content itself, as one comparable string: every staged path
+   * with the mode and blob id the index holds for it. Line counts alone cannot
+   * tell content restaged with the same counts, or any change to a binary
+   * file, from what was staged before.
+   */
+  async stagedIndexSignature(cwd: string): Promise<string> {
+    return git(cwd, ["diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames"], { GIT_OPTIONAL_LOCKS: "0" });
+  },
+
+  /**
+   * Where publishing the current branch goes: `origin` if the repository has
+   * it, otherwise its first remote, under the branch's own name.
+   */
+  async publishTarget(cwd: string): Promise<PushTarget> {
+    const ref = await currentBranchRef(cwd);
+    if (!ref) throw new Error("HEAD is detached: check out a branch to publish it.");
+    const remotes = await remoteNames(cwd);
+    const remote = remotes.includes("origin") ? "origin" : remotes[0];
+    if (!remote) throw new Error("This repository has no remote to publish to.");
+    const branch = ref.slice(HEADS.length);
+    return { branch, remote, remoteBranch: branch, refspec: `${ref}:${ref}` };
+  },
+
   /**
    * Take the last commit back into the index, as if it had never been made,
    * and hand back its message so it can go back into the message box.
@@ -80,14 +160,11 @@ export const gitWorkflowService = {
 
   /** Push a branch that has no upstream yet, and make the remote branch its upstream. */
   async publish(cwd: string): Promise<{ remote: string; branch: string }> {
-    const branch = (await runGit(cwd, ["symbolic-ref", "--short", "-q", "HEAD"])).stdout.trim();
-    if (!branch) throw new Error("HEAD is detached: check out a branch to publish it.");
-    const remotes = (await git(cwd, ["remote"])).split("\n").map((r) => r.trim()).filter(Boolean);
-    const remote = remotes.includes("origin") ? "origin" : remotes[0];
-    if (!remote) throw new Error("This repository has no remote to publish to.");
-    await git(cwd, ["push", "-u", remote, toDisplay(branch)]);
-    log.info(`published ${toDisplay(branch)} to ${remote} in ${cwd}`);
-    return { remote, branch: toDisplay(branch) };
+    const target = await gitWorkflowService.publishTarget(cwd);
+    // The full refspec, never the bare name: see `PushTarget`.
+    await git(cwd, ["push", "-u", target.remote, target.refspec]);
+    log.info(`published ${target.branch} to ${target.remote} in ${cwd}`);
+    return { remote: target.remote, branch: target.branch };
   },
 
   /**

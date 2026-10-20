@@ -57,16 +57,22 @@ export function gitStageSummary(input: { target: GitCardTarget; files: Array<{ p
 export interface DiscardFile {
   path: string;
   untracked: boolean;
-  /** Over the size PPM keeps a copy of, so its discard cannot be undone. */
-  tooLarge: boolean;
+  /** Why PPM's discard journal will keep no copy of it, so its discard cannot be undone; null when it keeps one. */
+  notKept: "not_a_file" | "too_large" | "over_total" | null;
 }
+
+const NOT_KEPT_NOTE: Record<NonNullable<DiscardFile["notKept"]>, string> = {
+  too_large: "over 20 MB — not kept, cannot be undone",
+  over_total: "past the 100 MB one discard keeps — not kept, cannot be undone",
+  not_a_file: "not a regular file — not kept, cannot be undone",
+};
 
 export const DISCARD_KEEP_WARNING = "PPM keeps a copy for one day; undo with git_undo or Source Control. Staged changes are untouched.";
 
 export function gitDiscardSummary(input: { target: GitCardTarget; files: DiscardFile[] }): ApprovalSummary {
-  const lost = input.files.filter((f) => f.tooLarge).length;
+  const lost = input.files.filter((f) => f.notKept).length;
   const lines = input.files.map((f) => {
-    const notes = [f.untracked ? "new file — deleted" : null, f.tooLarge ? "over 20 MB — not kept, cannot be undone" : null].filter(Boolean);
+    const notes = [f.untracked ? "new file — deleted" : null, f.notKept ? NOT_KEPT_NOTE[f.notKept] : null].filter(Boolean);
     return notes.length ? `${f.path}  (${notes.join("; ")})` : f.path;
   });
   return {
@@ -77,7 +83,11 @@ export function gitDiscardSummary(input: { target: GitCardTarget; files: Discard
       ...(lost ? [fact("Cannot be undone", plural(lost, "file"), "warning")] : []),
     ],
     body: { label: "Files", text: fileList(lines), format: "text" },
-    warning: DISCARD_KEEP_WARNING,
+    warning: !lost
+      ? DISCARD_KEEP_WARNING
+      : lost === input.files.length
+        ? "PPM keeps no copy of these files: this discard cannot be undone. Staged changes are untouched."
+        : `${plural(lost, "file")} marked in the list cannot be undone. ${DISCARD_KEEP_WARNING.replace("a copy", "a copy of the rest")}`,
   };
 }
 
@@ -175,21 +185,23 @@ export function gitPushSummary(input: {
   target: GitCardTarget;
   /** The upstream pushed to; null publishes the branch. */
   upstream: string | null;
+  /** Where the push goes, exactly as git is told: the remote by name and the full refspec. */
+  to: { remote: string; remoteBranch: string; refspec: string };
   ahead: number;
   behind: number;
   head: { hash: string; subject: string } | null;
 }): ApprovalSummary {
   const publish = input.upstream === null;
   const branch = branchLabel(input.target);
+  const destination = `branch ${input.to.remoteBranch} on remote ${input.to.remote}`;
   return {
     headline: publish
-      ? `Publish ${branch} from "${input.target.project}" to its remote for the first time`
-      : `Push ${plural(input.ahead, "commit")} of ${branch} to ${input.upstream}`,
+      ? `Publish ${branch} from "${input.target.project}" to remote ${input.to.remote} for the first time`
+      : `Push ${plural(input.ahead, "commit")} of ${branch} to ${destination}`,
     facts: [
       ...targetFacts(input.target),
-      publish
-        ? fact("To", "origin if the repository has it, otherwise its first remote; it becomes the branch's upstream")
-        : exactFact("To", input.upstream!),
+      exactFact("To", publish ? `${destination}, which becomes the branch's upstream` : destination),
+      exactFact("Refspec", input.to.refspec),
       fact("Commits", publish ? "the whole branch" : String(input.ahead)),
       fact("Force", "Never — PPM does not force push"),
     ],

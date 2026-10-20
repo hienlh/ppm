@@ -107,7 +107,8 @@ describe("assertRef", () => {
   it("rejects an option, a range, and control characters", () => {
     // A leading dash is read by git as an option even though argv never meets a
     // shell; `..` would smuggle a range past the caller's choice of mode.
-    for (const bad of ["--output=/tmp/x", "main..feature", "main...feature", "a\nb", ""]) {
+    // A leading `+` is a branch name git accepts and `git push` reads as forced.
+    for (const bad of ["--output=/tmp/x", "main..feature", "main...feature", "a\nb", "", "+main", " +main"]) {
       expect(() => assertRef(bad, "base")).toThrow();
     }
   });

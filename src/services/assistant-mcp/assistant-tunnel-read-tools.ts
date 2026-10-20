@@ -19,7 +19,6 @@ interface PublicLinkData { active?: unknown; url?: unknown; enabled?: unknown }
 interface NamedStatusData { mode?: unknown; liveMode?: unknown; hostname?: unknown; tunnelWarning?: unknown; authEnabled?: unknown }
 interface TailscaleStateData {
   installed?: unknown; backendState?: unknown; tailnet?: unknown; dnsSuffix?: unknown; enabled?: unknown;
-  device?: { name?: unknown } | null;
   service?: { name?: unknown; url?: unknown; approved?: unknown; pointsAtPpm?: unknown } | null;
 }
 interface TransportsData { tailscale?: { available?: unknown; reason?: unknown; dnsName?: unknown } }
@@ -85,7 +84,8 @@ export interface TailscaleSummary {
   backendState: string | null;
   /** Left out when the tailnet is named by an email address and no MagicDNS suffix is known. */
   tailnet?: string;
-  deviceName: string | null;
+  // No device name: it is the first label of the device's DNS name, which the tailnet beside it
+  // would complete, and it is often its owner's name ("someones-macbook").
   service: { name: string | null; url: string | null; enabled: boolean; approved: boolean; pointsAtPpm: boolean };
 }
 
@@ -98,7 +98,6 @@ export async function readTailscale(callRoute: CallPpmRoute): Promise<TailscaleS
     installed: bool(s.installed),
     backendState: str(s.backendState),
     ...(tailnet ? { tailnet } : {}),
-    deviceName: str(s.device?.name),
     service: {
       name: str(s.service?.name),
       url: str(s.service?.url),

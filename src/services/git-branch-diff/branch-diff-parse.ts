@@ -140,11 +140,14 @@ export function mergeBranchDiff(
 /**
  * Refs reach git as argv, so a shell is never involved — but an argument
  * starting with `-` is still read as an option, and `..` would turn one field
- * into a range and defeat the caller's choice of comparison.
+ * into a range and defeat the caller's choice of comparison. A leading `+` is
+ * a legal branch name that `git push` reads as a *forced* refspec — pushing a
+ * branch called `+main` by name force-pushes `main` — so no ref PPM is asked
+ * to create, check out or compare may start with one.
  */
 export function assertRef(value: string | undefined, label: string): string {
   const s = (value ?? "").trim();
-  if (!s || s.startsWith("-") || s.includes("..") || /[\x00-\x1f\x7f~^:?*[\]\\]/.test(s)) {
+  if (!s || s.startsWith("-") || s.startsWith("+") || s.includes("..") || /[\x00-\x1f\x7f~^:?*[\]\\]/.test(s)) {
     throw new Error(`Invalid git ref for ${label}: "${s}"`);
   }
   return s;

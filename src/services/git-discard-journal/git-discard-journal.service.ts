@@ -79,6 +79,22 @@ export interface PendingFileCapture {
   dir: string;
 }
 
+/** Why a whole-file discard keeps no copy of a file. */
+export type NotKeptReason = "not_a_file" | "too_large" | "over_total";
+
+/**
+ * Whether a whole-file discard copies a regular file of `size` bytes after
+ * already copying `total` bytes of the same discard — the one rule both the
+ * capture and its prediction apply, so a card cannot promise a copy the
+ * capture then skips.
+ */
+function notKeptReason(isFile: boolean, size: number, total: number): NotKeptReason | null {
+  if (!isFile) return "not_a_file";
+  if (size > MAX_FILE_BYTES) return "too_large";
+  if (total + size > MAX_ENTRY_BYTES) return "over_total";
+  return null;
+}
+
 function sha256(data: Buffer | string): string {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -150,6 +166,33 @@ class GitDiscardJournal {
   }
 
   /**
+   * Which of `paths` a whole-file discard of exactly these paths, in this
+   * order, would keep no copy of — `captureFiles`' rules, read with `lstat`
+   * (a symlink is kept as its target string, whatever it points at) and
+   * without reading any file. A path that is gone needs no copy. One that
+   * cannot be resolved is listed too: nothing could be kept of it.
+   */
+  async predictNotKept(repo: string, paths: string[]): Promise<Array<{ path: string; reason: NotKeptReason }>> {
+    const root = this.repoRoot(repo);
+    const notKept: Array<{ path: string; reason: NotKeptReason }> = [];
+    let total = 0;
+    for (const path of paths) {
+      let st;
+      try {
+        st = await lstat(await this.target(root, path));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") notKept.push({ path, reason: "not_a_file" });
+        continue;
+      }
+      if (st.isSymbolicLink()) continue;
+      const reason = notKeptReason(st.isFile(), st.size, total);
+      if (reason) notKept.push({ path, reason });
+      else total += st.size;
+    }
+    return notKept;
+  }
+
+  /**
    * Copy the files a whole-file discard is about to touch, and write the entry
    * down. Call before discarding: once this returns, a discard that stops half
    * way, PPM included, leaves an entry that can undo what it did.
@@ -165,7 +208,7 @@ class GitDiscardJournal {
       let total = 0;
       for (const [i, path] of paths.entries()) {
         const read = await this.stateOf(await this.target(root, path));
-        if (!read || (read.bytes && total + read.bytes.length > MAX_ENTRY_BYTES)) {
+        if (!read || (read.bytes && notKeptReason(true, read.bytes.length, total))) {
           entry.skipped!.push(path);
           continue;
         }

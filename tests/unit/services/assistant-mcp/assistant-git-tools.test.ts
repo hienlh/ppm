@@ -3,9 +3,10 @@
  * built from what the routes answered and calls its write route only after `approved`, a state
  * that moved while the card waited is `stale`, and a remote's URL never reaches the agent.
  */
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GitChanges } from "../../../../src/shared/git-changes.ts";
 import type { CallPpmRoute, RouteCallResult } from "../../../../src/services/assistant-mcp/assistant-route-rules.ts";
@@ -18,6 +19,25 @@ import { hideRemoteUrls } from "../../../../src/services/assistant-mcp/assistant
 
 const OID = "a".repeat(40);
 const LAST = "b".repeat(40);
+
+/**
+ * The few things no route answers — where a push goes, the index's blob ids, what the discard
+ * journal would keep — are read from the repository itself, so the stand-in routes describe a
+ * real one: branch `main` tracking `origin/main`.
+ */
+let repoDir = "";
+beforeAll(() => {
+  repoDir = mkdtempSync(join(tmpdir(), "ppm-git-tools-unit-"));
+  const git = (...args: string[]) => {
+    const p = Bun.spawnSync(["git", ...args], { cwd: repoDir });
+    if (p.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${p.stderr.toString()}`);
+  };
+  git("init", "-q", "-b", "main");
+  git("remote", "add", "origin", join(repoDir, "origin.git"));
+  git("config", "branch.main.remote", "origin");
+  git("config", "branch.main.merge", "refs/heads/main");
+});
+afterAll(() => rmSync(repoDir, { recursive: true, force: true }));
 
 function baseChanges(): GitChanges {
   return {
@@ -40,7 +60,7 @@ type Answer = RouteCallResult<unknown> | ((body: Record<string, unknown> | undef
 function fakeRoutes(answers: Record<string, Answer> = {}) {
   const calls: Array<{ method: string; sub: string; query: URLSearchParams; body?: Record<string, unknown> }> = [];
   const defaults: Record<string, Answer> = {
-    "GET repos": { status: 200, ok: true, data: { root: "/p", rootIsRepo: true, repos: [{ path: "/p", name: "p", relative: "." }] } },
+    "GET repos": { status: 200, ok: true, data: { root: repoDir, rootIsRepo: true, repos: [{ path: repoDir, name: "p", relative: "." }] } },
     "GET changes": { status: 200, ok: true, data: baseChanges() },
     "GET stashes": { status: 200, ok: true, data: [{ index: 0, hash: "c".repeat(40), base: null, branch: "main", message: "wip", date: "2026-10-10" }] },
     "GET discards": { status: 200, ok: true, data: [{ id: "d-1", createdAt: 0, kind: "files", paths: ["a.txt"] }] },
@@ -224,7 +244,8 @@ describe("write tools", () => {
     expect(pub.writes().map((w) => w.sub)).toEqual(["publish"]);
     const push = fakeRoutes();
     await run("git_sync", ctxOf(push.call, asker().ask), { action: "push" });
-    expect(push.writes()).toEqual([expect.objectContaining({ sub: "push", body: {} })]);
+    // The upstream's remote and the full refspec, so no push configuration can redirect or force it.
+    expect(push.writes()).toEqual([expect.objectContaining({ sub: "push", body: { remote: "origin", branch: "refs/heads/main:refs/heads/main" } })]);
   });
 
   it("hide remote URLs in every route error", async () => {

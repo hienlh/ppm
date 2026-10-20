@@ -67,6 +67,7 @@ describe("route rules", () => {
       allowRoute("GET", "/api/project/myproject/git/changes"),
       allowRoute("GET", "/api/project/:project/git/changes", ["repo", "repo"]),
       allowRoute("GET", "/api/project/:project/git/changes", ["re po"]),
+      allowRoute("GET", "/api/project/:project/files/read"),
       allowRoute("GET", "/settings"),
       allowRoute("GET", "/api/tunnels/:pid?"),
     ];
@@ -308,5 +309,20 @@ describe("the internal app", () => {
     for (const path of ["/api/settings", "/api/fs/list?path=%2F", "/api/health"]) {
       expect({ path, status: (await call("GET", path)).status }).toEqual({ path, status: 404 });
     }
+  });
+
+  it("lets nothing but a project's git routes through the project router", async () => {
+    // A rule for any other project route is dropped before it can be used…
+    for (const path of ["/api/project/:project/files/read", "/api/project/:project/chat/sessions", "/api/project/:project/git"]) {
+      expect(ruleProblem(allowRoute("GET", path))).toContain("git routes");
+    }
+    // …and the mounted app refuses one even when it is asked directly.
+    const app = await internalRouteApp();
+    for (const path of ["files/tree", "chat/sessions", "workspace", "designs"]) {
+      const res = await app.request(`http://ppm.internal/api/project/route-call/${path}`, { method: "GET" });
+      expect({ path, status: res.status }).toEqual({ path, status: 403 });
+    }
+    const git = await app.request("http://ppm.internal/api/project/route-call/git/changes", { method: "GET" });
+    expect(git.status).toBe(200);
   });
 });

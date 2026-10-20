@@ -1,6 +1,6 @@
-import { stat } from "node:fs/promises";
-import { join } from "node:path";
 import type { Json } from "../mcp-http-endpoint.ts";
+import { gitDiscardJournal, type NotKeptReason } from "../git-discard-journal/git-discard-journal.service.ts";
+import { gitWorkflowService } from "../git-workflow/git-workflow.service.ts";
 import type { ChangedFile, DiscardRecord, GitChanges } from "../../shared/git-changes.ts";
 import { GIT_COMMIT_TOOL, GIT_DISCARD_TOOL, GIT_STAGE_TOOL, GIT_UNDO_TOOL } from "../../shared/assistant-git-tool-names.ts";
 import {
@@ -14,14 +14,14 @@ import type { ToolContext } from "./assistant-tool-family.ts";
 
 /**
  * The git tools that change the working tree, the index or the last commit: stage, discard,
- * undo and commit. Each reads the repository through PPM's routes, refuses what git would refuse
+ * undo and commit. Each reads the repository through PPM's routes (and, read-only through the
+ * services, the two things no route answers: which files the discard journal would keep, and the
+ * index's blob ids a commit re-check compares), refuses what git would refuse
  * (or what the card could not show truthfully) before asking, asks, and only then calls the same
  * write route Source Control calls — so the Undo journal, the shared commit message and the
  * `git:changed` broadcast all happen exactly as for a click.
  */
 
-/** The size above which PPM's discard journal keeps no copy (`git-discard-journal.service.ts`). */
-export const DISCARD_KEEP_MAX_BYTES = 20 * 1024 * 1024;
 export const MAX_COMMIT_MESSAGE_CHARS = 20_000;
 
 /** The listed file each requested path names, or the first path that is not listed for this action. */
@@ -65,14 +65,6 @@ export async function gitStage(ctx: ToolContext, args: Record<string, unknown>):
   return jsonResult({ ...repoLabel(got.scope), [unstage.value ? "unstaged" : "staged"]: files.files });
 }
 
-async function sizeOver(path: string, limit: number): Promise<boolean> {
-  try {
-    return (await stat(path)).size > limit;
-  } catch {
-    return false; // gone already: there is nothing to keep, and git reports it as a deletion
-  }
-}
-
 export async function gitDiscard(ctx: ToolContext, args: Record<string, unknown>): Promise<Json> {
   const files = filesArg(args.files);
   if (!files.ok) return errorResult(files.error);
@@ -85,11 +77,16 @@ export async function gitDiscard(ctx: ToolContext, args: Record<string, unknown>
   // unstaged side git can check out, and staged changes are left alone by design.
   const picked = pickFiles(read.changes, files.files, (f) => !f.conflict && (f.untracked || f.unstaged !== null), "unstaged change to discard");
   if (typeof picked === "string") return errorResult(picked);
-  // A stat, not git: the journal decides what it keeps by size, and the card has to say which
-  // files would be gone for good.
-  const cards: DiscardFile[] = await Promise.all(picked.map(async (f) => ({
-    path: f.path, untracked: f.untracked, tooLarge: await sizeOver(join(got.scope.path, f.path), DISCARD_KEEP_MAX_BYTES),
-  })));
+  // The journal's own rules, in the order the route will hand it the files: it keeps no copy of
+  // a file over its per-file limit, nor of anything past its per-discard total, and the card has
+  // to say which files would be gone for good.
+  let notKept: Map<string, NotKeptReason>;
+  try {
+    notKept = new Map((await gitDiscardJournal.predictNotKept(got.scope.path, files.files)).map((n) => [n.path, n.reason]));
+  } catch (e) {
+    return errorResult(`PPM could not check which files it can keep a copy of: ${(e as Error).message}`);
+  }
+  const cards: DiscardFile[] = picked.map((f) => ({ path: f.path, untracked: f.untracked, notKept: notKept.get(f.path) ?? null }));
 
   const refused = await askFirst(ctx, GIT_DISCARD_TOOL, { ...repoLabel(got.scope), files: files.files },
     gitDiscardSummary({ target: cardTarget(got.scope, read.changes), files: cards }));
@@ -148,12 +145,15 @@ export async function gitUndo(ctx: ToolContext, args: Record<string, unknown>): 
   return jsonResult({ ...repoLabel(got.scope), undone: last.hash, note: "Its changes are staged again and its message is back in the commit box." });
 }
 
-/** The staged state a commit card shows, as one comparable string. */
-function stagedSignature(changes: GitChanges): string {
+/**
+ * The staged state a commit card shows, as one comparable string — including the index's own
+ * blob ids, since the same paths and line counts can hold different content.
+ */
+async function stagedSignature(repo: string, changes: GitChanges): Promise<string> {
   const staged = changes.files.filter((f) => f.staged !== null)
     .map((f) => [f.path, f.oldPath ?? "", f.x, f.y, f.staged!.added, f.staged!.removed].join("\u0000"))
     .sort();
-  return JSON.stringify([changes.branch.head, changes.branch.oid, staged]);
+  return JSON.stringify([changes.branch.head, changes.branch.oid, staged, await gitWorkflowService.stagedIndexSignature(repo)]);
 }
 
 export async function gitCommit(ctx: ToolContext, args: Record<string, unknown>): Promise<Json> {
@@ -178,7 +178,12 @@ export async function gitCommit(ctx: ToolContext, args: Record<string, unknown>)
   const last = changes.lastCommit;
   if (amend.value && !last) return errorResult("There is no commit to amend.");
 
-  const signature = stagedSignature(changes);
+  let signature: string;
+  try {
+    signature = await stagedSignature(got.scope.path, changes);
+  } catch (e) {
+    return errorResult(`PPM could not read the staged content: ${(e as Error).message}`);
+  }
   const refused = await askFirst(ctx, GIT_COMMIT_TOOL, { ...repoLabel(got.scope), message, amend: amend.value, signoff: signoff.value }, gitCommitSummary({
     target: cardTarget(got.scope, changes),
     files: staged.map((f) => ({ path: f.path, ...(f.oldPath ? { oldPath: f.oldPath } : {}), x: f.x })),
@@ -191,7 +196,8 @@ export async function gitCommit(ctx: ToolContext, args: Record<string, unknown>)
   // The card may have waited for hours: commit only what it showed, on the commit it showed.
   const again = await readChanges(ctx.callRoute, got.scope);
   if (!again.ok) return again.result;
-  if (stagedSignature(again.changes) !== signature) {
+  const signatureAgain = await stagedSignature(got.scope.path, again.changes).catch(() => null);
+  if (signatureAgain !== signature) {
     return staleResult(GIT_COMMIT_TOOL, "The staged files or the branch's last commit changed while the card waited.");
   }
   const res = await ctx.callRoute<{ hash: string }>("POST", gitRoute(got.scope, "commit"), {

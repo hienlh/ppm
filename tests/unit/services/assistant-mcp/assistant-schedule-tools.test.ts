@@ -253,6 +253,17 @@ describe("changing a schedule", () => {
     }
   });
 
+  it("is stale when the edit landed in the same second as the card's read", async () => {
+    // updated_at has one-second resolution, so an equal stamp says nothing about the fields.
+    const routes = fakeRoutes([sched()]);
+    const { ask } = asker({ verdict: "approved" }, () => {
+      routes.store.set(1, sched({ prompt: "something else" }));
+    });
+    const result = await scheduleRunNow(ctxOf(routes.callRoute, ask), { id: 1 }, deps);
+    expect(parse(result).outcome).toBe("stale");
+    expect(routes.writes()).toEqual([]);
+  });
+
   it("goes ahead when only a run's bookkeeping moved updated_at", async () => {
     const routes = fakeRoutes([sched()]);
     const { ask } = asker({ verdict: "approved" }, () => {

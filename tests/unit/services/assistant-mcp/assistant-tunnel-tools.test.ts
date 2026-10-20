@@ -100,14 +100,14 @@ describe("tunnels_status", () => {
     const result = await run(h, "tunnels_status");
     expect(h.asks).toHaveLength(0);
     const text = textOf(result);
-    for (const leak of ["SECRET", "tokenMasked", "certState", "login.tailscale", "dash.cloudflare", "100.64.0.7", "fd7a", "192.168.1.20", "victor", "127.0.0.1", "named-x", "\"ips\"", "osUser"]) {
+    for (const leak of ["SECRET", "tokenMasked", "certState", "login.tailscale", "dash.cloudflare", "100.64.0.7", "fd7a", "192.168.1.20", "victor", "127.0.0.1", "named-x", "\"ips\"", "osUser", "devbox"]) {
       expect(text).not.toContain(leak);
     }
     const out = JSON.parse(text);
     expect(out.publicLink).toEqual({ enabled: true, active: true, url: "https://ppm-now.trycloudflare.com", mode: "quick", liveMode: "quick", hostname: null, warning: null });
     expect(out.auth).toEqual({ enabled: true });
     expect(out.tailscale).toEqual({
-      installed: true, backendState: "Running", tailnet: "example.org", deviceName: "devbox",
+      installed: true, backendState: "Running", tailnet: "example.org",
       service: { name: "ppm", url: "https://ppm.tail1234.ts.net/", enabled: true, approved: true, pointsAtPpm: true },
     });
     expect(out.forwardOverTailscale).toEqual({ available: true, reason: null });

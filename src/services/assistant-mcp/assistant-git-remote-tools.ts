@@ -2,6 +2,7 @@ import type { Json } from "../mcp-http-endpoint.ts";
 import type { GitChanges, StashEntry } from "../../shared/git-changes.ts";
 import type { GitBranch } from "../../types/git.ts";
 import { assertRef } from "../git-branch-diff/branch-diff-parse.ts";
+import { gitWorkflowService, type PushTarget } from "../git-workflow/git-workflow.service.ts";
 import { GIT_BRANCH_TOOL, GIT_STASH_TOOL, GIT_SYNC_TOOL } from "../../shared/assistant-git-tool-names.ts";
 import {
   gitBranchSummary, gitFetchSummary, gitPullSummary, gitPushSummary, gitStashEntrySummary, gitStashSaveSummary,
@@ -29,6 +30,18 @@ async function afterState(ctx: ToolContext, scope: GitRepoScope): Promise<Record
 }
 
 const headSignature = (c: GitChanges): string => JSON.stringify([c.branch.head, c.branch.oid, c.branch.upstream]);
+
+/**
+ * Exactly where a push or a publish goes, read from the repository's own config. No route
+ * answers this, so it is read through the workflow service, on the path discovery returned.
+ */
+async function pushTarget(scope: GitRepoScope, publish: boolean): Promise<{ ok: true; target: PushTarget } | { ok: false; error: string }> {
+  try {
+    return { ok: true, target: publish ? await gitWorkflowService.publishTarget(scope.path) : await gitWorkflowService.upstreamPushTarget(scope.path) };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
 
 export async function gitSync(ctx: ToolContext, args: Record<string, unknown>): Promise<Json> {
   const action = args.action;
@@ -76,26 +89,36 @@ export async function gitSync(ctx: ToolContext, args: Record<string, unknown>): 
   // Push. A gone upstream is pushed to as configured, which recreates it; no upstream publishes.
   const publish = branch.upstream === null;
   if (!publish && !branch.upstreamGone && branch.ahead === 0) return errorResult(`${branch.head} has nothing to push to ${branch.upstream}.`);
+  const to = await pushTarget(scope, publish);
+  if (!to.ok) return errorResult(to.error);
   const last = changes.lastCommit;
   const refused = await askFirst(ctx, GIT_SYNC_TOOL, input, gitPushSummary({
-    target, upstream: branch.upstream, ahead: branch.ahead, behind: branch.behind,
+    target, upstream: branch.upstream, to: to.target, ahead: branch.ahead, behind: branch.behind,
     head: last ? { hash: last.hash, subject: last.subject } : null,
   }));
   if (refused) return refused;
-  // The user approved pushing these commits: anything that moved HEAD since would push others.
+  // The user approved pushing these commits there: anything that moved HEAD or the target since
+  // would push other commits, or push them somewhere else.
   const again = await readChanges(ctx.callRoute, scope);
   if (!again.ok) return again.result;
-  if (headSignature(again.changes) !== headSignature(changes)) {
-    return staleResult(GIT_SYNC_TOOL, "The branch, its last commit or its upstream changed while the card waited.");
+  const toAgain = await pushTarget(scope, publish);
+  if (headSignature(again.changes) !== headSignature(changes) || !toAgain.ok || JSON.stringify(toAgain.target) !== JSON.stringify(to.target)) {
+    return staleResult(GIT_SYNC_TOOL, "The branch, its last commit, its upstream or the remote it pushes to changed while the card waited.");
   }
+  // A push names the remote and the full refspec the card showed, so the repository's push
+  // configuration (a push remote, `push.default = matching`, a forced `remote.<r>.push`, a
+  // mirror) cannot send it anywhere else. Publish builds the same kind of refspec itself.
   const res = publish
     ? await ctx.callRoute<{ remote: string; branch: string }>("POST", gitRoute(scope, "publish"), {})
-    : await ctx.callRoute("POST", gitRoute(scope, "push"), {});
+    : await ctx.callRoute("POST", gitRoute(scope, "push"), { remote: to.target.remote, branch: to.target.refspec });
   if (!res.ok) return routeErrorResult(publish ? "Publishing failed" : "The push failed", res);
   return jsonResult({ ...repoLabel(scope), pushed: true, ...(publish ? { published: res.data } : {}), ...(await afterState(ctx, scope)) });
 }
 
-/** `name` as git checks it out, or why not: no dash first, no range, nothing git forbids. */
+/**
+ * `name` as git checks it out, or why not: no dash first, no range, nothing git forbids, and no
+ * leading `+`, which a later push would read as a forced refspec (`assertRef` refuses it).
+ */
 function refArg(value: unknown, label: string): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof value !== "string" || value.length > 250) return { ok: false, error: `\`${label}\` must be a branch name.` };
   try {
@@ -156,6 +179,8 @@ export async function gitBranch(ctx: ToolContext, args: Record<string, unknown>)
         : `There is no branch named ${name.value}, locally or on a remote. Fetch first, or create it.`);
     }
     localName = chosen.slice(chosen.indexOf("/") + 1);
+    // `origin/+main` passes as a name, but the local branch it would create is `+main`.
+    if (localName.startsWith("+")) return errorResult(`A branch name may not start with "+": ${localName}.`);
     if (local.has(localName)) {
       body = { ref: localName, mode: "checkout" };
     } else {

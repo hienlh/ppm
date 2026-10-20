@@ -55,14 +55,25 @@ describe("git approval cards", () => {
     const s = gitDiscardSummary({
       target,
       files: [
-        { path: "a.txt", untracked: false, tooLarge: false },
-        { path: "new.txt", untracked: true, tooLarge: false },
-        { path: "big.bin", untracked: false, tooLarge: true },
+        { path: "a.txt", untracked: false, notKept: null },
+        { path: "new.txt", untracked: true, notKept: null },
+        { path: "big.bin", untracked: false, notKept: "too_large" },
+        { path: "f6.bin", untracked: true, notKept: "over_total" },
       ],
     });
-    expect(s.body?.text).toBe("a.txt\nnew.txt  (new file — deleted)\nbig.bin  (over 20 MB — not kept, cannot be undone)");
-    expect(s.warning).toBe(DISCARD_KEEP_WARNING);
-    expect(s.facts.find((f) => f.label === "Cannot be undone")).toMatchObject({ value: "1 file", tone: "warning" });
+    expect(s.body?.text).toBe([
+      "a.txt",
+      "new.txt  (new file — deleted)",
+      "big.bin  (over 20 MB — not kept, cannot be undone)",
+      "f6.bin  (new file — deleted; past the 100 MB one discard keeps — not kept, cannot be undone)",
+    ].join("\n"));
+    expect(s.warning).toContain("2 files marked in the list cannot be undone");
+    expect(s.warning).toContain("keeps a copy of the rest for one day");
+    expect(s.facts.find((f) => f.label === "Cannot be undone")).toMatchObject({ value: "2 files", tone: "warning" });
+    const kept = gitDiscardSummary({ target, files: [{ path: "a.txt", untracked: false, notKept: null }] });
+    expect(kept.warning).toBe(DISCARD_KEEP_WARNING);
+    const none = gitDiscardSummary({ target, files: [{ path: "big.bin", untracked: false, notKept: "too_large" }] });
+    expect(none.warning).toContain("this discard cannot be undone");
   });
 
   it("list what an undo writes back or takes back", () => {
@@ -76,14 +87,25 @@ describe("git approval cards", () => {
   });
 
   it("say a push behind its upstream will likely be refused, and never force", () => {
-    const s = gitPushSummary({ target, upstream: "origin/main", ahead: 2, behind: 3, head: { hash: "e".repeat(40), subject: "tip" } });
+    const s = gitPushSummary({
+      target, upstream: "origin/main", ahead: 2, behind: 3, head: { hash: "e".repeat(40), subject: "tip" },
+      to: { remote: "origin", remoteBranch: "main", refspec: "refs/heads/feature:refs/heads/main" },
+    });
     expect(s.headline).toContain("Push 2 commits");
-    expect(factValue(s, "To")).toBe("origin/main");
+    expect(s.headline).toContain("to branch main on remote origin");
+    expect(factValue(s, "To")).toBe("branch main on remote origin");
+    expect(factValue(s, "Refspec")).toBe("refs/heads/feature:refs/heads/main");
     expect(factValue(s, "Force")).toContain("Never");
     expect(s.body?.text).toBe(`${"e".repeat(40)}\ntip`);
     expect(s.warning).toContain("will likely be refused. Pull first.");
-    const publish = gitPushSummary({ target, upstream: null, ahead: 0, behind: 0, head: null });
+    const publish = gitPushSummary({
+      target, upstream: null, ahead: 0, behind: 0, head: null,
+      to: { remote: "upstream", remoteBranch: "+main", refspec: "refs/heads/+main:refs/heads/+main" },
+    });
     expect(publish.headline).toContain("Publish");
+    expect(publish.headline).toContain("to remote upstream");
+    expect(factValue(publish, "To")).toBe("branch +main on remote upstream, which becomes the branch's upstream");
+    expect(factValue(publish, "Refspec")).toBe("refs/heads/+main:refs/heads/+main");
     expect(publish.body).toBeUndefined();
   });
 
