@@ -45,11 +45,18 @@ lives in the PreToolUse hook and bypass mode installs no hook; `assistantToolDec
 (`src/services/assistant/assistant-tool-policy.ts`) decides there, with the same check as a
 `canUseTool` backstop. It allows only Read, Glob and Grep that resolve inside a registered
 project and outside the private roots (`assistant-private-paths.ts`: PPM's own credential
-folders plus the login and key stores common tools keep under the home folder, which matter when
-a project is registered at or above home), ToolSearch, TodoWrite, and the Assistant's own MCP
-tools by exact name. Everything else asks: web, shell, writes, subagents, skills, other MCP
-servers, reads anywhere else. It fails closed: a path that cannot be resolved, a relative path
-with no working directory, or a Windows network path (answered without touching the disk) asks.
+folders, the login and key stores common tools keep under the home folder, and `/proc`, `/sys`
+and `/dev` on Linux — `/dev` on macOS), ToolSearch, TodoWrite, and the Assistant's own MCP
+tools by exact name. While the only registered project holding a path is the home folder or
+one above it (`/` included), the home folder's application-state area — every dot-entry
+(`.config`, `.local/share`, `.zsh_history`, `.pgpass`…), `Library`, and `AppData` on Windows —
+counts as private too, because too many tools keep logins there for a list to cover; a project
+registered inside that area (`~/.dotfiles`) reads its own tree as usual. A Glob or Grep whose
+folder holds the home folder asks. Everything else asks: web, shell, writes, subagents, skills,
+other MCP servers, reads anywhere else. A target is judged as the CLI will read it — trimmed,
+`~` expanded, `/c/…` taken as `C:` on Windows. It fails closed: a path that cannot be resolved,
+a relative path with no working directory, or a Windows network path (answered without touching
+the disk) asks.
 Codex gets its own profile (below).
 
 **The UI.** One tab type, `assistant` (`src/web/components/assistant/`): on a desktop it opens
@@ -161,7 +168,8 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 - **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
   `ui_switch_project`, and `ui_close_tab` for a tab that loses nothing. Each answers
   `previousProject` or enough to reopen what it closed, so the agent can undo — there is no
-  Undo of PPM's own.
+  Undo of PPM's own. A database table tab opens only for a relation `db_query` could read
+  unasked (see Databases below); a view that does more than read is refused, not opened.
 - **Ask first**: `db_query` for anything not proven to read, `chat_send_message`, `chat_start`
   and `chat_answer_approval` (always — the last even to deny, since a denial changes what that
   chat does next),
@@ -180,13 +188,18 @@ reach comes back from `ui_read_tab` itself, under the same rule: an editor's uns
 terminal's output, and the SQL and rows of a database tab on a SQLite file opened by path (no
 saved connection, so no *Available to the AI* setting to consult) are returned unasked inside a
 registered project and outside the private roots, and otherwise only after a card
-(`readOutsideSummary`). PPM's own folder and paths on no local drive are refused outright,
-checked before the disk is touched.
+(`readOutsideSummary`, which shows the path whole). A terminal is judged by the folder its shell
+runs in, and an untitled editor, which has no path, by its tab's project: a registered one reads
+unasked, none asks. PPM's own folder and paths on no local drive are refused outright — a file,
+a database file or a terminal's folder alike — checked before the disk is touched.
 
 Databases follow the user's per-connection choices: a connection with *Available to the AI
 chat* off (`ai_access = 0`) is neither listed, queried, opened nor read through a database tab,
 and a read-only connection never runs a write, approved or not. Every statement is audited with
-`actor = "agent"`.
+`actor = "agent"`. Opening a table tab (`ui_open_tab`) runs the same read proof on
+`SELECT * FROM <table>` first, because the grid's first page runs whatever a view does; the
+first page that tab loads is audited as the agent's (`source: "grid"`), and the user's own
+scrolling after it is not.
 
 **Old values of a write** (`assistant-write-old-rows.ts`, `assistant-sql-write-target.ts`). An
 approved UPDATE or DELETE answers `{ rowsAffected, columns, oldRows, oldRowsCapped }`: the rows it
@@ -232,7 +245,8 @@ and never includes tab content: the agent calls `ui_read_tab` when it needs that
 Assistant (`src/web/lib/commands/command-registry.ts`). Each command declares `changesData`; an
 extension's command is always treated as changing data. `ui_run_command` reads that flag from
 the device's own `list_commands` entry before anything runs, and only a run request built after
-approval carries the `approved` marker the device requires.
+approval carries the `approved` marker the device requires. That request also names the project
+the card showed (`approvedProject`): a device now showing another project refuses to run it.
 
 ## Approvals
 
@@ -459,7 +473,8 @@ started, PPM's own ports, the database profile, whether login is on), loaded laz
   address loses it, Telegram's Open in PPM buttons included; Telegram itself keeps working, so it
   can be switched back from there.
 - `tunnels_status` returns a field whitelist: no masked token, certificate state, sign-in link, IP,
-  OS user or device DNS name, and a tailnet named by an email address is replaced by its MagicDNS
+  OS user, device name or device DNS name (the name is the DNS name's first label, which the
+  tailnet beside it would complete), and a tailnet named by an email address is replaced by its MagicDNS
   suffix or left out. When the process scan for other programs' tunnels fails it says so
   (`forwardsIncomplete`, from `GET /api/tunnels?detail=1`) rather than reporting none; the
   forwards this PPM started are always listed.
@@ -593,10 +608,14 @@ means a blocked bot or a failing send still lets the push through.
 
 A session's card appears on Telegram as the same card: whichever answer comes first, in PPM or on
 the phone, wins, and the other copy loses its buttons. **Allow is offered only when the card's
-whole deciding input is on the card** — escaped, secrets hidden (the card says how many), and
-within `REVIEW_FIT_MAX` (`assistant-telegram-card-format.ts`). Otherwise the card shows a preview
-marked "Too long to review here" with Deny and Open in PPM only. Allow is a promise that the
-person saw what they allowed; a phone screen that shows half a command cannot make it.
+whole deciding input is on the card** — escaped and within `REVIEW_FIT_MAX`
+(`assistant-telegram-card-format.ts`), measured on the text before anything is hidden. Otherwise
+the card shows a preview marked "Too long to review here" with Deny and Open in PPM only. Once a
+secret-looking value had to be hidden, no card offers Allow — a command, a file write or edit, an
+MCP tool call and a prompt sent to another chat alike — because the hidden part could be the very
+thing that runs; the card says how many values it hid and offers Deny and Open in PPM. Only a
+question card keeps its choices, since answering one runs nothing by itself. Allow is a promise
+that the person saw what they allowed; a phone screen that shows half a command cannot make it.
 
 Questions show their choices as buttons (several at once: toggle, then Send); a question that
 only takes typed text points to PPM. Buttons carry random codes bound to the chat they were sent

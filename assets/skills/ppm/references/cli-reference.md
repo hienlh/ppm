@@ -43,104 +43,6 @@ Snapshot the PPM config database now
 **Options:**
 - `--json` — Output as JSON
 
-## `ppm bot`
-
-PPMBot utilities
-
-**Usage:** `ppm bot [options] [command]`
-
-### `ppm bot delegate`
-
-Delegate a task to a project subagent
-
-**Options:**
-- `--chat <id>` — Telegram chat ID
-- `--project <name>` — Project name
-- `--prompt <text>` — Enriched task prompt
-- `--timeout <ms>` — Timeout in milliseconds (default: `"900000"`)
-
-### `ppm bot task-status`
-
-Get status of a delegated task
-
-**Usage:** `ppm bot task-status [options] <id>`
-
-### `ppm bot task-result`
-
-Get full result of a completed task
-
-**Usage:** `ppm bot task-result [options] <id>`
-
-### `ppm bot tasks`
-
-List recent delegated tasks
-
-**Options:**
-- `--chat <id>` — Telegram chat ID (auto-detected if single)
-
-### `ppm bot memory`
-
-Manage cross-project memories
-
-**Usage:** `ppm bot memory [options] [command]`
-
-#### `ppm bot memory save`
-
-Save a cross-project memory
-
-**Options:**
-- `-c, --category <cat>` — Category: fact|preference|decision|architecture|issue (default: `"fact"`)
-- `-s, --session <id>` — Session ID (optional)
-
-**Usage:** `ppm bot memory save [options] <content>`
-
-#### `ppm bot memory list`
-
-List active cross-project memories
-
-**Options:**
-- `-l, --limit <n>` — Max results (default: `"30"`)
-- `--json` — Output as JSON
-
-#### `ppm bot memory forget`
-
-Delete memories matching a topic (FTS5 search)
-
-**Usage:** `ppm bot memory forget [options] <topic>`
-
-### `ppm bot project`
-
-Manage bot project context
-
-**Usage:** `ppm bot project [options] [command]`
-
-#### `ppm bot project list`
-
-List available projects
-
-**Options:**
-- `--json` — Output as JSON
-
-### `ppm bot status`
-
-Show current status and running tasks
-
-**Options:**
-- `--chat <id>` — Telegram chat ID (auto-detected if single)
-- `--json` — Output as JSON
-
-### `ppm bot version`
-
-Show PPM version
-
-### `ppm bot restart`
-
-Restart the PPM server
-
-### `ppm bot help`
-
-Show all bot CLI commands
-
 ## `ppm chat`
 
 Manage AI chat sessions
@@ -701,6 +603,9 @@ Manage registered projects
 ### `ppm projects list`
 
 List all registered projects
+
+**Options:**
+- `--json` — Output as JSON
 
 ### `ppm projects add`
 

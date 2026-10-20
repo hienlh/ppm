@@ -94,7 +94,7 @@ After setup, open the URL shown in terminal and enter your access password.
 
 - **Remote access** — a Cloudflare tunnel gives your machine a public URL (always enabled). Port forwarding opens a tunnel for any localhost dev server.
 - **PPM Cloud** *(optional)* — permanent private link to each machine, phone dashboard to see and open them, remote restart. Stores only your email, machine names and their tunnel URLs — never your code or chats. PPM works fully without it.
-- **Telegram bot (PPMBot)** — a coordinator chat that delegates project tasks to agents, keeps its own memory, and reports back.
+- **PPM Assistant** — an AI chat that works on PPM itself: finds and reads your chats, tabs and databases, starts chats, answers their approval cards after confirming with you, and tells you when a chat it watches finishes. Carry the same conversation on from Telegram. Anything that changes data asks first. See [PPM Assistant](docs/architecture/ppm-assistant.md).
 - **Jira** — per-project credentials plus watchers that poll JQL searches and notify you on new results.
 - **Notifications** — cloud push and Telegram when a turn finishes, needs approval, or asks a question.
 
@@ -159,7 +159,6 @@ ppm skills search <query>
 
 # Integrations
 ppm cloud login            # PPM Cloud (also: status, devices, alias, logout)
-ppm bot status             # Telegram coordinator (delegate, tasks, memory, ...)
 ppm jira config set <project>
 
 # Config
