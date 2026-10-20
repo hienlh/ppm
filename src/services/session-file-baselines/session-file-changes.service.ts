@@ -19,7 +19,7 @@
  * kept. Keeping, reverting and undoing those answers is `session-review-actions.ts`.
  */
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import simpleGit from "simple-git";
@@ -27,10 +27,12 @@ import { decodeText, isBinaryContent } from "../binary-content.ts";
 import { assertReadPermitted } from "../fs-ops/fs-ops-read-write.service.ts";
 import { realPathOrSelf } from "../fs-ops/fs-real-path.ts";
 import { getBranchRow } from "../session-branch.service.ts";
-import { BASELINE_MAX_BYTES, listBaselines, readBaseline, type FileBaseline } from "./session-file-baselines.service.ts";
+import { BASELINE_MAX_BYTES, baselinePaths, readBaseline, recordFile, sessionDir, type FileBaseline } from "./session-file-baselines.service.ts";
 import { clearReviewMark, findReviewMark, writeReviewMark, type ReviewMark } from "./session-review-marks.ts";
-import { hashBase, keptBlocks } from "./session-review-blocks.ts";
+import { answerRecordFiles, hashBase, keptBlocks } from "./session-review-blocks.ts";
 import { blockCalls } from "./session-file-blame.ts";
+import { historyFile } from "./session-file-history.ts";
+import { onSessionFileWritten } from "./session-file-writes.ts";
 import { computeBlocks, type BlockDiff } from "../../shared/review-blocks.ts";
 import type {
   SessionChangeStatus,
@@ -247,12 +249,137 @@ export function markReviewed(sessionId: string, compared: Compared): boolean {
 }
 
 /**
- * Lists being worked out, by session, project and paths asked. A session that touched
- * thousands of files takes minutes, and a browser that gives up on a request does not stop
- * the server working on it — so an identical ask joins the one running instead of starting
- * another beside it.
+ * Each session's list, kept between asks: one entry per file, with a stamp of what it was worked
+ * out from. Working a file out reads its "before" and its text now, diffs the two and replays
+ * its history, which on a session that touched a few thousand files took minutes per ask;
+ * stamping it is a few `stat`s. So an ask works out again only the files whose stamp moved,
+ * whoever moved them — the agent, the user's answers, an editor, a checkout — and the agent's
+ * own writes are worked out as they land and pushed to the browser (`onSessionFileChanges`).
  */
-const inFlight = new Map<string, Promise<SessionFileChange[]>>();
+interface Entry {
+  stamp: string;
+  /** Null when the file is no change of the session's, or one it may not read. */
+  change: SessionFileChange | null;
+}
+
+interface KeptList {
+  sessionId: string;
+  projectPath: string;
+  /** The lineage at the last ask, which is what an entry's stamp was taken along. */
+  chain: string[];
+  entries: Map<string, Entry>;
+  /** Asks and pushes one at a time: two would work the same file out side by side. */
+  queue: Promise<unknown>;
+}
+
+const lists = new Map<string, KeptList>();
+const LISTS_KEPT = 32;
+
+/** Work done between two hand-backs to the event loop: a first ask can take minutes. */
+const YIELD_AFTER_MS = 20;
+
+/** A 0 ms timer, not `setImmediate`: that one starves HTTP (see `file-list-index.service.ts`). */
+const breathe = () => new Promise<void>((done) => setTimeout(done, 0));
+
+function listFor(sessionId: string, projectPath: string): KeptList {
+  // By the session's directory, which names the PPM directory too.
+  const key = `${sessionDir(sessionId)}\0${resolve(projectPath)}`;
+  const list = lists.get(key) ?? { sessionId, projectPath, chain: [sessionId], entries: new Map(), queue: Promise.resolve() };
+  lists.delete(key);
+  lists.set(key, list);
+  if (lists.size > LISTS_KEPT) lists.delete(lists.keys().next().value!);
+  return list;
+}
+
+function queued<T>(list: KeptList, task: () => Promise<T>): Promise<T> {
+  const next = list.queue.then(task, task);
+  list.queue = next.catch(() => {});
+  return next;
+}
+
+function statStamp(file: string | null): string {
+  if (!file) return "";
+  try {
+    const st = statSync(file);
+    return `${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch {
+    return "-";
+  }
+}
+
+type HeadCache = Map<string, Promise<string | null>>;
+
+/** The commit HEAD names in the repository holding `dir`, once per ask and repository. */
+async function headOf(dir: string, repos: RepoCache, heads: HeadCache): Promise<string | null> {
+  const top = await repoTop(dir, repos);
+  if (!top) return null;
+  let head = heads.get(top);
+  if (!head) {
+    head = simpleGit(top).revparse(["HEAD"]).then((h) => h.trim() || null, () => null);
+    heads.set(top, head);
+  }
+  return head;
+}
+
+/**
+ * What `compare` reads for `path`, by `stat` alone: the file now; each session's "before",
+ * review mark and kept blocks along the lineage; the history the blocks are named from; and for
+ * a file with no "before", the HEAD it falls back to. Equal stamps mean an equal answer. Taken
+ * before the file is worked out, so a write landing in between moves the next stamp, not this one.
+ */
+async function stampOf(chain: string[], projectPath: string, path: string, repos: RepoCache, heads: HeadCache): Promise<string> {
+  const parts = [chain.join(","), statStamp(path)];
+  let kept = false;
+  for (const id of chain) {
+    const dir = sessionDir(id);
+    const before = dir ? statStamp(recordFile(dir, path)) : "-";
+    if (before !== "-") kept = true;
+    const answers = answerRecordFiles(id, path);
+    parts.push(before, statStamp(answers?.[0] ?? null), statStamp(answers?.[1] ?? null));
+  }
+  parts.push(statStamp(historyFile(chain[0]!, path)));
+  if (!kept && isInside(projectPath, path)) parts.push((await headOf(dirname(path), repos, heads)) ?? "");
+  return parts.join("|");
+}
+
+/** The file's entry, worked out again only when its stamp moved. */
+async function entryOf(list: KeptList, path: string, repos: RepoCache, heads: HeadCache): Promise<{ change: SessionFileChange | null; redone: boolean }> {
+  const stamp = await stampOf(list.chain, list.projectPath, path, repos, heads);
+  const held = list.entries.get(path);
+  if (held && held.stamp === stamp) return { change: held.change, redone: false };
+  // A path the guard refuses, or one that vanished mid-read, is simply not listed.
+  const change = (await compare(list.chain, list.projectPath, path, repos).catch(() => null))?.change ?? null;
+  list.entries.set(path, { stamp, change });
+  workedOut++;
+  return { change, redone: true };
+}
+
+let workedOut = 0;
+
+/** Test seam: how many files the kept lists have worked out, from scratch or again. */
+export function _sessionFilesWorkedOut(): number {
+  return workedOut;
+}
+
+/**
+ * The files the list is made of: those the session and its ancestors kept a "before" for, oldest
+ * first, then `extra`. Past the cap the newest are kept — on a session that touched thousands of
+ * files, the ones its latest turns changed are the ones being reviewed.
+ */
+function listedPaths(chain: string[], projectPath: string, extra: string[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const add = (raw: string) => {
+    if (!raw) return;
+    const path = resolve(projectPath, raw);
+    if (seen.has(path)) return;
+    seen.add(path);
+    ordered.push(path);
+  };
+  for (const id of [...chain].reverse()) for (const path of baselinePaths(id)) add(path);
+  for (const raw of extra) add(raw);
+  return ordered.length > MAX_SESSION_CHANGE_PATHS ? ordered.slice(-MAX_SESSION_CHANGE_PATHS) : ordered;
+}
 
 /** Every file the session changed: those it kept a "before" for, then any other `paths`. */
 export function sessionFileChanges(p: {
@@ -260,43 +387,93 @@ export function sessionFileChanges(p: {
   projectPath: string;
   paths?: string[];
 }): Promise<SessionFileChange[]> {
-  const key = [p.sessionId, p.projectPath, ...[...(p.paths ?? [])].sort()].join("\n");
-  const running = inFlight.get(key);
-  if (running) return running;
-  const job = computeSessionFileChanges(p).finally(() => inFlight.delete(key));
-  inFlight.set(key, job);
-  return job;
+  const list = listFor(p.sessionId, p.projectPath);
+  return queued(list, async () => {
+    list.chain = lineage(list.sessionId);
+    const repos: RepoCache = new Map();
+    const heads: HeadCache = new Map();
+    const out: SessionFileChange[] = [];
+    let since = performance.now();
+    for (const path of listedPaths(list.chain, list.projectPath, p.paths ?? [])) {
+      const { change } = await entryOf(list, path, repos, heads);
+      if (change) out.push(change);
+      if (performance.now() - since > YIELD_AFTER_MS) {
+        await breathe();
+        since = performance.now();
+      }
+    }
+    return out;
+  });
 }
 
-async function computeSessionFileChanges(p: {
+/** What a push carries: the rows of the files just worked out again, and the files no longer changed. */
+export interface SessionFileChangesPush {
   sessionId: string;
   projectPath: string;
-  paths?: string[];
-}): Promise<SessionFileChange[]> {
-  const chain = lineage(p.sessionId);
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  const add = (raw: string) => {
-    if (!raw || ordered.length >= MAX_SESSION_CHANGE_PATHS) return;
-    const path = resolve(p.projectPath, raw);
-    if (seen.has(path)) return;
-    seen.add(path);
-    ordered.push(path);
-  };
-  for (const id of [...chain].reverse()) for (const b of listBaselines(id)) add(b.path);
-  for (const raw of p.paths ?? []) add(raw);
+  files: SessionFileChange[];
+  gone: string[];
+}
 
-  const out: SessionFileChange[] = [];
-  const repos: RepoCache = new Map();
-  for (const path of ordered) {
-    try {
-      const compared = await compare(chain, p.projectPath, path, repos);
-      if (compared) out.push(compared.change);
-    } catch {
-      // A path the guard refuses, or one that vanished mid-read, is simply not listed.
-    }
+const pushListeners = new Set<(push: SessionFileChangesPush) => void>();
+
+/** Subscribe to the rows pushed after the agent changed files; returns the unsubscribe function. */
+export function onSessionFileChanges(cb: (push: SessionFileChangesPush) => void): () => void {
+  pushListeners.add(cb);
+  return () => {
+    pushListeners.delete(cb);
+  };
+}
+
+/** Folds one shell command's files, or a burst of edits, into one push. */
+const PUSH_DELAY_MS = 150;
+const written = new Map<string, Set<string>>();
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+
+onSessionFileWritten((sessionId, path) => {
+  let paths = written.get(sessionId);
+  if (!paths) written.set(sessionId, (paths = new Set()));
+  paths.add(resolve(path));
+  pushTimer ??= setTimeout(pushWritten, PUSH_DELAY_MS);
+});
+
+/** Work out again the files the agent wrote, in every kept list along whose lineage it wrote them, and push them. */
+function pushWritten(): void {
+  pushTimer = null;
+  const batch = new Map(written);
+  written.clear();
+  for (const list of lists.values()) {
+    const paths = new Set<string>();
+    for (const id of list.chain) for (const path of batch.get(id) ?? []) paths.add(path);
+    if (paths.size === 0) continue;
+    void queued(list, async () => {
+      const repos: RepoCache = new Map();
+      const heads: HeadCache = new Map();
+      const push: SessionFileChangesPush = { sessionId: list.sessionId, projectPath: list.projectPath, files: [], gone: [] };
+      for (const path of paths) {
+        const was = list.entries.get(path)?.change ?? null;
+        const { change, redone } = await entryOf(list, path, repos, heads);
+        if (!redone) continue;
+        if (change) push.files.push(change);
+        else if (was) push.gone.push(path);
+      }
+      if (push.files.length === 0 && push.gone.length === 0) return;
+      for (const cb of pushListeners) {
+        try {
+          cb(push);
+        } catch (e) {
+          console.warn(`[session-baselines] push listener failed: ${(e as Error).message}`);
+        }
+      }
+    }).catch((e) => console.warn(`[session-baselines] push failed: ${(e as Error).message}`));
   }
-  return out;
+}
+
+/** Test seam: forget every kept list and pending push. */
+export function _resetSessionFileChanges(): void {
+  lists.clear();
+  written.clear();
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = null;
 }
 
 /** Both sides of one file, for the diff editor. Null when the session did not change it. */

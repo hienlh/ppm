@@ -42,6 +42,22 @@ export interface SessionFileChange {
   base?: string;
 }
 
+/**
+ * Pushed on `/ws/global` once the agent has changed files of a session whose list the server
+ * keeps: those files' rows, and the files that are no longer changes. A browser showing the
+ * session's list puts them in place instead of asking for the list again.
+ */
+export const SESSION_FILE_CHANGES_PUSH = "session:file-changes";
+
+export interface SessionFileChangesPushEvent {
+  type: typeof SESSION_FILE_CHANGES_PUSH;
+  projectName: string;
+  sessionId: string;
+  files: SessionFileChange[];
+  /** Absolute paths. */
+  gone: string[];
+}
+
 export interface SessionBlockSummary {
   key: string;
   added: number;

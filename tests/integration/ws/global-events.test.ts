@@ -129,6 +129,32 @@ describe("global event bus", () => {
     close();
   });
 
+  it("relays the rows of a file the agent just changed, for a session whose list is kept", async () => {
+    const { recordBaseline } = await import("../../../src/services/session-file-baselines/session-file-baselines.service.ts");
+    const { observeFile } = await import("../../../src/services/session-file-baselines/session-file-history.ts");
+    const { sessionFileChanges } = await import("../../../src/services/session-file-baselines/session-file-changes.service.ts");
+    const { waitForType, close } = await connect();
+    await waitForType("global_ready");
+
+    const session = "3c9a1f2e-7b6d-4e5c-8a9b-0f1e2d3c4b5a";
+    const file = resolve(projectDir, "pushed.ts");
+    writeFileSync(file, "one\n");
+    recordBaseline(session, file, "one\n");
+    // Someone has the session's changes open: the server keeps its list.
+    expect(await sessionFileChanges({ sessionId: session, projectPath: projectDir })).toEqual([]);
+    // The agent's edit, as its PreToolUse and PostToolUse hooks record it.
+    await observeFile(session, file, "toolu_push", "before");
+    writeFileSync(file, "one\ntwo\n");
+    await observeFile(session, file, "toolu_push", "after");
+
+    const got = await waitForType("session:file-changes");
+    expect(got.projectName).toBe(PROJECT);
+    expect(got.sessionId).toBe(session);
+    expect(got.files.map((f: { path: string; blocks?: { calls?: string[] }[] }) => [f.path, f.blocks?.map((b) => b.calls)])).toEqual([[file, [["toolu_push"]]]]);
+    expect(got.gone).toEqual([]);
+    close();
+  });
+
   it("ignores a watch request for an unknown project instead of throwing", async () => {
     const { ws, waitForType, close } = await connect();
     await waitForType("global_ready");

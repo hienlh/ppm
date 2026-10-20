@@ -22,6 +22,8 @@ import { onIndexRebuilt, warmIndex } from "../../services/file-list-index.servic
 import { configService } from "../../services/config.service.ts";
 import { onDesignEvent } from "../../services/design/design-events.ts";
 import { onGitEvent } from "../../services/git-changes/git-events.ts";
+import { onSessionFileChanges } from "../../services/session-file-baselines/session-file-changes.service.ts";
+import { SESSION_FILE_CHANGES_PUSH } from "../../shared/session-file-changes.ts";
 import { subscribeLogs, unsubscribeLogs } from "../../services/logs/log-live.ts";
 import { tokenStillValid } from "../../services/agent-transcript/agent-transcript-hub-registry.ts";
 import { onIssuesChanged } from "../../services/logs/log-issues.ts";
@@ -107,6 +109,13 @@ onIndexRebuilt((projectPath, changed) => {
 // Services know the project path; browsers address projects by name, and a path no
 // registered project owns is dropped rather than broadcast.
 onGitEvent((event) => broadcastGlobalEvent(event));
+
+// The agent changed files of a session whose changes are open somewhere: just those rows, so the
+// changes bar, the turn pills and an open Review tab follow along without asking for the list.
+onSessionFileChanges(({ projectPath, sessionId, files, gone }) => {
+  const projectName = projectNameForPath(projectPath);
+  if (projectName) broadcastGlobalEvent({ type: SESSION_FILE_CHANGES_PUSH, projectName, sessionId, files, gone });
+});
 
 // The Logs window and the rail button's badge refetch the issues when this arrives.
 onIssuesChanged(() => broadcastGlobalEvent({ type: LOGS_ISSUES_CHANGED }));
