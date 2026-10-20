@@ -261,3 +261,44 @@ it("tells server-side listeners of every card that leaves, naming who answered o
     { requestId: endpointId, reason: "superseded_by_message", approved: false },
   ]);
 });
+
+it("reports an endpoint request that ended by itself as unanswered, and an answered one as answered", async () => {
+  const { chatLifecycle } = await import("../../../src/services/chat-control/chat-lifecycle.ts");
+  const s = await session();
+  const gone: Array<{ reason: string; by?: string; approved: boolean }> = [];
+  const off = chatLifecycle.on("approval_resolved", (p) => {
+    if (p.sessionId === s.id) gone.push({ reason: p.reason, by: p.by, approved: p.approved });
+  });
+  cleanups.push(off);
+  const phone = s.connect();
+  await s.say(phone.socket, { type: "message", content: "go" });
+  await until(() => phone.of("text").length > 0);
+
+  // The agent's HTTP call went away: nobody answered, so nobody may be said to have declined.
+  const call = new AbortController();
+  const withdrawn = assistantApprovalBroker.request(s.id, ASK, call.signal);
+  await until(() => phone.of("approval_request").length === 1);
+  call.abort();
+  expect((await withdrawn).verdict).toBe("withdrawn");
+
+  // Its answer window ran out: the same.
+  const prev = process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS;
+  const restore = () => { if (prev === undefined) delete process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS; else process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS = prev; };
+  cleanups.push(restore);
+  process.env.PPM_ASSISTANT_APPROVAL_TIMEOUT_MS = "120";
+  expect((await assistantApprovalBroker.request(s.id, ASK)).verdict).toBe("timeout");
+  restore();
+
+  // A device's answer is the one way a card ends as answered.
+  const asked = assistantApprovalBroker.request(s.id, ASK);
+  await until(() => phone.of("approval_request").length === 3);
+  await s.say(phone.socket, { type: "approval_response", requestId: phone.of("approval_request")[2].requestId, approved: false });
+  expect((await asked).verdict).toBe("denied");
+
+  expect(gone).toEqual([
+    { reason: "request_ended", by: undefined, approved: false },
+    { reason: "request_ended", by: undefined, approved: false },
+    { reason: "answered", by: "ws", approved: false },
+  ]);
+  expect(phone.of("approval_resolved")).toHaveLength(3);
+});

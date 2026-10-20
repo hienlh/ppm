@@ -294,6 +294,12 @@ interface SessionEntry {
    */
   turnOrigin?: ChatMessageOrigin;
   /**
+   * Messages other than a watch report that are on their way in and have not yet started or
+   * joined a turn. A cold session's first message spends a while awaiting `resumeSession` with
+   * the phase still idle; a watch report arriving then must wait rather than take that turn over.
+   */
+  messagesArriving?: number;
+  /**
    * Someone pressed Stop (or sent `/stop`) while the current turn ran: it ends as asked, not on
    * an error. Told to `turn_ended` listeners once, then cleared.
    */
@@ -606,6 +612,12 @@ function liveApprovalCard(ev: PendingApprovalEvent): LiveApprovalCard {
 
 /** Who is answering a card right now (see answerApprovalCore); undefined when nobody is. */
 let resolvingBy: ChatMessageOrigin | undefined;
+/**
+ * The endpoint request a device's answer is settling right now (see answerApprovalCore). The
+ * broker's end callback runs synchronously inside that settle, so this tells an answered request
+ * from one that ended by itself (its tool call went away, or its answer window ran out).
+ */
+let answeringEndpointRequest: string | undefined;
 
 /**
  * Every session's approval cards, provider and Assistant endpoint alike, one shown at a time
@@ -656,10 +668,13 @@ setAssistantApprovalDelivery(
     return 1;
   },
   // The request ended — answered, timed out or withdrawn — so its card goes, on every device.
+  // Only a device's answer is `answered`: a request that ended by itself was answered by nobody,
+  // and a listener relaying the card elsewhere must not report it as declined.
   (asked, requestId, approved) => {
     const sessionId = resolveMigratedSession(asked);
     const entry = activeSessions.get(sessionId);
-    if (entry && approvals.clear(sessionId, entry, requestId, APPROVAL_END.answered, { approved })) {
+    const reason = answeringEndpointRequest === requestId ? APPROVAL_END.answered : APPROVAL_END.requestEnded;
+    if (entry && approvals.clear(sessionId, entry, requestId, reason, { approved })) {
       broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
     }
   },
@@ -1367,9 +1382,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       if (evType === "done") {
         entry.turnEvents = [];
         entry.nestedBuffered = 0;
-        // The provider's own requests ended with its turn. An endpoint card stays: its tool call
-        // (a background agent's, say) is still waiting, and ends on its own when it does.
-        approvals.clearAll(sessionId, entry, APPROVAL_END.turnEnded, { only: "provider" });
+        // Cards stay through a `done`, the provider's as well as the endpoint's: a request is not
+        // tied to the turn it arrived in — a background agent asks whenever it gets there, and its
+        // tool call keeps waiting after the foreground turn ends. Each card leaves by its answer,
+        // a message the user sends instead, the consumer ending, or the session closing.
         // Clear stale compact status if turn ended without compact_boundary.
         // SDK may emit `status: compacting` without a matching boundary (deferred,
         // resolved, or errored); without this clear, UI shows stuck "Compacting…".
@@ -1473,7 +1489,8 @@ interface DeliverOpts {
 }
 
 /** A watch message finds the chat quiet, or does not go in: see {@link DeliverOpts.origin}. */
-const busyForWatch = (entry: SessionEntry): boolean => !!entry.pendingApprovalEvent || entry.phase !== "idle";
+const busyForWatch = (entry: SessionEntry): boolean =>
+  !!entry.pendingApprovalEvent || entry.phase !== "idle" || (entry.messagesArriving ?? 0) > 0;
 
 /**
  * A user's message, from the point it is valid and its sticky settings are stored: rewritten
@@ -1481,6 +1498,18 @@ const busyForWatch = (entry: SessionEntry): boolean => !!entry.pendingApprovalEv
  * pushed into the running one.
  */
 async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
+  // Counted from before the first await until the message has started or joined a turn (or was
+  // refused), so a watch report checking in between sees the chat as busy.
+  if (opts.origin === "watch") return deliverMessage(sessionId, entry, text, opts);
+  entry.messagesArriving = (entry.messagesArriving ?? 0) + 1;
+  try {
+    return await deliverMessage(sessionId, entry, text, opts);
+  } finally {
+    entry.messagesArriving = Math.max(0, (entry.messagesArriving ?? 1) - 1);
+  }
+}
+
+async function deliverMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
   const providerId = entry.providerId;
   const parsed = { content: text };
   const fromAssistant = opts.origin === "assistant";
@@ -1826,9 +1855,18 @@ function answerApprovalCore(
   try {
     // The Assistant endpoint's own request: the first device to answer settles it, and the
     // broker's end takes the card away on every device (see setAssistantApprovalDelivery).
-    if (assistantApprovalBroker.owns(requestId) && assistantApprovalBroker.settle(sessionId, requestId, approved)) {
-      recordAnswer();
-      return "answered";
+    if (assistantApprovalBroker.owns(requestId)) {
+      answeringEndpointRequest = requestId;
+      let settled: boolean;
+      try {
+        settled = assistantApprovalBroker.settle(sessionId, requestId, approved);
+      } finally {
+        answeringEndpointRequest = undefined;
+      }
+      if (settled) {
+        recordAnswer();
+        return "answered";
+      }
     }
     if (!approvals.has(entry, requestId)) {
       logSessionEvent(sessionId, "INFO", `approval_response${origin === "ws" ? "" : ` (${origin})`} for unknown request ${requestId.slice(0, 64)} refused as no longer valid`);

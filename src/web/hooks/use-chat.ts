@@ -326,6 +326,12 @@ export function useChat(
   projectNameRef.current = projectName;
   /** Toast ID for the current pending approval notification */
   const approvalToastRef = useRef<string | number | null>(null);
+  /**
+   * Cards this device marked answered before the server confirmed it: the answer is drawn at
+   * once, and taken back if the server says the request was no longer waiting (`approval_stale`).
+   * The server's own `approval_resolved` confirms a mark, whichever device's answer it carries.
+   */
+  const unconfirmedAnswersRef = useRef<Set<string>>(new Set());
   /** RAF handle for throttled syncMessages */
   const syncRafRef = useRef<number>(0);
 
@@ -524,6 +530,27 @@ export function useChat(
     syncMessages();
   }, [syncMessages]);
 
+  /**
+   * Takes back this device's own unconfirmed answer on a card the server says nothing waited on
+   * any more. Nothing ran, so the card must not keep reading as allowed or answered: it reads as
+   * not done, without the answers that were never delivered.
+   */
+  const markApprovalStale = useCallback((requestId: string) => {
+    if (!unconfirmedAnswersRef.current.delete(requestId)) return;
+    const idx = streamingEventsRef.current.findIndex(
+      (e) => e.type === "approval_request" && (e as any).requestId === requestId,
+    );
+    if (idx === -1) return;
+    const req = streamingEventsRef.current[idx] as any;
+    let input = req.input;
+    if (input && typeof input === "object" && "answers" in input) {
+      const { answers: _dropped, ...rest } = input as Record<string, unknown>;
+      input = rest;
+    }
+    streamingEventsRef.current[idx] = { ...req, approved: false, input } as ChatEvent;
+    syncMessages();
+  }, [syncMessages]);
+
   /** Process a single stream event — reused by live events and turn_events replay */
   const processStreamEvent = useCallback((data: unknown) => {
     const ev = data as any;
@@ -671,6 +698,7 @@ export function useChat(
         // Another device (or this one) answered — converge every client:
         // clear the live prompt for this requestId and merge answers into the card.
         const reqId = ev.requestId as string;
+        unconfirmedAnswersRef.current.delete(reqId);
         markApprovalAnswered(reqId, ev.approved === true, ev.answers);
         setPendingApproval((cur) => (cur && cur.requestId === reqId ? null : cur));
         if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
@@ -931,6 +959,7 @@ export function useChat(
     if ((data as any).type === "approval_stale") {
       const reqId = (data as any).requestId as string;
       setPendingApproval((cur) => (cur && cur.requestId === reqId ? null : cur));
+      markApprovalStale(reqId);
       toast.warning(typeof (data as any).message === "string" ? (data as any).message : "This approval request is no longer valid. Nothing was run.");
       return;
     }
@@ -1260,7 +1289,7 @@ export function useChat(
 
     // Route content events through processStreamEvent
     processStreamEvent(data);
-  }, [processStreamEvent, syncMessages]);
+  }, [processStreamEvent, syncMessages, markApprovalStale]);
   handleMessageRef.current = handleMessage;
 
   // The provider rides along because the server has no other way to learn it for a
@@ -1594,6 +1623,7 @@ export function useChat(
       // The card shows its answers by question text until the server's own resolution arrives.
       const card = streamingEventsRef.current.find((e) => e.type === "approval_request" && (e as any).requestId === requestId);
       const shown = answersById && card ? answersForDisplay(approvalQuestions(card as unknown as ApprovalRequest), answersById) : undefined;
+      unconfirmedAnswersRef.current.add(requestId);
       markApprovalAnswered(requestId, approved, shown);
       setPendingApproval(null);
       if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }

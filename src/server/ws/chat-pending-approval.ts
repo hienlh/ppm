@@ -141,6 +141,8 @@ export type PendingApprovals = ReturnType<typeof createPendingApprovals>;
 /** The reasons a card goes without being answered, worded for the agent that asked. */
 export const APPROVAL_END = {
   answered: { code: "answered", message: "The user answered." },
+  /** An endpoint request that ended by itself — its tool call went away, or its answer window ran out. */
+  requestEnded: { code: "request_ended", message: "The request ended before the user answered; not run." },
   turnStarted: { code: "turn_started", message: "A new turn started before the user answered; not run." },
   turnEnded: { code: "turn_ended", message: "The turn ended before the user answered; not run." },
   superseded: { code: "superseded_by_message", message: "The user sent another message instead of answering; not run." },

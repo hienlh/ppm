@@ -6,6 +6,7 @@ import { basename } from "@/lib/utils";
 import { chooseAiTabPlacement, isTabForFile } from "./ai-tab-placement";
 import { latestPreviewLoad, previewKey, waitForPreviewLoad } from "./html-preview-loads";
 import type { TabOpenRequest, TabOpenResult, TabTool } from "../../shared/tab-open-protocol";
+import { isAssistantProject } from "../../shared/assistant-project";
 
 /**
  * Opens the tab the AI asked for with `open_file` or `open_preview`, beside the chat that
@@ -113,6 +114,13 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
     const result: TabOpenResult = { type: "tab_open_result", requestId: req.requestId, ...answer };
     send(JSON.stringify(result));
   };
+  // The tab tools belong to ordinary chats; an Assistant session drives the screen through its
+  // own UI tools, which ask first. A `tab_open` that reached an Assistant chat's socket, however
+  // it got there, opens nothing.
+  if (isAssistantProject(chat.projectName)) {
+    reply({ opened: false, error: "This chat is a PPM Assistant session; its device does not take tab tool requests." });
+    return;
+  }
   let opened: ReturnType<typeof openAiTab>;
   try {
     opened = openAiTab({ tool: req.tool, filePath: req.filePath, projectName: req.projectName, line: req.line }, chat);
