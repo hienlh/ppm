@@ -115,8 +115,27 @@ describe("ui_run_command", () => {
     expect(a.asks[0]!.summary.facts).toEqual([
       { label: "Command", value: "Toggle Word Wrap" }, { label: "Id", value: "word-wrap" }, { label: "Project", value: "api" },
     ]);
-    expect(d.asked[1]!.body).toEqual({ op: "run_command", args: { id: "word-wrap", approved: true, approvedLabel: "Toggle Word Wrap" } });
+    expect(d.asked[1]!.body).toEqual({
+      op: "run_command", args: { id: "word-wrap", approved: true, approvedLabel: "Toggle Word Wrap", approvedProject: "api" },
+    });
     expect(JSON.parse(text(result))).toMatchObject({ ran: true, id: "word-wrap", changesData: true });
+  });
+
+  it("binds the approval to the project on the card, and reports a device that ran it elsewhere", async () => {
+    const none = device(COMMANDS, null);
+    await uiRunCommand("s1", { id: "word-wrap" }, asker({ verdict: "approved" }).ask, none.request);
+    expect(none.asked[1]!.body.args).toMatchObject({ approvedProject: null });
+
+    // A device too old to check the project itself answers where it ran.
+    const moved = device(COMMANDS);
+    const request = async (sessionId: string, body: AssistantUiBody, waitMs: number): Promise<AssistantUiOutcome> => {
+      const answer = await moved.request(sessionId, body, waitMs);
+      if (body.op !== "run_command" || !answer.ok) return answer;
+      return { ok: true, result: { type: "assistant_ui_result", requestId: "r", ok: true, data: { ran: true, id: "word-wrap", label: "Toggle Word Wrap", project: "web" } } };
+    };
+    const result = await uiRunCommand("s1", { id: "word-wrap" }, asker({ verdict: "approved" }).ask, request);
+    expect((result as any).isError).toBe(true);
+    expect(text(result)).toContain('in "web", not in "api" as the user approved');
   });
 
   it("asks before every extension command, whatever the device reported", async () => {
@@ -126,7 +145,7 @@ describe("ui_run_command", () => {
     expect(a.asks).toHaveLength(1);
     expect(a.asks[0]!.summary.headline).toBe('Run the extension command "Pull" on your device');
     expect(a.asks[0]!.summary.warning).toContain("PPM cannot see what it changes");
-    expect(d.asked[1]!.body.args).toEqual({ id: "ext:git.pull", approved: true, approvedLabel: "Pull" });
+    expect(d.asked[1]!.body.args).toEqual({ id: "ext:git.pull", approved: true, approvedLabel: "Pull", approvedProject: "api" });
   });
 
   it("asks when the device's answer does not say false", async () => {

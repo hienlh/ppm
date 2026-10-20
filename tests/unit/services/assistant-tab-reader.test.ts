@@ -108,6 +108,36 @@ describe("reading a file tab", () => {
     expect(first.more).toContain("offset: 2000");
   });
 
+  it("sends an untitled editor's text unasked only when its tab belongs to a registered project", async () => {
+    const untitled = (project: string | null): TabDescription => ({
+      id: "editor:untitled-1", type: "editor", title: "Untitled-1", project, area: "grid",
+      editor: { untitled: true, special: false, dirty: true, unsaved: lineWindow("UNTITLED DRAFT", 0) },
+    });
+    expect(contentOf(await readDescribedTab(untitled("alpha"), 0, deps))).toMatchObject({ project: "alpha", text: "UNTITLED DRAFT" });
+    for (const project of [null, "gone"]) {
+      const outcome = await readDescribedTab(untitled(project), 0, deps);
+      expect(outcome).toMatchObject({ kind: "needs-approval", why: "outside", subject: "unsaved" });
+      expect(JSON.stringify(outcome)).not.toContain("UNTITLED DRAFT");
+      expect(contentOf(await readDescribedTab(untitled(project), 0, deps, { approved: true })).text).toBe("UNTITLED DRAFT");
+    }
+    const asks: ApprovalAsk[] = [];
+    const declined: any = await uiReadTab("s1", { tabId: "editor:untitled-1" }, async (a) => { asks.push(a); return { verdict: "denied", reason: "no" }; },
+      async () => ({ ok: true, result: { type: "assistant_ui_result", requestId: "r", ok: true, data: untitled(null) } }), deps);
+    expect(declined.content[0].text).not.toContain("UNTITLED DRAFT");
+    expect(asks[0]!.summary.headline).toBe("Read the text of an untitled editor that belongs to no registered project");
+  });
+
+  it("asks for unsaved text in the home folder's dot-entries when the project is the home folder", async () => {
+    const home = join(root, "home-project");
+    mkdirSync(join(home, ".config"), { recursive: true });
+    mkdirSync(join(home, "notes"), { recursive: true });
+    const homeDeps: TabReaderDeps = { ...deps, listProjects: () => [{ name: "home", path: home }], home: () => home };
+    const dirty = (path: string) => editor(path, "home", { dirty: true, unsaved: lineWindow("typed", 0) });
+    expect(await readDescribedTab(dirty(".config/x"), 0, homeDeps)).toMatchObject({ kind: "needs-approval", why: "private" });
+    expect(await readDescribedTab(dirty(".zsh_history"), 0, homeDeps)).toMatchObject({ kind: "needs-approval", why: "private" });
+    expect(contentOf(await readDescribedTab(dirty("notes/a.md"), 0, homeDeps)).text).toBe("typed");
+  });
+
   it("asks before sending the unsaved text of a file outside every project", async () => {
     const desc = editor(join(root, "outside.txt"), null, { dirty: true, unsaved: lineWindow("draft outside", 0) });
     const outcome = await readDescribedTab(desc, 0, deps);
@@ -276,6 +306,39 @@ describe("a file in a credential store", () => {
     }
     const ordinary = editor("src/same.ts", "alpha", { dirty: true, unsaved: lineWindow("fine", 0) });
     expect(contentOf(await readDescribedTab(ordinary, 0, privateDeps())).text).toBe("fine");
+  });
+
+  it("judges a terminal by its folder: a credential store asks even inside a project, PPM's own folder is refused", async () => {
+    const termIn = (projectPath: string): TabDescription => {
+      terminals.set(TERM, { projectPath, buffer: "TERMINAL SECRET\n" });
+      return { id: "terminal:1", type: "terminal", title: "zsh", project: "alpha", area: "dock", terminal: { sessionId: TERM } };
+    };
+    try {
+      const inStore = await readDescribedTab(termIn(join(alpha().path, ".ssh")), 0, privateDeps());
+      expect(inStore).toMatchObject({ kind: "needs-approval", why: "private", subject: "terminal", details: { folder: join(alpha().path, ".ssh") } });
+      expect(JSON.stringify(inStore)).not.toContain("TERMINAL SECRET");
+      expect(contentOf(await readDescribedTab(termIn(join(alpha().path, ".ssh")), 0, privateDeps(), { approved: true })).text).toBe("TERMINAL SECRET");
+      // Through a link inside a project into the store, too.
+      expect(await readDescribedTab(termIn(join(beta().path, "aws")), 0, privateDeps())).toMatchObject({ kind: "needs-approval", why: "private" });
+
+      for (const approved of [false, true]) {
+        const ppm = await readDescribedTab(termIn(getPpmDir()), 0, privateDeps(), { approved });
+        expect(ppm).toMatchObject({ kind: "error" });
+        expect(JSON.stringify(ppm)).not.toContain("TERMINAL SECRET");
+      }
+      expect(contentOf(await readDescribedTab(termIn(join(alpha().path, "src")), 0, privateDeps())).text).toBe("TERMINAL SECRET");
+
+      const asks: ApprovalAsk[] = [];
+      const desc = termIn(join(alpha().path, ".ssh"));
+      await uiReadTab("s1", { tabId: "terminal:1" }, async (a) => { asks.push(a); return { verdict: "denied", reason: "no" }; },
+        async () => ({ ok: true, result: { type: "assistant_ui_result", requestId: "r", ok: true, data: desc } }), privateDeps());
+      expect(asks[0]!.summary).toMatchObject({
+        headline: "Read the output of a terminal running where logins or keys are kept",
+        facts: [{ label: "Folder", value: join(alpha().path, ".ssh") }],
+      });
+    } finally {
+      terminals.clear();
+    }
   });
 
   it("asks under its own headline, and sends nothing when declined", async () => {

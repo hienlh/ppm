@@ -80,8 +80,30 @@ describe("run_command", () => {
       expect(otherLabel.error).toContain("no longer the command the user approved");
       expect(toggle).not.toHaveBeenCalled();
 
-      const approved = await ask("run_command", { id: "word-wrap", approved: true, approvedLabel: "Toggle Word Wrap" });
+      const approved = await ask("run_command", { id: "word-wrap", approved: true, approvedLabel: "Toggle Word Wrap", approvedProject: null });
       expect(approved).toMatchObject({ ok: true, data: { ran: true, id: "word-wrap" } });
+      expect(toggle).toHaveBeenCalledTimes(1);
+    } finally {
+      toggle.mockRestore();
+    }
+  });
+
+  it("runs an approved command only in the project the approval names", async () => {
+    const toggle = spyOn(useSettingsStore.getState(), "toggleWordWrap").mockImplementation(() => {});
+    const approval = { id: "word-wrap", approved: true, approvedLabel: "Toggle Word Wrap" };
+    try {
+      useProjectStore.setState({ activeProject: { name: "web", path: "/web" } as never });
+      const moved = await ask("run_command", { ...approval, approvedProject: "api" });
+      expect(moved.ok).toBe(false);
+      expect(moved.error).toContain('approved for "api", but this device now shows "web"');
+      // An approval that names no project at all is no approval for this one.
+      expect((await ask("run_command", approval)).ok).toBe(false);
+      useProjectStore.setState({ activeProject: null });
+      expect((await ask("run_command", { ...approval, approvedProject: "api" })).error).toContain("now shows no project");
+      expect(toggle).not.toHaveBeenCalled();
+
+      useProjectStore.setState({ activeProject: { name: "api", path: "/api" } as never });
+      expect(await ask("run_command", { ...approval, approvedProject: "api" })).toMatchObject({ ok: true, data: { ran: true, project: "api" } });
       expect(toggle).toHaveBeenCalledTimes(1);
     } finally {
       toggle.mockRestore();
@@ -96,7 +118,7 @@ describe("run_command", () => {
     try {
       expect((await ask("run_command", { id: "ext:git.pull" })).ok).toBe(false);
       expect(fired).toEqual([]);
-      expect((await ask("run_command", { id: "ext:git.pull", approved: true, approvedLabel: "Pull" })).ok).toBe(true);
+      expect((await ask("run_command", { id: "ext:git.pull", approved: true, approvedLabel: "Pull", approvedProject: null })).ok).toBe(true);
       expect(fired).toEqual([{ command: "git.pull", args: [] }]);
     } finally {
       window.removeEventListener("ext:command:execute", listen);

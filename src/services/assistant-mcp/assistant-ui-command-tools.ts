@@ -89,7 +89,8 @@ export async function uiListCommands(sessionId: string, args: Record<string, unk
 /**
  * `ui_run_command`. The device is asked for its entry for `id` first; an id it does not offer
  * is refused. One that changes data runs only after the user approves the card, and the run
- * request then names the label approved, so a command that changed in between does not run.
+ * request then names the label and the project approved, so a command that changed, or a device
+ * that moved to another project, in between does not run.
  */
 export async function uiRunCommand(
   sessionId: string,
@@ -117,7 +118,9 @@ export async function uiRunCommand(
       summary: runCommandSummary({ id, label: entry.label, project: listed.list.project, extension: id.startsWith(EXTENSION_PREFIX) }),
     });
     if (verdict.verdict !== "approved") return notApprovedResult("run_command", verdict, { id, label: entry.label });
-    Object.assign(runArgs, { approved: true, approvedLabel: entry.label });
+    // The project is part of what was approved: the same command switched to another project
+    // in between (by the user or another tab) would act on that one, which nobody agreed to.
+    Object.assign(runArgs, { approved: true, approvedLabel: entry.label, approvedProject: listed.list.project });
   }
 
   // Asked once and never again: a command that timed out may still have run.
@@ -131,11 +134,17 @@ export async function uiRunCommand(
   if (!outcome.result.ok) return errorResult(`The device did not run "${entry.label}": ${outcome.result.error}`);
   const data = isObj(outcome.result.data) ? outcome.result.data : {};
   if (data.ran !== true) return errorResult("The device answered, but not with a result PPM understands; check with ui_get_state.");
+  const ranIn = typeof data.project === "string" ? data.project : null;
+  // A device too old to check `approvedProject` itself still says where it ran; a mismatch is
+  // reported, never passed off as the approved run.
+  if (entry.changesData && ranIn !== listed.list.project) {
+    return errorResult(`The device ran "${entry.label}" in ${ranIn ? `"${ranIn}"` : "no project"}, not in ${listed.list.project ? `"${listed.list.project}"` : "no project"} as the user approved. Tell the user; do not run it again unasked.`);
+  }
   return jsonResult({
     ran: true,
     id,
     label: entry.label,
-    project: typeof data.project === "string" ? data.project : listed.list.project,
+    project: ranIn ?? listed.list.project,
     changesData: entry.changesData,
   });
 }

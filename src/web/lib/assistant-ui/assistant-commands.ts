@@ -67,6 +67,13 @@ export async function runAssistantCommand(args: Record<string, unknown>): Promis
     if (args.approvedLabel !== cmd.label) {
       throw new Error(`"${id}" is no longer the command the user approved (it is now "${cmd.label}"); nothing was run.`);
     }
+    // The approval named the project the command would act in; checked here, where it runs,
+    // because the user may have switched project while the card waited.
+    const project = ctx.project?.name ?? null;
+    if (args.approvedProject !== project) {
+      const named = (p: unknown) => (typeof p === "string" ? `"${p}"` : "no project");
+      throw new Error(`"${cmd.label}" was approved for ${named(args.approvedProject)}, but this device now shows ${named(project)}; nothing was run.`);
+    }
   }
   await cmd.run(ctx);
   return { ran: true, id: cmd.id, label: cmd.label, project: ctx.project?.name ?? null };

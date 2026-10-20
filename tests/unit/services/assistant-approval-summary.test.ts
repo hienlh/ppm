@@ -41,7 +41,8 @@ describe("approval summaries", () => {
     });
     expect(s.body).toEqual({ label: "Message", text, format: "text" });
     expect(s.facts).toContainEqual({ label: "Project", value: "api" });
-    expect(s.facts).toContainEqual({ label: "Chat", value: "Fix login (0b6f6a3c)" });
+    // The whole id: two Codex chats of one title started in the same minute share its first 8 characters.
+    expect(s.facts).toContainEqual({ label: "Chat", value: "Fix login (0b6f6a3c-1a7b-4d7e-9b1a-2f0f6d8e9c11)" });
     expect(s.facts).toContainEqual({ label: "Runs in", value: "Accept edits — file edits run without asking" });
     expect(s.facts).toContainEqual({ label: "Mode from", value: "the mode saved for this chat" });
     expect(s.warning).toBeUndefined();
@@ -68,6 +69,27 @@ describe("approval summaries", () => {
     const db = readOutsideSummary({ kind: "database", location: "/home/u/.aws/x.db", privateStore: true });
     expect(db.headline).toBe("Read the SQL and rows of a database file where logins or keys are kept");
     expect(db.facts).toEqual([{ label: "Database file", value: "/home/u/.aws/x.db" }]);
+    const term = readOutsideSummary({ kind: "terminal", location: "/home/u/.ssh", privateStore: true });
+    expect(term.headline).toBe("Read the output of a terminal running where logins or keys are kept");
+    const untitled = readOutsideSummary({ kind: "unsaved", location: "" });
+    expect(untitled.headline).toBe("Read the text of an untitled editor that belongs to no registered project");
+  });
+
+  it("shows a read's path whole, since a cut path could name another file", () => {
+    const long = `/home/u/${"deep/".repeat(60)}notes.txt`;
+    expect(readOutsideSummary({ kind: "unsaved", location: long }).facts).toEqual([{ label: "File", value: long }]);
+  });
+
+  it("names a target chat by its whole id, so two same-titled chats never read alike", () => {
+    // UUIDv7: the first 8 characters are the creation time, shared by chats started in one minute.
+    const a = "01963f5e-7a10-7b2c-8d3e-111111111111";
+    const b = "01963f5e-7a10-7b2c-8d3e-222222222222";
+    const chatOf = (sessionId: string) => answerApprovalSummary({
+      project: "web", sessionId, sessionTitle: "Fix login", providerId: "codex", decision: "deny",
+      deciding: decidingInput({ tool: "Bash", input: { command: "ls" } }),
+    }).facts.find((f) => f.label === "Chat")!.value;
+    expect(chatOf(a)).not.toBe(chatOf(b));
+    expect(chatOf(a)).toBe(`Fix login (${a})`);
   });
 
   it("cuts an over-long fact rather than letting it take over the card", () => {

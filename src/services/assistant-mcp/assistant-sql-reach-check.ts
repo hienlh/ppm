@@ -27,11 +27,15 @@ export type CatalogReader = (sql: string) => Promise<unknown[][]>;
 /** How long PPM waits for the catalog before asking the user instead. The server stops the read at 5 s. */
 const CATALOG_DEADLINE_MS = 10_000;
 
-/** A catalog reader on `conn`'s read-only path: pools the server keeps read-only, whatever the connection allows. Not audited — the read is PPM's own. */
-export function connectionCatalogReader(conn: ConnectionRow): CatalogReader {
-  const adapter = getAdapter(conn.type);
-  const config = { ...connConfig(conn), readonly: true };
-  return async (sql) => (await adapter.runQuery(config, sql)).rows;
+/**
+ * A catalog reader on `conn`'s read-only path: pools the server keeps read-only, whatever the
+ * connection allows. Not audited — the read is PPM's own. `database` is one of the server's other
+ * databases, as a request's `?database=` names it. The adapter and config are looked up on the
+ * first read, not here: SQLite never reads the catalog, and a lookup that fails (no adapter, no
+ * login held) then surfaces as the read's failure, which the caller already treats as "not proven".
+ */
+export function connectionCatalogReader(conn: ConnectionRow, database?: string): CatalogReader {
+  return async (sql) => (await getAdapter(conn.type).runQuery({ ...connConfig(conn, database), readonly: true }, sql)).rows;
 }
 
 function withDeadline<T>(work: Promise<T>): Promise<T> {

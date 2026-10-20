@@ -72,6 +72,17 @@ const SOURCE_LABELS: Record<ModeSource, string> = {
 
 export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? mode;
 
+/**
+ * The chat a card acts on: its title (cut like any label) and its whole id. A shortened id names
+ * nothing for certain — a Codex chat's UUIDv7 id starts with its creation time, so two chats with
+ * one title started in the same minute would read the same.
+ */
+function chatFact(title: string | null, sessionId: string): ApprovalFact {
+  if (!title) return exactFact("Chat", sessionId);
+  const name = title.length > MAX_FACT_CHARS ? `${title.slice(0, MAX_FACT_CHARS)}…` : title;
+  return exactFact("Chat", `${name} (${sessionId})`);
+}
+
 export interface ChatSendApproval {
   project: string;
   sessionId: string;
@@ -85,12 +96,11 @@ export interface ChatSendApproval {
 
 export function chatSendSummary(input: ChatSendApproval): ApprovalSummary {
   const bypass = input.mode === "bypassPermissions";
-  const chat = input.sessionTitle ? `${input.sessionTitle} (${input.sessionId.slice(0, 8)})` : input.sessionId;
   return {
     headline: `Send a message to a ${input.providerId === "codex" ? "Codex" : "Claude"} chat in "${input.project}"; it runs there as if you sent it`,
     facts: [
       fact("Project", input.project),
-      fact("Chat", chat),
+      chatFact(input.sessionTitle, input.sessionId),
       fact("Runs in", modeLabel(input.mode), bypass ? "warning" : undefined),
       fact("Mode from", SOURCE_LABELS[input.modeSource]),
     ],
@@ -164,7 +174,6 @@ export interface AnswerApprovalApproval {
  */
 export function answerApprovalSummary(input: AnswerApprovalApproval): ApprovalSummary {
   const d = input.deciding;
-  const chat = input.sessionTitle ? `${input.sessionTitle} (${input.sessionId.slice(0, 8)})` : input.sessionId;
   const question = d.kind === "question";
   const verb = question ? (input.decision === "allow" ? "Answer" : "Skip") : input.decision === "allow" ? "Allow" : "Deny";
   return {
@@ -173,7 +182,7 @@ export function answerApprovalSummary(input: AnswerApprovalApproval): ApprovalSu
       : `${verb} "${d.title}" in a ${providerLabel(input.providerId)} chat in "${input.project}"`,
     facts: [
       fact("Project", input.project),
-      fact("Chat", chat),
+      chatFact(input.sessionTitle, input.sessionId),
       { label: "Your answer", value: verb, ...(input.decision === "allow" && !question ? { tone: "warning" as const } : {}) },
       ...(question ? [] : [{ label: "Card", value: d.title }]),
       ...d.facts.map((f) => ({ label: f.label, value: f.value })),
@@ -238,7 +247,7 @@ export function runCommandSummary(input: RunCommandApproval): ApprovalSummary {
  */
 export interface ReadOutsideApproval {
   kind: "unsaved" | "terminal" | "database";
-  /** The file's path, or the folder the terminal runs in, as PPM resolved it. */
+  /** The file's path, or the folder the terminal runs in, as PPM resolved it; empty for an untitled editor. */
   location: string;
   /** The file is in a store of logins or keys, which asks even inside a registered project. */
   privateStore?: boolean;
@@ -253,10 +262,15 @@ const READ_WHAT: Record<ReadOutsideApproval["kind"], string> = {
 export function readOutsideSummary({ kind, location, privateStore }: ReadOutsideApproval): ApprovalSummary {
   const what = READ_WHAT[kind];
   return {
-    headline: privateStore && kind !== "terminal"
+    headline: privateStore
       ? `Read ${what} where logins or keys are kept`
-      : `Read ${what} outside every registered project`,
-    facts: [fact(kind === "terminal" ? "Folder" : kind === "database" ? "Database file" : "File", location)],
+      : location
+        ? `Read ${what} outside every registered project`
+        : "Read the text of an untitled editor that belongs to no registered project",
+    // Whole: a path cut at a fixed length could name another file than the one read.
+    facts: [location
+      ? exactFact(kind === "terminal" ? "Folder" : kind === "database" ? "Database file" : "File", location)
+      : fact("Editor", "untitled (never saved), in no registered project")],
     warning: "What is read is sent to the AI provider as part of this conversation.",
   };
 }

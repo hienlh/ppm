@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
-import { canonicalPath, expandHome, isInside, patternLeavesRoot } from "../design/design-tool-policy.ts";
+import { isAbsolute, join, resolve } from "node:path";
+import { canonicalPath, isInside, patternLeavesRoot } from "../design/design-tool-policy.ts";
 import { ASSISTANT_TOOLS, CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER, claudeAssistantToolName } from "../../shared/assistant-tool-names.ts";
-import { assistantPrivateRoots, isAssistantPrivatePath, privateRootWithin } from "./assistant-private-paths.ts";
+import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin } from "./assistant-private-paths.ts";
 
 /**
  * Permission policy for a PPM Assistant session's Claude tools. The Assistant reads content it
@@ -11,10 +11,12 @@ import { assistantPrivateRoots, isAssistantPrivatePath, privateRootWithin } from
  * shows. Answers "allow" only for:
  *  - Read, Glob and Grep whose target resolves inside a registered project and outside every
  *    private root (`assistant-private-paths.ts`: the PPM dir, `~/.cloudflared`, the database
- *    snapshots, and the credential stores common tools keep under the home folder) — a project
- *    registered at the home directory must not open `~/.ppm/ppm.db` or `~/.ssh` to an unasked
+ *    snapshots, the credential stores common tools keep under the home folder, `/proc`, `/sys`
+ *    and `/dev`, and — while the only project holding them is the home folder or above — the
+ *    home folder's dot-entries, `Library` and `AppData`) — a project registered at the home
+ *    directory must not open `~/.ppm/ppm.db`, `~/.ssh` or a browser's saved logins to an unasked
  *    Read. A Glob or Grep searches everything below its folder, so one whose folder *holds* a
- *    private root asks too;
+ *    private root, or the home folder, asks too;
  *  - ToolSearch and TodoWrite, which touch nothing outside the conversation;
  *  - the Assistant's own MCP tools, by exact name, which ask inside their endpoint before any change.
  * Everything else — web, shell, file writes, subagents, skills, the user's own MCP servers,
@@ -90,24 +92,40 @@ export function assistantToolDecision(
     if (typeof pattern !== "string" || !pattern || patternLeavesRoot(pattern)) return "ask";
   }
 
-  let target = record[spec.field];
-  if (target === undefined || target === null || target === "") {
+  const home = ctx.home ?? homedir();
+  const raw = record[spec.field];
+  if (raw !== undefined && raw !== null && typeof raw !== "string") return "ask";
+  let target = typeof raw === "string" ? cliPath(raw, home) : null;
+  if (target === null) {
     if (!spec.optional) return "ask";
-    target = ctx.cwd;
+    target = ctx.cwd ?? null;
   }
-  if (typeof target !== "string" || !target) return "ask";
-  const expanded = expandHome(target);
-  if (!isAbsolute(expanded) && !ctx.cwd) return "ask";
+  if (!target) return "ask";
+  if (!isAbsolute(target) && !ctx.cwd) return "ask";
 
-  const resolved = canonicalPath(ctx.cwd ? resolve(ctx.cwd, expanded) : resolve(expanded));
+  const resolved = canonicalPath(ctx.cwd ? resolve(ctx.cwd, target) : resolve(target));
   if (!resolved) return "ask";
-  const privateRoots = assistantPrivateRoots(ctx.home ?? homedir());
-  if (isAssistantPrivatePath(resolved, privateRoots)) return "ask";
+  const projectRoots = ctx.projectRoots.map(canonicalPath).filter((r): r is string => !!r);
+  const scope = assistantPrivateScope({ projectRoots, home });
+  if (isAssistantPrivatePath(resolved, scope)) return "ask";
   // Glob and Grep walk the whole tree below their folder; Read on a file walks nothing.
-  if (toolName !== "Read" && privateRootWithin(resolved, privateRoots)) return "ask";
-  for (const root of ctx.projectRoots) {
-    const canonicalRoot = canonicalPath(root);
-    if (canonicalRoot && isInside(resolved, canonicalRoot)) return "allow";
-  }
-  return "ask";
+  if (toolName !== "Read" && privateRootWithin(resolved, scope)) return "ask";
+  return projectRoots.some((root) => isInside(resolved, root)) ? "allow" : "ask";
+}
+
+/**
+ * The path the Claude Code CLI will actually open for a Read/Glob/Grep target, spelled the way
+ * its own path expansion spells it: surrounding whitespace dropped, `~` and `~/…` taken as the
+ * home folder, and on Windows a Git Bash spelling `/c/…` taken as drive `C:`. Judging the raw
+ * text instead would resolve `" /home/u/.ssh"` as a relative name inside the working directory
+ * while the CLI reads `~/.ssh`. Null for a blank value, which the CLI treats as no path at all.
+ */
+export function cliPath(raw: string, home: string, platform: string = process.platform): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed === "~") return home;
+  if (trimmed.startsWith("~/") || (platform === "win32" && trimmed.startsWith("~\\"))) return join(home, trimmed.slice(2));
+  const drive = platform === "win32" ? /^\/([a-z])\//i.exec(trimmed) : null;
+  if (drive) return `${drive[1]!.toUpperCase()}:\\${trimmed.slice(3).replace(/\//g, "\\")}`;
+  return trimmed;
 }

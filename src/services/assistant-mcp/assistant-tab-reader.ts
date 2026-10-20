@@ -12,7 +12,7 @@ import {
 import { resolveAssistantProject, resolveAssistantSessionTarget, type AssistantProject, type AssistantSessionTarget } from "./assistant-project-scope.ts";
 import { readChatPage, type ChatPage } from "./assistant-chat-page.ts";
 import { findAiConnection } from "./assistant-db-tools.ts";
-import { assistantPrivateRoots, isAssistantPrivatePath } from "../assistant/assistant-private-paths.ts";
+import { assistantPrivateScope, isAssistantPrivatePath } from "../assistant/assistant-private-paths.ts";
 import { isWindowsNonDrivePath } from "../design/design-tool-policy.ts";
 
 /**
@@ -26,7 +26,8 @@ import { isWindowsNonDrivePath } from "../design/design-tool-policy.ts";
  * every file read. What only the device holds — an editor's unsaved text — comes back too, and
  * since no read tool can reach it, the same rule is applied to it here: unsaved text of a file
  * outside every registered project, or in a credential store (`assistant-private-paths.ts`), is
- * returned only once the user approves.
+ * returned only once the user approves, and an untitled editor's text only when its tab belongs
+ * to a registered project. A terminal is judged by the folder its shell runs in, the same way.
  *
  * A database tab's SQL and rows are the device's to send. For a saved connection they are read
  * only when the user left it available to the AI — the setting `db_query` and `ui_open_tab`
@@ -55,6 +56,8 @@ export interface TabReaderDeps {
   readChat: (target: AssistantSessionTarget, opts: { limit: number; before?: number }) => Promise<ChatPage>;
   /** The private roots a file is checked against; the Assistant's own list unless a test names others. */
   privateRoots?: () => readonly string[];
+  /** The home folder whose application-state area is private; the real one unless a test names another. */
+  home?: () => string;
 }
 
 const defaultDeps: TabReaderDeps = {
@@ -125,26 +128,35 @@ async function locateFile(filePath: string, tabProject: AssistantProject | null,
   } catch {
     return refused;
   }
-  const roots = deps.privateRoots?.() ?? assistantPrivateRoots();
+  const scope = assistantPrivateScope({
+    projectRoots: deps.listProjects().map((p) => p.path),
+    ...(deps.home ? { home: deps.home() } : {}),
+    ...(deps.privateRoots ? { roots: deps.privateRoots() } : {}),
+  });
   return {
     absolute,
     owner: await projectHolding(absolute, deps),
-    privateStore: isAssistantPrivatePath(absolute, roots) || isAssistantPrivatePath(real, roots),
+    privateStore: isAssistantPrivatePath(absolute, scope) || isAssistantPrivatePath(real, scope),
   };
 }
 
-/** The approval a read of this file's content needs, or null when it may be read unasked. */
+/**
+ * The approval a read of this file's (or, for a terminal, this folder's) content needs, or null
+ * when it may be read unasked.
+ */
 function fileApproval(loc: FileLocation, subject: ReadApprovalSubject, what: string): TabReadOutcome | null {
+  const place = subject === "terminal" ? "The terminal runs" : "The file is";
+  const details = subject === "terminal" ? { folder: loc.absolute } : { path: loc.absolute };
   if (loc.privateStore) {
     return {
-      kind: "needs-approval", why: "private", subject, details: { path: loc.absolute },
-      reason: `The file is where logins or keys are kept; reading ${what} needs the user's approval.`,
+      kind: "needs-approval", why: "private", subject, details,
+      reason: `${place} where logins or keys are kept; reading ${what} needs the user's approval.`,
     };
   }
   if (!loc.owner) {
     return {
-      kind: "needs-approval", why: "outside", subject, details: { path: loc.absolute },
-      reason: `The file is outside every registered project; reading ${what} needs the user's approval.`,
+      kind: "needs-approval", why: "outside", subject, details,
+      reason: `${place} outside every registered project; reading ${what} needs the user's approval.`,
     };
   }
   return null;
@@ -155,7 +167,18 @@ async function readEditor(desc: TabDescription, deps: TabReaderDeps, approved: b
   if (!ed || ed.special) return unreadable("This editor shows a diff, a viewer or inline text, not a file.");
   const unsaved = ed.unsaved ?? { text: "", fromLine: 0, toLine: 0, totalLines: 0 };
   const more = unsaved.nextOffset !== undefined ? { more: `Read more with offset: ${unsaved.nextOffset}` } : {};
-  if (ed.untitled) return content({ source: "untitled editor text (never saved)", ...unsaved, ...more });
+  if (ed.untitled) {
+    // Never saved, so no path to judge: it is the tab's project's text when that project is
+    // registered, and otherwise belongs to no project, which asks like any read from outside one.
+    const owner = projectNamed(desc.project, deps);
+    if (!owner && !approved) {
+      return {
+        kind: "needs-approval", why: "outside", subject: "unsaved", details: {},
+        reason: "This untitled editor belongs to no registered project; reading its text needs the user's approval.",
+      };
+    }
+    return content({ project: owner?.name ?? null, source: "untitled editor text (never saved)", ...unsaved, ...more });
+  }
   if (!ed.filePath) return error("The device did not say which file this tab shows.");
   const loc = await locateFile(ed.filePath, projectNamed(desc.project, deps), deps);
   if (typeof loc === "string") return error(loc);
@@ -182,20 +205,18 @@ async function readTerminal(desc: TabDescription, offset: number, deps: TabReade
   if (!TERMINAL_ID_RE.test(id)) return error("The device named a terminal PPM does not recognise.");
   const session = deps.terminal.get(id);
   if (!session) return error("This terminal's shell has ended; there is no output left to read.");
-  const owner = await projectHolding(session.projectPath, deps);
-  if (!owner && !approved) {
-    return {
-      kind: "needs-approval",
-      why: "outside",
-      subject: "terminal",
-      reason: "This terminal runs outside every registered project; reading it needs the user's approval.",
-      details: { folder: session.projectPath },
-    };
-  }
+  // The folder a shell runs in is judged like a file: PPM's own folder is refused, and a store
+  // of logins and keys asks even inside a project — its output is whatever was printed there.
+  if (!isAbsolute(session.projectPath)) return error("This terminal's folder is not one PPM can place, so its output is not read.");
+  const loc = await locateFile(session.projectPath, null, deps);
+  if (typeof loc === "string") return error(loc);
+  const ask = approved ? null : fileApproval(loc, "terminal", "its output");
+  if (ask) return ask;
+  const owner = loc.owner;
   const lines = terminalLines(deps.terminal.getBuffer(id));
   const w = tailWindow(lines, offset);
   return content({
-    project: owner?.name ?? null, ...(owner ? {} : { folder: session.projectPath }), source: "terminal output, newest last (colours removed)",
+    project: owner?.name ?? null, ...(owner ? {} : { folder: loc.absolute }), source: "terminal output, newest last (colours removed)",
     ...w, ...(w.nextOffset !== undefined ? { more: `Read older lines with offset: ${w.nextOffset}` } : {}),
   });
 }

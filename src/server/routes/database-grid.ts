@@ -25,7 +25,8 @@ import { GridCellConflictError, GridCellGoneError, parseGridCellRequest, readGri
 import { rowsToRecords } from "../../shared/db-grid.ts";
 import { gridExportFileName, type GridExportTicket } from "../../shared/db-grid-export.ts";
 import { ok, err } from "../../types/api.ts";
-import { auditCaller, logQuery } from "./query-audit-hook.ts";
+import { auditCaller, logQuery, logQueryAs, reportAuditError, type AuditCaller, type AuditFields } from "./query-audit-hook.ts";
+import { takeAssistantTableOpen } from "../../services/assistant-mcp/assistant-open-tab-target.ts";
 import { reserveExportSlot, ticketCellDownload, ticketGridExport, TooManyExportsError } from "./database-grid-export.ts";
 import { connAudit, connTarget, databaseParam, holdRequestOpen, requestDatabase, resolveTargetConn } from "./database-route-helpers.ts";
 
@@ -90,12 +91,23 @@ databaseGridRoutes.post("/:id/grid", async (c) => {
   holdRequestOpen(c, GRID_READ_SECONDS);
 
   // Browsing a table is not audited, as it never was; filtering is, because it
-  // used to run through /query and the log should not lose those entries.
-  const audited = req.filters.length > 0 || req.anyColumn.length > 0;
+  // used to run through /query and the log should not lose those entries. The
+  // first page of a table tab the PPM Assistant opened is audited too, as the
+  // agent's: the agent chose to run that read, even though this browser sent it.
+  const filtered = req.filters.length > 0 || req.anyColumn.length > 0;
+  const identity = connAudit(conn);
+  const agentOpened = typeof identity.connectionId === "number"
+    && takeAssistantTableOpen({ connectionId: identity.connectionId, database: requestDatabase(c), schema: req.schema, table: req.table });
+  const audited = filtered || agentOpened;
+  const caller: AuditCaller = agentOpened ? { ...auditCaller(c), actor: "agent" } : auditCaller(c);
+  const audit = (fields: AuditFields) => {
+    const failed = logQueryAs(caller, fields);
+    if (failed !== null) reportAuditError(c, failed);
+  };
   const d = dialectFor(conn.type);
   const auditBase = {
-    ...connAudit(conn),
-    source: "filter" as const,
+    ...identity,
+    source: filtered ? "filter" as const : "grid" as const,
     operation: "select" as const,
     params: {
       ...databaseParam(c), table: req.table, schema: req.schema, filters: req.filters, anyColumn: req.anyColumn,
@@ -104,14 +116,14 @@ databaseGridRoutes.post("/:id/grid", async (c) => {
   };
 
   if (blocksRawSql(conn, req)) {
-    logQuery(c, { ...auditBase, sql: blockedSql(conn, req), status: "blocked", error: READONLY_RAW_SQL, durationMs: Date.now() - startedAt });
+    audit({ ...auditBase, sql: blockedSql(conn, req), status: "blocked", error: READONLY_RAW_SQL, durationMs: Date.now() - startedAt });
     return c.json(err(READONLY_RAW_SQL), 403);
   }
 
   try {
     const page = await fetchGridPage(connTarget(conn, requestDatabase(c)), req);
     if (audited) {
-      logQuery(c, {
+      audit({
         ...auditBase,
         sql: `${page.built.displaySql}\n${d.limitOffset(String(req.limit + 1), String(req.offset))}`,
         status: "ok",
@@ -126,9 +138,9 @@ databaseGridRoutes.post("/:id/grid", async (c) => {
     const message = status === 403 ? readonlyRefusalMessage(e) : (e as Error).message;
     if (audited && (status === 500 || status === 403)) {
       // The statement text is not known when the failure came before it was built; params hold the request.
-      logQuery(c, {
+      audit({
         ...auditBase,
-        sql: `SELECT * FROM ${d.qualify(req.table, req.schema)} WHERE …`,
+        sql: `SELECT * FROM ${d.qualify(req.table, req.schema)}${filtered ? " WHERE …" : ""}`,
         status: status === 403 ? "blocked" : "error",
         error: message,
         durationMs: Date.now() - startedAt,

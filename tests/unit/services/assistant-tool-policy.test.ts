@@ -12,8 +12,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
-import { assistantToolDecision } from "../../../src/services/assistant/assistant-tool-policy.ts";
-import { assistantPrivateRoots, isAssistantPrivatePath, privateRootWithin } from "../../../src/services/assistant/assistant-private-paths.ts";
+import { assistantToolDecision, cliPath } from "../../../src/services/assistant/assistant-tool-policy.ts";
+import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin } from "../../../src/services/assistant/assistant-private-paths.ts";
 import { designToolDecision, isWindowsNonDrivePath, patternLeavesRoot } from "../../../src/services/design/design-tool-policy.ts";
 
 const isWindows = process.platform === "win32";
@@ -116,21 +116,129 @@ describe("credential stores under the home folder", () => {
   });
 
   it("leave the rest of the home project readable", () => {
-    for (const file of ["notes/todo.md", "src/app.ts", ".claude/settings.json", ".codex/config.toml"]) {
+    for (const file of ["notes/todo.md", "src/app.ts"]) {
       expect(assistantToolDecision("Read", { file_path: join(home, file) }, ctx([home]))).toBe("allow");
     }
   });
 
   it("are one list, which also holds PPM's own credential roots", () => {
-    const roots = assistantPrivateRoots(home, {});
-    expect(isAssistantPrivatePath(join(home, ".ssh", "id_ed25519"), roots)).toBe(true);
-    expect(isAssistantPrivatePath(join(getPpmDir(), "ppm.db"), roots)).toBe(true);
-    expect(isAssistantPrivatePath(join(getPpmDir(), "codex-accounts", "a", "auth.json"), roots)).toBe(true);
-    expect(isAssistantPrivatePath(join(home, "notes", "todo.md"), roots)).toBe(false);
-    expect(privateRootWithin(home, roots)).not.toBeNull();
-    expect(privateRootWithin(join(home, "src"), roots)).toBeNull();
-    const relocated = assistantPrivateRoots(home, { CODEX_HOME: join(base, "codex-home") });
+    const scope = assistantPrivateScope({ projectRoots: [], home, env: {} });
+    expect(isAssistantPrivatePath(join(home, ".ssh", "id_ed25519"), scope)).toBe(true);
+    expect(isAssistantPrivatePath(join(getPpmDir(), "ppm.db"), scope)).toBe(true);
+    expect(isAssistantPrivatePath(join(getPpmDir(), "codex-accounts", "a", "auth.json"), scope)).toBe(true);
+    expect(isAssistantPrivatePath(join(home, "notes", "todo.md"), scope)).toBe(false);
+    expect(privateRootWithin(home, scope)).not.toBeNull();
+    expect(privateRootWithin(join(home, "src"), scope)).toBeNull();
+    const relocated = assistantPrivateScope({ projectRoots: [], home, env: { CODEX_HOME: join(base, "codex-home") } });
     expect(isAssistantPrivatePath(join(base, "codex-home", "auth.json"), relocated)).toBe(true);
+  });
+});
+
+describe("a project registered at the home folder or above", () => {
+  /** Stores no fixed list names, each kept in the home folder's application-state area. */
+  const STATE_FILES = [
+    ".config/x", ".local/share/keyrings/login.keyring", ".zsh_history", ".pgpass", ".vault-token", ".password-store/a.gpg",
+    ".mozilla/firefox/p/logins.json", ".config/google-chrome/Default/Login Data", ".claude/settings.json", ".codex/config.toml",
+    "Library/Application Support/Google/Chrome/Default/Cookies",
+  ];
+
+  beforeAll(() => {
+    for (const file of [...STATE_FILES, ".dotfiles/vimrc"]) {
+      mkdirSync(dirname(join(home, file)), { recursive: true });
+      writeFileSync(join(home, file), "x");
+    }
+  });
+
+  it("asks before reading anything in the home folder's dot-entries and Library", () => {
+    for (const file of [".ssh/id_ed25519", ...STATE_FILES]) {
+      expect(assistantToolDecision("Read", { file_path: join(home, file) }, ctx([home]))).toBe("ask");
+    }
+    expect(assistantToolDecision("Grep", { pattern: "x", path: join(home, ".config") }, ctx([home]))).toBe("ask");
+    expect(assistantToolDecision("Glob", { pattern: "*", path: join(home, ".local", "share") }, ctx([home]))).toBe("ask");
+  });
+
+  it("asks the same with the project at the filesystem root", () => {
+    const fsRoot = isWindows ? `${home.slice(0, 3)}` : "/";
+    for (const file of [".ssh/id_ed25519", ".config/x", ".local/share/keyrings/login.keyring", ".zsh_history"]) {
+      expect(assistantToolDecision("Read", { file_path: join(home, file) }, ctx([fsRoot]))).toBe("ask");
+    }
+    expect(assistantToolDecision("Read", { file_path: join(home, "notes", "todo.md") }, ctx([fsRoot]))).toBe("allow");
+  });
+
+  it("asks for Windows' AppData only on Windows", () => {
+    const appData = join(home, "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data");
+    const scope = (platform: string) => assistantPrivateScope({ projectRoots: [home], home, env: {}, platform });
+    expect(isAssistantPrivatePath(appData, scope("win32"))).toBe(true);
+    expect(isAssistantPrivatePath(appData, scope("linux"))).toBe(false);
+  });
+
+  it("lets a project registered inside the home folder read its own tree", () => {
+    const dotfiles = join(home, ".dotfiles");
+    expect(assistantToolDecision("Read", { file_path: join(dotfiles, "vimrc") }, ctx([home, dotfiles]))).toBe("allow");
+    expect(assistantToolDecision("Read", { file_path: join(dotfiles, "vimrc") }, ctx([dotfiles]))).toBe("allow");
+    // A fixed credential store still asks inside one.
+    const configProject = join(home, ".config");
+    expect(assistantToolDecision("Read", { file_path: join(home, ".config", "gh", "hosts.yml") }, ctx([configProject]))).toBe("ask");
+    expect(assistantToolDecision("Read", { file_path: join(home, ".config", "x") }, ctx([configProject]))).toBe("allow");
+  });
+
+  it("does not mark a file no project holds as private: it is asked as outside every project", () => {
+    const scope = assistantPrivateScope({ projectRoots: [project], home, env: {} });
+    expect(isAssistantPrivatePath(join(home, ".zsh_history"), scope)).toBe(false);
+    expect(assistantToolDecision("Read", { file_path: join(home, ".zsh_history") }, ctx([project]))).toBe("ask");
+  });
+
+  it("does not ask for a normal file inside a project away from home", () => {
+    expect(assistantToolDecision("Read", { file_path: join(project, "src", "Main.ts") }, ctx([project]))).toBe("allow");
+    expect(assistantToolDecision("Read", { file_path: join(project, "src", "Main.ts") }, ctx([project, home]))).toBe("allow");
+  });
+});
+
+describe("the system's own pseudo-filesystems", () => {
+  it("are private roots on Linux and macOS, named as such", () => {
+    const linux = assistantPrivateScope({ projectRoots: ["/"], home, env: {}, platform: "linux" });
+    for (const p of ["/proc/self/environ", "/proc/1/environ", "/sys/firmware/x", "/dev/mem"]) {
+      expect(isAssistantPrivatePath(isWindows ? `C:${p.replace(/\//g, "\\")}` : p, linux)).toBe(true);
+    }
+    const mac = assistantPrivateScope({ projectRoots: ["/"], home, env: {}, platform: "darwin" });
+    expect(isAssistantPrivatePath(isWindows ? "C:\\dev\\fd\\0" : "/dev/fd/0", mac)).toBe(true);
+    expect(isAssistantPrivatePath(isWindows ? "C:\\proc\\self\\environ" : "/proc/self/environ", mac)).toBe(false);
+  });
+
+  it.if(process.platform === "linux")("ask for /proc even with a project registered at /", () => {
+    expect(assistantToolDecision("Read", { file_path: "/proc/self/environ" }, ctx(["/"]))).toBe("ask");
+    expect(assistantToolDecision("Read", { file_path: `/proc/${process.pid}/environ` }, ctx(["/"]))).toBe("ask");
+    expect(assistantToolDecision("Grep", { pattern: "x", path: "/sys" }, ctx(["/"]))).toBe("ask");
+  });
+});
+
+describe("a target spelled the way the CLI reads it", () => {
+  it("drops surrounding whitespace before judging", () => {
+    expect(assistantToolDecision("Grep", { pattern: "x", path: ` ${join(home, ".ssh")}` }, ctx([project]))).toBe("ask");
+    expect(assistantToolDecision("Glob", { pattern: "*", path: `${join(home, ".ssh")}\n` }, ctx([project]))).toBe("ask");
+    expect(assistantToolDecision("Read", { file_path: ` ${join(project, "src", "Main.ts")} ` }, ctx([project]))).toBe("allow");
+    // Blank is no path: the working directory, which holds nothing private here.
+    expect(assistantToolDecision("Grep", { pattern: "x", path: "   " }, ctx([project]))).toBe("allow");
+    expect(assistantToolDecision("Read", { file_path: "   " }, ctx([project]))).toBe("ask");
+  });
+
+  it("expands ~ to the home folder", () => {
+    expect(cliPath("~", home)).toBe(home);
+    expect(cliPath(" ~/.ssh ", home)).toBe(join(home, ".ssh"));
+    expect(assistantToolDecision("Grep", { pattern: "x", path: " ~/.ssh" }, ctx([project, home]))).toBe("ask");
+    expect(assistantToolDecision("Read", { file_path: "~/notes/todo.md" }, ctx([home]))).toBe("allow");
+  });
+
+  it("reads /c/… as drive C: on Windows only", () => {
+    expect(cliPath("/c/Users/u/.ssh", home, "win32")).toBe("C:\\Users\\u\\.ssh");
+    expect(cliPath("/c/Users/u/.ssh", home, "linux")).toBe("/c/Users/u/.ssh");
+    expect(cliPath("/cc/x", home, "win32")).toBe("/cc/x");
+  });
+
+  it.if(isWindows)("judges a Git Bash spelling by the drive it names", () => {
+    const bash = (p: string) => `/${p[0]!.toLowerCase()}/${p.slice(3).replace(/\\/g, "/")}`;
+    expect(assistantToolDecision("Grep", { pattern: "x", path: bash(join(home, ".ssh")) }, ctx([project, home]))).toBe("ask");
+    expect(assistantToolDecision("Read", { file_path: bash(join(project, "src", "Main.ts")) }, ctx([project]))).toBe("allow");
   });
 });
 
