@@ -78,6 +78,38 @@ export function repoContainingFile(
   return best;
 }
 
+/** Where a file-scoped git call goes: `repo` as its `repo=`, `path` as its file. */
+export interface FileGitScope {
+  /** `null` means no `repo=` at all — git runs in the project folder. */
+  repo: GitRepoCandidate | null;
+  /** The file, relative to wherever git runs. */
+  path: string;
+}
+
+/**
+ * The scope for one file's git call — blame, the file diff, a blob.
+ *
+ * The file's own repository when discovery found it. When discovery found no
+ * repository anywhere, the call goes out unscoped as it always did: a project
+ * folder *inside* a repository (`<repo>/packages/web`) has no `.git` of its own
+ * and none below it, yet git run there finds the enclosing repository and
+ * answers. Refusing that case would take blame away from a layout that had it.
+ *
+ * `undefined` while discovery has not answered — not yet known, so a caller
+ * waits rather than guessing. `null` for a file under none of the repositories
+ * discovery did find: there is nothing to ask git.
+ */
+export function fileGitScope(
+  discovery: GitRepoDiscovery | undefined,
+  projectRelative: string,
+): FileGitScope | null | undefined {
+  if (!discovery) return undefined;
+  const repo = repoContainingFile(discovery, projectRelative);
+  if (repo) return { repo, path: repoRelativePath(projectRelative, repo) ?? "" };
+  if (hasNoRepo(discovery)) return { repo: null, path: repoRelativePath(projectRelative, null) ?? "" };
+  return null;
+}
+
 /** True when there is a choice to make and it has not been made. */
 export function needsPick(
   discovery: GitRepoDiscovery | undefined,

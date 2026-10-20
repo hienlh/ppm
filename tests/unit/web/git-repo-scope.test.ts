@@ -5,6 +5,7 @@ import { describe, it, expect } from "bun:test";
 import {
   resolveRepo,
   repoContainingFile,
+  fileGitScope,
   needsPick,
   hasNoRepo,
   withRepoParam,
@@ -118,6 +119,26 @@ describe("repoContainingFile", () => {
     };
     expect(repoContainingFile(nested, "apps/web/src/a.ts")?.relative).toBe("apps/web");
     expect(repoContainingFile(nested, "apps/api/a.ts")?.relative).toBe("apps");
+  });
+});
+
+describe("fileGitScope", () => {
+  it("scopes to the file's own repository", () => {
+    expect(fileGitScope(TWO, "backend/src/a.ts")).toEqual({ repo: TWO.repos[0]!, path: "src/a.ts" });
+  });
+
+  it("goes out unscoped when discovery found no repository at all", () => {
+    // A project folder inside a repository: git run there finds the enclosing one.
+    expect(fileGitScope(NONE, "./src/a.ts")).toEqual({ repo: null, path: "src/a.ts" });
+  });
+
+  it("keeps a root repository's file path as it is", () => {
+    expect(fileGitScope(ROOT, "src/a.ts")).toEqual({ repo: ROOT.repos[0]!, path: "src/a.ts" });
+  });
+
+  it("is null outside every repository found, and undefined before discovery", () => {
+    expect(fileGitScope(TWO, "docs/readme.md")).toBeNull();
+    expect(fileGitScope(undefined, "backend/a.ts")).toBeUndefined();
   });
 });
 
