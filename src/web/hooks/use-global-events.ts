@@ -7,6 +7,7 @@ import { useFileStore } from "@/stores/file-store";
 import { syncRunningSessions } from "@/lib/sync-running-sessions";
 import { syncAllKnownProjects } from "@/stores/session-list-sync-triggers";
 import { notifyGlobalReady, sendIfOpen, setGlobalWsClient } from "@/lib/global-ws-channel";
+import { SESSION_FILE_CHANGES_PUSH } from "../../shared/session-file-changes";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
  *  silent socket never gets reaped as dead. */
@@ -41,6 +42,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   login URL/state, setup progress/done/pending/error).
  * - `git:*` → re-dispatched as window events (`git:changed` after any write PPM
  *   makes to a repository, `git:commit-draft` when the shared commit message changes).
+ * - `session:file-changes` → re-dispatched as a window event: the rows of the files the agent
+ *   just changed, for the changes bar of that session (`useSessionFileChanges`).
  * - `design:*` → re-dispatched as window events (`design:history_changed`,
  *   `design:comments_changed`). A design's `.design/` folder is not watched, so these
  *   are the only signal that its snapshots or comments changed.
@@ -147,6 +150,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("agent-transcript:")
         || type.startsWith("logs:")
         || type === "agent-activity"
+        || type === SESSION_FILE_CHANGES_PUSH
       ) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));
       }
