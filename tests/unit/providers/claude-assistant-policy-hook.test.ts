@@ -12,6 +12,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 import { assistantWorkDir, ensureAssistantWorkDir } from "../../../src/services/assistant/assistant-work-dir.ts";
 import { assistantToolDecision } from "../../../src/services/assistant/assistant-tool-policy.ts";
+import { passedMcpServers } from "../../helpers/passed-mcp-servers.ts";
 
 /** A query that yields one `result` and can be closed, as the provider's cleanup expects. */
 function resultOnlyQuery() {
@@ -184,7 +185,7 @@ describe("Claude Assistant session", () => {
       tabToolsMcp: { url: "http://127.0.0.1:1/api/tab-tools-mcp", token: "t" },
       designSession: true, designMcp: { url: "http://127.0.0.1:1/api/design-mcp", token: "d" },
     });
-    expect(opts.mcpServers).toBeUndefined();
+    expect(passedMcpServers(opts)).toBeUndefined();
     expect(opts.strictMcpConfig).toBe(true);
   });
 
@@ -196,11 +197,14 @@ describe("Claude Assistant session", () => {
       assistantMcp: { url: "http://127.0.0.1:8125/api/assistant-mcp", token: "tok" },
       assistantMcpServers: [{ id: "1", name: "notes", enabled: true, transport: "stdio", command: "notes-mcp", args: [], env: { K: "v" } }],
     });
-    expect(Object.keys(opts.mcpServers)).toEqual(["notes", "ppm-assistant"]);
-    expect(opts.mcpServers["ppm-assistant"]).toEqual({
+    const servers = passedMcpServers(opts)!;
+    expect(Object.keys(servers)).toEqual(["notes", "ppm-assistant"]);
+    expect(servers["ppm-assistant"]).toEqual({
       type: "http", url: "http://127.0.0.1:8125/api/assistant-mcp", headers: { Authorization: "Bearer tok" }, timeout: 2 ** 31 - 1,
     });
-    expect(opts.mcpServers.notes).toEqual({ type: "stdio", command: "notes-mcp", args: [], env: { K: "v" } });
+    expect(servers.notes).toEqual({ type: "stdio", command: "notes-mcp", args: [], env: { K: "v" } });
+    // Neither the Assistant's token nor the user's server env reaches the CLI's command line.
+    expect(JSON.stringify(opts)).not.toContain("Bearer tok");
     expect(opts.strictMcpConfig).toBe(true);
   });
 
@@ -257,7 +261,7 @@ describe("Claude Assistant session", () => {
     const opts = mockQueryFn.mock.calls.at(-1)![0].options;
     expect(opts.strictMcpConfig).toBeUndefined();
     expect(opts.settingSources).toEqual(["user", "project"]);
-    expect(opts.mcpServers?.["ppm-assistant"]).toBeUndefined();
-    expect(opts.mcpServers?.notes).toBeUndefined();
+    expect(passedMcpServers(opts)?.["ppm-assistant"]).toBeUndefined();
+    expect(passedMcpServers(opts)?.notes).toBeUndefined();
   });
 });

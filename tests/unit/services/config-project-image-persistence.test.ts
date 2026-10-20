@@ -76,40 +76,40 @@ describe("the projects.image migration", () => {
 
 describe("a project's avatar", () => {
   it("survives a restart", () => {
-    configService.set("projects", withImage("alpha", "abc.webp"));
+    configService.set("projects", withImage("alpha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp"));
     restart();
-    expect(imageOf("alpha")).toBe("abc.webp");
+    expect(imageOf("alpha")).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp");
     expect(imageOf("beta")).toBeUndefined();
   });
 
   it("is written by a change that touches nothing but the avatar", () => {
-    configService.set("projects", withImage("beta", "def.webp"));
-    expect(storedImage("beta")).toBe("def.webp");
+    configService.set("projects", withImage("beta", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.webp"));
+    expect(storedImage("beta")).toBe("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.webp");
     expect(storedImage("alpha")).toBeNull();
   });
 
   it("set from a stale list leaves another process's edit to a different project alone", () => {
     const stale = configService.get("projects").map((p) => ({ ...p }));
-    other.query("UPDATE projects SET color = '#123456', image = 'theirs.webp' WHERE name = 'beta'").run();
-    configService.set("projects", stale.map((p) => (p.name === "alpha" ? { ...p, image: "mine.webp" } : p)));
-    expect(storedImage("alpha")).toBe("mine.webp");
-    expect(storedImage("beta")).toBe("theirs.webp");
-    expect(imageOf("beta")).toBe("theirs.webp");
+    other.query("UPDATE projects SET color = '#123456', image = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.webp' WHERE name = 'beta'").run();
+    configService.set("projects", stale.map((p) => (p.name === "alpha" ? { ...p, image: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.webp" } : p)));
+    expect(storedImage("alpha")).toBe("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.webp");
+    expect(storedImage("beta")).toBe("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.webp");
+    expect(imageOf("beta")).toBe("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.webp");
   });
 
   it("set by another process is picked up on the next read", () => {
-    other.query("UPDATE projects SET image = 'elsewhere.webp' WHERE name = 'alpha'").run();
-    expect(imageOf("alpha")).toBe("elsewhere.webp");
+    other.query("UPDATE projects SET image = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.webp' WHERE name = 'alpha'").run();
+    expect(imageOf("alpha")).toBe("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.webp");
   });
 
   it("removed by another process is gone on the next read", () => {
-    configService.set("projects", withImage("alpha", "abc.webp"));
+    configService.set("projects", withImage("alpha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp"));
     other.query("UPDATE projects SET image = NULL WHERE name = 'alpha'").run();
     expect(imageOf("alpha")).toBeUndefined();
   });
 
   it("removed here is cleared in the table and stays cleared after a restart", () => {
-    configService.set("projects", withImage("alpha", "abc.webp"));
+    configService.set("projects", withImage("alpha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp"));
     configService.set("projects", withImage("alpha", undefined));
     expect(storedImage("alpha")).toBeNull();
     restart();
@@ -117,11 +117,11 @@ describe("a project's avatar", () => {
   });
 
   it("follows a project moved to another path", () => {
-    configService.set("projects", withImage("alpha", "abc.webp"));
+    configService.set("projects", withImage("alpha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp"));
     configService.set("projects", configService.get("projects").map((p) => (p.name === "alpha" ? { ...p, path: "/p/alpha-2" } : p)));
     restart();
     const alpha = configService.get("projects").find((p) => p.name === "alpha")!;
     expect(alpha.path).toBe("/p/alpha-2");
-    expect(alpha.image).toBe("abc.webp");
+    expect(alpha.image).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp");
   });
 });

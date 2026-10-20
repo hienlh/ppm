@@ -12,7 +12,8 @@
  * the isolation contract the test suite already uses -- or opt in loudly through
  * `PPM_ALLOW_PROD_DB=1`.
  */
-import { sep } from "node:path";
+import { homedir } from "node:os";
+import { resolve, sep } from "node:path";
 
 /**
  * Entry scripts cleared to open the real database, matched as path suffixes so
@@ -29,6 +30,13 @@ const ALLOWED_ENTRYPOINTS = [
 export const PROD_DB_OVERRIDE_ENV = "PPM_ALLOW_PROD_DB";
 
 /**
+ * Names a running instance's own folder in the shells it starts (`assistantShellEnv`). Those
+ * shells also get `PPM_HOME` set to that folder, so their `ppm` commands reach that instance; the
+ * folder may be anywhere (`/srv/ppm`), so this marker is what says it is live and not scratch.
+ */
+export const LIVE_PPM_HOME_ENV = "PPM_LIVE_HOME";
+
+/**
  * Everything the decision depends on, gathered in one place so the rule can be
  * exercised without mutating process-wide state (tests that unset PPM_HOME leak
  * the real ~/.ppm into whatever runs next).
@@ -39,6 +47,18 @@ export interface ProdDbGuardContext {
   execPath: string;
   /** Raw process.argv[1], separators not yet normalised. */
   entry: string;
+  /** The real PPM folder (`~/.ppm`); defaults to the current user's. */
+  realPpmDir?: string;
+  /** `PPM_LIVE_HOME`: a running instance's folder, set in the shells that instance starts. */
+  liveHome?: string;
+}
+
+/**
+ * The real PPM folder. Deliberately the real home rather than `getPpmDir()`: the question is
+ * whether `PPM_HOME` points somewhere else, so it cannot be answered through `PPM_HOME`.
+ */
+function realPpmDir(): string {
+  return resolve(homedir(), ".ppm");
 }
 
 /** Snapshot the live process into a guard context. */
@@ -48,7 +68,27 @@ export function currentProdDbGuardContext(): ProdDbGuardContext {
     override: process.env[PROD_DB_OVERRIDE_ENV],
     execPath: process.execPath,
     entry: process.argv[1] ?? "",
+    realPpmDir: realPpmDir(),
+    liveHome: process.env[LIVE_PPM_HOME_ENV],
   };
+}
+
+function samePath(a: string, b: string): boolean {
+  const x = resolve(a);
+  const y = resolve(b);
+  return process.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/**
+ * Whether `PPM_HOME` moves the PPM folder away from every live one. A `PPM_HOME` naming the real
+ * `~/.ppm`, or the folder of the instance whose shell this is (`PPM_LIVE_HOME`), isolates
+ * nothing: a production Assistant session's shell has it set exactly so, and a script started
+ * there inherits it. A scratch folder set over it (`PPM_HOME=$(mktemp -d)`) still isolates.
+ */
+function isolatesFromLiveDirs(ctx: ProdDbGuardContext): boolean {
+  if (!ctx.ppmHome) return false;
+  if (samePath(ctx.ppmHome, ctx.realPpmDir ?? realPpmDir())) return false;
+  return !(ctx.liveHome && samePath(ctx.ppmHome, ctx.liveHome));
 }
 
 /** Entry path with separators normalised, so Windows paths match the suffixes. */
@@ -59,13 +99,15 @@ function normaliseEntry(entry: string): string {
 /**
  * Whether the described process may open the real database.
  *
- * A set `PPM_HOME` already redirects the whole PPM directory elsewhere, so the
- * caller has isolated itself and there is nothing left to protect.
+ * A `PPM_HOME` naming another folder redirects the whole PPM directory
+ * elsewhere, so the caller has isolated itself and there is nothing left to
+ * protect. One naming the real folder, or a running instance's own, is no
+ * isolation at all.
  */
 export function isAllowedProdDbEntrypoint(
   ctx: ProdDbGuardContext = currentProdDbGuardContext(),
 ): boolean {
-  if (ctx.ppmHome) return true;
+  if (isolatesFromLiveDirs(ctx)) return true;
   if (ctx.override === "1") return true;
   // A compiled binary carries its entry inside the executable, so argv[1] is not
   // a source path there. Same signal autostart-generator uses.

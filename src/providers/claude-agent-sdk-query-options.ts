@@ -5,7 +5,10 @@
 // outside this set and crashes the subprocess (notably "extra" — the app UI
 // label "Extra" must map to "xhigh" before reaching this layer).
 
-import { isAbsolute, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
+import { getPpmDir } from "../services/ppm-dir.ts";
 import type { McpHttpServerConfig, McpServerConfig, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { AssistantMcpServer } from "../shared/assistant-settings.ts";
 import {
@@ -307,6 +310,82 @@ export function assistantMcpServers(
     } as McpHttpServerConfig;
   }
   return out;
+}
+
+/** How long an MCP config file may outlive a CLI that never reported in (see below). */
+export const MCP_CONFIG_FILE_MAX_AGE_MS = 10 * 60_000;
+
+/** Folder of the CLI's MCP config files, inside this instance's PPM folder. */
+export function mcpConfigFileDir(): string {
+  return join(getPpmDir(), "claude-mcp-config");
+}
+
+/**
+ * Hand the CLI its MCP servers through a file rather than its command line.
+ *
+ * The SDK turns `mcpServers` into `--mcp-config <JSON>`, and a process's command line is readable
+ * by every local account on Linux (`/proc/<pid>/cmdline` without `hidepid`) and listed by `ps`
+ * on macOS. That JSON holds bearer tokens — the Assistant's, which reaches an endpoint mounted
+ * before auth, and the design and tab-tools ones — plus whatever headers and env the user gave
+ * their own MCP servers. `--mcp-config` takes a file path just as well, so the servers are written
+ * to a file only this user can read and the path goes on the command line instead.
+ *
+ * Protection: on POSIX the file is 0600 in a 0700 folder. On Windows the mode bits are ignored;
+ * the file inherits the ACL of the PPM folder under the user's profile, which grants the user,
+ * SYSTEM and Administrators only — the same accounts that could already read the process.
+ *
+ * The CLI reads the file while parsing its arguments and keeps the servers in memory (checked:
+ * after deleting the file, `reconnectMcpServer` and toggling a server still work), so `release`
+ * deletes it as soon as the CLI has answered its first request. Should that answer never come,
+ * the file goes after `MCP_CONFIG_FILE_MAX_AGE_MS`, and every new file sweeps older leftovers —
+ * a server that died in between leaves nothing behind for long.
+ *
+ * In-process (`sdk`) servers cannot be serialised and never reach the command line; they stay.
+ */
+export function moveMcpServersToConfigFile<P extends { options?: Record<string, any> }>(
+  params: P,
+  dir: string = mcpConfigFileDir(),
+): { params: P; release: () => void } {
+  const servers = params.options?.mcpServers as Record<string, { type?: string }> | undefined;
+  const inProcess: Record<string, unknown> = {};
+  const external: Record<string, unknown> = {};
+  for (const [name, server] of Object.entries(servers ?? {})) {
+    (server?.type === "sdk" ? inProcess : external)[name] = server;
+  }
+  if (Object.keys(external).length === 0) return { params, release: () => {} };
+
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") chmodSync(dir, 0o700);
+  sweepStaleMcpConfigFiles(dir);
+  const path = join(dir, `${randomUUID()}.json`);
+  writeFileSync(path, JSON.stringify({ mcpServers: external }), { mode: 0o600, flag: "wx" });
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const release = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    try { unlinkSync(path); } catch { /* already gone */ }
+  };
+  timer = setTimeout(release, MCP_CONFIG_FILE_MAX_AGE_MS);
+  timer.unref?.();
+
+  const { mcpServers: _moved, ...rest } = params.options!;
+  const options = {
+    ...rest,
+    ...(Object.keys(inProcess).length > 0 && { mcpServers: inProcess }),
+    extraArgs: { ...(rest.extraArgs ?? {}), "mcp-config": path },
+  };
+  return { params: { ...params, options }, release };
+}
+
+function sweepStaleMcpConfigFiles(dir: string): void {
+  const cutoff = Date.now() - MCP_CONFIG_FILE_MAX_AGE_MS;
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const path = join(dir, name);
+    try { if (statSync(path).mtimeMs < cutoff) unlinkSync(path); } catch { /* raced with its own release */ }
+  }
 }
 
 /** They only open a tab for the user to look at, so they never ask first. */

@@ -1,13 +1,15 @@
 import { Hono } from "hono";
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { projectService } from "../../services/project.service.ts";
 import { configService } from "../../services/config.service.ts";
 import { gitService } from "../../services/git.service.ts";
 import { getConfigValue, setConfigValue } from "../../services/db.service.ts";
 import { searchGitDirs } from "../../services/git-dirs.service.ts";
 import { invalidateIndexCache } from "../../services/file-list-index.service.ts";
-import { writeAvatar, deleteAvatar, avatarPath } from "../../services/avatar-storage.service.ts";
+import { writeAvatar, deleteAvatar, avatarReadPath, isAvatarFilename } from "../../services/avatar-storage.service.ts";
 import { ok, err } from "../../types/api.ts";
+import type { ProjectConfig } from "../../types/config.ts";
 import type { ProjectSettings } from "../../types/project.ts";
 
 export const projectRoutes = new Hono();
@@ -132,9 +134,8 @@ projectRoutes.patch("/:name/color", async (c) => {
 projectRoutes.post("/:name/image", async (c) => {
   try {
     const name = c.req.param("name");
-    const projects = configService.get("projects");
-    const idx = projects.findIndex((p) => p.name === name);
-    if (idx === -1) return c.json(err(`Project not found: ${name}`), 404);
+    const exists = (list: ProjectConfig[]) => list.findIndex((p) => p.name === name);
+    if (exists(configService.get("projects")) === -1) return c.json(err(`Project not found: ${name}`), 404);
 
     const form = await c.req.formData();
     const file = form.get("file");
@@ -142,6 +143,14 @@ projectRoutes.post("/:name/image", async (c) => {
     if (file.size > 2_000_000) return c.json(err("Image too large (max 2MB)"), 400);
 
     const bytes = new Uint8Array(await file.arrayBuffer());
+
+    // Read the list again now that the body is in: while it uploaded, another process (the CLI,
+    // another tab) may have added, removed or renamed projects, and a read here may have adopted
+    // that. Writing back the list read before the awaits would apply it as a revert. Nothing is
+    // awaited from here to the save.
+    const projects = configService.get("projects");
+    const idx = exists(projects);
+    if (idx === -1) return c.json(err(`Project not found: ${name}`), 404);
     const filename = writeAvatar(bytes);
 
     const old = projects[idx]!.image;
@@ -185,11 +194,12 @@ projectRoutes.get("/:name/image", async (c) => {
   const name = c.req.param("name");
   const project = configService.get("projects").find((p) => p.name === name);
   if (!project?.image) return c.json(err("No image"), 404);
-  // Defense-in-depth: filename is only ever set server-side from a hash.
-  if (/[/\\]|\.\./.test(project.image)) return c.json(err("Invalid filename"), 400);
+  // The column is also writable from the CLI; only a name `writeAvatar` could return is served.
+  if (!isAvatarFilename(project.image)) return c.json(err("Invalid filename"), 400);
 
-  const f = Bun.file(avatarPath(project.image));
-  if (!(await f.exists())) return c.json(err("No image"), 404);
+  const path = avatarReadPath(project.image);
+  if (!path) return c.json(err("No image"), 404);
+  const f = Bun.file(path);
   return new Response(f, {
     headers: {
       "Content-Type": "image/webp",
@@ -254,8 +264,24 @@ projectRoutes.patch("/:name", async (c) => {
   try {
     const name = c.req.param("name");
     const body = await c.req.json<{ name?: string; path?: string }>();
-    const updated = projectService.update(name, body);
-    return c.json(ok(updated));
+    const current = configService.get("projects").find((p) => p.name === name);
+    const newName = body.name?.trim();
+    const renames = !!current && !!newName && newName !== name;
+    const moves = !!current && !!body.path && resolve(body.path) !== current.path;
+    if (!renames || !moves) return c.json(ok(projectService.update(name, body)));
+
+    // The table recognises a moved project by its name and a renamed one by its path, so both at
+    // once would match neither: the row would be replaced, its id would change and everything
+    // keyed on it (`jira_config`) would cascade away. Move first — the step whose checks (the
+    // folder exists, is not registered) are likeliest to refuse — then rename, and put the path
+    // back if the rename is refused, so the request either does both or neither.
+    projectService.update(name, { path: body.path });
+    try {
+      return c.json(ok(projectService.update(name, { name: newName })));
+    } catch (e) {
+      try { projectService.update(name, { path: current!.path }); } catch { /* the error below matters more */ }
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }

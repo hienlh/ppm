@@ -1,12 +1,51 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { getPpmDir } from "./ppm-dir.ts";
-import { getDb } from "./db.service.ts";
+import { getDb, getDbPath } from "./db.service.ts";
 
-/** Directory holding custom project avatars. Does NOT create it. */
+/**
+ * The only shape an avatar filename may have: what `writeAvatar` returns. The `image` column can
+ * also be written by `ppm config set projects.N.image` or an extension, and the name is joined
+ * under the avatars directory to serve and to delete it — so anything else (`../ppm.db`) is
+ * refused rather than resolved.
+ */
+const AVATAR_FILENAME = /^[0-9a-f]{64}\.webp$/;
+
+export function isAvatarFilename(name: unknown): name is string {
+  return typeof name === "string" && AVATAR_FILENAME.test(name);
+}
+
+/**
+ * Directory holding custom project avatars. Does NOT create it.
+ *
+ * One per database file: `ppm.db` and `ppm.dev.db` live in the same PPM directory, and the
+ * "is this file still used?" check can only ask the database it runs on. With one shared folder,
+ * a dev server dropping its last reference deleted a picture the production database still named.
+ */
 export function getAvatarsDir(): string {
-  return join(getPpmDir(), "avatars");
+  const profile = dbProfileName();
+  return join(getPpmDir(), profile ? `avatars.${profile}` : "avatars");
+}
+
+/** "" for `ppm.db`, `dev` for `ppm.dev.db`. */
+function dbProfileName(): string {
+  const db = basename(getDbPath()).replace(/\.db$/, "");
+  return db === "ppm" ? "" : db.replace(/^ppm\./, "");
+}
+
+/**
+ * Where to read an avatar from. A profile database (`ppm.dev.db`) used to share `avatars/` with
+ * `ppm.db`, so its rows can still name a file that only exists there: such a file is read from
+ * the shared folder, and never deleted from it — the production database may name it too, and
+ * this process can only ask its own database. Null when the file is in neither.
+ */
+export function avatarReadPath(filename: string): string | null {
+  const own = avatarPath(filename);
+  if (existsSync(own)) return own;
+  if (!dbProfileName()) return null;
+  const shared = join(getPpmDir(), "avatars", filename);
+  return existsSync(shared) ? shared : null;
 }
 
 /** Ensure the avatars dir exists, return its path. */
@@ -16,8 +55,9 @@ export function ensureAvatarsDir(): string {
   return dir;
 }
 
-/** Absolute path for an avatar filename (no traversal validation — caller guards). */
+/** Absolute path for an avatar filename; throws for anything `writeAvatar` could not have named. */
 export function avatarPath(filename: string): string {
+  if (!isAvatarFilename(filename)) throw new Error("Invalid avatar filename");
   return join(getAvatarsDir(), filename);
 }
 
@@ -51,10 +91,12 @@ function avatarStillReferenced(filename: string): boolean {
 
 /**
  * Delete an avatar file once no project references it. Call it after the change that dropped the
- * reference has been saved, or the row being changed still counts. Swallows ENOENT / missing filename.
+ * reference has been saved, or the row being changed still counts. A name that is not an avatar
+ * filename is ignored, never resolved. Only this database's own folder is touched (see
+ * `avatarReadPath`). Swallows ENOENT / missing filename.
  */
 export function deleteAvatar(filename?: string): void {
-  if (!filename) return;
+  if (!isAvatarFilename(filename)) return;
   if (avatarStillReferenced(filename)) return;
   const dest = avatarPath(filename);
   try {

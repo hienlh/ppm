@@ -2,6 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
 
 // A supervisor-managed tunnel's URL lives in status.json and the supervisor
 // rewrites it on its own (quick-URL regeneration, switching to a named
@@ -15,9 +16,12 @@ describe("tunnelService.getTunnelUrl follows status.json rewrites", () => {
     home = mkdtempSync(join(tmpdir(), "ppm-tunnel-sync-"));
     prevHome = process.env.PPM_HOME;
     process.env.PPM_HOME = home;
+    // getPpmDir() keeps the first folder it resolved, and every test file shares one process.
+    _resetPpmDir();
   });
   afterAll(() => {
     if (prevHome === undefined) delete process.env.PPM_HOME; else process.env.PPM_HOME = prevHome;
+    _resetPpmDir();
     rmSync(home, { recursive: true, force: true });
   });
 

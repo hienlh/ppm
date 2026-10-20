@@ -273,7 +273,19 @@ class ConfigService {
     // No baseline on this connection (a test swapped the database under a loaded service): take
     // the list given as the whole intended list, as before.
     const base = this.projectsSync?.db === db ? this.projectsSync.base : null;
-    const { rows, dataVersion } = writeProjectChanges(db, base, projects);
+    let written: ReturnType<typeof writeProjectChanges>;
+    try {
+      written = writeProjectChanges(db, base, projects);
+    } catch (e) {
+      // The list was already put in memory (set() stores it first, and callers mutate the array
+      // get() returned). Leaving a rejected list there would list a project that was never
+      // stored, hide the ones other processes add (the refresh skips a list that differs from
+      // its baseline), and hand it to the next unrelated save — which then fails the same way,
+      // or persists it. Go back to what the table held at the last read or write.
+      if (this.projectsSync) this.config.projects = structuredClone(this.projectsSync.base);
+      throw e;
+    }
+    const { rows, dataVersion } = written;
     const adopted = rowsToProjects(rows);
     this.config.projects = adopted;
     this.projectsSync = { db, dataVersion, base: structuredClone(adopted) };

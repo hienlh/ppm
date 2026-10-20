@@ -9,8 +9,10 @@
  */
 import { describe, it, expect } from "bun:test";
 import { sep } from "node:path";
+import { assistantShellEnv } from "../../../src/services/assistant/assistant-shell-env.ts";
 import {
   isAllowedProdDbEntrypoint,
+  LIVE_PPM_HOME_ENV,
   PROD_DB_OVERRIDE_ENV,
   type ProdDbGuardContext,
 } from "../../../src/services/prod-db-guard.ts";
@@ -79,6 +81,31 @@ describe("prod DB guard", () => {
     expect(
       isAllowedProdDbEntrypoint(ctx("/home/u/ppm/probe.ts", { ppmHome: "/tmp/scratch-ppm" })),
     ).toBe(true);
+  });
+
+  it("does not take a PPM_HOME naming the real folder as isolation", () => {
+    // Every shell a production Assistant session runs has PPM_HOME set exactly so.
+    const realPpmDir = "/home/u/.ppm";
+    expect(isAllowedProdDbEntrypoint(ctx("/home/u/ppm/probe.ts", { ppmHome: "/home/u/.ppm", realPpmDir }))).toBe(false);
+    expect(isAllowedProdDbEntrypoint(ctx("/home/u/ppm/probe.ts", { ppmHome: "/home/u/.ppm/", realPpmDir }))).toBe(false);
+    // The CLI itself still reaches it from there.
+    expect(isAllowedProdDbEntrypoint(ctx("/home/u/ppm/src/index.ts", { ppmHome: "/home/u/.ppm", realPpmDir }))).toBe(true);
+  });
+
+  it("does not take the folder of the instance whose shell this is as isolation, wherever it lives", () => {
+    // A production instance run with PPM_HOME=/srv/ppm: its Assistant shells carry both.
+    const shell = { ppmHome: "/srv/ppm", liveHome: "/srv/ppm", realPpmDir: "/home/u/.ppm" };
+    expect(isAllowedProdDbEntrypoint(ctx("/home/u/ppm/probe.ts", shell))).toBe(false);
+    expect(isAllowedProdDbEntrypoint(ctx("/home/u/ppm/src/index.ts", shell))).toBe(true);
+    expect(isAllowedProdDbEntrypoint(ctx("/opt/ppm/ppm", { ...shell, execPath: "/opt/ppm/ppm" }))).toBe(true);
+    // A scratch folder set over it from that shell still isolates.
+    expect(isAllowedProdDbEntrypoint(ctx("/home/u/ppm/probe.ts", { ...shell, ppmHome: "/tmp/scratch" }))).toBe(true);
+  });
+
+  it("is what an Assistant shell is given", () => {
+    const env = assistantShellEnv();
+    expect(env[LIVE_PPM_HOME_ENV]).toBe(env.PPM_HOME);
+    expect(isAllowedProdDbEntrypoint(ctx("/home/u/ppm/probe.ts", { ppmHome: env.PPM_HOME, liveHome: env[LIVE_PPM_HOME_ENV] }))).toBe(false);
   });
 
   it("honours the explicit override", () => {

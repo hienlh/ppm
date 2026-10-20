@@ -152,23 +152,70 @@ function sameFile(a: string, b: string): boolean {
   } catch { return false; }
 }
 
-function lastRefresh(path: string): number {
+interface AuthSummary {
+  lastRefresh: number;
+  authMode: string | null;
+  /** `tokens.account_id`: the ChatGPT *workspace*, shared by every member of a Team plan. */
+  accountId: string | null;
+  /** The person signed in: the id token's `chatgpt_user_id`, else `user_id`, else `sub`. */
+  userId: string | null;
+}
+
+const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+
+/** The id token's claims. Not verified: the file is codex's own, and only identity is compared. */
+function idTokenClaims(idToken: unknown): Record<string, unknown> | null {
+  if (typeof idToken !== "string") return null;
+  const payload = idToken.split(".")[1];
+  if (!payload) return null;
   try {
-    const value = (JSON.parse(readFileSync(path, "utf8")) as { last_refresh?: unknown }).last_refresh;
-    return typeof value === "string" ? Date.parse(value) : Number.NaN;
-  } catch { return Number.NaN; }
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as unknown;
+    return claims && typeof claims === "object" ? claims as Record<string, unknown> : null;
+  } catch { return null; }
+}
+
+function readAuthSummary(path: string): AuthSummary | null {
+  try {
+    const auth = JSON.parse(readFileSync(path, "utf8")) as {
+      last_refresh?: unknown; auth_mode?: unknown; tokens?: { account_id?: unknown; id_token?: unknown } | null;
+    };
+    const claims = idTokenClaims(auth.tokens?.id_token);
+    const openai = (claims?.["https://api.openai.com/auth"] ?? null) as Record<string, unknown> | null;
+    return {
+      lastRefresh: typeof auth.last_refresh === "string" ? Date.parse(auth.last_refresh) : Number.NaN,
+      authMode: nonEmpty(auth.auth_mode),
+      accountId: nonEmpty(auth.tokens?.account_id),
+      userId: nonEmpty(openai?.chatgpt_user_id) ?? nonEmpty(openai?.user_id) ?? nonEmpty(claims?.sub),
+    };
+  } catch { return null; }
 }
 
 /**
- * Make `target` the same file as `source`. A diverged target holding a strictly newer login is
- * written back into `source` first — in place, so any other name for that file keeps it too.
+ * Whether the Assistant's diverged copy is a newer login *of the same person in the same
+ * workspace*, and so belongs in the account's file. A copy diverges when the account's auth.json
+ * was replaced rather than rewritten — a fresh `codex login`, possibly as someone else — while an
+ * Assistant app-server kept the old file open and went on refreshing it. Its date alone would
+ * then put the old login back over the new sign-in. The workspace alone is not enough either:
+ * two members of one Team plan share it. So the user and the workspace both have to match, and
+ * an identity that cannot be read never overwrites anything.
+ */
+function isNewerSameLogin(theirs: AuthSummary | null, ours: AuthSummary | null): boolean {
+  if (!theirs || !ours) return false;
+  if (!theirs.accountId || theirs.accountId !== ours.accountId) return false;
+  if (!theirs.userId || theirs.userId !== ours.userId) return false;
+  if (theirs.authMode !== ours.authMode) return false;
+  return Number.isFinite(theirs.lastRefresh) && Number.isFinite(ours.lastRefresh) && theirs.lastRefresh > ours.lastRefresh;
+}
+
+/**
+ * Make `target` the same file as `source`. A diverged target holding a strictly newer login of
+ * the same account is written back into `source` first — in place, so any other name for that
+ * file keeps it too.
  */
 function linkAuth(source: string, target: string): boolean {
   if (sameFile(source, target)) return true;
   if (lstatExists(target)) {
-    const theirs = lastRefresh(target);
-    const ours = lastRefresh(source);
-    if (Number.isFinite(theirs) && Number.isFinite(ours) && theirs > ours) {
+    if (isNewerSameLogin(readAuthSummary(target), readAuthSummary(source))) {
       writeFileSync(source, readFileSync(target));
       log.warn("assistant home held a newer Codex login than its account; written back before relinking");
     }

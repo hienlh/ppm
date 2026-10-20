@@ -23,7 +23,20 @@ import { CodexJsonRpcClient } from "../../../src/providers/codex-app-server/code
 import * as accounts from "../../../src/services/codex-account.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
 
-const auth = (lastRefresh: string, token: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: token }, last_refresh: lastRefresh });
+/** An unsigned JWT carrying the claims codex writes into `tokens.id_token`. */
+const idToken = (userId: string, accountId: string) => [
+  Buffer.from('{"alg":"none"}').toString("base64url"),
+  Buffer.from(JSON.stringify({
+    sub: `auth0|${userId}`, email: `${userId}@example.com`,
+    "https://api.openai.com/auth": { chatgpt_account_id: accountId, chatgpt_user_id: userId, user_id: userId },
+  })).toString("base64url"),
+  "sig",
+].join(".");
+const auth = (lastRefresh: string, token: string, accountId = "acct-1", userId = "user-1") => JSON.stringify({
+  auth_mode: "chatgpt",
+  tokens: { id_token: idToken(userId, accountId), refresh_token: token, account_id: accountId },
+  last_refresh: lastRefresh,
+});
 const sameFile = (a: string, b: string) => {
   const x = statSync(a, { bigint: true });
   const y = statSync(b, { bigint: true });
@@ -104,6 +117,38 @@ describe("the Assistant's CODEX_HOME", () => {
     prepared();
     expect(readFileSync(join(account, "auth.json"), "utf8")).toContain("rt-refreshed");
     expect(sameFile(join(home, "auth.json"), join(account, "auth.json"))).toBe(true);
+  });
+
+  it("never writes a newer login of another account over a fresh sign-in", () => {
+    const home = prepared();
+    // `codex logout && codex login` as someone else replaces the account's file...
+    writeFileSync(join(base, "fresh.json"), auth("2026-10-05T00:00:00Z", "rt-new-user", "acct-2"));
+    renameSync(join(base, "fresh.json"), join(account, "auth.json"));
+    // ...while an Assistant app-server still holding the old file refreshes the old account.
+    writeFileSync(join(home, "auth.json"), auth("2026-10-09T00:00:00Z", "rt-old-user", "acct-1"));
+    prepared();
+    expect(readFileSync(join(account, "auth.json"), "utf8")).toContain("rt-new-user");
+    expect(sameFile(join(home, "auth.json"), join(account, "auth.json"))).toBe(true);
+  });
+
+  it("never writes back another member of the same Team workspace over a fresh sign-in", () => {
+    const home = prepared();
+    // Same workspace (`account_id`), another person signing in on this account folder.
+    writeFileSync(join(base, "fresh.json"), auth("2026-10-05T00:00:00Z", "rt-colleague", "acct-1", "user-2"));
+    renameSync(join(base, "fresh.json"), join(account, "auth.json"));
+    writeFileSync(join(home, "auth.json"), auth("2026-10-09T00:00:00Z", "rt-old-user", "acct-1", "user-1"));
+    prepared();
+    expect(readFileSync(join(account, "auth.json"), "utf8")).toContain("rt-colleague");
+  });
+
+  it("does not write back a diverged copy whose account or user it cannot tell", () => {
+    const home = prepared();
+    for (const tokens of [{ refresh_token: "rt-anon" }, { refresh_token: "rt-anon", account_id: "acct-1" }]) {
+      unlinkSync(join(home, "auth.json"));
+      writeFileSync(join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens, last_refresh: "2026-10-09T00:00:00Z" }));
+      prepared();
+      expect(readFileSync(join(account, "auth.json"), "utf8")).toContain("rt-1");
+    }
   });
 
   it("keeps the account's login when the Assistant's diverged copy is older", () => {

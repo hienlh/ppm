@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ProjectConfig } from "../types/config.ts";
+import { isAvatarFilename } from "./avatar-storage.service.ts";
 
 /**
  * The projects table is shared by every process that opens the database — the server, and any
@@ -12,7 +13,9 @@ import type { ProjectConfig } from "../types/config.ts";
  * So a write applies only what *this* process changed — measured against `base`, the list as it
  * last read or wrote it — to the table as it stands, inside one write transaction, and the caller
  * adopts the result. Rows are matched by path; a project whose path changed is matched by name
- * to the row it moved from, so it keeps its id.
+ * to the row it moved from, so it keeps its id. A rename and a move of one project in a single
+ * write would match neither and take a new id, so `PATCH /api/projects/:name` applies such a
+ * change as a move followed by a rename.
  */
 
 export interface StoredProjectRow {
@@ -81,7 +84,7 @@ export function writeProjectChanges(db: Database, base: ProjectConfig[] | null, 
     }
     for (const m of mine) {
       if (origin.has(m)) continue;
-      // A path change keeps its name (renaming and moving at once is not offered anywhere).
+      // A path change keeps its name (a rename and a move together are written as two steps).
       const moved = before.find((b) => b.name === m.name && !claimed.has(b.path) && !minePaths.has(b.path));
       if (moved) { origin.set(m, moved); claimed.add(moved.path); }
     }
@@ -102,6 +105,10 @@ export function writeProjectChanges(db: Database, base: ProjectConfig[] | null, 
       if (b && sameStored(b, m)) continue;
       const color = m.color || null;
       const image = m.image || null;
+      // The name is later joined under the avatars folder to serve and to delete the file.
+      if (image !== null && !isAvatarFilename(image)) {
+        throw new Error(`Invalid avatar filename for project "${m.name}": expected <sha256>.webp`);
+      }
       if (b && b.path !== m.path) {
         const moved = move.run(m.path, m.name, color, image, b.path) as { changes: number };
         if (moved.changes > 0) continue;

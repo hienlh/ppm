@@ -87,6 +87,22 @@ describe("a project another process changes while the server runs", () => {
     expect(names(getProjects())).toEqual(["beta", "alpha", "gamma"]);
   });
 
+  it("a rejected write leaves neither the rejected list in memory nor every later save failing", () => {
+    const stale = heldInMemory();
+    insertElsewhere("/p/gamma", "gamma");
+    // Another project already holds that name: the write fails on the table's UNIQUE(name).
+    expect(() => configService.set("projects", [...stale, { path: "/p/gamma-2", name: "gamma" }])).toThrow();
+    expect(names(configService.get("projects"))).toEqual(["alpha", "beta", "gamma"]);
+    expect(configService.get("projects").some((p) => p.path === "/p/gamma-2")).toBe(false);
+    // An unrelated save neither fails nor persists the refused project...
+    configService.set("theme", { style: "slate", mode: "dark" });
+    configService.save();
+    expect(getProjects().some((p) => p.path === "/p/gamma-2")).toBe(false);
+    // ...and projects other processes add are listed again.
+    insertElsewhere("/p/delta", "delta");
+    expect(names(configService.get("projects"))).toEqual(["alpha", "beta", "gamma", "delta"]);
+  });
+
   it("an edit made elsewhere is not reverted by an unrelated save from a stale list", () => {
     const stale = heldInMemory();
     other.query("UPDATE projects SET color = '#123456' WHERE name = 'alpha'").run();
@@ -122,10 +138,17 @@ describe("a save keeps project rows in place", () => {
     expect(JSON.parse(getProjectSettingsJson("/p/alpha-2"))).toEqual({ k: 1 });
   });
 
+  it("refuses an avatar name that is not one PPM wrote, so it can never be joined into a path", () => {
+    const list = configService.get("projects").map((p) => (p.name === "alpha" ? { ...p, image: "../ppm.db" } : p));
+    expect(() => configService.set("projects", list)).toThrow(/Invalid avatar filename/);
+    expect(other.query("SELECT image FROM projects WHERE name = 'alpha'").get()).toEqual({ image: null });
+    expect(configService.get("projects").find((p) => p.name === "alpha")!.image).toBeUndefined();
+  });
+
   it("keeps a custom avatar in memory across a refresh caused by another process", () => {
-    configService.set("projects", configService.get("projects").map((p) => (p.name === "alpha" ? { ...p, image: "abc.webp" } : p)));
+    configService.set("projects", configService.get("projects").map((p) => (p.name === "alpha" ? { ...p, image: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp" } : p)));
     insertElsewhere("/p/gamma", "gamma");
-    expect(configService.get("projects").find((p) => p.name === "alpha")!.image).toBe("abc.webp");
+    expect(configService.get("projects").find((p) => p.name === "alpha")!.image).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp");
   });
 });
 

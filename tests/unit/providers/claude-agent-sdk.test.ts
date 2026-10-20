@@ -12,6 +12,7 @@ import { readHistory } from "../../../src/services/session-file-baselines/sessio
 import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { passedMcpServers } from "../../helpers/passed-mcp-servers.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -574,13 +575,16 @@ describe("ClaudeAgentSdkProvider", () => {
         return mockQueryFn.mock.calls[0]![0].options;
       };
       const opts = await turn({ permissionMode: "default", tabToolsMcp });
-      expect(opts.mcpServers["ppm-tabs"]).toEqual({ type: "http", url: tabToolsMcp.url, headers: { Authorization: "Bearer tok-tabs" }, timeout: 60_000 });
+      expect(passedMcpServers(opts)!["ppm-tabs"]).toEqual({ type: "http", url: tabToolsMcp.url, headers: { Authorization: "Bearer tok-tabs" }, timeout: 60_000 });
+      // Handed over in a file: the SDK would put `mcpServers` on the CLI's command line.
+      expect(opts.mcpServers).toBeUndefined();
+      expect(JSON.stringify(opts)).not.toContain("tok-tabs");
       const allow = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
       expect(await permissionHook(opts)({ tool_name: "mcp__ppm-tabs__open_preview", tool_input: { path: "a.html" } })).toEqual(allow);
       expect(await permissionHook(opts)({ tool_name: "mcp__ppm-tabs__open_file", tool_input: { path: "a.ts" } })).toEqual(allow);
-      expect((await turn({ permissionMode: "default" })).mcpServers?.["ppm-tabs"]).toBeUndefined();
+      expect(passedMcpServers(await turn({ permissionMode: "default" }))?.["ppm-tabs"]).toBeUndefined();
       const design = await turn({ designSession: true, designInstructions: "# Design mode", permissionMode: "acceptEdits", tabToolsMcp });
-      expect(design.mcpServers?.["ppm-tabs"]).toBeUndefined();
+      expect(passedMcpServers(design)?.["ppm-tabs"]).toBeUndefined();
     });
 
     describe("design session", () => {
@@ -1385,9 +1389,10 @@ describe("ClaudeAgentSdkProvider", () => {
      * while it runs (the provider hands out queued approvals as messages arrive), then answers.
      */
     function cliFactory(during?: (options: any) => Promise<void>) {
-      const clis: Array<{ options: any; pushed: any[]; close: ReturnType<typeof mock> }> = [];
+      const clis: Array<{ options: any; mcpServers: Record<string, any> | undefined; pushed: any[]; close: ReturnType<typeof mock> }> = [];
       mockQueryFn.mockImplementation(({ prompt, options }: any) => {
-        const cli = { options, pushed: [] as any[], close: mock(() => {}) };
+        // Read now: the config file goes once `initializationResult` below has answered.
+        const cli = { options, mcpServers: passedMcpServers(options), pushed: [] as any[], close: mock(() => {}) };
         clis.push(cli);
         const input = prompt[Symbol.asyncIterator]();
         return {
@@ -1439,8 +1444,11 @@ describe("ClaudeAgentSdkProvider", () => {
         const spare = clis[0]!.options;
         const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
         expect(session.id).toBe(spare.sessionId);
-        expect(tabToolsMcpTokens.resolve(spare.mcpServers["ppm-tabs"].headers.Authorization.slice("Bearer ".length)))
+        expect(tabToolsMcpTokens.resolve(clis[0]!.mcpServers!["ppm-tabs"].headers.Authorization.slice("Bearer ".length)))
           .toEqual({ sessionId: session.id });
+        // Gone once the CLI has answered its initialize request: it holds the servers in memory.
+        await Promise.resolve();
+        expect(fsExists(spare.extraArgs["mcp-config"])).toBe(false);
         // What chatService.prepareSendOptions hands the session's turn.
         await drain(provider.sendMessage(session.id, "hi", { tabToolsMcp: tabToolsMcpAccessFor(session.id)! }));
         expect(clis).toHaveLength(1);

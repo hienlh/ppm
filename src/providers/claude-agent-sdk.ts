@@ -7,7 +7,7 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
@@ -106,6 +106,25 @@ export function resolveCliExecutablePath(
 export function needsNodeInterpreter(platform: string, cliPath: string | undefined): boolean {
   if (platform !== "win32") return false;
   return cliPath == null || /\.(c|m)?js$/i.test(cliPath);
+}
+
+/**
+ * Every CLI this provider starts goes through here, so no MCP server — and no token in one —
+ * reaches the CLI's command line (`moveMcpServersToConfigFile`). The config file is deleted once
+ * the CLI answers its initialize request, which it can only do after reading its arguments.
+ */
+function startQuery(params: Parameters<typeof query>[0]): Query {
+  const { params: handed, release } = moveMcpServersToConfigFile(params);
+  let q: Query;
+  try {
+    q = query(handed);
+  } catch (e) {
+    release();
+    throw e;
+  }
+  const initialized = (q as Partial<Query>).initializationResult;
+  if (typeof initialized === "function") initialized.call(q).then(release, release);
+  return q;
 }
 
 // ── Streaming Input: message channel for persistent query ──
@@ -969,7 +988,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), input.timeoutMs ?? 90_000);
     try {
-      const run = query({
+      const run = startQuery({
         prompt: input.prompt,
         options: {
           ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" as const }),
@@ -1049,7 +1068,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.warmSpares.offer(projectPath, spawnFingerprint(withSessionTokenMasked(options)), (sessionId, callbacks) => {
       const { generator, controller } = createMessageChannel();
       const access = tabTools ? tabToolsMcpAccessFor(sessionId) : null;
-      const q = query({
+      const q = startQuery({
         prompt: generator,
         options: {
           ...options,
@@ -1557,7 +1576,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const initContent = initRetry?.lastUserContent ?? modelInput;
       const initImages = initRetry?.lastUserImages ?? opts?.images;
 
-      const initialQuery = spare?.query ?? query({
+      const initialQuery = spare?.query ?? startQuery({
         prompt: channel!.generator,
         options: {
           ...queryOptions,
@@ -1592,7 +1611,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const { generator, controller } = createMessageChannel();
         controller.push(retry.msg);
         const opts = { ...queryOptions, sessionId: undefined, resume: sessionId, env };
-        const rq = query({
+        const rq = startQuery({
           prompt: generator,
           options: { ...opts, hooks: queryHooks, canUseTool } as any,
         });
@@ -1661,7 +1680,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             retryCtrl.push(retry1.msg);
             // Retry with resume (safe even if JSONL doesn't exist yet — SDK handles gracefully)
             const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId };
-            const rq = query({
+            const rq = startQuery({
               prompt: retryGen,
               options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
             });
@@ -1747,7 +1766,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // even with resume (resume loads JSONL history, generator provides current turn)
               earlyAuthCtrl.push(retry2.msg);
               const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
-              const rq = query({
+              const rq = startQuery({
                 prompt: earlyAuthGen,
                 options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
               });
@@ -1974,7 +1993,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
                 authRetryCtrl.push(retry3.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
-                const rq = query({
+                const rq = startQuery({
                   prompt: authRetryGen,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
@@ -2012,7 +2031,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const { generator: ulRetryGen, controller: ulRetryCtrl } = createMessageChannel();
                 ulRetryCtrl.push(retryU.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: ulRetryEnv };
-                const rq = query({
+                const rq = startQuery({
                   prompt: ulRetryGen,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
@@ -2237,7 +2256,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
                 authRetryCtrl2.push(retry6.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
-                const rq = query({
+                const rq = startQuery({
                   prompt: authRetryGen2,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
@@ -2577,7 +2596,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     );
     const mcpServers = this.resolveMcpServers(cwd);
     const { generator, controller } = createMessageChannel();
-    const q = query({
+    const q = startQuery({
       prompt: generator,
       options: {
         ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),

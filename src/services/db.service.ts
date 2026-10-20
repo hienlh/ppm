@@ -1265,7 +1265,7 @@ export function runMigrations(database: Database): void {
     // mode picked in the composer. Stored rather than inferred from the project because a
     // forked or provider-migrated session must stay one, and losing the mark would drop it to
     // the provider default — usually bypass. 0 = an ordinary session, every existing row.
-    try { database.exec("ALTER TABLE session_metadata ADD COLUMN assistant INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
+    addColumnIfMissing(database, "session_metadata", "assistant", "INTEGER NOT NULL DEFAULT 0");
     database.exec(`PRAGMA user_version = 57;`);
   }
 
@@ -1308,9 +1308,24 @@ export function runMigrations(database: Database): void {
     // A project's custom avatar: the filename `writeAvatar` returned (`<sha256>.webp` under the
     // avatars directory). It used to live only in the server's memory, so every restart dropped
     // it while the file stayed on disk. Null on existing rows: none of them has one stored.
-    try { database.exec("ALTER TABLE projects ADD COLUMN image TEXT"); } catch { /* column exists */ }
+    addColumnIfMissing(database, "projects", "image", "TEXT");
     database.exec(`PRAGMA user_version = 59;`);
   }
+}
+
+/**
+ * Add a column unless the table already has it (a build that ran before this one may have added
+ * it). Any other failure — another process holding the write lock past `busy_timeout`, a full
+ * disk — is thrown, so `user_version` is not raised over a schema that lacks the column: a
+ * swallowed error there leaves a database every later start believes is complete.
+ */
+function addColumnIfMissing(database: Database, table: string, column: string, definition: string): void {
+  const columns = database.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  // No such table: nothing to add a column to. Only a partial database lacks one an earlier step
+  // created (tests build such skeletons), and that is not this step's to repair.
+  if (columns.length === 0) return;
+  if (columns.some((c) => c.name === column)) return;
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 /**
