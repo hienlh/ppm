@@ -9,7 +9,9 @@
  * was kept, or a state that was not text.
  *
  * Replays are kept, per file and per base, and only the lines a log gained since are read, so
- * asking again after every edit costs that edit's diff and nothing more.
+ * asking again after every edit costs that edit's diff and nothing more. The first replay of a
+ * long log is the expensive one — one diff per observation, each allowed 200 ms — so it hands
+ * the event loop back every few milliseconds rather than holding the server for the whole log.
  */
 import { diffLines } from "diff";
 import { statSync } from "node:fs";
@@ -44,6 +46,25 @@ interface Replay {
 
 const replays = new Map<string, Replay>();
 const REPLAYS_KEPT = 256;
+
+/** Work done between two hand-backs to the event loop while a log is replayed. */
+const YIELD_AFTER_MS = 20;
+
+/** A 0 ms timer, not `setImmediate`: that one starves HTTP (see `file-list-index.service.ts`). */
+const breathe = () => new Promise<void>((done) => setTimeout(done, 0));
+
+const replaying = new Map<string, Promise<unknown>>();
+
+/** One replay of a key at a time: two would advance the same state from the same position. */
+function oneAtATime<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const next = (replaying.get(key) ?? Promise.resolve()).then(task, task);
+  replaying.set(key, next);
+  const settle = () => {
+    if (replaying.get(key) === next) replaying.delete(key);
+  };
+  next.then(settle, settle);
+  return next;
+}
 
 function labelOf(r: Replay, call: string): number {
   let label = r.callLabels.get(call);
@@ -125,28 +146,39 @@ function start(baseText: string, markedAt: number | undefined): Replay {
 }
 
 /** The replay of `path` from `baseText` up to the end of its log, reusing what was read before. */
-function replayed(sessionId: string, path: string, baseText: string, markedAt: number | undefined): Replay | null {
+function replayed(sessionId: string, path: string, baseText: string, markedAt: number | undefined): Promise<Replay | null> {
   const file = historyFile(sessionId, path);
-  if (!file) return null;
-  let size: number;
-  try {
-    size = statSync(file).size;
-  } catch {
-    return null;
-  }
+  if (!file) return Promise.resolve(null);
   const key = `${sessionId}\0${path}\0${stateHash(baseText)}\0${markedAt ?? ""}`;
-  let r = replays.get(key);
-  // A log shorter than what was read is one written again, after its session was deleted.
-  if (!r || size < r.pos.bytes) r = start(baseText, markedAt);
-  if (size > r.pos.bytes) {
-    const { entries, end } = readHistory(sessionId, path, r.pos);
-    for (const e of entries) step(r, e, markedAt);
-    r.pos = end;
-  }
-  replays.delete(key);
-  replays.set(key, r);
-  if (replays.size > REPLAYS_KEPT) replays.delete(replays.keys().next().value!);
-  return r;
+  return oneAtATime(key, async () => {
+    let size: number;
+    try {
+      size = statSync(file).size;
+    } catch {
+      return null;
+    }
+    let r = replays.get(key);
+    // A log shorter than what was read is one written again, after its session was deleted.
+    if (!r || size < r.pos.bytes) r = start(baseText, markedAt);
+    if (size > r.pos.bytes) {
+      const { entries, end } = readHistory(sessionId, path, r.pos);
+      // Stepped in place: one left half way, by a throw, could never be told from a whole one.
+      replays.delete(key);
+      let since = performance.now();
+      for (const e of entries) {
+        step(r, e, markedAt);
+        if (performance.now() - since > YIELD_AFTER_MS) {
+          await breathe();
+          since = performance.now();
+        }
+      }
+      r.pos = end;
+    }
+    replays.delete(key);
+    replays.set(key, r);
+    if (replays.size > REPLAYS_KEPT) replays.delete(replays.keys().next().value!);
+    return r;
+  });
 }
 
 /**
@@ -154,15 +186,15 @@ function replayed(sessionId: string, path: string, baseText: string, markedAt: n
  * they ran; an empty list where the history names none. `markedAt` is set when the base is the
  * state the file was marked reviewed in rather than its "before".
  */
-export function blockCalls(p: {
+export async function blockCalls(p: {
   sessionId: string;
   path: string;
   baseText: string;
   currentText: string;
   blocks: ReviewBlock[];
   markedAt?: number;
-}): string[][] | null {
-  const r = replayed(p.sessionId, p.path, p.baseText, p.markedAt);
+}): Promise<string[][] | null> {
+  const r = await replayed(p.sessionId, p.path, p.baseText, p.markedAt);
   if (!r) return null;
   // What changed since the last observation was changed by nobody the history names.
   let current = r.lines;
@@ -197,4 +229,5 @@ export function blockCalls(p: {
 /** Test seam: forget every kept replay. */
 export function _resetSessionFileBlame(): void {
   replays.clear();
+  replaying.clear();
 }

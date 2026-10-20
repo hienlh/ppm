@@ -218,7 +218,7 @@ export async function compare(chain: string[], projectPath: string, path: string
     const baseHash = hashBase(baseText!);
     change.base = baseHash.slice(0, 16);
     const kept = reviewed ? null : keptBlocks(chain, path, baseHash);
-    const calls = blockCalls({
+    const calls = await blockCalls({
       sessionId: chain[0]!,
       path,
       baseText: baseText!,
