@@ -4,6 +4,8 @@
 import { describe, it, expect } from "bun:test";
 import {
   resolveRepo,
+  repoContainingFile,
+  fileGitScope,
   needsPick,
   hasNoRepo,
   withRepoParam,
@@ -74,6 +76,69 @@ describe("resolveRepo", () => {
   it("resolves to null before the answer arrives", () => {
     expect(resolveRepo(undefined, "/ws/frontend")).toBeNull();
     expect(needsPick(undefined, undefined)).toBe(false);
+  });
+});
+
+describe("repoContainingFile", () => {
+  it("finds the checkout a file lives in, with nothing chosen", () => {
+    // The container case: several repositories, no pick made. Blame used to run
+    // git in the container itself here and get "not a git repository".
+    expect(needsPick(TWO, undefined)).toBe(true);
+    expect(repoContainingFile(TWO, "backend/src/a.ts")?.relative).toBe("backend");
+    expect(repoContainingFile(TWO, "./frontend/src/b.tsx")?.relative).toBe("frontend");
+  });
+
+  it("ignores the repository picked for the panels", () => {
+    // A file has one repository whatever Source Control is looking at.
+    expect(resolveRepo(TWO, "/ws/frontend")?.relative).toBe("frontend");
+    expect(repoContainingFile(TWO, "backend/src/a.ts")?.relative).toBe("backend");
+  });
+
+  it("does not match a sibling that merely shares a prefix", () => {
+    expect(repoContainingFile(TWO, "backend-old/a.ts")).toBeNull();
+  });
+
+  it("is null for a file under no repository, and before discovery answers", () => {
+    expect(repoContainingFile(TWO, "docs/readme.md")).toBeNull();
+    expect(repoContainingFile(NONE, "a.ts")).toBeNull();
+    expect(repoContainingFile(undefined, "backend/a.ts")).toBeNull();
+  });
+
+  it("is the root when the project is the repository", () => {
+    expect(repoContainingFile(ROOT, "src/a.ts")?.relative).toBe(".");
+  });
+
+  it("prefers the innermost repository", () => {
+    const nested: GitRepoDiscovery = {
+      root: "/ws",
+      rootIsRepo: false,
+      repos: [
+        { path: "/ws/apps", name: "apps", relative: "apps" },
+        { path: "/ws/apps/web", name: "web", relative: "apps/web" },
+      ],
+    };
+    expect(repoContainingFile(nested, "apps/web/src/a.ts")?.relative).toBe("apps/web");
+    expect(repoContainingFile(nested, "apps/api/a.ts")?.relative).toBe("apps");
+  });
+});
+
+describe("fileGitScope", () => {
+  it("scopes to the file's own repository", () => {
+    expect(fileGitScope(TWO, "backend/src/a.ts")).toEqual({ repo: TWO.repos[0]!, path: "src/a.ts" });
+  });
+
+  it("goes out unscoped when discovery found no repository at all", () => {
+    // A project folder inside a repository: git run there finds the enclosing one.
+    expect(fileGitScope(NONE, "./src/a.ts")).toEqual({ repo: null, path: "src/a.ts" });
+  });
+
+  it("keeps a root repository's file path as it is", () => {
+    expect(fileGitScope(ROOT, "src/a.ts")).toEqual({ repo: ROOT.repos[0]!, path: "src/a.ts" });
+  });
+
+  it("is null outside every repository found, and undefined before discovery", () => {
+    expect(fileGitScope(TWO, "docs/readme.md")).toBeNull();
+    expect(fileGitScope(undefined, "backend/a.ts")).toBeUndefined();
   });
 });
 

@@ -50,6 +50,66 @@ export function resolveRepo(
   return discovery.repos.length === 1 ? discovery.repos[0]! : null;
 }
 
+/**
+ * The repository a file belongs to, whatever the panels have chosen.
+ *
+ * A file-scoped question — blame, above all — has exactly one right answer: the
+ * repository whose working tree holds the file. Going by the user's choice
+ * instead left blame silent in a container folder until the right repository
+ * happened to be picked in Source Control, and with no choice at all it ran git
+ * in the container itself, which is not a repository.
+ *
+ * The innermost candidate wins, though discovery does not descend into a found
+ * repository today, so two never nest. `null` before discovery answers, and for
+ * a file under no repository.
+ */
+export function repoContainingFile(
+  discovery: GitRepoDiscovery | undefined,
+  projectRelative: string,
+): GitRepoCandidate | null {
+  if (!discovery) return null;
+  const path = projectRelative.replace(/^\.?\//, "");
+  let best: GitRepoCandidate | null = null;
+  for (const repo of discovery.repos) {
+    const contains = repo.relative === "." || path === repo.relative || path.startsWith(`${repo.relative}/`);
+    if (!contains) continue;
+    if (!best || best.relative === "." || repo.relative.length > best.relative.length) best = repo;
+  }
+  return best;
+}
+
+/** Where a file-scoped git call goes: `repo` as its `repo=`, `path` as its file. */
+export interface FileGitScope {
+  /** `null` means no `repo=` at all — git runs in the project folder. */
+  repo: GitRepoCandidate | null;
+  /** The file, relative to wherever git runs. */
+  path: string;
+}
+
+/**
+ * The scope for one file's git call — blame, the file diff, a blob.
+ *
+ * The file's own repository when discovery found it. When discovery found no
+ * repository anywhere, the call goes out unscoped as it always did: a project
+ * folder *inside* a repository (`<repo>/packages/web`) has no `.git` of its own
+ * and none below it, yet git run there finds the enclosing repository and
+ * answers. Refusing that case would take blame away from a layout that had it.
+ *
+ * `undefined` while discovery has not answered — not yet known, so a caller
+ * waits rather than guessing. `null` for a file under none of the repositories
+ * discovery did find: there is nothing to ask git.
+ */
+export function fileGitScope(
+  discovery: GitRepoDiscovery | undefined,
+  projectRelative: string,
+): FileGitScope | null | undefined {
+  if (!discovery) return undefined;
+  const repo = repoContainingFile(discovery, projectRelative);
+  if (repo) return { repo, path: repoRelativePath(projectRelative, repo) ?? "" };
+  if (hasNoRepo(discovery)) return { repo: null, path: repoRelativePath(projectRelative, null) ?? "" };
+  return null;
+}
+
 /** True when there is a choice to make and it has not been made. */
 export function needsPick(
   discovery: GitRepoDiscovery | undefined,

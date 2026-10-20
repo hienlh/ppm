@@ -168,19 +168,23 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     // Monaco DiffEditor computes the diff itself, giving full-file view instead
     // of just the changed hunks + 3 lines of context that `git diff` returns.
     if (filePath) {
-      // git is being run inside the repository, which for a container project
-      // is a subfolder — so the path it is asked about has to be relative to
-      // that, and a file outside it has no diff to show.
-      const inRepo = gitRepo.repoPath(filePath);
-      if (inRepo == null) { setLoading(false); return; }
-      const params = new URLSearchParams({ file: inRepo });
+      // git runs in the repository that holds the file — for a container
+      // project a subfolder, whichever one Source Control is pointed at — so the
+      // path it is asked about is relative to that. The Git Graph's views open
+      // these tabs on the file's own repository, not on the pick. Undecided
+      // until discovery answers (the effect re-runs then); a file under no
+      // repository has no diff to show.
+      const scope = gitRepo.fileScope(filePath);
+      if (scope === undefined) return;
+      if (scope === null) { setLoading(false); return; }
+      const params = new URLSearchParams({ file: scope.path });
       if (ref1) params.set("ref", ref1);
       if (ref2) params.set("ref2", ref2);
       // A binary file answers with its sides empty unless they are asked for.
       if (openAsText) params.set("text", "1");
       api
         .get<FileFullDiff>(
-          gitRepo.gitUrl(`/file-full-diff?${params}`),
+          gitRepo.fileGitUrl(`/file-full-diff?${params}`, scope.repo),
         )
         .then((data) => { setFullFileDiff(data); setLoading(false); })
         .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load diff"); setLoading(false); });
@@ -312,14 +316,14 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
 
   // A file the text editor cannot show. An image is drawn on both sides, and
   // anything else says so in VS Code's words; "Open Anyway" asks the route for
-  // the same bytes decoded. `repoFile` is non-null by construction here — the
-  // fetch above returns early without it — but the URL builder has to say so.
+  // the same bytes decoded. `scope` is set by construction here — the fetch
+  // above returns early without it — but the URL builder has to say so.
   if (fullFileDiff?.binary && !openAsText && filePath && projectName) {
-    const repoFile = gitRepo.repoPath(filePath);
+    const scope = gitRepo.fileScope(filePath);
     const blobUrl = (rev: string) =>
-      repoFile == null
+      scope == null
         ? null
-        : gitRepo.gitUrl(`/file-blob?file=${encodeURIComponent(repoFile)}&ref=${encodeURIComponent(rev)}`);
+        : gitRepo.fileGitUrl(`/file-blob?file=${encodeURIComponent(scope.path)}&ref=${encodeURIComponent(rev)}`, scope.repo);
     return (
       <div className="flex flex-col h-full">
         {canPreviewBinary(filePath) && (
