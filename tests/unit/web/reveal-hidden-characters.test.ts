@@ -13,6 +13,9 @@ describe("revealHiddenCharacters", () => {
     0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x00ad, 0x180e, 0x3164, // zero-width and blank-looking
     0x2028, 0x2029, 0x000d, 0x0000, 0x001b, 0x0085, // separators and controls
     0xe0041, // a tag character, outside the BMP
+    0xfe00, 0xfe0f, 0xe0100, 0xe01ef, // variation selectors, which can smuggle a byte each
+    0x1d173, 0x1d17a, 0x13430, 0x1bca0, 0x1bca3, 0x0600, 0x0605, 0x070f, // other format controls
+    0x034f, 0x115f, 0x17b4, 0x180b, 0xffa0, // default-ignorable letters and marks
   ])("marks code point %d", (code) => {
     const text = `a${cp(code)}b`;
     expect(hasHiddenCharacters(text)).toBe(true);

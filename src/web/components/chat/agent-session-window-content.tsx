@@ -19,6 +19,8 @@ import type { WindowContentProps } from "@/components/floating-window/window-con
 import type { AgentTranscriptProviderId, AgentTranscriptSourceKind } from "../../../shared/agent-transcript-protocol";
 import type { ChatEvent } from "../../../types/chat";
 import { SubagentChildren } from "./tool-cards";
+import { AssistantContentContext } from "@/components/shared/markdown-context";
+import { isAssistantProject } from "../../../shared/assistant-project";
 
 /** Payload a window or sheet opens an agent/teammate session with — the identity the hub
  *  subscribes on, plus display-only extras the opener already knows. */
@@ -74,7 +76,11 @@ export default function AgentSessionWindowContent({ payload }: WindowContentProp
   const tailFailed = !running && !!tail && tail.type === "tool_result" && !!tail.isError;
   const status: Status = loading ? "loading" : running ? "running" : tailFailed ? "failed" : "done";
 
+  // A floating window and the phone sheet both render outside the chat's own subtree, so the
+  // Assistant marking is restated here: an Assistant subagent's Markdown (tool cards, its
+  // answer, `MiniMarkdown`) must get the same filtering as the chat it came from.
   return (
+    <AssistantContentContext.Provider value={isAssistantProject(p.projectName)}>
     <div className="flex flex-col h-full min-h-0 bg-surface @container">
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/30 shrink-0">
         <span className="truncate text-xs font-medium">{p.title ?? "Agent session"}</span>
@@ -129,5 +135,6 @@ export default function AgentSessionWindowContent({ payload }: WindowContentProp
         />
       )}
     </div>
+    </AssistantContentContext.Provider>
   );
 }

@@ -59,7 +59,8 @@ export const useMdContext = () => useContext(MdContext);
 /**
  * Set by the Assistant's chat around everything it renders, so Markdown drawn without a
  * project name — tool cards, agent output, a user bubble's result — is treated as Assistant
- * content too. `MarkdownRenderer` also infers it from the Assistant's project name, which
- * covers what is drawn outside that subtree (an agent's session window).
+ * content too. What is drawn outside that subtree sets it again: an agent's session window and
+ * its phone sheet, from the session's project. `MarkdownRenderer` also infers it from the
+ * Assistant's project name when it is given one.
  */
 export const AssistantContentContext = createContext(false);

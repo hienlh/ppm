@@ -86,6 +86,20 @@ function openBeside(def: AssistantTabDef, chat: AssistantChat): string {
   return placement.tabId;
 }
 
+/**
+ * Marks a file tab the Assistant opened to show its code rather than its preview. A preview
+ * acts on its own: a README's badges are fetched from their hosts and an `.html` file runs its
+ * scripts, and the Assistant opens files nobody asked to see rendered. Stamped in the same tick
+ * as the open, so a new tab mounts as code; an already open tab keeps the view it is in (no
+ * new `aiOpenAt`), and the user can still switch to the preview by hand.
+ */
+function showAsCode(tabId: string): void {
+  const store = usePanelStore.getState();
+  const tab = store.getPanelForTab(tabId)?.tabs.find((t) => t.id === tabId);
+  if (!tab || tab.metadata?.aiView === "code") return;
+  store.updateTab(tabId, { metadata: { ...tab.metadata, aiView: "code" } });
+}
+
 export function openAssistantTab(args: Record<string, unknown>, chat: AssistantChat): AssistantNavResult {
   const project = requireProject(args.project);
   const target = args.target as AssistantOpenTabTarget | undefined;
@@ -99,6 +113,7 @@ export function openAssistantTab(args: Record<string, unknown>, chat: AssistantC
       { tool: "open_file", filePath: target.filePath, projectName: target.projectName ?? null, ...(target.line ? { line: target.line } : {}) },
       { sessionId: chat.sessionId, projectName: project.name },
     );
+    showAsCode(opened.tabId);
     return result(opened.tabId, previous);
   }
   if (target.kind === "settings") {

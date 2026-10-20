@@ -32,22 +32,27 @@ beforeEach(() => {
 });
 
 describe("loading a project layout next to this device's floating windows", () => {
-  it("leaves a tab a window holds out of the grid, and writes the repaired layout back", () => {
-    // What the phone saved: the Assistant beside a chat, in the grid.
-    memStore[`ppm-panels-${PROJECT}`] = JSON.stringify({
-      panels: { "panel-g": { id: "panel-g", tabs: [tab("assistant", "assistant", null), tab("chat:claude/1", "chat", PROJECT)], activeTabId: "assistant", tabHistory: ["chat:claude/1", "assistant"] } },
-      grid: [["panel-g"]],
-      focusedPanelId: "panel-g",
-      updatedAt: new Date().toISOString(),
-    });
-    // This desktop: the Assistant in its own window, already in memory (as hydration leaves it).
-    usePanelStore.setState({
-      currentProject: null, grid: [], focusedPanelId: "", projectGrids: {}, projectFocused: {}, projectDock: {},
-      panels: {
-        [WIN]: { id: WIN, tabs: [tab("assistant", "assistant", null)], activeTabId: "assistant", tabHistory: ["assistant"] },
-        [DOCK_PANEL_ID]: { id: DOCK_PANEL_ID, tabs: [], activeTabId: null, tabHistory: [] },
-      },
-    });
+  /** What the phone saved: the Assistant beside a chat, in the grid. */
+  const phoneLayout = (extraTabs: ReturnType<typeof tab>[] = []) => JSON.stringify({
+    panels: { "panel-g": { id: "panel-g", tabs: [tab("assistant", "assistant", null), tab("chat:claude/1", "chat", PROJECT), ...extraTabs], activeTabId: "assistant", tabHistory: ["chat:claude/1", "assistant"] } },
+    grid: [["panel-g"]],
+    focusedPanelId: "panel-g",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  /** This desktop: the Assistant in its own window, already in memory (as hydration leaves it). */
+  const desktopWithAssistantWindow = () => usePanelStore.setState({
+    currentProject: null, grid: [], focusedPanelId: "", projectGrids: {}, projectFocused: {}, projectDock: {},
+    panels: {
+      [WIN]: { id: WIN, tabs: [tab("assistant", "assistant", null)], activeTabId: "assistant", tabHistory: ["assistant"] },
+      [DOCK_PANEL_ID]: { id: DOCK_PANEL_ID, tabs: [], activeTabId: null, tabHistory: [] },
+    },
+  });
+  const savedTabIds = (project: string) =>
+    JSON.parse(memStore[`ppm-panels-${project}`]!).panels["panel-g"].tabs.map((t: { id: string }) => t.id);
+
+  it("leaves a tab a window holds out of the grid, without writing the layout for that alone", () => {
+    memStore[`ppm-panels-${PROJECT}`] = phoneLayout();
+    desktopWithAssistantWindow();
 
     usePanelStore.getState().switchProject(PROJECT);
 
@@ -56,8 +61,45 @@ describe("loading a project layout next to this device's floating windows", () =
     expect(grid).toEqual(["chat:claude/1"]);
     expect(state.panels["panel-g"]!.activeTabId).toBe("chat:claude/1");
     expect(state.panels[WIN]!.tabs.map((t) => t.id)).toEqual(["assistant"]);
-    const saved = JSON.parse(memStore[`ppm-panels-${PROJECT}`]!);
-    expect(saved.panels["panel-g"].tabs.map((t: { id: string }) => t.id)).toEqual(["chat:claude/1"]);
+    // Nothing was broken, so nothing is written: the phone's layout, and its Assistant tab, stand.
+    expect(JSON.parse(memStore[`ppm-panels-${PROJECT}`]!).updatedAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("keeps the window-held tab in the layout when a real repair is written back", () => {
+    memStore[`ppm-panels-${PROJECT}`] = phoneLayout([tab("old", "git-status", PROJECT)]);
+    desktopWithAssistantWindow();
+
+    usePanelStore.getState().switchProject(PROJECT);
+
+    expect(savedTabIds(PROJECT)).toEqual(["assistant", "chat:claude/1"]);
+  });
+
+  it("keeps it in the layout this device writes later, until the window lets it go", () => {
+    memStore[`ppm-panels-${PROJECT}`] = phoneLayout();
+    desktopWithAssistantWindow();
+    usePanelStore.getState().switchProject(PROJECT);
+
+    // Leaving the project writes its layout; the phone's tab is still in it.
+    usePanelStore.getState().switchProject(`${PROJECT}-other`);
+    expect(savedTabIds(PROJECT)).toEqual(["assistant", "chat:claude/1"]);
+
+    // The window closes the tab on this device: from then on this device's layout is written.
+    usePanelStore.setState((s) => ({ panels: { ...s.panels, [WIN]: { ...s.panels[WIN]!, tabs: [], activeTabId: null, tabHistory: [] } } }));
+    usePanelStore.getState().switchProject(PROJECT);
+    usePanelStore.getState().switchProject(`${PROJECT}-other`);
+    expect(savedTabIds(PROJECT)).toEqual(["chat:claude/1"]);
+  });
+
+  it("keeps it in the layout the dock writes when it is toggled or resized", () => {
+    memStore[`ppm-panels-${PROJECT}`] = phoneLayout();
+    desktopWithAssistantWindow();
+    usePanelStore.getState().switchProject(PROJECT);
+
+    usePanelStore.getState().setDockHeight(40);
+    expect(savedTabIds(PROJECT)).toEqual(["assistant", "chat:claude/1"]);
+
+    usePanelStore.getState().setDockVisible(false);
+    expect(savedTabIds(PROJECT)).toEqual(["assistant", "chat:claude/1"]);
   });
 
   it("keeps the tab in the grid when no window holds it", () => {

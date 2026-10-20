@@ -12,9 +12,20 @@ type Pair = { key: string; value: string };
 const FIELD = "space-y-1";
 const LABEL = "text-xs font-medium text-text-subtle";
 
+/** Whether two URLs share scheme, host and port; an unparsable one shares nothing. */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b.trim()).origin;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Add or edit one of the Assistant's MCP servers. Env and header values are secrets the browser
- * never receives: a saved one shows as a placeholder, and leaving it blank keeps it.
+ * never receives: a saved one shows as a placeholder, and leaving it blank keeps it — except a
+ * header once the URL points at another origin, which the server will not send there and so
+ * asks to be typed again.
  */
 export function AssistantMcpServerDialog({ open, server, savedKeys, takenNames, onClose, onDone }: {
   open: boolean;
@@ -49,6 +60,9 @@ export function AssistantMcpServerDialog({ open, server, savedKeys, takenNames, 
 
   const stdio = transport === "stdio";
   const sameTransport = server?.transport === transport;
+  // Mirrors the server's rule: a header saved for one origin is never sent to another.
+  const urlMoved = !stdio && server?.transport === "http" && !sameOrigin(server.url, url);
+  const keepsSaved = sameTransport && !urlMoved;
 
   const done = () => {
     const values = Object.fromEntries(pairs.filter((p) => p.key.trim()).map((p) => [p.key.trim(), p.value]));
@@ -56,10 +70,13 @@ export function AssistantMcpServerDialog({ open, server, savedKeys, takenNames, 
       ? { id: server?.id ?? "", name: name.trim(), enabled: server?.enabled ?? true, transport, command, args: args.split("\n").map((a) => a.trim()).filter(Boolean), env: values }
       : { id: server?.id ?? "", name: name.trim(), enabled: server?.enabled ?? true, transport, url, headers: values };
     const { value, errors } = readAssistantSettings({ mcp_servers: [draft] });
-    const missing = Object.entries(values).find(([key, val]) => !val && !(sameTransport && savedKeys.has(key)));
+    const missing = Object.entries(values).find(([key, val]) => !val && !(keepsSaved && savedKeys.has(key)));
     if (errors.length) return setError(errors[0]!);
     if (takenNames.has(foldMcpName(draft.name))) return setError(`Another server is already named "${draft.name}"`);
-    if (missing) return setError(`${missing[0]} needs a value`);
+    if (missing) {
+      const moved = urlMoved && savedKeys.has(missing[0]) ? ": the URL now points at a different server, so the saved value is not sent there" : "";
+      return setError(`${missing[0]} needs a value${moved}`);
+    }
     onDone({ ...value.mcp_servers[0]!, id: draft.id });
   };
 
@@ -114,12 +131,13 @@ export function AssistantMcpServerDialog({ open, server, savedKeys, takenNames, 
           <span className={LABEL}>{stdio ? "Environment variables" : "Headers"} (kept on the server, never shown again)</span>
           {pairs.map((pair, i) => {
             const saved = sameTransport && savedKeys.has(pair.key.trim());
+            const placeholder = !saved ? "value" : keepsSaved ? "•••••• saved — blank keeps it" : "saved for the old URL — type it again";
             return (
               <div key={i} className="flex items-center gap-2">
                 <Input value={pair.key} onChange={(e) => update(i, { key: e.target.value })} placeholder={stdio ? "NAME" : "Header"} aria-label="Name"
                   className="h-11 min-w-0 flex-1 md:h-8" autoComplete="off" />
                 <Input type="password" value={pair.value} onChange={(e) => update(i, { value: e.target.value })} aria-label="Value"
-                  placeholder={saved ? "•••••• saved — blank keeps it" : "value"} className="h-11 min-w-0 flex-1 md:h-8" autoComplete="new-password" />
+                  placeholder={placeholder} className="h-11 min-w-0 flex-1 md:h-8" autoComplete="new-password" />
                 <Button variant="ghost" size="icon" aria-label="Remove" className="size-11 shrink-0 md:size-8"
                   onClick={() => setPairs((all) => all.filter((_, idx) => idx !== i))}>
                   <X className="size-4" />

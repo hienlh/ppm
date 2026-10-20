@@ -20,6 +20,7 @@ import {
   deriveTabId,
 } from "./panel-utils";
 import type { PanelStore } from "./panel-store";
+import { withWindowHeldTabs } from "./window-held-tabs";
 
 // ---------------------------------------------------------------------------
 // Height clamping
@@ -212,13 +213,15 @@ export function persistDock(get: Get): void {
     if (panelIds.has(id)) projectPanels[id] = p;
   }
 
-  savePanelLayout(currentProject, {
+  // The layout is shared through the server: tabs a floating window here holds are not in the
+  // grid this device shows, but other devices still have them, so they go back in before writing.
+  savePanelLayout(currentProject, withWindowHeldTabs(currentProject, {
     panels: projectPanels,
     grid,
     focusedPanelId,
     dock,
     dockPanel: panels[DOCK_PANEL_ID] ?? createDockPanel(),
-  });
+  }, panels));
 }
 
 /**

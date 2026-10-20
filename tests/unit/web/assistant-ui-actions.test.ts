@@ -100,6 +100,24 @@ describe("opening, focusing and switching", () => {
     expect(allTabs().filter((t) => t.type === "git-review")).toHaveLength(1);
   });
 
+  // A preview acts on its own (a README's badges load from their hosts, an .html file runs),
+  // and nobody asked to see the file rendered.
+  it("opens a file as code, never as a preview", () => {
+    for (const filePath of ["README.md", "page.html"]) {
+      const res = openAssistantTab({ project: "a", target: { kind: "file", filePath, projectName: "a" } }, chat);
+      const opened = allTabs().find((t) => t.id === res.tabId)!;
+      expect(opened.metadata).toMatchObject({ filePath, aiView: "code" });
+    }
+  });
+
+  it("leaves a file tab that was already open in the view it is in", () => {
+    seed({ a: [assistant(), tab("editor:a/README.md", "editor", "a", { filePath: "README.md", projectName: "a", aiView: "preview", aiOpenAt: 5 })] });
+    const res = openAssistantTab({ project: "a", target: { kind: "file", filePath: "README.md", projectName: "a" } }, chat);
+    const opened = allTabs().find((t) => t.id === res.tabId)!;
+    // No new `aiOpenAt`: the editor switches view only on a new stamp, so the open preview stays.
+    expect(opened.metadata).toMatchObject({ aiOpenAt: 5 });
+  });
+
   it("refuses a project this device does not have, and the Assistant's own", () => {
     expect(() => openAssistantTab({ project: "nope", target: { kind: "terminal" } }, chat)).toThrow("no project named");
     expect(() => switchAssistantProject({ project: "__assistant__" })).toThrow("registered projects");

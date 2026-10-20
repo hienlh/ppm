@@ -11,12 +11,19 @@
  */
 
 /**
- * C0/C1 controls except tab and line feed; soft hyphen; combining grapheme joiner; Arabic letter
- * mark; Hangul fillers and Khmer/Mongolian invisible vowels; zero-width and direction marks;
- * line/paragraph separators; bidi embeddings, overrides and isolates; word joiner and invisible
- * operators; deprecated format controls; BOM; interlinear annotation; tag characters.
+ * Every control (`Cc`) except tab and line feed, every format character (`Cf`: soft hyphen,
+ * zero-width and direction marks, bidi embeddings/overrides/isolates, word joiner, invisible
+ * operators, BOM, interlinear annotation, tag characters, the Arabic, Syriac, Egyptian,
+ * musical and shorthand format controls), every default-ignorable code point (combining
+ * grapheme joiner, Hangul fillers, Khmer and Mongolian invisibles, and the variation selectors
+ * U+FE00–FE0F and U+E0100–E01EF, which draw nothing and can carry a byte apiece inside text
+ * that looks ordinary), and the line and paragraph separators.
+ *
+ * Classes rather than a list of ranges, so a character Unicode adds to them is covered without
+ * this pattern being edited. The lookahead keeps tab and line feed out of `Cc`; the `v` flag's
+ * set subtraction would say it more directly, but older browsers refuse that flag outright.
  */
-const HIDDEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u206F\u3164\uFEFF\uFFA0\uFFF9-\uFFFB\u{E0000}-\u{E007F}]/u;
+const HIDDEN = /(?![\t\n])[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u;
 
 /** One run of ordinary text, or one hidden character to draw as a marker. */
 export type RevealedPart = { text: string } | { hidden: string; marker: string };

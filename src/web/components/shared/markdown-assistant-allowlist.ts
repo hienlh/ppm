@@ -28,7 +28,11 @@ const HTML_ELEMENTS = set(
   "address", "figure", "figcaption", "details", "summary", "ruby", "rt", "rp", "bdi", "bdo", "wbr",
 );
 
-/** Allowed on every HTML element. `style` is checked separately for anything that can fetch. */
+/**
+ * Allowed on every HTML element. `className` and `style` are here for what PPM's pipeline
+ * writes (KaTeX, `language-*`, footnotes); the author's own are gone before this filter runs.
+ * `style` is still checked separately for anything that can fetch.
+ */
 const HTML_GLOBAL_ATTRIBUTES = set("className", "id", "title", "lang", "dir", "align", "role", "style");
 
 const HTML_ELEMENT_ATTRIBUTES: Record<string, Set<string>> = {
@@ -83,8 +87,13 @@ const CSS_VALUED_ATTRIBUTES = set(
   "fillOpacity", "strokeOpacity", "opacity", "strokeDasharray",
 );
 
-/** CSS that can reach the network: `url(`, `image-set(`, `image(`, `@import`, or any escape that could spell them. */
-const FETCHING_CSS = /\\|url|image|@import|expression/i;
+/**
+ * CSS that can reach the network: `url(`, `image-set(`, `image(`, `@import`, or any escape or
+ * comment that could spell them — React is handed the value after `style-to-js` has removed
+ * comments, so a comment splitting `url` arrives as `url`. An author's `style` never gets this
+ * far (`markdown-author-presentation.ts`); this guards what PPM's own pipeline writes.
+ */
+const FETCHING_CSS = /\\|\/\*|url|image|@import|expression/i;
 
 /** Whether an element of `tag` may be rendered in `space`. */
 export function isAllowedElement(space: MarkupSpace, tag: string): boolean {

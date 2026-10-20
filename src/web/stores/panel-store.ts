@@ -29,6 +29,7 @@ import {
   type PopOutOptions,
 } from "./window-panel-actions";
 import { saveWindowPanels } from "./window-panel-persistence";
+import { type WindowHeldTab, rememberWindowHeldTabs, windowTabIds, withWindowHeldTabs } from "./window-held-tabs";
 import { isPanelOnScreen, projectOwningPanel, relocateTab } from "./singleton-tab-relocation";
 import { isAssistantProject } from "../../shared/assistant-project";
 import { useWindowStore } from "@/components/floating-window/window-store";
@@ -64,6 +65,51 @@ const ONE_PER_WORKSPACE_TYPES = new Set<TabType>(["database", "db-structure", "d
 
 /** Tab types removed in a prior version — filter them out when loading persisted state */
 const OBSOLETE_TAB_TYPES = new Set(["projects", "git-status", "git-graph"]);
+
+/**
+ * A loaded layout repaired for this device: obsolete and foreign tabs dropped, tabs in
+ * `windowTabIds` left out (a window here holds them), emptied panels removed.
+ *
+ * `healed` says whether the layout itself was broken — obsolete or foreign tabs, panels with
+ * nothing of their own — which is worth writing back. Leaving out what a window holds is not:
+ * that is this device's arrangement, and the layout is shared with devices that have no such
+ * window (a phone keeps the Assistant as a grid tab), so it is returned as `windowHeld` instead.
+ */
+function migrateLoadedLayout(loaded: PanelLayout, projectName: string, windowTabIds: ReadonlySet<string>) {
+  let healed = false;
+  const windowHeld: WindowHeldTab[] = [];
+  const ownTabCount: Record<string, number> = {};
+  const panels: typeof loaded.panels = {};
+  for (const [pid, panel] of Object.entries(loaded.panels)) {
+    const kept = visibleTabs(panel.tabs, projectName).filter((t) => !OBSOLETE_TAB_TYPES.has(t.type));
+    if (kept.length !== panel.tabs.length) healed = true;
+    ownTabCount[pid] = kept.length;
+    kept.forEach((tab, index) => { if (windowTabIds.has(tab.id)) windowHeld.push({ panelId: pid, tab, index }); });
+    const tabs = kept.filter((t) => !windowTabIds.has(t.id));
+    const tabHistory = panel.tabHistory.filter((id) => tabs.some((t) => t.id === id));
+    const activeTabId = panel.activeTabId && tabs.some((t) => t.id === panel.activeTabId)
+      ? panel.activeTabId
+      : (tabHistory[tabHistory.length - 1] ?? tabs[0]?.id ?? null);
+    panels[pid] = { ...panel, tabs, tabHistory, activeTabId };
+  }
+
+  // Apply the "no empty panel" invariant on restore, not just in closeTab:
+  // the filtering above can empty a panel, and a grid id with no panel behind
+  // it renders nothing either. The last panel always stays — the grid needs
+  // something to render into.
+  let grid = loaded.grid;
+  for (const pid of grid.flat()) {
+    if ((panels[pid]?.tabs.length ?? 0) > 0) continue;
+    if (grid.flat().length <= 1) break;
+    grid = gridRemovePanel(grid, pid);
+    delete panels[pid];
+    if (!ownTabCount[pid]) healed = true;
+  }
+  const focusedPanelId = grid.flat().includes(loaded.focusedPanelId)
+    ? loaded.focusedPanelId
+    : (grid.flat()[0] ?? loaded.focusedPanelId);
+  return { panels, grid, focusedPanelId, healed, windowHeld };
+}
 
 /**
  * The shared __dock__ panel holds tabs from all projects. When the active
@@ -238,13 +284,13 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     for (const [id, p] of Object.entries(panels)) {
       if (panelIds.has(id)) projectPanels[id] = p;
     }
-    savePanelLayout(currentProject, {
+    savePanelLayout(currentProject, withWindowHeldTabs(currentProject, {
       panels: projectPanels,
       grid,
       focusedPanelId,
       dock,
       dockPanel: panels[DOCK_PANEL_ID],
-    });
+    }, panels));
   }
 
   /**
@@ -259,7 +305,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     if (owner && owner !== get().currentProject) {
       const saved = loadPanelLayout(owner);
       if (saved?.panels[fromPanelId]) {
-        savePanelLayout(owner, { ...saved, panels: { ...saved.panels, [fromPanelId]: get().panels[fromPanelId]! } });
+        savePanelLayout(owner, withWindowHeldTabs(owner, { ...saved, panels: { ...saved.panels, [fromPanelId]: get().panels[fromPanelId]! } }, get().panels));
       }
     }
     persist();
@@ -348,13 +394,13 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         for (const [id, p] of Object.entries(panels)) {
           if (panelIds.has(id)) currentPanels[id] = p;
         }
-        savePanelLayout(currentProject, {
+        savePanelLayout(currentProject, withWindowHeldTabs(currentProject, {
           panels: currentPanels,
           grid,
           focusedPanelId,
           dock,
           dockPanel: panels[DOCK_PANEL_ID],
-        });
+        }, panels));
       }
 
       // Already in memory → restore from snapshot (no localStorage read)
@@ -389,41 +435,13 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // A foreign tab is filtered out of the tab bar, so it can never be closed —
         // and closeTab is the only thing that removes an emptied panel, so leaving
         // one behind wedges its panel permanently (it renders as a blank slot).
-        let healed = false;
         // A tab one of this device's floating windows holds is not put in the grid as well. The
         // windows are this device's own, while the layout may have come from another device
         // through the server (a phone keeps the Assistant as a grid tab, a desktop in a window):
         // two panels holding one tab id mount one body, and the other shows a blank window.
-        const inWindows = new Set(Object.entries(panels).filter(([id]) => isWindowPanelId(id)).flatMap(([, p]) => p.tabs.map((t) => t.id)));
-        const migratedPanels: typeof loaded.panels = {};
-        for (const [pid, panel] of Object.entries(loaded.panels)) {
-          const filteredTabs = visibleTabs(panel.tabs, projectName)
-            .filter((t) => !OBSOLETE_TAB_TYPES.has(t.type) && !inWindows.has(t.id));
-          if (filteredTabs.length !== panel.tabs.length) healed = true;
-          const filteredHistory = panel.tabHistory.filter(
-            (id) => filteredTabs.some((t) => t.id === id),
-          );
-          const activeTabId = panel.activeTabId && filteredTabs.some((t) => t.id === panel.activeTabId)
-            ? panel.activeTabId
-            : (filteredHistory[filteredHistory.length - 1] ?? filteredTabs[0]?.id ?? null);
-          migratedPanels[pid] = { ...panel, tabs: filteredTabs, tabHistory: filteredHistory, activeTabId };
-        }
-
-        // Apply the "no empty panel" invariant on restore, not just in closeTab:
-        // the filtering above can empty a panel, and a grid id with no panel behind
-        // it renders nothing either. The last panel always stays — the grid needs
-        // something to render into.
-        let migratedGrid = loaded.grid;
-        for (const pid of migratedGrid.flat()) {
-          if ((migratedPanels[pid]?.tabs.length ?? 0) > 0) continue;
-          if (migratedGrid.flat().length <= 1) break;
-          migratedGrid = gridRemovePanel(migratedGrid, pid);
-          delete migratedPanels[pid];
-          healed = true;
-        }
-        const migratedFocused = migratedGrid.flat().includes(loaded.focusedPanelId)
-          ? loaded.focusedPanelId
-          : (migratedGrid.flat()[0] ?? loaded.focusedPanelId);
+        const migrated = migrateLoadedLayout(loaded, projectName, windowTabIds(panels));
+        const { panels: migratedPanels, grid: migratedGrid, focusedPanelId: migratedFocused, healed } = migrated;
+        rememberWindowHeldTabs(projectName, migrated.windowHeld);
 
         // Merge into flat panels map (keep-alive: old panels stay).
         // The shared __dock__ panel holds live tabs from ALL projects — union the
@@ -464,12 +482,15 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           projectDock: newProjectDock,
         });
         // Write the healed layout back so the repair sticks (and reaches the server
-        // blob), instead of being redone on every load.
+        // blob), instead of being redone on every load. Written as repaired *without* leaving
+        // out what a window here holds: that is this device's view, and writing it would
+        // delete the tab from every other device's layout.
         if (healed) {
+          const shared = migrated.windowHeld.length > 0 ? migrateLoadedLayout(loaded, projectName, new Set()) : migrated;
           savePanelLayout(projectName, {
-            panels: migratedPanels,
-            grid: migratedGrid,
-            focusedPanelId: migratedFocused,
+            panels: shared.panels,
+            grid: shared.grid,
+            focusedPanelId: shared.focusedPanelId,
             dock: restoredDock,
             dockPanel: mergedDockPanel,
           });

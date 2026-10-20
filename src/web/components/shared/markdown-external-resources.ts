@@ -16,6 +16,9 @@
  *   attribute (`style`, `fill`…) that could fetch (`url(`, any CSS escape, `image-set`…) is
  *   removed. KaTeX's own spans, SVG and MathML fit inside it, so maths still renders.
  *
+ * The author's own `class` and `style` are already gone by then
+ * (`markdown-author-presentation.ts`), so what this filter still sees of either is PPM's.
+ *
  * "External" is anything the browser would fetch from another origin. Local file paths
  * are loaded through PPM's own API by `MdImage`, and `data:`/`blob:` never leave the page.
  */

@@ -15,6 +15,7 @@ import { MdContext, useMdContext, AssistantContentContext, LOCAL_PATH_RE, markdo
 import { useMarkdownFileNavigation } from "./use-markdown-file-navigation";
 import { MdPre, MdCode } from "./markdown-code-block";
 import { isExternalResourceUrl, rehypeBlockExternalResources } from "./markdown-external-resources";
+import { rehypeStampMarkdownElements, rehypeStripAuthorPresentation } from "./markdown-author-presentation";
 import { isAssistantProject } from "../../../shared/assistant-project";
 
 interface MarkdownRendererProps {
@@ -30,8 +31,13 @@ interface MarkdownRendererProps {
 /** Plugin arrays — stable references to avoid re-creating on each render */
 const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
 const rehypePlugins = [rehypeRaw, rehypeKatex] as any;
-/** Last, so it also sees what KaTeX produced. */
-const assistantRehypePlugins = [rehypeRaw, rehypeKatex, rehypeBlockExternalResources] as any;
+/**
+ * The author's `class`/`style` are stripped between `rehype-raw` and KaTeX, so KaTeX's own
+ * layout survives; the external-resource filter runs last, so it also sees what KaTeX produced.
+ */
+const assistantRehypePlugins = [
+  rehypeStampMarkdownElements, rehypeRaw, rehypeStripAuthorPresentation, rehypeKatex, rehypeBlockExternalResources,
+] as any;
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
@@ -54,7 +60,10 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 
   return (
     <MdContext.Provider value={ctx}>
-      <div className={`markdown-content prose-sm ${isStreaming ? "is-streaming" : ""} ${className}`}>
+      {/* Assistant content is painted inside its own box and nowhere else: `contain: paint`
+          clips like `overflow: clip` and also makes the box the containing block for fixed
+          and absolute descendants, so nothing in it can cover the page or a card's buttons. */}
+      <div className={`markdown-content prose-sm ${assistantContent ? "[contain:paint]" : ""} ${isStreaming ? "is-streaming" : ""} ${className}`}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           rehypePlugins={assistantContent ? assistantRehypePlugins : rehypePlugins}
