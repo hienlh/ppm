@@ -5,7 +5,7 @@ import type { ChatLifecycleEvents } from "../../../../src/services/chat-control/
 import { AssistantTelegramCards } from "../../../../src/services/assistant-telegram/assistant-telegram-cards.ts";
 import { ButtonCodes } from "../../../../src/services/assistant-telegram/assistant-telegram-button-codes.ts";
 import type { BridgeAction } from "../../../../src/services/assistant-telegram/assistant-telegram-actions.ts";
-import { TOO_LONG_NOTE } from "../../../../src/services/assistant-telegram/assistant-telegram-card-format.ts";
+import { HIDDEN_NOTE, TOO_LONG_NOTE } from "../../../../src/services/assistant-telegram/assistant-telegram-card-format.ts";
 import { normalizeCodexQuestions } from "../../../../src/shared/approval-questions.ts";
 import type { TelegramCallbackQuery } from "../../../../src/services/telegram/telegram-types.ts";
 
@@ -96,12 +96,21 @@ describe("approval cards on Telegram", () => {
     expect(t.buttons(message.message_id).map((b) => b.text)).toContain("Allow");
   });
 
-  it("hides a secret in what it shows, says so, and still offers Allow", async () => {
+  it("hides a secret in a command, says so, and offers no Allow on what it cannot show", async () => {
     const t = setup();
     const { message } = await t.show({ tool: "Bash", input: { command: "curl -H 'Authorization: Bearer abcdefghijklmnop' https://x.example" } });
     expect(message.text).not.toContain("abcdefghijklmnop");
     expect(message.text).toContain("secret-looking value");
-    expect(t.buttons(message.message_id).map((b) => b.text)).toContain("Allow");
+    expect(message.text).toContain(HIDDEN_NOTE);
+    expect(t.buttons(message.message_id).map((b) => b.text)).toEqual(["Deny"]);
+  });
+
+  it("hides a secret in an MCP tool's arguments, and offers no Allow there either", async () => {
+    const t = setup();
+    const { message } = await t.show({ tool: "mcp__api__call", input: { server: "api", tool: "call", arguments: { url: "https://x.example", headers: { authorization: "Bearer abcdefghijklmnop" } } } });
+    expect(message.text).not.toContain("abcdefghijklmnop");
+    expect(message.text).toContain("secret-looking value");
+    expect(t.buttons(message.message_id).map((b) => b.text)).toEqual(["Deny"]);
   });
 
   it("answers once: a second press is no longer valid, and the card loses its buttons", async () => {
@@ -128,6 +137,17 @@ describe("approval cards on Telegram", () => {
     expect(byId(first.message.message_id).text).toContain("Denied in PPM.");
     expect(byId(second.message.message_id).text).toContain("No longer waiting: the turn ended.");
     expect(byId(second.message.message_id).reply_markup).toBeUndefined();
+  });
+
+  it("says a request that ended on its own was not answered, rather than denied", async () => {
+    const t = setup();
+    const { message, requestId } = await t.show({ tool: "Bash", input: { command: "ls" } });
+    cards.resolved({ sessionId: "s", requestId, approved: false, reason: "request_ended" });
+    await t.queue.whenIdle();
+    const after = fake.sent(Number(t.chat)).find((m) => m.message_id === message.message_id)!;
+    expect(after.text).toContain("No longer waiting: the request ended without an answer.");
+    expect(after.text).not.toContain("Denied");
+    expect(after.reply_markup).toBeUndefined();
   });
 
   it("says a card answered elsewhere is no longer waiting", async () => {

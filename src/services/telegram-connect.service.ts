@@ -55,6 +55,11 @@ interface ConnectTarget {
   connect(chatId: string, userId: string, name: string): void;
   /** The reply in the chat once it is connected. `device` is already escaped. */
   connectedText(device: string): string;
+  /**
+   * Only a private chat may be connected. A link opened in a group is refused and left unused,
+   * so it still works in the private chat it was meant for.
+   */
+  privateOnly?: boolean;
 }
 
 function sameToken(a: string, b: string): boolean {
@@ -128,8 +133,13 @@ export class TelegramConnect {
   async tryConnect(message: TelegramMessage, token: string, reply: Reply): Promise<boolean> {
     const pending = this.pending;
     if (!pending || Date.now() >= pending.expiresAt || !sameToken(token, pending.token)) return false;
-    this.pending = null;
     const chatId = String(message.chat.id);
+    if (this.target.privateOnly && message.chat.type !== "private") {
+      log.warn(`Connect refused for chat ${chatId} in ${this.target.where}: not a private chat`);
+      await reply(chatId, "Only a private chat can be connected here. Open the link in a private chat with the bot.").catch(() => {});
+      return true;
+    }
+    this.pending = null;
     const name = message.from?.username ? `${message.from.first_name} (@${message.from.username})` : message.from?.first_name ?? "Telegram";
     this.target.connect(chatId, String(message.from?.id ?? ""), name);
     log.info(`Chat connected in ${this.target.where}: chat ${chatId} user ${message.from?.id ?? "?"}`);
@@ -155,6 +165,8 @@ export const ppmbotConnect = new TelegramConnect({
   bot: getPPMBotBot,
   saveBot: setPPMBotBot,
   connect: upsertApprovedPairing,
+  // In a group, anyone in it could command an AI that works on this machine.
+  privateOnly: true,
   connectedText: (device) => bridgeBotId
     ? `✅ Connected to <b>${device}</b>. You can chat with PPM Assistant here — just send a message.`
     : `✅ Connected to <b>${device}</b>. PPM Assistant will answer here once it is turned on in PPM.`,

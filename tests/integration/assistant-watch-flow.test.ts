@@ -19,7 +19,7 @@ import { approvalAskerFor } from "../../src/services/assistant-mcp/assistant-app
 import { AssistantWatchService, MAX_REPORT_ATTEMPTS, MAX_WATCH_TURNS_PER_HOUR } from "../../src/services/assistant-watch/assistant-watch.service.ts";
 import { WATCH_ENTRY_HEADING, WATCH_OPENER } from "../../src/services/assistant-watch/watch-event-text.ts";
 import { watchEvents, type WatchEvents } from "../../src/services/assistant-watch/watch-events.ts";
-import { NOTIFY_KINDS } from "../../src/services/assistant-watch/watch-state.ts";
+import { NOTIFY_KINDS, readWatchState } from "../../src/services/assistant-watch/watch-state.ts";
 import { traceWriter } from "../../src/services/session-trace/trace-writer.ts";
 import { readEvents } from "../../src/services/session-trace/session-trace-store.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../src/shared/assistant-project.ts";
@@ -168,9 +168,9 @@ const watchTurns = (assistant: string) => toAssistant(assistant).filter((r) => r
 let clock = Date.now();
 const pushed: NotificationPayload[] = [];
 let services: AssistantWatchService[] = [];
-function startService(bound: string[] = []): AssistantWatchService {
+function startService(bound: string[] = [], retryDelayMs = 0): AssistantWatchService {
   const service = new AssistantWatchService({
-    now: () => clock, boundChats: () => bound, notify: (p) => pushed.push(p), retryDelayMs: 0, tickMs: 3_600_000,
+    now: () => clock, boundChats: () => bound, notify: (p) => pushed.push(p), retryDelayMs, tickMs: 3_600_000,
   });
   service.start();
   services.push(service);
@@ -380,7 +380,10 @@ describe("a watch turn asks the user nothing", () => {
 
 describe("a report that is not written", () => {
   it("does not count a turn without an answer, and after three failures pushes a notification naming the chat", async () => {
-    const service = startService(["123"]);
+    // Retries wait on the service's clock, so each attempt is looked at before the next one
+    // starts: with no delay the three can run back to back before the first is observed.
+    const RETRY_MS = 60_000;
+    const service = startService(["123"], RETRY_MS);
     const assistant = assistantSession("silent");
     const target = targetChat();
     watch(service, assistant, target);
@@ -388,9 +391,21 @@ describe("a report that is not written", () => {
     await until(() => watchTurns(assistant).length === 1);
     await idle(assistant);
     const [w] = listAssistantWatches({ assistantSessionId: assistant });
+    const attempts = () => readWatchState(getAssistantWatch(w!.id)!).attempts ?? 0;
+    await until(() => attempts() === 1);
     expect(getAssistantWatch(w!.id)!.deliveredAt).toBeNull();
+    // Held back until the retry delay has passed.
+    service.tick();
+    await quiet();
+    expect(watchTurns(assistant)).toHaveLength(1);
     modes.set(assistant, "throw");
-    await until(() => watchTurns(assistant).length === MAX_REPORT_ATTEMPTS && getAssistantWatch(w!.id)!.deliveredAt !== null);
+    for (let n = 2; n <= MAX_REPORT_ATTEMPTS; n++) {
+      clock += RETRY_MS;
+      service.tick();
+      await until(() => watchTurns(assistant).length === n && attempts() === n);
+    }
+    await until(() => getAssistantWatch(w!.id)!.deliveredAt !== null);
+    expect(watchTurns(assistant)).toHaveLength(MAX_REPORT_ATTEMPTS);
     expect(pushed.filter((p) => p.sessionId === target)).toEqual([expect.objectContaining({
       title: `Chat finished: Session ${target.slice(0, 8)}`, project: PROJECT, detail: "Finished: migrate",
     })]);

@@ -57,11 +57,18 @@ export function cleanEventText(value: unknown, max: number): string {
 }
 
 /**
- * A tag that only PPM's server writes (`<ppm-shared-context>`, `<ppm-event …>`, `</ppm-…>`),
- * typed or pasted into a message. Matched loosely — any case, spaces after the bracket — since a
- * model reads all of those as the tag.
+ * Whitespace and characters that draw nothing (a zero-width space, a direction mark, a variation
+ * selector): a model reads `<` U+200B `/ppm-…>` as the tag it looks like, so they may sit
+ * anywhere in one without hiding it from the match.
  */
-const PPM_TAG = /<(\s*\/?\s*ppm-)/gi;
+const INVISIBLE = String.raw`[\s\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}  ]*`;
+
+/**
+ * A tag that only PPM's server writes (`<ppm-shared-context>`, `<ppm-event …>`, `</ppm-…>`),
+ * typed or pasted into a message. Matched loosely — any case, spaces or invisible characters
+ * after the bracket and inside `ppm-` — since a model reads all of those as the tag.
+ */
+const PPM_TAG = new RegExp(`<(${INVISIBLE}\\/?${INVISIBLE}${["p", "p", "m", "-"].join(INVISIBLE)})`, "giu");
 
 /**
  * A message typed into an Assistant session, with every PPM-looking tag defused: its `<` becomes

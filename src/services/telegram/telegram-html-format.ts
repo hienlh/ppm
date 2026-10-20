@@ -236,14 +236,30 @@ export function stripTelegramHtml(html: string): string {
  * `Pwd=` of an ADO-style connection string. Each keeps its first group and hides the rest.
  */
 const TELEGRAM_SECRETS: readonly RegExp[] = [
-  // An unterminated key (a message cut mid-key) hides to the end; one already hidden is left.
-  /(-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)(?!\[REDACTED\])[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
+  pemPrivateKey(),
   /()\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
   /()\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}/g,
   /()\bxox[abprs]-[A-Za-z0-9-]{10,}/g,
   /()\bAIza[0-9A-Za-z_-]{35}/g,
   /(\bpwd\s*=\s*)[^;\s"'\u0001]+/gi,
 ];
+
+/**
+ * A PEM private key: its BEGIN line kept, everything that is key material hidden. Only key
+ * material: base64 lines (and the `Proc-Type`/`DEK-Info` headers of an encrypted key), up to the
+ * END line, or — for a key cut off before it — up to the first line that is not base64. Matching
+ * anything up to the END line, or up to the end of the text, would hide whatever sits between a
+ * `BEGIN` mentioned in a command and the end of it. One already hidden is left.
+ */
+function pemPrivateKey(): RegExp {
+  // A line break, or `\n` as a JSON-encoded tool input spells it.
+  const sep = String.raw`(?:\s|\\[rn])+`;
+  const newline = String.raw`(?:\r?\n|\\r?\\n)`;
+  const line = String.raw`(?:[A-Za-z0-9+/=]{1,16384}|(?:Proc-Type|DEK-Info):[^\r\n\\]{0,200})`;
+  const begin = String.raw`(-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----)(?!\[REDACTED\])`;
+  const end = String.raw`-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----`;
+  return new RegExp(`${begin}(?:(?:${sep}${line}){0,512}${sep}${end}|(?:${newline}${line}){1,512})`, "g");
+}
 /** Marks around a replacement while redacting, so the replacements can be counted. */
 const MARK_OPEN = "\u0001";
 const MARK_CLOSE = "\u0002";

@@ -103,9 +103,17 @@ export class AssistantTelegramInbound {
   }
 
   private onLane(chatId: string, work: () => Promise<void>): void {
-    let lane = this.lanes.get(chatId);
-    if (!lane) this.lanes.set(chatId, lane = { chain: Promise.resolve(), gathered: null, timer: null });
-    lane.chain = lane.chain.then(work).catch((e) => log.warn(`Telegram chat ${chatId}: ${(e as Error)?.message ?? e}`));
+    const lane = this.lanes.get(chatId) ?? { chain: Promise.resolve(), gathered: null, timer: null };
+    this.lanes.set(chatId, lane);
+    const chain = lane.chain.then(work).catch((e) => log.warn(`Telegram chat ${chatId}: ${(e as Error)?.message ?? e}`));
+    lane.chain = chain;
+    // A lane exists only while it has work: anyone can write to a public bot, so one kept per
+    // chat id ever seen — strangers refused at the door included — would grow without end.
+    // Nothing queued after this work and nothing gathered means the next update starts a fresh
+    // lane, and order still holds because this one has finished.
+    void chain.then(() => {
+      if (lane.chain === chain && !lane.gathered && !lane.timer && this.lanes.get(chatId) === lane) this.lanes.delete(chatId);
+    });
   }
 
   private reply(chatId: string, html: string, markup?: InlineKeyboardMarkup): void {
@@ -130,6 +138,7 @@ export class AssistantTelegramInbound {
   private async message(chatId: string, message: TelegramMessage, updateId: number): Promise<boolean> {
     const text = message.text ?? message.caption ?? "";
     // A tapped connect link connects the chat itself, so it comes before the access check.
+    // The Assistant's link refuses a group itself (`privateOnly`), leaving the link unused.
     if (text.startsWith("/start") && await handleConnectMessage(message, this.deps.token,
       (id, html) => this.deps.client.sendMessage(id, html))) return false;
 

@@ -126,6 +126,13 @@ describe("the notifications link", () => {
     expect(replies[1]!.html).toContain("Settings → Notifications");
   });
 
+  it("connects a group for alerts", async () => {
+    const { url } = await notifyConnect.start();
+    const fromGroup: TelegramMessage = { ...message(`/start ${tokenOf(url)}`), chat: { id: -100600, type: "supergroup" } };
+    expect(await handleConnectMessage(fromGroup, NOTIFY_TOKEN, reply)).toBe(true);
+    expect(listNotifyChats().map((c) => c.chatId)).toEqual(["-100600"]);
+  });
+
   it("refuses a wrong or replaced link, and ignores ordinary messages", async () => {
     const first = await notifyConnect.start();
     const second = await notifyConnect.start();
@@ -188,6 +195,17 @@ describe("the Assistant's link", () => {
     }
     expect(pairingRow("42")).toEqual({ status: "approved", pairing_code: null });
     expect(pairingRow("43")).toEqual({ status: "approved", pairing_code: null });
+  });
+
+  it("refuses a group, whatever reads the bot, and leaves the link for the private chat", async () => {
+    const { url } = await ppmbotConnect.start();
+    const fromGroup: TelegramMessage = { ...message(`/start ${tokenOf(url)}`), chat: { id: -100500, type: "group" } };
+    expect(await handleConnectMessage(fromGroup, PPMBOT_TOKEN, reply)).toBe(true);
+    expect(pairingRow("-100500")).toBeNull();
+    expect(replies[0]).toEqual({ chatId: "-100500", html: expect.stringContaining("Only a private chat") });
+    expect(ppmbotConnect.status().active).toBe(true);
+    expect(await handleConnectMessage(message(`/start ${tokenOf(url)}`), PPMBOT_TOKEN, reply)).toBe(true);
+    expect(getApprovedPairedChats().map((c) => c.telegram_chat_id)).toEqual(["42"]);
   });
 
   it("says the Assistant will answer once it is on, while it is off", async () => {

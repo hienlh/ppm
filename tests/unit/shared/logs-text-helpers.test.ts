@@ -65,6 +65,18 @@ describe("redactLogText", () => {
     expect(redactLogText("sent Bearer abcdefghijkl", off, true)).toBe("sent Bearer \u0001[REDACTED]\u0002");
   });
 
+  // A secret's characters are not a shell's: `&`, `|` and `;` inside a value are part of it, and
+  // a span cut short there would leave the tail of the secret in the text.
+  it("hides a value whole when it holds &, | or ;", () => {
+    const off = { home: false, email: false, chats: false };
+    const cases: Array<[string, string]> = [
+      ["Cookie: auth=AAA&BBB", "Cookie: [REDACTED]"],
+      ["cookie: sid=abc|def", "cookie: [REDACTED]"],
+      ["GET /cb?code=abc;def", "GET /cb?code=[REDACTED]"],
+    ];
+    for (const [input, out] of cases) expect(redactLogText(input, off)).toBe(out);
+  });
+
   it("leaves ordinary text alone, and what the write-time redactor took out as it was", () => {
     const off = { home: false, email: false, chats: false };
     for (const text of [

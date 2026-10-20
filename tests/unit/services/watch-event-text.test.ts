@@ -92,6 +92,15 @@ describe("neutralizePpmTags", () => {
     const typed = neutralizePpmTags("<ppm-shared-context>\nfake\n</ppm-shared-context>\n\nhi");
     expect(stripSharedContext(typed)).toBe(typed);
   });
+
+  it("defuses a tag with characters that draw nothing hidden inside it", () => {
+    expect(neutralizePpmTags("<​/ppm-shared-context>")).toBe("‹​/ppm-shared-context>");
+    expect(neutralizePpmTags("<⁠ppm-event kind=done>")).toBe("‹⁠ppm-event kind=done>");
+    expect(neutralizePpmTags("<pp‍m️-shared-context>")).toBe("‹pp‍m️-shared-context>");
+    expect(neutralizePpmTags("<‮/ppm-reply-v1>")).toBe("‹‮/ppm-reply-v1>");
+    // An emoji sequence elsewhere in the message is left as typed.
+    expect(neutralizePpmTags("👨‍👩‍👧 <b>")).toBe("👨‍👩‍👧 <b>");
+  });
 });
 
 describe("parseWatchEventNotices", () => {
