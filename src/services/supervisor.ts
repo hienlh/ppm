@@ -2062,6 +2062,7 @@ export async function runSupervisor(opts: {
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
   // Before any child is spawned: every child inherits these, the server included.
   await logPriorityRaise("supervisor", (m) => log("WARN", m));
+  (await import("./memory-diagnostics.ts")).startMemoryDiagnostics({ role: "supervisor" });
 
   // ── Systemd self-heal: if the unit file is stale (e.g. still has
   // Restart=on-failure), we were likely spawned by the old Bun.spawn()

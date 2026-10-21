@@ -5,6 +5,7 @@ import { configService } from "../services/config.service.ts";
 import { nextProbeDelayMs, type ProviderProbeStatus } from "./provider-probe.ts";
 import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 import { createLogger } from "../services/logger.ts";
+import { registerMemoryGauge } from "../services/memory-diagnostics.ts";
 
 const log = createLogger("registry");
 
@@ -53,7 +54,13 @@ class ProviderRegistry {
 export const providerRegistry = new ProviderRegistry();
 
 // SDK providers registered synchronously (no binary check needed)
-providerRegistry.register(new ClaudeAgentSdkProvider());
+const claudeProvider = new ClaudeAgentSdkProvider();
+providerRegistry.register(claudeProvider);
+// Sizes for the opt-in memory monitor (PPM_MEM_DIAG). Bracket access reaches the private
+// maps without widening the class; registering costs nothing while the monitor is off.
+registerMemoryGauge("claude.streamingSessions", () => claudeProvider["streamingSessions"].size);
+registerMemoryGauge("claude.activeQueries", () => claudeProvider["activeQueries"].size);
+registerMemoryGauge("claude.activeSessions", () => claudeProvider["activeSessions"].size);
 providerRegistry.register(new MockProvider()); // testing only
 
 /**
@@ -176,6 +183,8 @@ async function probeCodexProvider(): Promise<ProviderProbeStatus> {
       const result = await codex.probe();
       if (result.ok) {
         providerRegistry.register(codex);
+        registerMemoryGauge("codex.sessions", () => codex["sessions"].size);
+        registerMemoryGauge("codex.live", () => codex["live"].size);
         ensureCodexConfigEntry();
         log.info("Codex provider registered (@openai/codex found)");
         status = { id: "codex", registered: true, attempts, lastProbeAt };

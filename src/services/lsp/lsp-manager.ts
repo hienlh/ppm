@@ -20,6 +20,7 @@ import { resolveBunPath } from "../autostart-generator.ts";
 import { createLogger } from "../logger.ts";
 import { canInstall, lspInstallDir, rustupServerPath } from "./lsp-install.ts";
 import { LspSession, type LspSessionState } from "./lsp-session.ts";
+import { registerMemoryGauge } from "../memory-diagnostics.ts";
 import {
   LANGUAGE_SERVERS,
   ancestorDirs,
@@ -595,3 +596,5 @@ export class LspManager {
 }
 
 export const lspManager = new LspManager();
+
+registerMemoryGauge("lsp.servers", () => lspManager["entries"].size);

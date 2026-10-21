@@ -30,6 +30,7 @@ import type { ChatEvent } from "../types/chat.ts";
 import { createAgentTranscriptLineParser } from "./subagent-transcript-merger.ts";
 import { getCachedSubagentGroups } from "./agent-transcript/agent-transcript-index-cache.ts";
 import { createLogger } from "./logger.ts";
+import { registerMemoryGauge } from "./memory-diagnostics.ts";
 
 const log = createLogger("nested-spy");
 
@@ -207,3 +208,5 @@ function stopAllForSession(sessionId: string): void {
 }
 
 export const nestedSubagentSpy = { startSpy, stopSpy, stopAllForSession };
+
+registerMemoryGauge("nestedSubagentSpy.sessions", () => sessions.size);

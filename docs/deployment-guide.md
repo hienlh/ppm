@@ -639,6 +639,31 @@ Long chat sessions are the usual growth source; the transcript is windowed rathe
 materialized. If memory climbs, check for orphaned transcode or tunnel children with the System
 Monitor, filtered to PPM's own processes.
 
+Watch **private bytes**, not RSS. A server that runs the machine out of memory can read 1–2 GB
+resident while holding 30 GB of committed memory (Windows trims the working set and pages the
+rest out); new child processes then die at start, Claude CLI with exit code 9. On Windows the
+System event log says which process it was: provider `Microsoft-Windows-Resource-Exhaustion-Detector`
+names the pid and its bytes.
+
+To find the cause, run PPM with `PPM_MEM_DIAG=1` (optionally `PPM_MEM_DIAG_INTERVAL_MS`, default
+30000). Every interval the server appends a line to `~/.ppm/mem-diag.log` and the supervisor to
+`~/.ppm/mem-diag-supervisor.log` (rotated at 50 MB to `.1`): RSS, private bytes and their change,
+kernel handles (open fds on Linux), the JS heap, the child processes started since the previous
+line by command (`git status`, `claude`, `powershell get-ciminstance` — never their arguments),
+the children still alive, counts of objects that own native memory, and gauges for long-lived
+state (chat sessions, Claude/Codex sessions, terminals, LSP servers). The first time private bytes
+cross 2, 4, 8, 16, 24 and 32 GB it also writes an `alert` line with the oldest live children and
+all-time spawn totals. Then:
+
+```bash
+bun scripts/mem-diag-report.ts                # growth rate per run, MB per spawn by command, gauges
+bun scripts/mem-diag-report.ts --supervisor   # the supervisor's log
+```
+
+The report's slope is a correlation, not proof: two commands that always run together get the
+same share, and growth no command explains points at the gauges and native-object trends instead.
+Private bytes are measured on Windows and Linux; on macOS those fields are absent.
+
 ---
 
 ## Support

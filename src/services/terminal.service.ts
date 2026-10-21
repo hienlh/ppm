@@ -2,6 +2,7 @@ import type { Subprocess, Terminal as BunTerminal } from "bun";
 import { isUsableTerminalSize } from "../shared/terminal-size";
 import { withoutAiChatMark } from "./ai-chat-env.ts";
 import { createLogger } from "./logger.ts";
+import { registerMemoryGauge } from "./memory-diagnostics.ts";
 
 /** PTY lifecycle only — never what is typed into a terminal or what it prints. */
 const log = createLogger("terminal");
@@ -397,3 +398,10 @@ export class TerminalService {
 }
 
 export const terminalService = new TerminalService();
+
+registerMemoryGauge("terminal.sessions", () => terminalService["sessions"].size);
+registerMemoryGauge("terminal.bufferedKB", () => {
+  let chars = 0;
+  for (const b of terminalService["outputBuffers"].values()) chars += b.length;
+  return Math.round(chars / 1024);
+});
