@@ -61,8 +61,15 @@ export async function waitCanvasReady(ctx, gen = null, timeout = 15000) {
     const nonce = new URL(frame.src, location.href).searchParams.get("n");
     return window.__e2e.bridge.some((m) => m.type === "ready" && m.nonce === nonce && (!gen || m.gen === gen));
   }, { selector: canvasSelector(ctx), gen }, { timeout });
-  const handle = await ctx.page.locator(canvasSelector(ctx)).elementHandle();
-  return handle.contentFrame();
+  // The frame can be swapped out between that answer and this lookup (a reload it was just
+  // asked for, a move between panel slots), which leaves `contentFrame()` null for a moment.
+  for (let i = 0; i < 50; i++) {
+    const handle = await ctx.page.locator(canvasSelector(ctx)).elementHandle();
+    const frame = await handle.contentFrame();
+    if (frame) return frame;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`no document in ${canvasSelector(ctx)}`);
 }
 
 export async function lastReady(ctx) {

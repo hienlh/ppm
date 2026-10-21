@@ -27,6 +27,9 @@ export async function tabMetadata(ctx) {
 
 export async function openDesign(ctx) {
   ctx.tabId = await ctx.page.evaluate(async ({ projectName, slug }) => {
+    // These steps are about the design *tab*. Set here, not once per run: a step that reloads
+    // the page brings the setting back to its default, and a desktop then opens a window.
+    (await import("/stores/settings-store.ts")).useSettingsStore.setState({ designWindows: false });
     const { openDesignTab } = await import("/lib/design/open-design-tab.ts");
     return openDesignTab({ projectName, slug });
   }, { projectName: ctx.projectName, slug: ctx.slug });

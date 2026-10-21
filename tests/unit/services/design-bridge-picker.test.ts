@@ -54,11 +54,12 @@ function click(h: Harness, target: Element): Event {
 }
 
 /** A touch event whose `touches` is set directly, so the test needs no Touch constructor. */
-function touch(h: Harness, target: Element, type: string, x = 5, y = 5): void {
+function touch(h: Harness, target: Element, type: string, x = 5, y = 5): Event {
   const ev = new h.win.Event(type, { bubbles: true, cancelable: true });
   const touches = type === "touchend" || type === "touchcancel" ? [] : [{ clientX: x, clientY: y, target }];
   Object.defineProperty(ev, "touches", { value: touches });
   (target as unknown as EventTarget).dispatchEvent(ev as unknown as Event);
+  return ev as unknown as Event;
 }
 
 function tap(h: Harness, target: Element): void {
@@ -135,6 +136,36 @@ describe("picker", () => {
     click(h, h.el("h1"));
     expect(ofType(h, "select")).toHaveLength(0);
     expect(ofType(h, "hover").filter((m) => m.el)).toHaveLength(0);
+  });
+
+  it("cancels the touchend of a completed long-press, so the browser makes no click on the composer", async () => {
+    const h = boot(PAGE);
+    h.send("picker", { on: true });
+    touch(h, h.el("h1"), "touchstart");
+    await sleep(600);
+    expect(ofType(h, "element-menu")).toHaveLength(1);
+    // Where a browser hit-tests the tap when the finger lifts, its click would land on the
+    // composer's backdrop, which opened under the finger, and close it.
+    expect(touch(h, h.el("h1"), "touchend").defaultPrevented).toBe(true);
+  });
+
+  it("leaves the touchend of a tap alone, so its click still comes", () => {
+    const h = boot(PAGE);
+    h.send("picker", { on: true });
+    touch(h, h.el("h1"), "touchstart");
+    expect(touch(h, h.el("h1"), "touchend").defaultPrevented).toBe(false);
+    // A cancelled press does not count as a completed one for the next press either.
+    touch(h, h.el("h1"), "touchstart");
+    touch(h, h.el("h1"), "touchcancel");
+    touch(h, h.el("h1"), "touchstart");
+    expect(touch(h, h.el("h1"), "touchend").defaultPrevented).toBe(false);
+    expect(ofType(h, "element-menu")).toHaveLength(0);
+  });
+
+  it("leaves touches alone while the picker is off", () => {
+    const h = boot(PAGE);
+    touch(h, h.el("h1"), "touchstart");
+    expect(touch(h, h.el("h1"), "touchend").defaultPrevented).toBe(false);
   });
 
   it("never opens the composer when the browser cancels the touch for a scroll", async () => {
