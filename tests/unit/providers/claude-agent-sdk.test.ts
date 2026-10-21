@@ -647,6 +647,20 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(opts.maxTurns).toBe(1000);
     });
 
+    it("leaves maxTurns out when Max Turns is 0, so the CLI has no limit", async () => {
+      const claude = (configService as any).config.ai.providers.claude;
+      const saved = claude.max_turns;
+      claude.max_turns = 0;
+      try {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+        expect("maxTurns" in mockQueryFn.mock.calls[0]![0].options).toBe(false);
+      } finally {
+        claude.max_turns = saved;
+      }
+    });
+
     it("sets cwd to projectPath from session", async () => {
       mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
       const session = await provider.createSession({ projectPath: "/tmp/my-project" });

@@ -17,17 +17,17 @@ describe("validateAIProviderConfig", () => {
     expect(validateAIProviderConfig({})).toHaveLength(0);
   });
 
-  it("rejects max_turns below 1", () => {
-    expect(validateAIProviderConfig({ max_turns: 0 })).toHaveLength(1);
+  it("rejects max_turns below 0", () => {
+    expect(validateAIProviderConfig({ max_turns: -1 })).toHaveLength(1);
   });
 
-  it("rejects max_turns above 500", () => {
-    expect(validateAIProviderConfig({ max_turns: 501 })).toHaveLength(1);
+  it("rejects max_turns above 1000", () => {
+    expect(validateAIProviderConfig({ max_turns: 1001 })).toHaveLength(1);
   });
 
-  it("accepts max_turns at boundaries", () => {
-    expect(validateAIProviderConfig({ max_turns: 1 })).toHaveLength(0);
-    expect(validateAIProviderConfig({ max_turns: 500 })).toHaveLength(0);
+  it("accepts max_turns at boundaries, 0 meaning no limit", () => {
+    expect(validateAIProviderConfig({ max_turns: 0 })).toHaveLength(0);
+    expect(validateAIProviderConfig({ max_turns: 1000 })).toHaveLength(0);
   });
 
   it("rejects invalid effort value", () => {
@@ -58,7 +58,7 @@ describe("validateAIProviderConfig", () => {
 
   it("returns multiple errors for multiple invalid fields", () => {
     const errors = validateAIProviderConfig({
-      max_turns: 0,
+      max_turns: -1,
       max_budget_usd: -1,
       effort: "turbo" as any,
     });

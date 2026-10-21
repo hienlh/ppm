@@ -347,7 +347,7 @@ ai.providers.claude.inherit_claude_mcp   true
 - `api_key_env`: Environment variable holding the API key. Not required when the `claude` CLI is logged in
 - `model`: Model ID (e.g. `claude-opus-5`, `claude-sonnet-5`). Default: `claude-opus-5`
 - `effort`: Reasoning level — `low`, `medium`, `high`, `xhigh`, `max` (validated against `VALID_EFFORTS`; an out-of-enum value is rejected rather than passed through)
-- `max_turns`: Maximum interaction turns. Default 1000
+- `max_turns`: Maximum interaction turns per message. Default 1000, at most 1000; 0 = no limit (the CLI gets no `--max-turns`). Settings warns about cost when it is 0 or above 500
 - `permission_mode`: SDK permission mode, default `bypassPermissions`
 - `inherit_claude_mcp`: Reuse MCP servers configured for Claude Code
 - `max_budget_usd`: Spending limit in USD (optional)
