@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.15] - 2026-10-22
 
 ### Added
 
@@ -21,8 +21,14 @@
 
 - **Settings → Tools turns each of PPM's own AI tools on or off.** One switch per tool — Open files, Show pages, Show running apps, Read terminals, Type commands, Read databases, Open Query tabs and Change databases — for Claude and Codex alike, in place of the single "Let the AI open tabs in PPM" switch, whose choice Open files and Show pages keep until you switch either. Every other tool starts on. A new chat gets only the tools that are on; turning one off also stops it in chats already open, and with Change databases off the AI is told to hand you the script in a Query tab instead.
 
+- **Share a design for review.** Share for review makes a link anyone can open without a PPM account; reviewers pin comments and reply to each other, and their threads land on your canvas to answer or send to the AI. Each link has its own expiry, revoke and "Update to latest", and you can edit the message before it goes into the chat. (An older build drops comment replies the next time it saves.)
+- **Notifications for reviewer comments**, at most once a minute per link ("Reviewer comments" in Settings → Notifications).
+
 ### Fixed
 
+- **Security: HTML in chat, Markdown, Mermaid diagrams or `.docx` previews could run script in PPM's page and read your sign-in token.** It now goes through an allow-list; ordinary formatting still renders.
+- **Security: anyone who could reach a development server could stop it** through `GET /api/debug/crash`; it now needs sign-in and `PPM_DEBUG_CRASH_ROUTE=1`.
+- **Long-pressing an element on a design canvas sometimes closed the comment form as it opened.**
 - **A chat that had changed a few thousand files slowed all of PPM down while its changes bar was worked out.** The bar asked for its list again every time the transcript moved, and every answer re-read and re-diffed each file the chat had changed: two to three minutes on a session with 1,923 files, a new ask about every minute, and every other chat, Source Control and the session list waiting behind it. The list is now worked out only once you open the changes bar, its Review button or a turn's pill; until then the bar says how many files changed. From then on PPM keeps it and sends the row of each file the agent has just changed, so the bar, the pill under each answer and an open Review tab stay current without asking again, and the bar's refresh button works out again only the files that moved, in milliseconds. The first list of such a chat still takes a while, without holding up anything else. Past 500 changed files, the bar lists the 500 changed last instead of the first.
 
 - **Inline blame showed nothing in a project folder that holds several repositories.** It asked git in the folder itself unless the right repository was picked in Source Control; it now blames each file in the repository that holds it. A diff tab opened from Git Graph on such a file also no longer says "No content changes" or "not a git repository".
