@@ -30,6 +30,7 @@ export function DesignCommentsOverlay({ feature, fit, stage, isMobile, selection
         stage={stage}
         actions={{
           onOpen: feature.openComment,
+          onReply: feature.replyToComment,
           onResolve: (c) => feature.resolveComment(c, true),
           onSend: feature.sendComment,
           onDelete: feature.deleteComment,
@@ -48,7 +49,6 @@ export function DesignCommentsOverlay({ feature, fit, stage, isMobile, selection
         target={feature.composerTarget}
         onClose={feature.closeComposer}
         onSubmit={feature.submitComposer}
-        onDelete={feature.deleteFromComposer}
       />
       <CommentsSendPreview preview={feature.preview} onCancel={feature.cancelPreview} onConfirm={feature.confirmPreview} />
     </>
@@ -60,8 +60,10 @@ export function DesignCommentsSidePanel({ feature }: { feature: DesignCommentsFe
     <CommentsPanel
       state={feature.state}
       statusOf={feature.pins.statusOf}
+      thread={feature.thread}
       actions={{
         onOpen: feature.openComment,
+        onReply: feature.replyToComment,
         onResolve: feature.resolveComment,
         onSend: feature.sendComment,
         onDelete: feature.deleteComment,

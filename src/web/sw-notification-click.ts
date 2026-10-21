@@ -5,6 +5,7 @@
 import { OPEN_FROM_NOTIFICATION, type OpenFromNotificationMessage, type WebPushPayload } from "../shared/web-push-payload";
 
 export interface NotificationWindow {
+  url: string;
   focused: boolean;
   visibilityState: DocumentVisibilityState;
   postMessage(message: unknown): void;
@@ -30,7 +31,9 @@ export async function routeNotificationClick(
   // A notification can name another origin: a device that subscribed on an old quick
   // tunnel is sent the current one. A window here cannot show that.
   if (target.origin === workerOrigin) {
-    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    // A reviewer page (`/s/<code>`) opened on this origin is not the app and has no one
+    // listening, so a click handed to it would be lost.
+    const windows = (await clients.matchAll({ type: "window", includeUncontrolled: true })).filter((c) => !isSharePage(c.url));
     const client = windows.find((c) => c.focused)
       ?? windows.find((c) => c.visibilityState === "visible")
       ?? windows[0];
@@ -48,4 +51,12 @@ export async function routeNotificationClick(
     }
   }
   await clients.openWindow(target.href);
+}
+
+function isSharePage(url: string): boolean {
+  try {
+    return new URL(url).pathname.startsWith("/s/");
+  } catch {
+    return false;
+  }
 }

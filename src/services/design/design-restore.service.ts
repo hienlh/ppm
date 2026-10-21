@@ -9,6 +9,8 @@ import {
 } from "./design-restore-journal.ts";
 import { readSnapshotInfo, snapshotFilesDir } from "./design-snapshot-history.ts";
 import { readDesignTree, takeSnapshotLocked, writeTreeFiles } from "./design-snapshots.service.ts";
+import { pinnedSnapshotIds } from "./share/design-share-links-store.ts";
+import { projectKey } from "../project-name-for-path.ts";
 
 export { recoverRestoreJournal } from "./design-restore-journal.ts";
 
@@ -26,7 +28,8 @@ export interface RestoreResult {
  * Replace a design's working files with a snapshot's, as a journaled swap.
  *
  *  1. Snapshot the current state (`pre-restore`), protecting the target from that
- *     snapshot's pruning so restoring the oldest entry cannot evict the entry itself.
+ *     snapshot's pruning so restoring the oldest entry cannot evict the entry itself (and
+ *     protecting every snapshot a share link pins, as all pruning does).
  *  2. Stage a full copy of the target in `.design/tmp-<id>/`, journal `staged`.
  *  3. Journal `swapping`, then swap (see `completeSwap`).
  *  4. Remove the journal and the empty staging dir.
@@ -40,7 +43,8 @@ export async function restoreSnapshot(projectPath: string, slug: string, id: str
   const result = await withRecoveredDesign(projectPath, slug, async (designDir) => {
     if (!(await readSnapshotInfo(designDir, id))) throw new DesignError(404, "ENOENT", `Snapshot not found: ${id}`);
 
-    const before = await takeSnapshotLocked(designDir, "pre-restore", { restoreOf: id }, new Set([id]));
+    const keep = new Set([id, ...pinnedSnapshotIds(projectKey(projectPath), slug)]);
+    const before = await takeSnapshotLocked(designDir, "pre-restore", { restoreOf: id }, keep);
     if ("skipped" in before && before.skipped !== "unchanged") {
       throw new DesignError(409, "ETOOLARGE", "The current design is too large to back up, so restoring would lose it");
     }

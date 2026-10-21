@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 56;
+export const CURRENT_SCHEMA_VERSION = 57;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1258,6 +1258,30 @@ export function runMigrations(database: Database): void {
     // Every connection saved before this was available, so the default keeps it that way.
     try { database.exec("ALTER TABLE connections ADD COLUMN ai_access INTEGER NOT NULL DEFAULT 1"); } catch { /* column exists */ }
     database.exec(`PRAGMA user_version = 56;`);
+  }
+
+  if (current < 57) {
+    // Design share links. The code a reviewer holds is derived from a secret file and the
+    // link id, so only its hash is kept: a copied database or backup opens no link.
+    // `project_key` is the folded path the rows are looked up by (case-insensitive on Windows).
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS design_share_links (
+        id TEXT PRIMARY KEY,
+        code_hash TEXT NOT NULL UNIQUE,
+        code_version INTEGER NOT NULL DEFAULT 1,
+        project_path TEXT NOT NULL,
+        project_key TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        snapshot_id TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_design_share_links_design ON design_share_links(project_key, slug);
+    `);
+    database.exec(`PRAGMA user_version = 57;`);
   }
 }
 

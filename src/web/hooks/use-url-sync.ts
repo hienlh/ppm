@@ -43,12 +43,13 @@ function decodePathSegment(segment: string): string {
 }
 
 /**
- * Parse the current URL to extract project name and tab info.
+ * Parse the current URL (or the one given, such as a notification's) to extract project
+ * name and tab info.
  * Format: /project/{name}/{tabType}/{...identifier}
  */
-export function parseUrlState(): UrlState {
-  const path = window.location.pathname;
-  const params = new URLSearchParams(window.location.search);
+export function parseUrlState(location: Pick<Location, "pathname" | "search"> = window.location): UrlState {
+  const path = location.pathname;
+  const params = new URLSearchParams(location.search);
   const openChat = params.get("openChat");
 
   const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);

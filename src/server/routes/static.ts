@@ -1,16 +1,17 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { existsSync, statSync } from "node:fs";
-import { resolve, join, extname, dirname } from "node:path";
+import { resolve, join, extname, dirname, relative, sep } from "node:path";
 import { isCompiledBinary } from "../../services/autostart-generator.ts";
 import { chooseVariant } from "./static-encoding.ts";
 import { shouldServeAppShell } from "./static-fallback.ts";
+import { GUEST_PAGE_DIR } from "../../services/design/share/design-share-guest-page.ts";
 
 export const staticRoutes = new Hono();
 
 // Compiled binary: look for web/ next to the binary itself
 // Dev mode: resolve relative to source file
-const DIST_DIR = isCompiledBinary()
+export const DIST_DIR = isCompiledBinary()
   ? resolve(dirname(process.execPath), "web")
   : resolve(import.meta.dir, "../../../dist/web");
 
@@ -58,6 +59,13 @@ export function createStaticHandler(DIST_DIR: string) {
   // Security: prevent directory traversal
   if (!filePath.startsWith(DIST_DIR)) {
     return c.text("Forbidden", 403);
+  }
+
+  // The share reviewer's page is served only from `/s/<code>`, under its own CSP. Decided on
+  // the joined path, lower-cased, so `//design-share-page/` or another case on a
+  // case-insensitive disk cannot reach the file without that policy.
+  if (relative(DIST_DIR, filePath).split(sep)[0]!.toLowerCase() === GUEST_PAGE_DIR) {
+    return c.text("Not found", 404);
   }
 
   if (existsSync(filePath) && !filePath.endsWith("/") && !filePath.endsWith("\\")) {

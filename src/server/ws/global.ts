@@ -28,7 +28,7 @@ import { subscribeLogs, unsubscribeLogs } from "../../services/logs/log-live.ts"
 import { tokenStillValid } from "../../services/agent-transcript/agent-transcript-hub-registry.ts";
 import { onIssuesChanged } from "../../services/logs/log-issues.ts";
 import { LOGS_ISSUES_CHANGED, LOGS_SUBSCRIBE, LOGS_UNSUBSCRIBE } from "../../shared/logs-api.ts";
-import { resolve } from "node:path";
+import { projectNameForPath } from "../../services/project-name-for-path.ts";
 import {
   handleAgentActivitySubscribe, handleAgentActivityUnsubscribe,
   handleAgentTranscriptClientClosed, handleAgentTranscriptPing,
@@ -88,13 +88,6 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
 onFileChange((projectName, path) => {
   broadcastGlobalEvent({ type: "file:changed", projectName, path });
 });
-
-/** Registered project whose folder is `projectPath`, or null. Case-folded on Windows. */
-function projectNameForPath(projectPath: string): string | null {
-  const fold = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
-  const target = fold(projectPath);
-  return configService.get("projects").find((p) => fold(p.path) === target)?.name ?? null;
-}
 
 // A project's file index was rebuilt behind a stale one and now lists other paths. Clients do
 // not refetch the index on every `file:changed` (on a large project that is a 22 MB download

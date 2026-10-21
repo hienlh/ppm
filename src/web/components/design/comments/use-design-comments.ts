@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  createDesignComment, deleteDesignComment, listDesignComments, updateDesignComment, type CommentPatch,
+  addDesignCommentReply, createDesignComment, deleteDesignComment, deleteDesignCommentReply, deleteShareLinkThreads,
+  listDesignComments, updateDesignComment, updateDesignCommentReply, type CommentPatch,
 } from "@/lib/design/api-design-comments";
-import { isOpenComment, type CommentAnchor, type DesignComment } from "../../../../shared/design-comment-types";
+import { isOpenComment, type CommentAnchor } from "../../../../shared/design-comment-types";
+import type { DesignCommentOwnerView } from "../../../../shared/design-comment-thread-types";
 
 /**
  * One design's comments, kept in step with the server.
@@ -10,27 +12,35 @@ import { isOpenComment, type CommentAnchor, type DesignComment } from "../../../
  * `.design/` is not watched, so the list refreshes on `design:comments_changed` — which also
  * covers another device commenting on the same design. Every change this client makes is
  * applied locally at once from the server's answer; the event that follows only confirms it.
- * Refetches are debounced, because marking N comments sent is N events.
+ * Refetches are debounced, because marking N comments sent is N events. A deleted reply or a
+ * link's threads come back with no body to apply, so those are dropped locally the same way.
  */
 
 export const COMMENTS_CHANGED_EVENT = "design:comments_changed";
 
+type Thread = DesignCommentOwnerView;
+
 export interface DesignCommentsState {
-  comments: DesignComment[] | null;
+  comments: Thread[] | null;
   /** Open comments in the order they were made; a pin's number is its index here plus one. */
-  open: DesignComment[];
-  resolved: DesignComment[];
+  open: Thread[];
+  resolved: Thread[];
   error: string | null;
   reload: () => void;
-  add: (anchor: CommentAnchor, body: string) => Promise<DesignComment>;
-  update: (id: string, patch: CommentPatch) => Promise<DesignComment>;
+  add: (anchor: CommentAnchor, body: string) => Promise<Thread>;
+  update: (id: string, patch: CommentPatch) => Promise<Thread>;
   remove: (id: string) => Promise<void>;
+  reply: (id: string, body: string) => Promise<Thread>;
+  editReply: (id: string, replyId: string, body: string) => Promise<Thread>;
+  removeReply: (id: string, replyId: string) => Promise<void>;
+  /** Every thread reviewers on one share link started. */
+  removeLinkThreads: (linkId: string) => Promise<void>;
 }
 
-const byCreated = (a: DesignComment, b: DesignComment) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0);
+const byCreated = (a: Thread, b: Thread) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0);
 
 export function useDesignComments(projectName: string, slug: string): DesignCommentsState {
-  const [comments, setComments] = useState<DesignComment[] | null>(null);
+  const [comments, setComments] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
@@ -56,7 +66,7 @@ export function useDesignComments(projectName: string, slug: string): DesignComm
     };
   }, [projectName, slug, reload]);
 
-  const replace = useCallback((next: DesignComment) => {
+  const replace = useCallback((next: Thread) => {
     setComments((list) => {
       const rest = (list ?? []).filter((c) => c.id !== next.id);
       return [...rest, next].sort(byCreated);
@@ -80,10 +90,32 @@ export function useDesignComments(projectName: string, slug: string): DesignComm
     setComments((list) => (list ?? []).filter((c) => c.id !== id));
   }, [projectName, slug]);
 
+  const reply = useCallback(async (id: string, body: string) => {
+    const thread = await addDesignCommentReply(projectName, slug, id, body);
+    replace(thread);
+    return thread;
+  }, [projectName, slug, replace]);
+
+  const editReply = useCallback(async (id: string, replyId: string, body: string) => {
+    const thread = await updateDesignCommentReply(projectName, slug, id, replyId, body);
+    replace(thread);
+    return thread;
+  }, [projectName, slug, replace]);
+
+  const removeReply = useCallback(async (id: string, replyId: string) => {
+    await deleteDesignCommentReply(projectName, slug, id, replyId);
+    setComments((list) => (list ?? []).map((c) => (c.id === id ? { ...c, replies: c.replies.filter((r) => r.id !== replyId) } : c)));
+  }, [projectName, slug]);
+
+  const removeLinkThreads = useCallback(async (linkId: string) => {
+    await deleteShareLinkThreads(projectName, slug, linkId);
+    setComments((list) => (list ?? []).filter((c) => !(c.author.kind === "guest" && c.author.linkId === linkId)));
+  }, [projectName, slug]);
+
   const { open, resolved } = useMemo(() => {
     const sorted = [...(comments ?? [])].sort(byCreated);
     return { open: sorted.filter(isOpenComment), resolved: sorted.filter((c) => !isOpenComment(c)) };
   }, [comments]);
 
-  return { comments, open, resolved, error, reload, add, update, remove };
+  return { comments, open, resolved, error, reload, add, update, remove, reply, editReply, removeReply, removeLinkThreads };
 }

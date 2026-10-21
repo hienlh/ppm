@@ -83,6 +83,7 @@ describe("routeNotificationClick", () => {
     const posted: unknown[] = [];
     let focused = 0;
     const client: NotificationWindow = {
+      url: `${ORIGIN}/project/ppm`,
       focused: false,
       visibilityState: "hidden",
       postMessage: (m) => { posted.push(m); },
@@ -131,6 +132,22 @@ describe("routeNotificationClick", () => {
     await routeNotificationClick(moved, elsewhere, ORIGIN);
     expect(other.posted).toEqual([]);
     expect(elsewhere.opened).toEqual([moved.url]);
+  });
+
+  it("skips a reviewer page in front, which has no one listening", async () => {
+    const review = window({ url: `${ORIGIN}/s/abcdefghijkl`, focused: true, visibilityState: "visible" });
+    const app = window({ url: `${ORIGIN}/project/ppm/design/landing` });
+    const all = clients([review.client, app.client]);
+    await routeNotificationClick(push, all, ORIGIN);
+    expect(review.posted).toEqual([]);
+    expect(app.posted).toHaveLength(1);
+    expect(all.opened).toEqual([]);
+
+    const onlyReview = window({ url: `${ORIGIN}/s/abcdefghijkl`, focused: true });
+    const alone = clients([onlyReview.client]);
+    await routeNotificationClick(push, alone, ORIGIN);
+    expect(onlyReview.posted).toEqual([]);
+    expect(alone.opened).toEqual([push.url]);
   });
 
   it("still delivers the session when the browser refuses to focus", async () => {

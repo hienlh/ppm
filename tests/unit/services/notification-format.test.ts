@@ -23,6 +23,13 @@ describe("notificationPath", () => {
   it("opens PPM itself when there is no project — never a path posing as one", () => {
     expect(notificationPath({ project: "", sessionId: "s1" })).toBe("/");
   });
+
+  it("opens the event's own path when it names one inside the app", () => {
+    expect(notificationPath({ project: "shop", sessionId: "", path: "/project/shop/design/landing" })).toBe("/project/shop/design/landing");
+    expect(notificationPath({ project: "shop", sessionId: "", path: "//evil.example/x" })).toBe("/project/shop");
+    expect(notificationPath({ project: "shop", sessionId: "", path: "/\\evil.example" })).toBe("/project/shop");
+    expect(notificationPath({ project: "shop", sessionId: "", path: "https://evil.example" })).toBe("/project/shop");
+  });
 });
 
 describe("formatTelegramNotification", () => {

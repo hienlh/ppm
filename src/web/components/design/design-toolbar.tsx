@@ -1,7 +1,7 @@
 import type { ElementType, ReactNode } from "react";
 import {
   Columns2, Download, History, Maximize2, MessageSquare, MessageSquarePlus, Monitor, MoreHorizontal, MousePointerClick, Move,
-  Presentation, RefreshCw, Send, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
+  Presentation, RefreshCw, Send, Share2, SlidersHorizontal, Smartphone, Sparkles, Tablet, Undo2,
 } from "@/lib/icons";
 import { toast } from "sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -20,6 +20,7 @@ import { DesignLayoutMenu, DesignPaneSwitch } from "./design-layout-controls";
 import type { DesignVariantsFeature } from "./variants/use-design-variants";
 import { DesignVariantMenu } from "./variants/design-variant-controls";
 import { ToolbarBadge } from "./design-toolbar-badge";
+import type { DesignShareFeature } from "./share/design-share-dialog";
 
 /**
  * The canvas toolbar and its registry.
@@ -43,6 +44,7 @@ export interface DesignToolbarContext extends DesignTabContextValue {
   undo: DesignUndoFeature;
   exports: DesignExportFeature;
   variants: DesignVariantsFeature;
+  share: DesignShareFeature;
 }
 
 export interface DesignToolbarItem {
@@ -88,6 +90,11 @@ export const DESIGN_TOOLBAR_ITEMS: DesignToolbarItem[] = [
     isActive: (ctx) => ctx.comments.panelOpen,
     badge: (ctx) => ctx.comments.openCount || null,
     run: (ctx) => ctx.comments.togglePanel(),
+  },
+  {
+    // Opens the Share dialog; with PPM sign-in off it explains why nothing can be shared.
+    id: "share", label: "Share for review", icon: Share2, placement: "bar",
+    isActive: (ctx) => ctx.share.open, run: (ctx) => ctx.share.setOpen(true),
   },
   {
     // Offered whenever design.json parses; with no tweaks declared the panel asks the AI for some.
@@ -187,7 +194,9 @@ export function DesignToolbar({ ctx }: { ctx: DesignToolbarContext }) {
           disabled={item.isDisabled?.(ctx)} onClick={() => item.run(ctx)}
           className={cn(iconBtn, "relative", item.isActive?.(ctx) && "bg-surface-elevated text-foreground")}>
           <item.icon className="size-4" />
-          <ToolbarBadge count={item.badge?.(ctx)} className="absolute -right-1 -top-1" />
+          {/* Inside the button's top edge: the toolbar is only 2px taller than its buttons and a
+              window or split clips anything above it, so a badge raised past the edge is cut off. */}
+          <ToolbarBadge count={item.badge?.(ctx)} className="absolute -right-1.5 top-0" />
         </button>
       ))}
       {more.length > 0 && (

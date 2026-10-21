@@ -10,7 +10,7 @@ import { notificationPath } from "./notification-format.ts";
  * that is plain HTTP on an insecure origin, where the browser turns off notifications,
  * the clipboard and the other permissions PPM asks for, while localhost counts as secure.
  */
-export async function notificationLink(payload: Pick<NotificationPayload, "project" | "sessionId" | "providerId">): Promise<string> {
+export async function notificationLink(payload: Pick<NotificationPayload, "project" | "sessionId" | "providerId" | "path">): Promise<string> {
   const baseUrl = tunnelService.getTunnelUrl() ?? await tailscaleUrl() ?? `http://localhost:${ppmPublicPort()}`;
   return `${baseUrl.replace(/\/$/, "")}${notificationPath(payload)}`;
 }

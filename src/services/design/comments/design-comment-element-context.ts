@@ -1,7 +1,7 @@
 import {
   COMMENT_LIMITS, stripHtmlComments, type CommentAnchor, type CommentQuote,
 } from "../../../shared/design-comment-types.ts";
-import { resolveScopedPath } from "../preview/design-preview-scope.ts";
+import { resolveScopedPath, resolveSnapshotScopedPath } from "../preview/design-preview-scope.ts";
 import { readDesignSource, type DesignSource } from "../source/design-source-file.ts";
 import { elementSourceRange } from "../source/element-source-range.ts";
 import { diceSimilarity, resolveAnchor } from "../bridge/bridge-anchor-resolve.ts";
@@ -25,12 +25,27 @@ export interface ElementContext {
   quote: CommentQuote;
 }
 
-/** The HTML file a comment is on: inside the design, no dot-directories, `.html`/`.htm`. */
-export async function resolveCommentFile(projectPath: string, slug: string, file: string): Promise<string> {
+/** Which copy of the design an element is read from: the live folder unless a snapshot is named. */
+export interface ElementSourceOptions {
+  snapshotId?: string;
+}
+
+/**
+ * The HTML file a comment is on: inside the design, no dot-directories, `.html`/`.htm`. With
+ * a `snapshotId`, the file inside that snapshot instead, which is what a reviewer was shown.
+ */
+export async function resolveCommentFile(
+  projectPath: string, slug: string, file: string, opts: ElementSourceOptions = {},
+): Promise<string> {
   if (!/\.html?$/i.test(file) || file.startsWith("/") || file.split("/").includes("..")) {
     throw new DesignError(400, "EBADFILE", "A comment must be on an HTML file of the design");
   }
-  return (await resolveScopedPath({ projectPath, slug }, `${slug}/${file}`)).abs;
+  const design = { projectPath, slug };
+  const path = `${slug}/${file}`;
+  const asset = opts.snapshotId === undefined
+    ? await resolveScopedPath(design, path)
+    : await resolveSnapshotScopedPath(design, opts.snapshotId, path);
+  return asset.abs;
 }
 
 export function capSnippet(markup: string): string {
@@ -49,8 +64,15 @@ async function readSource(abs: string): Promise<DesignSource | null> {
   }
 }
 
-export async function elementContext(projectPath: string, slug: string, anchor: CommentAnchor): Promise<ElementContext> {
-  const abs = await resolveCommentFile(projectPath, slug, anchor.file);
+/**
+ * A non-null `snippet` means the anchor's `ppmId` and `gen` were confirmed against the file
+ * read — the live one, or the named snapshot's. Re-anchoring ({@link validateReanchor}) is
+ * always against the live file.
+ */
+export async function elementContext(
+  projectPath: string, slug: string, anchor: CommentAnchor, opts: ElementSourceOptions = {},
+): Promise<ElementContext> {
+  const abs = await resolveCommentFile(projectPath, slug, anchor.file, opts);
   const source = await readSource(abs);
   if (!source || anchor.ppmId === null || anchor.gen !== source.gen) return { snippet: null, quote: anchor.quote };
   const range = elementSourceRange(source.text, anchor.ppmId);

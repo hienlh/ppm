@@ -15,6 +15,8 @@ import { DesignError } from "./design-error.ts";
 import { designLockKey, withDesignLock } from "./design-lock.ts";
 import { withRecoveredDesign } from "./design-restore-journal.ts";
 import { resolveDesignVariants } from "./design-variants-resolve.ts";
+import { deleteShareLinksForDesign } from "./share/design-share-links-store.ts";
+import { projectKey } from "../project-name-for-path.ts";
 
 /** Designs listed per project, newest first. */
 export const MAX_LISTED_DESIGNS = 200;
@@ -161,12 +163,16 @@ export async function renameDesign(projectPath: string, slug: string, rawTitle: 
   });
 }
 
-/** Delete a design folder, `.design/` and its history included. */
+/**
+ * Delete a design folder, `.design/` and its history included, and then its share links:
+ * left behind, they would be inherited by a later design that reuses the slug.
+ */
 export async function deleteDesign(projectPath: string, slug: string): Promise<void> {
   await withDesignLock(designLockKey(projectPath, slug), async () => {
     const dir = await resolveDesignDir(projectPath, slug);
     // rm never follows a symlink inside the tree; the folder itself was checked not to be one.
     await rm(dir, { recursive: true, force: false });
+    deleteShareLinksForDesign(projectKey(projectPath), slug);
   });
 }
 

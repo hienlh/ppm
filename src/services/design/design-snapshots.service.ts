@@ -13,6 +13,8 @@ import {
 import { withRecoveredDesign } from "./design-restore-journal.ts";
 import { emitDesignEvent } from "./design-events.ts";
 import { DesignError, isDesignError } from "./design-error.ts";
+import { pinnedSnapshotIds } from "./share/design-share-links-store.ts";
+import { projectKey } from "../project-name-for-path.ts";
 
 /**
  * Snapshots are plain file copies of a design folder (minus `.design/`) kept in
@@ -131,7 +133,7 @@ export async function takeSnapshotLocked(
 
 /**
  * Snapshot a design (`turn` after an AI turn, `before-edit` ahead of a canvas write-back,
- * `manual` on request). Announces the change with one `history_changed` event when a
+ * `manual` on request). Snapshots a share link pins are never pruned. Announces the change with one `history_changed` event when a
  * snapshot was actually taken. A design that does not exist is reported as skipped, since
  * a turn can end in a session whose design was deleted.
  */
@@ -146,7 +148,11 @@ export async function snapshotDesign(
   }
   let result: SnapshotResult;
   try {
-    result = await withRecoveredDesign(projectPath, slug, (dir) => takeSnapshotLocked(dir, reason, meta));
+    // Read under the lock, so a link pinning an old snapshot cannot be inserted between the
+    // read and the prune that would otherwise take its snapshot away.
+    result = await withRecoveredDesign(projectPath, slug, (dir) => (
+      takeSnapshotLocked(dir, reason, meta, pinnedSnapshotIds(projectKey(projectPath), slug))
+    ));
   } catch (e) {
     if (isDesignError(e) && e.status === 404) return { skipped: "missing" };
     throw e;

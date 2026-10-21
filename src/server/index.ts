@@ -167,6 +167,12 @@ app.onError((error, c) => {
   return c.text("Internal Server Error", 500);
 });
 
+// Design share links: the public reviewer surface. Ahead of `cors()` (which would answer `*`
+// and re-wrap range bodies), of `/api` auth (a share code is never the PPM token) and of the
+// static fallback (its catch-all keeps every `/s` path off the app shell).
+import { designShareGuestRoutes } from "./routes/design-share-guest.ts";
+app.route("/s", designShareGuestRoutes);
+
 // CORS for dev
 app.use("*", cors());
 
@@ -247,6 +253,9 @@ import { mountDebugCrashRoute } from "./routes/debug-crash.ts";
 mountDebugCrashRoute(app);
 app.route("/api/html-preview", htmlPreviewRoutes.api);
 app.route("/api/design-preview", designPreviewRoutes.api);
+// The Share dialog's public address and sign-in state; the links themselves are per design.
+import { designShareAddressRoutes } from "./routes/design-share-address.ts";
+app.route("/api/design-shares", designShareAddressRoutes);
 
 // Port forwarding — starts per-port Cloudflare tunnels
 app.route("/api/preview", portForwardingRoutes);

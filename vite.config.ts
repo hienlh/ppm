@@ -110,6 +110,16 @@ export default defineConfig({
         target: process.env.PPM_DEV_API ?? "http://localhost:8081",
         ws: true,
       },
+      // A design share link's reviewer page and its built assets (`vite.share.config.ts`),
+      // so "Open as reviewer" works from the dev server too, once `build:web` has run.
+      "/s/": {
+        target: process.env.PPM_DEV_API ?? "http://localhost:8081",
+        changeOrigin: false,
+      },
+      "/assets/share-": {
+        target: process.env.PPM_DEV_API ?? "http://localhost:8081",
+        changeOrigin: false,
+      },
     },
     fs: {
       // A git worktree's `node_modules` is often a junction back to the main checkout's (to

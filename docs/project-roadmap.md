@@ -27,6 +27,11 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
   back into the element's `style` with an exact undo.
 - Exports: ZIP, standalone HTML, PDF via a print view, and PPTX with editable text; "Hand off to
   code" starts an ordinary chat with a build brief.
+- Share a design for review: a link (`/s/<code>`) to a pinned version that outside reviewers
+  open without an account, comment on and discuss in threads that reach the owner's canvas,
+  with per-link expiry and revoke; reviewer comments notify the owner. See
+  `docs/architecture/workspace-and-ui.md` → "Design mode" → "Share links". Verified by
+  `tests/e2e/design-share-e2e.mjs` (owner on a desktop, reviewers on a phone and a desktop).
 - See `docs/architecture/workspace-and-ui.md` → "Design mode". Verified by
   `tests/e2e/design-mode-e2e.mjs` at 1366 px and 390 px.
 

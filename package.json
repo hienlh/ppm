@@ -18,7 +18,7 @@
     "dev:web": "bun run vite --config vite.config.ts",
     "tunnel": "cloudflared tunnel --url http://localhost:5173",
     "dev:tunnel": "concurrently \"bun run dev:server\" \"bun run dev:web\" \"bun run tunnel\"",
-    "build:web": "bun run vite build --config vite.config.ts",
+    "build:web": "bun run vite build --config vite.config.ts && bun run vite build --config vite.share.config.ts",
     "build": "bun run build:web && bun scripts/copy-monaco.ts && bun scripts/precompress-web.ts && bun build src/index.ts src/services/extension-host-worker.ts src/services/file-index/file-index-worker.ts --compile --outfile dist/ppm",
     "start": "bun run src/index.ts start",
     "typecheck": "bunx tsc --noEmit",

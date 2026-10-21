@@ -125,7 +125,7 @@ async function stepSendToAi(ctx) {
   await selectedBar(ctx).getByRole("button", { name: "Send to AI" }).click();
   await overlay(ctx, "Send <p> to AI").getByRole("button", { name: "Preview message" }).click();
   const preview = overlay(ctx, "Put this in the design chat?");
-  const text = await preview.locator("pre").textContent();
+  const text = await preview.getByRole("textbox", { name: "Message to put in the design chat" }).inputValue();
   await preview.getByRole("button", { name: "Put in chat" }).click();
   if (!ctx.mobile) await designComposer(ctx);
   const chip = ctx.page.locator("span:visible", { hasText: /^Design element <p>$/ }).first();

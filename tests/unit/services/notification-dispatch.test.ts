@@ -142,6 +142,37 @@ describe("NotificationService.broadcast", () => {
     expect(telegrammed.map((p) => p.title).sort()).toEqual(["other session", "second"]);
   });
 
+  it("keeps only the newest pending notification per coalesce key, and tags it with the key", async () => {
+    settings({ delay_seconds: 20 });
+    const svc = service();
+    const told: string[] = [];
+    const send = (title: string, key: string) =>
+      svc.broadcast("design_review", payload("", { title }), { coalesceKey: key, onSend: () => told.push(title) });
+    const outcomes = await Promise.all([send("one", "design-share:a"), send("two", "design-share:a"), send("other", "design-share:b")]);
+    expect(outcomes).toEqual(["replaced", "sent", "sent"]);
+    expect(telegrammed.map((p) => p.title).sort()).toEqual(["other", "two"]);
+    expect(told.sort()).toEqual(["other", "two"]);
+    expect(pushed.map((p) => p.tag).sort()).toEqual(["ppm-design-share:a", "ppm-design-share:b"]);
+  });
+
+  it("calls onSend before delivering with no delay, and reports a switched-off event", async () => {
+    settings({ delay_seconds: 0 });
+    const svc = service();
+    let told = 0;
+    const sending = svc.broadcast("design_review", payload(""), { onSend: () => { told++; } });
+    expect(told).toBe(1);
+    expect(await sending).toBe("sent");
+    settings({ delay_seconds: 0, events: { ...DEFAULT_NOTIFICATION_SETTINGS.events, design_review: false } });
+    expect(await svc.broadcast("design_review", payload(""), { onSend: () => { told++; } })).toBe("off");
+    expect(told).toBe(1);
+  });
+
+  it("opens the path an event names", async () => {
+    settings({ delay_seconds: 0 });
+    await service().broadcast("design_review", payload("", { project: "shop", path: "/project/shop/design/landing" }));
+    expect(pushed[0]!.path).toBe("/project/shop/design/landing");
+  });
+
   it("does not collapse events that belong to no session", async () => {
     settings({ delay_seconds: 1 });
     const svc = service();

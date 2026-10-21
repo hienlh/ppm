@@ -18,11 +18,14 @@ export function escapeTelegramHtml(text: string): string {
 }
 
 /**
- * Where a notification opens PPM: the session's chat when there is one.
+ * Where a notification opens PPM: the event's own path when it names one, else the
+ * session's chat when there is one.
  * `project` must be the project's NAME — the app resolves `/project/<x>` by name, and
  * a path there falls back to whichever project sorts first.
  */
-export function notificationPath(payload: Pick<NotificationPayload, "project" | "sessionId" | "providerId">): string {
+export function notificationPath(payload: Pick<NotificationPayload, "project" | "sessionId" | "providerId" | "path">): string {
+  // Only a path inside the app: `//host` and `/\host` would leave PPM's origin.
+  if (payload.path && /^\/(?![/\\])/.test(payload.path)) return payload.path;
   if (!payload.project) return "/";
   const base = `/project/${encodeURIComponent(payload.project)}`;
   if (!payload.sessionId) return base;

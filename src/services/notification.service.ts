@@ -25,6 +25,8 @@ export interface NotificationPayload {
   /** How Telegram shows `detail`: quoted prose, or a code block for commands and paths. */
   detailStyle?: "quote" | "code";
   deviceName?: string;
+  /** Where the notification opens PPM, for an event that is not a chat ("/project/<p>/design/<slug>"). */
+  path?: string;
 }
 
 export interface BroadcastOptions {
@@ -34,12 +36,27 @@ export interface BroadcastOptions {
    * out: schedules and Jira have no "seen" state.
    */
   stillUnseen?: () => boolean;
+  /**
+   * For an event with no session: one waiting notification per key, the newer replacing
+   * the older, as sessions already are. Also the device tag, so a newer notification
+   * replaces the older one on the device too.
+   */
+  coalesceKey?: string;
+  /**
+   * Called the moment the notification goes out — synchronously inside `broadcast` when
+   * there is no delay — and never for one that is switched off, replaced or seen. Lets a
+   * caller that folds several events into one notification know which of them were told.
+   */
+  onSend?: () => void;
 }
+
+/** What became of one broadcast. Callers that only fire and forget can ignore it. */
+export type BroadcastOutcome = "sent" | "off" | "replaced" | "seen";
 
 const URGENT: ReadonlySet<NotificationType> = new Set(["approval_request", "question"]);
 
 export class NotificationService {
-  /** At most one waiting notification per session: a newer event about it replaces the older one. */
+  /** At most one waiting notification per session (or coalesce key): a newer event replaces the older one. */
   private pending = new Map<string, () => void>();
 
   /** @param msPerSecond test seam — the delay setting is in seconds. */
@@ -58,22 +75,26 @@ export class NotificationService {
    * The old rule was "send to Telegram only while no browser is connected", which meant
    * never: a PPM tab left open anywhere, even in the background, kept it silent.
    */
-  broadcast(type: NotificationType, payload: NotificationPayload, opts: BroadcastOptions = {}): Promise<void> {
+  broadcast(type: NotificationType, payload: NotificationPayload, opts: BroadcastOptions = {}): Promise<BroadcastOutcome> {
     const settings = resolveNotificationSettings(configService.get("notifications"));
     if (!settings.events[type]) {
       log.debug(`Notification ${type} not sent: switched off`);
-      return Promise.resolve();
+      return Promise.resolve("off");
     }
-    if (settings.delay_seconds === 0) return this.deliver(type, payload);
+    const tag = opts.coalesceKey;
+    if (settings.delay_seconds === 0) {
+      sent(opts);
+      return this.deliver(type, payload, tag).then(() => "sent");
+    }
 
-    const key = payload.sessionId || null;
+    const key = payload.sessionId || opts.coalesceKey || null;
     if (key) this.pending.get(key)?.();
-    return new Promise<void>((resolve) => {
+    return new Promise<BroadcastOutcome>((resolve) => {
       const cancel = () => {
         clearTimeout(timer);
         if (key && this.pending.get(key) === cancel) this.pending.delete(key);
-        log.debug(`Notification ${type} session=${key} not sent: replaced by a newer one`);
-        resolve();
+        log.debug(`Notification ${type} key=${key} not sent: replaced by a newer one`);
+        resolve("replaced");
       };
       const timer = setTimeout(() => {
         if (key && this.pending.get(key) === cancel) this.pending.delete(key);
@@ -82,16 +103,17 @@ export class NotificationService {
           unseen = opts.stillUnseen ? opts.stillUnseen() : true;
         } catch { /* cannot tell — better one notification too many than a missed approval */ }
         if (!unseen) {
-          log.debug(`Notification ${type} session=${key ?? "-"} not sent: seen within ${settings.delay_seconds}s`);
-          return resolve();
+          log.debug(`Notification ${type} key=${key ?? "-"} not sent: seen within ${settings.delay_seconds}s`);
+          return resolve("seen");
         }
-        this.deliver(type, payload).finally(resolve);
+        sent(opts);
+        this.deliver(type, payload, tag).finally(() => resolve("sent"));
       }, settings.delay_seconds * this.msPerSecond);
       if (key) this.pending.set(key, cancel);
     });
   }
 
-  private async deliver(type: NotificationType, event: NotificationPayload): Promise<void> {
+  private async deliver(type: NotificationType, event: NotificationPayload, coalesceKey?: string): Promise<void> {
     const settings = resolveNotificationSettings(configService.get("notifications"));
     const payload: NotificationPayload = { ...event, providerId: event.providerId || providerOf(event.sessionId) };
     const deviceName = (configService.get("device_name") as string) || "PPM";
@@ -110,7 +132,7 @@ export class NotificationService {
             project: payload.project,
             sessionId: payload.sessionId,
             sessionTitle: payload.sessionTitle,
-            notificationType: type === "schedule" || type === "jira" ? "done" : type,
+            notificationType: type === "schedule" || type === "jira" || type === "design_review" ? "done" : type,
           });
         })
         .catch(() => {}),
@@ -125,8 +147,10 @@ export class NotificationService {
             body,
             path: notificationPath(payload),
             // Same tag = the newer notification replaces the older one on the device. Right for a
-            // session; wrong for two Jira hits that land in the same millisecond.
-            tag: payload.sessionId ? `ppm-${payload.sessionId}` : `ppm-${type}-${crypto.randomUUID()}`,
+            // session or a coalesce key; wrong for two Jira hits that land in the same millisecond.
+            tag: payload.sessionId ? `ppm-${payload.sessionId}`
+              : coalesceKey ? `ppm-${coalesceKey}`
+              : `ppm-${type}-${crypto.randomUUID()}`,
             project: payload.project,
             sessionId: payload.sessionId,
             providerId: payload.providerId ?? "",
@@ -186,6 +210,14 @@ function ntfyFailure(e: unknown, config: NtfyConfig | null): string {
     host = new URL(config.server).host;
   } catch { /* not a URL: keep it as typed */ }
   return msg.split(config.server).join(host).split(config.topic).join("[topic]");
+}
+
+function sent(opts: BroadcastOptions): void {
+  try {
+    opts.onSend?.();
+  } catch (e) {
+    log.warn(`onSend failed: ${(e as Error).message}`);
+  }
 }
 
 /** Sessions PPM created or resumed have their provider recorded; others have no row. */

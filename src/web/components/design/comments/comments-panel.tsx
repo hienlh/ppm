@@ -1,23 +1,30 @@
 import { useState } from "react";
-import { CheckCircle, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, RotateCcw, Send, Trash2, X } from "@/lib/icons";
+import { CheckCircle, ChevronDown, ChevronRight, Loader2, MessageSquare, MessageSquarePlus, RotateCcw, Send, Trash2, X } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/adaptive-context-menu";
 import { formatRelativeDate } from "@/lib/format-date";
 import type { DesignCommentsState } from "./use-design-comments";
-import type { PinStatus } from "./use-comment-pins";
-import type { DesignComment } from "../../../../shared/design-comment-types";
+import { PIN_STATUS_LABEL, type PinStatus } from "./use-comment-pins";
+import type { DesignCommentOwnerView } from "../../../../shared/design-comment-thread-types";
+import { CommentAuthorLabel } from "./comment-author-label";
+import { CommentThreadView, type ThreadActions } from "./comment-thread-view";
 
 /**
  * The design's comments as a list: open ones numbered like their pins, resolved ones
  * folded below, and the one action that gathers them all for the AI. Rows use the adaptive
- * context menu; a tap opens the comment. A comment whose element could not be found is
- * marked Detached rather than hidden — it still says what the user wanted changed.
+ * context menu; a tap opens the thread, which then takes the list's place. Each row says who
+ * wrote it — "You", or a reviewer's name and the link they came through — and how many
+ * replies it has. A comment whose element could not be found is marked Detached rather than
+ * hidden — it still says what the user wanted changed.
  */
+
+type DesignComment = DesignCommentOwnerView;
 
 export interface CommentsPanelActions {
   onOpen: (c: DesignComment) => void;
+  onReply: (c: DesignComment) => void;
   onResolve: (c: DesignComment, resolved: boolean) => void;
   onSend: (c: DesignComment) => void;
   onDelete: (c: DesignComment) => void;
@@ -25,15 +32,14 @@ export interface CommentsPanelActions {
   onClose: () => void;
 }
 
-const STATUS_LABEL: Partial<Record<PinStatus, string>> = { detached: "Detached", moved: "Moved", elsewhere: "On another page" };
-
 function Row({ c, number, status, actions }: {
   c: DesignComment;
   number: number | null;
   status: PinStatus | null;
   actions: CommentsPanelActions;
 }) {
-  const label = status ? STATUS_LABEL[status] : undefined;
+  const label = status ? PIN_STATUS_LABEL[status] : undefined;
+  const replies = c.replies.length;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -45,7 +51,11 @@ function Row({ c, number, status, actions }: {
             {number ?? <CheckCircle className="size-4" />}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="line-clamp-2 text-sm">{c.body}</span>
+            <span className="flex min-w-0 text-xs text-text-2">
+              <CommentAuthorLabel author={c.author} />
+              {replies > 0 && <span className="shrink-0 text-text-subtle">&nbsp;· {replies === 1 ? "1 reply" : `${replies} replies`}</span>}
+            </span>
+            <span className="line-clamp-2 break-words text-sm">{c.body}</span>
             <span className="block truncate text-xs text-text-subtle">
               &lt;{c.anchor.tag}&gt; · {status === "elsewhere" ? c.file : formatRelativeDate(c.createdAt)}
               {label && <> · <span className={status === "detached" ? "text-warning" : undefined}>{label}</span></>}
@@ -58,6 +68,7 @@ function Row({ c, number, status, actions }: {
         {c.resolvedAt
           ? <ContextMenuItem onClick={() => actions.onResolve(c, false)}><RotateCcw className="size-4" /> Reopen</ContextMenuItem>
           : <ContextMenuItem onClick={() => actions.onResolve(c, true)}><CheckCircle className="size-4" /> Resolve</ContextMenuItem>}
+        <ContextMenuItem onClick={() => actions.onReply(c)}><MessageSquare className="size-4" /> Reply</ContextMenuItem>
         <ContextMenuItem onClick={() => actions.onSend(c)}><Send className="size-4" /> Send to AI</ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" onClick={() => actions.onDelete(c)}><Trash2 className="size-4" /> Delete</ContextMenuItem>
@@ -66,13 +77,25 @@ function Row({ c, number, status, actions }: {
   );
 }
 
-export function CommentsPanel({ state, statusOf, actions }: {
+export function CommentsPanel({ state, statusOf, actions, thread }: {
   state: DesignCommentsState;
   statusOf: (id: string) => PinStatus;
   actions: CommentsPanelActions;
+  /** The thread shown instead of the list, with its actions. */
+  thread?: { id: string; focusReply: boolean; actions: ThreadActions } | null;
 }) {
   const [showResolved, setShowResolved] = useState(false);
   const { open, resolved, comments, error } = state;
+  const shown = thread ? comments?.find((c) => c.id === thread.id) : undefined;
+  if (thread && shown) {
+    const index = open.indexOf(shown);
+    return (
+      <div className="h-full min-h-0 bg-panel">
+        <CommentThreadView key={shown.id} thread={shown} number={index < 0 ? null : index + 1}
+          status={index < 0 ? null : statusOf(shown.id)} actions={thread.actions} focusReply={thread.focusReply} />
+      </div>
+    );
+  }
   return (
     <div className="flex h-full min-h-0 flex-col bg-panel">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2">

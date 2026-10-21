@@ -17,4 +17,17 @@ describe("release frontend staging", () => {
     expect(precompress).toBeGreaterThan(monaco);
     expect(release).toContain("npm publish --access public --ignore-scripts");
   });
+
+  it("builds the design share reviewer page inside build:web, after the app build", () => {
+    // release.sh and prepublishOnly both run only build:web, so a separate script would ship
+    // releases whose /s/<code> answers 503 "not built". It must also come after the app
+    // build, which empties dist/web.
+    const pkg = JSON.parse(readFileSync(resolve(import.meta.dir, "../../../package.json"), "utf8"));
+    const buildWeb: string = pkg.scripts["build:web"];
+    const app = buildWeb.indexOf("--config vite.config.ts");
+    const share = buildWeb.indexOf("--config vite.share.config.ts");
+    expect(app).toBeGreaterThanOrEqual(0);
+    expect(share).toBeGreaterThan(app);
+    expect(pkg.scripts.build.startsWith("bun run build:web &&")).toBe(true);
+  });
 });

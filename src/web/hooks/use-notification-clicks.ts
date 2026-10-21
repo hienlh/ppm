@@ -2,11 +2,15 @@ import { useEffect, useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { hydrateWorkspaceFromServer } from "@/stores/panel-utils";
-import { autoOpenFromUrl } from "@/hooks/use-url-sync";
+import { autoOpenFromUrl, parseUrlState } from "@/hooks/use-url-sync";
 import { OPEN_FROM_NOTIFICATION, type OpenFromNotificationMessage } from "../../shared/web-push-payload";
 
-/** Show a notification's session in this window, the way a `?openChat=` link opens it at boot. */
-async function openNotifiedSession(projectName: string, sessionId: string, providerId: string): Promise<void> {
+/**
+ * Show a notification's session in this window, the way a `?openChat=` link opens it at boot.
+ * A notification about something other than a chat (a design a reviewer commented on) opens
+ * the tab its URL names, as that URL would at boot.
+ */
+async function openNotifiedSession(projectName: string, sessionId: string, providerId: string, url: string): Promise<void> {
   const target = useProjectStore.getState().projects.find((p) => p.name === projectName);
   if (!target) return;
   // Without a local copy of the layout, switching would create an empty one and overwrite the saved tabs.
@@ -14,7 +18,21 @@ async function openNotifiedSession(projectName: string, sessionId: string, provi
   useProjectStore.getState().setActiveProject(target);
   useTabStore.getState().switchProject(target.name);
   // `provider/session` as in a chat URL; without the provider the tab would open as Claude.
-  if (sessionId) autoOpenFromUrl("chat", providerId ? `${providerId}/${sessionId}` : sessionId, target.name);
+  if (sessionId) {
+    autoOpenFromUrl("chat", providerId ? `${providerId}/${sessionId}` : sessionId, target.name);
+    return;
+  }
+  const state = notifiedTab(url);
+  if (state?.tabType && state.projectName === target.name) autoOpenFromUrl(state.tabType, state.tabIdentifier, target.name);
+}
+
+function notifiedTab(url: string): ReturnType<typeof parseUrlState> | null {
+  try {
+    const parsed = new URL(url, window.location.href);
+    return parsed.origin === window.location.origin ? parseUrlState(parsed) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -35,7 +53,7 @@ export function useNotificationClicks(authenticated: boolean): void {
         if (new URL(message.url, window.location.href).origin === window.location.origin) window.location.assign(message.url);
         return;
       }
-      void openNotifiedSession(message.project ?? "", message.sessionId ?? "", message.providerId ?? "");
+      void openNotifiedSession(message.project ?? "", message.sessionId ?? "", message.providerId ?? "", message.url);
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);

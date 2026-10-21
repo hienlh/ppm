@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveScopedAsset } from "../../../src/services/design/preview/design-preview-scope.ts";
+import { resolveScopedAsset, resolveSnapshotScopedPath } from "../../../src/services/design/preview/design-preview-scope.ts";
 
 describe("design preview scope", () => {
   let project: string;
@@ -107,5 +107,74 @@ describe("design preview scope", () => {
   it("stops serving a design that was deleted after the token was minted", async () => {
     rmSync(join(project, "designs", "landing"), { recursive: true, force: true });
     expect(await status("landing/index.html")).toBe(404);
+  });
+});
+
+describe("design snapshot scope", () => {
+  let project: string;
+  const SNAP = "20261021-120000-abcd";
+  const design = () => ({ projectPath: project, slug: "landing" });
+  const status = async (path: string, id = SNAP): Promise<number> => {
+    try {
+      await resolveSnapshotScopedPath(design(), id, path);
+      return 200;
+    } catch (e) {
+      const err = e as { status?: number; code?: string };
+      return err.status ?? (err.code === "ENOENT" ? 404 : 500);
+    }
+  };
+  /** A complete snapshot directory, as the history module writes one. */
+  const writeSnapshot = (dir: string, id: string) => {
+    mkdirSync(join(dir, "files", "img"), { recursive: true });
+    writeFileSync(join(dir, "meta.json"), JSON.stringify({
+      id, reason: "manual", createdAt: "2026-10-21T12:00:00.000Z", fileCount: 2, bytes: 10, treeHash: "0".repeat(64),
+    }));
+    writeFileSync(join(dir, "files", "index.html"), "<p>old</p>");
+    writeFileSync(join(dir, "files", "img", "a.png"), "png");
+    writeFileSync(join(dir, "files", ".env.json"), "secret");
+  };
+  const history = () => join(project, "designs", "landing", ".design", "history");
+  const linkDir = (target: string, at: string) => symlinkSync(target, at, process.platform === "win32" ? "junction" : "dir");
+
+  beforeEach(() => {
+    project = realpathSync(mkdtempSync(join(tmpdir(), "ppm-design-snapscope-")));
+    mkdirSync(history(), { recursive: true });
+    writeFileSync(join(project, "designs", "landing", "index.html"), "<p>live</p>");
+    writeFileSync(join(project, "designs", "tokens.css"), ":root{}");
+    writeSnapshot(join(history(), SNAP), SNAP);
+  });
+  afterEach(() => { rmSync(project, { recursive: true, force: true }); });
+
+  it("serves the snapshot's copy of the design's own files, not the live one", async () => {
+    const asset = await resolveSnapshotScopedPath(design(), SNAP, "landing/index.html");
+    expect(asset).toMatchObject({ abs: join(history(), SNAP, "files", "index.html"), rel: "index.html" });
+    expect(readFileSync(asset.abs, "utf8")).toBe("<p>old</p>");
+    expect((await resolveSnapshotScopedPath(design(), SNAP, "landing/img/a.png")).rel).toBe("img/a.png");
+  });
+
+  it("reaches no alias, dot-file or path outside the snapshot", async () => {
+    for (const path of ["tokens.css", "systems/default/tokens.css", "landing/.env.json", "landing/../../meta.json", `landing/..${String.fromCharCode(92)}x.html`, "other/index.html", "landing/"]) {
+      expect(await status(path)).toBe(403);
+    }
+    expect(await status("landing/missing.html")).toBe(404);
+  });
+
+  it("404s an unknown or malformed snapshot id", async () => {
+    expect(await status("landing/index.html", "20200101-000000-0000")).toBe(404);
+    expect(await status("landing/index.html", "../history")).toBe(404);
+  });
+
+  it("refuses a snapshot directory that is a symlink, and a symlinked files/ inside a real one", async () => {
+    const outside = join(project, "elsewhere");
+    const LINKED = "20261021-130000-beef";
+    writeSnapshot(join(outside, LINKED), LINKED);
+    linkDir(join(outside, LINKED), join(history(), LINKED));
+    expect(await status("landing/index.html", LINKED)).toBe(404);
+
+    const REAL = "20261021-140000-cafe";
+    mkdirSync(join(history(), REAL));
+    writeFileSync(join(history(), REAL, "meta.json"), readFileSync(join(outside, LINKED, "meta.json"), "utf8").replace(LINKED, REAL));
+    linkDir(join(outside, LINKED, "files"), join(history(), REAL, "files"));
+    expect(await status("landing/index.html", REAL)).toBe(403);
   });
 });

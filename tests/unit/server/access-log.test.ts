@@ -66,6 +66,12 @@ describe("request target", () => {
     expect(describeRequestTarget(new URL("http://x/api/remote-desktop/whep/Zm9vYmFyYmF6")))
       .toBe("/api/remote-desktop/whep/[token]");
   });
+
+  it("cuts a share code out of every spelling of the share path", () => {
+    expect(describeRequestTarget(new URL("http://x/s/sharecode123/info"))).toBe("/s/[token]/info");
+    expect(describeRequestTarget(new URL("http://x/S/sharecode123"))).toBe("/s/[token]");
+    expect(describeRequestTarget(new URL("http://x//s/sharecode123/f/a.css"))).toBe("/s/[token]/f/a.css");
+  });
 });
 
 describe("middleware", () => {

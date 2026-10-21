@@ -39,12 +39,14 @@ const BACKGROUND_WRITES: readonly RegExp[] = [
   /^\/api\/(codex-)?accounts\/pick$/,
 ];
 
-/** Paths whose next segment is a bearer capability (a preview or export token, a WHEP ticket). */
+/** Paths whose next segment is a bearer capability (a preview or export token, a WHEP ticket, a share code). */
 const CAPABILITY_PREFIXES = [
   "/api/html-preview/content/",
   "/api/design-preview/content/",
   "/api/db/grid-export/",
   "/api/remote-desktop/whep/",
+  // A design share link: `/s/<code>/…`.
+  "/s/",
 ];
 
 const SECRET_QUERY_KEY = /token|key|secret|password|passwd|auth|code|state|ticket|sig|signature|credential/i;
@@ -71,9 +73,10 @@ export function accessLogLevel(method: string, path: string, status: number, ms:
 
 /** Path + query as logged: capability tokens cut out, credential-like query values replaced. */
 export function describeRequestTarget(url: URL): string {
-  let path = url.pathname;
+  // `//s/<code>` and `/S/<code>` miss the routes they resemble, but still carry the code here.
+  let path = url.pathname.replace(/^\/{2,}/, "/");
   for (const prefix of CAPABILITY_PREFIXES) {
-    if (path.startsWith(prefix)) {
+    if (path.toLowerCase().startsWith(prefix)) {
       const rest = path.slice(prefix.length);
       const slash = rest.indexOf("/");
       path = `${prefix}[token]${slash === -1 ? "" : rest.slice(slash)}`;
