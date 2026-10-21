@@ -207,11 +207,6 @@ app.get("/api/logs/recent", async (c) => {
   return c.json(ok({ logs: redactForBugReport(lines) }));
 });
 
-// Dev-only: crash endpoint for testing health check UI
-if (process.env.NODE_ENV !== "production") {
-  app.get("/api/debug/crash", () => { process.exit(1); });
-}
-
 // Proxy routes — before auth middleware (uses own auth key)
 app.route("/proxy", proxyRoutes);
 
@@ -247,6 +242,9 @@ app.all(DB_TOOLS_MCP_PATH, dbToolsMcpHandler);
 app.use("/api/*", authMiddleware);
 app.use("/api/*", gzipJson);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
+// Exits the process for testing the supervisor's restart path: signed in, and opt-in only.
+import { mountDebugCrashRoute } from "./routes/debug-crash.ts";
+mountDebugCrashRoute(app);
 app.route("/api/html-preview", htmlPreviewRoutes.api);
 app.route("/api/design-preview", designPreviewRoutes.api);
 

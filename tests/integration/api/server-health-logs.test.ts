@@ -117,11 +117,11 @@ describe("Logs endpoint", () => {
   });
 });
 
-describe("Debug crash endpoint (dev only)", () => {
-  it("GET /api/debug/crash exists in non-production", async () => {
-    // We can't actually call it (it kills the process), but verify it's registered
-    // by checking the app routes - just verify the health endpoint works as baseline
-    const res = await req("/api/health");
-    expect(res.status).toBe(200);
+describe("Debug crash endpoint", () => {
+  it("GET /api/debug/crash is not registered without PPM_DEBUG_CRASH_ROUTE", () => {
+    // Being a development server is not enough: the route exits the process, so it is
+    // opt-in and behind sign-in (tests/unit/server/debug-crash-route.test.ts).
+    expect(process.env.PPM_DEBUG_CRASH_ROUTE).toBeUndefined();
+    expect(app.routes.some((r) => r.path === "/api/debug/crash")).toBe(false);
   });
 });
