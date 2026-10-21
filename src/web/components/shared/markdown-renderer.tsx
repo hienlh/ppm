@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import rehypeKatex from "rehype-katex";
 import { useImageOverlay } from "@/stores/image-overlay-store";
 import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
@@ -14,6 +15,7 @@ import { normalizeMathDelimiters } from "@/lib/markdown-math-delimiters";
 import { MdContext, useMdContext, LOCAL_PATH_RE, markdownUrlTransform, parseMarkdownFileTarget } from "./markdown-context";
 import { useMarkdownFileNavigation } from "./use-markdown-file-navigation";
 import { MdPre, MdCode } from "./markdown-code-block";
+import { markdownSanitizeSchema, rehypePrefixFragmentLinks, sanitizedRemarkRehypeOptions } from "./markdown-sanitize";
 
 interface MarkdownRendererProps {
   content: string;
@@ -21,15 +23,24 @@ interface MarkdownRendererProps {
   className?: string;
   codeActions?: boolean;
   isStreaming?: boolean;
+  /**
+   * Parse HTML inside the Markdown (default), keeping only what `markdownSanitizeSchema`
+   * allows. Off for text nobody in this session wrote, such as a system tag's content, where
+   * HTML in the source is shown as text instead.
+   */
+  rawHtml?: boolean;
 }
 
 /** Plugin arrays — stable references to avoid re-creating on each render */
 const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
-const rehypePlugins = [rehypeRaw, rehypeKatex] as any;
+// Sanitise straight after parsing raw HTML and before KaTeX, so KaTeX's own markup is not
+// held to the allow-list.
+const rehypePlugins = [rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], rehypePrefixFragmentLinks, rehypeKatex] as any;
+const rehypePluginsNoRaw = [rehypeKatex] as any;
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
-export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false, rawHtml = true }: MarkdownRendererProps) {
   const openImageOverlayFn = useImageOverlay((s) => s.open);
   const openDiagramOverlayFn = useDiagramOverlay((s) => s.open);
   const openFileOrSearch = useMarkdownFileNavigation(projectName);
@@ -48,7 +59,8 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       <div className={`markdown-content prose-sm ${isStreaming ? "is-streaming" : ""} ${className}`}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
+          rehypePlugins={rawHtml ? rehypePlugins : rehypePluginsNoRaw}
+          remarkRehypeOptions={rawHtml ? sanitizedRemarkRehypeOptions : undefined}
           urlTransform={markdownUrlTransform}
           components={mdComponents}
         >

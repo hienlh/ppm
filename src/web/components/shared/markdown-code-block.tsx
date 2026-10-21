@@ -46,7 +46,9 @@ let mermaidPromise: Promise<typeof import("mermaid")["default"]> | null = null;
 function getMermaid() {
   if (!mermaidPromise) {
     mermaidPromise = import("mermaid").then((mod) => {
-      mod.default.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
+      // "strict": a diagram is text the AI wrote, and "loose" keeps `click … href "javascript:…"`
+      // links live in the SVG, one click from running on PPM's origin. PPM wires no click handlers.
+      mod.default.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
       return mod.default;
     });
   }

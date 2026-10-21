@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, FileWarning } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
+import { sanitizeDocxHtml } from "@/components/shared/docx-html-sanitize";
 
 interface DocxPreviewProps {
   filePath: string;
@@ -12,6 +13,10 @@ export function DocxPreview({ filePath, projectName }: DocxPreviewProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // mammoth does not sanitise, so hold its HTML to the allow-list before it reaches innerHTML.
+  // Declared with the other hooks, above every early return, so the hook order never changes.
+  const safeHtml = useMemo(() => (html ? sanitizeDocxHtml(html) : ""), [html]);
 
   useEffect(() => {
     setLoading(true);
@@ -85,7 +90,7 @@ export function DocxPreview({ filePath, projectName }: DocxPreviewProps) {
           [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2
           [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2
           [&_li]:my-0.5"
-        dangerouslySetInnerHTML={{ __html: html ?? "" }}
+        dangerouslySetInnerHTML={{ __html: safeHtml }}
       />
     </div>
   );

@@ -297,7 +297,8 @@ function TaskNotificationBadge({ content }: { content: string }) {
           {outputFile && <FilePathChip path={outputFile} />}
           {result && (
             <div className="text-[11px] text-text-subtle/80 max-h-60 overflow-y-auto leading-relaxed">
-              <MarkdownContent content={result} />
+              {/* Raw HTML off: anyone's text can arrive wrapped in this tag, an iframe srcdoc included. */}
+              <MarkdownContent content={result} rawHtml={false} />
             </div>
           )}
         </div>

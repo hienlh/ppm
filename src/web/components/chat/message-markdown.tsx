@@ -20,14 +20,17 @@ function stripTeammateMessages(text: string): string {
   return text.replace(TEAMMATE_MSG_RE, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** Wrapper: delegates to shared MarkdownRenderer with code actions enabled */
-export function MarkdownContent({ content, projectName, isStreaming }: { content: string; projectName?: string; isStreaming?: boolean }) {
+/**
+ * Wrapper: delegates to shared MarkdownRenderer with code actions enabled. `rawHtml={false}`
+ * for content that came from a system tag rather than from the user or the model.
+ */
+export function MarkdownContent({ content, projectName, isStreaming, rawHtml }: { content: string; projectName?: string; isStreaming?: boolean; rawHtml?: boolean }) {
   const cleaned = stripTeammateMessages(content);
   if (!cleaned) return null;
   return (
     <RenderErrorBoundary fallbackContent={cleaned}>
       <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded" />}>
-        <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} />
+        <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} rawHtml={rawHtml} />
       </Suspense>
     </RenderErrorBoundary>
   );
