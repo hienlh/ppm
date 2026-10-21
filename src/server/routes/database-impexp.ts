@@ -310,7 +310,7 @@ impExpJobRoutes.post("/jobs/:id/download", async (c) => {
   const ticket = issueExportTicket({
     fileName: file.name,
     contentType: file.format === "zip" ? "application/zip" : CONTENT_TYPES[file.format],
-    open: () => Bun.file(file.path).stream(),
+    open: () => Bun.file(file.path),
     abandon: () => {},
   });
   return c.json(ok<GridExportTicket>({ ticket, fileName: file.name }));

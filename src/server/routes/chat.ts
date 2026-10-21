@@ -1277,7 +1277,10 @@ chatRoutes.get("/uploads/:filename", async (c) => {
     if (c.req.header("if-none-match") === etag) {
       return new Response(null, { status: 304, headers: { ETag: etag } });
     }
-    return new Response(file.stream(), {
+    // The file itself, not `file.stream()`: that stream keeps about the file's size in native
+    // memory per response and never returns it (see `file-chunks.ts`), and chat images are
+    // served every time a tab opens without them cached.
+    return new Response(file, {
       headers: {
         "Content-Type": file.type || "application/octet-stream",
         "Cache-Control": "public, max-age=31536000, immutable",

@@ -19,6 +19,7 @@
 import { statSync } from "node:fs";
 import type { ChatMessage } from "../types/chat.ts";
 import { parseJsonlTranscript } from "./jsonl-transcript-parser.ts";
+import { readFileChunks } from "./file-chunks.ts";
 
 /**
  * How many bytes one expand may parse.
@@ -90,26 +91,20 @@ export async function compactSegmentWindow(filePath: string, beforeUuid?: string
   // instead would copy a long record once per chunk it spans.
   const pending: Uint8Array[] = [];
   let at = 0; // file offset of the first pending byte
-  const reader = Bun.file(filePath).stream().getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const lastNewline = value.lastIndexOf(NEWLINE);
-      if (lastNewline === -1) {
-        pending.push(value);
-        continue;
-      }
-      const lines = Buffer.concat([...pending, value.subarray(0, lastNewline + 1)]);
-      const stop = scan(lines, at);
-      if (stop !== undefined) return window(stop);
-      at += lines.length;
-      pending.length = 0;
-      pending.push(value.subarray(lastNewline + 1));
+  // Not `Bun.file().stream()`, which keeps about the file's size in native memory per read
+  // (see `file-chunks.ts`). Returning mid-loop closes the file.
+  for await (const value of readFileChunks(filePath)) {
+    const lastNewline = value.lastIndexOf(NEWLINE);
+    if (lastNewline === -1) {
+      pending.push(value);
+      continue;
     }
-  } finally {
-    // Not only `releaseLock`: a stream let go of before its end keeps the file open.
-    await reader.cancel().catch(() => {});
+    const lines = Buffer.concat([...pending, value.subarray(0, lastNewline + 1)]);
+    const stop = scan(lines, at);
+    if (stop !== undefined) return window(stop);
+    at += lines.length;
+    pending.length = 0;
+    pending.push(value.subarray(lastNewline + 1));
   }
   // A last line with no newline yet is still a record the full parse would read.
   const stop = scan(Buffer.concat(pending), at);

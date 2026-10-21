@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { writeFileSync } from "node:fs";
 import { SERVER_PORT_FILE } from "../services/edge-target-resolver.ts";
 import { configService } from "../services/config.service.ts";
@@ -7,6 +6,7 @@ import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { gzipJson } from "./middleware/gzip-json.ts";
 import { accessLog } from "./middleware/access-log.ts";
+import { corsHeaders } from "./middleware/cors-headers.ts";
 import { createLogger } from "../services/logger.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
@@ -167,14 +167,15 @@ app.onError((error, c) => {
   return c.text("Internal Server Error", 500);
 });
 
-// Design share links: the public reviewer surface. Ahead of `cors()` (which would answer `*`
-// and re-wrap range bodies), of `/api` auth (a share code is never the PPM token) and of the
-// static fallback (its catch-all keeps every `/s` path off the app shell).
+// Design share links: the public reviewer surface. Ahead of the CORS layer, of `/api` auth
+// (a share code is never the PPM token) and of the static fallback (its catch-all keeps every
+// `/s` path off the app shell).
 import { designShareGuestRoutes } from "./routes/design-share-guest.ts";
 app.route("/s", designShareGuestRoutes);
 
-// CORS for dev
-app.use("*", cors());
+// CORS for dev. Not Hono's `cors()`: it writes headers before the handler, which makes Hono
+// rebuild every response from its body and turns a `Bun.file` body into a leaking stream.
+app.use("*", corsHeaders);
 
 // Public endpoints (before auth)
 // Per-boot id so a named-tunnel health probe can tell "my connector is dark"

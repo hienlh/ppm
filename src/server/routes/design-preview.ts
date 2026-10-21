@@ -51,8 +51,8 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
   const api = new Hono();
   const content = new Hono();
 
-  // The app's global `cors()` answers `*`, and Hono copies headers set before a handler over
-  // the handler's own response, so the value set below would be lost. Re-assert it after.
+  // Every response here must say `null`, error pages included; asserted after the handler so
+  // it holds whatever an inner layer set. The app's CORS layer leaves an existing value alone.
   content.use("*", async (c, next) => {
     await next();
     c.res.headers.set("Access-Control-Allow-Origin", "null");
