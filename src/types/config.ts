@@ -157,6 +157,7 @@ export interface AIProviderConfig {
   api_key?: string;
   base_url?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  // Steps one message may take, at most 1000; 0 = no limit.
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
@@ -303,8 +304,8 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
   if (config.effort && !VALID_EFFORTS.includes(config.effort as any)) {
     errors.push(`effort must be one of: ${VALID_EFFORTS.join(", ")}`);
   }
-  if (config.max_turns != null && (!Number.isInteger(config.max_turns) || config.max_turns < 1 || config.max_turns > 500)) {
-    errors.push("max_turns must be integer 1-500");
+  if (config.max_turns != null && (!Number.isInteger(config.max_turns) || config.max_turns < 0 || config.max_turns > 1000)) {
+    errors.push("max_turns must be a whole number from 0 to 1000, 0 for no limit");
   }
   if (config.max_budget_usd != null && (config.max_budget_usd < 0.01 || config.max_budget_usd > 50)) {
     errors.push("max_budget_usd must be 0.01-50.00");

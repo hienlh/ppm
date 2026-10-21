@@ -267,17 +267,35 @@ describe("PUT /settings/ai", () => {
   });
 
   it("rejects invalid max_turns", async () => {
-    const app = createApp();
-    const res = await app.request("/settings/ai", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        providers: { claude: { max_turns: 999 } },
-      }),
-    });
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
+    for (const max_turns of [-1, 1.5, 1001]) {
+      const app = createApp();
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providers: { claude: { max_turns } },
+        }),
+      });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.ok).toBe(false);
+    }
+  });
+
+  it("accepts max_turns from 0, meaning no limit, up to 1000", async () => {
+    for (const max_turns of [0, 1000]) {
+      const app = createApp();
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providers: { claude: { max_turns } },
+        }),
+      });
+      const json = await res.json();
+      expect(json.ok).toBe(true);
+      expect(json.data.providers.claude.max_turns).toBe(max_turns);
+    }
   });
 
   it("rejects invalid effort", async () => {
