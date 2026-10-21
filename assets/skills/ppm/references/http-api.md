@@ -137,6 +137,10 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/db/connections/:id/export`
 - `GET    /api/db/search`
 
+## /api/design-shares
+
+- `GET    /api/design-shares/address`
+
 ## /api/extensions
 
 - `GET    /api/extensions`
@@ -473,10 +477,17 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /proxy/:provider/v1/models`
 - `GET    /proxy/stats`
 
+## /s
+
+- `GET    /s/:code/info`
+- `GET    /s/:code`
+- `ALL    /s`
+- `ALL    /s/*`
+
 ## WebSocket
 
 - `ws://<host>/ws/chat` — AI chat stream (Claude Agent SDK)
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.14 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.15 -->
