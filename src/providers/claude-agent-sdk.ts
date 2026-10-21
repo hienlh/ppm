@@ -922,6 +922,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const cliExecutablePath = resolveCliExecutablePath(
       (p.providerConfig as { cli_command?: string }).cli_command,
     );
+    // 0 = no limit: the CLI is then given no --max-turns at all.
+    const maxTurns = p.opts?.maxTurns ?? p.providerConfig.max_turns ?? 1000;
 
     return {
       // Run the CLI under node only for a .js entry (or the win32 source-mode
@@ -942,7 +944,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       allowDangerouslySkipPermissions: p.permissionMode === "bypassPermissions",
       ...(mqo.model && { model: mqo.model }),
       ...(mqo.effort && { effort: mqo.effort }),
-      maxTurns: p.opts?.maxTurns ?? p.providerConfig.max_turns ?? 1000,
+      ...(maxTurns > 0 && { maxTurns }),
       ...(p.providerConfig.max_budget_usd && { maxBudgetUsd: p.providerConfig.max_budget_usd }),
       ...(mqo.thinking && { thinking: mqo.thinking }),
       // Beta headers are honored only for API-key auth; OAuth/subscription sessions

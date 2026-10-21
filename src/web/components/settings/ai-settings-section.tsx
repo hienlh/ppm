@@ -362,13 +362,13 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
             </div>
 
             <div className={fieldGap}>
-              <Label htmlFor="ai-max-turns" className={compact ? labelSize : undefined}>Max Turns (1-500)</Label>
+              <Label htmlFor="ai-max-turns" className={compact ? labelSize : undefined}>Max Turns (up to 1000, 0 = no limit)</Label>
               <Input
                 key={`turns-${activeTab}-${revision}`}
                 id="ai-max-turns"
                 type="number"
-                min={1}
-                max={500}
+                min={0}
+                max={1000}
                 defaultValue={config?.max_turns ?? 100}
                 className={compact ? "h-7 text-[11px]" : undefined}
                 onBlur={(e) => {
@@ -376,6 +376,12 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                   if (!isNaN(val)) handleSave("max_turns", val);
                 }}
               />
+              {(config?.max_turns === 0 || (config?.max_turns ?? 0) > 500) && (
+                <p className={`flex items-start gap-1.5 ${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+                  <AlertTriangle className="size-3 text-warning shrink-0 mt-px" />
+                  Every step is a paid model call. With a limit this high, or none, a task left running unattended can go on for hours and run up a large bill.
+                </p>
+              )}
             </div>
 
             <div className={fieldGap}>

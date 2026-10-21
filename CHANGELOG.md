@@ -8,6 +8,8 @@
 
 - **Schedules can be shared as a file.** Export writes `<name>.ppm-schedule.json` with the script and its inputs, but no secret, path or state. Import shows the whole script, asks you to confirm you trust it, and creates the schedule turned off. Two examples ship in `templates/schedules/`: watch a web page for a change, and a weekly summary written in a chat.
 
+- **Max Turns goes up to 1000, or can be switched off.** Settings → AI Provider accepted 1 to 500 steps per message, so a long task stopped every 500 steps, about every hour and a half, and waited for someone to say continue. 0 now means no limit, and up to 1000 steps are accepted. At 0 or above 500, Settings warns that every step is a paid model call, so a task left running unattended can cost a lot.
+
 ### Fixed
 
 - **In Safari, and in every browser on iPhone and iPad, a design canvas and an HTML preview showed the page without its own files.** The page's stylesheets, images and scripts were all refused, so it came out unstyled and the canvas check listed each file as blocked by the Content Security Policy, followed by collapsed elements and page overflow. Newer WebKit builds load those but still refused the page's own requests for its files, which the PowerPoint export reads images with and the canvas check's screenshot needs. The policy now names the page's address with its scheme, which WebKit matches too.
