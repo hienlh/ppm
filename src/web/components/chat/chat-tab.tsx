@@ -19,6 +19,7 @@ import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
+import { ChatReconnectBanner } from "./chat-reconnect-banner";
 import { RunningAgentsBar } from "./running-agents-bar";
 import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
@@ -472,6 +473,12 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     backgroundShells,
     killBackgroundShell,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
+
+  // Shared by the history bar's reload button and the reconnect pill's Retry.
+  const reloadChat = useCallback(() => {
+    if (!isConnected) reconnect();
+    refetchMessages();
+  }, [isConnected, reconnect, refetchMessages]);
 
   const sessionChanges = useSessionFileChanges({ projectName, sessionId, messages, isStreaming });
   const openReview = useCallback((path?: string) => {
@@ -1283,15 +1290,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         </div>
       )}
 
-      {/* Reconnect overlay */}
-      {isReconnecting && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            <span>Reconnecting...</span>
-          </div>
-        </div>
-      )}
+      {/* Reconnect status — a pill, not an overlay: the chat stays readable and usable */}
+      <ChatReconnectBanner isReconnecting={isReconnecting} onRetry={reloadChat} />
 
       {/* Edit-fork overlay — covers the chat while the new version forks + connects */}
       {editForking && (
@@ -1399,10 +1399,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           onSelectSession={handleSelectSession}
           historyFilter={historyFilter}
           isConnected={isConnected}
-          onReload={() => {
-            if (!isConnected) reconnect();
-            refetchMessages();
-          }}
+          onReload={reloadChat}
           teamActivity={teamActivity}
           teamMessages={teamMessages}
           onTeamOpen={markTeamRead}
