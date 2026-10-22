@@ -22,6 +22,7 @@ export {
 } from "./types.ts";
 export { type ExtensionContext, Memento } from "./context.ts";
 export { ProcessService, type SpawnResult, type SpawnOptions } from "./process.ts";
+export { type PpmNamespace } from "./ppm/index.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";
@@ -30,6 +31,7 @@ import { WorkspaceService } from "./workspace.ts";
 import { ProcessService } from "./process.ts";
 import { createExtensionContext, type ExtensionContext } from "./context.ts";
 import { createEnvNamespace } from "./env.ts";
+import { createPpmNamespace } from "./ppm/index.ts";
 import { createNotSupported } from "./not-supported.ts";
 import { Uri } from "./uri.ts";
 import { Disposable } from "./disposable.ts";
@@ -44,6 +46,8 @@ export interface CreateVscodeCompatOptions {
   extensionId: string;
   extensionPath: string;
   storagePath: string;
+  /** Per-extension data folder that survives reinstall and rebuild; `storagePath` when absent. */
+  globalStoragePath?: string;
   rpc: RpcClient;
   appName?: string;
   machineId?: string;
@@ -53,6 +57,7 @@ export interface CreateVscodeCompatOptions {
 /** Create a scoped vscode-compatible API instance for an extension */
 export function createVscodeCompat(options: CreateVscodeCompatOptions) {
   const { extensionId, extensionPath, storagePath, rpc, storedState } = options;
+  const globalStoragePath = options.globalStoragePath ?? storagePath;
 
   const commands = new CommandService(rpc, extensionId);
   const window = new WindowService(rpc, extensionId);
@@ -66,6 +71,8 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
     workspace,
     process,
     env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local"),
+    /** PPM's own API, beyond what VSCode offers. */
+    ppm: createPpmNamespace(rpc, extensionId),
 
     // Classes & utilities
     Uri,
@@ -91,7 +98,7 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
 
     // Helper: create ExtensionContext for this extension
     _createContext(): ExtensionContext {
-      return createExtensionContext(rpc, extensionId, extensionPath, storagePath, storedState);
+      return createExtensionContext(rpc, extensionId, extensionPath, storagePath, storedState, globalStoragePath);
     },
   };
 }

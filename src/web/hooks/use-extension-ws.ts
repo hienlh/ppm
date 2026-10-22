@@ -5,6 +5,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { getAuthToken } from "@/lib/api-client";
 import { openGitReview } from "@/lib/open-git-review";
+import { popOutExtensionTab } from "@/lib/extension-webview-window";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
 
@@ -245,13 +246,14 @@ export function useExtensionWs(enabled = true) {
             // broadcasts triggered by other browser tabs are ignored here
             const currentProject = useTabStore.getState().currentProject;
             const projectName = msg.projectName ?? currentProject ?? undefined;
-            useTabStore.getState().openTab({
+            const tabId = useTabStore.getState().openTab({
               type: "extension",
               title: msg.title,
               projectId: null,
               closable: true,
               metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(projectName && { projectName }) },
             });
+            if (msg.preferWindow && tabId) popOutExtensionTab(tabId);
           }
           break;
         }

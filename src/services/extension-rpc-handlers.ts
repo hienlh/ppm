@@ -11,6 +11,8 @@ import { getProjects } from "./db.service.ts";
 import { isSecretConfigKey, redactSecretConfigValue } from "./config-secret-keys.ts";
 import type { ComposerOptionsMsg, ComposerResultMsg } from "../types/extension-messages.ts";
 import { createLogger } from "./logger.ts";
+import { extensionApiDeps, registerExtensionApiHandlers, type ExtensionApiDeps } from "./extension-api/index.ts";
+import { ExtensionCallRegistry } from "./extension-api/extension-call-registry.ts";
 
 /** Same scope as the extension host's own forwarded console: what an extension did or said. */
 const log = createLogger("ext");
@@ -35,8 +37,27 @@ function logRefusal(kind: string, message: string): void {
   log.warn(last?.suppressed ? `${message} (+${last.suppressed} more refused since the last one logged)` : message);
 }
 
-/** Register all vscode-compat RPC handlers on the given RPC channel */
-export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
+/** Longest an extension may let a spawned process run, whatever timeout it asks for. */
+export const MAX_SPAWN_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
+
+/** The timeout a `process:spawn` actually runs with: the default when none or nonsense is
+ *  given, never above {@link MAX_SPAWN_TIMEOUT_MS}. */
+export function spawnTimeoutMs(requested: unknown): number {
+  if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) return DEFAULT_SPAWN_TIMEOUT_MS;
+  return Math.min(requested, MAX_SPAWN_TIMEOUT_MS);
+}
+
+/**
+ * Register all vscode-compat RPC handlers on the given RPC channel. `deps` ties long-running
+ * calls to the worker this channel serves; without it (tests) they get a registry of their own.
+ */
+export function registerVscodeCompatHandlers(
+  rpc: RpcChannel,
+  deps: ExtensionApiDeps = extensionApiDeps(0, new ExtensionCallRegistry()),
+): void {
+  registerExtensionApiHandlers(rpc, deps);
+
   // --- commands ---
   rpc.onRequest("commands:execute", async (params) => {
     const [command, ...args] = params as [string, ...unknown[]];
@@ -132,7 +153,7 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
 
   // --- webview panels (forwarded to browser via WS bridge) ---
   rpc.onRequest("window:webview:create", async (params) => {
-    const [panelId, extensionId, viewType, title, projectPath] = params as [string, string, string, string, string | undefined];
+    const [panelId, extensionId, viewType, title, projectPath, preferWindow] = params as [string, string, string, string, string | undefined, unknown];
     // Resolve project name so browser clients can scope the panel to the right project
     let projectName: string | undefined;
     if (projectPath) {
@@ -140,7 +161,10 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       const target = normalize(projectPath);
       projectName = getProjects().find((p) => normalize(p.path) === target)?.name;
     }
-    broadcastExtMsg({ type: "webview:create", panelId, extensionId, viewType, title, projectPath, projectName });
+    broadcastExtMsg({
+      type: "webview:create", panelId, extensionId, viewType, title, projectPath, projectName,
+      ...(preferWindow === true ? { preferWindow: true } : {}),
+    });
     return { ok: true };
   });
 
@@ -328,14 +352,23 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       }
     }
 
-    const timeout = options?.timeout ?? 30_000;
+    const timeout = spawnTimeoutMs(options?.timeout);
+    // Killed if the worker that asked is rebuilt: nobody would read the output.
+    const call = deps.beginCall();
+    if (call.signal.aborted) throw new Error("process:spawn: the extension host was rebuilt");
     const startedAt = Date.now();
-    const proc = Bun.spawn([cmd, ...args], {
-      cwd: safeCwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: safeEnv,
-    });
+    let proc: ReturnType<typeof spawnPiped>;
+    try {
+      proc = spawnPiped([cmd, ...args], safeCwd, safeEnv);
+    } catch (e) {
+      call.end();
+      throw new Error(`process:spawn failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const onAbort = () => {
+      log.info(`spawn killed: extension host rebuilt cmd=${baseName}`);
+      try { proc.kill(); } catch {}
+    };
+    call.signal.addEventListener("abort", onAbort, { once: true });
 
     // The binary's name only, never its arguments. A kill here otherwise reads as an
     // ordinary non-zero exit.
@@ -349,14 +382,21 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
         new Response(proc.stderr).text(),
       ]);
       const exitCode = await proc.exited;
-      clearTimeout(timer);
       log.debug(`spawn cmd=${baseName} exit=${exitCode} ms=${Date.now() - startedAt}`);
       return { stdout, stderr, exitCode };
     } catch (e) {
-      clearTimeout(timer);
       throw new Error(`process:spawn failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      clearTimeout(timer);
+      call.signal.removeEventListener("abort", onAbort);
+      call.end();
     }
   });
+}
+
+/** Named so the handler can type the process it holds without widening `stdout` to a union. */
+function spawnPiped(argv: string[], cwd: string, env: Record<string, string | undefined>) {
+  return Bun.spawn(argv, { cwd, stdout: "pipe", stderr: "pipe", env });
 }
 
 /**

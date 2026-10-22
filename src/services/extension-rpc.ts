@@ -35,6 +35,8 @@ export class RpcChannel {
   private log: RpcLog;
   /** Methods already reported as unhandled: API drift repeats on every call, the warning need not. */
   private warnedUnhandled = new Set<string>();
+  /** Set by dispose(): the other side is gone, so nothing more is sent or answered. */
+  private disposed = false;
 
   constructor(postFn: (msg: RpcMessage) => void, log: RpcLog = consoleRpcLog) {
     this.postFn = postFn;
@@ -45,6 +47,7 @@ export class RpcChannel {
    * bookkeeping and timeout wiring, parameterized on the timeout so callers can opt into a
    * longer wait without duplicating the promise/timer plumbing. */
   private send<T = unknown>(method: string, params: unknown[], timeoutMs: number): Promise<T> {
+    if (this.disposed) return Promise.reject(new Error(`RPC channel disposed: ${method}`));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -98,6 +101,7 @@ export class RpcChannel {
 
   /** Process an incoming message (call from message event listener) */
   async handleMessage(msg: RpcMessage): Promise<void> {
+    if (this.disposed) return;
     if (msg.type === "response") {
       const pending = this.pending.get(msg.id);
       if (!pending) return;
@@ -128,6 +132,11 @@ export class RpcChannel {
           this.log.debug(`${msg.method} failed: ${response.error}`);
         }
       }
+      // A handler can outlive the channel: its answer would go to a peer that no longer exists.
+      if (this.disposed) {
+        this.log.debug(`dropped the answer to ${msg.method}: channel disposed`);
+        return;
+      }
       this.postFn(response);
       return;
     }
@@ -144,6 +153,7 @@ export class RpcChannel {
 
   /** Clean up all pending requests */
   dispose(): void {
+    this.disposed = true;
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
       p.reject(new Error("RPC channel disposed"));

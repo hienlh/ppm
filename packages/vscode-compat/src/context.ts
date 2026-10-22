@@ -42,6 +42,12 @@ export interface ExtensionContext {
   readonly extensionId: string;
   readonly extensionPath: string;
   readonly storagePath: string;
+  /**
+   * The extension's own data folder under PPM's directory (`<ppm dir>/extension-data/<id>`),
+   * created before `activate` runs. Unlike `storagePath`, which sits beside the code, it
+   * survives reinstall, re-linking and rebuilds, and removing the extension leaves it in place.
+   */
+  readonly globalStoragePath: string;
   readonly globalState: Memento;
   readonly workspaceState: Memento;
   readonly subscriptions: Disposable[];
@@ -53,11 +59,13 @@ export function createExtensionContext(
   extensionPath: string,
   storagePath: string,
   storedState?: { global?: Record<string, string | null>; workspace?: Record<string, string | null> },
+  globalStoragePath: string = storagePath,
 ): ExtensionContext {
   return {
     extensionId: extId,
     extensionPath,
     storagePath,
+    globalStoragePath,
     globalState: new Memento(rpc, extId, "global", storedState?.global),
     workspaceState: new Memento(rpc, extId, "workspace", storedState?.workspace),
     subscriptions: [],

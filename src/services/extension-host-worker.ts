@@ -73,7 +73,7 @@ self.addEventListener("error", (event: Event & { error?: unknown; message?: stri
 // --- RPC handlers ---
 
 rpc.onRequest("ext:activate", async (params) => {
-  const [extId, entryPath, extensionPath, storedState, baseUrl, authToken] = params as [string, string, string, Record<string, Record<string, string | null>>?, string?, string?];
+  const [extId, entryPath, extensionPath, storedState, baseUrl, authToken, dataDir] = params as [string, string, string, Record<string, Record<string, string | null>>?, string?, string?, string?];
   console.debug(`[ExtHost] activating ${extId} from ${entryPath}`);
   if (activeExtensions.has(extId)) return { ok: true, already: true };
 
@@ -94,6 +94,8 @@ rpc.onRequest("ext:activate", async (params) => {
     extensionId: extId,
     extensionPath,
     storagePath: `${extensionPath}/.storage`,
+    // Computed on the main thread, which owns PPM's directory; this thread never guesses it.
+    ...(typeof dataDir === "string" && dataDir ? { globalStoragePath: dataDir } : {}),
     rpc: rpcClient,
     storedState: storedState as { global?: Record<string, string | null>; workspace?: Record<string, string | null> },
   });

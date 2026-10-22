@@ -249,11 +249,17 @@ export class WindowService {
 
   // --- Webview Panel ---
 
-  createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn, options?: { projectPath?: string }): unknown {
+  /**
+   * `preferWindow`: open the panel in a floating window on a desktop browser. A phone, or a
+   * desktop already at its window limit, gets an ordinary tab. Only the browser tab that ran
+   * the command opening the panel moves it.
+   */
+  createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn, options?: { projectPath?: string; preferWindow?: boolean }): unknown {
     const panelId = `${this.extId}-wv-${++this._idCounter}`;
     const rpc = this.rpc;
     const extId = this.extId;
-    rpc.request("window:webview:create", panelId, extId, viewType, title, options?.projectPath);
+    rpc.request("window:webview:create", panelId, extId, viewType, title, options?.projectPath,
+      ...(options?.preferWindow === true ? [true] : []));
 
     const onDidDispose = new EventEmitter<void>();
     const onDidReceiveMessage = new EventEmitter<unknown>();

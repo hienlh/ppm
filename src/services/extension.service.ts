@@ -1,9 +1,13 @@
 import { resolve, dirname } from "node:path";
-import { existsSync } from "node:fs";
-import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/extension.ts";
+import { existsSync, mkdirSync } from "node:fs";
+import type { ExtensionManifest, ExtensionInfo } from "../types/extension.ts";
 import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
-import { RpcChannel } from "./extension-rpc.ts";
+import type { RpcChannel } from "./extension-rpc.ts";
+import { openWorkerChannel } from "./extension-worker-channel.ts";
+import { extensionCallRegistry } from "./extension-api/extension-call-registry.ts";
+import { extensionApiDeps } from "./extension-api/index.ts";
+import { extensionDataDir } from "./extension-data-dir.ts";
 import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
@@ -76,42 +80,43 @@ class ExtensionService {
   private installing = new Set<string>();
   private extensionPaths = new Map<string, string>();
   private bundledIds = new Set<string>();
+  /** Bumped for every worker started; long-running calls are tied to the one that asked. */
+  private generation = 0;
 
   // --- Worker lifecycle ---
 
   private ensureWorker(): { worker: Worker; rpc: RpcChannel } {
     if (this.worker && this.rpc) return { worker: this.worker, rpc: this.rpc };
 
-    this.worker = new Worker(extensionHostWorkerSpec(), { type: "module" });
-    const worker = this.worker;
-    this.rpc = new RpcChannel((msg) => this.worker!.postMessage(msg), createLogger("RPC"));
-    log.info("Extension host worker started");
+    const worker = new Worker(extensionHostWorkerSpec(), { type: "module" });
+    const generation = ++this.generation;
+    this.worker = worker;
+    const rpc = openWorkerChannel(worker, () => this.worker === worker, createLogger("RPC"));
+    this.rpc = rpc;
+    log.info(`Extension host worker started generation=${generation}`);
 
-    this.rpc.onRequest("storage:set", async (params) => {
+    rpc.onRequest("storage:set", async (params) => {
       const [extId, scope, key, value] = params as [string, string, string, string | null];
       setExtensionStorageValue(extId, scope, key, value);
       return { ok: true };
     });
 
     // Register vscode-compat API handlers (commands, window, workspace, fs)
-    registerVscodeCompatHandlers(this.rpc);
+    registerVscodeCompatHandlers(rpc, extensionApiDeps(generation));
 
-    this.rpc.onEvent("worker:ready", () => {
+    rpc.onEvent("worker:ready", () => {
       this.workerReady = true;
       log.debug("Extension host worker ready");
     });
 
-    this.rpc.onEvent("log", (data) => {
+    rpc.onEvent("log", (data) => {
       const { level, text } = (data ?? {}) as { level?: unknown; text?: unknown };
       if (typeof text !== "string") return;
       if (level === "debug" || level === "warn" || level === "error") extLog[level](text);
       else extLog.info(text);
     });
 
-    this.worker.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
-      this.rpc!.handleMessage(event.data);
-    });
-    this.worker.addEventListener("error", (event) => {
+    worker.addEventListener("error", (event) => {
       log.error("Worker error:", event.message);
     });
     // The only sign the host thread is gone: an uncaught exception in any extension ends it
@@ -128,7 +133,7 @@ class ExtensionService {
       }
     });
 
-    return { worker: this.worker, rpc: this.rpc };
+    return { worker, rpc };
   }
 
   private recovering = false;
@@ -165,6 +170,9 @@ class ExtensionService {
   }
 
   private async terminateWorker(): Promise<void> {
+    // Before the next worker can start: its calls answer nobody once this one is gone.
+    const aborted = extensionCallRegistry.endGeneration(this.generation);
+    if (aborted > 0) log.info(`aborted ${aborted} extension call(s) of generation ${this.generation}`);
     if (this.rpc) { this.rpc.dispose(); this.rpc = null; }
     if (this.worker) { this.worker.terminate(); this.worker = null; }
     this.workerReady = false;
@@ -242,6 +250,10 @@ class ExtensionService {
     const entryPath = resolve(extDir, manifest.main);
     if (!existsSync(entryPath)) throw new Error(`Entry point not found: ${entryPath}`);
 
+    // Created before activate() runs, so an extension can open files there straight away.
+    const dataDir = extensionDataDir(id);
+    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+
     const { rpc } = this.ensureWorker();
 
     // Hydrate persisted state so extensions can read it after activation
@@ -261,7 +273,7 @@ class ExtensionService {
 
     log.debug(`activating ${id} (entry: ${entryPath})`);
     const result = await rpc.sendRequest<{ ok: boolean; error?: string }>(
-      "ext:activate", id, entryPath, extDir, storedState, baseUrl, authToken,
+      "ext:activate", id, entryPath, extDir, storedState, baseUrl, authToken, dataDir,
     );
     if (!result.ok) {
       this.activationErrors.set(id, result.error ?? "Unknown activation error");
