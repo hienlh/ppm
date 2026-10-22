@@ -1423,7 +1423,7 @@ describe("ClaudeAgentSdkProvider", () => {
         await drain(provider.sendMessage(cold.id, "hi", picks));
 
         expect(clis).toHaveLength(2);
-        const comparable = ({ sessionId: _id, stderr: _stderr, canUseTool: _ask, hooks, ...rest }: any) => ({ ...rest, hooks: !!hooks });
+        const comparable = ({ sessionId: _id, stderr: _stderr, canUseTool: _ask, hooks, spawnClaudeCodeProcess: spawn, ...rest }: any) => ({ ...rest, hooks: !!hooks, spawn: typeof spawn });
         expect(comparable(clis[0]!.options)).toEqual(comparable(clis[1]!.options));
         expect(clis[0]!.options.model).toBeTruthy();
         expect(clis[0]!.options.permissionMode).toBe("acceptEdits");
