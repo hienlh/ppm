@@ -166,6 +166,17 @@ class AccountService {
   private pendingStates = new Map<string, { verifier: string; createdAt: number }>();
   /** Per-account mutex: dedup concurrent refresh calls so only one OAuth request fires at a time. */
   private pendingRefreshes = new Map<string, Promise<void>>();
+  private tokenListeners = new Set<(accountId: string) => void>();
+
+  /**
+   * Hear about every replaced access token. Renewing one revokes the previous token, so a
+   * Claude subprocess still holding it fails its next request — see
+   * `src/server/ws/chat-token-rotation.ts`, which moves idle chats onto the new one.
+   */
+  onTokenRotated(listener: (accountId: string) => void): () => void {
+    this.tokenListeners.add(listener);
+    return () => { this.tokenListeners.delete(listener); };
+  }
 
   private toAccount(row: AccountRow): Account {
     let profileData: OAuthProfileData | null = null;
@@ -518,6 +529,9 @@ class AccountService {
       reauth_required: 0,
       ...(parked ? {} : { status: "active" as const }),
     });
+    for (const listener of this.tokenListeners) {
+      try { listener(id); } catch (e) { log.warn(`token rotation listener failed for ${id}: ${(e as Error).message}`); }
+    }
   }
 
   /**

@@ -221,6 +221,30 @@ interface StreamingSession {
   lastUserContent: string;
   /** Latest user message images — updated on follow-ups for accurate retry */
   lastUserImages?: Array<{ data: string; mediaType: string }>;
+  /** The sign-in this subprocess was started with — see `SubprocessCredential`. */
+  credential: SubprocessCredential;
+}
+
+/**
+ * The OAuth token a CLI subprocess holds, fixed for its whole life.
+ *
+ * The CLI cannot renew a token handed to it in `CLAUDE_CODE_OAUTH_TOKEN`: it carries no
+ * refresh token, and the CLI's own 401 recovery deliberately keeps a user-supplied token
+ * rather than adopting one from disk. Its only other renewal paths — the SDK's
+ * `getOAuthToken` callback and the rotated-token file — are enabled for Anthropic's own
+ * clients alone (the callback is gated on `CLAUDE_CODE_ENTRYPOINT` being Desktop, Cowork or
+ * VS Code). So when PPM renews an account's token, which revokes the previous one, every
+ * subprocess still holding it fails its next request. Recording the token per subprocess is
+ * what lets the chat layer renew while an account is quiet and restart idle subprocesses
+ * onto the new token between turns (`src/server/ws/chat-token-rotation.ts`).
+ */
+export interface SubprocessCredential {
+  accountId: string | null;
+  oauthToken: string;
+}
+
+function credentialOf(env: Record<string, string | undefined>, accountId: string | undefined): SubprocessCredential {
+  return { accountId: accountId ?? null, oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN ?? "" };
 }
 
 /**
@@ -825,6 +849,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return this.streamingSessions.has(sessionId);
   }
 
+  /** Every session with a live subprocess, with the sign-in that subprocess holds. */
+  liveSubprocessCredentials(): Array<{ sessionId: string; credential: SubprocessCredential }> {
+    return [...this.streamingSessions].map(([sessionId, ss]) => ({ sessionId, credential: ss.credential }));
+  }
+
   /**
    * How long this session's prompt cache is worth holding a subprocess for.
    *
@@ -1390,6 +1419,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         if (latest) account = latest;
       }
       const queryEnv = this.buildQueryEnv(meta.projectPath, account);
+      const queryCredential = credentialOf(queryEnv, account?.id);
 
       // Pre-flight: warn if no credentials at all (avoids 2-minute silent timeout)
       if (!account) {
@@ -1503,7 +1533,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // The query's one start line: a warm CLI and the MCP servers belong to it.
       log.info(`query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`
         + ` cli=${spare ? `warm ageMs=${spare.ageMs}` : "cold"}${crashRetryCount > 0 ? ` crashRetry=${crashRetryCount}` : ""} mcp=${Object.keys(mcpServers).join(",") || "none"}`);
-      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages });
+      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages, credential: queryCredential });
       this.activeQueries.set(sessionId, initialQuery);
       let eventSource: AsyncIterable<any> = initialQuery;
       log.debug(`session=${sessionId} query() created, waiting for first SDK event...`);
@@ -1531,7 +1561,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           prompt: generator,
           options: { ...opts, hooks: queryHooks, canUseTool } as any,
         });
-        this.streamingSessions.set(sessionId, { meta, query: rq, controller, lastUserContent: retry.lastUserContent, lastUserImages: retry.lastUserImages });
+        this.streamingSessions.set(sessionId, { meta, query: rq, controller, lastUserContent: retry.lastUserContent, lastUserImages: retry.lastUserImages, credential: credentialOf(env, acc?.id) });
         this.activeQueries.set(sessionId, rq);
         return rq;
       };
@@ -1600,7 +1630,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               prompt: retryGen,
               options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
             });
-            this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl, lastUserContent: retry1.lastUserContent, lastUserImages: retry1.lastUserImages });
+            this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl, lastUserContent: retry1.lastUserContent, lastUserImages: retry1.lastUserImages, credential: queryCredential });
             this.activeQueries.set(sessionId, rq);
             eventSource = rq;
             continue retryLoop;
@@ -1686,7 +1716,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 prompt: earlyAuthGen,
                 options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
               });
-              this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl, lastUserContent: retry2.lastUserContent, lastUserImages: retry2.lastUserImages });
+              this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl, lastUserContent: retry2.lastUserContent, lastUserImages: retry2.lastUserImages, credential: credentialOf(retryEnv, account?.id) });
               this.activeQueries.set(sessionId, rq);
               eventSource = rq;
               continue retryLoop;
@@ -1913,7 +1943,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   prompt: authRetryGen,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl, lastUserContent: retry3.lastUserContent, lastUserImages: retry3.lastUserImages });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl, lastUserContent: retry3.lastUserContent, lastUserImages: retry3.lastUserImages, credential: credentialOf(retryEnv, account?.id) });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
@@ -1950,7 +1980,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   prompt: ulRetryGen,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: ulRetryCtrl, lastUserContent: retryU.lastUserContent, lastUserImages: retryU.lastUserImages });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: ulRetryCtrl, lastUserContent: retryU.lastUserContent, lastUserImages: retryU.lastUserImages, credential: credentialOf(ulRetryEnv, account?.id) });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
@@ -2171,7 +2201,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   prompt: authRetryGen2,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2, lastUserContent: retry6.lastUserContent, lastUserImages: retry6.lastUserImages });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2, lastUserContent: retry6.lastUserContent, lastUserImages: retry6.lastUserImages, credential: credentialOf(retryEnv, account?.id) });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;

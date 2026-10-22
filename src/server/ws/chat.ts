@@ -33,6 +33,8 @@ import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-p
 import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
+import { dropStaleIdle, registerTokenRotation, type TokenRotationDeps } from "./chat-token-rotation.ts";
+import type { SubprocessCredential } from "../../providers/claude-agent-sdk.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -435,6 +437,28 @@ registerMcpSignInSync({
     `Subprocess released: it could not see the new ${serverName} sign-in, the next turn starts a fresh one`,
   ),
 });
+
+const tokenRotationDeps: TokenRotationDeps = {
+  liveSubprocesses: () => {
+    const provider = providerRegistry.get("claude") as {
+      liveSubprocessCredentials?: () => Array<{ sessionId: string; credential: SubprocessCredential }>;
+    } | undefined;
+    return (provider?.liveSubprocessCredentials?.() ?? []).map(({ sessionId, credential }) => {
+      const entry = activeSessions.get(sessionId);
+      // The consumer loop outlives each turn, so a live subprocess between turns sits at
+      // `idle` with `isStreamingActive` still set. A subprocess with no entry here belongs to
+      // something else (a scheduled run) and is never ours to judge idle.
+      const busy = !entry || entry.phase !== "idle" || !!entry.pendingApprovalEvent || hasBackgroundWork(sessionId);
+      return { sessionId, credential, busy };
+    });
+  },
+  dropIdle: (sessionId) => dropIdleSubprocess(
+    sessionId,
+    "token_rotated",
+    "Subprocess restarted: its account's sign-in token was renewed, the next message resumes on the new one",
+  ),
+};
+registerTokenRotation(tokenRotationDeps);
 
 /**
  * Sessions with a turn in flight, optionally narrowed to one project.
@@ -1253,6 +1277,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           broadcast(sessionId, { type: "compact_status", status: "done" });
         }
         setPhase(sessionId, "idle");
+        // A renewal that landed while this turn ran left its subprocess holding a revoked
+        // token; restart it now rather than let the next message open with a 401. Deferred so
+        // the drop does not close the query from inside the loop that is reading it.
+        setTimeout(() => dropStaleIdle(tokenRotationDeps), 0);
         // Reset heartbeat tracking for next turn
         firstEventReceived = false;
         startTime = Date.now();
