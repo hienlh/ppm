@@ -127,10 +127,10 @@ export class WindowService {
   }
 
   /**
-   * Show the real chat composer and return the message the user sent, or `undefined` on
-   * cancel/dismiss/timeout. Client-side stub only — the host-side RPC handler, WS round trip
-   * and dialog UI land in a later phase; until then this call always times out or errors with
-   * "No handler for method" against a worker that has no `window:showComposer` handler wired.
+   * Show the real chat composer (slash/file pickers, model, permission mode) and
+   * return what the user composed, or `undefined` on cancel/dismiss/timeout.
+   * Returns a message — it does not send one. Authors against the active
+   * project; fails fast when no browser client is connected.
    */
   async showComposer(options?: ComposerOptions): Promise<ComposerResult | undefined> {
     return this.rpc.requestWithTimeout<ComposerResult | undefined>("window:showComposer", 600_000, options ?? {});
