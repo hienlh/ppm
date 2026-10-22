@@ -5,7 +5,7 @@
  * Endpoint: POST /proxy/v1/chat/completions
  * Reference: https://github.com/fuergaosi233/claude-code-proxy
  */
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "../providers/claude-cli-process-group.ts";
 import { accountSelector } from "./account-selector.service.ts";
 import {
   buildPromptFromOpenAiMessages, openAiError, SSE_HEADERS,
