@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.16] - 2026-10-22
+
+### Fixed
+
+- **Renewing a Claude sign-in no longer cuts a running chat short.** PPM now renews an account's token while nothing is running on it and moves idle chats onto the new one, so "Token refreshed — retrying" no longer appears mid-answer and subagents are not killed by it.
+- **Reconnecting no longer covers the chat.** Returning to a phone tab keeps the chat readable; a small pill appears only if reconnecting takes longer than 800 ms, and turns into "Connection lost" with Retry after 8 s.
+
 ## [0.23.15] - 2026-10-22
 
 ### Added
