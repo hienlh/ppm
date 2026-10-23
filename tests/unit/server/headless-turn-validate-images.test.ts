@@ -56,6 +56,12 @@ describe("validateHeadlessSend", () => {
     expect(validateHeadlessSend({ content: "hi", timeoutMs: 1_000 })).toBeNull();
   });
 
+  it("accepts only a permission mode the session can be started with", () => {
+    expect(validateHeadlessSend({ content: "hi", permissionMode: "acceptEdits" })).toBeNull();
+    expect(validateHeadlessSend({ content: "hi", permissionMode: "yolo" })).toContain("permissionMode must be one of");
+    expect(validateHeadlessSend({ content: "hi", permissionMode: 7 })).toContain("permissionMode");
+  });
+
   it("hands the images to the shared validator", () => {
     expect(validateHeadlessSend({ content: "hi", images: "nope" })).toBe("images must be an array");
     expect(validateHeadlessSend({ content: "hi", images: [{ data: "x", mediaType: "image/tiff" }] })).toContain("Unsupported image type");

@@ -290,6 +290,18 @@ describe("POST /chat/sessions/:id/messages — validation", () => {
     expect(json.error).toContain("Unsupported image type");
   });
 
+  it("400s on a reply reference that names another session, and on an unknown permission mode", async () => {
+    const session = await createSession();
+    const replyTo = { version: 1, sessionId: crypto.randomUUID(), providerId: testProvider.id, messageId: "m1", role: "assistant", timestamp: new Date().toISOString(), quote: "earlier", truncated: false };
+    const reply = await postMessage(session.id, { content: "hi", replyTo });
+    expect(reply.status).toBe(400);
+    expect(reply.json.error).toContain("reply reference");
+    const mode = await postMessage(session.id, { content: "hi", permissionMode: "yolo" });
+    expect(mode.status).toBe(400);
+    expect(mode.json.error).toContain("permissionMode");
+    expect(running(session.id)).toBe(false);
+  });
+
   it("400s when the session belongs to another project (DB-persisted path)", async () => {
     const session = await createSession();
     const { status, json } = await postMessage(session.id, { content: "hi" }, OTHER_PROJECT);

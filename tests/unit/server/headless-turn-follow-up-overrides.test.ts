@@ -9,7 +9,8 @@ import { chatService } from "../../../src/services/chat.service.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
 import { setSessionMetadata } from "../../../src/services/db.service.ts";
 import { listRunningSessions } from "../../../src/server/ws/chat.ts";
-import { BUSY_DIFFERENT_MODEL, startHeadlessTurn } from "../../../src/server/ws/chat-headless-turn.ts";
+import { BUSY_BACKGROUND_WORK, BUSY_DIFFERENT_MODEL, startHeadlessTurn } from "../../../src/server/ws/chat-headless-turn.ts";
+import { backgroundShellRegistry } from "../../../src/services/background-shell-registry.ts";
 import type { AIProvider, Session, SessionConfig, ChatEvent, SendMessageOpts } from "../../../src/providers/provider.interface.ts";
 
 /**
@@ -43,7 +44,7 @@ class FakeClaude implements AIProvider {
   async listSessions() { return []; }
   async deleteSession(sessionId: string) { this.sessions.delete(sessionId); }
 
-  /** `hold:` messages park the turn until `release()`; everything else answers at once. */
+  /** `hold:` messages park the turn, after its first event, until `release()`; everything else answers at once. */
   async *sendMessage(sessionId: string, message: string, opts?: SendMessageOpts): AsyncIterable<ChatEvent> {
     this.queries.push({ sessionId, message, opts });
     const controller = new AbortController();
@@ -51,6 +52,7 @@ class FakeClaude implements AIProvider {
     let current: string | undefined = message;
     while (current !== undefined && !controller.signal.aborted) {
       if (current.startsWith("hold:")) {
+        yield { type: "text", content: "working" };
         await new Promise<void>((resolve) => {
           this.holds.set(sessionId, resolve);
           controller.signal.addEventListener("abort", () => resolve(), { once: true });
@@ -126,5 +128,21 @@ describe("headless follow-up on a live Claude session", () => {
     fake.release(session.id);
     await until(() => !running(session.id), "the turn to end");
     fake.abortQuery(session.id, "test_cleanup");
+  });
+
+  it("refuses to restart an idle subprocess that still runs a background shell", async () => {
+    const session = await chatService.createSession("claude", {});
+    await startHeadlessTurn(session.id, { content: "one", providerId: "claude", model: "claude-opus-5-5" });
+    await until(() => !running(session.id) && fake.hasStreamingSession(session.id), "the first turn");
+    backgroundShellRegistry.register(session.id, { shellId: "sh-1", command: "bun test --watch", outputPath: "/tmp/out", toolUseId: "tu-1" });
+    const abortsBefore = fake.abortReasons.length;
+    try {
+      await expect(startHeadlessTurn(session.id, { content: "two", providerId: "claude", model: "claude-haiku-4-5" })).rejects.toThrow(BUSY_BACKGROUND_WORK);
+      expect(fake.abortReasons).toHaveLength(abortsBefore);
+      expect(fake.hasStreamingSession(session.id)).toBe(true);
+    } finally {
+      backgroundShellRegistry.clearSession(session.id);
+      fake.abortQuery(session.id, "test_cleanup");
+    }
   });
 });

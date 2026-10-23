@@ -13,9 +13,11 @@ import { configService } from "../../../src/services/config.service.ts";
 import { getSessionModel, getSessionProjectPath } from "../../../src/services/db.service.ts";
 import { contributionRegistry } from "../../../src/services/contribution-registry.ts";
 import { extensionWebSocket } from "../../../src/server/ws/extensions.ts";
+import { listRunningSessions } from "../../../src/server/ws/chat.ts";
 import type { RpcMessage, RpcResponse } from "../../../src/types/extension.ts";
 
 const PROJECT = "ext-chat-handlers-project";
+const EXT = "probe-ext";
 const PROJECT_PATH = `${process.cwd()}/.ext-chat-handlers-${process.pid}`;
 
 const sent: RpcMessage[] = [];
@@ -66,7 +68,7 @@ describe("chat:listProjects / chat:createSession", () => {
     expect(projects.some((p) => p.name === PROJECT && p.path === PROJECT_PATH)).toBe(true);
 
     const session = await call<{ sessionId: string; providerId: string; projectName: string }>("chat:createSession", {
-      projectName: PROJECT, providerId: "mock", title: "Night run", model: "claude-haiku-4-5",
+      extensionId: EXT, projectName: PROJECT, providerId: "mock", title: "Night run", model: "claude-haiku-4-5",
     });
     expect(session.providerId).toBe("mock");
     expect(session.projectName).toBe(PROJECT);
@@ -76,15 +78,15 @@ describe("chat:listProjects / chat:createSession", () => {
   });
 
   it("refuses an unregistered project and an unknown provider", async () => {
-    await expect(call("chat:createSession", { projectName: "nope", providerId: "mock" })).rejects.toThrow("not registered");
-    await expect(call("chat:createSession", { projectName: PROJECT, providerId: "no-such" })).rejects.toThrow("not found");
+    await expect(call("chat:createSession", { extensionId: EXT, projectName: "nope", providerId: "mock" })).rejects.toThrow("not registered");
+    await expect(call("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "no-such" })).rejects.toThrow("not found");
   });
 });
 
 describe("chat:send / chat:state / chat:lastAssistantText / chat:cancel", () => {
   it("starts a turn, reports it running, then idle, and reads the answer back", async () => {
     scriptMock((sid) => [{ type: "text", content: "all done" }, { type: "done", sessionId: sid }]);
-    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { projectName: PROJECT, providerId: "mock" });
+    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" });
     const provider = providerRegistry.get("mock")!;
     const messages = spyOn(provider, "getMessages").mockResolvedValue([
       { id: "u", role: "user", content: "go", timestamp: "" },
@@ -92,7 +94,7 @@ describe("chat:send / chat:state / chat:lastAssistantText / chat:cancel", () => 
     ] as never);
     restores.push(() => messages.mockRestore());
 
-    const started = await call<{ sessionId: string; queued: boolean }>("chat:send", { sessionId, content: "go", timeoutMs: 5_000 });
+    const started = await call<{ sessionId: string; queued: boolean }>("chat:send", { extensionId: EXT, sessionId, content: "go", timeoutMs: 5_000 });
     expect(started).toEqual({ sessionId, queued: false });
     let state = await call<{ running: boolean; phase: string }>("chat:state", { sessionId });
     expect(state.running).toBe(true);
@@ -105,19 +107,56 @@ describe("chat:send / chat:state / chat:lastAssistantText / chat:cancel", () => 
   });
 
   it("refuses what the REST route refuses, before anything starts", async () => {
-    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { projectName: PROJECT, providerId: "mock" });
-    await expect(call("chat:send", { sessionId, content: "   " })).rejects.toThrow("content is required");
-    await expect(call("chat:send", { sessionId, content: "hi", timeoutMs: 10 })).rejects.toThrow("timeoutMs");
-    await expect(call("chat:send", { sessionId: crypto.randomUUID(), content: "hi" })).rejects.toThrow("Session not found");
+    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" });
+    await expect(call("chat:send", { extensionId: EXT, sessionId, content: "   " })).rejects.toThrow("content is required");
+    await expect(call("chat:send", { extensionId: EXT, sessionId, content: "hi", timeoutMs: 10 })).rejects.toThrow("timeoutMs");
+    await expect(call("chat:send", { extensionId: EXT, sessionId: crypto.randomUUID(), content: "hi" })).rejects.toThrow("Session not found");
     await expect(call("chat:state", { sessionId: crypto.randomUUID() })).rejects.toThrow("Session not found");
   });
 
   it("cancel stops the turn through the chat service under the extension origin", async () => {
-    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { projectName: PROJECT, providerId: "mock" });
+    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" });
     const abort = spyOn(chatService, "abortQuery").mockImplementation(() => {});
     restores.push(() => abort.mockRestore());
-    expect(await call("chat:cancel", { sessionId })).toEqual({ cancelled: true });
+    expect(await call("chat:cancel", { extensionId: EXT, sessionId })).toEqual({ cancelled: true });
     expect(abort).toHaveBeenCalledWith("mock", sessionId, "extension_cancel", "extension");
+  });
+});
+
+describe("which sessions an extension may drive", () => {
+  it("refuses to send to or stop a session another extension or a person created", async () => {
+    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" });
+    await expect(call("chat:send", { extensionId: "someone-else", sessionId, content: "hi" })).rejects.toThrow("not created by this extension");
+    await expect(call("chat:cancel", { extensionId: "someone-else", sessionId })).rejects.toThrow("not created by this extension");
+    const theirs = await chatService.createSession("mock", { projectName: PROJECT, projectPath: PROJECT_PATH });
+    await expect(call("chat:send", { extensionId: EXT, sessionId: theirs.id, content: "hi" })).rejects.toThrow("not created by this extension");
+    await expect(call("chat:send", { sessionId, content: "hi" })).rejects.toThrow("extensionId is required");
+  });
+
+  it("caps the sessions one extension may have a turn in flight on, and frees a slot when a turn ends", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const provider = providerRegistry.get("mock")!;
+    const send = spyOn(provider, "sendMessage").mockImplementation(async function* (sessionId: string) {
+      yield { type: "text", content: "working" };
+      await held;
+      yield { type: "done", sessionId };
+    } as never);
+    restores.push(() => send.mockRestore());
+    const sessions: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      sessions.push((await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" })).sessionId);
+    }
+    for (const sessionId of sessions.slice(0, 4)) {
+      expect(await call("chat:send", { extensionId: EXT, sessionId, content: "go" })).toEqual({ sessionId, queued: false });
+    }
+    await expect(call("chat:send", { extensionId: EXT, sessionId: sessions[4]!, content: "go" })).rejects.toThrow("TOO_MANY_HEADLESS_TURNS");
+    // A follow-up on a session already in flight is not a new slot.
+    expect(await call("chat:send", { extensionId: EXT, sessionId: sessions[0]!, content: "more" })).toEqual({ sessionId: sessions[0], queued: true });
+    release();
+    await until(() => sessions.slice(0, 4).every((id) => !listRunningSessions().some((s) => s.sessionId === id)), "the four turns to end");
+    expect(await call("chat:send", { extensionId: EXT, sessionId: sessions[4]!, content: "go" })).toEqual({ sessionId: sessions[4], queued: false });
+    await until(() => !listRunningSessions().some((s) => s.sessionId === sessions[4]), "the fifth turn to end");
   });
 });
 
@@ -129,12 +168,12 @@ describe("chat:openTab", () => {
   }
 
   it("opens nothing for a caller no browser ran a command for", async () => {
-    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { projectName: PROJECT, providerId: "mock" });
+    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" });
     expect(await call("chat:openTab", { sessionId, extensionId: "nobody-ran-me" })).toEqual({ opened: false });
   });
 
   it("addresses the tab to the browser that ran the extension's command, with the project in it", async () => {
-    contributionRegistry.register("probe-ext", { commands: [{ command: "probe.run", title: "Run" }] } as never);
+    contributionRegistry.register(EXT, { commands: [{ command: "probe.run", title: "Run" }] } as never);
     const runner = fakeWs();
     const bystander = fakeWs();
     extensionWebSocket.open(runner as never);
@@ -146,8 +185,8 @@ describe("chat:openTab", () => {
       expect(runner.messages.map((m) => m.type)).toEqual(["client:hello", "contributions:update"]);
       await extensionWebSocket.message(runner as never, JSON.stringify({ type: "command:execute", command: "probe.run" }));
 
-      const { sessionId, providerId } = await call<{ sessionId: string; providerId: string }>("chat:createSession", { projectName: PROJECT, providerId: "mock", title: "Graph" });
-      expect(await call("chat:openTab", { sessionId, extensionId: "probe-ext" })).toEqual({ opened: true });
+      const { sessionId, providerId } = await call<{ sessionId: string; providerId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock", title: "Graph" });
+      expect(await call("chat:openTab", { sessionId, extensionId: EXT })).toEqual({ opened: true });
 
       const open = bystander.messages.find((m) => m.type === "tab:open");
       expect(open).toMatchObject({
@@ -157,7 +196,7 @@ describe("chat:openTab", () => {
     } finally {
       extensionWebSocket.close(runner as never);
       extensionWebSocket.close(bystander as never);
-      contributionRegistry.unregister("probe-ext");
+      contributionRegistry.unregister(EXT);
     }
   });
 });

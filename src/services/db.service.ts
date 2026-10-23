@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 57;
+export const CURRENT_SCHEMA_VERSION = 58;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1283,6 +1283,12 @@ export function runMigrations(database: Database): void {
     `);
     database.exec(`PRAGMA user_version = 57;`);
   }
+  if (current < 58) {
+    // Which extension created a session, so its headless sends and cancels are confined to
+    // the sessions it made — across restarts, as the extension's own sessions are long-lived.
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN created_by_extension TEXT"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 58;`);
+  }
 }
 
 /**
@@ -1490,6 +1496,18 @@ export function setSessionMetadata(sessionId: string, projectName?: string, proj
   getDb().query(
     "INSERT INTO session_metadata (session_id, project_name, project_path) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET project_name = COALESCE(excluded.project_name, session_metadata.project_name), project_path = COALESCE(excluded.project_path, session_metadata.project_path)",
   ).run(sessionId, projectName ?? null, projectPath ?? null);
+}
+
+/** The extension that created a session over `chat:createSession`; null for every other session. */
+export function getSessionCreatedByExtension(sessionId: string): string | null {
+  const row = getDb().query("SELECT created_by_extension FROM session_metadata WHERE session_id = ?").get(sessionId) as { created_by_extension: string | null } | null;
+  return row?.created_by_extension ?? null;
+}
+
+export function setSessionCreatedByExtension(sessionId: string, extensionId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, created_by_extension) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET created_by_extension = excluded.created_by_extension",
+  ).run(sessionId, extensionId);
 }
 
 /** Record which session a /clear started from */

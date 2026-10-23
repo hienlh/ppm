@@ -80,13 +80,22 @@ export interface PpmChat {
 
 const DEFAULT_POLL_MS = 2_000;
 
+/**
+ * `send` answers once the turn is queued, which can mean waiting out a consumer another
+ * message is starting (the server gives a provider 120 s to answer its first message) and a
+ * subprocess restart for a model change (10 s) — well past the 10 s every other RPC gets.
+ */
+export const CHAT_SEND_RPC_TIMEOUT_MS = 150_000;
+
 export function createPpmChat(rpc: RpcClient, extensionId: string): PpmChat {
   const state = (sessionId: string) => rpc.request<PpmChatState>("chat:state", { sessionId });
   return {
     listProjects: () => rpc.request<PpmChatProject[]>("chat:listProjects", {}),
-    createSession: (options) => rpc.request<PpmChatSession>("chat:createSession", options),
-    send: (sessionId, options) => rpc.request<PpmChatSendResult>("chat:send", { ...options, sessionId }),
-    cancel: async (sessionId) => { await rpc.request("chat:cancel", { sessionId }); },
+    // The extension's id travels with the calls that create and drive sessions: a session
+    // may only be sent to or stopped by the extension that created it.
+    createSession: (options) => rpc.request<PpmChatSession>("chat:createSession", { ...options, extensionId }),
+    send: (sessionId, options) => rpc.requestWithTimeout<PpmChatSendResult>("chat:send", CHAT_SEND_RPC_TIMEOUT_MS, { ...options, sessionId, extensionId }),
+    cancel: async (sessionId) => { await rpc.request("chat:cancel", { sessionId, extensionId }); },
     state,
     lastAssistantText: (sessionId) => rpc.request<string | null>("chat:lastAssistantText", { sessionId }),
     openTab: (sessionId) => rpc.request<{ opened: boolean }>("chat:openTab", { sessionId, extensionId }),

@@ -59,13 +59,15 @@ chatHeadlessRoutes.post("/sessions/:id/messages", async (c) => {
     if (!sessionKnown(id)) return c.json(err("Session not found"), 404);
     if (await crossProjectMismatch(id, projectPath)) return c.json(err("Session belongs to a different project"), 400);
 
-    const { BUSY_DIFFERENT_MODEL, startHeadlessTurn } = await import("../ws/chat-headless-turn.ts");
+    const { HeadlessTurnError, startHeadlessTurn } = await import("../ws/chat-headless-turn.ts");
     try {
       const { queued } = await startHeadlessTurn(id, { ...body, providerId: providerOf(id), projectName, projectPath });
       return c.json(ok({ sessionId: id, queued }), 202);
     } catch (e) {
-      const message = (e as Error).message;
-      return c.json(err(message), message === BUSY_DIFFERENT_MODEL ? 409 : 500);
+      // A refusal carries its own status (409 busy, 429 over the cap, 503 still starting,
+      // 400 a bad reply reference); anything else is the server's fault.
+      const status = e instanceof HeadlessTurnError ? e.status : 500;
+      return c.json(err((e as Error).message), status as 400);
     }
   } catch (e) {
     return c.json(err((e as Error).message), 500);

@@ -1,17 +1,17 @@
 import { describe, it, expect } from "bun:test";
-import { createPpmChat } from "../../../packages/vscode-compat/src/ppm/ppm-chat.ts";
+import { CHAT_SEND_RPC_TIMEOUT_MS, createPpmChat } from "../../../packages/vscode-compat/src/ppm/ppm-chat.ts";
 import { createPpmNamespace } from "../../../packages/vscode-compat/src/ppm/index.ts";
 import type { RpcClient } from "../../../packages/vscode-compat/src/types.ts";
 
 function mockRpc(answers: Record<string, (params: unknown[]) => unknown> = {}) {
-  const requests: { method: string; params: unknown[] }[] = [];
+  const requests: { method: string; params: unknown[]; timeoutMs?: number }[] = [];
   const rpc: RpcClient = {
     async request<T>(method: string, ...params: unknown[]): Promise<T> {
       requests.push({ method, params });
       return (answers[method]?.(params) ?? undefined) as T;
     },
-    async requestWithTimeout<T>(method: string, _timeoutMs: number, ...params: unknown[]): Promise<T> {
-      requests.push({ method, params });
+    async requestWithTimeout<T>(method: string, timeoutMs: number, ...params: unknown[]): Promise<T> {
+      requests.push({ method, params, timeoutMs });
       return (answers[method]?.(params) ?? undefined) as T;
     },
     notify() {},
@@ -45,8 +45,13 @@ describe("ppm.chat", () => {
     expect(requests.map((r) => r.method)).toEqual([
       "chat:listProjects", "chat:createSession", "chat:send", "chat:cancel", "chat:lastAssistantText", "chat:openTab",
     ]);
-    expect(requests[2]!.params).toEqual([{ content: "go", timeoutMs: 5_000, model: "claude-haiku-4-5", sessionId: "s1" }]);
-    expect(requests[3]!.params).toEqual([{ sessionId: "s1" }]);
+    // Creating, sending and cancelling carry the extension's id: a session is only its creator's to drive.
+    expect(requests[1]!.params).toEqual([{ projectName: "p", providerId: "claude", title: "T", extensionId: "probe-ext" }]);
+    expect(requests[2]!.params).toEqual([{ content: "go", timeoutMs: 5_000, model: "claude-haiku-4-5", sessionId: "s1", extensionId: "probe-ext" }]);
+    // A send can wait out another door's consumer start, well past the 10 s every other RPC gets.
+    expect(requests[2]!.timeoutMs).toBe(CHAT_SEND_RPC_TIMEOUT_MS);
+    expect(CHAT_SEND_RPC_TIMEOUT_MS).toBeGreaterThanOrEqual(130_000);
+    expect(requests[3]!.params).toEqual([{ sessionId: "s1", extensionId: "probe-ext" }]);
     expect(requests[5]!.params).toEqual([{ sessionId: "s1", extensionId: "probe-ext" }]);
   });
 

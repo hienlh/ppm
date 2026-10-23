@@ -7,7 +7,7 @@
 import type { RpcChannel } from "../extension-rpc.ts";
 import { chatService } from "../chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
-import { getProjects, getSessionProjectPath, getSessionProvider, resolveMigratedSession, setSessionMetadata, setSessionModel } from "../db.service.ts";
+import { getProjects, getSessionCreatedByExtension, getSessionProjectPath, getSessionProvider, resolveMigratedSession, setSessionCreatedByExtension, setSessionMetadata, setSessionModel } from "../db.service.ts";
 import { bindPickedAccount } from "../picked-account-binding.ts";
 import { dbApprovalBroker } from "../db-ai-tools/db-approval-broker.ts";
 import { broadcastExtMsg, recentCommandClient } from "../../server/ws/extensions.ts";
@@ -42,6 +42,19 @@ function resolveSession(requestedId: string): { sessionId: string; providerId: s
   return { sessionId, providerId, projectPath };
 }
 
+/**
+ * A session an extension may drive or stop: one it created itself. Every extension shares
+ * the host, so the id is what the worker says it is — this confines a mistaken extension
+ * to its own sessions, and keeps a person's chats out of reach of a loop gone wrong.
+ */
+function resolveOwnSession(requestedId: string, extensionId: string): ReturnType<typeof resolveSession> {
+  const resolved = resolveSession(requestedId);
+  if (getSessionCreatedByExtension(resolved.sessionId) !== extensionId) {
+    throw new Error("Session was not created by this extension");
+  }
+  return resolved;
+}
+
 function projectNameOf(projectPath: string | null): string | undefined {
   if (!projectPath) return undefined;
   return getProjects().find((p) => p.path === projectPath)?.name;
@@ -52,6 +65,7 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
 
   rpc.onRequest("chat:createSession", async (params) => {
     const p = paramsOf(params);
+    const extensionId = requireString(p, "extensionId");
     const projectName = requireString(p, "projectName");
     const providerId = requireString(p, "providerId");
     const project = getProjects().find((row) => row.name === projectName);
@@ -64,6 +78,7 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
     });
     // On record whatever the provider wrote: every later call finds the project through it.
     setSessionMetadata(session.id, projectName, project.path);
+    setSessionCreatedByExtension(session.id, extensionId);
     if (typeof p.accountId === "string" && p.accountId) bindPickedAccount(session.id, session.providerId, p.accountId);
     // Stored like a pick made in the tab, so a turn the user types later runs on it too.
     if (typeof p.model === "string" && p.model) setSessionModel(session.id, p.model);
@@ -72,10 +87,11 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
 
   rpc.onRequest("chat:send", async (params) => {
     const p = paramsOf(params);
-    const { sessionId: _ignored, ...body } = p;
+    const { sessionId: _ignored, extensionId: _ext, ...body } = p;
+    const extensionId = requireString(p, "extensionId");
     const invalid = validateHeadlessSend(body);
     if (invalid) throw new Error(invalid);
-    const { sessionId, providerId, projectPath } = resolveSession(requireString(p, "sessionId"));
+    const { sessionId, providerId, projectPath } = resolveOwnSession(requireString(p, "sessionId"), extensionId);
     const { timeoutMs, notifyOnDone, ...payload } = body as ChatSendPayload & { timeoutMs?: number; notifyOnDone?: unknown };
     const { startHeadlessTurn } = await headlessTurn();
     const result = await startHeadlessTurn(sessionId, {
@@ -83,6 +99,7 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
       providerId,
       projectName: projectNameOf(projectPath),
       projectPath: projectPath ?? undefined,
+      extensionId,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       notifyOnDone: notifyOnDone === true,
     });
@@ -90,7 +107,8 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
   });
 
   rpc.onRequest("chat:cancel", async (params) => {
-    const { sessionId, providerId } = resolveSession(requireString(paramsOf(params), "sessionId"));
+    const p = paramsOf(params);
+    const { sessionId, providerId } = resolveOwnSession(requireString(p, "sessionId"), requireString(p, "extensionId"));
     dbApprovalBroker.cancelSession(sessionId, "The extension stopped the turn before the user approved, so nothing ran.");
     chatService.abortQuery(providerId, sessionId, "extension_cancel", "extension");
     return { cancelled: true };

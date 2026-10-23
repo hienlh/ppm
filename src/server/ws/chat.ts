@@ -245,8 +245,23 @@ export interface SessionEntry {
    * while someone peeks at it, so its approvals keep their deadline.
    */
   turnOrigin?: TraceOrigin;
+  /** The extension behind an `extension` turn, which its concurrent-turn cap is counted per. */
+  turnExtensionId?: string;
   /** Whether an extension-started turn may send the "Chat completed" push when it ends. */
   notifyOnDone?: boolean;
+  /**
+   * The turns that messages pushed behind a running turn will open, oldest first. A push
+   * never changes the running turn: the consumer applies the next of these when the provider
+   * starts the turn it was queued for (`beginTurn`), and a door opening a turn itself drops
+   * whatever is still here, which a turn that already ended left stale.
+   */
+  nextTurns?: PendingTurn[];
+  /**
+   * Set by the door starting this session's consumer, before its first await, and settled once
+   * the consumer takes follow-ups or gave up — so a message from any door in that window waits
+   * for the consumer instead of starting a second one or pushing into a stream not yet open.
+   */
+  consumerStart?: { ready: Promise<void>; settle: () => void };
   /**
    * One-shot callbacks fired when the running turn ends (`endTurn`). The consumer loop
    * outlives turns, so anything scoped to one turn — a wall-clock budget, a claim — must
@@ -259,12 +274,45 @@ export interface SessionEntry {
   lastError?: string;
 }
 
+/** What a turn is before it starts: which door it came through and what that door armed for it. */
+export interface PendingTurn {
+  origin: TraceOrigin;
+  /** The extension behind an `extension` turn. */
+  extensionId?: string;
+  notifyOnDone?: boolean;
+  /** Runs when the turn starts; anything it arms belongs to that turn (`onTurnEnd`). */
+  onStart?: (entry: SessionEntry) => void;
+}
+
+/** The turn starts: it is this door's from here, and only its own callbacks will end it. */
+function beginTurn(sessionId: string, entry: SessionEntry, turn: PendingTurn): void {
+  entry.turnOrigin = turn.origin;
+  entry.turnExtensionId = turn.origin === "extension" ? turn.extensionId : undefined;
+  entry.notifyOnDone = turn.notifyOnDone === true;
+  entry.lastError = undefined;
+  try { turn.onStart?.(entry); } catch (e) { log.error(`session=${sessionId} turn start callback threw: ${(e as Error).message}`); }
+}
+
+/**
+ * A door opens a turn now — the first message of a consumer, or a follow-up on a session that
+ * sits idle between turns. Whatever was queued behind a turn that is over by now is stale.
+ */
+export function openTurn(sessionId: string, entry: SessionEntry, turn: PendingTurn): void {
+  entry.nextTurns = undefined;
+  beginTurn(sessionId, entry, turn);
+}
+
+/** A message pushed behind a running turn opens the turn after it, not the running one. */
+export function queueTurn(entry: SessionEntry, turn: PendingTurn): void {
+  (entry.nextTurns ??= []).push(turn);
+}
+
 /**
  * Fire and clear the running turn's one-shot callbacks. Called once per completed turn —
  * on the loop's own `done` and from the consumer's teardown — so nothing scoped to a turn
  * survives the turn that armed it. Idempotent.
  */
-function endTurn(sessionId: string, entry: SessionEntry): void {
+export function endTurn(sessionId: string, entry: SessionEntry): void {
   if (entry.approvalDeadline) {
     clearTimeout(entry.approvalDeadline);
     entry.approvalDeadline = undefined;
@@ -306,6 +354,46 @@ export function getOrCreateEntry(sessionId: string, providerId: string, projectN
   };
   activeSessions.set(sessionId, entry);
   return entry;
+}
+
+/**
+ * The door is about to start this session's consumer. Taken before its first await, so a
+ * message arriving from any door during the resume and the subprocess start waits for this
+ * consumer rather than starting its own; false when another door already holds it.
+ */
+export function claimConsumerStart(entry: SessionEntry): boolean {
+  if (entry.consumerStart) return false;
+  let settle!: () => void;
+  const ready = new Promise<void>((resolve) => { settle = resolve; });
+  entry.consumerStart = { ready, settle };
+  return true;
+}
+
+/** The consumer takes follow-ups now — or never will: every door waiting on it goes on. */
+export function settleConsumerStart(entry: SessionEntry): void {
+  const start = entry.consumerStart;
+  if (!start) return;
+  entry.consumerStart = undefined;
+  start.settle();
+}
+
+/** Waits out a consumer start in progress for the session, if there is one. */
+export async function awaitConsumerStart(entry: SessionEntry): Promise<void> {
+  while (entry.consumerStart) await entry.consumerStart.ready;
+}
+
+/**
+ * How many other sessions carry a turn of this extension's that is running, starting or
+ * queued behind another turn. A follow-up on `exceptSessionId` is not a new slot.
+ */
+export function countExtensionTurnsInFlight(extensionId: string, exceptSessionId?: string): number {
+  let n = 0;
+  for (const [sessionId, entry] of activeSessions) {
+    if (sessionId === exceptSessionId) continue;
+    const running = entry.phase !== "idle" && entry.turnOrigin === "extension" && entry.turnExtensionId === extensionId;
+    if (running || entry.nextTurns?.some((turn) => turn.origin === "extension" && turn.extensionId === extensionId)) n++;
+  }
+  return n;
 }
 
 /**
@@ -1053,6 +1141,7 @@ export async function prepareTurn(
   parsed: { content: string; replyTo?: import("../../shared/chat-reply.ts").ReplyReference | null },
   origin: TraceOrigin,
   echoUserMessage?: (finalContent: string) => void,
+  options: { unblockPendingApproval?: boolean } = {},
 ): Promise<PrepareTurnResult> {
   const providerId = entry.providerId;
   // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
@@ -1095,8 +1184,9 @@ export async function prepareTurn(
   // A message instead of an answer to a pending question/approval.
   // The SDK generator is blocked inside canUseTool awaiting that approval, so
   // it can't consume the pushed message — resolve the approval as skipped to
-  // unblock it, then the follow-up message flows through normally.
-  if (entry.pendingApprovalEvent) {
+  // unblock it, then the follow-up message flows through normally. A message queued behind
+  // another door's turn leaves that turn's approval to whoever it was asked of.
+  if (entry.pendingApprovalEvent && options.unblockPendingApproval !== false) {
     const pendingReqId = entry.pendingApprovalEvent.requestId;
     if (dbApprovalBroker.has(pendingReqId)) {
       // PPM's own approval: settling it takes the card off every device (`dbApprovalResolved`).
@@ -1133,8 +1223,9 @@ export async function startSessionConsumer(sessionId: string, providerId: string
   log.debug(`session=${sessionId} startSessionConsumer started (clients=${entry.clients.size}, origin=${origin})`);
 
   entry.isStreamingActive = true;
-  entry.turnOrigin = origin;
-  entry.lastError = undefined;
+  // The door opened this turn when it claimed the start (`openTurn`); a caller that did not
+  // gets a turn of the origin it names.
+  if (entry.phase === "idle") openTurn(sessionId, entry, { origin });
   clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
   entry.turnEvents = [];
   entry.nestedBuffered = 0;
@@ -1195,6 +1286,11 @@ export async function startSessionConsumer(sessionId: string, providerId: string
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
+      // status_update is PPM's pre-flight account selection — not actual SDK content
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update";
+      // The provider's stream exists before its first event of its own (the account
+      // pre-flight runs before it is opened): a follow-up pushed from here on reaches it.
+      if (!isMetadataEvent) settleConsumerStart(entry);
       // An approval an extension's unattended turn raised: its denial is buffered right
       // after the request, so a device replaying the turn sees an answered card.
       let deniedAt: unknown;
@@ -1278,9 +1374,11 @@ export async function startSessionConsumer(sessionId: string, providerId: string
       }
 
       // First content event — stop heartbeat, transition phase
-      // status_update is PPM's pre-flight account selection — not actual SDK content
-      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update";
       if (!firstEventReceived && !isMetadataEvent) {
+        // A turn the provider opened from its own queue — a message pushed behind the turn
+        // before — begins here, as the turn that push queued. A door's turn has its phase
+        // set already and was begun by that door.
+        if (entry.phase === "idle") beginTurn(sessionId, entry, entry.nextTurns?.shift() ?? { origin: entry.turnOrigin ?? "ws" });
         firstEventReceived = true;
         const requested = entry.turnRequestedAt;
         entry.turnRequestedAt = undefined;
@@ -1581,6 +1679,8 @@ export async function startSessionConsumer(sessionId: string, providerId: string
     // A turn that ended without its `done` (an exception, an abort) still ends here.
     endTurn(sessionId, entry);
     entry.isStreamingActive = false;
+    // A door waiting for this consumer to take its message starts a consumer of its own.
+    settleConsumerStart(entry);
     entry.turnEvents = [];
     // Force-clear compact status on stream teardown (error, close, etc.)
     if (entry.compactStatus === "compacting") {
@@ -1870,6 +1970,24 @@ export const chatWebSocket = {
 
       const provider = providerRegistry.get(providerId);
 
+      // A consumer another message is starting — from this device, another one or an
+      // extension — takes this message as a follow-up once it is live; starting a second
+      // would run two on one session, and pushing now would reach a stream not yet open.
+      await awaitConsumerStart(entry);
+      // Claimed before the first await below, so every later message waits as above. The turn
+      // is a person's from here, which an extension's push cannot change.
+      const startsConsumer = !entry.isStreamingActive && claimConsumerStart(entry);
+      if (startsConsumer) {
+        openTurn(sessionId, entry, { origin: "ws" });
+        setPhase(sessionId, "initializing");
+      }
+      /** The start did not happen: the session is idle again and waiting doors go on. */
+      const abandonStart = () => {
+        endTurn(sessionId, entry);
+        setPhase(sessionId, "idle");
+        settleConsumerStart(entry);
+      };
+
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected
       // second device only sees the assistant stream for this turn.
@@ -1886,17 +2004,26 @@ export const chatWebSocket = {
           try { client.send(echo); } catch { evictClient(entry, client); }
         }
       };
-      const prep = await prepareTurn(entry, sessionId, parsed, "ws", echoToOtherClients);
-      if (prep.handled) return;
+      let prep: PrepareTurnResult;
+      try {
+        prep = await prepareTurn(entry, sessionId, parsed, "ws", echoToOtherClients);
+      } catch (e) {
+        if (startsConsumer) abandonStart();
+        throw e;
+      }
+      if (prep.handled) {
+        if (startsConsumer) abandonStart();
+        return;
+      }
       parsed.content = prep.content;
 
       entry.lastSender = ws;
       // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
-      if (!entry.isStreamingActive || entry.phase === "idle") {
-        entry.turnRequestedAt = { at: messageReceivedAt, cold: !entry.isStreamingActive };
+      if (startsConsumer || entry.phase === "idle") {
+        entry.turnRequestedAt = { at: messageReceivedAt, cold: startsConsumer };
       }
 
-      if (!entry.isStreamingActive) {
+      if (startsConsumer) {
         // First message or post-crash recovery: start persistent consumer
         // Resume session in provider (can be slow on first call — sdkListSessions)
         if (provider && "resumeSession" in provider) {
@@ -1907,6 +2034,7 @@ export const chatWebSocket = {
             // The message is dropped, as it was when this rejected out of the handler; this
             // names the session and provider that the socket dispatcher's catch cannot.
             log.error(`session=${sessionId} resume failed provider=${providerId}:`, e);
+            abandonStart();
             return;
           }
           const elapsed = Date.now() - t0;
@@ -1920,7 +2048,6 @@ export const chatWebSocket = {
         }
 
         entry.turnEvents = [];
-        setPhase(sessionId, "initializing");
 
         const permMode = entry.permissionMode;
         const msgModel = entry.model;
@@ -1936,8 +2063,6 @@ export const chatWebSocket = {
         if (provider && "pushMessage" in provider && parsed.type === "message") {
           const effort = getSessionEffort(sessionId) ?? undefined;
           const thinkingBudget = getSessionThinking(sessionId);
-          // A person typed this: whatever turn it opens or joins is theirs from here.
-          entry.turnOrigin = "ws";
           try {
             await chatService.pushMessage(providerId, sessionId, parsed.content, {
               origin: "ws",
@@ -1953,6 +2078,10 @@ export const chatWebSocket = {
             return;
           }
         }
+        // A person typed this: the turn it opens now, or the one it is queued to open, is
+        // theirs. A turn already running keeps whatever door it came through.
+        if (entry.phase === "idle") openTurn(sessionId, entry, { origin: "ws" });
+        else queueTurn(entry, { origin: "ws" });
         // Clear turn events for new turn display + transition phase
         entry.turnEvents = [];
         clearPendingApproval(sessionId, entry);
@@ -2057,15 +2186,24 @@ export const chatWebSocket = {
       broadcastBackgroundRegistry(sessionId);
       const provider = providerRegistry.get(providerId);
       const instruction = `Call the KillShell tool with task_id "${shellId}" to stop that background command, then reply with just "Stopped.".`;
-      if (!entry.isStreamingActive || entry.phase === "idle") {
-        entry.turnRequestedAt = { at: Date.now(), cold: !entry.isStreamingActive };
+      // Same door rules as a typed message: wait out a consumer another message is starting,
+      // and claim the start before the first await.
+      await awaitConsumerStart(entry);
+      const startsConsumer = !entry.isStreamingActive && claimConsumerStart(entry);
+      if (startsConsumer || entry.phase === "idle") {
+        entry.turnRequestedAt = { at: Date.now(), cold: startsConsumer };
       }
-      if (!entry.isStreamingActive) {
+      if (startsConsumer) {
+        openTurn(sessionId, entry, { origin: "ws" });
+        setPhase(sessionId, "initializing");
         if (provider && "resumeSession" in provider) {
           try {
             await (provider as any).resumeSession(sessionId);
           } catch (e) {
             log.error(`session=${sessionId} resume failed provider=${providerId} (kill_background_shell shellId=${shellId}):`, e);
+            endTurn(sessionId, entry);
+            setPhase(sessionId, "idle");
+            settleConsumerStart(entry);
             return;
           }
         }
@@ -2073,7 +2211,6 @@ export const chatWebSocket = {
           (provider as any).ensureProjectPath(sessionId, entry.projectPath);
         }
         entry.turnEvents = [];
-        setPhase(sessionId, "initializing");
         const permMode = entry.permissionMode;
         const msgModel = entry.model;
         entry.streamPromise = new Promise<void>((resolve) => {
@@ -2088,6 +2225,8 @@ export const chatWebSocket = {
           log.error(`session=${sessionId} follow-up failed provider=${providerId} (kill_background_shell shellId=${shellId}):`, e);
           return;
         }
+        if (entry.phase === "idle") openTurn(sessionId, entry, { origin: "ws" });
+        else queueTurn(entry, { origin: "ws" });
         entry.turnEvents = [];
         clearPendingApproval(sessionId, entry);
         setPhase(sessionId, "thinking");
