@@ -28,6 +28,10 @@ export {
   type PpmChatSendOptions, type PpmChatSendResult, type PpmChatState, type PpmChatWaitOptions,
   type PpmChatToolPolicy, type PpmChatBindOptions, type PpmChatBinding,
 } from "./ppm/ppm-chat.ts";
+export {
+  PpmAiError, type PpmAi, type PpmAiProvider, type PpmAiCompleteRequest, type PpmAiCompleteResult,
+  type PpmAiErrorCode,
+} from "./ppm/ppm-ai.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";

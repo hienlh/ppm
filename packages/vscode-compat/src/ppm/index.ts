@@ -1,5 +1,6 @@
 import type { RpcClient } from "../types.ts";
 import { createPpmChat, type PpmChat } from "./ppm-chat.ts";
+import { createPpmAi, type PpmAi } from "./ppm-ai.ts";
 
 /**
  * `api.ppm` — what PPM offers an extension beyond the VSCode API. Each area is a file of its
@@ -9,8 +10,10 @@ import { createPpmChat, type PpmChat } from "./ppm-chat.ts";
 export interface PpmNamespace {
   /** Chat sessions driven with nobody watching. */
   chat: PpmChat;
+  /** One-shot completions from Claude or Codex, outside any chat. */
+  ai: PpmAi;
 }
 
 export function createPpmNamespace(rpc: RpcClient, extensionId: string): PpmNamespace {
-  return { chat: createPpmChat(rpc, extensionId) };
+  return { chat: createPpmChat(rpc, extensionId), ai: createPpmAi(rpc, extensionId) };
 }
