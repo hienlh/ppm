@@ -29,6 +29,18 @@ describe("buildSystemPromptOption", () => {
       type: "preset", preset: "claude_code", append: "Be terse.\n\n# Design mode",
     });
   });
+
+  it("appends an extension's bound instructions last", () => {
+    expect(buildSystemPromptOption(undefined, undefined, "# Manager")).toEqual({
+      type: "preset", preset: "claude_code", append: "# Manager",
+    });
+    expect(buildSystemPromptOption("Be terse.", "# Design mode", " # Manager \n")).toEqual({
+      type: "preset", preset: "claude_code", append: "Be terse.\n\n# Design mode\n\n# Manager",
+    });
+    expect(buildSystemPromptOption("Be terse.", undefined, "   ")).toEqual({
+      type: "preset", preset: "claude_code", append: "Be terse.",
+    });
+  });
 });
 
 describe("preToolUseDecision", () => {

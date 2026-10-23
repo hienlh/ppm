@@ -15,6 +15,7 @@ import {
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import { TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
+import { EXTENSION_MCP_TOOL_PREFIX } from "../shared/extension-session-binding.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -49,7 +50,10 @@ export function allowedToolsFor(p: {
   agentTeams?: boolean;
   designPolicy?: boolean;
   designCheckTool?: string | null;
+  /** A session an extension bound with a tool policy: only the extension's own MCP tools. */
+  extensionPolicy?: boolean;
 }): string[] {
+  if (p.extensionPolicy) return [`${EXTENSION_MCP_TOOL_PREFIX}*`];
   if (p.designPolicy) return p.designCheckTool ? [p.designCheckTool] : [];
   const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
   const teamTools = p.agentTeams
@@ -120,9 +124,10 @@ export interface PresetSystemPromptOption {
 
 /**
  * Compose the SDK `systemPrompt` option from the provider's "Additional Instructions"
- * (`system_prompt`) and a design session's instruction block.
+ * (`system_prompt`), a design session's instruction block and the instructions an
+ * extension bound to the session, in that order.
  *
- * Both are appended to the preset, never used as a replacing `custom` prompt: the setting
+ * All are appended to the preset, never used as a replacing `custom` prompt: the setting
  * is labelled as *additional* instructions, and replacing Claude Code's prompt would drop
  * its tool-use guidance. Computed on every turn, so nothing depends on the SDK recording
  * the prompt on the session's first request.
@@ -130,8 +135,9 @@ export interface PresetSystemPromptOption {
 export function buildSystemPromptOption(
   additional?: string,
   design?: string,
+  extension?: string,
 ): PresetSystemPromptOption {
-  const parts = [additional, design]
+  const parts = [additional, design, extension]
     .map((part) => part?.trim())
     .filter((part): part is string => !!part);
   return parts.length

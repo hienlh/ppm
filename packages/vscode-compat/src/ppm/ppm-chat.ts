@@ -20,6 +20,43 @@ export interface PpmChatCreateSessionOptions {
   accountId?: string;
   /** Stored as the session's model, so a turn the user types later runs on it too. */
   model?: string;
+  /** Let this extension `bind` the session later. Claude only; refused for any other provider. */
+  bindable?: boolean;
+}
+
+/**
+ * Decides every tool a bound chat may use; nothing ever waits on an approval card. Roots are
+ * absolute. Reads: `Read`/`Glob`/`Grep` inside `readRoots`. Writes: `Write`/`Edit`/
+ * `MultiEdit`/`NotebookEdit` inside `writeRoots`, never to a symlink or hard link, never to
+ * `protectedPaths` (globs matched at any depth below a write root) nor to `.git`, `package.json`,
+ * lockfiles, `bunfig.toml`, `.claude/**`, `.github/**`, `node_modules/**`. Credential folders
+ * (PPM's, `~/.claude`, `~/.codex`, `~/.ssh`, `~/.cloudflared`) are refused even inside a root.
+ * Questions, shell, subagents, web and other MCP servers are denied unless `allowTools` names
+ * them; the extension's own MCP tools are allowed.
+ */
+export interface PpmChatToolPolicy {
+  readRoots: string[];
+  writeRoots: string[];
+  protectedPaths?: string[];
+  allowTools?: string[];
+}
+
+/** A field left out keeps its value; `null` clears it. Applies from the next session start. */
+export interface PpmChatBindOptions {
+  /** Appended to the system prompt; at most 64 KB. */
+  instructions?: string | null;
+  /** Ids of this extension's MCP toolsets (`^[a-z0-9]{2,16}$`), at most 8. */
+  toolsets?: string[];
+  toolPolicy?: PpmChatToolPolicy | null;
+}
+
+export interface PpmChatBinding {
+  sessionId: string;
+  extensionId: string;
+  instructions: string | null;
+  toolsets: string[];
+  toolPolicy: PpmChatToolPolicy | null;
+  updatedAt: string;
 }
 
 export interface PpmChatSession {
@@ -76,6 +113,11 @@ export interface PpmChat {
   openTab(sessionId: string): Promise<{ opened: boolean }>;
   /** Resolves with the final state once no turn runs; rejects when `timeoutMs` passes first. */
   waitForIdle(sessionId: string, options?: PpmChatWaitOptions): Promise<PpmChatState>;
+  /** Only a session this extension created with `bindable: true`. */
+  bind(sessionId: string, options: PpmChatBindOptions): Promise<PpmChatBinding>;
+  /** Clears instructions, toolsets and policy; the session stays bindable. */
+  unbind(sessionId: string): Promise<void>;
+  getBinding(sessionId: string): Promise<PpmChatBinding>;
 }
 
 const DEFAULT_POLL_MS = 2_000;
@@ -99,6 +141,9 @@ export function createPpmChat(rpc: RpcClient, extensionId: string): PpmChat {
     state,
     lastAssistantText: (sessionId) => rpc.request<string | null>("chat:lastAssistantText", { sessionId }),
     openTab: (sessionId) => rpc.request<{ opened: boolean }>("chat:openTab", { sessionId, extensionId }),
+    bind: (sessionId, options) => rpc.request<PpmChatBinding>("chat:bind", { sessionId, extensionId, binding: options }),
+    unbind: async (sessionId) => { await rpc.request("chat:unbind", { sessionId, extensionId }); },
+    getBinding: (sessionId) => rpc.request<PpmChatBinding>("chat:getBinding", { sessionId, extensionId }),
     async waitForIdle(sessionId, options = {}) {
       const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
       const deadline = options.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined;

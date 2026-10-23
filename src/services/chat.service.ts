@@ -175,6 +175,8 @@ class ChatService {
     tabOpenBroker.forget(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
+    const { deleteSessionBinding } = await import("./extension-session-binding.service.ts");
+    deleteSessionBinding(sessionId);
     return provider.deleteSession(sessionId);
   }
 
@@ -316,13 +318,20 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    // Like the design fields, the tab and database tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // Like the design fields, the tab and database tools and an extension's binding are only
+    // ever server-built.
+    const { extensionInstructions: _instructions, extensionToolPolicy: _policy, ...callerOpts } = opts ?? {};
+    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, callerOpts);
+    // A session an extension bound carries its instructions and, with a policy, runs outside
+    // bypass with no tool the policy did not decide — hence none of the tab or database tools.
+    const { boundTurnOptions } = await import("./extension-session-binding.service.ts");
+    const bound = boundTurnOptions(providerId, sessionId, design.permissionMode);
+    const policySession = !!bound?.extensionToolPolicy;
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those.
     const ai = configService.get("ai");
-    const tabToolsMcp = !design.designSession && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
-    const dbToolsMcp = !design.designSession && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
+    const tabToolsMcp = !design.designSession && !policySession && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
+    const dbToolsMcp = !design.designSession && !policySession && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
       ? dbToolsMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
@@ -343,7 +352,7 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}), sharedContext };
+    return { ...design, ...bound, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}), sharedContext };
   }
 
   /**

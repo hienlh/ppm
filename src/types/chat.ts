@@ -49,6 +49,18 @@ export interface SendMessageOpts {
    * Settings → Tools, and never for a design session. Server-built like `designMcp`.
    */
   dbToolsMcp?: { url: string; token: string };
+  /**
+   * Instructions an extension bound to this session, appended to the system prompt.
+   * Server-built by `chatService.prepareSendOptions` from the session's binding; a caller's
+   * copy is discarded.
+   */
+  extensionInstructions?: string;
+  /**
+   * The bound extension's tool policy: when present it decides every tool the chat may use,
+   * the session runs outside bypass mode, and it gets no tab, database or inherited MCP tools.
+   * Server-built like `extensionInstructions`.
+   */
+  extensionToolPolicy?: import("../shared/extension-session-binding.ts").ExtensionToolPolicy;
 }
 
 export interface AIProvider {
@@ -59,6 +71,9 @@ export interface AIProvider {
   /** Delivers opts.designInstructions to the model on every turn. Only such providers may
    *  host a design session; anywhere else the instructions would be silently dropped. */
   supportsDesignInstructions?: boolean;
+  /** Delivers opts.extensionInstructions and enforces opts.extensionToolPolicy. Only such
+   *  providers may host a session an extension binds. */
+  supportsExtensionBinding?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
   getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
 

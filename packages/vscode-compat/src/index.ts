@@ -26,6 +26,7 @@ export { type PpmNamespace } from "./ppm/index.ts";
 export {
   type PpmChat, type PpmChatProject, type PpmChatCreateSessionOptions, type PpmChatSession,
   type PpmChatSendOptions, type PpmChatSendResult, type PpmChatState, type PpmChatWaitOptions,
+  type PpmChatToolPolicy, type PpmChatBindOptions, type PpmChatBinding,
 } from "./ppm/ppm-chat.ts";
 
 // Service imports

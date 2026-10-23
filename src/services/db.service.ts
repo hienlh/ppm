@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 58;
+export const CURRENT_SCHEMA_VERSION = 59;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1289,6 +1289,30 @@ export function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN created_by_extension TEXT"); } catch { /* column exists */ }
     database.exec(`PRAGMA user_version = 58;`);
   }
+  if (current < 59) {
+    // What an extension attached to a chat session it created (instructions, toolsets, tool
+    // policy), and the last tool definitions each extension toolset registered, so a query
+    // started before the extension is back still knows its tools' names.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS extension_session_bindings (
+        session_id TEXT PRIMARY KEY,
+        extension_id TEXT NOT NULL,
+        instructions TEXT,
+        toolsets_json TEXT NOT NULL DEFAULT '[]',
+        tool_policy_json TEXT,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_extension_session_bindings_ext ON extension_session_bindings(extension_id);
+      CREATE TABLE IF NOT EXISTS extension_mcp_toolsets (
+        extension_id TEXT NOT NULL,
+        toolset_id TEXT NOT NULL,
+        tools_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (extension_id, toolset_id)
+      );
+    `);
+    database.exec(`PRAGMA user_version = 59;`);
+  }
 }
 
 /**
@@ -1557,6 +1581,16 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
       "ON CONFLICT(session_id) DO UPDATE SET migrated_to = excluded.migrated_to",
     ).run(oldSessionId, newSessionId);
+    // The extension that created the session, and what it bound to it, follow the session:
+    // left on the old id, an extension could neither drive its session nor keep its policy.
+    database.query(`
+      UPDATE session_metadata SET created_by_extension = (SELECT created_by_extension FROM session_metadata WHERE session_id = ?)
+      WHERE session_id = ? AND created_by_extension IS NULL
+    `).run(oldSessionId, newSessionId);
+    database.query(
+      "UPDATE OR IGNORE extension_session_bindings SET session_id = ? WHERE session_id = ?",
+    ).run(newSessionId, oldSessionId);
+    database.query("DELETE FROM extension_session_bindings WHERE session_id = ?").run(oldSessionId);
   })();
 }
 
@@ -2495,7 +2529,13 @@ export function updateExtension(id: string, updates: Partial<Pick<ExtensionRow, 
 }
 
 export function deleteExtension(id: string): void {
-  getDb().query("DELETE FROM extensions WHERE id = ?").run(id);
+  const database = getDb();
+  database.transaction(() => {
+    database.query("DELETE FROM extensions WHERE id = ?").run(id);
+    // What the extension attached to its chats and the toolsets it registered go with it.
+    database.query("DELETE FROM extension_session_bindings WHERE extension_id = ?").run(id);
+    database.query("DELETE FROM extension_mcp_toolsets WHERE extension_id = ?").run(id);
+  })();
 }
 
 export function getExtensionStorage(extId: string, scope: string): ExtensionStorageRow[] {
@@ -2512,6 +2552,40 @@ export function setExtensionStorageValue(extId: string, scope: string, key: stri
 
 export function deleteExtensionStorage(extId: string): void {
   getDb().query("DELETE FROM extension_storage WHERE ext_id = ?").run(extId);
+}
+
+/** What an extension attached to a chat session it created; JSON columns are parsed by the binding service. */
+export interface ExtensionSessionBindingRow {
+  session_id: string;
+  extension_id: string;
+  instructions: string | null;
+  toolsets_json: string;
+  tool_policy_json: string | null;
+  updated_at: string;
+}
+
+export function getExtensionSessionBinding(sessionId: string): ExtensionSessionBindingRow | null {
+  return getDb().query("SELECT * FROM extension_session_bindings WHERE session_id = ?").get(sessionId) as ExtensionSessionBindingRow | null;
+}
+
+/** The row an extension owns from the moment it creates a bindable session; nothing bound yet. */
+export function insertExtensionSessionBinding(sessionId: string, extensionId: string): void {
+  getDb().query(
+    "INSERT INTO extension_session_bindings (session_id, extension_id, updated_at) VALUES (?, ?, ?)",
+  ).run(sessionId, extensionId, new Date().toISOString());
+}
+
+export function updateExtensionSessionBinding(
+  sessionId: string,
+  fields: { instructions: string | null; toolsetsJson: string; toolPolicyJson: string | null },
+): void {
+  getDb().query(
+    "UPDATE extension_session_bindings SET instructions = ?, toolsets_json = ?, tool_policy_json = ?, updated_at = ? WHERE session_id = ?",
+  ).run(fields.instructions, fields.toolsetsJson, fields.toolPolicyJson, new Date().toISOString(), sessionId);
+}
+
+export function deleteExtensionSessionBinding(sessionId: string): void {
+  getDb().query("DELETE FROM extension_session_bindings WHERE session_id = ?").run(sessionId);
 }
 
 // ---------------------------------------------------------------------------

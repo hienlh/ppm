@@ -21,6 +21,7 @@ import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../servic
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
+import { clampBoundPermissionMode, extensionToolDecision } from "./extension-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
@@ -264,6 +265,7 @@ interface PendingApproval {
 export class ClaudeAgentSdkProvider implements AIProvider {
   readonly supportsSharedContext = true;
   readonly supportsDesignInstructions = true;
+  readonly supportsExtensionBinding = true;
   id = "claude";
   name = "Claude";
 
@@ -895,6 +897,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     env: Record<string, string | undefined>;
     allowedTools: string[];
     mcpServers: Record<string, unknown>;
+    /** Only the servers in `mcpServers`: none from the user's or the project's Claude settings. */
+    strictMcp?: boolean;
     permissionMode: string;
     opts?: Pick<import("./provider.interface.ts").SendMessageOpts, "model" | "oneMContext" | "effort" | "thinkingBudget" | "maxTurns">;
     providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
@@ -938,6 +942,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       settings: { permissions: { allow: [], deny: [] } },
       allowedTools: p.allowedTools,
       ...(Object.keys(p.mcpServers).length > 0 && { mcpServers: p.mcpServers }),
+      ...(p.strictMcp && { strictMcpConfig: true }),
       permissionMode: p.permissionMode,
       allowDangerouslySkipPermissions: p.permissionMode === "bypassPermissions",
       ...(mqo.model && { model: mqo.model }),
@@ -1161,21 +1166,30 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // Resolve permission mode early — canUseTool needs isBypass
     const providerConfig = this.getProviderConfig();
-    const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
+    // A session an extension bound with a tool policy: the policy decides every tool, so the
+    // session never runs in bypass, where the permission hook is not even installed. The chat
+    // service clamps the mode already; this holds for any caller that reaches the provider.
+    const extensionPolicy = opts?.extensionToolPolicy;
+    const permissionMode = extensionPolicy
+      ? clampBoundPermissionMode(opts?.permissionMode)
+      : opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
-    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
+    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions, opts?.extensionInstructions);
+    // Relative tool paths resolve against the directory the CLI runs in.
+    const policyCwd = meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : homedir();
     // A design session in acceptEdits auto-approves file tools only while they target the
     // project, and asks for everything else. Any other mode the user picks for a design
     // session behaves exactly as that mode does in an ordinary chat.
-    const designPolicy = !!opts?.designSession && permissionMode === "acceptEdits";
+    const designPolicy = !extensionPolicy && !!opts?.designSession && permissionMode === "acceptEdits";
     // No project root means nothing can be proven inside it, so every file tool asks.
     const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
-    const designCheckTool = opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
-    const tabToolsMcp = opts?.designSession ? undefined : opts?.tabToolsMcp;
-    const dbToolsMcp = opts?.designSession ? undefined : opts?.dbToolsMcp;
-    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
+    const designCheckTool = !extensionPolicy && opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    // A policy session gets no tool its policy did not decide: no tab or database tools.
+    const tabToolsMcp = opts?.designSession || extensionPolicy ? undefined : opts?.tabToolsMcp;
+    const dbToolsMcp = opts?.designSession || extensionPolicy ? undefined : opts?.dbToolsMcp;
+    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, extensionPolicy: !!extensionPolicy });
 
     /**
      * Approval events to yield from the generator.
@@ -1204,6 +1218,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      */
     const canUseTool = async (toolName: string, input: unknown) => {
       log.debug(`canUseTool called: tool=${toolName} permissionMode=${permissionMode}`);
+      // Ahead of the question branch: a bound session's policy denies questions too, because
+      // nobody may be there to answer one.
+      if (extensionPolicy) {
+        const verdict = extensionToolDecision(toolName, input, extensionPolicy, policyCwd);
+        return verdict.decision === "allow"
+          ? { behavior: "allow" as const, updatedInput: input }
+          : { behavior: "deny" as const, message: verdict.reason };
+      }
       if (toolName === "AskUserQuestion") {
         const result = await waitForApproval(toolName, input);
         if (result.approved && result.data) {
@@ -1232,6 +1254,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const toolName = hookInput?.tool_name as string | undefined;
       if (!toolName) return {};
       log.debug(`preToolUseHook: tool=${toolName} permissionMode=${permissionMode} isBypass=${isBypass}`);
+
+      // A bound session's policy is exhaustive: an explicit verdict for every tool, before
+      // the question pass-through and the tab/database allows below, so neither an approval
+      // card nor acceptEdits' own auto-approvals ever get a say.
+      if (extensionPolicy) {
+        const verdict = extensionToolDecision(toolName, hookInput?.tool_input, extensionPolicy, policyCwd);
+        return verdict.decision === "allow" ? preToolUseDecision("allow") : preToolUseDecision("deny", verdict.reason);
+      }
 
       // Bypass mode: allow everything
       if (isBypass) return {};
@@ -1428,7 +1458,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           log.warn(`session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
         }
       }
-      const mcpServers = {
+      // A policy session inherits none of the user's MCP servers (PPM's or Claude Code's):
+      // their tools would be denied anyway, and their mere presence is reach the policy did
+      // not grant. `strictMcpConfig` below keeps the CLI from loading them on its own.
+      const mcpServers = extensionPolicy ? {} : {
         ...this.resolveMcpServers(effectiveCwd),
         ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
         ...tabToolsMcpServers(tabToolsMcp),
@@ -1455,6 +1488,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         env: queryEnv,
         allowedTools,
         mcpServers,
+        strictMcp: !!extensionPolicy,
         permissionMode,
         opts,
         providerConfig,

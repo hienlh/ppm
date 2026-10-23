@@ -9,6 +9,7 @@ import { chatService } from "../chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { getProjects, getSessionCreatedByExtension, getSessionProjectPath, getSessionProvider, resolveMigratedSession, setSessionCreatedByExtension, setSessionMetadata, setSessionModel } from "../db.service.ts";
 import { bindPickedAccount } from "../picked-account-binding.ts";
+import { BINDING_CLAUDE_ONLY, createBindableSession, providerSupportsBinding } from "../extension-session-binding.service.ts";
 import { dbApprovalBroker } from "../db-ai-tools/db-approval-broker.ts";
 import { broadcastExtMsg, recentCommandClient } from "../../server/ws/extensions.ts";
 import { validateHeadlessSend } from "../../server/ws/chat-headless-turn-helpers.ts";
@@ -71,6 +72,9 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
     const project = getProjects().find((row) => row.name === projectName);
     if (!project) throw new Error(`Project "${projectName}" is not registered`);
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
+    if (p.bindable !== undefined && typeof p.bindable !== "boolean") throw new Error("bindable must be a boolean");
+    // Checked before the session exists, so a refusal leaves nothing behind.
+    if (p.bindable && !providerSupportsBinding(providerId)) throw new Error(BINDING_CLAUDE_ONLY);
     const session = await chatService.createSession(providerId, {
       projectName,
       projectPath: project.path,
@@ -79,6 +83,7 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
     // On record whatever the provider wrote: every later call finds the project through it.
     setSessionMetadata(session.id, projectName, project.path);
     setSessionCreatedByExtension(session.id, extensionId);
+    if (p.bindable) createBindableSession(session.id, extensionId);
     if (typeof p.accountId === "string" && p.accountId) bindPickedAccount(session.id, session.providerId, p.accountId);
     // Stored like a pick made in the tab, so a turn the user types later runs on it too.
     if (typeof p.model === "string" && p.model) setSessionModel(session.id, p.model);
