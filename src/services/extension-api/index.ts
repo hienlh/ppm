@@ -5,6 +5,7 @@
  */
 import type { RpcChannel } from "../extension-rpc.ts";
 import { extensionCallRegistry, type ExtensionCall, type ExtensionCallRegistry } from "./extension-call-registry.ts";
+import { registerExtensionChatHandlers } from "./extension-chat-handlers.ts";
 
 /** What a handler is given besides the channel: which worker it serves, and how to tie a
  *  long-running call to that worker's life. */
@@ -23,6 +24,6 @@ export function extensionApiDeps(
 }
 
 /** Register every `ppm:*` handler on a worker's channel. Called once per channel. */
-export function registerExtensionApiHandlers(_rpc: RpcChannel, _deps: ExtensionApiDeps): void {
-  // No PPM-specific calls are registered yet.
+export function registerExtensionApiHandlers(rpc: RpcChannel, _deps: ExtensionApiDeps): void {
+  registerExtensionChatHandlers(rpc);
 }

@@ -82,7 +82,10 @@ export type ExtServerMsg =
   | { type: "webview:html"; panelId: string; html: string }
   | { type: "webview:dispose"; panelId: string }
   | { type: "webview:postMessage"; panelId: string; message: unknown }
-  | { type: "tab:open"; tabType: string; title: string; projectId: string | null; closable?: boolean; metadata?: Record<string, unknown> }
+  /** This socket's id, sent once on connect; a `tab:open` may be addressed to one client by it. */
+  | { type: "client:hello"; clientId: string }
+  /** `clientId` set: only that browser opens the tab; every other one ignores the message. */
+  | { type: "tab:open"; tabType: string; title: string; projectId: string | null; closable?: boolean; metadata?: Record<string, unknown>; clientId?: string }
   | { type: "project:switch"; projectName: string }
   | { type: "contributions:update"; contributions: ExtensionContributes; activationErrors?: Record<string, string> }
   | { type: "composer:show"; requestId: string; options: ComposerOptionsMsg }

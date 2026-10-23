@@ -23,6 +23,10 @@ export {
 export { type ExtensionContext, Memento } from "./context.ts";
 export { ProcessService, type SpawnResult, type SpawnOptions } from "./process.ts";
 export { type PpmNamespace } from "./ppm/index.ts";
+export {
+  type PpmChat, type PpmChatProject, type PpmChatCreateSessionOptions, type PpmChatSession,
+  type PpmChatSendOptions, type PpmChatSendResult, type PpmChatState, type PpmChatWaitOptions,
+} from "./ppm/ppm-chat.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";

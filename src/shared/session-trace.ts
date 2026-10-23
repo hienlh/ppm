@@ -15,6 +15,8 @@ export type TraceOrigin =
   | "jira"
   | "cli"
   | "proxy"
+  /** A turn an extension started over RPC or the headless REST route. */
+  | "extension"
   | "browser"
   | "unknown";
 

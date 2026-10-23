@@ -6,6 +6,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { getAuthToken } from "@/lib/api-client";
 import { openGitReview } from "@/lib/open-git-review";
 import { popOutExtensionTab } from "@/lib/extension-webview-window";
+import { openExtensionChatTab } from "@/lib/extension-chat-tab";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
 
@@ -85,6 +86,9 @@ export function useExtensionWs(enabled = true) {
     const wsUrl = token ? `/ws/extensions?token=${encodeURIComponent(token)}` : "/ws/extensions";
     const client = new WsClient(wsUrl);
     clientRef.current = client;
+    // The server's name for this socket, so a `tab:open` addressed to one browser can be
+    // told from one meant for every browser.
+    let ownClientId: string | null = null;
 
     client.onMessage((event) => {
       let msg: ExtServerMsg;
@@ -97,6 +101,10 @@ export function useExtensionWs(enabled = true) {
       const store = useExtensionStore.getState();
 
       switch (msg.type) {
+        case "client:hello":
+          ownClientId = msg.clientId;
+          break;
+
         case "contributions:update":
           store.setContributions(msg.contributions);
           if (msg.activationErrors) {
@@ -273,10 +281,20 @@ export function useExtensionWs(enabled = true) {
           break;
 
         case "tab:open": {
+          // Addressed to the browser that ran the extension's command: every other one ignores it.
+          if (msg.clientId && msg.clientId !== ownClientId) break;
+          const meta = (msg as any).metadata as Record<string, unknown> | undefined;
+          // A chat belongs to a project; it is opened there (see `openExtensionChatTab`).
+          if (msg.tabType === "chat" && typeof meta?.projectName === "string" && typeof meta.sessionId === "string") {
+            void openExtensionChatTab({
+              title: msg.title,
+              metadata: { projectName: meta.projectName, sessionId: meta.sessionId, ...(typeof meta.providerId === "string" ? { providerId: meta.providerId } : {}) },
+            });
+            break;
+          }
           // The Review tab is one per project and is only focused by openTab,
           // so what it should show has to be written into it — the same path
           // Source Control takes.
-          const meta = (msg as any).metadata as Record<string, unknown> | undefined;
           if ((msg as any).tabType === "git-review" && typeof meta?.projectName === "string") {
             openGitReview(
               meta.projectName,

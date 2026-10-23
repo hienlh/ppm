@@ -9,6 +9,8 @@ import { describeApprovalInput } from "../../services/notification-format.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
+import type { TraceOrigin } from "../../shared/session-trace.ts";
+import { validateChatImages } from "../../shared/validate-chat-images.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
 // — a chat socket is not guaranteed to exist now that chat tabs mount lazily.
 import { broadcastGlobalEvent } from "./global.ts";
@@ -152,9 +154,20 @@ const FINAL_TEXT_KEEP = 1_000;
  * the turn's own later events out of a reconnecting client's replay.
  */
 const MAX_NESTED_TURN_EVENTS = 2_000;
+/**
+ * How long an approval raised by an extension-started turn waits for a person when a
+ * browser is attached. Nobody asked for the turn from a screen, so an unanswered card must
+ * not hold the subprocess for good; with no browser attached it is denied at once.
+ */
+export const EXTENSION_APPROVAL_DEADLINE_MS = 120_000;
+let extensionApprovalDeadlineMs = EXTENSION_APPROVAL_DEADLINE_MS;
+/** Shorten the deadline for a test; `null` restores the real one. */
+export function setExtensionApprovalDeadlineMs(ms: number | null): void {
+  extensionApprovalDeadlineMs = ms ?? EXTENSION_APPROVAL_DEADLINE_MS;
+}
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
-  "approval_request", "error", "done", "account_info", "account_retry",
+  "approval_request", "approval_resolved", "error", "done", "account_info", "account_retry",
   "team_detected",
 ]);
 
@@ -164,7 +177,7 @@ type ChatWsSocket = {
   ping?: (data?: string | ArrayBuffer) => void;
 };
 
-interface SessionEntry {
+export interface SessionEntry {
   providerId: string;
   clients: Set<ChatWsSocket>;
   projectPath?: string;
@@ -226,6 +239,93 @@ interface SessionEntry {
   lastSender?: ChatWsSocket;
   /** Events broadcast with no client attached since the session last went idle — logged then, as one count. */
   droppedEvents?: number;
+  /**
+   * Which door the running (or last) turn came through, fixed when the turn starts and left
+   * alone by browsers attaching or leaving: an extension's turn stays an extension's turn
+   * while someone peeks at it, so its approvals keep their deadline.
+   */
+  turnOrigin?: TraceOrigin;
+  /** Whether an extension-started turn may send the "Chat completed" push when it ends. */
+  notifyOnDone?: boolean;
+  /**
+   * One-shot callbacks fired when the running turn ends (`endTurn`). The consumer loop
+   * outlives turns, so anything scoped to one turn — a wall-clock budget, a claim — must
+   * hang off this rather than off the loop's own end.
+   */
+  onTurnEnd?: Set<() => void>;
+  /** The timer that denies an extension turn's approval nobody answered. */
+  approvalDeadline?: ReturnType<typeof setTimeout>;
+  /** The first error the running (or last) turn reported, for `chat:state`. */
+  lastError?: string;
+}
+
+/**
+ * Fire and clear the running turn's one-shot callbacks. Called once per completed turn —
+ * on the loop's own `done` and from the consumer's teardown — so nothing scoped to a turn
+ * survives the turn that armed it. Idempotent.
+ */
+function endTurn(sessionId: string, entry: SessionEntry): void {
+  if (entry.approvalDeadline) {
+    clearTimeout(entry.approvalDeadline);
+    entry.approvalDeadline = undefined;
+  }
+  const callbacks = entry.onTurnEnd;
+  entry.onTurnEnd = undefined;
+  if (!callbacks) return;
+  for (const cb of callbacks) {
+    try { cb(); } catch (e) { log.error(`session=${sessionId} onTurnEnd callback threw: ${(e as Error).message}`); }
+  }
+}
+
+/**
+ * The session's registry entry, created on first use. One constructor for the socket's
+ * `open`, the message handler's own auto-create (a message can race `open`) and a headless
+ * turn, which has no socket to trigger `open` at all.
+ */
+export function getOrCreateEntry(sessionId: string, providerId: string, projectName?: string, projectPath?: string): SessionEntry {
+  const existing = activeSessions.get(sessionId);
+  if (existing) {
+    if (projectPath) existing.projectPath = projectPath;
+    if (projectName) existing.projectName = projectName;
+    return existing;
+  }
+  const entry: SessionEntry = {
+    providerId,
+    clients: new Set(),
+    projectPath,
+    projectName,
+    pingIntervals: new Map(),
+    phase: "idle",
+    turnEvents: [],
+    isStreamingActive: false,
+    streamSeq: 0,
+    teamWatchers: new Map(),
+    teamNames: new Set(),
+    compactStatus: null,
+    model: getSessionModel(sessionId) ?? undefined,
+  };
+  activeSessions.set(sessionId, entry);
+  return entry;
+}
+
+/**
+ * The registry's project path for a session — what a running turn actually uses, which can
+ * differ from the DB row for an entry the auto-create path built with no row at all.
+ */
+export function getActiveSessionProjectPath(sessionId: string): string | undefined {
+  return activeSessions.get(resolveMigratedSession(sessionId))?.projectPath;
+}
+
+/** Which door the session's running (or last) turn came through; undefined with no entry. */
+export function getSessionTurnOrigin(sessionId: string): TraceOrigin | undefined {
+  return activeSessions.get(resolveMigratedSession(sessionId))?.turnOrigin;
+}
+
+/** What an extension polling a session needs: whether a turn runs, its phase, its first error. */
+export function getSessionTurnState(sessionId: string): { running: boolean; phase: SessionPhase; lastError?: string } {
+  const entry = activeSessions.get(resolveMigratedSession(sessionId));
+  if (!entry) return { running: false, phase: "idle" };
+  return { running: entry.phase !== "idle", phase: entry.phase, ...(entry.lastError && { lastError: entry.lastError }) };
 }
 
 /** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
@@ -572,12 +672,68 @@ function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type:
 function announceDbApproval(sessionId: string, event: DbApprovalEvent): boolean {
   const entry = activeSessions.get(sessionId);
   if (!entry) return false;
+  // An extension's turn with nobody watching: the broker settles it as unanswerable
+  // (`no-chat`) rather than holding a card for ten minutes that no device shows.
+  if (unattendedExtensionTurn(entry)) return false;
   // A provider's own approval holds the session's one slot: this one waits behind it
   // (`showWaitingDbApproval`) rather than taking that card off the user's screen.
   if (entry.pendingApprovalEvent) return true;
   holdApprovalRequest(sessionId, entry, event);
+  armExtensionApprovalDeadline(sessionId, entry, event.requestId);
   broadcast(sessionId, event);
   return true;
+}
+
+/** An extension started the running turn and no browser is attached to answer for it. */
+function unattendedExtensionTurn(entry: SessionEntry): boolean {
+  return entry.turnOrigin === "extension" && entry.clients.size === 0;
+}
+
+/**
+ * Deny an extension turn's approval that no person is going to answer: the provider's own
+ * approval or question through the provider, a `db_execute` through its broker, which takes
+ * the card off every device itself. The buffered request is stamped so a device replaying
+ * the turn later sees an answered card, not a live question.
+ */
+function denyExtensionApproval(sessionId: string, entry: SessionEntry, requestId: string, reason: string): void {
+  if (entry.approvalDeadline) {
+    clearTimeout(entry.approvalDeadline);
+    entry.approvalDeadline = undefined;
+  }
+  if (dbApprovalBroker.has(requestId)) {
+    dbApprovalBroker.cancelSession(sessionId, "The turn was started by an extension and nobody answered, so nothing ran.");
+    return;
+  }
+  chatService.resolveApproval(entry.providerId, sessionId, requestId, false, undefined, { reason, origin: "extension" });
+  for (let i = entry.turnEvents.length - 1; i >= 0; i--) {
+    const buffered = entry.turnEvents[i] as { type?: string; requestId?: string; approved?: boolean };
+    if (buffered.type === "approval_request" && buffered.requestId === requestId) {
+      buffered.approved = false;
+      break;
+    }
+  }
+  if (entry.pendingApprovalEvent?.requestId === requestId) {
+    entry.pendingApprovalEvent = undefined;
+    broadcast(sessionId, { type: "approval_resolved", requestId, approved: false, answers: null });
+    broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
+    clearPendingApproval(sessionId, entry);
+  }
+  logSessionEvent(sessionId, "INFO", `Approval ${requestId} denied: ${reason}`);
+}
+
+/**
+ * A browser is attached to an extension's turn, so its approval is shown as usual — but only
+ * for `EXTENSION_APPROVAL_DEADLINE_MS`, after which it is denied the way an unattended one is.
+ */
+function armExtensionApprovalDeadline(sessionId: string, entry: SessionEntry, requestId: string): void {
+  if (entry.turnOrigin !== "extension") return;
+  if (entry.approvalDeadline) clearTimeout(entry.approvalDeadline);
+  entry.approvalDeadline = setTimeout(() => {
+    entry.approvalDeadline = undefined;
+    if (entry.pendingApprovalEvent?.requestId !== requestId) return;
+    log.info(`session=${sessionId} extension turn: approval ${requestId} unanswered after ${extensionApprovalDeadlineMs / 1000}s, denied`);
+    denyExtensionApproval(sessionId, entry, requestId, "extension_approval_deadline");
+  }, extensionApprovalDeadlineMs);
 }
 
 /** A `db_execute` approval was answered, or given up on: every device drops its card. */
@@ -598,6 +754,7 @@ function showWaitingDbApproval(sessionId: string, entry: SessionEntry): void {
   const waiting = dbApprovalBroker.pendingEvent(sessionId);
   if (!waiting || entry.pendingApprovalEvent) return;
   entry.pendingApprovalEvent = waiting;
+  armExtensionApprovalDeadline(sessionId, entry, waiting.requestId);
   broadcast(sessionId, waiting);
 }
 
@@ -611,7 +768,11 @@ const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothi
  * but a database approval's own answer (`dbApprovalResolved`), comes through here, so none can
  * leave a database approval waiting for a card nobody sees.
  */
-function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelDbApproval?: string): void {
+export function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelDbApproval?: string): void {
+  if (entry.approvalDeadline) {
+    clearTimeout(entry.approvalDeadline);
+    entry.approvalDeadline = undefined;
+  }
   if (cancelDbApproval) dbApprovalBroker.cancelSession(sessionId, cancelDbApproval);
   entry.pendingApprovalEvent = undefined;
   showWaitingDbApproval(sessionId, entry);
@@ -629,7 +790,7 @@ export function forwardEventToSession(sessionId: string, event: unknown): void {
 }
 
 /** Broadcast event to all connected clients for a session */
-function broadcast(sessionId: string, event: unknown): void {
+export function broadcast(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
   if (!entry || entry.clients.size === 0) {
     const evType = (event as any)?.type ?? "unknown";
@@ -648,7 +809,7 @@ function broadcast(sessionId: string, event: unknown): void {
 }
 
 /** Buffer event in turnEvents + broadcast to all clients */
-function bufferAndBroadcast(sessionId: string, event: unknown): void {
+export function bufferAndBroadcast(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   const evType = (event as any)?.type;
@@ -773,7 +934,7 @@ async function rewriteProviderSkillSigil(
   }
 }
 
-function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): void {
+export function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): void {
   const entry = activeSessions.get(sessionId);
   if (!entry || entry.phase === phase) return;
   entry.phase = phase;
@@ -865,20 +1026,111 @@ function startCleanupTimer(sessionId: string): void {
   }, CLEANUP_TIMEOUT_MS);
 }
 
+export interface PrepareTurnResult {
+  /** True when the turn was fully handled here (a PPM-only builtin): nothing reaches the provider. */
+  handled: boolean;
+  /** What the provider is sent: the typed text after the rewrites below. */
+  content: string;
+}
+
+/**
+ * What every turn goes through before it reaches a provider, from the socket and from an
+ * extension alike, in this order: the plugin-alias rewrite (`/ak:debug` → the name the
+ * runtime registered), the provider's skill sigil (Codex reads `$name`, not `/name`), the
+ * reply encoding, the echo to the other devices (after the rewrites, so every device shows
+ * what ran, and before the builtin interception, so a second device still sees the user's
+ * `/skills` line above the builtin's answer), the PPM builtins, the unblock of an approval
+ * the previous turn left pending (the SDK's `canUseTool` await has no timeout of its own),
+ * and the user message kept for reconnect replay.
+ */
+export async function prepareTurn(
+  entry: SessionEntry,
+  sessionId: string,
+  parsed: { content: string; replyTo?: import("../../shared/chat-reply.ts").ReplyReference | null },
+  origin: TraceOrigin,
+  echoUserMessage?: (finalContent: string) => void,
+): Promise<PrepareTurnResult> {
+  const providerId = entry.providerId;
+  // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
+  // name the runtime never registers — it names plugin items after the plugin
+  // and directory instead. Rewrite before the echo so every consumer (other
+  // devices, the stored transcript, the SDK) sees the name that actually ran.
+  const typedContent = parsed.content.trimStart();
+  if (typedContent.startsWith("/")) {
+    const { listSlashItems, rewriteSlashAlias } = await import("../../services/slash-discovery/index.ts");
+    const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
+    if (canonical !== typedContent) parsed.content = canonical;
+  }
+
+  // Providers with their own skill runtime may not use a leading slash.
+  // Codex resolves a skill from a `$name` mention in the prompt; sent as
+  // `/imagegen` it is inert prose, so the picked skill would silently not
+  // run. Rewritten before the echo for the same reason as the alias above:
+  // other devices and the stored transcript must show what actually ran.
+  await rewriteProviderSkillSigil(parsed, providerId, sessionId);
+  parsed.content = encodeReply(parsed.content, parsed.replyTo);
+
+  echoUserMessage?.(parsed.content);
+
+  // Intercept PPM-handled built-in commands (e.g. /skills, /version)
+  const content = parsed.content.trim();
+  const slashMatch = content.match(/^\/(\S+)/);
+  if (slashMatch) {
+    const { isPpmHandled, executeBuiltin } = await import("../../services/slash-discovery/index.ts");
+    const cmdName = slashMatch[1]!;
+    if (isPpmHandled(cmdName)) {
+      const response = executeBuiltin(cmdName, entry.projectPath ?? "");
+      if (response) {
+        broadcast(sessionId, { type: "text", content: response });
+        broadcast(sessionId, { type: "done", resultSubtype: "builtin", numTurns: 0 });
+        return { handled: true, content: parsed.content };
+      }
+    }
+  }
+
+  // A message instead of an answer to a pending question/approval.
+  // The SDK generator is blocked inside canUseTool awaiting that approval, so
+  // it can't consume the pushed message — resolve the approval as skipped to
+  // unblock it, then the follow-up message flows through normally.
+  if (entry.pendingApprovalEvent) {
+    const pendingReqId = entry.pendingApprovalEvent.requestId;
+    if (dbApprovalBroker.has(pendingReqId)) {
+      // PPM's own approval: settling it takes the card off every device (`dbApprovalResolved`).
+      dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
+    } else {
+      chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin });
+      broadcast(sessionId, {
+        type: "approval_resolved",
+        requestId: pendingReqId,
+        approved: false,
+        answers: null,
+      });
+      clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
+    }
+    logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (a new message arrived)`);
+  }
+
+  // Store user message for reconnect replay (turn_events includes only assistant events)
+  entry.currentUserMessage = parsed.content;
+  return { handled: false, content: parsed.content };
+}
+
 /**
  * Persistent event consumer — runs for the entire session lifetime.
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[]): Promise<void> {
+export async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], origin: TraceOrigin = "ws"): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
     return;
   }
-  log.debug(`session=${sessionId} startSessionConsumer started (clients=${entry.clients.size})`);
+  log.debug(`session=${sessionId} startSessionConsumer started (clients=${entry.clients.size}, origin=${origin})`);
 
   entry.isStreamingActive = true;
+  entry.turnOrigin = origin;
+  entry.lastError = undefined;
   clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
   entry.turnEvents = [];
   entry.nestedBuffered = 0;
@@ -935,10 +1187,13 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin: "ws" })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
+      // An approval an extension's unattended turn raised: its denial is buffered right
+      // after the request, so a device replaying the turn sees an answered card.
+      let deniedAt: unknown;
 
       // Child streams can outlive the root turn. Their content and terminal
       // events belong to the Agent card, never to the root turn's lifecycle.
@@ -1150,6 +1405,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         void detectImplicitTeam(sessionId);
       } else if (evType === "error") {
         const errorDetail = ev.message ?? JSON.stringify(ev).slice(0, 500);
+        entry.lastError ??= String(errorDetail).slice(0, 500);
         log.error(`session=${sessionId} error: ${errorDetail}`);
         logSessionEvent(sessionId, "ERROR", errorDetail);
       } else if (evType === "done") {
@@ -1196,7 +1452,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         const stopped = turnStop ? describeTurnStop(turnStop) : null;
 
         const finalText = entry.finalText;
-        import("../../services/notification.service.ts").then(({ notificationService }) => {
+        // An extension's turn pushes "Chat completed" only when asked: a push keyed on this
+        // session would replace the extension's own notification for it, and a night run
+        // has nobody to tell.
+        if (entry.turnOrigin !== "extension" || entry.notifyOnDone) import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
           const sessionTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
@@ -1215,7 +1474,17 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           });
         }).catch(() => {});
       } else if (evType === "approval_request") {
-        holdApprovalRequest(sessionId, entry, ev);
+        if (unattendedExtensionTurn(entry)) {
+          // Nobody is there to answer, and the provider's wait has no timeout of its own:
+          // denied at once, before the slot, the unread mark and the push would be set.
+          log.info(`session=${sessionId} extension turn: ${ev.tool} approval ${ev.requestId} denied, no device attached`);
+          ev.approved = false;
+          denyExtensionApproval(sessionId, entry, ev.requestId, "extension_turn_unattended");
+          deniedAt = { type: "approval_resolved", requestId: ev.requestId, approved: false, answers: null };
+        } else {
+          holdApprovalRequest(sessionId, entry, ev);
+          armExtensionApprovalDeadline(sessionId, entry, ev.requestId);
+        }
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking
         const newId = ev.newSessionId as string;
@@ -1261,6 +1530,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
 
       // Buffer + broadcast content events
       bufferAndBroadcast(sessionId, event);
+      if (deniedAt) bufferAndBroadcast(sessionId, deniedAt);
 
       // After "done", transition to idle + clear turn buffer for next turn
       // Consumer loop continues — query waits for next message in generator
@@ -1268,6 +1538,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         entry.turnEvents = [];
         entry.nestedBuffered = 0;
         clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
+        // This turn is over while the loop lives on: release what was armed for it.
+        endTurn(sessionId, entry);
         // Clear stale compact status if turn ended without compact_boundary.
         // SDK may emit `status: compacting` without a matching boundary (deferred,
         // resolved, or errored); without this clear, UI shows stuck "Compacting…".
@@ -1302,6 +1574,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // Drain nested-agent tails while their turn buffer still exists, so the last
     // records land in this turn's replay instead of the head of the next one.
     nestedSubagentSpy.stopAllForSession(sessionId);
+    // A turn that ended without its `done` (an exception, an abort) still ends here.
+    endTurn(sessionId, entry);
     entry.isStreamingActive = false;
     entry.turnEvents = [];
     // Force-clear compact status on stream teardown (error, close, etc.)
@@ -1420,22 +1694,8 @@ export const chatWebSocket = {
     }
 
     // New session entry
-    const newEntry: SessionEntry = {
-      providerId,
-      clients: new Set([ws]),
-      projectPath,
-      projectName,
-      pingIntervals: new Map(),
-      phase: "idle",
-      turnEvents: [],
-      isStreamingActive: false,
-      streamSeq: 0,
-      teamWatchers: new Map(),
-      teamNames: new Set(),
-      compactStatus: null,
-      model: getSessionModel(sessionId) ?? undefined,
-    };
-    activeSessions.set(sessionId, newEntry);
+    const newEntry = getOrCreateEntry(sessionId, providerId, projectName, projectPath);
+    newEntry.clients.add(ws);
     setupClientPing(newEntry, ws);
 
     // Resuming a session whose team already exists on disk (server restart, or a
@@ -1521,13 +1781,8 @@ export const chatWebSocket = {
       const pid = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
       if (pn) { try { pp = resolveProjectPath(pn); } catch { reportUnregisteredProject(sessionId, pn); } }
-      const newEntry: SessionEntry = {
-        providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
-        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false, streamSeq: 0,
-        teamWatchers: new Map(), teamNames: new Set(), compactStatus: null,
-        model: getSessionModel(sessionId) ?? undefined,
-      };
-      activeSessions.set(sessionId, newEntry);
+      const newEntry = getOrCreateEntry(sessionId, pid, pn, pp);
+      newEntry.clients.add(ws);
       setupClientPing(newEntry, ws);
       entry = newEntry;
       log.info(`session=${sessionId} auto-created entry in message handler`);
@@ -1580,23 +1835,10 @@ export const chatWebSocket = {
         return;
       }
       // Validate image payload
-      if (parsed.images?.length) {
-        if (parsed.images.length > 5) {
-          ws.send(JSON.stringify({ type: "error", message: "Max 5 images per message" }));
-          return;
-        }
-        const MAX_BASE64_SIZE = 7_000_000; // ~5MB decoded
-        const SUPPORTED_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-        for (const img of parsed.images) {
-          if (img.data.length > MAX_BASE64_SIZE) {
-            ws.send(JSON.stringify({ type: "error", message: "Image too large (max 5MB)" }));
-            return;
-          }
-          if (!SUPPORTED_TYPES.has(img.mediaType)) {
-            ws.send(JSON.stringify({ type: "error", message: `Unsupported image type: ${img.mediaType}` }));
-            return;
-          }
-        }
+      const imageError = validateChatImages(parsed.images);
+      if (imageError) {
+        ws.send(JSON.stringify({ type: "error", message: imageError }));
+        return;
       }
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
@@ -1622,32 +1864,16 @@ export const chatWebSocket = {
         setSessionThinking(sessionId, parsed.thinking ? THINKING_ADAPTIVE : 0);
       }
 
-      // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
-      // name the runtime never registers — it names plugin items after the plugin
-      // and directory instead. Rewrite before the echo so every consumer (other
-      // devices, the stored transcript, the SDK) sees the name that actually ran.
-      const typedContent = parsed.content.trimStart();
-      if (typedContent.startsWith("/")) {
-        const { listSlashItems, rewriteSlashAlias } = await import("../../services/slash-discovery/index.ts");
-        const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
-        if (canonical !== typedContent) parsed.content = canonical;
-      }
-
-      // Providers with their own skill runtime may not use a leading slash.
-      // Codex resolves a skill from a `$name` mention in the prompt; sent as
-      // `/imagegen` it is inert prose, so the picked skill would silently not
-      // run. Rewritten before the echo for the same reason as the alias above:
-      // other devices and the stored transcript must show what actually ran.
-      await rewriteProviderSkillSigil(parsed, providerId, sessionId);
-      parsed.content = encodeReply(parsed.content, parsed.replyTo);
+      const provider = providerRegistry.get(providerId);
 
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected
       // second device only sees the assistant stream for this turn.
-      if (entry.clients.size > 1) {
+      const echoToOtherClients = (finalContent: string) => {
+        if (entry.clients.size <= 1) return;
         const echo = JSON.stringify({
           type: "user_message",
-          content: parsed.content,
+          content: finalContent,
           imageCount: parsed.images?.length ?? 0,
           timestamp: new Date().toISOString(),
         });
@@ -1655,50 +1881,11 @@ export const chatWebSocket = {
           if (client === ws) continue;
           try { client.send(echo); } catch { evictClient(entry, client); }
         }
-      }
+      };
+      const prep = await prepareTurn(entry, sessionId, parsed, "ws", echoToOtherClients);
+      if (prep.handled) return;
+      parsed.content = prep.content;
 
-      // Intercept PPM-handled built-in commands (e.g. /skills, /version)
-      const content = parsed.content.trim();
-      const slashMatch = content.match(/^\/(\S+)/);
-      if (slashMatch) {
-        const { isPpmHandled, executeBuiltin } = await import("../../services/slash-discovery/index.ts");
-        const cmdName = slashMatch[1]!;
-        if (isPpmHandled(cmdName)) {
-          const response = executeBuiltin(cmdName, entry.projectPath ?? "");
-          if (response) {
-            broadcast(sessionId, { type: "text", content: response });
-            broadcast(sessionId, { type: "done", resultSubtype: "builtin", numTurns: 0 });
-            return;
-          }
-        }
-      }
-
-      const provider = providerRegistry.get(providerId);
-
-      // User sent a message instead of answering a pending question/approval.
-      // The SDK generator is blocked inside canUseTool awaiting that approval, so
-      // it can't consume the pushed message — resolve the approval as skipped to
-      // unblock it, then the follow-up message flows through normally.
-      if (entry.pendingApprovalEvent) {
-        const pendingReqId = entry.pendingApprovalEvent.requestId;
-        if (dbApprovalBroker.has(pendingReqId)) {
-          // PPM's own approval: settling it takes the card off every device (`dbApprovalResolved`).
-          dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
-        } else {
-          chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
-          broadcast(sessionId, {
-            type: "approval_resolved",
-            requestId: pendingReqId,
-            approved: false,
-            answers: null,
-          });
-          clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
-        }
-        logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
-      }
-
-      // Store user message for reconnect replay (turn_events includes only assistant events)
-      entry.currentUserMessage = parsed.content;
       entry.lastSender = ws;
       // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
       if (!entry.isStreamingActive || entry.phase === "idle") {
@@ -1745,6 +1932,8 @@ export const chatWebSocket = {
         if (provider && "pushMessage" in provider && parsed.type === "message") {
           const effort = getSessionEffort(sessionId) ?? undefined;
           const thinkingBudget = getSessionThinking(sessionId);
+          // A person typed this: whatever turn it opens or joins is theirs from here.
+          entry.turnOrigin = "ws";
           try {
             await chatService.pushMessage(providerId, sessionId, parsed.content, {
               origin: "ws",

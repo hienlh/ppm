@@ -19,6 +19,28 @@ const clients = new Set<ExtWsSocket>();
 /** Pending request resolvers for quickpick/inputbox responses from browser */
 const pendingRequests = new Map<string, (value: unknown) => void>();
 
+/** Each socket's id, told to the browser on connect so a `tab:open` can be addressed to it. */
+const clientIds = new WeakMap<ExtWsSocket, string>();
+
+/** The browser that last ran each extension's command, so a tab the command opens lands there. */
+const lastCommandClients = new Map<string, { clientId: string; at: number }>();
+
+/** How long after a command its browser is still "the one that ran it". */
+export const COMMAND_CLIENT_TTL_MS = 10_000;
+
+/** The id of the browser that ran one of `extensionId`'s commands within the TTL, if any. */
+export function recentCommandClient(extensionId: string, now = Date.now()): string | null {
+  const last = lastCommandClients.get(extensionId);
+  if (!last || now - last.at > COMMAND_CLIENT_TTL_MS) return null;
+  return last.clientId;
+}
+
+function rememberCommandClient(ws: ExtWsSocket, command: string): void {
+  const owner = contributionRegistry.getCommandOwner(command);
+  const clientId = clientIds.get(ws);
+  if (owner && clientId) lastCommandClients.set(owner, { clientId, at: Date.now() });
+}
+
 // --- Public API for extension service to push UI updates ---
 
 /** Broadcast a message to all connected extension WS clients */
@@ -61,6 +83,7 @@ export function getExtClientCount(): number {
 
 function handleOpen(ws: ExtWsSocket): void {
   clients.add(ws);
+  clientIds.set(ws, crypto.randomUUID());
   log.debug(`Client connected (${clients.size} total)`);
 }
 
@@ -74,6 +97,9 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
 
   switch (msg.type) {
     case "ready": {
+      // The browser's name for itself here, ahead of everything else it is sent.
+      const clientId = clientIds.get(ws);
+      if (clientId) ws.send(JSON.stringify({ type: "client:hello", clientId } satisfies ExtServerMsg));
       // Send current contributions + any activation errors on connect
       const contributions = contributionRegistry.getAll();
       const { extensionService } = await import("../../services/extension.service.ts");
@@ -86,6 +112,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
     }
 
     case "command:execute": {
+      rememberCommandClient(ws, msg.command);
       try {
         const { extensionService } = await import("../../services/extension.service.ts");
         if (extensionService["rpc"]) {
@@ -125,6 +152,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
 
     case "tree:click": {
       if (msg.command) {
+        rememberCommandClient(ws, msg.command);
         try {
           const { extensionService } = await import("../../services/extension.service.ts");
           if (extensionService["rpc"]) {
