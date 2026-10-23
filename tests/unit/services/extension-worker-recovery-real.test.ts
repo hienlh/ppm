@@ -104,5 +104,7 @@ describe("extension host recovery with real workers", () => {
     const settled = await waitFor(() => !svc.recovering && svc.worker === null, 25_000);
     expect({ settled, rebuilds: svc.recoveryTimes.length }).toEqual({ settled: true, rebuilds: 3 });
     expect(extensionService.isActivated(EXITING_ID)).toBe(false);
+    // The panel still says why it is down after the host was given up on.
+    expect(extensionService.getActivationErrors().get(EXITING_ID)).toContain("RPC channel disposed");
   }, 45_000);
 });

@@ -168,8 +168,11 @@ class ExtensionService {
         if (this.recoveryTimes.length >= 3) {
           log.error(`Worker ${next} again — 3 recoveries in 5 min, giving up until restart`);
           // Drop the dead host, so an extension enabled later starts a fresh one instead of
-          // posting to a thread that no longer exists.
+          // posting to a thread that no longer exists. The activation errors stay, so the
+          // extensions panel still says why each one is down.
+          const errors = new Map(this.activationErrors);
           await this.terminateWorker();
+          for (const [id, message] of errors) this.activationErrors.set(id, message);
           this.broadcastContributions();
           return;
         }
