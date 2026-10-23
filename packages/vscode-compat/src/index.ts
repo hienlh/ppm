@@ -32,6 +32,10 @@ export {
   PpmAiError, type PpmAi, type PpmAiProvider, type PpmAiCompleteRequest, type PpmAiCompleteResult,
   type PpmAiErrorCode,
 } from "./ppm/ppm-ai.ts";
+export {
+  type PpmUsage, type PpmUsageProviderId, type PpmUsageWindow, type PpmUsageAccount, type PpmUsageSummary,
+  type PpmPresence, type PpmPresenceSnapshot,
+} from "./ppm/ppm-usage.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";

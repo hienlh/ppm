@@ -31,6 +31,7 @@ import { useTabPrefetch } from "@/hooks/use-tab-prefetch";
 import { useFileIndexInvalidation } from "@/hooks/use-file-index-invalidation";
 import { useUiPreload } from "@/hooks/use-ui-preload";
 import { useGlobalEvents } from "@/hooks/use-global-events";
+import { usePresenceHeartbeat } from "@/hooks/use-presence-heartbeat";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { useNotificationClicks } from "@/hooks/use-notification-clicks";
 import { CommandPalette } from "@/components/layout/command-palette";
@@ -169,6 +170,10 @@ export function App() {
   // App-wide event bus — owns file watching + cross-cutting broadcasts so they do
   // not depend on a chat tab being mounted.
   useGlobalEvents(authState === "authenticated", activeProject?.name);
+
+  // Real input anywhere in this document counts toward core's presence tracker, throttled to
+  // one send per minute — a signal to pause/not-propose a run, never a permission to spend.
+  usePresenceHeartbeat(authState === "authenticated");
 
   // Warm a few recent chat tabs during idle time (desktop only). Tabs mount
   // lazily, so this trades a little background work for instant tab switching.

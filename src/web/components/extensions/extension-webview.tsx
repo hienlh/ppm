@@ -5,6 +5,8 @@ import { THEME_CHANGE_EVENT } from "@/theme/apply-theme";
 import { HOST_THEME_MESSAGE, injectHostTheme, readHostTheme } from "./webview-theme";
 import { externalLinkRequest } from "./webview-external-link";
 import { type IconRuleIndex, fileIconsAnswer, fileIconsRequest, indexIconRules } from "./webview-file-icons";
+import { isUserActivityMessage } from "./webview-user-activity";
+import { notePresenceInput } from "@/lib/presence-input";
 import { iconStylesheet } from "@/lib/file-icons";
 import { useProjectFrameworkStore } from "@/stores/project-framework-store";
 import { commandRunsGit } from "@/lib/git-repo-scope";
@@ -220,6 +222,10 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
         const link = externalLinkRequest(event.data);
         if (link !== undefined) {
           if (link) window.open(link, "_blank", "noopener,noreferrer");
+          return;
+        }
+        if (isUserActivityMessage(event.data)) {
+          notePresenceInput();
           return;
         }
         const iconNames = fileIconsRequest(event.data);
