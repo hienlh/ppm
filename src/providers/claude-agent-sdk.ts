@@ -7,7 +7,7 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, extensionMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
@@ -1385,12 +1385,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       // A policy session inherits none of the user's MCP servers (PPM's or Claude Code's):
       // their tools would be denied anyway, and their mere presence is reach the policy did
-      // not grant. `strictMcpConfig` below keeps the CLI from loading them on its own.
-      const mcpServers = extensionPolicy ? {} : {
+      // not grant. `strictMcpConfig` below keeps the CLI from loading them on its own. Its own
+      // extension's toolsets (`ppm-ext`) are the one server it does get.
+      const extensionMcp = extensionMcpServers(opts?.extensionMcp);
+      const mcpServers = extensionPolicy ? extensionMcp : {
         ...this.resolveMcpServers(effectiveCwd),
         ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
         ...tabToolsMcpServers(tabToolsMcp),
         ...dbToolsMcpServers(dbToolsMcp),
+        ...extensionMcp,
       };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time

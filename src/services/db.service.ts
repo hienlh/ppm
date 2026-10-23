@@ -2620,6 +2620,26 @@ export function deleteExtensionSessionBinding(sessionId: string): void {
   getDb().query("DELETE FROM extension_session_bindings WHERE session_id = ?").run(sessionId);
 }
 
+/** Every session an extension bound or created as bindable, closed ones included. */
+export function getExtensionBoundSessionIds(extensionId: string): string[] {
+  return (getDb().query("SELECT session_id FROM extension_session_bindings WHERE extension_id = ?").all(extensionId) as Array<{ session_id: string }>)
+    .map((row) => row.session_id);
+}
+
+/** The tool definitions a toolset last registered, as JSON; null when it never registered. */
+export function getExtensionMcpToolsetJson(extensionId: string, toolsetId: string): string | null {
+  const row = getDb().query("SELECT tools_json FROM extension_mcp_toolsets WHERE extension_id = ? AND toolset_id = ?")
+    .get(extensionId, toolsetId) as { tools_json: string } | null;
+  return row?.tools_json ?? null;
+}
+
+export function saveExtensionMcpToolsetJson(extensionId: string, toolsetId: string, toolsJson: string): void {
+  getDb().query(
+    `INSERT INTO extension_mcp_toolsets (extension_id, toolset_id, tools_json, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(extension_id, toolset_id) DO UPDATE SET tools_json = excluded.tools_json, updated_at = excluded.updated_at`,
+  ).run(extensionId, toolsetId, toolsJson, new Date().toISOString());
+}
+
 // ---------------------------------------------------------------------------
 // PPMBot session helpers
 // ---------------------------------------------------------------------------

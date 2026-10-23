@@ -7,6 +7,7 @@ import { RpcChannel } from "./extension-rpc.ts";
 import { createVscodeCompat } from "@ppm/vscode-compat";
 import type { WindowService } from "@ppm/vscode-compat/src/window.ts";
 import type { CommandService } from "@ppm/vscode-compat/src/commands.ts";
+import type { PpmMcpHost } from "@ppm/vscode-compat/src/ppm/ppm-mcp.ts";
 import type { Disposable, RpcMessage } from "../types/extension.ts";
 
 // Active extension instances: id → { module, context, deactivate, services }
@@ -16,6 +17,17 @@ const activeExtensions = new Map<string, {
   window?: WindowService;
   commands?: CommandService;
 }>();
+
+/**
+ * Each extension's MCP tool handlers, by extension id. Set before `activate()` runs, since an
+ * extension registers its toolsets there and a chat may call one before activation returns.
+ */
+const mcpHosts = new Map<string, PpmMcpHost>();
+
+function dropMcpHost(extId: string): void {
+  mcpHosts.get(extId)?.dispose();
+  mcpHosts.delete(extId);
+}
 
 const rpc = new RpcChannel((msg) => postMessage(msg));
 
@@ -102,6 +114,7 @@ rpc.onRequest("ext:activate", async (params) => {
   });
 
   const context = api._createContext();
+  mcpHosts.set(extId, api._mcpHost);
 
   try {
     const mod = await import(entryPath);
@@ -126,6 +139,7 @@ rpc.onRequest("ext:activate", async (params) => {
     const msg = e instanceof Error ? e.message : String(e);
     // The main thread reports the failure with this same message.
     console.debug(`[ExtHost] Failed to activate ${extId}:`, msg);
+    dropMcpHost(extId);
     return { ok: false, error: msg };
   }
 });
@@ -144,12 +158,14 @@ rpc.onRequest("ext:deactivate", async (params) => {
       try { (sub as Disposable).dispose(); } catch {}
     }
     activeExtensions.delete(extId);
+    dropMcpHost(extId);
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // The main thread reports the failure with this same message.
     console.debug(`[ExtHost] Failed to deactivate ${extId}:`, msg);
     activeExtensions.delete(extId);
+    dropMcpHost(extId);
     return { ok: false, error: msg };
   }
 });
@@ -220,6 +236,21 @@ rpc.onRequest("ext:tree:expand", async (params) => {
     }
   }
   return { ok: true, items: [] };
+});
+
+// A chat's agent called an extension's tool: routed by the extension id the main thread
+// recorded at registration, to the handlers that extension's own `ppm.mcp` holds.
+rpc.onRequest("ext:mcp:call", async (params) => {
+  const request = params[0] as { extensionId?: unknown } | undefined;
+  const host = typeof request?.extensionId === "string" ? mcpHosts.get(request.extensionId) : undefined;
+  if (!host) return { text: "The extension that provides this tool is not running.", isError: true };
+  return host.call(request);
+});
+
+rpc.onRequest("ext:mcp:cancel", async (params) => {
+  const request = params[0] as { extensionId?: unknown; callId?: unknown } | undefined;
+  const host = typeof request?.extensionId === "string" ? mcpHosts.get(request.extensionId) : undefined;
+  return { cancelled: host?.cancel(request?.callId) ?? false };
 });
 
 rpc.onRequest("ext:list-active", () => {

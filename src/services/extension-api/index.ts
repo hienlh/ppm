@@ -9,6 +9,7 @@ import { registerExtensionChatHandlers } from "./extension-chat-handlers.ts";
 import { registerExtensionChatBindingHandlers } from "./extension-chat-binding-handlers.ts";
 import { registerExtensionAiHandlers } from "./extension-ai-handlers.ts";
 import { registerExtensionUsageHandlers } from "./extension-usage-handlers.ts";
+import { registerExtensionMcpHandlers } from "./extension-mcp-handlers.ts";
 
 /** What a handler is given besides the channel: which worker it serves, and how to tie a
  *  long-running call to that worker's life. */
@@ -32,4 +33,5 @@ export function registerExtensionApiHandlers(rpc: RpcChannel, deps: ExtensionApi
   registerExtensionChatBindingHandlers(rpc);
   registerExtensionAiHandlers(rpc, deps);
   registerExtensionUsageHandlers(rpc);
+  registerExtensionMcpHandlers(rpc, deps);
 }

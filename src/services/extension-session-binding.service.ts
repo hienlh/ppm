@@ -94,6 +94,24 @@ export function sessionBindingFor(sessionId: string): ExtensionSessionBinding | 
   return row ? parseRow(row) : null;
 }
 
+export type BoundToolsets = { ok: true; toolsets: string[] } | { ok: false; reason: string };
+
+/**
+ * The toolsets this extension's tools may be served from to the session's agent right now, or
+ * why none: read on every MCP request, so an unbind, a changed list or a removed extension
+ * applies to the very next call.
+ */
+export function boundToolsetsFor(sessionId: string, extensionId: string): BoundToolsets {
+  const row = findRow(sessionId);
+  if (!row || row.extension_id !== extensionId) return { ok: false, reason: "This chat is no longer bound to the extension that provides this tool." };
+  if (row.extension_removed_at) return { ok: false, reason: "The extension that provided this tool was removed, so the chat is closed." };
+  try {
+    return { ok: true, toolsets: parseRow(row).toolsets };
+  } catch (e) {
+    return { ok: false, reason: `This chat's binding cannot be read: ${(e as Error).message}` };
+  }
+}
+
 /** A fork (or an edited version) of a bound chat: the same owner and binding, closed if the source is. */
 export function copyBindingToFork(sourceId: string, forkId: string): void {
   const row = findRow(sourceId);

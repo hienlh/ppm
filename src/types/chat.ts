@@ -61,6 +61,12 @@ export interface SendMessageOpts {
    * Server-built like `extensionInstructions`.
    */
   extensionToolPolicy?: import("../shared/extension-session-binding.ts").ExtensionToolPolicy;
+  /**
+   * The extension toolsets' MCP endpoint (`ppm-ext`) for a session whose binding names toolsets:
+   * a URL on the port this server listens on and the session's capability token. Server-built
+   * like `extensionInstructions`; absent when the process serves no HTTP (the CLI).
+   */
+  extensionMcp?: { url: string; token: string };
 }
 
 export interface AIProvider {

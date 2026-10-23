@@ -36,6 +36,10 @@ export {
   type PpmUsage, type PpmUsageProviderId, type PpmUsageWindow, type PpmUsageAccount, type PpmUsageSummary,
   type PpmPresence, type PpmPresenceSnapshot,
 } from "./ppm/ppm-usage.ts";
+export {
+  type PpmMcp, type PpmMcpToolset, type PpmMcpToolDefinition, type PpmMcpCallContext, type PpmMcpToolResult,
+  type PpmMcpToolHandler, type PpmMcpRegistration, type PpmMcpHost,
+} from "./ppm/ppm-mcp.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";
@@ -45,6 +49,7 @@ import { ProcessService } from "./process.ts";
 import { createExtensionContext, type ExtensionContext } from "./context.ts";
 import { createEnvNamespace } from "./env.ts";
 import { createPpmNamespace } from "./ppm/index.ts";
+import { createPpmMcp } from "./ppm/ppm-mcp.ts";
 import { createNotSupported } from "./not-supported.ts";
 import { Uri } from "./uri.ts";
 import { Disposable } from "./disposable.ts";
@@ -76,6 +81,7 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
   const window = new WindowService(rpc, extensionId);
   const workspace = new WorkspaceService(rpc, extensionId);
   const process = new ProcessService(rpc);
+  const mcp = createPpmMcp(rpc, extensionId);
 
   return {
     // Active API namespaces
@@ -85,7 +91,7 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
     process,
     env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local"),
     /** PPM's own API, beyond what VSCode offers. */
-    ppm: createPpmNamespace(rpc, extensionId),
+    ppm: createPpmNamespace(rpc, extensionId, mcp.api),
 
     // Classes & utilities
     Uri,
@@ -113,5 +119,7 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
     _createContext(): ExtensionContext {
       return createExtensionContext(rpc, extensionId, extensionPath, storagePath, storedState, globalStoragePath);
     },
+    /** For the extension host: routes the tool calls of this extension's toolsets. */
+    _mcpHost: mcp.host,
   };
 }

@@ -243,6 +243,10 @@ app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
 import { dbToolsMcpHandler } from "../services/db-ai-tools/db-ai-tools-endpoint.ts";
 import { DB_TOOLS_MCP_PATH } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
 app.all(DB_TOOLS_MCP_PATH, dbToolsMcpHandler);
+// Extension toolsets (`ppm-ext`): the same, for a chat an extension bound with toolsets.
+import { extensionMcpHandler } from "../services/extension-mcp/extension-mcp-endpoint.ts";
+import { EXTENSION_MCP_PATH } from "../services/extension-mcp/extension-mcp-tokens.ts";
+app.all(EXTENSION_MCP_PATH, extensionMcpHandler);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);

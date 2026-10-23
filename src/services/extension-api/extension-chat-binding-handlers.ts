@@ -11,6 +11,7 @@
 import type { RpcChannel } from "../extension-rpc.ts";
 import { bindSession, getOwnedBinding, unbindSession } from "../extension-session-binding.service.ts";
 import type { ExtensionSessionBinding } from "../../shared/extension-session-binding.ts";
+import { extensionMcpTokens } from "../extension-mcp/extension-mcp-tokens.ts";
 
 type Params = Record<string, unknown>;
 
@@ -30,10 +31,17 @@ function requireString(p: Params, key: string): string {
 /** What a turn runs under; nothing else in a binding needs the subprocess restarted. */
 const turnShape = (b: ExtensionSessionBinding) => JSON.stringify([b.instructions, b.toolsets, b.toolPolicy]);
 
-/** Restart the live subprocess if the change matters to it; true while that restart is still to come. */
+/**
+ * Restart the live subprocess if the change matters to it; true while that restart is still to
+ * come. Once no query is left holding the session's `ppm-ext` token it is revoked, and the next
+ * query gets a fresh one if the binding still names toolsets; until then the endpoint itself
+ * answers by the new binding, so a running turn's calls to a dropped toolset are error results.
+ */
 async function putInForce(before: ExtensionSessionBinding, after: ExtensionSessionBinding): Promise<boolean> {
   if (turnShape(before) === turnShape(after)) return false;
-  return (await chatSocket()).applyBindingChange(after.sessionId).pendingRestart;
+  const { pendingRestart } = (await chatSocket()).applyBindingChange(after.sessionId);
+  if (!pendingRestart) extensionMcpTokens.revoke(after.sessionId);
+  return pendingRestart;
 }
 
 export function registerExtensionChatBindingHandlers(rpc: RpcChannel): void {

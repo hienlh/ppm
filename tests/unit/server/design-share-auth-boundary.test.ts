@@ -32,6 +32,7 @@ const PUBLIC_API_ROUTES = new Set([
   "ALL /api/design-mcp",
   "ALL /api/tab-tools-mcp",
   "ALL /api/db-tools-mcp",
+  "ALL /api/ext-mcp",
 ]);
 /** Preview content authenticates with its own bounded capability token in the path. */
 const PUBLIC_API_PREFIXES = ["/api/html-preview/content/", "/api/design-preview/content/"];

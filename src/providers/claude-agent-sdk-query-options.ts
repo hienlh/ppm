@@ -15,7 +15,8 @@ import {
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import { TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
-import { EXTENSION_MCP_TOOL_PREFIX } from "../shared/extension-session-binding.ts";
+import { EXTENSION_MCP_SERVER, EXTENSION_MCP_TOOL_PREFIX } from "../shared/extension-session-binding.ts";
+import { EXTENSION_TOOL_CALL_TIMEOUT_MS } from "../shared/extension-mcp.ts";
 
 export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
@@ -302,6 +303,24 @@ export function dbToolsMcpServers(access: DbToolsMcpAccess | null | undefined): 
  * prompt in front of it would only repeat without either.
  */
 export const CLAUDE_DB_TOOLS: readonly string[] = DB_TOOLS.map((tool) => `mcp__${CLAUDE_DB_TOOLS_MCP_SERVER}__${tool}`);
+
+/**
+ * The extension toolsets' MCP server (`ppm-ext`) as the SDK's `http` server config, for a
+ * session whose binding names toolsets; `{}` otherwise. The timeout outlasts the endpoint's own
+ * ten-minute ceiling on one call, so the endpoint is the one that answers. It is never part of a
+ * warm spare, and needs no masking for one: a bound session never matches a spare.
+ */
+export function extensionMcpServers(access: { url: string; token: string } | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [EXTENSION_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: EXTENSION_TOOL_CALL_TIMEOUT_MS + 30_000,
+    },
+  };
+}
 
 /**
  * Spawn options as `spawnFingerprint` should compare them: the tab and database tools' tokens

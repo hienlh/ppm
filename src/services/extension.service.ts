@@ -1,12 +1,14 @@
 import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import type { ExtensionManifest, ExtensionInfo } from "../types/extension.ts";
-import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
+import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue, getExtensionBoundSessionIds } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import type { RpcChannel } from "./extension-rpc.ts";
 import { openWorkerChannel } from "./extension-worker-channel.ts";
 import { extensionCallRegistry } from "./extension-api/extension-call-registry.ts";
 import { extensionApiDeps } from "./extension-api/index.ts";
+import { extensionMcpRegistry } from "./extension-mcp/extension-mcp-registry.ts";
+import { revokeExtensionMcpTokens } from "./extension-mcp/extension-mcp-tokens.ts";
 import { extensionDataDir } from "./extension-data-dir.ts";
 import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
@@ -209,6 +211,8 @@ class ExtensionService {
     this.workerReady = false;
     this.activatedIds.clear();
     this.activationErrors.clear();
+    // Every toolset was served by that worker; the next one's activations register them again.
+    extensionMcpRegistry.clear();
     // `extensionPaths` and `bundledIds` describe what is on disk, not this worker: a rebuild
     // keeps them, or a bundled extension is looked for under node_modules and cannot be
     // re-activated. Only `shutdown` forgets them.
@@ -267,6 +271,8 @@ class ExtensionService {
     if (this.activatedIds.has(id)) await this.deactivate(id);
     await removeExtension(id, resolve(getPpmDir(), "extensions"));
     contributionRegistry.unregister(id);
+    // Its chats are closed; their agents' tokens to its tools go too.
+    revokeExtensionMcpTokens(getExtensionBoundSessionIds(id));
   }
 
   async activate(id: string): Promise<void> {
@@ -308,6 +314,8 @@ class ExtensionService {
       "ext:activate", id, entryPath, extDir, storedState, baseUrl, authToken, dataDir,
     );
     if (!result.ok) {
+      // A toolset it registered before failing would forward calls to a handler nobody runs.
+      extensionMcpRegistry.unregisterExtension(id);
       this.activationErrors.set(id, result.error ?? "Unknown activation error");
       throw new Error(`Failed to activate ${id}: ${result.error}`);
     }
@@ -332,6 +340,7 @@ class ExtensionService {
       }
     }
     this.activatedIds.delete(id);
+    extensionMcpRegistry.unregisterExtension(id);
     contributionRegistry.unregister(id);
     this.broadcastContributions();
     log.info(`Deactivated ${id}`);

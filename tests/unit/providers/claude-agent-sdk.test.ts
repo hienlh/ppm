@@ -690,6 +690,27 @@ describe("ClaudeAgentSdkProvider", () => {
         }
       });
 
+      it("gets its extension's ppm-ext server, and only that one, with the session's bearer token", async () => {
+        const extensionMcp = { url: "http://127.0.0.1:8080/api/ext-mcp", token: "tok-ext" };
+        const list = spyOn(mcpConfigService, "list").mockReturnValue({ github: { type: "http", url: "http://127.0.0.1:1/mcp" } } as never);
+        try {
+          const opts = await boundTurn({ extensionMcp });
+          expect(Object.keys(opts.mcpServers)).toEqual(["ppm-ext"]);
+          expect(opts.mcpServers["ppm-ext"]).toMatchObject({ type: "http", url: extensionMcp.url, headers: { Authorization: "Bearer tok-ext" } });
+          expect(opts.strictMcpConfig).toBe(true);
+          expect(await permissionHook(opts)({ tool_name: "mcp__ppm-ext__fg_overview", tool_input: {}, hook_event_name: "PreToolUse" })).toEqual(allow);
+          // A chat bound with toolsets but no policy keeps its other servers beside it.
+          mockQueryFn.mockClear();
+          mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+          const session = await provider.createSession({ projectPath: root });
+          for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default", extensionMcp })) { /* consume */ }
+          const plain = mockQueryFn.mock.calls[0]![0].options;
+          expect(Object.keys(plain.mcpServers).sort()).toEqual(["github", "ppm-ext"]);
+        } finally {
+          list.mockRestore();
+        }
+      });
+
       it("answers every tool through the real hook with a verdict the CLI honours", async () => {
         const hook = permissionHook(await boundTurn());
         const pending = (provider as any).pendingApprovals as Map<string, unknown>;

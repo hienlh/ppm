@@ -24,6 +24,7 @@ import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { tabOpenBroker } from "./tab-tools-mcp/tab-open-broker.ts";
 import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools-tokens.ts";
+import { extensionMcpAccessFor, extensionMcpTokens } from "./extension-mcp/extension-mcp-tokens.ts";
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
@@ -174,6 +175,7 @@ class ChatService {
     tabToolsMcpTokens.revoke(sessionId);
     tabOpenBroker.forget(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
+    extensionMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     const { deleteSessionBinding } = await import("./extension-session-binding.service.ts");
     deleteSessionBinding(sessionId);
@@ -320,13 +322,17 @@ class ChatService {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
     // Like the design fields, the tab and database tools and an extension's binding are only
     // ever server-built.
-    const { extensionInstructions: _instructions, extensionToolPolicy: _policy, ...callerOpts } = opts ?? {};
+    const { extensionInstructions: _instructions, extensionToolPolicy: _policy, extensionMcp: _extMcp, ...callerOpts } = opts ?? {};
     const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, callerOpts);
     // A session an extension bound carries its instructions and, with a policy, runs outside
     // bypass with no tool the policy did not decide — hence none of the tab or database tools.
-    const { boundTurnOptions } = await import("./extension-session-binding.service.ts");
+    const { boundTurnOptions, sessionBindingFor } = await import("./extension-session-binding.service.ts");
     const bound = boundTurnOptions(providerId, sessionId, design.permissionMode);
     const policySession = !!bound?.extensionToolPolicy;
+    // Its extension's toolsets, whether or not they are registered yet: the query lists its MCP
+    // servers once, and the endpoint answers from the last-known tools until they are back.
+    const binding = bound ? sessionBindingFor(sessionId) : null;
+    const extensionMcp = binding && binding.toolsets.length > 0 ? extensionMcpAccessFor(sessionId, binding.extensionId) : null;
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those.
     const ai = configService.get("ai");
@@ -352,7 +358,10 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, ...bound, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}), sharedContext };
+    return {
+      ...design, ...bound, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
+      ...(extensionMcp ? { extensionMcp } : {}), sharedContext,
+    };
   }
 
   /**
