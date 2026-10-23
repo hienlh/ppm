@@ -6,6 +6,8 @@ import type {
   ChatEvent,
   ChatMessage,
   ModelOption,
+  OneShotInput,
+  OneShotResult,
   SendMessageOpts,
   UsageInfo,
 } from "../provider.interface.ts";
@@ -53,6 +55,10 @@ import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.
 import { redactTruncate } from "./codex-redact.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
 import { getRolloutMessagesAsync } from "./codex-history-async.ts";
+import { codexCompleteOnce } from "./codex-complete-once.ts";
+import { OneShotError } from "../one-shot-error.ts";
+import { getPpmDir } from "../../services/ppm-dir.ts";
+import { mkdirSync } from "node:fs";
 import {
   listCodexRollouts,
   findRolloutByThreadId,
@@ -1348,6 +1354,20 @@ export class CodexAppServerProvider implements AIProvider {
 
   async isAvailable(): Promise<boolean> {
     return (await this.probe()).ok;
+  }
+
+  /**
+   * One prompt, one answer on a short-lived app-server of its own, in `<ppm dir>/one-shot`,
+   * on an ephemeral thread, so nothing reaches the chat list. Without `accountId` it runs on
+   * the machine's own ~/.codex login; callers that rotate accounts name one.
+   */
+  async completeOnce(input: OneShotInput): Promise<OneShotResult> {
+    const account = input.accountId ? getCodexAccount(input.accountId) : null;
+    if (input.accountId && !account) throw new OneShotError("NO_ACCOUNT", "That Codex account no longer exists");
+    const cwd = join(getPpmDir(), "one-shot");
+    mkdirSync(cwd, { recursive: true });
+    const result = await codexCompleteOnce(input, { cwd, ...(account ? { codexHome: account.home } : {}) });
+    return account ? { ...result, accountId: account.id } : result;
   }
 
   async listModels(): Promise<ModelOption[]> {

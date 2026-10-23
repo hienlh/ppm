@@ -93,6 +93,8 @@ export interface AIProvider {
   // Optional capabilities — providers implement what they support
   /** Start the process a chat about to be created will run on, ahead of its first message. */
   prewarm?(input: PrewarmInput): Promise<void>;
+  /** One prompt, one answer, with no chat session behind it and nothing in the chat list. */
+  completeOnce?(input: OneShotInput): Promise<OneShotResult>;
   resolveApproval?(requestId: string, approved: boolean, data?: unknown): void;
   onToolApproval?: (callback: ToolApprovalHandler) => void;
   abortQuery?(sessionId: string, source?: string): void;
@@ -152,6 +154,33 @@ export interface SessionConfig {
    * to boot one of its own.
    */
   adoptWarmSpare?: boolean;
+}
+
+/** What `completeOnce` is asked. Only the first four fields are required. */
+export interface OneShotInput {
+  prompt: string;
+  systemPrompt: string;
+  model: string;
+  /** Wall-clock limit for the whole call. */
+  timeoutMs?: number;
+  /** Ask for an answer shaped by this JSON Schema, natively where the provider can. */
+  jsonSchema?: Record<string, unknown>;
+  /** Let the model search and read the web. */
+  webSearch?: boolean;
+  /** Run on this account instead of the provider's own pick (which may move its rotation). */
+  accountId?: string;
+  /** Aborting stops the provider call itself, not just the wait for it. */
+  signal?: AbortSignal;
+}
+
+export interface OneShotResult {
+  text: string;
+  /** The provider's native structured answer, when it gave one. */
+  structured?: unknown;
+  inputTokens: number;
+  outputTokens: number;
+  /** The account that answered; absent when the provider's own sign-in did. */
+  accountId?: string;
 }
 
 /** What `prewarm` needs to start the CLI a new chat's first message will run on. */
