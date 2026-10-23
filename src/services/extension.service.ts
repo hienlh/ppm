@@ -309,12 +309,17 @@ class ExtensionService {
     const authConfig = cfg.get("auth");
     const authToken = authConfig?.enabled ? authConfig.token : undefined;
 
+    // A toolset a lost race, a timed-out activation or an older worker left registered under
+    // this id would forward calls to a handler nobody runs; this activation gets a clean slate.
+    extensionMcpRegistry.unregisterExtension(id);
+
     log.debug(`activating ${id} (entry: ${entryPath})`);
     const result = await rpc.sendRequest<{ ok: boolean; error?: string }>(
       "ext:activate", id, entryPath, extDir, storedState, baseUrl, authToken, dataDir,
     );
     if (!result.ok) {
-      // A toolset it registered before failing would forward calls to a handler nobody runs.
+      // Its activate() can keep running after this; ppm.mcp.ts refuses whatever it registers
+      // late, but the registry is cleared here too in case of a worker that predates that fix.
       extensionMcpRegistry.unregisterExtension(id);
       this.activationErrors.set(id, result.error ?? "Unknown activation error");
       throw new Error(`Failed to activate ${id}: ${result.error}`);

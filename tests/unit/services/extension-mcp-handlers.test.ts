@@ -13,19 +13,21 @@ import { createPpmMcp, type PpmMcpToolHandler } from "../../../packages/vscode-c
 import type { RpcClient } from "../../../packages/vscode-compat/src/types.ts";
 
 const EXT = "probe-ext";
+/** Another installed extension in the same worker. */
+const OTHER = "other-ext";
 const GENERATION = 7;
 const schema = { type: "object", properties: {} };
 const toolset = (id = "fg") => ({ id, title: "Graph", tools: [{ name: "overview", description: "Overview", inputSchema: schema }] });
 const ctx = { sessionId: "s1", turnOrigin: "extension" };
 
-function setup() {
+function setup(options: { callTimeoutMs?: number } = {}) {
   let main!: RpcChannel;
   const worker = new RpcChannel((m) => queueMicrotask(() => void main.handleMessage(m)));
   main = new RpcChannel((m) => queueMicrotask(() => void worker.handleMessage(m)));
   const calls = new ExtensionCallRegistry();
-  const registry = new ExtensionMcpRegistry({ load: () => null, save: () => {} });
+  const registry = new ExtensionMcpRegistry({ load: () => null, save: () => {}, isEnabled: () => true });
   registerExtensionMcpHandlers(main, { generation: GENERATION, beginCall: () => calls.begin(GENERATION) }, {
-    registry, isKnownExtension: (id) => id === EXT,
+    registry, isKnownExtension: (id) => id === EXT || id === OTHER, ...options,
   });
   const client = (extensionId: string) => {
     const rpc: RpcClient = {
@@ -40,8 +42,10 @@ function setup() {
   const hosts = new Map([[EXT, mcp.host]]);
   worker.onRequest("ext:mcp:call", (p) => hosts.get((p[0] as { extensionId: string }).extensionId)!.call(p[0]));
   worker.onRequest("ext:mcp:cancel", (p) => ({ cancelled: hosts.get(EXT)!.cancel((p[0] as { callId: string }).callId) }));
-  return { registry, calls, mcp, client, close: () => { main.dispose(); worker.dispose(); } };
+  return { registry, calls, mcp, client, worker, close: () => { main.dispose(); worker.dispose(); } };
 }
+
+const tick = () => new Promise((r) => setTimeout(r, 10));
 
 describe("extension MCP over RPC", () => {
   it("registers a toolset and runs its handler with the tool's own name, arguments and context", async () => {
@@ -98,5 +102,60 @@ describe("extension MCP over RPC", () => {
     expect(calls.count(GENERATION)).toBe(0);
     // The worker never answers; disposing the channels drops the request it still holds.
     close();
+  });
+
+  it("lets no other code in the shared worker drop or replace a running toolset", async () => {
+    const { registry, mcp, worker } = setup();
+    await mcp.api.registerToolset(toolset(), async () => ({ text: "the real one" })).registered;
+    // What any extension in the worker can post: the owner's id, but not its registration's handle.
+    await expect(worker.sendRequest("mcp:unregisterToolset", { extensionId: EXT, toolsetId: "fg" })).rejects.toThrow(/handle/);
+    expect(await worker.sendRequest("mcp:unregisterToolset", { extensionId: EXT, toolsetId: "fg", handle: "guessed" }))
+      .toEqual({ unregistered: false });
+    await expect(worker.sendRequest("mcp:registerToolset", { extensionId: EXT, toolset: { ...toolset(), title: "Forged" } }))
+      .rejects.toThrow(/already registered/);
+    expect(registry.list().map((t) => t.title)).toEqual(["Graph"]);
+    expect(await registry.call(`${EXT}:fg`, "overview", {}, ctx)).toEqual({ text: "the real one" });
+  });
+
+  it("drops a toolset with its own registration's handle, which only that registration holds", async () => {
+    const { registry, mcp, client } = setup();
+    const own = mcp.api.registerToolset(toolset(), async () => ({ text: "mine" }));
+    const other = client(OTHER).api.registerToolset(toolset(), async () => ({ text: "theirs" }));
+    await Promise.all([own.registered, other.registered]);
+    own.dispose();
+    await tick();
+    expect(registry.list().map((t) => t.key)).toEqual([`${OTHER}:fg`]);
+  });
+
+  it("takes no toolset from an extension whose host was closed: deactivated, or its activation failed or timed out", async () => {
+    const { registry, mcp } = setup();
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args); };
+    try {
+      mcp.host.dispose();
+      const late = mcp.api.registerToolset(toolset(), async () => ({ text: "nobody routes here" }));
+      await expect(late.registered).rejects.toThrow(/no longer accepts toolsets/);
+      await tick();
+    } finally {
+      console.error = original;
+    }
+    expect(registry.list()).toEqual([]);
+    expect(errors).toHaveLength(1);
+  });
+
+  it("stops the worker's handler when a call outlives its time limit", async () => {
+    const { registry, calls, mcp } = setup({ callTimeoutMs: 50 });
+    const aborted: string[] = [];
+    await mcp.api.registerToolset(toolset(), (_name, _args, c) => new Promise(() => {
+      // Never answers, as a hung handler would; only its signal can tell it to stop.
+      c.signal.addEventListener("abort", () => aborted.push((c.signal.reason as Error).name), { once: true });
+    })).registered;
+    const result = await registry.call(`${EXT}:fg`, "overview", {}, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/did not answer within/);
+    await tick();
+    expect(aborted).toEqual(["AbortError"]);
+    expect(calls.count(GENERATION)).toBe(0);
   });
 });

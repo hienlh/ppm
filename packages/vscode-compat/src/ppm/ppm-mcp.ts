@@ -12,7 +12,15 @@ import type { RpcClient } from "../types.ts";
  *
  * A call may run for at most 10 minutes; longer work should start in one tool and be polled
  * through another. An answer over 200 KB is cut. `ctx.signal` aborts when the model gives up on
- * the call (the user stopped the turn) or the extension host restarts.
+ * the call (the user stopped the turn), the call outlives its time limit, or the extension host
+ * restarts.
+ *
+ * `registerToolset` sends the main thread's registration RPC and, once accepted, holds the handle
+ * it returned so a later `dispose()` can name it — nothing else in this worker ever sees that
+ * value. Once the extension host's own `host.dispose()` has run (deactivated, or its activation
+ * failed or timed out), `registerToolset` refuses every further call on the spot: the extension's
+ * `activate()` can keep running after a timeout, and whatever it registers after that must never
+ * reach a chat, because nothing on this host would route to it any more.
  */
 
 export interface PpmMcpToolDefinition {
@@ -70,6 +78,8 @@ const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v =
 export function createPpmMcp(rpc: RpcClient, extensionId: string): { api: PpmMcp; host: PpmMcpHost } {
   const handlers = new Map<string, PpmMcpToolHandler>();
   const running = new Map<string, AbortController>();
+  /** Set once by `host.dispose()`; nothing registered after that can ever be routed to. */
+  let closed = false;
   const forget = (id: string, handler: PpmMcpToolHandler) => {
     if (handlers.get(id) === handler) handlers.delete(id);
   };
@@ -80,9 +90,24 @@ export function createPpmMcp(rpc: RpcClient, extensionId: string): { api: PpmMcp
       if (typeof id !== "string" || !id) throw new TypeError("toolset.id must be a string");
       if (typeof handler !== "function") throw new TypeError("handler must be a function");
       if (handlers.has(id)) throw new Error(`Toolset "${id}" is already registered by this extension`);
+      if (closed) {
+        const message = `Toolset "${id}" was refused: the extension host no longer accepts toolsets`;
+        console.error(`[ppm.mcp] toolset "${id}" was refused:`, message);
+        const registered: Promise<string[]> = Promise.reject(new Error(message));
+        registered.catch(() => {});
+        return { registered, dispose() {} };
+      }
       handlers.set(id, handler);
-      const registered = rpc.request<{ tools: string[] }>("mcp:registerToolset", { extensionId, toolset }).then(
-        (answer) => answer.tools,
+      let disposed = false;
+      // Known only once the main thread answers; a dispose() that beat it there sends the
+      // unregister itself the moment it arrives, so it is read here rather than captured once.
+      let handle: string | undefined;
+      const registered = rpc.request<{ tools: string[]; handle: string }>("mcp:registerToolset", { extensionId, toolset }).then(
+        (answer) => {
+          handle = answer.handle;
+          if (disposed) rpc.request("mcp:unregisterToolset", { extensionId, toolsetId: id, handle }).catch(() => {});
+          return answer.tools;
+        },
         (error: unknown) => {
           forget(id, handler);
           console.error(`[ppm.mcp] toolset "${id}" was refused:`, error instanceof Error ? error.message : error);
@@ -91,14 +116,15 @@ export function createPpmMcp(rpc: RpcClient, extensionId: string): { api: PpmMcp
       );
       // Already logged; an extension that never awaits it must not leave an unhandled rejection.
       registered.catch(() => {});
-      let disposed = false;
       return {
         registered,
         dispose() {
           if (disposed) return;
           disposed = true;
           forget(id, handler);
-          rpc.request("mcp:unregisterToolset", { extensionId, toolsetId: id }).catch(() => {});
+          // Else: still unanswered, or refused (nothing was ever registered); the `.then` above
+          // sends it once the handle arrives, and the rejection branch already forgot the handler.
+          if (handle !== undefined) rpc.request("mcp:unregisterToolset", { extensionId, toolsetId: id, handle }).catch(() => {});
         },
       };
     },
@@ -131,10 +157,15 @@ export function createPpmMcp(rpc: RpcClient, extensionId: string): { api: PpmMcp
     cancel(callId) {
       const controller = typeof callId === "string" ? running.get(callId) : undefined;
       if (!controller) return false;
+      // Freed here rather than left to `call`'s own `finally`: a handler that never notices the
+      // abort would otherwise hold its bookkeeping forever, and a second cancel of the same id
+      // would wrongly report there was still something to cancel.
+      running.delete(callId as string);
       controller.abort(abortError());
       return true;
     },
     dispose() {
+      closed = true;
       for (const controller of running.values()) controller.abort(abortError());
       running.clear();
       handlers.clear();

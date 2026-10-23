@@ -9,6 +9,7 @@
  * together are held to what fits behind the prefix.
  */
 import { EXTENSION_MCP_TOOL_PREFIX, TOOLSET_ID_RE } from "./extension-session-binding.ts";
+import { checkToolInputSchema } from "./extension-mcp-input-schema.ts";
 
 export interface ExtensionMcpToolDefinition {
   name: string;
@@ -43,6 +44,8 @@ export const MAX_EXTENSION_TOOL_RESULT_BYTES = 200 * 1024;
 export const EXTENSION_TOOL_CALL_TIMEOUT_MS = 600_000;
 /** Answered for a tool whose extension has not registered it since PPM or its host started. */
 export const EXTENSION_TOOLSET_STARTING = "Tiện ích đang khởi động, thử lại sau 30 giây";
+/** Answered for a tool of an extension the user has turned off: it will not come back by itself. */
+export const EXTENSION_TOOLSET_OFF = "Tiện ích cung cấp công cụ này đã bị tắt";
 
 /** The name the model calls a toolset's tool by, behind the `ppm-ext` server prefix. */
 export const exposedToolName = (toolsetId: string, name: string): string => `${toolsetId}_${name}`;
@@ -89,6 +92,7 @@ function validateTool(raw: unknown, toolsetId: string, index: number): Extension
     throw new Error(`${where}.inputSchema must be plain JSON`);
   }
   if (size > MAX_EXTENSION_TOOL_SCHEMA_BYTES) throw new Error(`${where}.inputSchema exceeds ${MAX_EXTENSION_TOOL_SCHEMA_BYTES} bytes`);
+  checkToolInputSchema(inputSchema, `${where}.inputSchema`);
   return { name, description, inputSchema: JSON.parse(JSON.stringify(inputSchema)) as Record<string, unknown> };
 }
 

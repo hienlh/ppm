@@ -23,6 +23,7 @@ function setup() {
   const registry = new ExtensionMcpRegistry({
     load: (e, id) => saved.get(`${e}:${id}`) ?? null,
     save: (e, ts) => { saved.set(`${e}:${ts.id}`, ts.tools); },
+    isEnabled: () => true,
   });
   const tokens = createExtensionMcpTokenStore();
   const origins = new Map<string, string>();

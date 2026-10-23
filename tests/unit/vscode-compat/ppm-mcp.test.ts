@@ -7,7 +7,7 @@ import type { RpcClient } from "../../../packages/vscode-compat/src/types.ts";
 const schema = { type: "object", properties: {} };
 const toolset = { id: "fg", title: "Graph", tools: [{ name: "overview", description: "Overview", inputSchema: schema }] };
 
-function mockRpc(answer: (method: string, params: any) => unknown = () => ({ tools: ["fg_overview"] })) {
+function mockRpc(answer: (method: string, params: any) => unknown = () => ({ tools: ["fg_overview"], handle: "h-1" })) {
   const sent: { method: string; params: any }[] = [];
   const rpc: RpcClient = {
     async request<T>(method: string, ...params: unknown[]) {
@@ -45,10 +45,50 @@ describe("ppm.mcp", () => {
     expect(() => api.registerToolset(toolset, async () => ({ text: "" }))).toThrow(/already registered/);
     registration.dispose();
     registration.dispose();
+    await new Promise((r) => setTimeout(r, 0));
+    // The handle the main thread returned is what drops it; nothing else in the worker holds it.
     expect(sent.filter((m) => m.method === "mcp:unregisterToolset")).toEqual([
-      { method: "mcp:unregisterToolset", params: { extensionId: "probe-ext", toolsetId: "fg" } },
+      { method: "mcp:unregisterToolset", params: { extensionId: "probe-ext", toolsetId: "fg", handle: "h-1" } },
     ]);
     expect((await host.call(call("fg"))).isError).toBe(true);
+  });
+
+  it("sends the dispose of a registration still in flight once its handle arrives", async () => {
+    let answer!: (value: unknown) => void;
+    const { rpc, sent } = mockRpc((method) => method === "mcp:registerToolset" ? new Promise((r) => { answer = r; }) : {});
+    const { api } = createPpmMcp(rpc, "probe-ext");
+    const registration = api.registerToolset(toolset, async () => ({ text: "" }));
+    registration.dispose();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent.map((m) => m.method)).toEqual(["mcp:registerToolset"]);
+    answer({ tools: ["fg_overview"], handle: "h-2" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent[1]).toEqual({ method: "mcp:unregisterToolset", params: { extensionId: "probe-ext", toolsetId: "fg", handle: "h-2" } });
+  });
+
+  it("refuses new toolsets once the host is closed, without asking the main thread", async () => {
+    const { rpc, sent } = mockRpc();
+    const { api, host } = createPpmMcp(rpc, "probe-ext");
+    host.dispose();
+    const original = console.error;
+    console.error = () => {};
+    try {
+      const late = api.registerToolset(toolset, async () => ({ text: "" }));
+      await expect(late.registered).rejects.toThrow(/no longer accepts toolsets/);
+      late.dispose();
+    } finally {
+      console.error = original;
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it("frees a cancelled call at once, even when its handler never notices", async () => {
+    const { api, host } = createPpmMcp(mockRpc().rpc, "probe-ext");
+    api.registerToolset(toolset, () => new Promise(() => {}));
+    void host.call(call("fg", { callId: "hung" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(host.cancel("hung")).toBe(true);
+    expect(host.cancel("hung")).toBe(false);
   });
 
   it("answers an error result for an unknown toolset, a throwing handler or a non-text answer", async () => {
