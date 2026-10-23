@@ -7,7 +7,13 @@ import type { RpcClient } from "../types.ts";
  * `src/services/extension-api/extension-notify-handlers.ts` when the call has ended.
  */
 
-export type PpmNotifyOutcome = "sent" | "off" | "replaced" | "seen";
+/**
+ * "queued" means `notify:send` answered before PPM's own notification delay (up to 60s by
+ * default) decided the real outcome, so the call never has to wait that long — the extension
+ * RPC channel itself times out at 10s. The notification is still sent (or dropped by the
+ * delay's own "seen" check); this call just did not wait around to see which.
+ */
+export type PpmNotifyOutcome = "sent" | "off" | "replaced" | "seen" | "queued";
 
 export interface PpmNotifyRequest {
   /** 1 to 120 characters. */

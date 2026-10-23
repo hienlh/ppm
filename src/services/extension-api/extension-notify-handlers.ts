@@ -7,6 +7,10 @@
  * in-app `path` the same way `notificationPath` builds one, and a fresh coalesce key is minted
  * per call so only two calls made back to back (same extension, within the delay window) fold
  * into one notification.
+ *
+ * `notify:send` never waits out `broadcast`'s own delay (see `notifyAnswerTimeout` below): the
+ * call answers "sent"/"off"/"replaced"/"seen" when that is known quickly, else "queued" at once,
+ * while the real send still happens in the background.
  */
 import type { RpcChannel } from "../extension-rpc.ts";
 import { chatService } from "../chat.service.ts";
@@ -40,9 +44,26 @@ export class NotifySendError extends Error {
   }
 }
 
+/** `BroadcastOutcome` plus "queued": accepted, but `notify:send` answered before the
+ *  notification's own delay (up to 60s by default) decided whether it was actually sent. */
+export type NotifySendOutcome = BroadcastOutcome | "queued";
+
 export type NotifySendWire =
-  | { ok: true; result: BroadcastOutcome }
+  | { ok: true; result: NotifySendOutcome }
   | { ok: false; error: { code: NotifySendErrorCode; message: string } };
+
+/**
+ * Test seam: how long `notify:send` waits for `broadcast`'s real outcome before answering
+ * "queued" instead. `broadcast` does not resolve until the notification delay elapses
+ * (60s by default) or the call is switched off — far past the extension RPC's 10s timeout, so
+ * every awaited `ppm.notify` used to fail with "RPC timeout: notify:send" even though PPM still
+ * sent the notification. A fast outcome (switched off, no delay configured, or the real send)
+ * still wins this race and is returned as-is; a slow one still happens, just unobserved by this
+ * call's answer.
+ */
+export const notifyAnswerTimeout = { ms: 2_000 };
+
+const PENDING = Symbol("notify-send-pending");
 
 export interface ExtensionNotifyDeps {
   isKnownExtension(id: string): boolean;
@@ -154,8 +175,18 @@ export function registerExtensionNotifyHandlers(rpc: RpcChannel, deps: Extension
         ...(providerId && { providerId }),
         path: notificationPath({ project: projectName ?? "", sessionId: sessionId ?? "", providerId, path: explicitPath }),
       };
-      const result = await deps.broadcast("extension", payload, { coalesceKey: `ext:${extensionId}:${crypto.randomUUID()}` });
-      return { ok: true, result };
+      const broadcastPromise = deps.broadcast("extension", payload, { coalesceKey: `ext:${extensionId}:${crypto.randomUUID()}` });
+      // Never let the detached promise become an unhandled rejection once this call has
+      // already answered "queued" and moved on.
+      broadcastPromise.catch((error) => {
+        log.debug(`notify.send broadcast failed after answering: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<typeof PENDING>((resolve) => {
+        timer = setTimeout(() => resolve(PENDING), notifyAnswerTimeout.ms);
+      });
+      const outcome = await Promise.race([broadcastPromise, timeout]).finally(() => clearTimeout(timer));
+      return { ok: true, result: outcome === PENDING ? "queued" : outcome };
     } catch (error) {
       const code = error instanceof NotifySendError ? error.code : "BAD_REQUEST";
       const message = error instanceof Error ? error.message : String(error);

@@ -455,7 +455,10 @@ and `await registration.registered` (the exposed names, or why it was refused).
 goes out through PPM's own channels (push, Telegram, ntfy) under Settings → Notifications →
 Extensions, titled "<display name>: <title>". Title 1–120 characters, body up to 1,000; a tap
 opens the session, the project or an in-app `path`. 30 per hour per extension; refusals are
-`PpmNotifyError` (`BAD_REQUEST`, `RATE_LIMITED`).
+`PpmNotifyError` (`BAD_REQUEST`, `RATE_LIMITED`). The call answers within ~2s — well inside the
+10s RPC limit — resolving `"sent" | "off" | "replaced" | "seen"` when that is already known, else
+`"queued"` while the real send (which can wait out PPM's own notification delay, 60s by default)
+keeps running in the background.
 
 `tests/e2e/extension-ai-core-e2e.mjs` drives most of this through a probe extension
 (`tests/e2e/fixtures/ext-ai-probe/`), a useful minimal example.

@@ -7,7 +7,8 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { RpcChannel } from "../../../src/services/extension-rpc.ts";
 import {
-  extensionNotifyClock, registerExtensionNotifyHandlers, resetExtensionNotifyLimit, type ExtensionNotifyDeps,
+  extensionNotifyClock, notifyAnswerTimeout, registerExtensionNotifyHandlers, resetExtensionNotifyLimit,
+  type ExtensionNotifyDeps,
 } from "../../../src/services/extension-api/extension-notify-handlers.ts";
 import { NotificationService, type BroadcastOptions, type NotificationPayload } from "../../../src/services/notification.service.ts";
 import { configService } from "../../../src/services/config.service.ts";
@@ -142,6 +143,36 @@ describe("notify:send", () => {
     const svc = new NotificationService(1);
     const { deps } = fakeDeps({ broadcast: (type, payload, opts) => svc.broadcast(type, payload, opts) });
     expect(await channel(deps).call(base)).toEqual({ ok: true, result: "off" });
+  });
+
+  it("answers \"queued\" at once when the real outcome is slower than the answer timeout, and still delivers it afterward", async () => {
+    let resolveBroadcast!: (outcome: "sent") => void;
+    const slow = new Promise<"sent">((resolve) => { resolveBroadcast = resolve; });
+    const { deps, broadcasts } = fakeDeps({
+      broadcast: async (type, payload, opts) => {
+        broadcasts.push({ type, payload, opts });
+        return slow;
+      },
+    });
+    const originalMs = notifyAnswerTimeout.ms;
+    notifyAnswerTimeout.ms = 10;
+    try {
+      const start = Date.now();
+      const result = await channel(deps).call(base);
+      const elapsed = Date.now() - start;
+      expect(result).toEqual({ ok: true, result: "queued" });
+      expect(elapsed).toBeLessThan(5_000); // nowhere near the real 60s delivery delay
+      expect(broadcasts).toHaveLength(1); // the broadcast itself was still made, not skipped
+      resolveBroadcast("sent"); // let the detached promise settle so it does not leak into other tests
+      await Promise.resolve();
+    } finally {
+      notifyAnswerTimeout.ms = originalMs;
+    }
+  });
+
+  it("still answers the real outcome when it beats the answer timeout, as every other test here assumes", async () => {
+    const { deps } = fakeDeps(); // default fake resolves "sent" on the next microtask
+    expect((await channel(deps).call(base))).toEqual({ ok: true, result: "sent" });
   });
 
   it("does not cancel, and is not cancelled by, the chat's own 'done' push for the same session", async () => {
