@@ -1,21 +1,27 @@
 /**
- * How many one-shot AI calls one extension may run at once: at most `maxInFlight` (4), with up
- * to `maxQueued` (32) more waiting their turn, each for at most `maxQueueWaitMs` (60 s). An
- * in-flight cap rather than a rate window, like the tab-open broker's: what costs quota is
- * calls running together, and a loop gone wrong is stopped by the queue filling up.
+ * How many one-shot AI calls may run at once: at most `maxInFlight` (4) per extension and
+ * `maxTotal` (8) across every extension, with up to `maxQueued` (32) more per extension waiting
+ * their turn, each for at most `maxQueueWaitMs` (60 s). An in-flight cap rather than a rate
+ * window, like the tab-open broker's: what costs quota is calls running together, and a loop
+ * gone wrong is stopped by the queue filling up. The total cap is what keeps several extensions
+ * — or one claiming several names in the worker all extensions share — from starting a pile of
+ * Claude CLIs or Codex app-servers at once.
  *
- * A call waiting here has not spent anything yet, so a cancel or the wait running out simply
- * takes it out of the line. The worker's RPC deadline includes this wait
+ * Waiting calls are admitted in arrival order, skipping one whose own extension is still at its
+ * cap. A call waiting here has not spent anything yet, so a cancel or the wait running out
+ * simply takes it out of the line. The worker's RPC deadline includes this wait
  * (`timeoutMs + maxQueueWaitMs + 15 s`), so `QUEUE_TIMEOUT` always arrives first.
  */
 import { OneShotError } from "../../providers/one-shot-error.ts";
 
 export const AI_MAX_IN_FLIGHT = 4;
+export const AI_MAX_IN_FLIGHT_TOTAL = 8;
 export const AI_MAX_QUEUED = 32;
 export const AI_MAX_QUEUE_WAIT_MS = 60_000;
 
 export interface LimiterOptions {
   maxInFlight: number;
+  maxTotal: number;
   maxQueued: number;
   maxQueueWaitMs: number;
   /** Timer seam for tests. */
@@ -26,22 +32,26 @@ export interface LimiterOptions {
 /** Give the slot back. Safe to call more than once. */
 export type ReleaseSlot = () => void;
 
-interface Waiter {
-  admit(): void;
-}
-
 interface Lane {
   running: number;
-  queue: Waiter[];
+  queued: number;
+}
+
+interface Waiter {
+  key: string;
+  admit(): void;
 }
 
 export class ExtensionAiLimiter {
   private lanes = new Map<string, Lane>();
+  private waiting: Waiter[] = [];
+  private running = 0;
   private readonly opts: Required<LimiterOptions>;
 
   constructor(options: Partial<LimiterOptions> = {}) {
     this.opts = {
       maxInFlight: options.maxInFlight ?? AI_MAX_IN_FLIGHT,
+      maxTotal: options.maxTotal ?? AI_MAX_IN_FLIGHT_TOTAL,
       maxQueued: options.maxQueued ?? AI_MAX_QUEUED,
       maxQueueWaitMs: options.maxQueueWaitMs ?? AI_MAX_QUEUE_WAIT_MS,
       setTimer: options.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -51,39 +61,61 @@ export class ExtensionAiLimiter {
 
   private lane(key: string): Lane {
     let lane = this.lanes.get(key);
-    if (!lane) this.lanes.set(key, lane = { running: 0, queue: [] });
+    if (!lane) this.lanes.set(key, lane = { running: 0, queued: 0 });
     return lane;
   }
 
-  private releaser(key: string, lane: Lane): ReleaseSlot {
+  private dropIfIdle(key: string, lane: Lane): void {
+    if (lane.running === 0 && lane.queued === 0) this.lanes.delete(key);
+  }
+
+  private canRun(lane: Lane): boolean {
+    return lane.running < this.opts.maxInFlight && this.running < this.opts.maxTotal;
+  }
+
+  private take(key: string, lane: Lane): ReleaseSlot {
+    lane.running++;
+    this.running++;
     let released = false;
     return () => {
       if (released) return;
       released = true;
       lane.running--;
-      const next = lane.queue.shift();
-      if (next) next.admit();
-      else if (lane.running === 0) this.lanes.delete(key);
+      this.running--;
+      this.dropIfIdle(key, lane);
+      this.admitWaiting();
     };
+  }
+
+  /** Admit waiting calls, oldest first, while some lane with a waiter has room. */
+  private admitWaiting(): void {
+    for (let i = 0; i < this.waiting.length && this.running < this.opts.maxTotal;) {
+      const waiter = this.waiting[i]!;
+      if (this.canRun(this.lane(waiter.key))) {
+        this.waiting.splice(i, 1);
+        waiter.admit();
+      } else {
+        i++;
+      }
+    }
   }
 
   /** Wait for a slot in `key`'s lane. Rejects with `QUEUE_FULL`, `QUEUE_TIMEOUT` or `ABORTED`. */
   acquire(key: string, signal?: AbortSignal): Promise<ReleaseSlot> {
     if (signal?.aborted) return Promise.reject(new OneShotError("ABORTED", "The call was cancelled"));
     const lane = this.lane(key);
-    if (lane.running < this.opts.maxInFlight) {
-      lane.running++;
-      return Promise.resolve(this.releaser(key, lane));
-    }
-    if (lane.queue.length >= this.opts.maxQueued) {
+    if (this.canRun(lane)) return Promise.resolve(this.take(key, lane));
+    if (lane.queued >= this.opts.maxQueued) {
+      this.dropIfIdle(key, lane);
       return Promise.reject(new OneShotError("QUEUE_FULL",
-        `Too many AI calls: ${this.opts.maxInFlight} running and ${this.opts.maxQueued} waiting`));
+        `Too many AI calls: ${lane.running} running and ${lane.queued} waiting`));
     }
     return new Promise<ReleaseSlot>((resolve, reject) => {
       const leave = (error: OneShotError) => {
-        const at = lane.queue.indexOf(waiter);
-        if (at >= 0) lane.queue.splice(at, 1);
-        if (lane.running === 0 && lane.queue.length === 0) this.lanes.delete(key);
+        const at = this.waiting.indexOf(waiter);
+        if (at >= 0) this.waiting.splice(at, 1);
+        lane.queued--;
+        this.dropIfIdle(key, lane);
         done();
         reject(error);
       };
@@ -95,20 +127,27 @@ export class ExtensionAiLimiter {
         signal?.removeEventListener("abort", onAbort);
       };
       const waiter: Waiter = {
+        key,
         admit: () => {
           done();
-          lane.running++;
-          resolve(this.releaser(key, lane));
+          lane.queued--;
+          resolve(this.take(key, lane));
         },
       };
       signal?.addEventListener("abort", onAbort, { once: true });
-      lane.queue.push(waiter);
+      lane.queued++;
+      this.waiting.push(waiter);
     });
   }
 
   /** Calls running and waiting for `key`, for logs and tests. */
   stats(key: string): { running: number; queued: number } {
     const lane = this.lanes.get(key);
-    return { running: lane?.running ?? 0, queued: lane?.queue.length ?? 0 };
+    return { running: lane?.running ?? 0, queued: lane?.queued ?? 0 };
+  }
+
+  /** Calls running across every extension. */
+  totalRunning(): number {
+    return this.running;
   }
 }

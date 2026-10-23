@@ -14,7 +14,7 @@ import { OneShotError, oneShotCodeOf } from "../../providers/one-shot-error.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { CLAUDE_MODEL_IDS } from "../../types/claude-models.ts";
 import { completeForExtension, defaultExtensionAiDeps, type ExtensionAiDeps } from "../extension-ai/extension-ai-complete.service.ts";
-import type { AiCompleteResult, AiProviderId } from "../extension-ai/extension-ai-request.ts";
+import { isExtensionId, type AiCompleteResult, type AiProviderId } from "../extension-ai/extension-ai-request.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("extension-ai");
@@ -43,7 +43,7 @@ function paramsOf(params: unknown[]): Record<string, unknown> {
 }
 
 function requireCall(p: Record<string, unknown>): { extensionId: string; callId: string } {
-  if (typeof p.extensionId !== "string" || !p.extensionId) throw new OneShotError("BAD_REQUEST", "extensionId is required");
+  if (!isExtensionId(p.extensionId)) throw new OneShotError("BAD_REQUEST", "extensionId must be an extension id");
   if (typeof p.callId !== "string" || !CALL_ID.test(p.callId)) throw new OneShotError("BAD_REQUEST", "callId must be a UUID");
   return { extensionId: p.extensionId, callId: p.callId };
 }

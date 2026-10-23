@@ -8,12 +8,21 @@
  * 5-hour use in the usage store (Claude), or `selectCodexAccount` in `lowest-usage` mode,
  * which touches no cursor (Codex). With no accounts set up at all the provider's own sign-in
  * answers (`accountId` undefined). Accounts set up but none usable is `NO_ACCOUNT`.
+ *
+ * Codex applies the same limits a chat does: every account signed out is `NO_ACCOUNT` rather
+ * than a fall back to the machine's own login, an account whose daily guard is reached is not
+ * used, and an account parked for a spent quota is never handed back — even when it is the
+ * last one, where the chat selector's soft fallback would return it and the call would start
+ * an app-server only to be refused.
  */
 import { OneShotError } from "../../providers/one-shot-error.ts";
 import { accountService } from "../account.service.ts";
 import { accountSelector } from "../account-selector.service.ts";
 import { getLatestSnapshotForAccount } from "../db.service.ts";
-import { codexUsageLevel, getCodexAccount, listCodexAccounts, selectCodexAccount } from "../codex-account.service.ts";
+import {
+  assertSomeAccountSignedIn, CodexSignedOutError, codexUsageLevel, dailyGuardBlockedIds, getAllCodexUsages,
+  getCodexAccount, listCodexAccounts, selectCodexAccount,
+} from "../codex-account.service.ts";
 import { isCodexAccountAuthFailed } from "../codex-account-auth-state.ts";
 import { isCodexAccountUsageLimited } from "../codex-account-cooldown.ts";
 import { getUsage } from "../provider-usage/usage-registry.ts";
@@ -23,8 +32,8 @@ export interface PickedAccount {
   accountId?: string;
 }
 
-function noAccount(provider: string): OneShotError {
-  return new OneShotError("NO_ACCOUNT", `No ${provider} account can take a request right now`);
+function noAccount(provider: string, why = "can take a request right now"): OneShotError {
+  return new OneShotError("NO_ACCOUNT", `No ${provider} account ${why}`);
 }
 
 function pickClaude(explicit: string | undefined): PickedAccount {
@@ -45,24 +54,41 @@ function pickClaude(explicit: string | undefined): PickedAccount {
   return { accountId: usable[0]!.id };
 }
 
-function pickCodex(explicit: string | undefined): PickedAccount {
+async function pickCodex(explicit: string | undefined): Promise<PickedAccount> {
   if (explicit) {
     const named = getCodexAccount(explicit);
     if (!named || named.status === "disabled") {
       throw new OneShotError("BAD_REQUEST", "accountId does not name an active Codex account");
     }
-    if (!isCodexAccountAuthFailed(explicit) && !isCodexAccountUsageLimited(explicit)) return { accountId: explicit };
   }
-  if (listCodexAccounts().length === 0) return {};
+  const accounts = listCodexAccounts();
+  if (accounts.length === 0) return {};
+  try {
+    assertSomeAccountSignedIn();
+  } catch (error) {
+    if (error instanceof CodexSignedOutError) throw new OneShotError("NO_ACCOUNT", error.message);
+    throw error;
+  }
+  const parked = accounts.filter((a) => isCodexAccountUsageLimited(a.id)).map((a) => a.id);
+  // Usage is fetched only when a daily guard needs it, as the chat path does; otherwise the
+  // stored figures are enough to rank the accounts.
+  const guarded = accounts.some((a) => a.dailyGuardEnabled && a.status !== "disabled");
+  const usages = guarded ? await getAllCodexUsages() : null;
+  const blocked = usages ? dailyGuardBlockedIds(accounts, usages) : [];
+  const exclude = [...parked, ...blocked];
+  if (explicit && !exclude.includes(explicit) && !isCodexAccountAuthFailed(explicit)) return { accountId: explicit };
   const picked = selectCodexAccount({
     strategy: "lowest-usage",
-    usageOf: (id) => codexUsageLevel(getUsage("codex", id)),
+    usageOf: (id) => codexUsageLevel(usages ? usages[id] : getUsage("codex", id)),
+    exclude,
   });
-  if (!picked) throw noAccount("Codex");
+  if (!picked) {
+    throw blocked.length > 0 ? noAccount("Codex", "is left under its daily guard or with quota") : noAccount("Codex");
+  }
   return { accountId: picked.id };
 }
 
-/** The account a call runs on. Throws `NO_ACCOUNT`, or `BAD_REQUEST` for a bad `accountId`. */
-export function pickOneShotAccount(provider: AiProviderId, explicit?: string): PickedAccount {
+/** The account a call runs on. Rejects with `NO_ACCOUNT`, or `BAD_REQUEST` for a bad `accountId`. */
+export async function pickOneShotAccount(provider: AiProviderId, explicit?: string): Promise<PickedAccount> {
   return provider === "claude" ? pickClaude(explicit) : pickCodex(explicit);
 }

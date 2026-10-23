@@ -20,6 +20,7 @@ function hangingAi() {
   const ai: ExtensionAiDeps = {
     limiter: new ExtensionAiLimiter(),
     pickAccount: () => ({ accountId: "acc-1" }),
+    isKnownExtension: (id) => id === "ext" || id === "other" || id === "@scope/ext",
     now: () => Date.now(),
     provider: () => ({
       completeOnce: (input: OneShotInput) => new Promise((resolve, reject) => {
@@ -55,6 +56,16 @@ describe("ai:* handlers", () => {
       .toEqual({ ok: true, result: { text: "ok", inputTokens: 1, outputTokens: 1, provider: "claude", model: "claude-haiku-4-5", accountId: "acc-1" } });
     expect((await call("ai:complete", { extensionId: "ext", callId: CALL_A, request: { ...request, provider: "x" } })).error.code).toBe("BAD_REQUEST");
     expect((await call("ai:complete", { extensionId: "ext", callId: "not-a-uuid", request })).error.code).toBe("BAD_REQUEST");
+  });
+
+  it("takes only an installed extension's id, scoped package names included", async () => {
+    const { ai } = hangingAi();
+    const { call } = channel(ai);
+    const answer = { ...request, prompt: "answer" };
+    expect((await call("ai:complete", { extensionId: "@scope/ext", callId: CALL_A, request: answer })).ok).toBe(true);
+    for (const extensionId of ["not-installed", "ext\nforged", " ext", "x".repeat(300), 42]) {
+      expect((await call("ai:complete", { extensionId, callId: CALL_B, request: answer })).error.code).toBe("BAD_REQUEST");
+    }
   });
 
   it("ai:cancel stops the running provider call; another extension cannot cancel it", async () => {

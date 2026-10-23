@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { completeForExtension, defaultExtensionAiDeps, type ExtensionAiDeps, type OneShotProvider } from "../../../src/services/extension-ai/extension-ai-complete.service.ts";
 import { ExtensionAiLimiter } from "../../../src/services/extension-ai/extension-ai-limiter.ts";
 import { OneShotError } from "../../../src/providers/one-shot-error.ts";
@@ -29,6 +29,7 @@ function deps(provider: OneShotProvider | undefined, picked: { accountId?: strin
     limiter: new ExtensionAiLimiter(),
     provider: () => provider,
     pickAccount: (p, explicit) => { asked.push({ provider: p, explicit }); return picked; },
+    isKnownExtension: (id) => id === "ext",
     now: () => Date.now(),
   };
   return { d, asked };
@@ -154,5 +155,51 @@ describe("completeForExtension", () => {
   it("finds a one-shot on both real providers", () => {
     expect(defaultExtensionAiDeps.provider("claude")).toBeDefined();
     expect(typeof CodexAppServerProvider.prototype.completeOnce).toBe("function");
+  });
+});
+
+describe("completeForExtension caller identity and log line", () => {
+  const logged = () => {
+    const lines: string[] = [];
+    const spies = (["log", "warn", "error", "info", "debug"] as const).map((level) =>
+      spyOn(console, level).mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(" ")); }));
+    return { lines, restore: () => spies.forEach((s) => s.mockRestore()) };
+  };
+
+  it("refuses an extension id that names no installed extension, before any queue is made for it", async () => {
+    const { provider, calls } = scripted(answer("ok"));
+    const { d, asked } = deps(provider);
+    const lanes: string[] = [];
+    const acquire = d.limiter.acquire.bind(d.limiter);
+    d.limiter.acquire = (key, signal) => { lanes.push(key); return acquire(key, signal); };
+    for (const id of ["ext-made-up-1", "ext-made-up-2"]) {
+      expect((await failure(completeForExtension(id, request(), never, d)))?.code).toBe("BAD_REQUEST");
+    }
+    expect([calls.length, asked.length, lanes.length]).toEqual([0, 0, 0]);
+  });
+
+  it("refuses a malformed id and never writes it raw into the log", async () => {
+    const { d } = deps(scripted().provider);
+    d.isKnownExtension = () => true;
+    const log = logged();
+    try {
+      const forged = "ext\n2026-10-23T00:00:00.000Z [INFO] [server] forged line";
+      expect((await failure(completeForExtension(forged, request(), never, d)))?.code).toBe("BAD_REQUEST");
+      expect(log.lines.some((l) => l.includes("\n"))).toBe(false);
+    } finally {
+      log.restore();
+    }
+  });
+
+  it("logs the web searches a call ran alongside its tokens", async () => {
+    const { provider } = scripted(answer("ok", { webSearches: 4 }));
+    const log = logged();
+    try {
+      await completeForExtension("ext", request({ webSearch: true }), never, deps(provider).d);
+    } finally {
+      log.restore();
+    }
+    const line = log.lines.find((l) => l.includes("ai.complete ext=ext"));
+    expect(line).toContain("in=10 out=5 searches=4 outcome=ok");
   });
 });

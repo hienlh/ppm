@@ -7,8 +7,10 @@
  * `format`, …) is ignored, which only makes the check looser, never wrong.
  *
  * `checkSchema` is run before any call is made, so a schema the validator cannot use (an
- * unknown type name, a pattern that does not compile) is refused instead of paid for.
+ * unknown type name, a pattern that does not compile or could stall the thread testing it) is
+ * refused instead of paid for. `enum` and `const` compare by value, whatever the key order.
  */
+import { MAX_PATTERN_WORK, patternInputLimit, patternWork, unsafePatternReason } from "./json-schema-pattern-guard.ts";
 
 type Schema = Record<string, unknown>;
 export interface SchemaProblem {
@@ -44,6 +46,8 @@ export function checkSchema(schema: unknown, path = "$", depth = 0): string | nu
   if (schema.pattern !== undefined) {
     if (typeof schema.pattern !== "string") return `${path}: pattern must be a string`;
     try { compilePattern(schema.pattern); } catch { return `${path}: pattern does not compile`; }
+    const unsafe = unsafePatternReason(schema.pattern);
+    if (unsafe) return `${path}: ${unsafe}`;
   }
   if (schema.properties !== undefined) {
     if (!isObject(schema.properties)) return `${path}: properties must be an object`;
@@ -74,9 +78,22 @@ function typeOf(value: unknown, wanted: string): boolean {
   }
 }
 
+/** Equal as JSON values: objects by their members, whatever the order of their keys. */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => sameJson(v, b[i]));
+  }
+  if (!isObject(a) || !isObject(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && sameJson(a[k], b[k]));
+}
+
 class Validation {
   problems: SchemaProblem[] = [];
   private patterns = new Map<string, RegExp>();
+  /** Work spent on patterns so far, bounded across the whole answer. */
+  private workSpent = 0;
   constructor(private readonly maxProblems: number) {}
 
   private fail(path: string, message: string): void {
@@ -95,10 +112,10 @@ class Validation {
       const types = (Array.isArray(schema.type) ? schema.type : [schema.type]) as string[];
       if (!types.some((t) => typeOf(value, t))) return this.fail(path, `must be ${types.join(" or ")}`);
     }
-    if (Array.isArray(schema.enum) && !schema.enum.some((e) => JSON.stringify(e) === JSON.stringify(value))) {
+    if (Array.isArray(schema.enum) && !schema.enum.some((e) => sameJson(e, value))) {
       this.fail(path, `must be one of ${JSON.stringify(schema.enum).slice(0, 200)}`);
     }
-    if (schema.const !== undefined && JSON.stringify(schema.const) !== JSON.stringify(value)) {
+    if (schema.const !== undefined && !sameJson(schema.const, value)) {
       this.fail(path, `must be ${JSON.stringify(schema.const).slice(0, 200)}`);
     }
     if (typeof value === "string") this.checkString(value, schema, path);
@@ -111,7 +128,18 @@ class Validation {
     const length = [...value].length;
     if (typeof schema.minLength === "number" && length < schema.minLength) this.fail(path, `must have at least ${schema.minLength} characters`);
     if (typeof schema.maxLength === "number" && length > schema.maxLength) this.fail(path, `must have at most ${schema.maxLength} characters`);
-    if (typeof schema.pattern === "string" && !this.regex(schema.pattern).test(value)) this.fail(path, `must match ${schema.pattern}`);
+    if (typeof schema.pattern === "string") this.checkPattern(value, schema.pattern, path);
+  }
+
+  /** Test `value` against `pattern` only within the bounds that keep the test short. */
+  private checkPattern(value: string, pattern: string, path: string): void {
+    // `checkSchema` refuses these up front; a caller validating without it is refused here.
+    if (unsafePatternReason(pattern)) return this.fail(path, `cannot be checked against an unsafe pattern`);
+    const limit = patternInputLimit(pattern);
+    if (value.length > limit) return this.fail(path, `is too long to check against its pattern (more than ${limit} characters)`);
+    this.workSpent += patternWork(pattern, value.length);
+    if (this.workSpent > MAX_PATTERN_WORK) return this.fail(path, "cannot be checked: the answer holds too much text to match against patterns");
+    if (!this.regex(pattern).test(value)) this.fail(path, `must match ${pattern}`);
   }
 
   private checkNumber(value: number, schema: Schema, path: string): void {

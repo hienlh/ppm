@@ -75,4 +75,36 @@ describe("ExtensionAiLimiter", () => {
     (await next)();
     expect(await codeOf(limiter.acquire("ext", AbortSignal.abort()))).toBe("ABORTED");
   });
+
+  it("caps calls across every extension at eight, however many names they arrive under", async () => {
+    const limiter = new ExtensionAiLimiter({ setTimer: () => 0, clearTimer: () => {} });
+    const releases: (() => void)[] = [];
+    for (let i = 0; i < 8; i++) releases.push(await limiter.acquire(`ext-${i}`));
+    let ninthAdmitted = false;
+    const ninth = limiter.acquire("ext-new").then((r) => { ninthAdmitted = true; return r; });
+    await Promise.resolve();
+    expect(ninthAdmitted).toBe(false);
+    expect(limiter.totalRunning()).toBe(8);
+    releases[3]!();
+    (await ninth)();
+    expect(ninthAdmitted).toBe(true);
+    for (const r of releases) r();
+    expect(limiter.totalRunning()).toBe(0);
+  });
+
+  it("admits a waiter whose own lane has room before one whose lane is full", async () => {
+    const limiter = new ExtensionAiLimiter({ maxInFlight: 2, maxTotal: 3, setTimer: () => 0, clearTimer: () => {} });
+    const a1 = await limiter.acquire("a");
+    await limiter.acquire("a");
+    const b1 = await limiter.acquire("b");
+    const order: string[] = [];
+    void limiter.acquire("a").then((r) => { order.push("a"); return r; });
+    void limiter.acquire("b").then((r) => { order.push("b"); return r; });
+    b1();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(order).toEqual(["b"]);
+    a1();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(order).toEqual(["b", "a"]);
+  });
 });

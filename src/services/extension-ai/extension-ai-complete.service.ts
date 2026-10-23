@@ -7,7 +7,13 @@
  *
  * The whole call, retry included, shares one deadline (`timeoutMs`), counted from the moment
  * the slot is granted. Aborting `signal` stops the provider call itself. Every call ends with
- * one log line — extension, provider, model, account, time, tokens, outcome — never the prompt.
+ * one log line — extension, provider, model, account, time, tokens, web searches, outcome —
+ * never the prompt.
+ *
+ * The extension id comes from the worker, which every extension shares, so it is checked twice
+ * before it names a queue or reaches the log: it must look like an extension id, and it must
+ * name an installed, enabled extension. The limiter's total cap is what bounds an extension
+ * that borrows another's id.
  */
 import { addUsage, OneShotError, oneShotCodeOf, type OneShotUsage } from "../../providers/one-shot-error.ts";
 import { providerRegistry } from "../../providers/registry.ts";
@@ -15,7 +21,11 @@ import type { OneShotInput, OneShotResult } from "../../types/chat.ts";
 import { createLogger } from "../logger.ts";
 import { pickOneShotAccount, type PickedAccount } from "./extension-ai-account.ts";
 import { ExtensionAiLimiter } from "./extension-ai-limiter.ts";
-import { validateAiCompleteRequest, type AiCompleteRequest, type AiCompleteResult, type AiProviderId } from "./extension-ai-request.ts";
+import {
+  isExtensionId, loggableExtensionId, validateAiCompleteRequest,
+  type AiCompleteRequest, type AiCompleteResult, type AiProviderId,
+} from "./extension-ai-request.ts";
+import { getExtensionById } from "../db.service.ts";
 import { extractJson } from "./json-extract.ts";
 import { formatProblems, validateJson } from "./json-schema-lite.ts";
 
@@ -29,7 +39,9 @@ export interface OneShotProvider {
 export interface ExtensionAiDeps {
   limiter: ExtensionAiLimiter;
   provider(id: AiProviderId): OneShotProvider | undefined;
-  pickAccount(provider: AiProviderId, explicit?: string): PickedAccount;
+  pickAccount(provider: AiProviderId, explicit?: string): PickedAccount | Promise<PickedAccount>;
+  /** Whether `id` names an extension allowed to call: installed and enabled. */
+  isKnownExtension(id: string): boolean;
   now(): number;
 }
 
@@ -42,6 +54,7 @@ export const defaultExtensionAiDeps: ExtensionAiDeps = {
     return p && typeof p.completeOnce === "function" ? p as OneShotProvider : undefined;
   },
   pickAccount: pickOneShotAccount,
+  isKnownExtension: (id) => getExtensionById(id)?.enabled === 1,
   now: () => Date.now(),
 };
 
@@ -113,7 +126,7 @@ async function runWithSchema(
 async function run(request: AiCompleteRequest, signal: AbortSignal, deps: ExtensionAiDeps, spent: Spent): Promise<AiCompleteResult> {
   const provider = deps.provider(request.provider);
   if (!provider) throw new OneShotError("PROVIDER_UNAVAILABLE", `The ${request.provider} provider is not available`);
-  const picked = deps.pickAccount(request.provider, request.accountId);
+  const picked = await deps.pickAccount(request.provider, request.accountId);
   spent.accountId = picked.accountId;
   const deadline = deps.now() + request.timeoutMs;
   const schema = request.jsonSchema;
@@ -148,6 +161,10 @@ export async function completeForExtension(
   extensionId: string, raw: unknown, signal: AbortSignal, deps: ExtensionAiDeps = defaultExtensionAiDeps,
 ): Promise<AiCompleteResult> {
   const startedAt = deps.now();
+  if (!isExtensionId(extensionId) || !deps.isKnownExtension(extensionId)) {
+    log.warn(`ai.complete refused: unknown extension ${loggableExtensionId(extensionId)}`);
+    throw new OneShotError("BAD_REQUEST", "extensionId does not name an installed, enabled extension");
+  }
   const request = validateAiCompleteRequest(raw);
   const spent: Spent = { usage: { inputTokens: 0, outputTokens: 0 } };
   let outcome = "ok";
@@ -165,6 +182,6 @@ export async function completeForExtension(
   } finally {
     log.info(`ai.complete ext=${extensionId} provider=${request.provider} model=${request.model} `
       + `account=${spent.accountId ?? "default"} ms=${deps.now() - startedAt} `
-      + `in=${spent.usage.inputTokens} out=${spent.usage.outputTokens} outcome=${outcome}`);
+      + `in=${spent.usage.inputTokens} out=${spent.usage.outputTokens} searches=${spent.usage.webSearches ?? 0} outcome=${outcome}`);
   }
 }

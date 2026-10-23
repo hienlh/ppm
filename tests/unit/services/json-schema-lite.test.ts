@@ -92,3 +92,41 @@ describe("json-schema-lite keywords", () => {
     expect(validateJson(Array.from({ length: 50 }, (_, i) => i), schema)).toHaveLength(10);
   });
 });
+
+describe("json-schema-lite values and patterns", () => {
+  it("compares enum and const objects by value, whatever the key order", () => {
+    expect(validateJson({ b: 2, a: 1 }, { enum: [{ a: 1, b: 2 }] })).toEqual([]);
+    expect(validateJson({ b: 2, a: [1, { y: 0, x: 1 }] }, { const: { a: [1, { x: 1, y: 0 }], b: 2 } })).toEqual([]);
+    expect(paths({ a: 1 }, { const: { a: 1, b: 2 } })).toEqual(["$"]);
+    expect(paths([1, 2], { const: [2, 1] })).toEqual(["$"]);
+  });
+
+  it("refuses patterns that backtrack without bound before anything is spent", () => {
+    for (const pattern of ["^(a+)+$", "(a|aa)*b", "^(\\d+\\.)*$", "(.*a){3}", "(a)\\1", "(?<x>a)\\k<x>", "\\d*\\d*\\d*x", "x".repeat(257)]) {
+      expect(checkSchema({ type: "string", pattern })).not.toBeNull();
+    }
+    for (const pattern of ["^https?://", "^\\d{4}-\\d{2}-\\d{2}$", "^[a-z-]+$", "^(?:ab)?c+$", "[(+)]*x", "\\(a+\\)+"]) {
+      expect(checkSchema({ type: "string", pattern })).toBeNull();
+    }
+  });
+
+  it("never runs a catastrophic pattern on the thread, even when handed one without checkSchema", () => {
+    const startedAt = performance.now();
+    // 27 a's: long enough to take a measurable while if it ran (each a doubles it), short
+    // enough that a build without the guard still finishes this test.
+    const problems = validateJson("a".repeat(27) + "b", { type: "string", pattern: "^(a+)+$" });
+    expect(performance.now() - startedAt).toBeLessThan(50);
+    expect(problems.map((p) => p.message)).toEqual(["cannot be checked against an unsafe pattern"]);
+  });
+
+  it("bounds the text tested against the patterns it allows", () => {
+    const two = { type: "string", pattern: "\\d*\\d*x" };
+    expect(paths("1".repeat(501), two)).toEqual(["$"]);
+    const startedAt = performance.now();
+    const many = validateJson(Array.from({ length: 40 }, () => "1".repeat(500)), { type: "array", items: two }, 100);
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    expect(many.some((p) => p.message.includes("too much text"))).toBe(true);
+    // A pattern with no unbounded repeat runs on long strings: a long URL still passes.
+    expect(validateJson("https://x.test/" + "q".repeat(3_000), { type: "string", pattern: "^https?://" })).toEqual([]);
+  });
+});
