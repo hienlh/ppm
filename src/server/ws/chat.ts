@@ -4,7 +4,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, getSessionPermissionMode, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
 import { describeApprovalInput } from "../../services/notification-format.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
@@ -27,6 +27,8 @@ import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/sub
 import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
+import { sessionBindingFor } from "../../services/extension-session-binding.service.ts";
+import { clampBoundPermissionMode } from "../../providers/extension-tool-policy.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
 import { dbApprovalBroker, setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
@@ -193,6 +195,8 @@ export interface SessionEntry {
   currentUserMessage?: string;
   streamPromise?: Promise<void>;
   permissionMode?: string;
+  /** An extension changed this session's binding while it could not be restarted; done at the next idle moment. */
+  bindingRestartPending?: boolean;
   /** Per-session model override; falls back to provider default when undefined */
   model?: string;
   /** Whether the persistent event consumer loop is running */
@@ -483,6 +487,52 @@ export function dropIdleSubprocess(sessionId: string, reason: string, note: stri
 export function hasBackgroundWork(sessionId: string): boolean {
   if ((activeSessions.get(sessionId)?.backgroundToolUseIds?.size ?? 0) > 0) return true;
   return backgroundShellRegistry.list(sessionId).some((sh) => sh.status !== "stopped");
+}
+
+/**
+ * Put a changed extension binding in force. A live subprocess keeps the system prompt, tools
+ * and policy it was started with, so it is restarted like a model switch restarts it: at once
+ * when the session is idle, otherwise at the first idle moment — the end of the running turn,
+ * or of a later one while background work is still running, since that is never killed for
+ * this. Until then the session runs under the binding it started with. Answers whether the
+ * restart is still to come.
+ */
+export function applyBindingChange(sessionId: string): { pendingRestart: boolean } {
+  const id = resolveMigratedSession(sessionId);
+  const entry = activeSessions.get(id);
+  // No entry means no subprocess of ours: dropping the entry is what ends one.
+  if (!entry) return { pendingRestart: false };
+  entry.bindingRestartPending = true;
+  restartForBindingIfIdle(id);
+  return { pendingRestart: entry.bindingRestartPending === true };
+}
+
+/**
+ * The mode a chat an extension bound with a tool policy really runs in, which the picker does
+ * not show (bypass and plan are clamped); null for every other chat, and when the stored
+ * binding cannot be read — the turn itself refuses that one.
+ */
+function boundPermissionModeFor(sessionId: string, picked: string | undefined): string | null {
+  try {
+    if (!sessionBindingFor(sessionId)?.toolPolicy) return null;
+    return clampBoundPermissionMode(picked ?? getSessionPermissionMode(sessionId) ?? undefined);
+  } catch {
+    return null;
+  }
+}
+
+function restartForBindingIfIdle(sessionId: string): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry?.bindingRestartPending) return;
+  // A message queued behind the turn that just ended would be lost with the subprocess.
+  const busy = entry.phase !== "idle" || !!entry.pendingApprovalEvent || (entry.nextTurns?.length ?? 0) > 0 || hasBackgroundWork(sessionId);
+  if (busy) return;
+  entry.bindingRestartPending = false;
+  dropIdleSubprocess(
+    sessionId,
+    "extension_binding",
+    "Subprocess restarted: the extension that manages this chat changed its instructions, tools or policy, the next message starts under them",
+  );
 }
 
 /** Tear down the longest-idle subprocesses once too many sessions are holding one. */
@@ -1655,6 +1705,10 @@ export async function startSessionConsumer(sessionId: string, providerId: string
         // token; restart it now rather than let the next message open with a 401. Deferred so
         // the drop does not close the query from inside the loop that is reading it.
         setTimeout(() => dropStaleIdle(tokenRotationDeps), 0);
+        if (entry.bindingRestartPending) {
+          const idleId = sessionId;
+          setTimeout(() => restartForBindingIfIdle(idleId), 0);
+        }
         // Reset heartbeat tracking for next turn
         firstEventReceived = false;
         startTime = Date.now();
@@ -1766,6 +1820,7 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, existing),
         turnStop: existing.phase === "idle" ? lastTurnStop(sessionId) : null,
+        boundPermissionMode: boundPermissionModeFor(sessionId, existing.permissionMode),
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -1815,6 +1870,7 @@ export const chatWebSocket = {
       compactStatus: null,
       model: resolveSessionModel(sessionId),
       turnStop: lastTurnStop(sessionId),
+      boundPermissionMode: boundPermissionModeFor(sessionId, newEntry.permissionMode),
     }));
 
     // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
@@ -1916,6 +1972,7 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, entry),
         turnStop: entry.phase === "idle" ? lastTurnStop(sessionId) : null,
+        boundPermissionMode: boundPermissionModeFor(sessionId, entry.permissionMode),
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
@@ -2075,6 +2132,9 @@ export const chatWebSocket = {
             });
           } catch (e) {
             log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);
+            // Refused before it reached the model (a chat whose extension was removed, say):
+            // the person who typed it is told, rather than left waiting on nothing.
+            ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));
             return;
           }
         }

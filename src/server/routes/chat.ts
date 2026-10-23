@@ -48,6 +48,7 @@ import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
 import { createLogger } from "../../services/logger.ts";
+import { copyBindingToFork } from "../../services/extension-session-binding.service.ts";
 
 const log = createLogger("chat");
 
@@ -824,6 +825,21 @@ chatRoutes.delete("/sessions/:id/tag", (c) => {
   }
 });
 
+/**
+ * A fork of a chat an extension bound keeps that binding, owner and creator mark included, so
+ * editing a message or forking can never yield a chat more open than its source. If that
+ * cannot be recorded the fork is deleted rather than left behind as an ordinary chat.
+ */
+async function carryBindingToFork(providerId: string, sourceId: string, forkId: string): Promise<void> {
+  try {
+    copyBindingToFork(sourceId, forkId);
+  } catch (e) {
+    await chatService.deleteSession(providerId, forkId)
+      .catch((deleteErr) => log.error(`fork ${forkId} of bound session ${sourceId} left unbound: ${(deleteErr as Error).message}`));
+    throw e;
+  }
+}
+
 /** POST /chat/sessions/:id/fork — fork session into a new one (for rewind/branch) */
 chatRoutes.post("/sessions/:id/fork", async (c) => {
   try {
@@ -856,8 +872,10 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         });
         // Register forked session with provider + DB so it's tracked in memory
         setSessionMetadata(result.sessionId, projectName, projectPath);
-        // Before the resume below: a fork of a design chat must stay a design chat.
+        // Before the resume below: a fork of a design chat must stay a design chat, and a
+        // fork of a chat an extension bound stays bound.
         copySessionDesignSettings(sourceId, result.sessionId);
+        await carryBindingToFork(providerId, sourceId, result.sessionId);
         // Persist the inherited user-set title so the collapsed-tree head shows
         // it regardless of the SDK-derived summary.
         if (inheritedTitle) setSessionTitle(result.sessionId, inheritedTitle);
@@ -922,6 +940,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
       });
       if (inheritedTitle) setSessionTitle(session.id, inheritedTitle);
       copySessionDesignSettings(sourceId, session.id);
+      await carryBindingToFork(providerId, sourceId, session.id);
       return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     }
   } catch (e) {

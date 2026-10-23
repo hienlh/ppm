@@ -56,7 +56,9 @@ describe("schema", () => {
     expect(tables).toContain("extension_session_bindings");
     expect(tables).toContain("extension_mcp_toolsets");
     expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: CURRENT_SCHEMA_VERSION });
-    expect(CURRENT_SCHEMA_VERSION).toBe(59);
+    expect(CURRENT_SCHEMA_VERSION).toBe(60);
+    const columns = (db.query("PRAGMA table_info(extension_session_bindings)").all() as { name: string }[]).map((c) => c.name);
+    expect(columns).toContain("extension_removed_at");
   });
 });
 
@@ -130,13 +132,14 @@ describe("lifetime", () => {
     expect(getExtensionSessionBinding(sessionId)).toBeNull();
   });
 
-  it("deletes the extension's bindings and toolsets with the extension, and nobody else's", async () => {
+  it("closes the extension's bindings and deletes its toolsets with the extension, and nobody else's", async () => {
     const mine = await create();
     const theirs = await create(OTHER);
     getDb().query("INSERT INTO extension_mcp_toolsets (extension_id, toolset_id, tools_json, updated_at) VALUES (?, 'fg', '[]', 'now')").run(EXT);
     deleteExtension(EXT);
-    expect(getExtensionSessionBinding(mine.sessionId)).toBeNull();
-    expect(getExtensionSessionBinding(theirs.sessionId)).not.toBeNull();
+    // Kept as a record that the chat is closed, so it can never run as an ordinary chat.
+    expect(getExtensionSessionBinding(mine.sessionId)?.extension_removed_at).toBeString();
+    expect(getExtensionSessionBinding(theirs.sessionId)?.extension_removed_at).toBeNull();
     expect(getDb().query("SELECT COUNT(*) AS n FROM extension_mcp_toolsets WHERE extension_id = ?").get(EXT)).toEqual({ n: 0 });
   });
 

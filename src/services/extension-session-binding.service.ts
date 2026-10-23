@@ -1,7 +1,7 @@
 import { providerRegistry } from "../providers/registry.ts";
 import { clampBoundPermissionMode } from "../providers/extension-tool-policy.ts";
 import {
-  deleteExtensionSessionBinding, getExtensionSessionBinding, getSessionProvider, insertExtensionSessionBinding,
+  copyExtensionSessionBinding, deleteExtensionSessionBinding, getExtensionSessionBinding, getSessionProvider, insertExtensionSessionBinding,
   resolveMigratedSession, updateExtensionSessionBinding, type ExtensionSessionBindingRow,
 } from "./db.service.ts";
 import {
@@ -18,8 +18,13 @@ import {
  * extension off a person's chats and off other extensions' sessions; it is not isolation
  * against a hostile one (extensions are trusted code).
  *
- * A change applies from the next provider session start: a live Claude query keeps the
- * system prompt, tools and policy it was started with.
+ * A live Claude query keeps the system prompt, tools and policy it was started with, so a
+ * change is put in force by restarting it (the `chat:bind` handler does, once it is idle).
+ *
+ * The binding outlives what it came from in both directions. A fork or an edited version of
+ * a bound chat gets a copy, so it is never more open than its source. And when the owning
+ * extension is removed the row stays, marked: the chat is closed rather than unbound, since
+ * an unbound chat would run with every tool.
  */
 
 export const BINDING_CLAUDE_ONLY = "Chỉ hỗ trợ Claude";
@@ -48,7 +53,7 @@ function findRow(sessionId: string): ExtensionSessionBindingRow | null {
 
 function ownedRow(sessionId: string, extensionId: string): ExtensionSessionBindingRow {
   const row = findRow(sessionId);
-  if (row && row.extension_id === extensionId) return row;
+  if (row && row.extension_id === extensionId && !row.extension_removed_at) return row;
   const providerId = getSessionProvider(resolveMigratedSession(sessionId));
   if (providerId && !providerSupportsBinding(providerId)) throw new Error(BINDING_CLAUDE_ONLY);
   throw new Error("Session was not created as bindable by this extension");
@@ -89,6 +94,12 @@ export function sessionBindingFor(sessionId: string): ExtensionSessionBinding | 
   return row ? parseRow(row) : null;
 }
 
+/** A fork (or an edited version) of a bound chat: the same owner and binding, closed if the source is. */
+export function copyBindingToFork(sourceId: string, forkId: string): void {
+  const row = findRow(sourceId);
+  if (row) copyExtensionSessionBinding(row.session_id, forkId);
+}
+
 export function deleteSessionBinding(sessionId: string): void {
   deleteExtensionSessionBinding(sessionId);
   const current = resolveMigratedSession(sessionId);
@@ -106,8 +117,12 @@ export interface BoundTurnOptions {
  * deliver a binding refuses the turn rather than run it with the policy silently dropped.
  */
 export function boundTurnOptions(providerId: string, sessionId: string, permissionMode: string | undefined): BoundTurnOptions | null {
-  const binding = sessionBindingFor(sessionId);
-  if (!binding) return null;
+  const row = findRow(sessionId);
+  if (!row) return null;
+  if (row.extension_removed_at) {
+    throw new Error(`The extension that managed this chat (${row.extension_id}) was removed, so the chat is closed`);
+  }
+  const binding = parseRow(row);
   const instructions = binding.instructions?.trim() ? binding.instructions : undefined;
   if (!instructions && !binding.toolPolicy && binding.toolsets.length === 0) return null;
   if (!providerSupportsBinding(providerId)) {

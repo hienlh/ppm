@@ -41,7 +41,11 @@ export interface PpmChatToolPolicy {
   allowTools?: string[];
 }
 
-/** A field left out keeps its value; `null` clears it. Applies from the next session start. */
+/**
+ * A field left out keeps its value; `null` clears it. Applies from the session's next turn:
+ * an idle chat's subprocess is restarted at once, a busy one when it is next idle (see
+ * `PpmChatBindResult.pendingRestart`).
+ */
 export interface PpmChatBindOptions {
   /** Appended to the system prompt; at most 64 KB. */
   instructions?: string | null;
@@ -57,6 +61,14 @@ export interface PpmChatBinding {
   toolsets: string[];
   toolPolicy: PpmChatToolPolicy | null;
   updatedAt: string;
+}
+
+export interface PpmChatBindResult extends PpmChatBinding {
+  /**
+   * True when a turn or background work was running: it finishes under the previous binding,
+   * and the change applies once the session is next idle. False when it applies to the next turn.
+   */
+  pendingRestart: boolean;
 }
 
 export interface PpmChatSession {
@@ -114,9 +126,9 @@ export interface PpmChat {
   /** Resolves with the final state once no turn runs; rejects when `timeoutMs` passes first. */
   waitForIdle(sessionId: string, options?: PpmChatWaitOptions): Promise<PpmChatState>;
   /** Only a session this extension created with `bindable: true`. */
-  bind(sessionId: string, options: PpmChatBindOptions): Promise<PpmChatBinding>;
-  /** Clears instructions, toolsets and policy; the session stays bindable. */
-  unbind(sessionId: string): Promise<void>;
+  bind(sessionId: string, options: PpmChatBindOptions): Promise<PpmChatBindResult>;
+  /** Clears instructions, toolsets and policy; the session stays bindable. Restarts like `bind`. */
+  unbind(sessionId: string): Promise<{ pendingRestart: boolean }>;
   getBinding(sessionId: string): Promise<PpmChatBinding>;
 }
 
@@ -141,8 +153,11 @@ export function createPpmChat(rpc: RpcClient, extensionId: string): PpmChat {
     state,
     lastAssistantText: (sessionId) => rpc.request<string | null>("chat:lastAssistantText", { sessionId }),
     openTab: (sessionId) => rpc.request<{ opened: boolean }>("chat:openTab", { sessionId, extensionId }),
-    bind: (sessionId, options) => rpc.request<PpmChatBinding>("chat:bind", { sessionId, extensionId, binding: options }),
-    unbind: async (sessionId) => { await rpc.request("chat:unbind", { sessionId, extensionId }); },
+    bind: (sessionId, options) => rpc.request<PpmChatBindResult>("chat:bind", { sessionId, extensionId, binding: options }),
+    unbind: async (sessionId) => {
+      const { pendingRestart } = await rpc.request<{ pendingRestart: boolean }>("chat:unbind", { sessionId, extensionId });
+      return { pendingRestart };
+    },
     getBinding: (sessionId) => rpc.request<PpmChatBinding>("chat:getBinding", { sessionId, extensionId }),
     async waitForIdle(sessionId, options = {}) {
       const pollMs = options.pollMs ?? DEFAULT_POLL_MS;

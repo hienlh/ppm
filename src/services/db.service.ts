@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 59;
+export const CURRENT_SCHEMA_VERSION = 60;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1313,6 +1313,12 @@ export function runMigrations(database: Database): void {
     `);
     database.exec(`PRAGMA user_version = 59;`);
   }
+  if (current < 60) {
+    // When the extension that owned a binding was removed. The row is kept as the record
+    // that its chat is closed: deleting it would turn the chat into an ordinary one.
+    try { database.exec("ALTER TABLE extension_session_bindings ADD COLUMN extension_removed_at TEXT"); } catch { /* column exists */ }
+    database.exec(`PRAGMA user_version = 60;`);
+  }
 }
 
 /**
@@ -2532,8 +2538,11 @@ export function deleteExtension(id: string): void {
   const database = getDb();
   database.transaction(() => {
     database.query("DELETE FROM extensions WHERE id = ?").run(id);
-    // What the extension attached to its chats and the toolsets it registered go with it.
-    database.query("DELETE FROM extension_session_bindings WHERE extension_id = ?").run(id);
+    // Its toolsets go with it. Its bound chats stay bound and become closed: dropping the
+    // binding would hand each of them every tool the next time someone typed into it.
+    database.query(
+      "UPDATE extension_session_bindings SET extension_removed_at = ? WHERE extension_id = ? AND extension_removed_at IS NULL",
+    ).run(new Date().toISOString(), id);
     database.query("DELETE FROM extension_mcp_toolsets WHERE extension_id = ?").run(id);
   })();
 }
@@ -2562,6 +2571,8 @@ export interface ExtensionSessionBindingRow {
   toolsets_json: string;
   tool_policy_json: string | null;
   updated_at: string;
+  /** Set once the owning extension is removed: the chat is closed for good. */
+  extension_removed_at: string | null;
 }
 
 export function getExtensionSessionBinding(sessionId: string): ExtensionSessionBindingRow | null {
@@ -2582,6 +2593,27 @@ export function updateExtensionSessionBinding(
   getDb().query(
     "UPDATE extension_session_bindings SET instructions = ?, toolsets_json = ?, tool_policy_json = ?, updated_at = ? WHERE session_id = ?",
   ).run(fields.instructions, fields.toolsetsJson, fields.toolPolicyJson, new Date().toISOString(), sessionId);
+}
+
+/**
+ * Give a fork the binding of the chat it came from, owner and creator mark included, in one
+ * transaction — closed if the source is closed.
+ */
+export function copyExtensionSessionBinding(sourceSessionId: string, targetSessionId: string): void {
+  const database = getDb();
+  database.transaction(() => {
+    database.query(`
+      INSERT OR REPLACE INTO extension_session_bindings
+        (session_id, extension_id, instructions, toolsets_json, tool_policy_json, updated_at, extension_removed_at)
+      SELECT ?, extension_id, instructions, toolsets_json, tool_policy_json, ?, extension_removed_at
+      FROM extension_session_bindings WHERE session_id = ?
+    `).run(targetSessionId, new Date().toISOString(), sourceSessionId);
+    database.query(`
+      INSERT INTO session_metadata (session_id, created_by_extension)
+      SELECT ?, extension_id FROM extension_session_bindings WHERE session_id = ?
+      ON CONFLICT(session_id) DO UPDATE SET created_by_extension = excluded.created_by_extension
+    `).run(targetSessionId, sourceSessionId);
+  })();
 }
 
 export function deleteExtensionSessionBinding(sessionId: string): void {
