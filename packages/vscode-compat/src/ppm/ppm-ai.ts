@@ -19,9 +19,14 @@ export interface PpmAiCompleteRequest {
   /** The answer must be JSON matching this schema; it comes back parsed in `json`. Keywords
    *  enforced: type (incl. `integer`, lists such as `["string","null"]`), enum, const,
    *  properties, required, additionalProperties, items, min/maxItems, min/maxLength, pattern,
-   *  minimum/maximum, exclusiveMinimum/Maximum. Others are ignored. At most 64 KB. */
+   *  minimum/maximum, exclusiveMinimum/Maximum. Others are ignored. At most 64 KB. A `pattern`
+   *  is refused when it could backtrack without bound: over 256 characters, backreferences, a
+   *  repeated group holding a repeat or `|`, or more than two unbounded repeats. */
   jsonSchema?: Record<string, unknown>;
-  /** Let the model search and read the web (Claude: WebSearch + WebFetch). */
+  /**
+   * Let the model search the web. Claude gets WebSearch only — no WebFetch, so no page it finds
+   * can have it send the prompt to a URL. Codex gets live search with its shell and subagents off.
+   */
   webSearch?: boolean;
   /** Run on this account; otherwise the usable one with the lowest 5-hour use. */
   accountId?: string;

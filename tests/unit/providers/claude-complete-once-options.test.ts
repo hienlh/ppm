@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { accountSelector } from "../../../src/services/account-selector.service.ts";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
@@ -40,10 +41,10 @@ describe("buildClaudeOneShotOptions", () => {
     expect(o.maxTurns).toBe(3);
   });
 
-  it("allows exactly the two web tools, for up to 12 turns", () => {
+  it("allows web search alone — no fetch of a URL a page could name — for up to 12 turns", () => {
     const o = buildClaudeOneShotOptions({ ...base, webSearch: true, jsonSchema: SCHEMA }, ctx, run) as Record<string, unknown>;
-    expect(o.tools).toEqual(["WebSearch", "WebFetch"]);
-    expect(o.allowedTools).toEqual(["WebSearch", "WebFetch"]);
+    expect(o.tools).toEqual(["WebSearch"]);
+    expect(o.allowedTools).toEqual(["WebSearch"]);
     expect(o.maxTurns).toBe(12);
     expect(o.outputFormat).toEqual({ type: "json_schema", schema: SCHEMA });
   });
@@ -128,5 +129,61 @@ describe("claudeCompleteOnce", () => {
     const aborted = new AbortController();
     aborted.abort();
     expect((await claudeCompleteOnce({ ...base, signal: aborted.signal }, oneShotCtx(bad.runQuery)).catch((e) => e)).code).toBe("ABORTED");
+  });
+
+  it("counts the web searches the call ran", async () => {
+    const { runQuery } = fakeQuery([success({ usage: { input_tokens: 10, output_tokens: 4, server_tool_use: { web_search_requests: 3 } } })]);
+    const result = await claudeCompleteOnce({ ...base, webSearch: true }, oneShotCtx(runQuery));
+    expect(result.webSearches).toBe(3);
+  });
+});
+
+describe("claudeCompleteOnce account health", () => {
+  const named = () => accountService.add({
+    email: "h@x", accessToken: "a-h", refreshToken: "r-h", expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  });
+  const spies: { mockRestore(): void }[] = [];
+  afterEach(() => { for (const s of spies.splice(0)) s.mockRestore(); });
+  const spy = <K extends "onRateLimit" | "onUsageLimit" | "onAuthError">(name: K) => {
+    const s = spyOn(accountSelector, name);
+    spies.push(s);
+    return s;
+  };
+  const failed = { type: "result", subtype: "error_during_execution", is_error: true };
+
+  it("a rate limit cools the account down, as a chat turn does", async () => {
+    const a = named();
+    const onRateLimit = spy("onRateLimit");
+    const { runQuery } = fakeQuery([{ type: "assistant", error: "rate_limit", message: {} }, failed]);
+    expect((await claudeCompleteOnce({ ...base, accountId: a.id }, oneShotCtx(runQuery)).catch((e) => e)).code).toBe("RATE_LIMITED");
+    expect(onRateLimit).toHaveBeenCalledWith(a.id);
+  });
+
+  it("a usage limit naming its reset cools the account down until then", async () => {
+    const a = named();
+    const onUsageLimit = spy("onUsageLimit");
+    const text = "You've hit your session limit · resets 11:30pm";
+    const { runQuery } = fakeQuery([{ type: "assistant", message: { content: [{ type: "text", text }] } }, failed]);
+    expect((await claudeCompleteOnce({ ...base, accountId: a.id }, oneShotCtx(runQuery)).catch((e) => e)).code).toBe("RATE_LIMITED");
+    expect(onUsageLimit).toHaveBeenCalledTimes(1);
+    expect(onUsageLimit.mock.calls[0]![0]).toBe(a.id);
+    expect(new Date(onUsageLimit.mock.calls[0]![1] as number).getHours()).toBe(23);
+  });
+
+  it("a 401 marks the account's sign-in as failing and reports NO_ACCOUNT", async () => {
+    const a = named();
+    const onAuthError = spy("onAuthError");
+    const text = "Failed to authenticate. API Error: 401 {\"type\":\"error\"}";
+    const { runQuery } = fakeQuery([{ type: "assistant", message: { content: [{ type: "text", text }] } }, failed]);
+    expect((await claudeCompleteOnce({ ...base, accountId: a.id }, oneShotCtx(runQuery)).catch((e) => e)).code).toBe("NO_ACCOUNT");
+    expect(onAuthError).toHaveBeenCalledWith(a.id);
+  });
+
+  it("a 429 reported only in the result's errors still cools the account down", async () => {
+    const a = named();
+    const onRateLimit = spy("onRateLimit");
+    const { runQuery } = fakeQuery([{ ...failed, errors: ["API Error: 429 rate_limit_error"] }]);
+    expect((await claudeCompleteOnce({ ...base, accountId: a.id }, oneShotCtx(runQuery)).catch((e) => e)).code).toBe("RATE_LIMITED");
+    expect(onRateLimit).toHaveBeenCalledWith(a.id);
   });
 });
