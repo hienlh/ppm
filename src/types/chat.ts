@@ -179,6 +179,8 @@ export interface OneShotResult {
   structured?: unknown;
   inputTokens: number;
   outputTokens: number;
+  /** Web searches the call ran, billed apart from tokens; absent when there were none. */
+  webSearches?: number;
   /** The account that answered; absent when the provider's own sign-in did. */
   accountId?: string;
 }

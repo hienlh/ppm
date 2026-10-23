@@ -21,6 +21,8 @@ export type OneShotErrorCode =
 export interface OneShotUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Web searches the call ran, billed apart from tokens; absent when there were none. */
+  webSearches?: number;
 }
 
 export class OneShotError extends Error {
@@ -47,8 +49,10 @@ export function oneShotCodeOf(error: unknown): OneShotErrorCode {
 
 /** Sum two usages; either may be missing. */
 export function addUsage(a: OneShotUsage | undefined, b: OneShotUsage | undefined): OneShotUsage {
+  const webSearches = (a?.webSearches ?? 0) + (b?.webSearches ?? 0);
   return {
     inputTokens: (a?.inputTokens ?? 0) + (b?.inputTokens ?? 0),
     outputTokens: (a?.outputTokens ?? 0) + (b?.outputTokens ?? 0),
+    ...(webSearches > 0 && { webSearches }),
   };
 }

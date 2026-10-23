@@ -1,18 +1,26 @@
 /**
  * Codex one-shot: one short-lived app-server per call, bound to the account's CODEX_HOME,
- * running one ephemeral thread (read-only sandbox, approvals never) and one turn, read until
- * `turn/completed`. The app-server is closed — its process killed — on every way out: an
- * answer, a failure, the deadline and a cancel. Killing it is what stops a cancelled turn
- * from spending; `turn/interrupt` is sent first but not waited for.
+ * running one ephemeral thread (read-only sandbox, approvals never, shell and subagents off)
+ * and one turn, read until `turn/completed`. On every way out — an answer, a failure, the
+ * deadline and a cancel — the app-server's whole process tree is killed. Killing only the
+ * `bun x` wrapper is not enough: on Windows that leaves the native `codex.exe` it started
+ * running, mid-turn and still spending. `turn/interrupt` is sent first but not waited for.
  *
  * A schema goes in as the turn's `outputSchema`. A turn refused for that schema runs once
- * more without it, so the caller's prompt-and-validate path still gets a chance.
- * Web search is the thread's `config.web_search = "live"`.
+ * more without it, on a fresh thread so the refused prompt is not paid for twice, giving the
+ * caller's prompt-and-validate path a chance. Web search is the thread's
+ * `config.web_search = "live"`.
+ *
+ * What the call learns about its account is recorded as a chat records it: a signed-out login
+ * ends the call at codex's first retry notice and benches the account, a usage limit parks it,
+ * and an answer clears a sign-out mark.
  */
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, type CloseHandler, type NotificationHandler, type ServerRequestHandler } from "./codex-jsonrpc-client.ts";
 import { codexOneShotThreadParams, codexOneShotTurnParams, CodexOneShotCollector, isSchemaRefusal, type CodexTurnEnd } from "./codex-one-shot-turn.ts";
+import { codexAccountProblemError, recordCodexAccountAnswered, recordCodexAccountProblem } from "./codex-one-shot-account-health.ts";
 import { isCodexUsageLimit } from "./codex-usage-limit.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { OneShotError } from "../one-shot-error.ts";
 import type { OneShotInput, OneShotResult } from "../../types/chat.ts";
 
@@ -22,6 +30,8 @@ export const CODEX_ONE_SHOT_DEFAULT_TIMEOUT_MS = 180_000;
 
 /** The part of `CodexJsonRpcClient` a one-shot uses; tests pass a fake app-server. */
 export interface OneShotRpcClient {
+  /** The spawned process, whose tree is killed when the call ends. */
+  readonly pid?: number;
   start(opts: { cwd?: string; codexHome?: string; purpose?: "control" }): void;
   request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
   notify(method: string, params?: unknown): void;
@@ -36,7 +46,16 @@ export interface CodexOneShotContext {
   cwd: string;
   /** The account's CODEX_HOME; absent means the machine's own ~/.codex login. */
   codexHome?: string;
+  /** The managed account behind `codexHome`, whose health the call records. */
+  accountId?: string;
   createClient?: () => OneShotRpcClient;
+}
+
+/** Stop the app-server and everything under it. The tree is walked while its root still lives. */
+function killAppServer(client: OneShotRpcClient): void {
+  const pid = client.pid;
+  if (pid) { try { killProcessTree(pid); } catch { /* already gone */ } }
+  client.close();
 }
 
 export async function codexCompleteOnce(input: OneShotInput, ctx: CodexOneShotContext): Promise<OneShotResult> {
@@ -58,6 +77,20 @@ export async function codexCompleteOnce(input: OneShotInput, ctx: CodexOneShotCo
   );
   const onAbort = () => fail(new OneShotError("ABORTED", "The call was cancelled", { usage: usage() }));
   input.signal?.addEventListener("abort", onAbort, { once: true });
+  collector.onAccountProblem = (problem) => {
+    recordCodexAccountProblem(ctx.accountId, problem);
+    fail(codexAccountProblemError(problem, usage()));
+  };
+
+  const startThread = async (): Promise<string> => {
+    const thread = await race(client.request<{ thread?: { id?: string } }>(
+      "thread/start", codexOneShotThreadParams({ ...input, cwd: ctx.cwd }), CONTROL_REQUEST_TIMEOUT_MS,
+    ));
+    const id = typeof thread?.thread?.id === "string" ? thread.thread.id : null;
+    if (!id) throw new OneShotError("PROVIDER_ERROR", "Codex started no thread");
+    collector.follow(id);
+    return id;
+  };
 
   const runTurn = async (outputSchema: Record<string, unknown> | undefined): Promise<CodexTurnEnd> => {
     collector.resetAnswer();
@@ -80,21 +113,20 @@ export async function codexCompleteOnce(input: OneShotInput, ctx: CodexOneShotCo
     client.start({ cwd: ctx.cwd, ...(ctx.codexHome ? { codexHome: ctx.codexHome } : {}), purpose: "control" });
     await race(client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS));
     client.notify("initialized");
-    const thread = await race(client.request<{ thread?: { id?: string } }>(
-      "thread/start", codexOneShotThreadParams({ ...input, cwd: ctx.cwd }), CONTROL_REQUEST_TIMEOUT_MS,
-    ));
-    threadId = typeof thread?.thread?.id === "string" ? thread.thread.id : null;
-    if (!threadId) throw new OneShotError("PROVIDER_ERROR", "Codex started no thread");
+    threadId = await startThread();
 
     let end = await runTurn(input.jsonSchema);
     if (end.status !== "completed" && input.jsonSchema && isSchemaRefusal(end.error ?? "")) {
+      threadId = await startThread();
       end = await runTurn(undefined);
     }
     if (end.status !== "completed") {
+      const usageLimited = isCodexUsageLimit(end.error ?? "");
+      if (usageLimited) recordCodexAccountProblem(ctx.accountId, { kind: "usage", reason: end.error! });
       const reason = redactTruncate(end.error || `turn ${end.status}`, 300);
-      const code = isCodexUsageLimit(reason) ? "RATE_LIMITED" : "PROVIDER_ERROR";
-      throw new OneShotError(code, `Codex did not answer: ${reason}`, { usage: usage() });
+      throw new OneShotError(usageLimited ? "RATE_LIMITED" : "PROVIDER_ERROR", `Codex did not answer: ${reason}`, { usage: usage() });
     }
+    recordCodexAccountAnswered(ctx.accountId);
     return { text: collector.answer(), ...usage() };
   } catch (error) {
     if (error instanceof OneShotError) {
@@ -107,9 +139,10 @@ export async function codexCompleteOnce(input: OneShotInput, ctx: CodexOneShotCo
   } finally {
     clearTimeout(timer);
     input.signal?.removeEventListener("abort", onAbort);
+    collector.onAccountProblem = null;
     if (turnRunning && threadId && collector.turnId) {
       client.request("turn/interrupt", { threadId, turnId: collector.turnId }).catch(() => {});
     }
-    client.close();
+    killAppServer(client);
   }
 }

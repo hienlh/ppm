@@ -47,6 +47,7 @@ import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-to
 import { mapCodexEvent, parseTokenUsage } from "./codex-event-mapper.ts";
 import { recordFileChangeBaselines } from "./codex-file-baselines.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
+import { threadIdFromNotification } from "./codex-notification-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
 import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
@@ -284,20 +285,7 @@ function createEventChannel(): EventChannel {
   };
 }
 
-/** The app-server puts the owner thread on every item notification.  An
- * `agentThreadId` inside a SubAgentActivity is the newly spawned child, so it
- * must never be used here: that would nest the launch card inside itself. */
-export function threadIdFromNotification(params: unknown): string | null {
-  if (!params || typeof params !== "object") return null;
-  const p = params as Record<string, unknown>;
-  const direct = p.threadId ?? p.thread_id;
-  if (typeof direct === "string" && direct) return direct;
-  const thread = p.thread;
-  if (thread && typeof thread === "object" && typeof (thread as Record<string, unknown>).id === "string") {
-    return (thread as Record<string, unknown>).id as string;
-  }
-  return null;
-}
+export { threadIdFromNotification };
 
 /**
  * Drop a model id that isn't a codex model. PPM's per-session model can fall back
@@ -1366,7 +1354,7 @@ export class CodexAppServerProvider implements AIProvider {
     if (input.accountId && !account) throw new OneShotError("NO_ACCOUNT", "That Codex account no longer exists");
     const cwd = join(getPpmDir(), "one-shot");
     mkdirSync(cwd, { recursive: true });
-    const result = await codexCompleteOnce(input, { cwd, ...(account ? { codexHome: account.home } : {}) });
+    const result = await codexCompleteOnce(input, { cwd, ...(account ? { codexHome: account.home, accountId: account.id } : {}) });
     return account ? { ...result, accountId: account.id } : result;
   }
 

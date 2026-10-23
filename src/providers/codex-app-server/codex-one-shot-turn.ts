@@ -10,6 +10,8 @@
  */
 import type { JsonRpcNotification } from "./codex-protocol.ts";
 import type { OneShotUsage } from "../one-shot-error.ts";
+import { threadIdFromNotification } from "./codex-notification-thread.ts";
+import { codexAccountProblemOf, type CodexAccountProblem } from "./codex-one-shot-account-health.ts";
 
 export interface CodexOneShotParamsInput {
   cwd: string;
@@ -17,6 +19,22 @@ export interface CodexOneShotParamsInput {
   systemPrompt: string;
   webSearch?: boolean;
 }
+
+/**
+ * Tool surfaces a one-shot never needs, switched off with the same dotted keys as
+ * `codex -c features.<name>=false`. A read-only sandbox still offers a shell that can read any
+ * file, and under live web search a page could ask for one to be read and sent on; subagents
+ * would open threads the call does not watch; apps and plugins reach accounts beyond the call.
+ * Each key was checked with `codex -c features.<name>=false features list` (codex-cli 0.163.0).
+ * `unified_exec` is left out: that override did not take effect on that version.
+ */
+export const CODEX_ONE_SHOT_FEATURES_OFF: Readonly<Record<string, false>> = {
+  "features.shell_tool": false,
+  "features.multi_agent": false,
+  "features.image_generation": false,
+  "features.apps": false,
+  "features.plugins": false,
+};
 
 export function codexOneShotThreadParams(input: CodexOneShotParamsInput): Record<string, unknown> {
   return {
@@ -26,7 +44,7 @@ export function codexOneShotThreadParams(input: CodexOneShotParamsInput): Record
     approvalPolicy: "never",
     ephemeral: true,
     ...(input.systemPrompt.trim() ? { developerInstructions: input.systemPrompt } : {}),
-    config: { web_search: input.webSearch ? "live" : "disabled" },
+    config: { web_search: input.webSearch ? "live" : "disabled", ...CODEX_ONE_SHOT_FEATURES_OFF },
   };
 }
 
@@ -53,22 +71,37 @@ type Obj = Record<string, unknown>;
 const asObj = (v: unknown): Obj => (v && typeof v === "object" ? v as Obj : {});
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-/** Notifications of one thread folded into its answer, its token count and its last error. */
+/**
+ * Notifications of the call's own thread folded into its answer, its token count and its last
+ * error. One app-server also streams any thread the model spawns, so a notification naming
+ * another thread is dropped: a child's `turn/completed` must not end the call with the child's
+ * text. A notification naming no thread is taken as the call's own, as the chat path does.
+ */
 export class CodexOneShotCollector {
   private deltas = "";
   private lastMessage: string | null = null;
-  private usage: OneShotUsage = { inputTokens: 0, outputTokens: 0 };
+  /** Token totals per thread the call started; a schema retry runs on a thread of its own. */
+  private usageByThread = new Map<string, OneShotUsage>();
+  private searches = 0;
+  private current: string | null = null;
   /** The last error codex reported for good (retry notices are not errors). */
   lastError = "";
   turnId: string | null = null;
   private onEnd: ((end: CodexTurnEnd) => void) | null = null;
+  /** Told about a signed-out or spent account the moment codex names it. */
+  onAccountProblem: ((problem: CodexAccountProblem) => void) | null = null;
+
+  /** From now on, only this thread's notifications count. */
+  follow(threadId: string): void {
+    this.current = threadId;
+  }
 
   /** Called once when the running turn ends. */
   awaitEnd(fn: (end: CodexTurnEnd) => void): void {
     this.onEnd = fn;
   }
 
-  /** A second turn on the same thread starts from an empty answer. */
+  /** A new turn starts from an empty answer. */
   resetAnswer(): void {
     this.deltas = "";
     this.lastMessage = null;
@@ -78,6 +111,8 @@ export class CodexOneShotCollector {
 
   handle(notif: JsonRpcNotification): void {
     const p = asObj(notif.params);
+    const threadId = threadIdFromNotification(notif.params);
+    if (threadId && threadId !== this.current) return;
     switch (notif.method) {
       case "turn/started": {
         const id = asObj(p.turn).id;
@@ -90,17 +125,20 @@ export class CodexOneShotCollector {
       case "item/completed": {
         const item = asObj(p.item);
         if (item.type === "agentMessage" && typeof item.text === "string") this.lastMessage = item.text;
+        if (item.type === "webSearch") this.searches++;
         return;
       }
       case "thread/tokenUsage/updated": {
-        // `total` is the thread's running sum, which covers a second turn as well.
+        // `total` is the thread's running sum.
         const total = asObj(asObj(p.tokenUsage).total);
         if (typeof total.inputTokens === "number") {
-          this.usage = { inputTokens: num(total.inputTokens), outputTokens: num(total.outputTokens) };
+          this.usageByThread.set(threadId ?? this.current ?? "", { inputTokens: num(total.inputTokens), outputTokens: num(total.outputTokens) });
         }
         return;
       }
       case "error": {
+        const problem = codexAccountProblemOf(notif.params);
+        if (problem) this.onAccountProblem?.(problem);
         if (p.willRetry === true) return;
         const err = asObj(p.error);
         this.lastError = typeof err.message === "string" ? err.message : typeof p.message === "string" ? p.message : "codex error";
@@ -128,7 +166,9 @@ export class CodexOneShotCollector {
   }
 
   tokens(): OneShotUsage {
-    return { ...this.usage };
+    let inputTokens = 0, outputTokens = 0;
+    for (const u of this.usageByThread.values()) { inputTokens += u.inputTokens; outputTokens += u.outputTokens; }
+    return { inputTokens, outputTokens, ...(this.searches > 0 && { webSearches: this.searches }) };
   }
 }
 
