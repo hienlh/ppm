@@ -3,6 +3,7 @@ import { createPpmChat, type PpmChat } from "./ppm-chat.ts";
 import { createPpmAi, type PpmAi } from "./ppm-ai.ts";
 import { createPpmUsage, createPpmPresence, type PpmUsage, type PpmPresence } from "./ppm-usage.ts";
 import { createPpmMcp, type PpmMcp } from "./ppm-mcp.ts";
+import { createPpmNotify, type PpmNotify } from "./ppm-notify.ts";
 
 /**
  * `api.ppm` — what PPM offers an extension beyond the VSCode API. Each area is a file of its
@@ -20,6 +21,8 @@ export interface PpmNamespace {
   presence: PpmPresence;
   /** Tools served to the chats the extension bound. */
   mcp: PpmMcp;
+  /** Tell the person through PPM's own fan-out (push, Telegram, ntfy). */
+  notify: PpmNotify;
 }
 
 /** `mcp` is passed in when the caller also needs its host half (the extension host does). */
@@ -30,5 +33,6 @@ export function createPpmNamespace(rpc: RpcClient, extensionId: string, mcp: Ppm
     usage: createPpmUsage(rpc),
     presence: createPpmPresence(rpc),
     mcp,
+    notify: createPpmNotify(rpc, extensionId),
   };
 }

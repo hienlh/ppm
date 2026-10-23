@@ -40,6 +40,9 @@ export {
   type PpmMcp, type PpmMcpToolset, type PpmMcpToolDefinition, type PpmMcpCallContext, type PpmMcpToolResult,
   type PpmMcpToolHandler, type PpmMcpRegistration, type PpmMcpHost,
 } from "./ppm/ppm-mcp.ts";
+export {
+  PpmNotifyError, type PpmNotify, type PpmNotifyRequest, type PpmNotifyOutcome, type PpmNotifyErrorCode,
+} from "./ppm/ppm-notify.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";
