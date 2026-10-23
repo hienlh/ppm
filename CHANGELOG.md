@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.17] - 2026-10-23
+
+### Fixed
+
+- **Codex can ask and wait for your answer in Default mode**, then continue the same turn without switching to Plan.
+- **Codex async questions now show selectable answers**, retain their answered state after reload, and send replies back to the conversation.
+
 ## [0.23.16] - 2026-10-22
 
 ### Fixed
