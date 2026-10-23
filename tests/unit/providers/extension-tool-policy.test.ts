@@ -121,8 +121,8 @@ describe("extensionToolDecision — writes", () => {
 
 describe("extensionToolDecision — every other tool", () => {
   it("denies questions, shell, subagents, web, skills, team tools and foreign MCP", () => {
-    expect(decide("AskUserQuestion", { questions: [] })).toEqual({ decision: "deny", reason: "Hãy hỏi bằng tin nhắn thường trong chat" });
-    expect(decide("ExitPlanMode", {})).toEqual({ decision: "deny", reason: "Hãy hỏi bằng tin nhắn thường trong chat" });
+    expect(decide("AskUserQuestion", { questions: [] })).toEqual({ decision: "deny", reason: "Ask the question as an ordinary message in the chat instead" });
+    expect(decide("ExitPlanMode", {})).toEqual({ decision: "deny", reason: "Ask the question as an ordinary message in the chat instead" });
     for (const tool of ["Bash", "PowerShell", "Agent", "Task", "WebFetch", "WebSearch", "Skill", "TeamCreate", "SendMessage",
       "TodoWrite", "mcp__github__create_issue", "mcp__ppm-tabs__open_file", "mcp__ppm-db__db_query", "SomethingNew"]) {
       expect(decide(tool, {})).toEqual({ decision: "deny", reason: `${tool} is not available in this chat` });
@@ -174,6 +174,7 @@ describe("path helpers", () => {
     expect(clampBoundPermissionMode("anything")).toBe("acceptEdits");
     expect(clampBoundPermissionMode("acceptEdits")).toBe("acceptEdits");
     expect(clampBoundPermissionMode("default")).toBe("default");
-    expect(clampBoundPermissionMode("plan")).toBe("plan");
+    // Plan mode would wait on a plan approval the policy denies; the policy is the plan.
+    expect(clampBoundPermissionMode("plan")).toBe("acceptEdits");
   });
 });

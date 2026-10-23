@@ -704,7 +704,7 @@ describe("ClaudeAgentSdkProvider", () => {
         expect(await verdict("Read", { file_path: "~/.ssh/id_ed25519" })).toEqual(deny("~/.ssh/id_ed25519 holds credentials and is off limits"));
         expect(await verdict("Bash", { command: "ls" })).toEqual(deny("Bash is not available in this chat"));
         expect(await verdict("WebFetch", { url: "https://example.com" })).toEqual(deny("WebFetch is not available in this chat"));
-        expect(await verdict("AskUserQuestion", { questions: [] })).toEqual(deny("Hãy hỏi bằng tin nhắn thường trong chat"));
+        expect(await verdict("AskUserQuestion", { questions: [] })).toEqual(deny("Ask the question as an ordinary message in the chat instead"));
         expect(await verdict("mcp__ppm-tabs__open_file", { path: "a.ts" })).toEqual(deny("mcp__ppm-tabs__open_file is not available in this chat"));
         expect(await verdict("mcp__ppm-db__db_query", {})).toEqual(deny("mcp__ppm-db__db_query is not available in this chat"));
         expect(await verdict("mcp__ppm-ext__fg_notebook_read", {})).toEqual(allow);
@@ -718,7 +718,7 @@ describe("ClaudeAgentSdkProvider", () => {
         const pending = (provider as any).pendingApprovals as Map<string, unknown>;
         const before = pending.size;
         expect(await opts.canUseTool("AskUserQuestion", { questions: [] }))
-          .toEqual({ behavior: "deny", message: "Hãy hỏi bằng tin nhắn thường trong chat" });
+          .toEqual({ behavior: "deny", message: "Ask the question as an ordinary message in the chat instead" });
         expect(await opts.canUseTool("Bash", { command: "ls" })).toEqual({ behavior: "deny", message: "Bash is not available in this chat" });
         const input = { file_path: join(root, "src", "a.ts") };
         expect(await opts.canUseTool("Read", input)).toEqual({ behavior: "allow", updatedInput: input });

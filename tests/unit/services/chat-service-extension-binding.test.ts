@@ -79,7 +79,7 @@ describe("chatService and extension bindings", () => {
 
     expect((await chatService.prepareSendOptions("stub-bind", "bound", "hi")).permissionMode).toBe("acceptEdits");
     expect((await chatService.prepareSendOptions("stub-bind", "bound", "hi", { permissionMode: "default" })).permissionMode).toBe("default");
-    expect((await chatService.prepareSendOptions("stub-bind", "bound", "hi", { permissionMode: "plan" })).permissionMode).toBe("plan");
+    expect((await chatService.prepareSendOptions("stub-bind", "bound", "hi", { permissionMode: "plan" })).permissionMode).toBe("acceptEdits");
   });
 
   it("delivers the binding to the provider on a turn, whoever sent it", async () => {

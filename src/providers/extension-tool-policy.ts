@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { getPpmDir } from "../services/ppm-dir.ts";
 import { getBackupsDir } from "../services/db-backup/db-backup-paths.ts";
-import { canonicalPath, expandHome, isInside, matchesProtectedPath, patternLeavesRoot, relativeInside } from "../services/tool-path-scope.ts";
+import { gitHooksDirs } from "../services/git-hooks-dirs.ts";
+import {
+  canonicalPath, expandHome, isInside, matchesProtectedPath, namesAlternateStream, patternLeavesRoot, relativeInside,
+} from "../services/tool-path-scope.ts";
 import { EXTENSION_MCP_TOOL_PREFIX, type ExtensionToolPolicy } from "../shared/extension-session-binding.ts";
 
 /**
@@ -11,12 +14,25 @@ import { EXTENSION_MCP_TOOL_PREFIX, type ExtensionToolPolicy } from "../shared/e
  * exhaustive: every tool gets an explicit allow or deny, so nothing reaches an approval card
  * or a permission mode's own auto-approvals. Fail-closed throughout — anything that cannot
  * be resolved is denied with the reason the model is told.
+ *
+ * The roots confine what the session touches, not what the user's own tooling later does
+ * with it: anything that tooling runs or obeys on its own belongs in `protectedPaths` (the
+ * list below holds the common ones), and a root at or above the home directory is not a
+ * supported policy — the credential list is a safety net, not a boundary.
  */
 export type ExtensionToolVerdict = { decision: "allow" } | { decision: "deny"; reason: string };
 
 /** Refused inside every write root, at any depth, on top of the policy's own list. */
 export const ALWAYS_PROTECTED_PATHS: readonly string[] = [
-  ".git", ".git/**", "package.json", "bun.lock", "bun.lockb", "bunfig.toml", ".claude/**", ".github/**", "node_modules/**",
+  // The repository, and the hooks git runs on the next commit (plus any folder `core.hooksPath` names).
+  ".git", ".git/**", ".husky/**", ".githooks/**",
+  // Manifests, lockfiles and configs a package manager acts on, running code at the next install.
+  "package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
+  "bunfig.toml", ".npmrc", ".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", "node_modules/**",
+  // Instructions, settings and MCP servers that every other agent chat opened in this folder loads.
+  "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md", ".claude/**", ".codex/**", ".mcp.json",
+  // What runs when the folder is entered (direnv), opened in an editor, or pushed.
+  ".envrc", ".vscode/**", ".github/**",
 ];
 
 /** Tool → the input field naming its target; Glob and Grep default to the session's directory. */
@@ -26,30 +42,40 @@ const READ_TOOLS: Record<string, { field: string; optional: boolean }> = {
 const WRITE_TOOLS: Record<string, string> = { Write: "file_path", Edit: "file_path", MultiEdit: "file_path", NotebookEdit: "notebook_path" };
 /** Questions and plan approval would wait on a person who may not be there. */
 const QUESTION_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
+export const ASK_IN_CHAT_REASON = "Ask the question as an ordinary message in the chat instead";
 /** Only loads the definitions of tools the session already has (deferred MCP tools among them). */
 const ALWAYS_ALLOWED = new Set(["ToolSearch"]);
 
 /**
  * A policy is only enforceable outside bypass mode, where the permission hook does not even
  * run: bypass (or no choice, which falls back to a provider default that is usually bypass)
- * becomes acceptEdits, whose own auto-approvals the policy then overrides tool by tool.
+ * becomes acceptEdits, whose own auto-approvals the policy then overrides tool by tool. Plan
+ * mode goes the same way: the policy denies the plan approval it would end with, so a chat
+ * in it could never leave it, and the policy already is the plan for what may be written.
  */
-export function clampBoundPermissionMode(mode: string | undefined): "default" | "plan" | "acceptEdits" {
-  return mode === "default" || mode === "plan" ? mode : "acceptEdits";
+export function clampBoundPermissionMode(mode: string | undefined): "default" | "acceptEdits" {
+  return mode === "default" ? mode : "acceptEdits";
 }
 
 const ALLOW: ExtensionToolVerdict = { decision: "allow" };
 const deny = (reason: string): ExtensionToolVerdict => ({ decision: "deny", reason });
 
+/** Below the home directory: credentials, and configs that would run code or plant MCP servers in every later chat. */
+const HOME_CREDENTIALS = [
+  ".claude", ".claude.json", ".codex", ".ssh", ".cloudflared", ".gitconfig", ".git-credentials", ".config/git", ".config/gh",
+  ".npmrc", ".yarnrc", ".yarnrc.yml", ".bunfig.toml", ".netrc", ".aws", ".docker", ".kube",
+];
+
 /**
- * Directories holding credentials, refused even inside a root: PPM's own (config database,
- * account tokens), its database snapshots, and the CLIs' and SSH's homes. The real home
- * directory is deliberate for the last four — those tools, not PPM, decide where they live.
+ * Credential folders and files, refused even inside a root: PPM's own (config database,
+ * account tokens), its database snapshots, and the CLIs', SSH's, git's and the package
+ * managers' homes. The real home directory is deliberate — those tools, not PPM, decide
+ * where they live.
  */
 function credentialRoots(): string[] {
-  const homeDirs = [".claude", ".codex", ".ssh", ".cloudflared"].map((dir) => resolve(homedir(), dir));
+  const homeEntries = HOME_CREDENTIALS.map((entry) => resolve(homedir(), entry));
   const moved = [process.env.CLAUDE_CONFIG_DIR, process.env.CODEX_HOME].filter((dir): dir is string => !!dir).map((dir) => resolve(dir));
-  return canonicalRoots([getPpmDir(), getBackupsDir(), ...homeDirs, ...moved]);
+  return canonicalRoots([getPpmDir(), getBackupsDir(), ...homeEntries, ...moved]);
 }
 
 function canonicalRoots(roots: readonly string[]): string[] {
@@ -60,6 +86,7 @@ function canonicalRoots(roots: readonly string[]): string[] {
 function resolveTarget(raw: unknown, cwd: string): { resolved: string; literal: string } | ExtensionToolVerdict {
   if (typeof raw !== "string" || !raw) return deny("The tool call names no path");
   const literal = resolve(cwd, expandHome(raw));
+  if (process.platform === "win32" && namesAlternateStream(literal)) return deny(`${raw} names an NTFS stream, which is not supported`);
   const resolved = canonicalPath(literal);
   if (!resolved) return deny(`${raw} cannot be resolved`);
   if (credentialRoots().some((root) => isInside(resolved, root))) return deny(`${raw} holds credentials and is off limits`);
@@ -79,6 +106,11 @@ function readDecision(toolName: string, input: Record<string, unknown>, policy: 
   return deny(`${String(raw ?? cwd)} is outside the folders this chat may read`);
 }
 
+/** Inside a folder a git config names as its hooks folder (compared as written when it cannot be resolved). */
+function insideGitHooks(target: string): boolean {
+  return gitHooksDirs(target).some((dir) => isInside(target, canonicalPath(dir) ?? resolve(dir)));
+}
+
 function writeDecision(raw: unknown, policy: ExtensionToolPolicy, cwd: string): ExtensionToolVerdict {
   const target = resolveTarget(raw, cwd);
   if ("decision" in target) return target;
@@ -92,10 +124,11 @@ function writeDecision(raw: unknown, policy: ExtensionToolPolicy, cwd: string): 
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") return deny(`${String(raw)} cannot be checked`);
   }
   const patterns = [...ALWAYS_PROTECTED_PATHS, ...(policy.protectedPaths ?? [])];
-  for (const root of roots) {
+  const protectedHere = (root: string) => {
     const rel = relativeInside(target.resolved, root);
-    if (!rel || matchesProtectedPath(rel, patterns)) return deny(`${String(raw)} is protected and cannot be written`);
-  }
+    return !rel || matchesProtectedPath(rel, patterns);
+  };
+  if (roots.some(protectedHere) || insideGitHooks(target.resolved)) return deny(`${String(raw)} is protected and cannot be written`);
   return ALLOW;
 }
 
@@ -105,7 +138,7 @@ export function extensionToolDecision(
   policy: ExtensionToolPolicy,
   cwd: string,
 ): ExtensionToolVerdict {
-  if (QUESTION_TOOLS.has(toolName)) return deny("Hãy hỏi bằng tin nhắn thường trong chat");
+  if (QUESTION_TOOLS.has(toolName)) return deny(ASK_IN_CHAT_REASON);
   const input = toolInput && typeof toolInput === "object" ? toolInput as Record<string, unknown> : {};
   if (READ_TOOLS[toolName]) return readDecision(toolName, input, policy, cwd);
   const writeField = WRITE_TOOLS[toolName];
