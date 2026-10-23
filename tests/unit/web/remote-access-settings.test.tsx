@@ -1,7 +1,7 @@
 /**
  * Settings → Remote Access against a stub server: an open Settings moving to the pane a link
- * asks for, the sub-tabs, and the public link's switch and address — what each control sends,
- * and what it refuses to do without a confirmation. Port forwarding is the sidebar's panel, in
+ * asks for, the sub-tabs, and the public link's and the review address's switch and address —
+ * what each control sends, and what it refuses to do without a confirmation. Port forwarding is the sidebar's panel, in
  * `port-forwarding-panel.test.tsx`.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -20,6 +20,7 @@ const { useWindowStore } = await import("../../../src/web/components/floating-wi
 const { RemoteAccessSettingsSection } = await import("../../../src/web/components/settings/remote-access/remote-access-settings-section");
 const { useRemoteAccessTab } = await import("../../../src/web/components/settings/remote-access/remote-access-tab-store");
 const { PublicLinkPane } = await import("../../../src/web/components/settings/remote-access/public-link-pane");
+const { ReviewLinksPane } = await import("../../../src/web/components/settings/remote-access/review-links-pane");
 
 interface Answer { status?: number; body: unknown }
 type Req = { method: string; url: string; body: unknown };
@@ -43,12 +44,19 @@ const QUICK = {
   login: { state: "idle", url: null, message: null }, liveMode: null, tunnelWarning: null, authEnabled: true,
 };
 const NAMED = { ...QUICK, mode: "named", hostname: "ppm.example.com", tunnelName: "ppm", certState: "ok", liveMode: "named" };
+const SHARE_OFF = {
+  enabled: false, mode: "quick", hostname: null, tunnelName: null, canApply: true, supervised: true, running: false,
+  connected: false, url: null, warning: null, ppmTunnel: { named: false, hostname: null, enabled: false },
+  certState: "ok", authEnabled: true,
+};
+const PPM_ON_DOMAIN = { named: true, hostname: "ppm.example.com", enabled: false };
 
 beforeEach(() => {
   requests = [];
   routes = [
     on("GET", "/api/tunnel", ok(TUNNEL_OFF)),
     on("GET", "/api/tunnel/named/status", ok(QUICK)),
+    on("GET", "/api/share-host/status", ok(SHARE_OFF)),
   ];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const req = {
@@ -98,6 +106,13 @@ function button(text: string, root: ParentNode = document.body): HTMLButtonEleme
 const dialog = () => $('[role="dialog"]');
 const text = () => document.body.textContent ?? "";
 
+async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 describe("Settings navigation", () => {
   const stub = (label: string) => Object.assign(() => <p>{label} pane</p>, { preload: async () => {} }) as never;
   const real = { general: SECTIONS.general, remote: SECTIONS["remote-access"] };
@@ -136,15 +151,19 @@ describe("Settings navigation", () => {
 });
 
 describe("Remote Access sub-tabs", () => {
-  it("starts on Tailscale and switches to the public link; port forwarding is not one of them", async () => {
+  it("starts on Tailscale and switches to the public link and review links; port forwarding is not one of them", async () => {
     view = await mount(<RemoteAccessSettingsSection />);
     expect($('[data-testid="remote-access"]').dataset.tab).toBe("tailscale");
     expect($('[data-testid="remote-access-tab-tailscale"]').getAttribute("aria-selected")).toBe("true");
-    expect([...document.body.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Tailscale", "Public link"]);
+    expect([...document.body.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Tailscale", "Public link", "Review links"]);
 
     await click($('[data-testid="remote-access-tab-public-link"]'));
     await settle();
     expect(document.body.querySelector('[data-testid="public-link-pane"]')).not.toBeNull();
+
+    await click($('[data-testid="remote-access-tab-review-links"]'));
+    await settle();
+    expect(document.body.querySelector('[data-testid="review-links-pane"]')).not.toBeNull();
   });
 
   it("opens on the sub-tab a link picked", async () => {
@@ -250,5 +269,122 @@ describe("Public link", () => {
     // `?relogin=1` moves the old credential aside instead of reusing it.
     expect(sent("POST", "/api/tunnel/named/login?relogin=1")).toHaveLength(1);
     expect(text()).toContain("https://dash.cloudflare.com/argotunnel?x=2");
+  });
+});
+
+describe("Review links", () => {
+  it("turns the review address on, then says where links open once it connects", async () => {
+    let share: Record<string, unknown> = SHARE_OFF;
+    serve(
+      (req) => (req.method === "GET" && req.url === "/api/share-host/status" ? ok(share) : undefined),
+      on("POST", "/api/share-host/enabled", (req) => {
+        share = { ...SHARE_OFF, enabled: (req.body as { enabled: boolean }).enabled, running: true };
+        return ok({ applied: true });
+      }),
+    );
+    view = await mount(<ReviewLinksPane />);
+    await settle();
+    expect($('[data-testid="review-links-status"]').textContent).toBe("Off.");
+
+    await click($("#review-links-switch"));
+    await settle();
+    expect(sent("POST", "/api/share-host/enabled").map((r) => r.body)).toEqual([{ enabled: true }]);
+    expect($('[data-testid="review-links-status"]').textContent).toBe("On. Connecting to Cloudflare…");
+
+    share = { ...share, connected: true, url: "https://quiet-river.trycloudflare.com" };
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect($('[data-testid="review-links-status"]').textContent).toBe("On. Review links open at https://quiet-river.trycloudflare.com");
+  });
+
+  it("will not turn on, or set up a domain, while PPM's password is off", async () => {
+    serve(on("GET", "/api/share-host/status", ok({ ...SHARE_OFF, authEnabled: false })));
+    view = await mount(<ReviewLinksPane />);
+    await settle();
+    expect(($("#review-links-switch") as HTMLButtonElement).disabled).toBe(true);
+    expect(text()).toContain("PPM's password is off, and share links do not open while it is.");
+    expect(buttons("Set up")).toHaveLength(0);
+  });
+
+  it("says a PPM started before review addresses existed applies them after a restart", async () => {
+    serve(on("GET", "/api/share-host/status", ok({ ...SHARE_OFF, enabled: true, canApply: false })));
+    view = await mount(<ReviewLinksPane />);
+    await settle();
+    expect(text()).toContain("Run `ppm restart` to apply these settings.");
+  });
+
+  it("offers PPM's tunnel only once PPM's public link has a domain", async () => {
+    view = await mount(<ReviewLinksPane />);
+    await settle();
+    expect(document.body.querySelector('[data-testid="review-links-setup-named"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-testid="review-links-setup-shared"]')).toBeNull();
+    expect(text()).toContain("set your domain up under Public link first");
+  });
+
+  it("sets a name up on PPM's tunnel, refusing PPM's own address", async () => {
+    serve(
+      on("GET", "/api/share-host/status", ok({ ...SHARE_OFF, ppmTunnel: PPM_ON_DOMAIN })),
+      on("GET", "/api/share-host/zone", ok({ zone: "example.com", proposedHostname: "share.example.com" })),
+      on("POST", "/api/share-host/setup", (req) => ok({
+        hostname: (req.body as { hostname: string }).hostname, tunnelName: "ppm", applied: { applied: true },
+      })),
+    );
+    view = await mount(<ReviewLinksPane />);
+    await settle();
+    await click($('[data-testid="review-links-setup-shared"]'));
+    await settle();
+    expect(($("#named-tunnel-prefix") as HTMLInputElement).value).toBe("share");
+
+    await typeInto($("#named-tunnel-prefix") as HTMLInputElement, "ppm");
+    await click($('[data-testid="review-links-submit"]'));
+    await settle();
+    expect(text()).toContain("That is PPM's own address — pick another prefix");
+    expect(sent("POST", "/api/share-host/setup")).toHaveLength(0);
+
+    await typeInto($("#named-tunnel-prefix") as HTMLInputElement, "review");
+    await click($('[data-testid="review-links-submit"]'));
+    await settle();
+    expect(sent("POST", "/api/share-host/setup").map((r) => r.body)).toEqual([{ mode: "shared", hostname: "review.example.com" }]);
+    expect(document.body.querySelector('[data-testid="review-links-setup"]')).toBeNull();
+  });
+
+  it("asks before signing in to Cloudflare again when the saved sign-in is another account's", async () => {
+    serve(
+      on("GET", "/api/share-host/status", ok({ ...SHARE_OFF, certState: "mismatch" })),
+      on("POST", "/api/tunnel/named/login?relogin=1", ok({ state: "waiting", url: "https://dash.cloudflare.com/argotunnel?x=3", message: null })),
+    );
+    view = await mount(<ReviewLinksPane />);
+    await settle();
+    await click($('[data-testid="review-links-setup-named"]'));
+    await settle();
+    expect(text()).toContain("Cloudflare sign-in needed");
+    expect(requests.filter((r) => r.url.startsWith("/api/tunnel/named/login"))).toHaveLength(0);
+
+    await click(button("Sign in again"));
+    await settle();
+    expect(sent("POST", "/api/tunnel/named/login?relogin=1")).toHaveLength(1);
+    expect(text()).toContain("https://dash.cloudflare.com/argotunnel?x=3");
+  });
+
+  it("gives a domain up for a temporary address only after a confirmation", async () => {
+    serve(
+      on("GET", "/api/share-host/status", ok({
+        ...SHARE_OFF, enabled: true, mode: "named", hostname: "share.example.com", tunnelName: "ppm-share-box",
+        running: true, connected: true, url: "https://share.example.com",
+      })),
+      on("POST", "/api/share-host/quick", ok({ applied: true })),
+    );
+    view = await mount(<ReviewLinksPane />);
+    await settle();
+    expect($('[data-testid="review-links-address"]').querySelector("[data-in-use]")?.textContent).toContain("https://share.example.com");
+
+    await click(button("Switch"));
+    await settle();
+    expect(dialog().textContent).toContain("stop opening at https://share.example.com");
+    expect(sent("POST", "/api/share-host/quick")).toHaveLength(0);
+
+    await click(button("Switch", dialog()));
+    await settle();
+    expect(sent("POST", "/api/share-host/quick")).toHaveLength(1);
   });
 });

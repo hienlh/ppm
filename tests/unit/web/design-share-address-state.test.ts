@@ -5,7 +5,7 @@ import {
 import type { DesignShareAddress } from "../../../src/shared/design-share-types";
 
 const address = (extra: Partial<DesignShareAddress> = {}): DesignShareAddress => ({
-  kind: "none", url: null, warning: null, enabled: false, authEnabled: true, ...extra,
+  kind: "none", url: null, warning: null, via: "ppm", enabled: false, authEnabled: true, ...extra,
 });
 const named = address({ kind: "named", url: "https://ppm.example.com", enabled: true });
 const quick = address({ kind: "quick", url: "https://quiet-river-1.trycloudflare.com", enabled: true });
@@ -22,8 +22,8 @@ describe("share address view", () => {
   });
 
   it("shows the stable address without the temporary warning, and the quick one with it", () => {
-    expect(view(named)).toEqual({ kind: "named", url: "https://ppm.example.com", warning: null });
-    expect(view(quick)).toEqual({ kind: "quick", url: "https://quiet-river-1.trycloudflare.com", warning: null });
+    expect(view(named)).toEqual({ kind: "named", url: "https://ppm.example.com", warning: null, reviewOnly: false });
+    expect(view(quick)).toEqual({ kind: "quick", url: "https://quiet-river-1.trycloudflare.com", warning: null, reviewOnly: false });
   });
 
   it("passes the supervisor's warning through, e.g. a named tunnel that is not connected", () => {
@@ -36,7 +36,7 @@ describe("share address view", () => {
   });
 
   it("is starting for a minute after Start, then failed", () => {
-    const start = { at: now - 1000, reload: "sent" as const, error: null };
+    const start = { at: now - 1000, target: "public" as const, reload: "sent" as const, error: null };
     expect(view(address({ enabled: true }), { start }).kind).toBe("starting");
     expect(view(address({ enabled: true }), { start: { ...start, reload: "busy" } }).kind).toBe("starting");
     const late = view(address({ enabled: true }), { start: { ...start, at: now - SHARE_START_TIMEOUT_MS - 1 } });
@@ -46,9 +46,31 @@ describe("share address view", () => {
   });
 
   it("fails at once when there is no supervisor to act on the switch, or the switch failed", () => {
-    expect(view(address(), { start: { at: now, reload: "no-supervisor", error: null } }).kind).toBe("failed");
-    expect(view(address(), { start: { at: now, reload: null, error: "HTTP 500" } }))
-      .toEqual({ kind: "failed", message: "HTTP 500" });
+    expect(view(address(), { start: { at: now, target: "public", reload: "no-supervisor", error: null } }).kind).toBe("failed");
+    expect(view(address(), { start: { at: now, target: "public", reload: null, error: "HTTP 500" } }))
+      .toEqual({ kind: "failed", message: "HTTP 500", target: "public" });
+  });
+
+  it("marks the review-only address, so the dialog can say PPM itself stays private", () => {
+    const review = address({ kind: "named", url: "https://share.example.com", via: "share-host" });
+    expect(view(review)).toEqual({ kind: "named", url: "https://share.example.com", warning: null, reviewOnly: true });
+    expect(view({ ...review, kind: "quick" })).toMatchObject({ kind: "quick", reviewOnly: true });
+  });
+
+  it("is down rather than offering PPM's link when the review address is on but has no address", () => {
+    const down = address({ via: "share-host", warning: "Not connected to Cloudflare right now — reconnecting." });
+    expect(view(down)).toEqual({ kind: "review-down", warning: "Not connected to Cloudflare right now — reconnecting." });
+  });
+
+  it("starts the review-only address for a minute, then fails naming it", () => {
+    const start = { at: now - 1000, target: "review" as const, reload: "sent" as const, error: null };
+    expect(view(address(), { start })).toEqual({ kind: "starting", target: "review" });
+    expect(view(address({ via: "share-host" }), { start })).toEqual({ kind: "starting", target: "review" });
+    const late = view(address({ via: "share-host" }), { start: { ...start, at: now - SHARE_START_TIMEOUT_MS - 1 } });
+    expect(late).toEqual({ kind: "failed", target: "review", message: "The review-only address did not come up within a minute." });
+    // A change the supervisor could not take says why, at once.
+    expect(view(address(), { start: { ...start, error: "Run `ppm restart` to apply." } }))
+      .toEqual({ kind: "failed", target: "review", message: "Run `ppm restart` to apply." });
   });
 
   it("refuses sharing while PPM sign-in is off, whatever the tunnel is doing", () => {

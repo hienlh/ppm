@@ -259,7 +259,7 @@ export function PublicLinkPane() {
   );
 }
 
-function AddressOption({ title, description, inUse, action }: {
+export function AddressOption({ title, description, inUse, action }: {
   title: string;
   description: ReactNode;
   inUse: boolean;

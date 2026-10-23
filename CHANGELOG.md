@@ -5,6 +5,7 @@
 ### Added
 
 - **Max Turns goes up to 1000, or can be switched off.** Settings → AI Provider accepted 1 to 500 steps per message, so a long task stopped every 500 steps, about every hour and a half, and waited for someone to say continue. 0 now means no limit, and up to 1000 steps are accepted. At 0 or above 500, Settings warns that every step is a paid model call, so a task left running unattended can cost a lot.
+- **Design review links can open without making PPM public.** Share for review now has a **Review-only address** switch: it gives links an address of their own, answered by a separate PPM process that serves the review pages and nothing else (no editor, chat, file, API or sign-in page answers there, whatever is sent), published through Cloudflare. It starts on a temporary trycloudflare address; **Use my domain**, in the same dialog, puts it on your domain, either on a Cloudflare tunnel of its own or added to the tunnel PPM's public link uses (it keeps working with that public link off). While it is on, links are copied with that address only, and the dialog says when an address opens PPM itself. The same settings are in Settings → Remote Access → Review links. It needs PPM sign-in on; a PPM started before this version picks it up after `ppm restart`.
 
 ### Fixed
 

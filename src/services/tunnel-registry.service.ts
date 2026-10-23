@@ -165,16 +165,20 @@ async function recoverUrl(pid: number, metricsAddr: string | null): Promise<stri
 function readAppShare(): AppShare {
   let shareUrl: string | null = null;
   let tunnelPid: number | null = null;
+  let shareHostTunnelPid: number | null = null;
+  let shareHostUrl: string | null = null;
   try {
     const statusFile = resolve(getPpmDir(), "status.json");
     if (existsSync(statusFile)) {
       const s = JSON.parse(readFileSync(statusFile, "utf-8"));
       shareUrl = s.shareUrl ?? null;
       tunnelPid = typeof s.tunnelPid === "number" ? s.tunnelPid : null;
+      shareHostTunnelPid = typeof s.shareHostTunnelPid === "number" ? s.shareHostTunnelPid : null;
+      shareHostUrl = typeof s.shareHostUrl === "string" ? s.shareHostUrl : null;
     }
   } catch { /* ignore */ }
   const serverPort = (configService.get("port") as number | undefined) ?? null;
-  return { shareUrl, tunnelPid, serverPort };
+  return { shareUrl, tunnelPid, serverPort, shareHostTunnelPid, shareHostUrl };
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +271,7 @@ export async function listTunnels(
     if (isAppTunnel(entry, app)) {
       entry.source = "app";
       entry.protected = true;
-      if (!entry.url) entry.url = app.shareUrl;
+      if (!entry.url) entry.url = entry.pid === app.shareHostTunnelPid ? app.shareHostUrl ?? null : app.shareUrl;
     }
   }
 

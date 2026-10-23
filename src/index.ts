@@ -185,10 +185,11 @@ export async function buildProgram(): Promise<Command> {
  */
 export function resolveEntryMode(
   argv: string[],
-): "supervise" | "serve" | "edge" | "cli" {
+): "supervise" | "serve" | "edge" | "share-host" | "cli" {
   if (argv.includes("__supervise__")) return "supervise";
   if (argv.includes("__serve__")) return "serve";
   if (argv.includes("__edge__")) return "edge";
+  if (argv.includes("__share_host__")) return "share-host";
   return "cli";
 }
 
@@ -202,6 +203,9 @@ if (import.meta.main) {
       break;
     case "edge":
       await import("./services/edge-forwarder.ts");
+      break;
+    case "share-host":
+      await import("./services/share-host/share-host-worker.ts");
       break;
     default: {
       // A command's stdout is its output (`--json`, a pipe): log lines go to stderr.
