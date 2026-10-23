@@ -23,7 +23,8 @@ Browser (React)                    ← Zustand store + React components
 - **Package Format:** npm packages (`@ppm/ext-database`, `@ppm/ext-git-graph`, `@ppm/ext-docker`, etc.)
 - **Installation:** `~/.ppm/extensions/node_modules/{id}/`
 - **Lifecycle:** Install → Enable → Activate → Deactivate → Remove
-- **Worker Isolation:** Each activated extension runs in a Bun Worker (crash-safe, 10s activation timeout)
+- **Worker Isolation:** Activated extensions run in one shared Bun Worker (rebuilt if it dies, 10s activation timeout)
+- **PPM API:** `api.ppm.*` — headless chat turns, session binding and tool policy, one-shot AI, usage/presence, MCP toolsets, notifications (`src/services/extension-api/`)
 - **Communication:** RPC (Worker↔Main) + WebSocket (Main↔Browser)
 - **API Shim:** `@ppm/vscode-compat` — VSCode-compatible API (commands, window, workspace)
 - **Subprocess Access:** RPC `process:spawn` handler for extensions needing CLI commands (git, docker, npm, python, etc.)
@@ -176,6 +177,56 @@ Extension metadata defined in `package.json` under `ppm` key:
 
 - Extension can define custom RPC methods via `rpc.onRequest(method, handler)`
 
+**Timeouts.** `RpcChannel` gives a request 10 s unless the caller uses
+`sendRequestWithTimeout` (`requestWithTimeout` in vscode-compat). The dialogs wait 600 s on
+both sides, `process:spawn` its own timeout (default 30 s, capped at 15 min) plus 30 s, and the
+`ppm.*` verbs below set their own. `window:webview:create` takes a sixth parameter, `true`, for
+`preferWindow`.
+
+**Worker generations.** Every worker start bumps a generation (`extension.service.ts`), and
+`openWorkerChannel` (`extension-worker-channel.ts`) binds a channel to that one worker, so a late
+reply from a dead worker never settles the new one's request. A long call registers with
+`extensionCallRegistry` (`extension-api/extension-call-registry.ts`) through `deps.beginCall()`;
+`terminateWorker` ends the generation first, which aborts its AI calls, spawned processes,
+MCP tool calls and open dialogs (the browser gets `quickpick:dismiss` / `inputbox:dismiss` /
+`composer:dismiss`). The worker installs `process.on("uncaughtException" | "unhandledRejection")`
+guards, which are what keep it alive in Bun 1.3.13; when it dies anyway, `recoverWorker`
+rebuilds it and re-activates every enabled extension, at most 3 times in 5 minutes.
+
+**PPM methods (`api.ppm.*`, handled in `src/services/extension-api/`):**
+
+| Method | Answer | Notes |
+|---|---|---|
+| `chat:listProjects` / `chat:createSession` | projects / `{ sessionId, providerId, projectName, title }` | `bindable` (Claude only) records the creator |
+| `chat:send` / `chat:cancel` | `{ sessionId, queued }` / `{ cancelled }` | creator only; 150 s RPC wait; `startHeadlessTurn` |
+| `chat:state` / `chat:lastAssistantText` | `{ running, phase, lastError? }` / text | read-only |
+| `chat:openTab` | `{ opened }` | `tab:open` addressed to the browser that ran a command in the last 10 s |
+| `chat:bind` / `chat:unbind` / `chat:getBinding` | binding + `pendingRestart` | owner only |
+| `ai:complete` / `ai:cancel` / `ai:listModels` | `{ ok, result }` or `{ ok, error: { code } }` | `extension-ai/`; call id is a worker-made UUID |
+| `usage:get` / `presence:get` | summary / snapshot | read-only |
+| `mcp:registerToolset` / `mcp:unregisterToolset` | `{ tools, handle }` / `{ unregistered }` | the handle alone may unregister |
+| `notify:send` | `{ ok, result }` or `{ ok, error: { code } }` | 30/hour per extension |
+
+Main → worker: `ext:mcp:call` (600 s) and `ext:mcp:cancel`, routed by the extension id the main
+thread names. The extension id on every `ppm.*` call is what the shared worker says it is: it
+must name an installed, enabled extension, but nothing proves the caller is that extension.
+
+### Extension MCP tools
+
+`ppm.mcp.registerToolset` registers in `extensionMcpRegistry`
+(`src/services/extension-mcp/extension-mcp-registry.ts`), keyed `<extension>:<toolset>`. A live
+key is never replaced, and only the random handle its registration returned may remove it. Each
+toolset's definitions are saved in `extension_mcp_toolsets` once per extension run, so a chat
+whose query started before the extension registered still lists the tools; a call then answers
+"starting" until the extension is back, or "off" when it is disabled.
+`/api/ext-mcp` (`extension-mcp-endpoint.ts`, mounted before auth, on `createMcpHttpHandler`)
+serves them as the server `ppm-ext` to a chat whose binding names toolsets. Its token
+(`extension-mcp-tokens.ts`) names the session and the extension; every request reads the
+binding again, so an unbind, a changed list or a removed extension applies to the next call as
+an error result. Validation (`src/shared/extension-mcp.ts`, `extension-mcp-input-schema.ts`):
+ids, at most 40 tools, exposed names ≤ 50 characters, a structural check of `inputSchema`
+(local `$ref` only), answers cut at 200 KB.
+
 ### State Storage
 
 **Database Schema:**
@@ -204,6 +255,24 @@ const wsVal = context.workspaceState.get("selectedTable");
 await context.workspaceState.update("selectedTable", "users");
 ```
 
+The startup sweep deletes the Memento rows of an extension no longer on disk.
+
+**Data directory.** `context.globalStoragePath = <ppm dir>/extension-data/<id>`
+(`extension-data-dir.ts`: `@scope/name` → `__scope__name`, any other character outside npm's
+name alphabet refused). The main thread creates it before `ext:activate` and passes it as the
+seventh parameter. It is kept when the extension is removed, and `workspace.fs` /
+`process:spawn` cannot reach it (they are limited to project roots).
+
+**Chat binding tables** (migrations 58–60, `CURRENT_SCHEMA_VERSION = 60`):
+- `session_metadata.created_by_extension` (58): the extension that created a session; only it
+  may `chat:send` / `chat:cancel` / bind it. Moves with a migrated session id.
+- `extension_session_bindings` (59): instructions, toolsets and tool policy per session; copied
+  to a fork, moved on session-id migration, deleted with the session.
+  `extension_removed_at` (60) is the tombstone `deleteExtension` sets instead of deleting, which
+  closes the removed extension's chats.
+- `extension_mcp_toolsets` (59): each toolset's last registered definitions, deleted with the
+  extension.
+
 ### WebSocket Bridge (Extension ↔ Browser)
 
 Extensions interact with the browser UI via a dedicated WebSocket at `/ws/extensions`. The main process translates between Worker RPC and WS messages.
@@ -217,7 +286,11 @@ Extensions interact with the browser UI via a dedicated WebSocket at `/ws/extens
 - Browser user clicks tree item → WS `tree:click` → `extensions.ts` → Worker RPC `ext:command:execute` → CommandService → extension handler
 - Webview iframe postMessage → parent → CustomEvent → WS `webview:message` → Worker RPC `ext:webview:message` → EventEmitter → extension's `onDidReceiveMessage` handler
 
-**Request/response pattern:** QuickPick, InputBox, and notification actions use `requestFromBrowser(msg, trackingId, 30s timeout)` — sends WS message and awaits browser response via pending Promise map.
+**Request/response pattern:** QuickPick, InputBox and the composer use `requestFromBrowser` with a 600 s wait (`askBrowserDialog`, `extension-browser-dialog.ts`) and broadcast a `*:dismiss` however the wait ends; notification actions still wait 30 s.
+
+**Addressed messages.** Each `/ws/extensions` socket gets an id, sent as `client:hello` in reply to `ready`. `command:execute` and `tree:click` remember which socket ran an extension's command; `chat:openTab` and `preferWindow` act only in that browser (`tab:open` carries `clientId`, and another browser ignores it).
+
+**Presence.** Real input on any PPM document sends `presence:input` on `/ws/global` at most once a minute (`presence-input.ts`), and so does a webview's `{ command: "__ppm.userActivity" }`; no other iframe message counts. `presence-tracker.ts` keeps the time in memory only (10-minute window, `PPM_PRESENCE_ACTIVE_MS` overrides it at start).
 
 ### UI Components
 
@@ -446,9 +519,9 @@ Main Process                Worker
 ### Crash Safety
 
 **Worker Isolation:**
-- Each extension in isolated Bun Worker thread
-- Worker crash doesn't crash main process
-- Error events logged, extension marked as failed
+- All extensions share one Bun Worker thread, apart from the main thread
+- Worker crash doesn't crash main process; the host is rebuilt (see Worker generations)
+- An extension's uncaught error is logged and swallowed by the worker's process-level guards
 - Main process continues operating
 
 **Cleanup:**
