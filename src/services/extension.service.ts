@@ -127,6 +127,9 @@ class ExtensionService {
       const code = (event as Event & { code?: number }).code;
       if (this.worker === worker) {
         log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
+        // Fails the requests still waiting on it (an activation in progress) now, rather than
+        // after their full timeout.
+        rpc.dispose();
         void this.recoverWorker("close");
       } else {
         log.debug(`Extension host worker stopped code=${code}`);
@@ -138,34 +141,59 @@ class ExtensionService {
 
   private recovering = false;
   private recoveryTimes: number[] = [];
+  /** Set when the worker a rebuild just started dies too; the rebuild then goes again. */
+  private recoverAgain: string | null = null;
 
   /**
    * A terminated worker leaves `this.worker` non-null, so every later RPC waits
    * the full timeout and fails. Rebuild the host and re-activate whatever was
    * enabled; bounded so a crash-on-activate extension cannot restart-loop.
+   *
+   * A worker that dies while a rebuild is re-activating (the crash-on-activate case) is
+   * rebuilt by that same call and counts against the same bound, so the host is never
+   * left dead without a "giving up" line.
    */
   private async recoverWorker(reason: string): Promise<void> {
-    if (this.recovering) return;
-    const now = Date.now();
-    this.recoveryTimes = this.recoveryTimes.filter((t) => now - t < 5 * 60_000);
-    if (this.recoveryTimes.length >= 3) {
-      log.error(`Worker ${reason} again — 3 recoveries in 5 min, giving up until restart`);
+    if (this.recovering) {
+      this.recoverAgain = reason;
       return;
     }
     this.recovering = true;
-    this.recoveryTimes.push(now);
     try {
-      const toReactivate = getExtensions().filter((row) => row.enabled === 1).map((row) => row.id);
-      log.warn(`Worker ${reason} — rebuilding host and re-activating ${toReactivate.length} extension(s)`);
-      await this.terminateWorker();
-      for (const id of toReactivate) {
-        try { await this.activate(id); } catch (e) {
-          this.activationErrors.set(id, e instanceof Error ? e.message : String(e));
-          log.error(`Failed to re-activate ${id} after worker ${reason}:`, e);
+      let next: string | null = reason;
+      while (next !== null) {
+        this.recoverAgain = null;
+        const now = Date.now();
+        this.recoveryTimes = this.recoveryTimes.filter((t) => now - t < 5 * 60_000);
+        if (this.recoveryTimes.length >= 3) {
+          log.error(`Worker ${next} again — 3 recoveries in 5 min, giving up until restart`);
+          // Drop the dead host, so an extension enabled later starts a fresh one instead of
+          // posting to a thread that no longer exists.
+          await this.terminateWorker();
+          this.broadcastContributions();
+          return;
         }
+        this.recoveryTimes.push(now);
+        await this.rebuildWorker(next);
+        next = this.recoverAgain;
       }
     } finally {
       this.recovering = false;
+      this.recoverAgain = null;
+    }
+  }
+
+  private async rebuildWorker(reason: string): Promise<void> {
+    const toReactivate = getExtensions().filter((row) => row.enabled === 1).map((row) => row.id);
+    log.warn(`Worker ${reason} — rebuilding host and re-activating ${toReactivate.length} extension(s)`);
+    await this.terminateWorker();
+    for (const id of toReactivate) {
+      // The new host died as well: activating the rest against it would only fail.
+      if (this.recoverAgain !== null) break;
+      try { await this.activate(id); } catch (e) {
+        this.activationErrors.set(id, e instanceof Error ? e.message : String(e));
+        log.error(`Failed to re-activate ${id} after worker ${reason}:`, e);
+      }
     }
   }
 
@@ -178,8 +206,9 @@ class ExtensionService {
     this.workerReady = false;
     this.activatedIds.clear();
     this.activationErrors.clear();
-    this.extensionPaths.clear();
-    this.bundledIds.clear();
+    // `extensionPaths` and `bundledIds` describe what is on disk, not this worker: a rebuild
+    // keeps them, or a bundled extension is looked for under node_modules and cannot be
+    // re-activated. Only `shutdown` forgets them.
     contributionRegistry.clear();
   }
 
@@ -402,6 +431,8 @@ class ExtensionService {
       try { await this.deactivate(id); } catch {}
     }
     await this.terminateWorker();
+    this.extensionPaths.clear();
+    this.bundledIds.clear();
   }
 
   isActivated(id: string): boolean { return this.activatedIds.has(id); }
