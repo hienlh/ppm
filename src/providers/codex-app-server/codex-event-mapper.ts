@@ -1,6 +1,7 @@
 import type { ChatEvent } from "../provider.interface.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { codexAsyncQuestionEvent } from "./codex-user-input.ts";
 import { changeToToolUse, fileUpdateChanges } from "./codex-patch.ts";
 import { parseSubagentActivity, subagentToolResult, subagentToolUse } from "./codex-subagent-thread.ts";
 
@@ -237,6 +238,8 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
 
     case "item/completed": {
       const item = asObj(p.item) as Item;
+      const question = codexAsyncQuestionEvent(item);
+      if (question) return [question];
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compact_done" }];
       const subagent = parseSubagentActivity(item);
       // Answers the card opened at `started` — keyed on the thread, because the

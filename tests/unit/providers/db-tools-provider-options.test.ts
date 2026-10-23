@@ -41,7 +41,7 @@ describe("database tools provider options", () => {
       url: access.url, bearer_token_env_var: "PPM_DB_TOOLS_MCP_TOKEN", enabled_tools: ["db_query", "open_query", "db_execute"],
       default_tools_approval_mode: "approve", startup_timeout_sec: 10, tool_timeout_sec: Math.ceil(DB_TOOLS_TIMEOUT_MS / 1000),
     });
-    expect(Object.keys(params.config!)).toEqual(["mcp_servers.ppm_tabs", "mcp_servers.ppm_db"]);
+    expect(Object.keys(params.config!)).toEqual(["features.default_mode_request_user_input", "mcp_servers.ppm_tabs", "mcp_servers.ppm_db"]);
     expect(JSON.stringify(params)).not.toContain("db-secret");
     expect(dbToolsMcpEnv(access)).toEqual({ PPM_DB_TOOLS_MCP_TOKEN: "db-secret" });
     expect(dbToolsMcpEnv(undefined)).toEqual({});

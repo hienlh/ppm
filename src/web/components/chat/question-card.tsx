@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import type { ChatQuestion } from "../../../shared/chat-questions";
 
 /* ── Types ── */
 export interface QuestionOption {
@@ -6,17 +7,13 @@ export interface QuestionOption {
   description?: string;
 }
 
-export interface Question {
-  question: string;
-  header?: string;
-  options: QuestionOption[];
-  multiSelect?: boolean;
-}
+export type Question = ChatQuestion;
 
 interface QuestionCardProps {
   questions: Question[];
   onSubmit: (answers: Record<string, string>) => void;
   onSkip: () => void;
+  autoFocus?: boolean;
 }
 
 /* ── Hook: form state ── */
@@ -81,6 +78,7 @@ function useQuestionKeyboard(config: {
   onSubmit: () => void;
   customInputRef: React.RefObject<HTMLInputElement | null>;
   enabled: boolean;
+  autoFocus: boolean;
 }) {
   const [focusedOption, setFocusedOption] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -139,7 +137,7 @@ function useQuestionKeyboard(config: {
       // Same reason: asking the main document whether focus is already inside the card answers
       // "no" for a card living in another document, and this effect re-runs on every render —
       // which would yank focus out of the custom input after each keystroke.
-      if (!el.contains(el.ownerDocument.activeElement)) el.focus();
+      if (config.autoFocus && !el.contains(el.ownerDocument.activeElement)) el.focus();
     }
     return () => { el?.removeEventListener("keydown", handleKeyDown); };
   }, [config, focusedOption]);
@@ -148,7 +146,7 @@ function useQuestionKeyboard(config: {
 }
 
 /* ── Component ── */
-export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps) {
+export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: QuestionCardProps) {
   const customInputRef = useRef<HTMLInputElement>(null);
   const form = useQuestionForm(questions);
   const currentQ = questions[form.activeTab];
@@ -158,7 +156,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
   const handleSubmit = useCallback(() => {
     if (!form.allAnswered) return;
     const result: Record<string, string> = {};
-    questions.forEach((q, i) => { result[q.question] = form.getFinalAnswer(i); });
+    questions.forEach((q, i) => { result[q.id ?? q.question] = form.getFinalAnswer(i); });
     onSubmit(result);
   }, [form.allAnswered, form.getFinalAnswer, questions, onSubmit]);
 
@@ -182,7 +180,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
     allAnswered: form.allAnswered, hasAnswer: form.hasAnswer,
     onSelectOption: handleSelectOption,
     goToNextTab: form.goToNextTab, goToPrevTab: form.goToPrevTab,
-    onSubmit: handleSubmit, customInputRef, enabled: true,
+    onSubmit: handleSubmit, customInputRef, enabled: true, autoFocus,
   });
 
   const selectWithFocus = useCallback(

@@ -2,6 +2,28 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Codex questions
+
+Blocking `item/tool/requestUserInput` requests use the existing question form.
+The adapter preserves question IDs, normalizes absent options to an empty list,
+and returns answers keyed by Codex IDs (not the displayed question text).
+Skipping returns an empty answer map.
+
+Thread start/resume parameters enable the experimental
+`features.default_mode_request_user_input` flag so Codex can ask and wait in
+Default mode without switching to Plan or changing filesystem permissions.
+This also applies when an account rotation respawns the thread. Verified on
+Codex CLI 0.163.0: holding the RPC response keeps the same turn waiting even
+though its Default-mode request carries `isBlocking: false`.
+
+Async questions arrive on completed `agentMessage` items with `questions`, not
+as approval requests. Live events and rollout history map them to an inline
+`RequestUserInput` card. Answering or skipping sends a normal follow-up message,
+so it works during a turn and after completion without blocking the agent.
+The reply includes the originating item ID; the card derives its answered state
+from that user message after reload. Async cards do not take keyboard focus away
+from the composer. Nested agent questions are read-only in the parent transcript.
+
 ## Codex child stream lifecycle
 
 App-server notifications with an explicit non-root thread ID are nested agent

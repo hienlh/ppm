@@ -116,6 +116,7 @@ export function dbToolsMcpEnv(access: DbToolsMcpAccess | undefined): Record<stri
 export function buildThreadParams(input: ThreadParamsInput): CodexThreadParams {
   const instructions = input.developerInstructions?.trim();
   const config = {
+    "features.default_mode_request_user_input": true,
     ...(input.configOverrides?.config ?? {}),
     ...designMcpConfig(input.designMcp),
     ...tabToolsMcpConfig(input.tabToolsMcp),

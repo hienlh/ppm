@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { AsyncQuestionContext } from "./async-question-card";
 import { Loader2, Upload, X } from "@/lib/icons";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
@@ -1315,7 +1316,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             <span>Starting conversation...</span>
           </div>
         </div>
-      ) : <SessionChangesContext.Provider value={sessionChangesValue}><MessageList
+      ) : <AsyncQuestionContext.Provider value={{ messages: renderedMessages, onSend: isConnected ? (content) => sendMessage(content, { permissionMode }) : undefined }}><SessionChangesContext.Provider value={sessionChangesValue}><MessageList
         messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
@@ -1346,7 +1347,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
-      /></SessionChangesContext.Provider>}
+      /></SessionChangesContext.Provider></AsyncQuestionContext.Provider>}
 
       {/* Agents still working — pinned here so it is the last thing under the conversation */}
       <RunningAgentsBar

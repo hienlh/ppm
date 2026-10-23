@@ -51,6 +51,7 @@ import { getOrFetchUsage, registerUsageSource } from "../../services/provider-us
 import { codexUsageSource } from "./codex-usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { buildUserInputResponse, normalizeCodexQuestions } from "./codex-user-input.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
 import { getRolloutMessagesAsync } from "./codex-history-async.ts";
 import {
@@ -62,7 +63,6 @@ import type {
   ModelListResponse,
   ServerRequest,
   JsonRpcNotification,
-  ToolRequestUserInputResponse,
   Thread,
   UserInput,
   CodexSkill,
@@ -326,24 +326,6 @@ function approvalToolLabel(method: string, params: unknown): string {
   if (method.includes("fileChange") || method === "applyPatchApproval") return "Edit";
   if (method === "item/tool/requestUserInput") return "AskUserQuestion";
   return String(p.tool ?? "Tool");
-}
-
-function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestUserInputResponse {
-  const answers: ToolRequestUserInputResponse["answers"] = {};
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-      answers[k] = { answers: Array.isArray(v) ? v.map(String) : [String(v)] };
-    }
-    return { answers };
-  }
-  const arr = Array.isArray(data) ? data : data != null ? [data] : [];
-  const qs = Array.isArray(questions) ? questions : [];
-  qs.forEach((q, i) => {
-    const qid = (q && typeof q === "object" && ((q as any).id ?? (q as any).questionId)) || String(i);
-    const a = arr[i];
-    answers[qid] = { answers: a != null ? [String(a)] : [] };
-  });
-  return { answers };
 }
 
 /**
@@ -1160,7 +1142,7 @@ export class CodexAppServerProvider implements AIProvider {
       const ppmReqId = crypto.randomUUID();
       const questions = (req.params as { questions?: unknown })?.questions;
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method, questions });
-      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: "AskUserQuestion", input: redactTruncate(req.params) });
+      live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: "AskUserQuestion", input: { questions: normalizeCodexQuestions(questions) } });
       return;
     }
     // permissions/* response is a granted-profile, not a decision → decline.
@@ -1174,7 +1156,7 @@ export class CodexAppServerProvider implements AIProvider {
       if (!pending) continue;
       live.pendingApprovals.delete(requestId);
       if (pending.method === "item/tool/requestUserInput") {
-        this.respondOnce(live, pending.codexId, buildUserInputResponse(pending.questions, data));
+        this.respondOnce(live, pending.codexId, buildUserInputResponse(pending.questions, approved ? data : undefined));
       } else if (isApprovalMethod(pending.method)) {
         this.respondOnce(live, pending.codexId, decisionFor(pending.method as ApprovalMethod, approved));
       }

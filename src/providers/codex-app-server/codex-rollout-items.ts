@@ -1,5 +1,6 @@
 import type { ChatEvent } from "../provider.interface.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { codexAsyncQuestionEvent } from "./codex-user-input.ts";
 import { parseSubagentActivity, type SubagentActivity } from "./codex-subagent-thread.ts";
 import { changeToToolUse, rolloutFileChanges } from "./codex-patch.ts";
 
@@ -161,6 +162,8 @@ export function mapRolloutItem(item: unknown): RolloutItemMapping {
     return text ? { kind: "user", text } : { kind: "ignore" };
   }
   if (type === "AgentMessage") {
+    const question = codexAsyncQuestionEvent(it);
+    if (question) return { kind: "events", events: [question] };
     const text = textFrom(it.content);
     return text ? { kind: "assistant", text } : { kind: "ignore" };
   }

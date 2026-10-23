@@ -626,7 +626,7 @@ function ToolDetails({
         </div>
       );
     case "AskUserQuestion": {
-      const qs = (input.questions as Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }>) ?? [];
+      const qs = (input.questions as Array<{ id?: string; question: string; header?: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }>) ?? [];
       const answers = (input.answers as Record<string, string>) ?? {};
       return (
         <div className="space-y-2">
@@ -635,7 +635,7 @@ function ToolDetails({
               <p className="text-text-primary font-medium">{q.header ? `${q.header}: ` : ""}{q.question}</p>
               <div className="flex flex-wrap gap-1">
                 {q.options.map((opt, oi) => {
-                  const answer = answers[q.question] ?? "";
+                  const answer = answers[q.id ?? q.question] ?? answers[q.question] ?? "";
                   const isSelected = answer.split(", ").includes(opt.label);
                   return (
                     <span key={oi} className={`inline-block rounded px-1.5 py-0.5 text-xs border ${
@@ -646,8 +646,8 @@ function ToolDetails({
                   );
                 })}
               </div>
-              {answers[q.question] && (
-                <p className="text-foreground text-xs">Answer: {answers[q.question]}</p>
+              {(answers[q.id ?? q.question] ?? answers[q.question]) && (
+                <p className="text-foreground text-xs">Answer: {answers[q.id ?? q.question] ?? answers[q.question]}</p>
               )}
             </div>
           ))}

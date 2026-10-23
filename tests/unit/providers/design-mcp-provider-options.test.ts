@@ -19,11 +19,12 @@ describe("design MCP server in provider options", () => {
 
   it("gives Codex one dotted mcp_servers override with the token only in the environment", () => {
     const plain = buildThreadParams({ cwd: "/p", permission, configOverrides: { config: { model_context_window: 1000 } } });
-    expect(plain.config).toEqual({ model_context_window: 1000 });
-    expect(buildThreadParams({ cwd: "/p", permission })).not.toHaveProperty("config");
+    expect(plain.config).toEqual({ "features.default_mode_request_user_input": true, model_context_window: 1000 });
+    expect(buildThreadParams({ cwd: "/p", permission }).config).toEqual({ "features.default_mode_request_user_input": true });
 
     const design = buildThreadParams({ cwd: "/p", permission, configOverrides: { config: { model_context_window: 1000 } }, designMcp: access });
     expect(design.config).toEqual({
+      "features.default_mode_request_user_input": true,
       model_context_window: 1000,
       "mcp_servers.ppm_design": {
         url: access.url, bearer_token_env_var: "PPM_DESIGN_MCP_TOKEN", enabled_tools: ["design_check"],

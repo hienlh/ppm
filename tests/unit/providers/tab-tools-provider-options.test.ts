@@ -37,10 +37,10 @@ describe("tab tools provider options", () => {
       url: access.url, bearer_token_env_var: "PPM_TAB_TOOLS_MCP_TOKEN", enabled_tools: ["open_file", "open_preview", "open_url", "read_terminal", "run_in_terminal"],
       default_tools_approval_mode: "approve", startup_timeout_sec: 10, tool_timeout_sec: 60,
     });
-    expect(Object.keys(params.config!)).toEqual(["mcp_servers.ppm_design", "mcp_servers.ppm_tabs"]);
+    expect(Object.keys(params.config!)).toEqual(["features.default_mode_request_user_input", "mcp_servers.ppm_design", "mcp_servers.ppm_tabs"]);
     expect(JSON.stringify(params)).not.toContain("tok-secret");
     expect(tabToolsMcpEnv(access)).toEqual({ PPM_TAB_TOOLS_MCP_TOKEN: "tok-secret" });
     expect(tabToolsMcpEnv(undefined)).toEqual({});
-    expect(buildThreadParams({ cwd: "/p", permission })).not.toHaveProperty("config");
+    expect(buildThreadParams({ cwd: "/p", permission }).config).toEqual({ "features.default_mode_request_user_input": true });
   });
 });

@@ -12,6 +12,8 @@ import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownContent } from "./message-markdown";
+import { AsyncQuestionCard } from "./async-question-card";
+import { ASYNC_QUESTION_TOOL, type ChatQuestion } from "../../../shared/chat-questions";
 
 /**
  * Renders events in order — consecutive text events merged into one bubble,
@@ -162,6 +164,10 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
               <StreamingText content={group.content} animate={isLast} projectName={projectName} />
             </div>
           );
+        }
+        if (group.tool.type === "tool_use" && group.tool.tool === ASYNC_QUESTION_TOOL && !group.tool.parentToolUseId) {
+          const input = group.tool.input as { questions: ChatQuestion[] };
+          return <AsyncQuestionCard key={group.tool.toolUseId} itemId={group.tool.toolUseId!} questions={input.questions} />;
         }
         return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} completed={group.completed} projectName={projectName} bashPartialOutput={bashPartialOutput} />;
       })}
