@@ -15,7 +15,7 @@ import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { stepHistory } from "./message-history-recall";
 import { toComposerDraft } from "./user-message-parse";
-import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
+import { ModeSelector, getModeLabel, getModeIcon, composerModeFor } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { SlashItem } from "./slash-command-picker";
@@ -131,6 +131,11 @@ interface MessageInputProps {
   permissionMode?: string;
   /** Permission mode change handler */
   onModeChange?: (mode: string) => void;
+  /** The mode an extension-bound chat actually runs in ("default" or "acceptEdits"), from the
+   *  server's own session_state. When set, the chip/picker show this instead of `permissionMode`
+   *  and the picker offers only the modes a bound chat may run in — never bypass or plan, which
+   *  the server would silently clamp anyway. */
+  boundPermissionMode?: string | null;
   /** Current provider ID */
   providerId?: string;
   /** Live session id, when the tab has one. Scopes the slash list to the session's
@@ -185,6 +190,7 @@ export const MessageInput = memo(function MessageInput({
   autoFocus,
   permissionMode,
   onModeChange,
+  boundPermissionMode,
   providerId,
   sessionId,
   onProviderChange,
@@ -197,6 +203,7 @@ export const MessageInput = memo(function MessageInput({
   promptCache,
   configurationPending = false,
 }: MessageInputProps) {
+  const { mode: effectiveMode, allowedModeIds } = composerModeFor(permissionMode, boundPermissionMode);
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
   // This eliminates React re-render on every keystroke — critical for Chromium on iPad.
@@ -1027,14 +1034,15 @@ export const MessageInput = memo(function MessageInput({
         <div className="flex flex-wrap items-center gap-1 px-2 pt-2 md:hidden relative">
           {!configurationPending && <>
           <ModeChip
-            mode={permissionMode ?? "bypassPermissions"}
+            mode={effectiveMode}
             onClick={() => setModeSelectorOpen((v) => !v)}
           />
           <ModeSelector
-            value={permissionMode ?? "bypassPermissions"}
+            value={effectiveMode}
             onChange={(m) => onModeChange?.(m)}
             open={modeSelectorOpen}
             onOpenChange={setModeSelectorOpen}
+            allowedModeIds={allowedModeIds}
           />
           </>}
           {onProviderChange && projectName && (
@@ -1130,14 +1138,15 @@ export const MessageInput = memo(function MessageInput({
             {/* Mode indicator chip */}
             {!configurationPending && <div className="relative shrink-0">
               <ModeChip
-                mode={permissionMode ?? "bypassPermissions"}
+                mode={effectiveMode}
                 onClick={() => setModeSelectorOpen((v) => !v)}
               />
               <ModeSelector
-                value={permissionMode ?? "bypassPermissions"}
+                value={effectiveMode}
                 onChange={(m) => onModeChange?.(m)}
                 open={modeSelectorOpen}
                 onOpenChange={setModeSelectorOpen}
+                allowedModeIds={allowedModeIds}
               />
             </div>}
             {/* Provider selector — only when no active session */}

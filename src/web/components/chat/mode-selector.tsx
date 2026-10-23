@@ -10,6 +10,11 @@ const MODES = [
 
 export type ModeId = typeof MODES[number]["id"];
 
+/** The only modes a policy-bound chat may actually run in: the server clamps everything else
+ *  (plan, bypass) down to "acceptEdits". The picker must not offer a mode the server would
+ *  silently override. */
+export const BOUND_ALLOWED_MODE_IDS: readonly ModeId[] = ["default", "acceptEdits"];
+
 /** Short label for the mode chip */
 export function getModeLabel(id: string): string {
   return MODES.find((m) => m.id === id)?.label ?? "Unknown";
@@ -20,16 +25,40 @@ export function getModeIcon(id: string) {
   return MODES.find((m) => m.id === id)?.icon ?? Hand;
 }
 
+/**
+ * What the composer should display and offer, given the locally-chosen `permissionMode` and the
+ * server's own `boundPermissionMode` (set only for an extension-bound, policy-enforced chat).
+ *
+ * The bound mode always wins for display: the server clamps a bound chat's permission mode to
+ * "default" or "acceptEdits" regardless of what was last picked locally, so showing the local
+ * pick instead (which can still say "bypassPermissions" from before the chat was bound) is what
+ * let the composer claim "Bypass permissions" for a chat the server actually ran as acceptEdits.
+ * The picker is restricted the same way, so it never offers a mode the server would override.
+ */
+export function composerModeFor(
+  permissionMode: string | undefined,
+  boundPermissionMode: string | null | undefined,
+): { mode: string; allowedModeIds: readonly ModeId[] | undefined } {
+  return {
+    mode: boundPermissionMode ?? permissionMode ?? "bypassPermissions",
+    allowedModeIds: boundPermissionMode ? BOUND_ALLOWED_MODE_IDS : undefined,
+  };
+}
+
 interface ModeSelectorProps {
   value: string;
   onChange: (mode: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Restricts the listed options, e.g. `BOUND_ALLOWED_MODE_IDS` for a policy-bound chat.
+   *  Every mode is offered when omitted. */
+  allowedModeIds?: readonly ModeId[];
 }
 
-export function ModeSelector({ value, onChange, open, onOpenChange }: ModeSelectorProps) {
+export function ModeSelector({ value, onChange, open, onOpenChange, allowedModeIds }: ModeSelectorProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const focusedRef = useRef(0);
+  const visibleModes = allowedModeIds ? MODES.filter((m) => allowedModeIds.includes(m.id)) : MODES;
 
   // Close on click outside
   useEffect(() => {
@@ -49,10 +78,10 @@ export function ModeSelector({ value, onChange, open, onOpenChange }: ModeSelect
   // Focus current mode on open
   useEffect(() => {
     if (open) {
-      focusedRef.current = MODES.findIndex((m) => m.id === value);
+      focusedRef.current = visibleModes.findIndex((m) => m.id === value);
       if (focusedRef.current < 0) focusedRef.current = 0;
     }
-  }, [open, value]);
+  }, [open, value, visibleModes]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -62,16 +91,16 @@ export function ModeSelector({ value, onChange, open, onOpenChange }: ModeSelect
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const dir = e.key === "ArrowDown" ? 1 : -1;
-      focusedRef.current = (focusedRef.current + dir + MODES.length) % MODES.length;
+      focusedRef.current = (focusedRef.current + dir + visibleModes.length) % visibleModes.length;
       const el = panelRef.current?.querySelector(`[data-idx="${focusedRef.current}"]`) as HTMLElement;
       el?.focus();
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      const mode = MODES[focusedRef.current];
+      const mode = visibleModes[focusedRef.current];
       if (mode) { onChange(mode.id); onOpenChange(false); }
     }
-  }, [onChange, onOpenChange]);
+  }, [onChange, onOpenChange, visibleModes]);
 
   if (!open) return null;
 
@@ -92,7 +121,7 @@ export function ModeSelector({ value, onChange, open, onOpenChange }: ModeSelect
         </kbd>
       </div>
       <div className="py-1">
-        {MODES.map((mode, idx) => {
+        {visibleModes.map((mode, idx) => {
           const Icon = mode.icon;
           const isActive = mode.id === value;
           return (

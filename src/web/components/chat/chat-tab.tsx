@@ -450,6 +450,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    boundPermissionMode,
     statusMessage,
     sessionTitle,
     liveAccount,
@@ -1434,6 +1435,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             onContentChange={handleContentChange}
             getUserHistory={getUserHistory}
             permissionMode={permissionMode}
+            boundPermissionMode={boundPermissionMode}
             onModeChange={!preparation?.pending && !firstSendPending ? handleModeChange : undefined}
             providerId={preparation?.providerId ?? providerId}
             sessionId={sessionId ?? undefined}

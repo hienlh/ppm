@@ -114,6 +114,13 @@ interface UseChatReturn {
    * the transcript, so every history reload would otherwise wipe it.
    */
   turnStop: TurnStop | null;
+  /**
+   * The mode an extension-bound chat really runs in ("default" or "acceptEdits" — the server
+   * clamps out bypass and plan), from the server's own `session_state`. Null for every other
+   * chat. The composer must show this instead of whatever permission mode is locally selected,
+   * and must not offer bypass when it is set.
+   */
+  boundPermissionMode: string | null;
   statusMessage: string | null;
   sessionTitle: string | null;
   /**
@@ -232,6 +239,7 @@ export function useChat(
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
+  const [boundPermissionMode, setBoundPermissionMode] = useState<string | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -1120,6 +1128,7 @@ export function useChat(
       // replayed prefix was — neither is in the transcript, so a reload has to be told.
       setPromptCache((state.promptCache as PromptCacheState | undefined) ?? null);
       setMcpNeedsAuth(Array.isArray(state.mcpNeedsAuth) ? state.mcpNeedsAuth : []);
+      setBoundPermissionMode(typeof state.boundPermissionMode === "string" ? state.boundPermissionMode : null);
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
       // and the full transcript finished loading moments ago — on boot the WS
@@ -1811,6 +1820,7 @@ export function useChat(
     promptCache,
     mcpNeedsAuth,
     turnStop,
+    boundPermissionMode,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */
