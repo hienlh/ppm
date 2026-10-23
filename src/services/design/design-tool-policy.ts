@@ -1,6 +1,5 @@
-import { lstatSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
+import { canonicalPath, expandHome, isInside, patternLeavesRoot } from "../tool-path-scope.ts";
 
 /**
  * Permission policy for a design session in `acceptEdits` mode: file reads, searches,
@@ -52,60 +51,4 @@ export function designToolDecision(
   const resolved = canonicalPath(resolve(projectPath, expandHome(target)));
   if (!resolved) return "ask";
   return isInside(resolved, root) ? "allow" : "ask";
-}
-
-/** `~` is expanded the way a shell would, so `~/.ssh` is judged as the home directory it
- *  names rather than as a folder called `~` inside the project. */
-function expandHome(path: string): string {
-  if (path === "~") return homedir();
-  if (path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(2));
-  return path;
-}
-
-function patternLeavesRoot(pattern: string): boolean {
-  if (isAbsolute(pattern) || /^[a-zA-Z]:/.test(pattern) || pattern.startsWith("~")) return true;
-  return pattern.split(/[\\/]/).includes("..");
-}
-
-/**
- * Realpath of the path, or of its nearest existing ancestor with the missing tail
- * re-appended — a Write usually targets a file that does not exist yet, and its parent
- * directories may not either. Null when nothing along the chain resolves.
- */
-function canonicalPath(path: string): string | null {
-  const tail: string[] = [];
-  let current = resolve(path);
-  for (;;) {
-    try {
-      const real = realpathSync.native(current);
-      return tail.length ? join(real, ...tail.reverse()) : real;
-    } catch {
-      // Something is there but cannot be resolved — typically a dangling symlink, which
-      // a Write would follow to wherever it points. Only a truly absent entry may be
-      // replaced by its parent.
-      if (entryExists(current)) return null;
-      const parent = dirname(current);
-      if (parent === current) return null;
-      tail.push(basename(current));
-      current = parent;
-    }
-  }
-}
-
-function entryExists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isInside(target: string, root: string): boolean {
-  const caseFold = process.platform === "win32" || process.platform === "darwin";
-  const a = caseFold ? target.toLowerCase() : target;
-  const b = caseFold ? root.toLowerCase() : root;
-  const rel = relative(b, a);
-  if (rel === "") return true;
-  return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
 }
