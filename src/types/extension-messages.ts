@@ -89,7 +89,10 @@ export type ExtServerMsg =
   | { type: "project:switch"; projectName: string }
   | { type: "contributions:update"; contributions: ExtensionContributes; activationErrors?: Record<string, string> }
   | { type: "composer:show"; requestId: string; options: ComposerOptionsMsg }
-  | { type: "composer:dismiss"; requestId: string };
+  | { type: "composer:dismiss"; requestId: string }
+  /** The server stopped waiting for this dialog: every tab still showing it closes it. */
+  | { type: "quickpick:dismiss"; requestId: string }
+  | { type: "inputbox:dismiss"; requestId: string };
 
 // --- Client → Server messages ---
 

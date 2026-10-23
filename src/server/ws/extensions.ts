@@ -54,23 +54,28 @@ export function broadcastExtMsg(msg: ExtServerMsg): void {
 /**
  * Send a request to browser and wait for response (quickpick, inputbox, notification).
  * The `trackingId` is the key used to match the response.
- * Returns the resolved value or undefined on timeout.
+ * Returns the resolved value, or undefined on timeout or once `signal` aborts (the extension
+ * host that asked was rebuilt, so nobody is left to read the answer).
  */
 export function requestFromBrowser<T = unknown>(
   msg: ExtServerMsg,
   trackingId: string,
   timeoutMs = 30_000,
+  signal?: AbortSignal,
 ): Promise<T | undefined> {
+  if (signal?.aborted) return Promise.resolve(undefined);
   broadcastExtMsg(msg);
   return new Promise<T | undefined>((resolve) => {
-    const timer = setTimeout(() => {
-      pendingRequests.delete(trackingId);
-      resolve(undefined);
-    }, timeoutMs);
-    pendingRequests.set(trackingId, (value) => {
+    const settle = (value: T | undefined) => {
       clearTimeout(timer);
-      resolve(value as T);
-    });
+      signal?.removeEventListener("abort", onAbort);
+      pendingRequests.delete(trackingId);
+      resolve(value);
+    };
+    const onAbort = () => settle(undefined);
+    const timer = setTimeout(onAbort, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    pendingRequests.set(trackingId, (value) => settle(value as T));
   });
 }
 

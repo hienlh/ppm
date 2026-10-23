@@ -12,6 +12,7 @@ import { isSecretConfigKey, redactSecretConfigValue } from "./config-secret-keys
 import type { ComposerOptionsMsg, ComposerResultMsg } from "../types/extension-messages.ts";
 import { createLogger } from "./logger.ts";
 import { extensionApiDeps, registerExtensionApiHandlers, type ExtensionApiDeps } from "./extension-api/index.ts";
+import { askBrowserDialog } from "./extension-browser-dialog.ts";
 import { ExtensionCallRegistry } from "./extension-api/extension-call-registry.ts";
 
 /** Same scope as the extension host's own forwarded console: what an extension did or said. */
@@ -97,28 +98,30 @@ export function registerVscodeCompatHandlers(
   rpc.onRequest("window:showQuickPick", async (params) => {
     const [items, options] = params as [unknown[], unknown];
     const requestId = nextRequestId();
-    const selected = await requestFromBrowser<unknown[] | null>(
+    return askBrowserDialog<unknown[] | null>(
       {
         type: "quickpick:show", requestId,
         items: items as { label: string; description?: string; detail?: string; picked?: boolean }[],
         options: normalizeDialogOptions(options) as { title?: string; placeholder?: string; canPickMany?: boolean },
       },
       requestId,
+      { type: "quickpick:dismiss", requestId },
+      deps,
     );
-    return selected;
   });
 
   rpc.onRequest("window:showInputBox", async (params) => {
     const [options] = params as [unknown];
     const requestId = nextRequestId();
-    const value = await requestFromBrowser<string | null>(
+    return askBrowserDialog<string | null>(
       {
         type: "inputbox:show", requestId,
         options: normalizeDialogOptions(options) as { title?: string; prompt?: string; value?: string; placeholder?: string; password?: boolean },
       },
       requestId,
+      { type: "inputbox:dismiss", requestId },
+      deps,
     );
-    return value;
   });
 
   rpc.onRequest("window:showComposer", async (params) => {
@@ -127,14 +130,14 @@ export function registerVscodeCompatHandlers(
     // extension worker for the full 600s timeout it sets on this call.
     if (getExtClientCount() === 0) return undefined;
     const requestId = nextRequestId();
-    const result = await requestFromBrowser<ComposerResultMsg | null>(
+    // A prompt authored in one browser tab must not linger open in the others: the dismiss
+    // goes out whether this settled by resolve, by timeout or by a rebuild of the host.
+    const result = await askBrowserDialog<ComposerResultMsg | null>(
       { type: "composer:show", requestId, options: options ?? {} },
       requestId,
-      600_000,
+      { type: "composer:dismiss", requestId },
+      deps,
     );
-    // A prompt authored in one browser tab must not linger open in the others —
-    // broadcast the dismiss whether this settled by resolve or by timeout.
-    broadcastExtMsg({ type: "composer:dismiss", requestId });
     return result ?? undefined;
   });
 

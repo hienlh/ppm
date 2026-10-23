@@ -165,6 +165,7 @@ export function useExtensionWs(enabled = true) {
 
         case "quickpick:show":
           store.showQuickPick(
+            msg.requestId,
             msg.items,
             msg.options,
           ).then((selected) => {
@@ -177,7 +178,7 @@ export function useExtensionWs(enabled = true) {
           break;
 
         case "inputbox:show":
-          store.showInputBox(msg.options).then((value) => {
+          store.showInputBox(msg.requestId, msg.options).then((value) => {
             send({
               type: "inputbox:resolve",
               requestId: msg.requestId,
@@ -201,6 +202,14 @@ export function useExtensionWs(enabled = true) {
 
         case "composer:dismiss":
           store.dismissComposer(msg.requestId);
+          break;
+
+        case "quickpick:dismiss":
+          store.dismissQuickPick(msg.requestId);
+          break;
+
+        case "inputbox:dismiss":
+          store.dismissInputBox(msg.requestId);
           break;
 
         case "webview:create": {

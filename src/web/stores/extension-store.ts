@@ -47,6 +47,8 @@ export interface WebviewPanelUI {
 }
 
 export interface QuickPickState {
+  /** The round trip this dialog answers; a `dismissQuickPick` for another one is a no-op. */
+  requestId: string;
   items: QuickPickItemUI[];
   options: { title?: string; placeholder?: string; canPickMany?: boolean };
   resolve: (selected: QuickPickItemUI[] | undefined) => void;
@@ -60,6 +62,8 @@ export interface QuickPickItemUI {
 }
 
 export interface InputBoxState {
+  /** The round trip this dialog answers; a `dismissInputBox` for another one is a no-op. */
+  requestId: string;
   options: { title?: string; prompt?: string; value?: string; placeholder?: string; password?: boolean };
   resolve: (value: string | undefined) => void;
 }
@@ -124,13 +128,15 @@ interface ExtensionStore {
 
   // QuickPick modal
   quickPick: QuickPickState | null;
-  showQuickPick: (items: QuickPickItemUI[], options?: QuickPickState["options"]) => Promise<QuickPickItemUI[] | undefined>;
+  showQuickPick: (requestId: string, items: QuickPickItemUI[], options?: QuickPickState["options"]) => Promise<QuickPickItemUI[] | undefined>;
   resolveQuickPick: (selected: QuickPickItemUI[] | undefined) => void;
+  dismissQuickPick: (requestId: string) => void;
 
   // InputBox modal
   inputBox: InputBoxState | null;
-  showInputBox: (options?: InputBoxState["options"]) => Promise<string | undefined>;
+  showInputBox: (requestId: string, options?: InputBoxState["options"]) => Promise<string | undefined>;
   resolveInputBox: (value: string | undefined) => void;
+  dismissInputBox: (requestId: string) => void;
 
   // Composer dialog (window.showComposer())
   composer: ComposerState | null;
@@ -201,12 +207,12 @@ export const useExtensionStore = create<ExtensionStore>((set, get) => ({
 
   // --- QuickPick ---
   quickPick: null,
-  showQuickPick: (items, options = {}) => {
+  showQuickPick: (requestId, items, options = {}) => {
     // Resolve any existing quickpick first (prevents promise leak)
     const existing = get().quickPick;
     if (existing) existing.resolve(undefined);
     return new Promise((resolve) => {
-      set({ quickPick: { items, options, resolve } });
+      set({ quickPick: { requestId, items, options, resolve } });
     });
   },
   resolveQuickPick: (selected) => {
@@ -216,15 +222,20 @@ export const useExtensionStore = create<ExtensionStore>((set, get) => ({
       set({ quickPick: null });
     }
   },
+  // Closes without resolving, like `dismissComposer`: the server stopped waiting (another tab
+  // answered, the wait ran out, or the extension host was rebuilt), so no answer is sent.
+  dismissQuickPick: (requestId) => {
+    if (get().quickPick?.requestId === requestId) set({ quickPick: null });
+  },
 
   // --- InputBox ---
   inputBox: null,
-  showInputBox: (options = {}) => {
+  showInputBox: (requestId, options = {}) => {
     // Resolve any existing inputbox first (prevents promise leak)
     const existing = get().inputBox;
     if (existing) existing.resolve(undefined);
     return new Promise((resolve) => {
-      set({ inputBox: { options, resolve } });
+      set({ inputBox: { requestId, options, resolve } });
     });
   },
   resolveInputBox: (value) => {
@@ -233,6 +244,9 @@ export const useExtensionStore = create<ExtensionStore>((set, get) => ({
       ib.resolve(value);
       set({ inputBox: null });
     }
+  },
+  dismissInputBox: (requestId) => {
+    if (get().inputBox?.requestId === requestId) set({ inputBox: null });
   },
 
   // --- Composer ---
