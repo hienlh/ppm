@@ -134,6 +134,9 @@ export interface AppShare {
   shareUrl: string | null;
   tunnelPid: number | null;
   serverPort: number | null;
+  /** The share host's own connector (review links), which the supervisor also runs, and its address. */
+  shareHostTunnelPid?: number | null;
+  shareHostUrl?: string | null;
 }
 
 /**
@@ -150,6 +153,7 @@ export interface AppShare {
  */
 export function isAppTunnel(entry: TunnelEntry, app: AppShare): boolean {
   if (app.tunnelPid != null && entry.pid === app.tunnelPid) return true;
+  if (app.shareHostTunnelPid != null && entry.pid === app.shareHostTunnelPid) return true;
   if (app.shareUrl && entry.url && entry.url === app.shareUrl) return true;
   if (entry.source === "ppm") return false;
   if (app.serverPort != null && entry.port === app.serverPort) return true;

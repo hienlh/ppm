@@ -93,6 +93,11 @@ export interface DesignShareAddress {
   url: string | null;
   /** The supervisor's tunnel warning, passed through (for example, a dark named tunnel). */
   warning: string | null;
+  /**
+   * `share-host`: the review address, which reaches the review pages and nothing else of PPM
+   * (Settings → Remote Access → Review links); `ppm`: PPM's own public link.
+   */
+  via: "share-host" | "ppm";
   /** The public tunnel master switch. */
   enabled: boolean;
   /** PPM sign-in; sharing is refused while it is off. */

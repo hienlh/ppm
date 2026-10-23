@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
-import { writeCmd, requestTunnelReload, CMD_FILE, STATUS_FILE } from "../../../src/services/supervisor-state.ts";
+import {
+  writeCmd, requestTunnelReload, requestShareHostReload, CMD_FILE, STATUS_FILE,
+} from "../../../src/services/supervisor-state.ts";
 
 // Guard: if requestTunnelReload's SIGUSR2 lands on this test process (self-PID
 // case below), the default disposition would terminate it — a no-op handler
@@ -97,6 +99,36 @@ describe("supervisor-state — retunnel", () => {
       writeFileSync(STATUS_FILE(), JSON.stringify({ supervisorPid: process.pid }));
       expect(requestTunnelReload()).toBe("sent");
       expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe("retunnel");
+    });
+  });
+
+  describe("requestShareHostReload", () => {
+    test("sends nothing to a supervisor older than the share host, whose SIGUSR2 would restart the server", () => {
+      writeFileSync(STATUS_FILE(), JSON.stringify({ supervisorPid: process.pid, capabilities: ["retunnel"] }));
+      expect(requestShareHostReload()).toBe("outdated");
+      expect(() => readFileSync(CMD_FILE(), "utf-8")).toThrow();
+    });
+
+    test("returns 'sent' and writes the reshare command when the supervisor knows it", () => {
+      writeFileSync(STATUS_FILE(), JSON.stringify({ supervisorPid: process.pid, capabilities: ["retunnel", "reshare"] }));
+      expect(requestShareHostReload()).toBe("sent");
+      expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe("reshare");
+    });
+
+    test("is 'no-supervisor' before anything else", () => {
+      writeFileSync(STATUS_FILE(), JSON.stringify({ capabilities: ["reshare"] }));
+      expect(requestShareHostReload()).toBe("no-supervisor");
+    });
+
+    test("yields to a lifecycle action, and is overwritten by one", () => {
+      writeFileSync(STATUS_FILE(), JSON.stringify({ supervisorPid: process.pid, capabilities: ["retunnel", "reshare"] }));
+      writeFileSync(CMD_FILE(), JSON.stringify({ action: "restart" }));
+      expect(requestShareHostReload()).toBe("busy");
+      expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe("restart");
+
+      writeFileSync(CMD_FILE(), JSON.stringify({ action: "reshare" }));
+      expect(writeCmd("resume")).toBe(true);
+      expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe("resume");
     });
   });
 });

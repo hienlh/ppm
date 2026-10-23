@@ -5,11 +5,12 @@
 import { create } from "zustand";
 import { openSettings } from "../open-settings";
 
-export type RemoteAccessTabId = "tailscale" | "public-link";
+export type RemoteAccessTabId = "tailscale" | "public-link" | "review-links";
 
 export const REMOTE_ACCESS_TABS: { id: RemoteAccessTabId; label: string }[] = [
   { id: "tailscale", label: "Tailscale" },
   { id: "public-link", label: "Public link" },
+  { id: "review-links", label: "Review links" },
 ];
 
 export const useRemoteAccessTab = create<{ tab: RemoteAccessTabId; setTab: (tab: RemoteAccessTabId) => void }>((set) => ({

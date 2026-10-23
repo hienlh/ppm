@@ -36,7 +36,7 @@ export class SetupError extends Error {
 // and `=` padding — a real token is ~180 chars ending in `=`), not URL-safe
 // base64, so the alphabet must include those three or every real token is
 // rejected as "unexpected output".
-const TOKEN_SHAPE = /^[A-Za-z0-9+/=._-]{100,}$/;
+export const TOKEN_SHAPE = /^[A-Za-z0-9+/=._-]{100,}$/;
 const RELOAD_RETRY_DELAY_MS = 2_000;
 
 /** Module-level in-flight guard — two concurrent setups would race `route dns`. */
