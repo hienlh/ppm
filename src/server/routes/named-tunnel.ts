@@ -22,9 +22,9 @@ export const namedTunnelRoutes = new Hono();
  * same-origin check so a foreign page cannot drive them via ambient
  * browser credentials.
  */
-function assertMutationAllowed(c: Context): Response | null {
+export function assertMutationAllowed(c: Context, what = "named-tunnel setup"): Response | null {
   if (!configService.get("auth").enabled) {
-    return c.json(err("named-tunnel setup requires PPM authentication to be enabled"), 403);
+    return c.json(err(`${what} requires PPM authentication to be enabled`), 403);
   }
   const origin = c.req.header("origin");
   if (origin) {

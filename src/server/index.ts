@@ -314,6 +314,8 @@ app.route("/api/settings/design", designSettingsRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 import { namedTunnelRoutes } from "./routes/named-tunnel.ts";
 app.route("/api/tunnel/named", namedTunnelRoutes);
+import { shareHostRoutes } from "./routes/share-host.ts";
+app.route("/api/share-host", shareHostRoutes);
 import { tailscaleRoutes } from "./routes/tailscale.ts";
 app.route("/api/tailscale", tailscaleRoutes);
 app.route("/api/projects", projectRoutes);

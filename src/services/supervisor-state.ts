@@ -76,7 +76,7 @@ export function writeStatus(data: Record<string, unknown>) {
 // "upgrade" is written directly by upgrade.service.ts (bypasses writeCmd, same
 // as restart.ts/stop.ts) and read by supervisor.ts's Windows poll loop — listed
 // here so the type matches what's actually read/written on disk.
-export type CmdAction = "soft_stop" | "resume" | "restart" | "retunnel" | "upgrade";
+export type CmdAction = "soft_stop" | "resume" | "restart" | "retunnel" | "reshare" | "upgrade";
 
 /** Atomically claim + read command file (rename to .claimed, read, delete) */
 export function readAndDeleteCmd(): { action: CmdAction } | null {
@@ -94,20 +94,21 @@ export function readAndDeleteCmd(): { action: CmdAction } | null {
 }
 
 /**
- * `retunnel` is the only low-priority action — it always yields to whatever
- * is already pending, since a named-tunnel reload can wait behind a genuine
- * lifecycle transition. The other three outrank it: a `resume` stuck behind
- * an unclaimed `retunnel` would otherwise leave the server looking stopped
- * (win32's poll loop is 1s; POSIX has a write/SIGUSR2 gap) for no reason.
+ * `retunnel` and `reshare` are the low-priority actions — they always yield to
+ * whatever is already pending, since a tunnel or share-host reload can wait
+ * behind a genuine lifecycle transition. The others outrank them: a `resume`
+ * stuck behind an unclaimed `retunnel` would otherwise leave the server looking
+ * stopped (win32's poll loop is 1s; POSIX has a write/SIGUSR2 gap) for no reason.
  */
 const LIFECYCLE_ACTIONS: readonly CmdAction[] = ["resume", "soft_stop", "restart", "upgrade"];
+const RELOAD_ACTIONS: readonly string[] = ["retunnel", "reshare"];
 
 /**
  * Write `.supervisor-cmd`, but never clobber a *different* action that's still
  * unclaimed — with one exception: a lifecycle action (`resume`/`soft_stop`/
- * `restart`/`upgrade`) always overwrites a pending `retunnel`. Any other
- * collision (two different lifecycle actions, or a `retunnel` behind a
- * pending lifecycle action) returns `false` without writing so the caller can
+ * `restart`/`upgrade`) always overwrites a pending `retunnel` or `reshare`. Any
+ * other collision (two different lifecycle actions, a reload behind a pending
+ * lifecycle action, or one reload behind the other) returns `false` without writing so the caller can
  * report "busy" instead of silently discarding someone else's request; a
  * warning is logged either way so a dropped command is never silent. Note:
  * `restart.ts`/`stop.ts` write this file directly and bypass this peek
@@ -119,8 +120,8 @@ export function writeCmd(action: CmdAction): boolean {
   try {
     const existing = JSON.parse(readFileSync(CMD_FILE(), "utf-8")) as { action?: string };
     if (existing?.action && existing.action !== action) {
-      const lifecycleOverridesRetunnel = LIFECYCLE_ACTIONS.includes(action) && existing.action === "retunnel";
-      if (!lifecycleOverridesRetunnel) {
+      const lifecycleOverridesReload = LIFECYCLE_ACTIONS.includes(action) && RELOAD_ACTIONS.includes(existing.action);
+      if (!lifecycleOverridesReload) {
         log.warn(`Supervisor command '${action}' dropped — '${existing.action}' still unclaimed`);
         return false;
       }
@@ -139,6 +140,21 @@ export function writeCmd(action: CmdAction): boolean {
  * the supervisor's existing 1s command-file poll loop to pick up the request.
  */
 export function requestTunnelReload(): "sent" | "busy" | "no-supervisor" {
+  return requestReload("retunnel");
+}
+
+/**
+ * Ask the running supervisor to apply changed share-host settings (`reshare`). `outdated` is a
+ * supervisor from before the share host: its dispatcher would read an unknown command as a plain
+ * SIGUSR2 and restart the server, so nothing is sent and the change waits for a restart.
+ */
+export function requestShareHostReload(): "sent" | "busy" | "no-supervisor" | "outdated" {
+  return requestReload("reshare");
+}
+
+function requestReload(action: "retunnel"): "sent" | "busy" | "no-supervisor";
+function requestReload(action: "reshare"): "sent" | "busy" | "no-supervisor" | "outdated";
+function requestReload(action: "retunnel" | "reshare"): "sent" | "busy" | "no-supervisor" | "outdated" {
   const status = readStatus();
   const pid = status.supervisorPid as number | undefined;
   if (!pid) return "no-supervisor";
@@ -151,7 +167,11 @@ export function requestTunnelReload(): "sent" | "busy" | "no-supervisor" {
     }
   }
 
-  if (!writeCmd("retunnel")) return "busy";
+  if (action === "reshare") {
+    const capabilities = Array.isArray(status.capabilities) ? (status.capabilities as unknown[]) : [];
+    if (!capabilities.includes("reshare")) return "outdated";
+  }
+  if (!writeCmd(action)) return "busy";
 
   if (process.platform !== "win32") {
     try { process.kill(pid, "SIGUSR2"); } catch { /* best-effort; poll loop is the fallback path */ }

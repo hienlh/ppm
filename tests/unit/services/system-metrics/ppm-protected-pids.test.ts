@@ -51,6 +51,17 @@ describe("resolveProtectedPids", () => {
     expect(resolveProtectedPids(input({ status: { tunnelPid: 888 } })).pids.has(888)).toBe(false);
   });
 
+  test("the share host's worker and connector are protected under the same image rules", () => {
+    const r = resolveProtectedPids(input({ status: { shareHostPid: 700, shareHostTunnelPid: 300 } }));
+    expect(r.pids.has(700)).toBe(true);
+    expect(r.pids.has(300)).toBe(true);
+    expect([...r.roots].sort()).toEqual([100, 200]);
+    // Swapped images are recycled pids, not PPM's.
+    const swapped = resolveProtectedPids(input({ status: { shareHostPid: 300, shareHostTunnelPid: 700 } }));
+    expect(swapped.pids.has(300)).toBe(false);
+    expect(swapped.pids.has(700)).toBe(false);
+  });
+
   test("per-port preview tunnels are protected under the same cloudflared rule", () => {
     const r = resolveProtectedPids(input({ portTunnelPids: [400, 500, 0, 999] }));
     expect(r.pids.has(400)).toBe(true);

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { _resetPpmDir } from "../../../../src/services/ppm-dir.ts";
@@ -69,6 +69,33 @@ describe("buildTunnelAttempts — spawnTunnel's actual call site", () => {
     expect(attempts).toHaveLength(1);
     expect(attempts[0]!.mode).toBe("quick");
     expect(attempts[0]!.args).toEqual(getQuickTunnelArgs(TEST_PORT));
+  });
+});
+
+describe("buildTunnelAttempts — carrying the review address on PPM's tunnel", () => {
+  const SHARE = { hostname: "share.hienle.tech", port: 39901 };
+
+  test("routes both hostnames by ingress, with a 404 for anything else, and keeps the quick fallback", () => {
+    const attempts = buildTunnelAttempts(NAMED, TEST_PORT, SHARE);
+    expect(attempts.map((a) => a.mode)).toEqual(["named", "quick"]);
+    const named = attempts[0]!.args;
+    expect(named).not.toContain("--url");
+    expect(named.join(" ")).not.toContain(NAMED.token!);
+    const config = readFileSync(named[named.indexOf("--config") + 1]!, "utf8");
+    expect(config).toContain(`hostname: ${SHARE.hostname}\n    service: http://127.0.0.1:${SHARE.port}`);
+    expect(config).toContain(`hostname: ${NAMED.hostname}\n    service: http://127.0.0.1:${TEST_PORT}`);
+    expect(config.trimEnd().endsWith("- service: http_status:404")).toBe(true);
+    // A temporary address can carry no hostname of its own: the fallback is PPM's plain quick tunnel.
+    expect(attempts[1]!.args).toEqual(getQuickTunnelArgs(TEST_PORT));
+  });
+
+  test("without a share route the named argv is exactly what it was", () => {
+    expect(buildTunnelAttempts(NAMED, TEST_PORT, null)[0]!.args).toEqual(buildTunnelAttempts(NAMED, TEST_PORT)[0]!.args);
+    expect(buildTunnelAttempts(NAMED, TEST_PORT)[0]!.args).toContain("--url");
+  });
+
+  test("a quick PPM tunnel ignores the share route", () => {
+    expect(buildTunnelAttempts(QUICK, TEST_PORT, SHARE)).toEqual(buildTunnelAttempts(QUICK, TEST_PORT));
   });
 });
 

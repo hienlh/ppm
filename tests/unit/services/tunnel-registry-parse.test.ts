@@ -145,6 +145,11 @@ describe("isAppTunnel", () => {
     expect(isAppTunnel(base({ pid: 100 }), app)).toBe(true);
   });
 
+  it("protects the share host's connector by pid, as the supervisor runs it too", () => {
+    expect(isAppTunnel(base({ pid: 555 }), { ...app, shareHostTunnelPid: 555 })).toBe(true);
+    expect(isAppTunnel(base({ pid: 555 }), app)).toBe(false);
+  });
+
   it("protects by public URL even when the pid went stale", () => {
     expect(isAppTunnel(base({ pid: 999, url: "https://ppm.example.com" }), app)).toBe(true);
   });
