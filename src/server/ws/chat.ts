@@ -744,7 +744,11 @@ function dbApprovalResolved(sessionId: string, requestId: string, approved: bool
   broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: null });
   broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
 }
-setDbApprovalChat({ announce: announceDbApproval, resolved: dbApprovalResolved }, resolveMigratedSession);
+/** Hands this module's chat to the database approval broker; a test that swapped the broker's chat puts the real one back with it. */
+export function registerDbApprovalChat(): void {
+  setDbApprovalChat({ announce: announceDbApproval, resolved: dbApprovalResolved }, resolveMigratedSession);
+}
+registerDbApprovalChat();
 
 /**
  * A provider's approval took the session's one pending slot while a `db_execute` approval was

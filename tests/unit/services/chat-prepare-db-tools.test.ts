@@ -29,9 +29,12 @@ describe("chatService database tools", () => {
     providerRegistry.register(stubProvider("stub-db"));
     setServerListenAddress(8124, "0.0.0.0");
   });
-  afterEach(() => {
+  afterEach(async () => {
     setServerListenAddress(0, "");
-    setDbApprovalChat(null);
+    // The real chat, not null: the broker is a singleton, and a later file's approvals
+    // would otherwise find no chat to show them in.
+    const { registerDbApprovalChat } = await import("../../../src/server/ws/chat.ts");
+    registerDbApprovalChat();
   });
 
   it("gives a chat the database tools while a connection is available to the AI, and never a caller's endpoint", async () => {
