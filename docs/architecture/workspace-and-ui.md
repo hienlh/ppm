@@ -2,6 +2,17 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Web preview navigation
+
+Forwarded web previews report their current URL through a same-origin script injected by
+`services/port-forward/preview-navigation.ts`. The tab accepts reports only from its own
+iframe and the original forward origin. SPA history changes, hashes and document navigation
+update the address, Copy/Open links and persisted `currentUrl`; Reload loads that current
+route without resetting to the original address. Reporting alone never changes the iframe's
+`src`. The forward streams HTML instrumentation and preserves application CSP. Pages whose
+CSP blocks the bridge, direct local URLs that bypass the forward, and navigation to another
+origin cannot report their URL and retain the last known address.
+
 ## Adaptive guided tour
 
 The optional welcome card and Settings → General → Learn PPM open a two-screen chooser:

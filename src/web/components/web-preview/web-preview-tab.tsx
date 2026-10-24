@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Check, Copy, ExternalLink, Globe, Lock, RotateCw } from "@/lib/icons";
 import { tunnelsApi } from "@/lib/api-tunnels";
 import { copyToClipboard } from "@/lib/clipboard";
 import { safePreviewUrl } from "@/lib/web-preview-url";
+import { usePanelStore } from "@/stores/panel-store";
 
 const actionClass =
   "flex items-center justify-center shrink-0 rounded min-h-11 min-w-11 md:min-h-7 md:min-w-7 text-muted-foreground hover:text-foreground hover:bg-muted";
@@ -28,13 +29,44 @@ function allowFramingHere(): Promise<void> {
  * A dev server on the host, forwarded and shown in a tab. The toolbar sits at the bottom
  * below `md`, in the thumb zone, as a phone browser's address bar does.
  */
-export function WebPreviewTab({ metadata }: { metadata?: Record<string, unknown> }) {
-  const url = safePreviewUrl(metadata?.url, window.location.origin);
+export function WebPreviewTab({ metadata, tabId }: { metadata?: Record<string, unknown>; tabId?: string }) {
+  const requestedUrl = safePreviewUrl(metadata?.url, window.location.origin);
+  const savedUrl = safePreviewUrl(metadata?.currentUrl, window.location.origin);
+  const initialUrl = savedUrl && requestedUrl && new URL(savedUrl).origin === new URL(requestedUrl).origin ? savedUrl : requestedUrl;
+  const [url, setUrl] = useState(initialUrl);
+  const [src, setSrc] = useState(initialUrl);
+  const iframe = useRef<HTMLIFrameElement>(null);
+  const command = `${requestedUrl}:${String(metadata?.aiOpenAt ?? "")}`;
+  const lastCommand = useRef(command);
   // `local` is the AI's open_url on the host's own browser: no forward, so only this machine reaches it.
   const isPrivate = metadata?.via === "tailscale" || metadata?.via === "local";
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [framingAsked, setFramingAsked] = useState(false);
+
+  useEffect(() => {
+    if (lastCommand.current === command) return;
+    lastCommand.current = command;
+    setUrl(requestedUrl);
+    setSrc(requestedUrl);
+  }, [command, requestedUrl]);
+
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (!requestedUrl || !iframe.current?.contentWindow || event.source !== iframe.current.contentWindow
+        || event.origin !== new URL(requestedUrl).origin || event.data?.ppm !== "web-preview-navigation") return;
+      const next = safePreviewUrl(event.data.url, window.location.origin);
+      if (!next || new URL(next).origin !== event.origin) return;
+      setUrl(next);
+      if (tabId) {
+        const store = usePanelStore.getState();
+        const tab = Object.values(store.panels).flatMap((panel) => panel.tabs).find((item) => item.id === tabId);
+        if (tab && tab.metadata?.currentUrl !== next) store.updateTab(tabId, { metadata: { ...tab.metadata, currentUrl: next } });
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [requestedUrl, tabId]);
 
   useEffect(() => {
     let live = true;
@@ -64,7 +96,7 @@ export function WebPreviewTab({ metadata }: { metadata?: Record<string, unknown>
           {isPrivate ? <Lock className="size-3.5" /> : <Globe className="size-3.5" />}
         </span>
         <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground select-all">{url}</span>
-        <button type="button" onClick={() => void allowFramingHere().then(() => setReloadKey((k) => k + 1))} title="Reload" aria-label="Reload" className={actionClass}>
+        <button type="button" onClick={() => void allowFramingHere().then(() => { setSrc(url); setReloadKey((k) => k + 1); })} title="Reload" aria-label="Reload" className={actionClass}>
           <RotateCw className="size-4" />
         </button>
         <button type="button" onClick={copy} title="Copy URL" aria-label="Copy URL" className={actionClass}>
@@ -78,10 +110,11 @@ export function WebPreviewTab({ metadata }: { metadata?: Record<string, unknown>
           own cookies and storage; without allow-top-navigation it cannot navigate PPM away. */}
       {framingAsked ? (
         <iframe
+          ref={iframe}
           // The AI's open_url sets aiOpenAt on every call: a page it opens again reloads.
           key={`${reloadKey}:${String(metadata?.aiOpenAt ?? "")}`}
           title={`Preview of ${url}`}
-          src={url}
+          src={src ?? undefined}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
           allow="clipboard-read; clipboard-write; fullscreen"
           referrerPolicy="no-referrer"
