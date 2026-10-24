@@ -15,14 +15,14 @@ import { persistWindowPanelChange } from "@/stores/window-panel-actions";
 import { reconcileRunKey, reconcileTabHostWindows } from "@/stores/window-panel-reconcile";
 import { useWindowStore } from "@/components/floating-window/window-store";
 
-export function useWindowPanelReconcile(): void {
+export function useWindowPanelReconcile(enabled = true): void {
   const isMobile = useIsMobile();
   const currentProject = usePanelStore((s) => s.currentProject);
   const restored = useWindowStore((s) => s.restored);
   const reconciledFor = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!currentProject) return;
+    if (!enabled || !currentProject) return;
     if (!restored && !isMobile) return;
     const runKey = reconcileRunKey(currentProject, isMobile);
     if (reconciledFor.current === runKey) return;
@@ -44,5 +44,5 @@ export function useWindowPanelReconcile(): void {
       persistWindowPanelChange(usePanelStore.getState);
     }
     for (const windowId of result.windowIdsToClose) useWindowStore.getState().close(windowId);
-  }, [currentProject, restored, isMobile]);
+  }, [enabled, currentProject, restored, isMobile]);
 }

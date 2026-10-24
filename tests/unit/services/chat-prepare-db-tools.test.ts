@@ -70,6 +70,17 @@ describe("chatService database tools", () => {
     expect(await chatService.prepareSendOptions("stub-db", "d3", "hi")).not.toHaveProperty("dbToolsMcp");
   });
 
+  it("minimal excludes database tools even with an AI-enabled connection and caller-supplied tools", async () => {
+    insertConnection("sqlite", "Prod", { type: "sqlite", path: "/tmp/x.db" });
+    const argv = process.argv;
+    process.argv = [...argv, "--minimal"];
+    try {
+      expect(await chatService.prepareSendOptions("stub-db", "minimal-db", "hi", EVIL))
+        .not.toHaveProperty("dbToolsMcp");
+    } finally { process.argv = argv; }
+    expect((await chatService.prepareSendOptions("stub-db", "minimal-db", "hi")).dbToolsMcp).toBeDefined();
+  });
+
   it("revokes the token and declines a waiting change when the chat is deleted", async () => {
     insertConnection("sqlite", "Prod", { type: "sqlite", path: "/tmp/x.db" });
     const { dbToolsMcp } = await chatService.prepareSendOptions("stub-db", "d4", "hi");

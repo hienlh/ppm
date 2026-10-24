@@ -20,6 +20,7 @@ interface PanelLayoutProps {
 const EMPTY_GRID: string[][] = [[]];
 
 export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayoutProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const isDesktop = useMediaQuery("(min-width: 768px)");
   const grid = usePanelStore((s) =>
     s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? EMPTY_GRID),
@@ -94,7 +95,7 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
 
   // Non-active projects (hidden keep-alive layouts) render the grid only — only the
   // active project hosts the shared dock slot.
-  if (!isActiveProject) {
+  if (!isActiveProject || minimalMode) {
     return <>{gridArea}</>;
   }
 

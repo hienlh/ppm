@@ -1,3 +1,4 @@
+import { isMinimalSidebarTab } from "@/lib/sidebar-tabs/tab-registry";
 import { useCallback, useRef, memo, lazy, Suspense } from "react";
 import { PanelLeftOpen } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
@@ -75,8 +76,9 @@ export const Sidebar = memo(function Sidebar() {
   const sidebarWidth = useSettingsStore((s) => s.sidebarWidth);
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const setSidebarWidth = useSettingsStore((s) => s.setSidebarWidth);
-  const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
-  useGitChangesPoller(activeProject?.name, sidebarActiveTab === "git");
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
+  const sidebarActiveTab = useSettingsStore((s) => s.minimalMode && !isMinimalSidebarTab(s.sidebarActiveTab) ? "history" : s.sidebarActiveTab);
+  useGitChangesPoller(minimalMode ? undefined : activeProject?.name, minimalMode || sidebarActiveTab === "git");
 
   if (sidebarCollapsed) {
     return (

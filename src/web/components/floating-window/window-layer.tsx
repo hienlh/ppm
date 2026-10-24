@@ -1,3 +1,7 @@
+import { isMinimalTab } from "@/lib/minimal-mode";
+import { useSettingsStore } from "@/stores/settings-store";
+import { usePanelStore } from "@/stores/panel-store";
+import { windowPanelId } from "@/stores/panel-utils";
 /**
  * Host for all floating windows, sized to the app's content area.
  *
@@ -25,6 +29,8 @@ export function WindowLayer() {
 }
 
 function DesktopWindowLayer() {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
+  const panels = usePanelStore((s) => s.panels);
   const containerRef = useRef<HTMLDivElement>(null);
   const windows = useWindowStore((s) => s.windows);
   const bounds = useWindowStore((s) => s.bounds);
@@ -57,7 +63,7 @@ function DesktopWindowLayer() {
     return el.getBoundingClientRect().width / el.offsetWidth;
   }, []);
 
-  const ordered = windowsInRankOrder(windows);
+  const ordered = windowsInRankOrder(windows).filter((win) => !minimalMode || win.kind === "settings" || win.kind === "agent-session" || (win.kind === "tab-host" && panels[windowPanelId(win.id)]?.tabs.some((tab) => (isMinimalTab(tab.type)))));
   const frontId = frontWindowId(windows);
 
   return (

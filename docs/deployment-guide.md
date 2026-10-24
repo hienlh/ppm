@@ -648,3 +648,14 @@ Monitor, filtered to PPM's own processes.
 3. **Logs:** `ppm logs -f` (`~/.ppm/ppm.log`)
 4. **Status:** `ppm status --json`
 5. **Known traps:** [`lessons-learned.md`](lessons-learned.md)
+
+## Minimal startup
+
+`ppm start --minimal` serves chat, file explorer, editor and Settings to every browser. It keeps projects,
+chat providers/accounts, uploads, authentication and remote access; skips extension hosts,
+scheduled agents, Jira watchers, PPMBot and database startup work. Non-chat WebSocket and
+workspace API endpoints return 403. Saved workspace tabs are retained for full mode.
+
+The supervisor preserves the mode across crashes and `ppm restart`. Changing a running
+instance requires `ppm down` followed by `ppm start --minimal` (or `ppm start` for full
+mode). This is a process option, not a saved global setting or browser toggle.

@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Narrow-container layout: one column, list first and pane second.
  *
@@ -14,11 +15,12 @@ import {
 } from "./settings-categories";
 
 export function SettingsCategoryList({ onSelect }: { onSelect: (id: SettingsCategoryId) => void }) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   return (
     <ScrollArea className="h-full">
       <nav className="p-3 space-y-5" aria-label="Settings categories">
         {SETTINGS_GROUPS.map((group) => {
-          const categories = settingsCategoriesInGroup(group.id);
+          const categories = settingsCategoriesInGroup(group.id, minimalMode);
           if (categories.length === 0) return null;
           return (
             <div key={group.id} className="space-y-1">

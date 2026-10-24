@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Opening an agent's or teammate's work session, on whichever presentation the device has.
  *
@@ -51,7 +52,7 @@ export function useOpenAgentSession(): (payload: AgentSessionWindowPayload, fall
         setFallbackEvents(fallbackKey(payload.sessionId, payload.source), fallbackEvents);
       }
 
-      if (isMobile) {
+      if (isMobile || useSettingsStore.getState().minimalMode) {
         openSheet(payload);
         return;
       }

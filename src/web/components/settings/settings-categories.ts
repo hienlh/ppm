@@ -134,7 +134,22 @@ export function settingsCategory(id: SettingsCategoryId): SettingsCategoryDef {
   return SETTINGS_CATEGORIES.find((c) => c.id === id)!;
 }
 
+/** Settings for services that remain available when PPM starts with --minimal. */
+const MINIMAL_SETTINGS_CATEGORIES = new Set<SettingsCategoryId>([
+  "general", "appearance", "ai-provider", "accounts", "voice", "notifications",
+  "remote-access", "shortcuts", "files",
+]);
+
+export function settingsCategoryAvailable(id: SettingsCategoryId, minimalMode: boolean): boolean {
+  return !minimalMode || MINIMAL_SETTINGS_CATEGORIES.has(id);
+}
+
+/** Resolve before rendering so a restored disabled pane never mounts or fetches. */
+export function resolveSettingsCategory(id: SettingsCategoryId, minimalMode: boolean): SettingsCategoryId {
+  return settingsCategoryAvailable(id, minimalMode) ? id : DEFAULT_SETTINGS_CATEGORY;
+}
+
 /** Categories of one group, in declaration order. */
-export function settingsCategoriesInGroup(group: SettingsGroupId): SettingsCategoryDef[] {
-  return SETTINGS_CATEGORIES.filter((c) => c.group === group);
+export function settingsCategoriesInGroup(group: SettingsGroupId, minimalMode = false): SettingsCategoryDef[] {
+  return SETTINGS_CATEGORIES.filter((c) => c.group === group && settingsCategoryAvailable(c.id, minimalMode));
 }

@@ -1,3 +1,6 @@
+import { isMinimalTab } from "@/lib/minimal-mode";
+import { useSettingsStore } from "./settings-store";
+import { toast } from "sonner";
 import { create } from "zustand";
 import type { Tab, TabType } from "./tab-store";
 import {
@@ -541,6 +544,10 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     },
 
     openTab: (tabDef, panelId?) => {
+      if (useSettingsStore.getState().minimalMode && !isMinimalTab(tabDef.type)) {
+        toast.info("This feature needs full mode. Restart PPM without --minimal.");
+        return "";
+      }
       const mobile = get().isMobile();
       // On mobile, always open in first panel (tabs merged in mobile nav)
       const pid = mobile
@@ -584,7 +591,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (tabDef.type === "chat" && tabDef.metadata?.sessionId) {
         const sid = tabDef.metadata.sessionId;
         for (const p of Object.values(get().panels)) {
-          const existing = p.tabs.find((t) => tabSessionId(t) === sid);
+          const existing = p.tabs.find((t) => tabSessionId(t) === sid && (!useSettingsStore.getState().minimalMode || t.type === "chat"));
           if (existing) {
             rememberChatProvider(existing);
             set((s) => ({

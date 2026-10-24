@@ -65,6 +65,7 @@ interface TabBarProps {
 }
 
 export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const activeProject = useProjectStore((s) => s.activeProject);
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -74,8 +75,8 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   const panel = usePanelStore((s) => panelId ? s.panels[panelId] : s.panels[s.focusedPanelId]);
   const projectName = activeProject?.name ?? null;
   // Filter out cross-project tabs (race condition in openTab during project switch)
-  const tabs = visibleTabs(panel?.tabs ?? [], projectName);
-  const activeTabId = panel?.activeTabId ?? null;
+  const tabs = visibleTabs(panel?.tabs ?? [], projectName, minimalMode);
+  const activeTabId = tabs.some((tab) => tab.id === panel?.activeTabId) ? panel!.activeTabId : tabs[0]?.id ?? null;
   const effectivePanelId = panel?.id ?? usePanelStore.getState().focusedPanelId;
 
   const { dropIndex, handleDragStart, handleDragOver, handleDragOverBar, handleDrop, handleDragEnd } =
@@ -226,7 +227,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   /** Handle context menu actions on a tab */
   const handleTabContextAction = useCallback((tab: Tab, action: string) => {
     const panelState = usePanelStore.getState();
-    const pTabs = panelState.panels[effectivePanelId]?.tabs ?? [];
+    const pTabs = visibleTabs(panelState.panels[effectivePanelId]?.tabs ?? [], projectName, minimalMode);
 
     switch (action) {
       case "close":
@@ -286,14 +287,19 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         break;
       }
     }
-  }, [effectivePanelId]);
+  }, [effectivePanelId, projectName, minimalMode]);
 
   /** Double-click on empty bar area → open command palette */
   function handleBarDoubleClick(e: React.MouseEvent) {
     // Only trigger if clicking directly on the bar or scroll container (not on a tab)
     const target = e.target as HTMLElement;
     if (target.closest("[data-tab-item]")) return;
-    openCommandPalette();
+    if (minimalMode) openChat();
+    else openCommandPalette();
+  }
+
+  function openChat() {
+    usePanelStore.getState().openTab({ type: "chat", title: "AI Chat", projectId: activeProject?.name ?? null, closable: true, metadata: activeProject ? { projectName: activeProject.name } : undefined }, effectivePanelId);
   }
 
   return (
@@ -427,7 +433,9 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
           {/* + button — opens a terminal when in the dock, command palette otherwise */}
           <button
             onClick={() => {
-              if (effectivePanelId === DOCK_PANEL_ID) {
+              if (minimalMode) {
+                openChat();
+              } else if (effectivePanelId === DOCK_PANEL_ID) {
                 // Dock-specific: open a new terminal directly in the dock
                 const project = useProjectStore.getState().activeProject;
                 usePanelStore.getState().openInDock({
@@ -442,7 +450,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
                 openCommandPalette();
               }
             }}
-            title={effectivePanelId === DOCK_PANEL_ID ? "New terminal in dock" : "Open command palette (Shift+Shift)"}
+            title={minimalMode ? "New chat" : effectivePanelId === DOCK_PANEL_ID ? "New terminal in dock" : "Open command palette (Shift+Shift)"}
             className={tabAddButtonClass(editorTabStyle)}
           >
             <Plus className="size-4" />
@@ -471,9 +479,9 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
           {tabWrap ? "Scroll Tabs" : "Wrap Tabs"}
         </BarContextMenuItem>
         <BarContextMenuSeparator />
-        <BarContextMenuItem onClick={() => openCommandPalette()}>
+        {!minimalMode && <BarContextMenuItem onClick={() => openCommandPalette()}>
           Open Command Palette
-        </BarContextMenuItem>
+        </BarContextMenuItem>}
       </BarContextMenuContent>
     </BarContextMenu>
 
