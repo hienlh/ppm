@@ -12,6 +12,7 @@ export function registerAutoStartCommands(program: Command): void {
     .option("-p, --port <port>", "Override port")
     .option("-s, --share", "(deprecated) Tunnel is now always enabled")
     .option("--profile <name>", "DB profile name")
+    .option("--minimal", "Start with chat, files, editor and settings")
     .action(async (options) => {
       const { enableAutoStart } = await import("../../services/autostart-register.ts");
 
@@ -24,6 +25,7 @@ export function registerAutoStartCommands(program: Command): void {
         host,
         share: !!options.share,
         profile: options.profile,
+        minimal: !!options.minimal,
       };
 
       try {

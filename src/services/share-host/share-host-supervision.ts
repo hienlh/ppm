@@ -19,6 +19,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Subprocess } from "bun";
+import { isMinimalMode } from "../runtime-mode.ts";
 import { getConfigValue } from "../db.service.ts";
 import { updateStatus } from "../supervisor-state.ts";
 import { withoutNotifySocket } from "../sd-notify.ts";
@@ -73,6 +74,9 @@ let chain: Promise<void> = Promise.resolve();
 
 /** Fresh read of the `share_host` row: the server writes it, and this process caches nothing. */
 export function readShareHostConfigFresh(): ResolvedShareHostConfig {
+  // Keep saved review-host settings intact, but never spawn its worker/connector
+  // in chat-only mode, including a reshare/retunnel request from an older client.
+  if (isMinimalMode()) return resolveShareHostConfig(null);
   return resolveShareHostConfig(getConfigValue("share_host"));
 }
 

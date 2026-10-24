@@ -45,7 +45,7 @@ export async function restartServer(options: { force?: boolean }) {
       const { stopServer } = await import("./stop.ts");
       await stopServer({ kill: true });
       const { startServer } = await import("../../server/index.ts");
-      await startServer({ port: port ? String(port) : undefined, profile });
+      await startServer({ port: port ? String(port) : undefined, profile, minimal: status.minimalMode === true });
       return;
     }
 

@@ -1,3 +1,4 @@
+import { isMinimalMode } from "../services/runtime-mode.ts";
 import { decodeReply } from "../shared/chat-reply.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
@@ -495,7 +496,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // PPM's `open_preview` replaces the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
     // `ArtifactData`), whose pages live on claude.ai rather than in PPM.
-    const artifactEnv = ppmToolOn(configService.get("ai"), OPEN_PREVIEW_TOOL) ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
+    const artifactEnv = !isMinimalMode() && ppmToolOn(configService.get("ai"), OPEN_PREVIEW_TOOL) ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
 
     return {
       ...base,
@@ -1031,10 +1032,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // The chat's turns will carry the tab tools too (`chatService.prepareSendOptions`); their
     // token is minted below, once the spare has the session id it will be taken over with.
     const ai = configService.get("ai");
-    const base = anyPpmToolOn(ai, TAB_TOOLS) ? localServerBaseUrl() : null;
+    const base = !isMinimalMode() && anyPpmToolOn(ai, TAB_TOOLS) ? localServerBaseUrl() : null;
     const tabTools = base ? { url: `${base}${TAB_TOOLS_MCP_PATH}`, token: "" } : null;
     // Likewise the database tools, while a saved connection is available to the AI chat.
-    const dbBase = anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0 ? localServerBaseUrl() : null;
+    const dbBase = !isMinimalMode() && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0 ? localServerBaseUrl() : null;
     const dbTools = dbBase ? { url: `${dbBase}${DB_TOOLS_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,

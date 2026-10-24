@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 import { useEffect } from "react";
 import { api, projectUrl } from "@/lib/api-client";
 import { usePanelStore } from "@/stores/panel-store";
@@ -21,9 +22,10 @@ export function useDesignSessionRedirect(input: {
   projectName?: string;
   providerId?: string;
 }) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const { tabId, sessionId, designSlug, projectName, providerId } = input;
   useEffect(() => {
-    if (!tabId || !sessionId || designSlug || !projectName) return;
+    if (minimalMode || !tabId || !sessionId || designSlug || !projectName) return;
     const panel = usePanelStore.getState().getPanelForTab(tabId);
     if (panel?.tabs.find((t) => t.id === tabId)?.type !== "chat") return;
     let cancelled = false;
@@ -36,5 +38,5 @@ export function useDesignSessionRedirect(input: {
       })
       .catch(() => { /* an unknown session stays a plain chat */ });
     return () => { cancelled = true; };
-  }, [tabId, sessionId, designSlug, projectName, providerId]);
+  }, [minimalMode, tabId, sessionId, designSlug, projectName, providerId]);
 }

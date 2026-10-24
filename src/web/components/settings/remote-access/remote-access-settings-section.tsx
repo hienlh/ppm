@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Settings → Remote Access: every way to open PPM itself from another device. One sub-tab each:
  *
@@ -17,13 +18,15 @@ import { ReviewLinksPane } from "./review-links-pane";
 import { REMOTE_ACCESS_TABS, useRemoteAccessTab } from "./remote-access-tab-store";
 
 export function RemoteAccessSettingsSection() {
-  const tab = useRemoteAccessTab((s) => s.tab);
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
+  const storedTab = useRemoteAccessTab((s) => s.tab);
+  const tab = minimalMode && storedTab === "review-links" ? "tailscale" : storedTab;
   const setTab = useRemoteAccessTab((s) => s.setTab);
 
   return (
     <div className="space-y-5" data-testid="remote-access" data-tab={tab}>
       <div role="tablist" aria-label="Remote access" className="flex gap-1 overflow-x-auto border-b border-border/50">
-        {REMOTE_ACCESS_TABS.map((t) => (
+        {REMOTE_ACCESS_TABS.filter((t) => !minimalMode || t.id !== "review-links").map((t) => (
           <button
             key={t.id}
             type="button"

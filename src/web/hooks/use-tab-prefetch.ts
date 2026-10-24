@@ -58,7 +58,7 @@ function scheduleAfterDelayWhenIdle(fn: () => void, delayMs: number): { cancel: 
  *
  * Mount once, at app level — not inside a per-tab component.
  */
-export function useTabPrefetch(): void {
+export function useTabPrefetch(enabled = true): void {
   const isMobile = useIsMobile();
   const currentProject = usePanelStore((s) => s.currentProject);
 
@@ -66,7 +66,7 @@ export function useTabPrefetch(): void {
   // prefetching grows `mounted`, which would otherwise retrigger the effect and
   // restart the queue on every step.
   useEffect(() => {
-    if (isMobile) return;
+    if (!enabled || isMobile) return;
 
     let disposed = false;
     let remaining = PREFETCH_CAP;
@@ -120,5 +120,5 @@ export function useTabPrefetch(): void {
       cancelPending();
       unsubscribe();
     };
-  }, [isMobile, currentProject]);
+  }, [enabled, isMobile, currentProject]);
 }

@@ -13,7 +13,9 @@ import { windowsSkin } from "./windows-skin";
 
 export function useExplorerSkin(): ExplorerSkin {
   const override = useSettingsStore((s) => s.explorerSkin);
-  const { host } = useHostInfo();
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
+  // Settings shares this window chrome; it does not need explorer drive discovery.
+  const { host } = useHostInfo(!minimalMode);
 
   if (override === "windows") return windowsSkin;
   if (override === "macos") return macosSkin;

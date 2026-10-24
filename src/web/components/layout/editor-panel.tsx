@@ -1,4 +1,5 @@
-import { useCallback } from "react";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useCallback, useEffect } from "react";
 import { Terminal, MessageSquare, FilePlus, X } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -24,6 +25,7 @@ interface EditorPanelProps {
 }
 
 export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const panel = usePanelStore((s) => s.panels[panelId]);
   const isFocused = usePanelStore((s) => s.focusedPanelId === panelId);
   const panelCount = usePanelStore((s) => {
@@ -40,13 +42,23 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
     registerPanelSlot(panelId, el);
   }, [panelId]);
 
+  // Select an available tab in place; do not move panels or delete hidden tabs.
+  useEffect(() => {
+    if (!minimalMode || !panel) return;
+    const chats = visibleTabs(panel.tabs, projectName, true);
+    if (!chats.length || chats.some((tab) => tab.id === panel.activeTabId)) return;
+    usePanelStore.setState((state) => ({
+      panels: { ...state.panels, [panelId]: { ...state.panels[panelId]!, activeTabId: chats[0]!.id } },
+    }));
+  }, [minimalMode, panel, panelId, projectName]);
+
   if (!panel) return null;
 
   // Judge emptiness the same way TabBar does. A panel holding only another
   // project's tab shows no tab chips, so treating it as non-empty here would
   // render neither tabs nor the empty state — a blank panel with nothing to
   // close. See visibleTabs().
-  const isEmpty = visibleTabs(panel.tabs, projectName).length === 0;
+  const isEmpty = visibleTabs(panel.tabs, projectName, minimalMode).length === 0;
 
   return (
     <div
@@ -64,7 +76,7 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
         data-panel-drop-zone={panelId}
         // Middle-click an empty panel to close it (matches VS Code).
         onAuxClick={(e) => {
-          if (e.button !== 1 || !isEmpty) return;
+          if (minimalMode || e.button !== 1 || !isEmpty) return;
           e.preventDefault();
           usePanelStore.getState().closePanel(panelId);
         }}
@@ -80,6 +92,7 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
 }
 
 function EmptyPanel({ panelId, canClose }: { panelId: string; canClose: boolean }) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const activeProject = useProjectStore((s) => s.activeProject);
 
   function openTab(type: TabType) {
@@ -106,7 +119,7 @@ function EmptyPanel({ panelId, canClose }: { panelId: string; canClose: boolean 
       <div className="flex flex-col items-center justify-center gap-6 px-4 flex-1">
         <p className="text-sm">Open a tab to get started</p>
         <div className="grid grid-cols-3 gap-2 w-full max-w-sm">
-          {QUICK_OPEN_TABS.map((opt) => {
+          {QUICK_OPEN_TABS.filter((tab) => !minimalMode || tab.type === "chat" || tab.type === "editor").map((opt) => {
             const Icon = opt.icon;
             return (
               <button
@@ -121,7 +134,7 @@ function EmptyPanel({ panelId, canClose }: { panelId: string; canClose: boolean 
           })}
         </div>
 
-        {canClose && (
+        {canClose && !minimalMode && (
           <button
             onClick={() => usePanelStore.getState().closePanel(panelId)}
             className="flex items-center gap-1.5 px-4 py-3.5 rounded-md text-xs text-text-subtle hover:text-foreground active:bg-surface-elevated transition-colors"

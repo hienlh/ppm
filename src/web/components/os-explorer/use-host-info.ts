@@ -38,14 +38,15 @@ export interface HostInfoState {
   error: string | null;
 }
 
-export function useHostInfo(): HostInfoState {
+export function useHostInfo(enabled = true): HostInfoState {
   const [state, setState] = useState<HostInfoState>(() => ({
     host: cached?.value ?? null,
-    loading: cached == null,
+    loading: enabled && cached == null,
     error: null,
   }));
 
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
     const notify = (value: HostInfo) => {
       if (alive) setState({ host: value, loading: false, error: null });
@@ -66,7 +67,7 @@ export function useHostInfo(): HostInfoState {
       alive = false;
       subscribers.delete(notify);
     };
-  }, []);
+  }, [enabled]);
 
   return state;
 }
