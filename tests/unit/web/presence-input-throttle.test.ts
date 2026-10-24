@@ -6,20 +6,11 @@ function fakeClock(start: number) {
   return { now: () => t, advance: (ms: number) => { t += ms; } };
 }
 
-/** A fake `onGlobalReady`: fires every registered listener on demand instead of on a real socket. */
-function fakeReady() {
-  const listeners: Array<() => void> = [];
-  return {
-    subscribe: (listener: () => void) => { listeners.push(listener); return () => {}; },
-    fire: () => { for (const l of listeners) l(); },
-  };
-}
-
-describe("createPresenceInputNotifier", () => {
+describe("createPresenceInputNotifier().notify", () => {
   test("50 inputs within 60s send exactly one message", () => {
     const sent: string[] = [];
     const clock = fakeClock(0);
-    const notify = createPresenceInputNotifier((m) => { sent.push(m); return true; }, clock.now, fakeReady().subscribe);
+    const { notify } = createPresenceInputNotifier((m) => { sent.push(m); return true; }, clock.now);
     for (let i = 0; i < 50; i++) {
       notify();
       clock.advance(1_000); // 50 inputs, 1s apart: 49s total, inside the window
@@ -30,7 +21,7 @@ describe("createPresenceInputNotifier", () => {
   test("sends again once the throttle window has fully elapsed", () => {
     const sent: number[] = [];
     const clock = fakeClock(0);
-    const notify = createPresenceInputNotifier(() => { sent.push(clock.now()); return true; }, clock.now, fakeReady().subscribe);
+    const { notify } = createPresenceInputNotifier(() => { sent.push(clock.now()); return true; }, clock.now);
     notify();
     clock.advance(PRESENCE_SEND_THROTTLE_MS - 1);
     notify(); // still inside the window
@@ -42,8 +33,7 @@ describe("createPresenceInputNotifier", () => {
   test("a dropped send (socket not open yet) does not arm the throttle: the next input still goes through at once", () => {
     const sent: number[] = [];
     const clock = fakeClock(0);
-    const ready = fakeReady();
-    const notify = createPresenceInputNotifier(() => { sent.push(clock.now()); return false; }, clock.now, ready.subscribe);
+    const { notify } = createPresenceInputNotifier(() => { sent.push(clock.now()); return false; }, clock.now);
     notify();
     clock.advance(1_000);
     notify();
@@ -52,43 +42,59 @@ describe("createPresenceInputNotifier", () => {
     expect(sent).toEqual([0, 1_000]);
   });
 
-  test("a dropped send is retried the moment the socket reports ready, with no second user input", () => {
+  test("defaults to Date.now and the real global socket sender without throwing", () => {
+    expect(() => createPresenceInputNotifier().notify()).not.toThrow();
+  });
+});
+
+describe("createPresenceInputNotifier().retryIfPending", () => {
+  test("is a no-op until a notify() has actually been dropped", () => {
     const sent: number[] = [];
     const clock = fakeClock(0);
-    const ready = fakeReady();
+    const { retryIfPending } = createPresenceInputNotifier(() => { sent.push(clock.now()); return true; }, clock.now);
+    retryIfPending();
+    expect(sent).toEqual([]);
+  });
+
+  test("resends a dropped input with no second call to notify()", () => {
+    const sent: number[] = [];
+    const clock = fakeClock(0);
     let open = false;
-    const notify = createPresenceInputNotifier(
+    const { notify, retryIfPending } = createPresenceInputNotifier(
       () => { if (!open) return false; sent.push(clock.now()); return true; },
       clock.now,
-      ready.subscribe,
     );
     notify(); // page just loaded, socket still connecting: dropped, kept pending
     expect(sent).toEqual([]);
     clock.advance(5_000); // the socket takes 5s to connect; nobody touches the page meanwhile
     open = true;
-    ready.fire(); // global_ready
+    retryIfPending();
     expect(sent).toEqual([5_000]); // the original input is reported promptly, no second gesture
   });
 
-  test("the retried send still arms the throttle, so an input right after it is swallowed for the normal window", () => {
+  test("a successful retry still arms the throttle, so an input right after it is swallowed for the normal window", () => {
     const sent: number[] = [];
     const clock = fakeClock(0);
-    const ready = fakeReady();
     let open = false;
-    const notify = createPresenceInputNotifier(
+    const { notify, retryIfPending } = createPresenceInputNotifier(
       () => { if (!open) return false; sent.push(clock.now()); return true; },
       clock.now,
-      ready.subscribe,
     );
     notify();
     open = true;
-    ready.fire();
+    retryIfPending();
     clock.advance(1_000);
     notify(); // still inside the 60s window the retry started
     expect(sent).toEqual([0]);
   });
 
-  test("defaults to Date.now and the real global socket sender without throwing", () => {
-    expect(() => createPresenceInputNotifier()()).not.toThrow();
+  test("does nothing once a retry has already delivered the pending input", () => {
+    const sent: number[] = [];
+    const clock = fakeClock(0);
+    const { notify, retryIfPending } = createPresenceInputNotifier(() => { sent.push(clock.now()); return true; }, clock.now);
+    notify(); // delivered immediately — nothing pending
+    retryIfPending();
+    retryIfPending();
+    expect(sent).toEqual([0]);
   });
 });
