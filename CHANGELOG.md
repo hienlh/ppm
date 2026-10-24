@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.18] - 2026-10-24
+
+### Fixed
+
+- **Web preview tabs follow navigation**, keeping Reload, Copy URL and Open in browser on the current page.
+
 ## [0.23.17] - 2026-10-23
 
 ### Fixed
