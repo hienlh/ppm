@@ -1,6 +1,6 @@
 /**
  * Bringing the sidebar's Port Forwarding panel on screen from elsewhere — the command palette's
- * "Forward a Port". A phone has no sidebar, so there it is the navigation drawer, opened on it.
+ * "Open Web Preview / Forward a Port". A phone has no sidebar, so there it is the navigation drawer, opened on it.
  */
 import { useSettingsStore } from "@/stores/settings-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
