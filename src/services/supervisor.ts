@@ -1996,6 +1996,7 @@ export function shutdown() {
 
 // ─── Main entry ────────────────────────────────────────────────────────
 export async function runSupervisor(opts: {
+  minimal?: boolean;
   port: number;
   host: string;
   profile?: string;
@@ -2035,7 +2036,7 @@ export async function runSupervisor(opts: {
       if (isAutoStartUnitStale()) {
         log("INFO", "Stale systemd unit detected — regenerating and restarting through systemd for proper process tracking");
         await enableAutoStart(
-          { port: opts.port, host: opts.host, share: opts.share, profile: opts.profile },
+          { port: opts.port, host: opts.host, share: opts.share, profile: opts.profile, minimal: opts.minimal },
           { skipStart: true },
         );
         // Schedule restart in a separate scope (survives our cgroup teardown)
@@ -2068,6 +2069,7 @@ export async function runSupervisor(opts: {
   const isUpgrade = prevStatus.state === "upgrading";
   writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
+    minimalMode: !!opts.minimal,
     state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,
     pid: null,
     tunnelPid: isUpgrade ? (prevStatus.tunnelPid ?? null) : null,
@@ -2100,6 +2102,7 @@ export async function runSupervisor(opts: {
     "__serve__", "0", "127.0.0.1",
     opts.profile ?? "",
   ];
+  if (opts.minimal) serverArgs.push("--minimal");
   // Strip trailing empty args
   while (serverArgs.length > 0 && serverArgs[serverArgs.length - 1] === "") serverArgs.pop();
 
@@ -2487,5 +2490,5 @@ if (process.argv.includes("__supervise__")) {
   const { startLogLevelSync } = await import("./log-level-config.ts");
   startLogLevelSync();
 
-  runSupervisor({ port, host, profile, share });
+  runSupervisor({ port, host, profile, share, minimal: process.argv.includes("--minimal") });
 }

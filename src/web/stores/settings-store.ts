@@ -34,6 +34,8 @@ export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jir
 const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
+  /** Server startup mode, never persisted as a browser preference. */
+  minimalMode: boolean;
   themeStyle: PpmThemeStyle;
   themeMode: PpmThemeMode;
   /** Id of the selected imported theme when themeStyle === "custom". */
@@ -435,6 +437,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   inlineBlame: _initial.inlineBlame ?? false,
+  minimalMode: false,
   designWindows: _initial.designWindows ?? true,
   wordWrap: _initial.wordWrap ?? false,
   remoteDesktopQuality: parseQualityChoice(_initial.remoteDesktopQuality),
@@ -783,8 +786,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ]);
       const infoJson = await infoRes.json();
       if (infoJson.ok) {
-        const { device_name, version, tunnel_active } = infoJson.data;
-        set({ deviceName: device_name || null, version: version || null, tunnelActive: !!tunnel_active });
+        const { device_name, version, tunnel_active, minimal_mode } = infoJson.data;
+        set({ minimalMode: minimal_mode === true, deviceName: device_name || null, version: version || null, tunnelActive: !!tunnel_active });
         if (device_name) {
           document.title = `PPM — ${device_name}`;
         }

@@ -3,13 +3,16 @@
  * notification, the history list, a `?openChat=` link — must land on that tab, not start a
  * plain chat tab that has left design mode.
  */
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { installDom, uninstallDom } from "../../helpers/react-dom";
 
 installDom();
 afterAll(uninstallDom);
 const { usePanelStore } = await import("../../../src/web/stores/panel-store");
 const { openDesignTab, openSessionInItsTab } = await import("../../../src/web/lib/design/open-design-tab");
+
+const { useSettingsStore } = await import("../../../src/web/stores/settings-store");
+afterEach(() => useSettingsStore.setState({ minimalMode: false }));
 
 const designTab = (id: string, project: string, slug: string, sessionId?: string) => ({
   id, type: "design" as const, title: slug, projectId: project, closable: true,
@@ -66,5 +69,21 @@ describe("opening a design session", () => {
   it("opens an ordinary session as an ordinary chat", () => {
     const id = openSessionInItsTab({ id: "plain", providerId: "claude", title: "Hi" }, "p");
     expect(allTabs().find((t) => t.id === id)?.type).toBe("chat");
+  });
+});
+
+ describe("minimal mode session routing", () => {
+  it("opens design history as chat while preserving its saved design tab", () => {
+    useSettingsStore.setState({ minimalMode: true });
+    const id = openSessionInItsTab({ id: "sess-1", providerId: "claude", designSlug: "landing" }, "p");
+    expect(allTabs().find((t) => t.id === id)?.type).toBe("chat");
+    expect(allTabs().some((t) => t.id === "design:landing")).toBe(true);
+    expect(openSessionInItsTab({ id: "sess-1", designSlug: "landing" }, "p")).toBe(id);
+  });
+  it("refuses non-chat tabs without modifying the saved workspace", () => {
+    useSettingsStore.setState({ minimalMode: true });
+    const before = JSON.stringify(usePanelStore.getState().panels);
+    expect(usePanelStore.getState().openTab({ type: "terminal", title: "Terminal", projectId: "p", closable: true })).toBe("");
+    expect(JSON.stringify(usePanelStore.getState().panels)).toBe(before);
   });
 });

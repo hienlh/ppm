@@ -6,6 +6,7 @@ export interface AutoStartConfig {
   host: string;
   share: boolean;
   profile?: string;
+  minimal?: boolean;
 }
 
 /** Detect whether running from compiled binary or bun runtime */
@@ -45,6 +46,7 @@ export function buildExecCommand(config: AutoStartConfig): string[] {
     const args = [process.execPath, "__supervise__", String(config.port), config.host];
     if (config.profile) args.push(config.profile);
     if (config.share) args.push("--share");
+    if (config.minimal) args.push("--minimal");
     return args;
   }
 
@@ -54,6 +56,7 @@ export function buildExecCommand(config: AutoStartConfig): string[] {
   const args = [bunPath, "run", scriptPath, "__supervise__", String(config.port), config.host];
   if (config.profile) args.push(config.profile);
   if (config.share) args.push("--share");
+  if (config.minimal) args.push("--minimal");
   return args;
 }
 

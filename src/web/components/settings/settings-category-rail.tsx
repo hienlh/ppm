@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Left pane of the split layout: every category visible at once, grouped.
  *
@@ -19,11 +20,12 @@ interface SettingsCategoryRailProps {
 }
 
 export function SettingsCategoryRail({ active, onSelect }: SettingsCategoryRailProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   return (
     <ScrollArea className="h-full">
       <nav className="p-2 space-y-4" aria-label="Settings categories">
         {SETTINGS_GROUPS.map((group) => {
-          const categories = settingsCategoriesInGroup(group.id);
+          const categories = settingsCategoriesInGroup(group.id, minimalMode);
           if (categories.length === 0) return null;
           return (
             <div key={group.id} className="space-y-1">

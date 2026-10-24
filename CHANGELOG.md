@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`ppm start --minimal` runs PPM with only chat, files, the editor and Settings.** The window keeps its usual sidebar, tabs and panels, but shows only chats and their history, the file explorer, search, the editor and the Settings panes that apply; the terminal, database, Git, Design, extensions and the other panels are hidden. The server skips extensions, scheduled agents, Jira watchers, PPMBot and database startup, and refuses the hidden features' requests with a message saying they are off in minimal mode, even from a browser still showing a full-mode page. Projects, chat providers and accounts, attachments, sign-in and remote access work as before. The mode belongs to the running PPM: `ppm restart`, a restart after a crash and autostart keep it, `ppm status` shows it, and changing it means `ppm down`, then `ppm start` with or without `--minimal`. Tabs opened in full mode are kept and come back when PPM runs in full mode again.
+
 ## [0.23.17] - 2026-10-23
 
 ### Fixed

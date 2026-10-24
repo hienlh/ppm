@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * The Settings shell, shared by every host: the floating window, the mobile tab, and (until it
  * moves out) the sidebar panel.
@@ -19,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
-  DEFAULT_SETTINGS_CATEGORY, SETTINGS_NAVIGATE_EVENT, isSettingsCategoryId, settingsCategory,
+  DEFAULT_SETTINGS_CATEGORY, SETTINGS_NAVIGATE_EVENT, isSettingsCategoryId, settingsCategory, resolveSettingsCategory,
   type SettingsCategoryId,
 } from "./settings-categories";
 import { SettingsCategoryRail } from "./settings-category-rail";
@@ -38,14 +39,17 @@ export interface SettingsBodyProps {
 }
 
 export function SettingsBody({ initialCategory, onCategoryChange }: SettingsBodyProps) {
-  const [active, setActive] = useState<SettingsCategoryId>(initialCategory ?? DEFAULT_SETTINGS_CATEGORY);
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
+  const [selected, setActive] = useState<SettingsCategoryId>(initialCategory ?? DEFAULT_SETTINGS_CATEGORY);
   // Narrow layout only: is the index covering the pane? A deep link opens straight on the pane.
   const [showList, setShowList] = useState(initialCategory === undefined);
 
+  const active = resolveSettingsCategory(selected, minimalMode);
   const category = settingsCategory(active);
   const Icon = category.icon;
 
   function select(id: SettingsCategoryId) {
+    id = resolveSettingsCategory(id, minimalMode);
     setActive(id);
     // Also cleared when picking from the rail: if the container later shrinks, a stale list
     // overlay would otherwise cover the pane the user just chose.

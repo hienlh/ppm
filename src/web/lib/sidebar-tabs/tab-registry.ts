@@ -74,3 +74,8 @@ export function getAvailableTabs(opts: {
 
   return tabs;
 }
+
+/** Sections used by the minimal chat-and-editor workspace. */
+export function isMinimalSidebarTab(id: SidebarActiveTab): boolean {
+  return id === "history" || id === "explorer" || id === "search";
+}

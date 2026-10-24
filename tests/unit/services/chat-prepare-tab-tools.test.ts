@@ -69,6 +69,20 @@ describe("chatService tab tools", () => {
     expect(await chatService.prepareSendOptions("stub-tabs", "t5", "hi")).not.toHaveProperty("tabToolsMcp");
   });
 
+  it("minimal overrides enabled editor, preview, URL and terminal tools without changing saved switches", async () => {
+    setTabTools(true);
+    const ai = configService.get("ai");
+    ai.ppm_tools = Object.fromEntries(TAB_TOOLS.map((tool) => [tool, true]));
+    const argv = process.argv;
+    process.argv = [...argv, "--minimal"];
+    try {
+      expect(await chatService.prepareSendOptions("stub-tabs", "minimal-tabs", "hi", EVIL))
+        .not.toHaveProperty("tabToolsMcp");
+      expect(TAB_TOOLS.every((tool) => ai.ppm_tools?.[tool] === true)).toBe(true);
+    } finally { process.argv = argv; }
+    expect((await chatService.prepareSendOptions("stub-tabs", "minimal-tabs", "hi")).tabToolsMcp).toBeDefined();
+  });
+
   it("revokes the token when the chat is deleted", async () => {
     setTabTools(true);
     const { tabToolsMcp } = await chatService.prepareSendOptions("stub-tabs", "t4", "hi");

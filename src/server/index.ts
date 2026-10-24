@@ -1,3 +1,4 @@
+import { isMinimalMode, isMinimalPathDisabled } from "../services/runtime-mode.ts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { writeFileSync } from "node:fs";
@@ -150,12 +151,18 @@ function describeSocket(data: Record<string, unknown> | undefined): string {
 }
 
 // Register database adapters at module load time
-initAdapters();
+if (!isMinimalMode()) initAdapters();
 
 export const app = new Hono();
 
 // One log line per request (see access-log.ts) — first, so it times and sees everything.
 app.use("*", accessLog);
+app.use("*", async (c, next) => {
+  if (isMinimalMode() && isMinimalPathDisabled(c.req.path)) {
+    return c.json({ ok: false, error: "Unavailable in minimal mode. Restart PPM without --minimal to enable this feature." }, 403);
+  }
+  await next();
+});
 
 // Hono's default handler, minus its `console.error(err)`: the access log writes the failure
 // once, on the request's own line and with the stack, from `c.error`.
@@ -183,6 +190,7 @@ const instanceId = crypto.randomUUID();
 app.get("/api/health", (c) => c.json(ok({ status: "running", instanceId })));
 app.get("/api/info", (c) => c.json(ok({
   version: VERSION,
+  minimal_mode: isMinimalMode(),
   device_name: configService.get("device_name") || null,
   // Read-only status so the login screen can show a live tunnel chip pre-auth.
   // The mutating tunnel routes (/start, /stop) stay behind authMiddleware.
@@ -421,6 +429,7 @@ async function waitForServerReady(statusFile: string, port: number) {
 let codexCleanupRef: (() => void) | null = null;
 
 export async function startServer(options: {
+  minimal?: boolean;
   port?: string;
   share?: boolean;
   profile?: string;
@@ -474,6 +483,12 @@ export async function startServer(options: {
         if (supervisorPid) {
           try {
             process.kill(supervisorPid, 0); // throws if dead
+            if (!!status.minimalMode !== !!options.minimal) {
+              console.error(`  PPM is already running in ${status.minimalMode ? "minimal" : "full"} mode.`);
+              console.error(`  To change mode, run: ppm down && ppm start${options.minimal ? " --minimal" : ""}`);
+              process.exitCode = 1;
+              return;
+            }
 
             // Supervisor is alive — handle based on state
             const state = status.state as string;
@@ -669,7 +684,7 @@ export async function startServer(options: {
       if (shouldStartViaService(process.platform, getAutoStartStatus(), isIsolatedPpmHome())) {
         try {
           // Regenerates the unit/plist in case config changed (port, share, …)
-          await enableAutoStart({ port, host, share: !!options.share, profile: options.profile });
+          await enableAutoStart({ port, host, share: !!options.share, profile: options.profile, minimal: !!options.minimal });
           startedViaService = true;
         } catch (err) {
           serviceStartError = err instanceof Error ? err.message : String(err);
@@ -694,6 +709,7 @@ export async function startServer(options: {
         options.profile ?? "",
       ];
       if (options.share) superviseArgs.push("--share");
+      if (options.minimal) superviseArgs.push("--minimal");
       while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
 
       const bunExe = process.execPath.replace(/\\/g, "\\\\");
@@ -731,6 +747,7 @@ export async function startServer(options: {
         options.profile ?? "",
       ];
       if (options.share) superviseArgs.push("--share");
+      if (options.minimal) superviseArgs.push("--minimal");
       while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
 
       const cmd = isCompiledBin
@@ -800,6 +817,7 @@ export async function startServer(options: {
       if (!shareUrl) console.warn("  ⚠  Tunnel started but URL not detected yet. Check: ppm status");
     }
 
+    if (options.minimal) console.log("  Mode: minimal (chat + editor)");
     console.log(`  Supervisor started (PID: ${supervisorPid}, server PID: ${serverPid})\n`);
     console.log(`  ➜  Local:   http://localhost:${port}/`);
     if (shareUrl) {
@@ -824,7 +842,7 @@ export async function startServer(options: {
     // upgrade past the v0.13 → v0.14 systemd cgroup fix get the new unit
     // picked up on next `systemctl --user restart ppm.service` / reboot.
     try {
-      const { getAutoStartStatus, enableAutoStart, isAutoStartUnitStale } = await import("../services/autostart-register.ts");
+      const { getAutoStartStatus, enableAutoStart, isAutoStartUnitStale, loadMetadata } = await import("../services/autostart-register.ts");
       const status = getAutoStartStatus();
       const stale = status.enabled && isAutoStartUnitStale();
       if (startedViaService) {
@@ -836,11 +854,12 @@ export async function startServer(options: {
         console.warn(`  ⚠  Could not start via service manager: ${serviceStartError}`);
         console.warn(`     Started directly instead — PPM will stop when this terminal window closes.`);
         console.warn(`     Fix: ppm stop && ppm autostart enable`);
-      } else if (!status.enabled || stale) {
+      } else if (!status.enabled || stale || !!loadMetadata()?.config.minimal !== !!options.minimal) {
         const autoConfig = {
           port, host,
           share: !!options.share,
           profile: options.profile,
+          minimal: !!options.minimal,
         };
         // skipStart: supervisor is already running from direct spawn above
         await enableAutoStart(autoConfig, { skipStart: true });
@@ -920,7 +939,7 @@ if (process.argv.includes("__serve__")) {
   } catch { /* status.json missing or no shareUrl — normal */ }
 
   // Auto-cleanup old proxy request logs (30-day retention): on startup + daily
-  {
+  if (!isMinimalMode()) {
     const { cleanupOldProxyRequests } = await import("../services/db.service.ts");
     const runProxyCleanup = () => {
       try {
@@ -936,7 +955,7 @@ if (process.argv.includes("__serve__")) {
 
   // Same idea for the SQL audit log, but the limits are user-configurable.
   // Skipped when the audit database was never created — no queries have run yet.
-  {
+  if (!isMinimalMode()) {
     const { existsSync } = await import("node:fs");
     const { getAuditDbPath } = await import("../services/query-audit/query-audit-db.ts");
     const { cleanupQueryAudit } = await import("../services/query-audit/query-audit-cleanup.ts");
@@ -1000,7 +1019,7 @@ if (process.argv.includes("__serve__")) {
   }
 
   // Import/Export's files of servers that are no longer running: no job or upload names them any more.
-  {
+  if (!isMinimalMode()) {
     const { wipeImpExpFiles } = await import("../services/database/impexp/impexp-files.ts");
     void wipeImpExpFiles();
   }
@@ -1043,6 +1062,12 @@ if (process.argv.includes("__serve__")) {
         const upgraded = server.upgrade(req, { data: { type: "health" } });
         if (upgraded) return undefined;
         return upgradeFailed(url);
+      }
+
+      // Sockets only: an HTTP route falls through to the Hono middleware, whose JSON
+      // error is what the browser's api-client can show.
+      if (url.pathname.startsWith("/ws/") && isMinimalMode() && isMinimalPathDisabled(url.pathname)) {
+        return new Response("Unavailable in minimal mode", { status: 403 });
       }
 
       // Every socket except the health probe is authenticated at upgrade time.
@@ -1226,45 +1251,48 @@ if (process.argv.includes("__serve__")) {
     console.warn("[event-loop] Lag monitor failed to start:", e);
   });
 
-  // Discover + activate enabled extensions
-  import("../services/extension.service.ts").then(({ extensionService }) => extensionService.startup()).catch((e) => {
-    console.error("[ExtService] Startup error:", e);
-  });
-
-  // Start PPMBot Telegram poller (if enabled)
-  import("../services/ppmbot/ppmbot-service.ts")
-    .then(({ ppmbotService }) => ppmbotService.start())
-    .catch((e) => {
-      console.error("[ppmbot] Startup error:", e);
-    });
-
-  // Start Jira watchers (non-blocking, cleanup on exit)
-  import("../services/jira-watcher.service.ts")
-    .then(({ jiraWatcherService }) => {
-      // Reset zombie debug sessions from previous server run
-      import("../services/jira-debug-session.service.ts").then(({ jiraDebugService }) => {
-        jiraDebugService.init();
-      }).catch((e) => {
-        console.error("[jira] Resetting debug sessions left by the previous run failed:", e);
-      });
-      jiraWatcherService.startAll().catch((e) => {
-        console.error("[jira] Failed to start watchers:", (e as Error).message);
-      });
-    })
-    .catch((e) => {
-      console.error("[jira] Watcher service failed to load:", e);
-    });
-
-  // Start scheduled-agents cron scheduler
   let schedulerStop: (() => void) | null = null;
-  import("../services/scheduler.service.ts")
-    .then(({ schedulerService }) => {
-      schedulerService.start();
-      schedulerStop = () => schedulerService.stop();
-    })
-    .catch((e) => {
-      console.error("[scheduler] Startup error:", e);
+  if (!isMinimalMode()) {
+    // Discover + activate enabled extensions
+    import("../services/extension.service.ts").then(({ extensionService }) => extensionService.startup()).catch((e) => {
+      console.error("[ExtService] Startup error:", e);
     });
+
+    // Start PPMBot Telegram poller (if enabled)
+    import("../services/ppmbot/ppmbot-service.ts")
+      .then(({ ppmbotService }) => ppmbotService.start())
+      .catch((e) => {
+        console.error("[ppmbot] Startup error:", e);
+      });
+
+    // Start Jira watchers (non-blocking, cleanup on exit)
+    import("../services/jira-watcher.service.ts")
+      .then(({ jiraWatcherService }) => {
+        // Reset zombie debug sessions from previous server run
+        import("../services/jira-debug-session.service.ts").then(({ jiraDebugService }) => {
+          jiraDebugService.init();
+        }).catch((e) => {
+          console.error("[jira] Resetting debug sessions left by the previous run failed:", e);
+        });
+        jiraWatcherService.startAll().catch((e) => {
+          console.error("[jira] Failed to start watchers:", (e as Error).message);
+        });
+      })
+      .catch((e) => {
+        console.error("[jira] Watcher service failed to load:", e);
+      });
+
+    // Start scheduled-agents cron scheduler
+    import("../services/scheduler.service.ts")
+      .then(({ schedulerService }) => {
+        schedulerService.start();
+        schedulerStop = () => schedulerService.stop();
+      })
+      .catch((e) => {
+        console.error("[scheduler] Startup error:", e);
+      });
+
+  }
 
   // Graceful shutdown: close the listening socket so the port is released
   const gracefulShutdown = (trigger: string) => {
