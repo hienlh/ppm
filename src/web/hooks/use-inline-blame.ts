@@ -115,7 +115,7 @@ export function useInlineBlame({
   // repository) when nothing was. Every path below is relative to it, because
   // that is where git runs. `fileRepo` null with a `repoFile` is a project
   // inside a repository: git runs unscoped there, as it always did.
-  const { fileScope, fileGitUrl } = useGitRepo(projectName);
+  const { fileScope, fileGitUrl } = useGitRepo(enabled ? projectName : undefined);
   const scope = filePath ? fileScope(filePath) : null;
   const fileRepo = scope?.repo ?? null;
   const gitRoot = fileRepo?.path ?? projectPath;

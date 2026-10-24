@@ -1,3 +1,4 @@
+import { isMinimalTab } from "@/lib/minimal-mode";
 /**
  * TabPool — persistent tab rendering with DOM reparenting.
  *
@@ -13,6 +14,7 @@
  * they travel with the node — including into another document.
  */
 import { useState, useEffect, useSyncExternalStore } from "react";
+import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useMountedTabsStore } from "@/stores/mounted-tabs-store";
 import type { TabType } from "@/stores/tab-store";
@@ -98,6 +100,7 @@ export function TabPool() {
 
   // Detached tabs and their floating windows are persisted separately, so a reload can
   // restore one without the other; this repairs the mismatch once per project load.
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   useWindowPanelReconcile();
 
   // Collect tabs from ALL mounted projects (not just active) to preserve
@@ -106,7 +109,8 @@ export function TabPool() {
   // Logic lives in tab-pool-collect.ts (pure helper) so it is unit-testable
   // without a DOM; it also applies the stable tabId sort that prevents React
   // insertBefore() reorders from yanking reparented DOM nodes back here.
-  const allEntries = collectTabEntries(panels, grid, projectGrids, currentProject);
+  const allEntries = collectTabEntries(panels, grid, projectGrids, currentProject)
+    .filter((entry) => !minimalMode || isMinimalTab(entry.type));
 
   // Lazy mount: a saved workspace can hold dozens of tabs, and mounting them
   // all on boot runs every tab's data-fetch effects at once (measured: 515

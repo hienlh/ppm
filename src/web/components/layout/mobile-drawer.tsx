@@ -14,7 +14,7 @@ import { PortForwardingPanel } from "@/components/tunnels/port-forwarding-panel"
 import { SessionHistoryList } from "@/components/chat/session-history-list";
 import { GroupList } from "@/components/group-chat/group-list";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
-import { getAvailableTabs } from "@/lib/sidebar-tabs/tab-registry";
+import { getAvailableTabs, isMinimalSidebarTab } from "@/lib/sidebar-tabs/tab-registry";
 import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
 import { MobileDrawerTabBar } from "@/components/layout/mobile-drawer-tab-bar";
 import { openLogs } from "@/components/logs/open-logs";
@@ -90,6 +90,7 @@ interface MobileDrawerProps {
 
 export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps) {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
   const sidebarTabOrder = useSettingsStore((s) => s.sidebarTabOrder);
   const setSidebarTabOrder = useSettingsStore((s) => s.setSidebarTabOrder);
@@ -98,12 +99,13 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   const openRemoteDesktop = useOpenRemoteDesktop();
   const openAndroid = useOpenAndroid();
   const { available: androidAvailable } = useAndroidAvailable();
-  const [activeTab, setActiveTab] = useState<SidebarActiveTab>(initialTab ?? "explorer");
+  const [storedActiveTab, setActiveTab] = useState<SidebarActiveTab>(initialTab ?? "explorer");
+  const activeTab = minimalMode && !isMinimalSidebarTab(storedActiveTab) ? "history" : storedActiveTab;
   const [cloudOpen, setCloudOpen] = useState(false);
 
   const tabs = useMemo(
-    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder).filter((t) => isMobileSupported(t.id)),
-    [jiraEnabled, contributions, sidebarTabOrder],
+    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder).filter((t) => isMobileSupported(t.id) && (!minimalMode || isMinimalSidebarTab(t.id))),
+    [jiraEnabled, contributions, sidebarTabOrder, minimalMode],
   );
 
   // Sync when initialTab changes (e.g. settings button opens drawer)
@@ -120,10 +122,10 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   // sheet here is what opens. The sheet portals to body, so it shows even while
   // the drawer itself is closed.
   useEffect(() => {
-    const open = () => { if (isMobileDevice()) setCloudOpen(true); };
+    const open = () => { if (!minimalMode && isMobileDevice()) setCloudOpen(true); };
     window.addEventListener("open-cloud-share", open);
     return () => window.removeEventListener("open-cloud-share", open);
-  }, []);
+  }, [minimalMode]);
 
   const likelyBugs = useLogsBadgeCount();
 
@@ -218,22 +220,22 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           <div className="border-t border-border px-3 py-2">
             <div
               className="grid gap-1"
-              style={{ gridTemplateColumns: `repeat(${footerTiles.length}, minmax(0, 1fr))` }}
+              style={{ gridTemplateColumns: `repeat(${minimalMode ? 1 : footerTiles.length}, minmax(0, 1fr))` }}
             >
-              {footerTiles.map((tile) => (
+              {footerTiles.filter((tile) => !minimalMode || tile.label === "Settings").map((tile) => (
                 <FooterTile key={tile.label} {...tile} />
               ))}
             </div>
             {/* Version / upgrade pinned at the very bottom, under a divider. */}
             <div className="mt-2 border-t border-border px-1 text-[11px]">
-              <UpgradeButton align="left" />
+              {!minimalMode && <UpgradeButton align="left" />}
             </div>
           </div>
         </div>
       </div>
 
       {/* Cloud & Share — bottom sheet (portals to body, so drawer transform doesn't clip it) */}
-      <BottomSheet open={cloudOpen} onClose={() => setCloudOpen(false)} zIndex={60}>
+      <BottomSheet open={!minimalMode && cloudOpen} onClose={() => setCloudOpen(false)} zIndex={60}>
         <CloudSharePopover variant="sheet" onClose={() => setCloudOpen(false)} />
       </BottomSheet>
     </div>

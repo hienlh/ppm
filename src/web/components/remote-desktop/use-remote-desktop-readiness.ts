@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Client view of `GET /api/remote-desktop/capabilities`: the host's requirements checklist
  * (ffmpeg, macOS permissions, …) plus the derived `videoReady` / `inputReady` flags.
@@ -130,28 +131,30 @@ export function useRemoteDesktopReadiness(poll: boolean): {
   refresh: () => void;
   runHostAction: (id: string, action: "request" | "open-settings") => Promise<void>;
 } {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const [caps, setCaps] = useState<RemoteDesktopCapabilities | null>(null);
   const [failed, setFailed] = useState(false);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
+    if (minimalMode) return;
     let cancelled = false;
     api.get<RemoteDesktopCapabilities>("/api/remote-desktop/capabilities")
       .then((c) => { if (!cancelled) { setCaps(normalizeCapabilities(c)); setFailed(false); } })
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [tick]);
+  }, [tick, minimalMode]);
 
   // A ready host stops the poll. The gate is then showing the viewer for the rest of the
   // session, and every poll re-ran the host's probes for it — on a Wayland host without a GPU
   // encoder, four `gst-inspect-1.0` every two seconds beside a software encode.
   const ready = !!caps?.videoReady && caps.inputReady;
   useEffect(() => {
-    if (!poll || ready) return;
+    if (minimalMode || !poll || ready) return;
     const timer = setInterval(refresh, READINESS_POLL_MS);
     return () => clearInterval(timer);
-  }, [poll, ready, refresh]);
+  }, [poll, ready, refresh, minimalMode]);
 
   const runHostAction = useCallback(async (id: string, action: "request" | "open-settings") => {
     try { await api.post(`/api/remote-desktop/requirements/${encodeURIComponent(id)}/${action}`); } catch { /* panel shows state on next poll */ }

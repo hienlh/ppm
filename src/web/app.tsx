@@ -1,3 +1,4 @@
+import { isMinimalTab } from "@/lib/minimal-mode";
 import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -70,6 +71,7 @@ const RemoteDesktopMobileSheet = lazy(() =>
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
 export function App() {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   useFileIndexInvalidation();
   const [authState, setAuthState] = useState<AuthState>("checking");
   const isMobileViewport = useIsMobile();
@@ -131,6 +133,7 @@ export function App() {
         const json = await res.json();
 
         if (json.ok) {
+          await fetchServerInfo();
           setAuthState("authenticated");
         } else {
           setAuthState("unauthenticated");
@@ -163,7 +166,7 @@ export function App() {
   useNotificationClicks(authState === "authenticated");
 
   // Extension WS bridge — connects to /ws/extensions for UI updates (only after auth)
-  useExtensionWs(authState === "authenticated");
+  useExtensionWs(authState === "authenticated" && !minimalMode);
 
   // App-wide event bus — owns file watching + cross-cutting broadcasts so they do
   // not depend on a chat tab being mounted.
@@ -171,11 +174,11 @@ export function App() {
 
   // Warm a few recent chat tabs during idle time (desktop only). Tabs mount
   // lazily, so this trades a little background work for instant tab switching.
-  useTabPrefetch();
+  useTabPrefetch(authState === "authenticated" && !minimalMode);
 
   // Load every tab's and window's code during idle time (desktop or Wi-Fi), so the
   // first one of each kind opens without waiting on its chunk or a spinner.
-  useUiPreload(authState === "authenticated");
+  useUiPreload(authState === "authenticated" && !minimalMode);
 
   // Warn before closing browser tab (prevents accidental Ctrl+W)
   useEffect(() => {
@@ -247,7 +250,7 @@ export function App() {
       useTabStore.getState().switchProject(target.name);
 
       // Auto-open target tab from URL (type-based)
-      if (urlState.tabType) {
+      if (urlState.tabType && (!useSettingsStore.getState().minimalMode || (isMinimalTab(urlState.tabType)))) {
         autoOpenFromUrl(urlState.tabType, urlState.tabIdentifier, target!.name);
       }
       // Legacy: ?openChat= query param
@@ -332,6 +335,7 @@ export function App() {
   return (
     <TooltipProvider>
       <div className="app-backdrop h-dvh flex flex-col text-foreground overflow-hidden relative">
+        {!minimalMode && <>
         {/* Beta ribbon — top-left on desktop, top-right on mobile */}
         <div className="fixed z-50 overflow-hidden pointer-events-none max-md:right-0 max-md:top-0 md:left-0 md:top-0 w-10 h-10">
           <div className="absolute flex items-center justify-center max-md:rotate-45 max-md:right-[-18px] max-md:top-[4px] md:-rotate-45 md:left-[-18px] md:top-[4px] w-[60px] bg-warning text-white text-[6px] font-bold leading-none py-[2.5px] shadow-sm">
@@ -349,6 +353,7 @@ export function App() {
         {/* Screen-awake pill — mobile only; the desktop equivalent lives in the status bar */}
         <WakeLockMobileBadge />
 
+        </>}
         {/* Main layout */}
         <div className="flex flex-1 overflow-hidden">
           {/* Desktop unified nav rail (wordmark + project switcher + section rail + panel) */}
@@ -373,7 +378,7 @@ export function App() {
             <TabPool />
             {/* Desktop status bar — spans the working area only (not under the sidebar).
                 Self-gated to desktop via `hidden md:flex`. */}
-            <StatusBar />
+            {!minimalMode && <StatusBar />}
             {/* Floating windows — desktop only, self-gated; covers the working area. */}
             <WindowLayer />
           </div>
@@ -397,6 +402,7 @@ export function App() {
           isOpen={projectSheetOpen}
           onClose={() => setProjectSheetOpen(false)}
         />
+        {!minimalMode && <>
         <OnboardingRoot
           paletteOpen={paletteOpen}
           navigationOpen={drawerOpen || projectSheetOpen}
@@ -413,7 +419,6 @@ export function App() {
 
         {/* Database Log In, for a connection that keeps no password — singleton */}
         <DbLoginDialogHost />
-        <TabCloseConfirmHost />
         <StructureSaveHost />
         <GridSaveHost />
 
@@ -423,9 +428,7 @@ export function App() {
         </Suspense>
 
         {/* Mobile stand-in for the agent-session window, which WindowLayer never renders below md */}
-        <Suspense fallback={null}>
-          <AgentSessionSheet />
-        </Suspense>
+
 
         {/* Mobile full-screen remote-desktop viewer — same reason as AgentSessionSheet above */}
         <Suspense fallback={null}>
@@ -435,6 +438,13 @@ export function App() {
         {/* Named-tunnel first-run setup popup — hidden unless auth is on, mode is
             still quick and the user has not dismissed it (or a cert needs renewal) */}
         <NamedTunnelSetupPopup />
+
+        </>}
+        <Suspense fallback={null}>
+          <AgentSessionSheet />
+        </Suspense>
+
+        <TabCloseConfirmHost />
 
         {/* Global image lightbox */}
         <ImageOverlay />
@@ -446,14 +456,13 @@ export function App() {
         <BackgroundOutputPanel />
 
         {/* Extension modals (QuickPick, InputBox) */}
-        <ExtensionQuickPick />
-        <ExtensionInputBox />
+        {!minimalMode && <><ExtensionQuickPick /><ExtensionInputBox /></>}
 
         {/* Connection lost overlay — shown when API unreachable for >15s */}
         <ConnectionLostOverlay />
 
         {/* Explorer upload progress — bottom-right card (desktop) or pill + sheet (mobile) */}
-        <UploadProgressPanel />
+        {!minimalMode && <UploadProgressPanel />}
 
         {/* Toast notifications. Bottom-left collides with the mobile dock's
             terminal toolbar — a toast lands directly on the buttons that raised

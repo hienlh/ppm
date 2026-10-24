@@ -1,3 +1,4 @@
+import { isMinimalMode } from "../../services/runtime-mode.ts";
 /**
  * Global event bus WebSocket (`/ws/global`).
  *
@@ -80,7 +81,7 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
 
   void startWatching(projectName, project.path);
   // A client opened this project: have its file list ready before the palette asks for it.
-  warmIndex(project.path);
+  if (!isMinimalMode()) warmIndex(project.path);
   watchedProject.set(ws, projectName);
 }
 

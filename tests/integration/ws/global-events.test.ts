@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/claude-projects-root.ts";
 import { _resetAgentTranscriptHubForTest } from "../../../src/services/agent-transcript/agent-transcript-hub.ts";
 
-const PORT = 19881; // unique — avoid clashing with other WS suites
+const PORT = 0; // Let the OS choose an unused test port.
 let server: ReturnType<typeof Bun.serve>;
 let projectDir: string;
 const PROJECT = "global-events-test";
@@ -61,7 +61,7 @@ function connect(): Promise<{
   close: () => void;
 }> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${PORT}/ws/global`);
+    const ws = new WebSocket(`ws://localhost:${server.port}/ws/global`);
     const messages: any[] = [];
     ws.onmessage = (ev) => {
       try { messages.push(JSON.parse(ev.data as string)); } catch { /* ignore */ }
@@ -127,6 +127,22 @@ describe("global event bus", () => {
     expect(typeof evt.path).toBe("string");
 
     close();
+  });
+
+  it("watches editor files in minimal mode without a chat session", async () => {
+    process.argv.push("--minimal");
+    const { ws, waitForType, close } = await connect();
+    try {
+      await waitForType("global_ready");
+      ws.send(JSON.stringify({ type: "watch", projectName: PROJECT }));
+      await new Promise((r) => setTimeout(r, 300));
+      writeFileSync(resolve(projectDir, "minimal-editor.txt"), "changed outside editor");
+      const evt = await waitForType("file:changed");
+      expect(evt.projectName).toBe(PROJECT);
+    } finally {
+      close();
+      process.argv.splice(process.argv.lastIndexOf("--minimal"), 1);
+    }
   });
 
   it("relays the rows of a file the agent just changed, for a session whose list is kept", async () => {
