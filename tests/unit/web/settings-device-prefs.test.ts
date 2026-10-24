@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterAll } from "bun:test";
 import { installGlobal, uninstallDom } from "../../helpers/react-dom.tsx";
 
 interface StoreShape {
+  minimalMode: boolean;
   wordWrap: boolean;
   mobileWordWrap: boolean;
   lspEnabled: boolean;
@@ -31,6 +32,7 @@ let store: Record<string, string> = {};
 let requests: { url: string; method: string; body: unknown }[] = [];
 /** What `/api/settings/ui-prefs` answers with. */
 let serverPrefs: Record<string, unknown> = {};
+let minimalMode = false;
 
 // Through the harness so the real `localStorage` and `fetch` come back: the test process
 // shares one DOM, and this file replaces both on every test.
@@ -48,7 +50,7 @@ function installGlobals() {
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     });
     const body =
-      String(url).includes("/api/info") ? { ok: true, data: { device_name: null, version: "0.0.0" } }
+      String(url).includes("/api/info") ? { ok: true, data: { device_name: null, version: "0.0.0", minimal_mode: minimalMode } }
       : String(url).includes("/api/settings/theme") ? { ok: true, data: { theme: null } }
       : String(url).includes("/api/settings/ui-prefs") ? { ok: true, data: serverPrefs }
       : { ok: true, data: null };
@@ -76,7 +78,7 @@ function uiPrefPuts() {
 }
 
 describe("device-local settings", () => {
-  beforeEach(() => { serverPrefs = {}; });
+  beforeEach(() => { serverPrefs = {}; minimalMode = false; });
 
   it("starts with no language server and with wrap on for a phone", async () => {
     const get = await loadStore();
@@ -134,4 +136,16 @@ describe("device-local settings", () => {
     expect(persisted().mobileWordWrap).toBeUndefined();
     expect(persisted().voiceEngine).toBeUndefined();
   });
+});
+
+it("takes minimal mode only from server info and clears it on a full-mode restart", async () => {
+  const get = await loadStore({ minimalMode: true });
+  expect(get().minimalMode).toBe(false);
+  minimalMode = true;
+  await get().fetchServerInfo();
+  expect(get().minimalMode).toBe(true);
+  minimalMode = false;
+  serverPrefs = { minimalMode: true };
+  await get().fetchServerInfo();
+  expect(get().minimalMode).toBe(false);
 });

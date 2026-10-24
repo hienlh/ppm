@@ -1,3 +1,4 @@
+import { isMinimalTab } from "@/lib/minimal-mode";
 import { randomId } from "@/lib/utils";
 import { dbTabId, upgradeDbTab } from "@/lib/db-tabs";
 import type { Tab, TabType } from "./tab-store";
@@ -174,7 +175,8 @@ export function gridRemovePanel(grid: string[][], panelId: string): string[][] {
  * they are normalized here — a split between them would resurrect the exact
  * disagreement this helper exists to prevent.
  */
-export function visibleTabs(tabs: Tab[], projectName: string | null): Tab[] {
+export function visibleTabs(tabs: Tab[], projectName: string | null, minimalMode = false): Tab[] {
+  if (minimalMode) tabs = tabs.filter((tab) => isMinimalTab(tab.type));
   if (!projectName || projectName === "__global__") return tabs;
   return tabs.filter((t) => !t.projectId || t.projectId === projectName);
 }

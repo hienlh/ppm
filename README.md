@@ -111,6 +111,7 @@ After setup, open the URL shown in terminal and enter your access password.
 ```bash
 # Server
 ppm start                  # Start (background daemon, port 3210, tunnel auto-enabled)
+ppm start --minimal        # Chat, files, editor and settings; disable extra services
 ppm start -p 4000          # Custom port
 ppm stop                   # Stop the server (supervisor stays alive)
 ppm down                   # Full shutdown (supervisor + server + tunnel)
@@ -171,6 +172,20 @@ ppm init                   # Re-run setup wizard
 ppm export skill           # Export the PPM skill for Claude Code
 ppm report                 # File bug report on GitHub
 ```
+
+### Minimal mode
+
+Run `ppm start --minimal` for a minimal workspace: project selection, new chats,
+conversation history, attachments, file explorer, editor and Settings, using the original
+sidebar, tabs and panel layout. Terminal, database, Git panels and extensions are hidden; extra UI preloading and extension connections stop.
+The server skips extensions, scheduled agents, Jira watchers, PPMBot and database
+initialization, and refuses disabled feature endpoints. Chat providers, accounts,
+authentication and remote access remain available.
+
+The flag belongs to this server run, survives supervisor restarts, and applies to all
+connected browsers. Existing workspace tabs remain saved. To change mode on a running
+instance, use `ppm down` then `ppm start --minimal`; to return to full mode, use
+`ppm down` then `ppm start`. `ppm restart` keeps the current mode.
 
 ## Non-Interactive / AI Agent Setup
 

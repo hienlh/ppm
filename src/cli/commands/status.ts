@@ -4,6 +4,7 @@ import { getPpmDir } from "../../services/ppm-dir.ts";
 import { redactSecrets } from "../../services/redact-secrets.ts";
 
 interface DaemonStatus {
+  minimalMode: boolean;
   running: boolean;
   pid: number | null;
   port: number | null;
@@ -36,7 +37,7 @@ async function probeHealth(port: number): Promise<boolean> {
 
 function getDaemonStatus(): DaemonStatus {
   const dead: DaemonStatus = {
-    running: false, pid: null, port: null, host: null,
+    minimalMode: false, running: false, pid: null, port: null, host: null,
     shareUrl: null, tunnelPid: null, tunnelAlive: false,
     supervisorPid: null, supervisorAlive: false,
     state: null, pausedAt: null, pauseReason: null, lastCrashError: null,
@@ -53,6 +54,7 @@ function getDaemonStatus(): DaemonStatus {
       const supervisorAlive = supervisorPid ? isAlive(supervisorPid) : false;
       return {
         running: isAlive(pid),
+        minimalMode: data.minimalMode === true,
         pid,
         port: data.port,
         host: data.host,
@@ -186,6 +188,7 @@ export async function showStatus(options: { json?: boolean; all?: boolean }) {
   if (status.supervisorPid) {
     console.log(`  Supervisor: ${status.supervisorAlive ? "running" : "stopped"} (PID: ${status.supervisorPid})`);
   }
+  console.log(`  Mode:    ${status.minimalMode ? "minimal (chat + editor)" : "full"}`);
   // Show state info
   const state = status.state ?? (status.running ? "running" : "stopped");
   if (state === "paused") {

@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { AsyncQuestionContext } from "./async-question-card";
 import { Loader2, Upload, X } from "@/lib/icons";
@@ -85,6 +86,7 @@ export function ChatTab(props: ChatTabProps) {
 }
 
 function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }: ChatTabProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const preparation = useNewChatPreparation();
   const metadataRef = useRef(metadata);
   metadataRef.current = metadata;
@@ -481,17 +483,17 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     refetchMessages();
   }, [isConnected, reconnect, refetchMessages]);
 
-  const sessionChanges = useSessionFileChanges({ projectName, sessionId, messages, isStreaming });
+  const sessionChanges = useSessionFileChanges({ projectName, sessionId: minimalMode ? null : sessionId, messages, isStreaming });
   const openReview = useCallback((path?: string) => {
     if (!sessionId) return;
     openSessionReview({ projectName, sessionId, title: sessionTitle || undefined, providerId, paths: sessionChanges.paths, selectPath: path });
   }, [projectName, sessionId, sessionTitle, providerId, sessionChanges.paths]);
   // Each turn's change tray answers the same list the bar shows.
   const sessionChangesValue = useMemo((): SessionChangesValue | null => (
-    projectName && sessionId
+    !minimalMode && projectName && sessionId
       ? { projectName, sessionId, files: sessionChanges.files, refresh: sessionChanges.refresh, openReview }
       : null
-  ), [projectName, sessionId, sessionChanges.files, sessionChanges.refresh, openReview]);
+  ), [minimalMode, projectName, sessionId, sessionChanges.files, sessionChanges.refresh, openReview]);
 
   // `model`/`effort`/`thinking` are what change when a pick does; the picks sent are read
   // through `turnSettings`, which leaves out whatever the user has not chosen.
@@ -1369,7 +1371,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />
 
       {/* Every file this session has changed, across all its turns */}
-      <SessionChangesBar
+      {!minimalMode && <SessionChangesBar
         files={sessionChanges.files}
         loaded={sessionChanges.loaded}
         loading={sessionChanges.loading}
@@ -1380,7 +1382,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onRefresh={sessionChanges.refresh}
         onSetReviewed={sessionChanges.setReviewed}
         onReview={openReview}
-      />
+      />}
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-panel shrink-0">

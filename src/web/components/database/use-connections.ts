@@ -47,27 +47,30 @@ export interface UpdateConnectionData {
   readonly?: number;
 }
 
-export function useConnections() {
+export function useConnections(enabled = true) {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [cachedTables, setCachedTables] = useState<Map<number, CachedTable[]>>(new Map());
 
   const fetchConnections = useCallback(async () => {
+    if (!enabled) return;
     try {
       const data = await api.get<Connection[]>("/api/db/connections");
       setConnections(data);
     } catch {
       // ignore — server may not be ready
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => { fetchConnections(); }, [fetchConnections]);
 
   const updateConnection = useCallback(async (id: number, data: UpdateConnectionData): Promise<void> => {
+    if (!enabled) return;
     const updated = await api.put<Connection>(`/api/db/connections/${id}`, data);
     setConnections((prev) => prev.map((c) => (c.id === id ? updated : c)));
-  }, []);
+  }, [enabled]);
 
   const refreshTables = useCallback(async (id: number): Promise<void> => {
+    if (!enabled) return;
     const raw = await api.get<{ name: string; schema: string; rowCount: number }[]>(`/api/db/connections/${id}/tables`);
     const tables: CachedTable[] = raw.map((t) => ({
       connectionId: id,
@@ -77,10 +80,11 @@ export function useConnections() {
       cachedAt: new Date().toISOString(),
     }));
     setCachedTables((prev) => new Map(prev).set(id, tables));
-  }, []);
+  }, [enabled]);
 
   // The connection tab and Database Log In change connections from outside this list.
   useEffect(() => {
+    if (!enabled) return;
     const onChanged = (e: Event) => {
       const { connectionId, refreshTables: reread } = (e as CustomEvent<DbConnectionsChangedDetail>).detail ?? {};
       void fetchConnections();
@@ -88,7 +92,7 @@ export function useConnections() {
     };
     window.addEventListener(DB_CONNECTIONS_CHANGED, onChanged);
     return () => window.removeEventListener(DB_CONNECTIONS_CHANGED, onChanged);
-  }, [fetchConnections, refreshTables]);
+  }, [enabled, fetchConnections, refreshTables]);
 
   return { connections, cachedTables, updateConnection, refreshTables };
 }
