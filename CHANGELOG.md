@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.19] - 2026-10-26
+
+### Fixed
+
+- **A maximized or snapped window no longer shows its title bar at the bottom** after a reload.
+
 ## [0.23.18] - 2026-10-24
 
 ### Fixed
