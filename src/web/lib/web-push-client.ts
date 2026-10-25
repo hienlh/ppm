@@ -22,7 +22,12 @@ function ipadOs(): boolean {
   return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
 }
 
-/** Brave says "Chrome" in its user agent; Vivaldi and Chromium do too, but list no Chrome brand. */
+/**
+ * The browser a push failure names. Brave says "Chrome" in its user agent; Vivaldi and Chromium
+ * do too, but list no Chrome brand, so they get "This browser" rather than a guess.
+ * `userAgentData` exists only in a secure context, and so does every use of this answer:
+ * `pushSupportFrom` stops at plain HTTP before it reads the browser.
+ */
 function thisBrowser(): string {
   if ("brave" in navigator) return "Brave";
   const name = browserNameFrom(navigator.userAgent);
@@ -45,6 +50,11 @@ export function pushSupport(): PushSupport {
   });
 }
 
+/**
+ * Not `thisBrowser()`: a device list wants a name the user recognises, so a Chromium build with
+ * no Chrome brand (Vivaldi, Chromium) stays "Chrome" here. A push failure names the browser's
+ * push service, and there a wrong guess sends the user after the wrong one.
+ */
 export function thisDeviceLabel(): string {
   return deviceLabelFrom(navigator.userAgent, ipadOs(), "brave" in navigator ? "Brave" : undefined);
 }
