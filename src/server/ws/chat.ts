@@ -480,6 +480,31 @@ export function listRunningSessions(
   return running;
 }
 
+/** When each pending approval took the session's slot. Keyed by the event, so it goes with it. */
+const approvalHeldAt = new WeakMap<object, number>();
+
+export interface SessionLiveState {
+  phase: SessionPhase;
+  providerId: string;
+  projectName?: string;
+  pending: { tool: string; requestId: string; since: number } | null;
+}
+
+/** Every session this process holds in memory: its phase and what it is waiting on, if anything. */
+export function listSessionLiveState(): Map<string, SessionLiveState> {
+  const live = new Map<string, SessionLiveState>();
+  for (const [sessionId, entry] of activeSessions) {
+    const ev = entry.pendingApprovalEvent;
+    live.set(sessionId, {
+      phase: entry.phase,
+      providerId: entry.providerId,
+      ...(entry.projectName ? { projectName: entry.projectName } : {}),
+      pending: ev ? { tool: ev.tool, requestId: ev.requestId, since: approvalHeldAt.get(ev) ?? Date.now() } : null,
+    });
+  }
+  return live;
+}
+
 /**
  * App-wide broadcasts live on the global bus (`/ws/global`), not on chat sockets:
  * chat tabs mount lazily, so a chat socket is not guaranteed to exist. Re-exported
@@ -537,6 +562,7 @@ setTabOpenDelivery(deliverTabOpen, resolveMigratedSession);
  */
 function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type: string; requestId: string; tool: string; input: unknown }): void {
   entry.pendingApprovalEvent = ev;
+  approvalHeldAt.set(ev, Date.now());
 
   const isQuestion = ev.tool === "AskUserQuestion";
   const nType = isQuestion ? "question" : "approval_request";
@@ -598,6 +624,7 @@ function showWaitingDbApproval(sessionId: string, entry: SessionEntry): void {
   const waiting = dbApprovalBroker.pendingEvent(sessionId);
   if (!waiting || entry.pendingApprovalEvent) return;
   entry.pendingApprovalEvent = waiting;
+  approvalHeldAt.set(waiting, Date.now());
   broadcast(sessionId, waiting);
 }
 

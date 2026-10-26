@@ -11,7 +11,8 @@ import type { TurnStop } from "../../shared/turn-stop.ts";
 const ROWS_SQL = `
   SELECT type, ts,
     CASE WHEN type IN ('error', 'run_failed') THEN json_extract(payload_json, '$.message') END AS message,
-    CASE WHEN type = 'done' THEN json_extract(payload_json, '$.resultSubtype') END AS subtype
+    CASE WHEN type = 'done' THEN json_extract(payload_json, '$.resultSubtype') END AS subtype,
+    CASE WHEN type = 'turn_aborted' THEN json_extract(payload_json, '$.reason') END AS reason
   FROM session_events
   WHERE trace_id = ?
     AND type IN ('user_message', 'done', 'run_failed', 'turn_aborted', 'error', 'text', 'thinking', 'tool_use')
@@ -24,6 +25,8 @@ export interface TurnStopRow {
   ts: number;
   message: string | null;
   subtype: string | null;
+  /** Why PPM stopped the run, on a `turn_aborted` row (`ws_cancel` is the user's Stop). */
+  reason?: string | null;
 }
 
 /**
@@ -67,4 +70,74 @@ export function lastTurnStop(rows: readonly TurnStopRow[]): TurnStop | null {
     };
   }
   return stop;
+}
+
+/** The user's Stop button, as `chatService.abortQuery` records it. Other abort reasons are PPM's own. */
+const USER_CANCEL_REASON = "ws_cancel";
+
+/**
+ * How the latest turn ended, from the trace alone. `unfinished` is a turn whose rows stop
+ * mid-turn: running if the session is live, else a run that died without a word, which only
+ * the caller can tell apart.
+ */
+export type TraceTurnOutcome =
+  | { outcome: "done"; at: number }
+  | { outcome: "cancelled"; at: number }
+  | { outcome: "error" | "max_turns"; at: number; message: string; subtype?: string }
+  | { outcome: "unfinished"; at: number };
+
+export interface TraceTurnStatus {
+  last: TraceTurnOutcome | null;
+  /** Newest top-level `done`; null when the window of rows read holds none. */
+  lastAnswerAt: number | null;
+  lastUserMessageAt: number | null;
+}
+
+/**
+ * The outcome of the latest turn, given `ROWS_SQL`'s rows newest first. A user cancel is told
+ * apart from `lastTurnStop`'s "stopped on purpose": the Stop button's abort inside the turn,
+ * before the turn finished. An abort written after the turn's own `done` (Stop pressed just
+ * too late) leaves the turn done.
+ */
+export function lastTurnOutcome(rows: readonly TurnStopRow[]): TraceTurnOutcome | null {
+  if (rows.length === 0) return null;
+  const boundary = rows.findIndex((r) => r.type === "user_message");
+  const turn = boundary === -1 ? rows : rows.slice(0, boundary);
+
+  const cancelAt = turn.findIndex((r) => r.type === "turn_aborted" && r.reason === USER_CANCEL_REASON);
+  if (cancelAt !== -1) {
+    const quietSince = turn.slice(0, cancelAt)
+      .every((r) => r.type === "done" || r.type === "error" || r.type === "run_failed" || r.type === "turn_aborted");
+    const finishedBefore = turn.slice(cancelAt + 1).some((r) => r.type === "done");
+    if (quietSince && !finishedBefore) return { outcome: "cancelled", at: turn[cancelAt]!.ts };
+  }
+
+  const stop = lastTurnStop(rows);
+  if (stop) {
+    return {
+      outcome: stop.subtype === "error_max_turns" ? "max_turns" : "error",
+      at: stop.at,
+      message: stop.message,
+      ...(stop.subtype ? { subtype: stop.subtype } : {}),
+    };
+  }
+
+  const newest = rows.find((r) => r.type !== "turn_aborted");
+  if (newest?.type === "done") return { outcome: "done", at: newest.ts };
+  return { outcome: "unfinished", at: (newest ?? rows[0]!).ts };
+}
+
+/** {@link lastTurnOutcome} plus the latest answer and user message, for one trace id. */
+export function readTurnStatusForTrace(traceId: string): TraceTurnStatus {
+  const rows = getTraceDb().query(ROWS_SQL).all(traceId) as TurnStopRow[];
+  return {
+    last: lastTurnOutcome(rows),
+    lastAnswerAt: rows.find((r) => r.type === "done")?.ts ?? null,
+    lastUserMessageAt: rows.find((r) => r.type === "user_message")?.ts ?? null,
+  };
+}
+
+/** {@link readTurnStatusForTrace} for a session id, resolved past any id the provider migrated to. */
+export function readTurnStatus(sessionId: string): TraceTurnStatus {
+  return readTurnStatusForTrace(resolveTraceId(sessionId));
 }

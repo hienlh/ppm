@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { clearSessionUnreadMany } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
+import { listChatSessionStatus } from "../../services/chat-session-status.service.ts";
+import { STATUS_DEFAULT_SINCE_HOURS, STATUS_MAX_SINCE_HOURS } from "../../shared/chat-session-status.ts";
 
 /**
  * Chat routes that are deliberately *not* project-scoped.
@@ -25,6 +27,28 @@ chatGlobalRoutes.get("/sessions/running", async (c) => {
   try {
     const { listRunningSessions } = await import("../ws/chat.ts");
     return c.json(ok(listRunningSessions()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /chat/sessions/status — every session with trace activity in the last `sinceHours`
+ * (default 336, at most 2160), across all registered projects: what it is waiting on, how its
+ * last turn ended, and whether the user has replied since the AI's last answer. `project`
+ * narrows it to one project. Read-only: nothing here marks anything read.
+ */
+chatGlobalRoutes.get("/sessions/status", async (c) => {
+  const rawHours = c.req.query("sinceHours");
+  const sinceHours = rawHours === undefined ? STATUS_DEFAULT_SINCE_HOURS : Number(rawHours);
+  if (!Number.isInteger(sinceHours) || sinceHours < 1 || sinceHours > STATUS_MAX_SINCE_HOURS) {
+    return c.json(err(`sinceHours must be a whole number from 1 to ${STATUS_MAX_SINCE_HOURS}`), 400);
+  }
+  const project = c.req.query("project") || undefined;
+  try {
+    const { listSessionLiveState } = await import("../ws/chat.ts");
+    const { chatSessionStatusSources } = await import("../../services/chat-session-status-sources.ts");
+    return c.json(ok(listChatSessionStatus(chatSessionStatusSources(listSessionLiveState), { sinceHours, project })));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
