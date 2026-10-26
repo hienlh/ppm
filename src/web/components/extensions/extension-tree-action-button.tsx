@@ -26,7 +26,8 @@ export function ExtensionTreeActionButton({ action }: { action: TreeItemAction }
       type="button"
       onClick={handleClick}
       className={cn(
-        "p-0.5 text-text-subtle transition-colors",
+        // Always shown on touch, where it needs a finger-sized target (44 px), not a 16 px glyph.
+        "flex items-center justify-center p-0.5 text-text-subtle transition-colors pointer-coarse:size-11",
         isTrash ? "hover:text-error" : "hover:text-foreground",
       )}
       title={action.tooltip}

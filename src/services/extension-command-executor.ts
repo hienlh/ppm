@@ -23,7 +23,9 @@ export interface CommandExecutorDeps {
   /** Commands of activated extensions, with the extension that declared each. */
   activeCommands(): Array<{ command: string; extId: string }>;
   /** Every installed extension's manifest, activated or not. */
-  installedManifests(): Array<{ id: string; manifest: ExtensionManifest }>;
+  installedManifests(): Array<{ id: string; enabled: boolean; manifest: ExtensionManifest }>;
+  /** Why an extension failed to activate, if it did. */
+  activationError(id: string): string | undefined;
   send(command: string, args: unknown[], timeoutMs: number): Promise<WorkerCommandReply>;
   now?(): number;
 }
@@ -52,9 +54,14 @@ export async function executeExtensionCommand(
     // installed but disabled or failed to activate, which is a different fix for the user.
     const owner = deps.installedManifests().find((e) =>
       e.manifest.contributes?.commands?.some((c) => c.command === command));
-    return owner
-      ? fail("NOT_ACTIVE", `Extension ${owner.id} declares ${command} but is not active`, owner.id)
-      : fail("NOT_FOUND", `No installed extension declares the command ${command}`);
+    if (!owner) return fail("NOT_FOUND", `No installed extension declares the command ${command}`);
+    const error = deps.activationError(owner.id);
+    if (!owner.enabled || error) {
+      const why = owner.enabled ? `failed to activate: ${error}` : "is disabled";
+      return fail("NOT_ACTIVE", `Extension ${owner.id} declares ${command} but ${why}`, owner.id);
+    }
+    // Enabled with no failure recorded: its activation has not run yet (PPM is still starting).
+    return fail("HOST_NOT_READY", `Extension ${owner.id} is not active yet; PPM may still be starting`, owner.id);
   }
 
   let reply: WorkerCommandReply;

@@ -113,23 +113,31 @@ export function registerExtCommands(program: Command): void {
   const run = ext
     .command("run")
     .description("Run a command an extension declared, on the running server")
-    .argument("<command>", "command id, as in the extension's contributes.commands")
+    .argument("[command]", "command id, as in the extension's contributes.commands")
     .argument("[args...]", "passed to the command as separate arguments")
     .option("--json", "print the result as one line of JSON")
-    .option("--timeout <ms>", "how long to wait for the command, in ms (1000 to 600000)")
+    // Optional value, so a missing one reaches the usage check (exit 2) instead of Commander.
+    .option("--timeout [ms]", "how long to wait for the command, in ms (1000 to 600000)")
     .allowUnknownOption()
-    .action(async (command: string, args: string[] | undefined, opts: { json?: boolean; timeout?: string }) => {
+    .allowExcessArguments()
+    .action(async (_command: unknown, _args: unknown, _opts: unknown, self: Command) => {
+      // Read from the tokens as typed, so `--` behaves the same wherever it appears.
+      const { parseExtRunTokens, rawTokensAfter } = await import("../utils/raw-command-tokens.ts");
+      const parsed = parseExtRunTokens(rawTokensAfter(self, ["ext", "run"]));
+      const usageError = (message: string): never => {
+        process.stderr.write(`${message}\n`);
+        process.exit(2);
+      };
+      if (parsed.error) usageError(parsed.error);
+      if (!parsed.command) usageError("Usage: ppm ext run [--json] [--timeout <ms>] <command> [args...]");
       const { clampExecuteTimeout, EXECUTE_DEFAULT_TIMEOUT_MS } = await import("../../shared/extension-command-execute.ts");
       let timeoutMs = EXECUTE_DEFAULT_TIMEOUT_MS;
-      if (opts.timeout !== undefined) {
-        if (!/^\d+$/.test(opts.timeout)) {
-          process.stderr.write(`--timeout must be a whole number of milliseconds, not "${opts.timeout}"\n`);
-          process.exit(2);
-        }
-        timeoutMs = clampExecuteTimeout(Number(opts.timeout));
+      if (parsed.timeout !== undefined) {
+        if (!/^\d+$/.test(parsed.timeout)) usageError(`--timeout must be a whole number of milliseconds, not "${parsed.timeout}"`);
+        timeoutMs = clampExecuteTimeout(Number(parsed.timeout));
       }
       const { runExtensionCommand } = await import("../utils/run-extension-command.ts");
-      process.exit(await runExtensionCommand(command, args ?? [], { printMode: opts.json ? "json" : "auto", timeoutMs }));
+      process.exit(await runExtensionCommand(parsed.command!, parsed.args, { printMode: parsed.json ? "json" : "auto", timeoutMs }));
     });
   markMachineFacing(run);
 

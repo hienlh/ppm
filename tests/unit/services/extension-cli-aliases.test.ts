@@ -78,6 +78,8 @@ describe("addExtensionCliAliases", () => {
     expect((await parse("midday", "list", "--json")).ran).toEqual([{ command: "midday.cli", argv: ["list", "--json"] }]);
     expect((await parse("midday", "--help")).ran).toEqual([{ command: "midday.cli", argv: ["--help"] }]);
     expect((await parse("midday", "note", "--", "-x")).ran).toEqual([{ command: "midday.cli", argv: ["note", "--", "-x"] }]);
+    // Commander alone would swallow a `--` right after the name.
+    expect((await parse("midday", "--", "x")).ran).toEqual([{ command: "midday.cli", argv: ["--", "x"] }]);
     expect((await parse("midday")).ran).toEqual([{ command: "midday.cli", argv: [] }]);
   });
 

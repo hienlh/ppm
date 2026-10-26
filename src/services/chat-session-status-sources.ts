@@ -1,6 +1,7 @@
 import { getDb, getProjects, resolveMigratedSession } from "./db.service.ts";
 import { getTraceDb } from "./session-trace/session-trace-db.ts";
 import { readTurnStatusForTrace } from "./session-trace/turn-stop-reader.ts";
+import { isTurnRunning } from "./session-trace/trace-recorder.ts";
 import type { ChatSessionStatusDeps, LiveSessionState, SessionMetaRow } from "./chat-session-status.service.ts";
 
 /** SQLite's default bound-parameter limit is 999; stay well under it. */
@@ -50,5 +51,6 @@ export function chatSessionStatusSources(liveState: () => Map<string, LiveSessio
     },
     registeredProjects: () => new Set(getProjects().map((p) => p.name)),
     liveState,
+    isTurnRunning,
   };
 }

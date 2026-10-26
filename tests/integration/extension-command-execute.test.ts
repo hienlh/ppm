@@ -7,15 +7,17 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
+// A scratch PPM_HOME and database of its own. afterAll puts the preload's PPM_HOME back and a fresh
+// test database in place: every test file shares this process. The preload's in-memory config
+// (auth off) is left as it is, never reloaded.
 const home = mkdtempSync(resolve(tmpdir(), "ppm-ext-exec-"));
+const originalHome = process.env.PPM_HOME;
 process.env.PPM_HOME = home;
 
 const { _resetPpmDir } = await import("../../src/services/ppm-dir.ts");
 _resetPpmDir();
 const { openTestDb, setDb } = await import("../../src/services/db.service.ts");
 setDb(openTestDb());
-const { configService } = await import("../../src/services/config.service.ts");
-configService.load();
 const { extensionService } = await import("../../src/services/extension.service.ts");
 const { extensionRoutes } = await import("../../src/server/routes/extensions.ts");
 const { extensionWebSocket } = await import("../../src/server/ws/extensions.ts");
@@ -40,6 +42,7 @@ function writeFixture(): string {
         { command: "fixture.nothing", title: "Returns nothing" },
         { command: "fixture.declaredOnly", title: "Declared, never registered" },
         { command: "fixture.zone", title: "Client time zone" },
+        { command: "fixture.bigint", title: "Returns what JSON cannot carry" },
       ],
     },
   }));
@@ -53,6 +56,7 @@ function writeFixture(): string {
         vscode.commands.registerCommand("fixture.throw", () => { throw new Error("handler blew up"); }),
         vscode.commands.registerCommand("fixture.sleep", () => new Promise((r) => setTimeout(() => r("late"), 2500))),
         vscode.commands.registerCommand("fixture.nothing", () => undefined),
+        vscode.commands.registerCommand("fixture.bigint", () => ({ n: 10n })),
         vscode.commands.registerCommand("fixture.undeclared", () => "should never run"),
       );
     };
@@ -78,6 +82,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await extensionService.shutdown();
+  resetClientTimeZone();
+  process.env.PPM_HOME = originalHome;
+  _resetPpmDir();
+  setDb(openTestDb()); // setDb closed the preload's; a fresh one is what it held
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -100,6 +108,13 @@ describe("POST /api/extensions/commands/execute with a real worker", () => {
     expect(status).toBe(500);
     expect(body).toMatchObject({ ok: false, code: "COMMAND_FAILED" });
     expect(body.error).toContain("handler blew up");
+  });
+
+  it("500 COMMAND_FAILED, not a bare error, for a result JSON cannot carry", async () => {
+    const { status, body } = await execute({ command: "fixture.bigint" });
+    expect(status).toBe(500);
+    expect(body.code).toBe("COMMAND_FAILED");
+    expect(body.error).toContain("cannot be sent back");
   });
 
   it("504 TIMEOUT when the handler outlasts timeoutMs", async () => {

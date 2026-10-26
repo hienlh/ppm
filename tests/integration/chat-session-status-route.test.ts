@@ -9,7 +9,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
+// A scratch PPM_HOME and database of its own. afterAll puts the preload's PPM_HOME back and a fresh
+// test database in place: every test file shares this process, and must not find a deleted dir.
 const home = mkdtempSync(resolve(tmpdir(), "ppm-status-route-"));
+const originalHome = process.env.PPM_HOME;
 process.env.PPM_HOME = home;
 
 const { _resetPpmDir } = await import("../../src/services/ppm-dir.ts");
@@ -83,6 +86,9 @@ beforeAll(() => {
 
 afterAll(() => {
   closeTraceDb();
+  process.env.PPM_HOME = originalHome;
+  _resetPpmDir();
+  db.setDb(db.openTestDb()); // setDb closed the preload's; a fresh one is what it held
   try { rmSync(home, { recursive: true, force: true }); } catch { /* sqlite handles may linger on Windows */ }
 });
 
@@ -111,6 +117,22 @@ describe("GET /api/chat/sessions/status", () => {
     expect((await status("?project=other")).body.data.sessions).toEqual([]);
     const wide = await status("?sinceHours=2160");
     expect((wide.body.data.sessions as any[]).map((s) => s.sessionId)).toContain("ancient");
+  });
+
+  it("answers the exact last message and answer times past a long turn", async () => {
+    session("long-turn", "Long turn");
+    const base = NOW - 50 * 60_000;
+    writeTrace("long-turn", [
+      { type: "user_message", at: base, text: "first" },
+      { type: "done", at: base + 1_000 },
+      { type: "user_message", at: base + 2_000, text: "second" },
+      // Far more rows than the outcome reader's 64-row window, the way a long agentic turn writes.
+      ...Array.from({ length: 150 }, (_, i) => ({ type: "tool_use", at: base + 3_000 + i })),
+    ]);
+    const s = ((await status()).body.data.sessions as any[]).find((x) => x.sessionId === "long-turn");
+    expect(s.lastUserMessageAt).toBe(new Date(base + 2_000).toISOString());
+    expect(s.lastAnswerAt).toBe(new Date(base + 1_000).toISOString());
+    expect(s.userRepliedSinceAnswer).toBe(true);
   });
 
   it("refuses a sinceHours outside 1 to 2160", async () => {

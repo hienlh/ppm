@@ -143,10 +143,9 @@ export function registerExtensionNotifyHandlers(rpc: RpcChannel, deps: Extension
       const extensionId = requireExtension(p, deps);
       const title = requireTitle(p);
       const body = requireBody(p);
-
-      if (limiter.take(extensionId, extensionNotifyClock.now())) {
-        log.warn(`notify.send refused: ${loggableExtensionId(extensionId)} is over ${RATE_LIMIT_MAX}/hour`);
-        throw new NotifySendError("RATE_LIMITED", `At most ${RATE_LIMIT_MAX} notifications an hour per extension`);
+      // One destination per notification: a link cannot open a chat, a path and a panel at once.
+      if ([p.open, p.sessionId, p.path].filter((v) => v !== undefined).length > 1) {
+        throw bad("Give at most one of open, sessionId or path");
       }
 
       let projectName: string | undefined;
@@ -173,11 +172,15 @@ export function registerExtensionNotifyHandlers(rpc: RpcChannel, deps: Extension
       }
 
       if (p.open !== undefined) {
-        // One destination per notification: a link cannot open a chat and a panel at once.
-        if (sessionId !== undefined || explicitPath !== undefined) throw bad("Give at most one of open, sessionId or path");
         const checked = checkNotifyOpen(p.open, deps.commandsOf(extensionId));
         if (!checked.ok) throw bad(checked.message);
         explicitPath = buildExtensionDeepLink({ projectName, open: checked.open });
+      }
+
+      // Counted only once the request is known to be good: a refused call sends nothing.
+      if (limiter.take(extensionId, extensionNotifyClock.now())) {
+        log.warn(`notify.send refused: ${loggableExtensionId(extensionId)} is over ${RATE_LIMIT_MAX}/hour`);
+        throw new NotifySendError("RATE_LIMITED", `At most ${RATE_LIMIT_MAX} notifications an hour per extension`);
       }
 
       const payload: NotificationPayload = {

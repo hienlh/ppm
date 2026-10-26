@@ -14,6 +14,7 @@ interface Fixture {
   meta?: SessionMetaRow[];
   projects?: string[];
   live?: Record<string, LiveSessionState>;
+  running?: string[];
 }
 
 function deps(f: Fixture): ChatSessionStatusDeps & { since: number[] } {
@@ -27,6 +28,7 @@ function deps(f: Fixture): ChatSessionStatusDeps & { since: number[] } {
     metadata: (ids) => new Map((f.meta ?? []).filter((m) => ids.includes(m.sessionId)).map((m) => [m.sessionId, m])),
     registeredProjects: () => new Set(f.projects ?? ["ppm"]),
     liveState: () => new Map(Object.entries(f.live ?? {})),
+    isTurnRunning: (id) => (f.running ?? []).includes(id),
   };
 }
 
@@ -73,20 +75,40 @@ describe("listChatSessionStatus", () => {
   });
 
   it("maps cancelled, max turns and a run that died mid-turn", () => {
+    const dead = NOW - 10 * 60_000;
     const out = listChatSessionStatus(deps({
-      traces: [{ traceId: "a", updatedAt: NOW - 3 }, { traceId: "b", updatedAt: NOW - 2 }, { traceId: "c", updatedAt: NOW - 1 }],
+      traces: [{ traceId: "a", updatedAt: NOW - 3 }, { traceId: "b", updatedAt: NOW - 2 }, { traceId: "c", updatedAt: dead }],
       status: {
         a: { last: { outcome: "cancelled", at: NOW - 3 }, lastAnswerAt: null, lastUserMessageAt: NOW - 4 },
         b: { last: { outcome: "max_turns", at: NOW - 2, message: "limit", subtype: "error_max_turns" }, lastAnswerAt: NOW - 2, lastUserMessageAt: NOW - 9 },
-        c: { last: { outcome: "unfinished", at: NOW - 1 }, lastAnswerAt: null, lastUserMessageAt: NOW - 5 },
+        c: { last: { outcome: "unfinished", at: dead }, lastAnswerAt: null, lastUserMessageAt: dead - 5 },
       },
       meta: [meta("a"), meta("b"), meta("c")],
     }), { sinceHours: 1 });
     const byId = Object.fromEntries(out.sessions.map((s) => [s.sessionId, s.lastTurn]));
     expect(byId.a).toEqual({ outcome: "cancelled", at: new Date(NOW - 3).toISOString() });
     expect(byId.b).toEqual({ outcome: "max_turns", at: new Date(NOW - 2).toISOString(), message: "limit", subtype: "error_max_turns" });
-    expect(byId.c).toEqual({ outcome: "error", at: new Date(NOW - 1).toISOString(), message: "The turn ended without finishing" });
-    expect(out.sessions.map((s) => s.sessionId)).toEqual(["c", "b", "a"]);
+    expect(byId.c).toEqual({ outcome: "error", at: new Date(dead).toISOString(), message: "The turn ended without finishing" });
+    expect(out.sessions.map((s) => s.sessionId)).toEqual(["b", "a", "c"]);
+  });
+
+  it("calls a turn running when this process runs it without a chat socket (scheduler, Jira, a bot)", () => {
+    const out = listChatSessionStatus(deps({
+      traces: [{ traceId: "sched", updatedAt: NOW - 10 * 60_000 }],
+      status: { sched: { last: { outcome: "unfinished", at: NOW - 10 * 60_000 }, lastAnswerAt: null, lastUserMessageAt: NOW - 11 * 60_000 } },
+      meta: [meta("sched")],
+      running: ["sched"],
+    }), { sinceHours: 1 });
+    expect(out.sessions[0]).toMatchObject({ phase: "idle", lastTurn: { outcome: "running" } });
+  });
+
+  it("gives a turn another process is writing (ppm chat) two minutes before calling it dead", () => {
+    const out = listChatSessionStatus(deps({
+      traces: [{ traceId: "cli", updatedAt: NOW - 30_000 }],
+      status: { cli: { last: { outcome: "unfinished", at: NOW - 30_000 }, lastAnswerAt: null, lastUserMessageAt: NOW - 40_000 } },
+      meta: [meta("cli")],
+    }), { sinceHours: 1 });
+    expect(out.sessions[0]!.lastTurn).toEqual({ outcome: "running", at: new Date(NOW - 30_000).toISOString() });
   });
 
   it("says the user replied when their message is newer than the answer", () => {

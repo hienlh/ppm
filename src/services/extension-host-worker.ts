@@ -158,10 +158,11 @@ rpc.onRequest("ext:command:execute", async (params) => {
       console.debug(`[ExtHost] routing "${command}" → ${extId}`);
       try {
         const result = await (ext.commands as any).executeCommand(command, ...args);
-        // The answer crosses to the main thread by structured clone. A value that cannot make
-        // the trip (a function, a class with methods) would fail inside postMessage, and the
-        // caller would only see a timeout; refuse it here with a message that says why.
-        try { structuredClone(result); } catch (e) {
+        // The answer crosses to the main thread by structured clone and leaves PPM as JSON. A
+        // value that cannot make either trip (a function, a BigInt, a cycle) would fail inside
+        // postMessage or the route's encoder, where the caller sees only a timeout or a bare 500;
+        // refuse it here with a message that says why.
+        try { structuredClone(result); JSON.stringify(result); } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           console.error(`[ExtHost] command "${command}" in ${extId} returned a value that cannot be sent:`, msg);
           return { ok: false, error: `${command} returned a value that cannot be sent back: ${msg}` };

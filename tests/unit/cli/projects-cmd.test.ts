@@ -3,7 +3,7 @@
  * it), and `add`/`remove` must go through a running server, which keeps projects in memory and
  * would not see a write made straight to the database.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import { Command } from "commander";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,13 @@ import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 
 const statusFile = () => resolve(getPpmDir(), "status.json");
+// The commands reload config from the database, whose defaults turn auth on. Every test file
+// shares this process, so the preload's in-memory config, and a fresh test database, are put back.
+const originalConfig = structuredClone((configService as unknown as { config: unknown }).config);
+afterAll(() => {
+  setDb(openTestDb()); // setDb closed the preload's; a fresh one is what it held
+  (configService as unknown as { config: unknown }).config = originalConfig;
+});
 let lines: string[] = [];
 const restore: Array<() => void> = [];
 const dirs: string[] = [];

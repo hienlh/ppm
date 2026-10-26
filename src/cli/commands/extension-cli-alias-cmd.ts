@@ -3,6 +3,7 @@ import { isBuiltinCliName } from "../../shared/cli-builtin-commands.ts";
 import { EXECUTE_DEFAULT_TIMEOUT_MS } from "../../shared/extension-command-execute.ts";
 import type { CliAlias } from "../../services/extension-cli-aliases.ts";
 import { markMachineFacing } from "../utils/machine-facing-commands.ts";
+import { rawTokensAfter } from "../utils/raw-command-tokens.ts";
 
 /**
  * `ppm <name> [args…]` for every alias an enabled extension contributes (`contributes.cli`).
@@ -47,8 +48,9 @@ export function addExtensionCliAliases(program: Command, aliases: readonly CliAl
       .allowExcessArguments()
       .passThroughOptions()
       .argument("[args...]", `passed to ${alias.command}; try --help`)
-      .action(async (args: string[] | undefined) => {
-        await run(alias.command, args ?? []);
+      .action(async (_args: string[] | undefined, _opts: unknown, self: Command) => {
+        // As typed: Commander would drop a `--` right after the name.
+        await run(alias.command, rawTokensAfter(self, [alias.name]));
       });
     markMachineFacing(command);
   }

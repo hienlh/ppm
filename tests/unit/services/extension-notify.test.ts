@@ -90,13 +90,33 @@ describe("notify:send", () => {
     expect(opts.coalesceKey).toMatch(/^ext:fg:/);
   });
 
-  it("builds a bare project link with no session, and lets an explicit path win over both", async () => {
+  it("builds a bare project link with no session, and uses an explicit path as it is", async () => {
     const { deps, broadcasts } = fakeDeps();
     const { call } = channel(deps);
     await call({ ...base, projectName: "ppm" });
     expect(broadcasts[0]!.payload.path).toBe("/project/ppm");
-    await call({ ...base, projectName: "ppm", sessionId: "s1", path: "/project/ppm/design/landing" });
+    await call({ ...base, projectName: "ppm", path: "/project/ppm/design/landing" });
     expect(broadcasts[1]!.payload.path).toBe("/project/ppm/design/landing");
+  });
+
+  it("refuses a session and a path together: one destination per notification", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    expect((await call({ ...base, projectName: "ppm", sessionId: "s1", path: "/project/ppm/design/landing" })).error.code).toBe("BAD_REQUEST");
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  it("does not count a refused call against the hourly limit", async () => {
+    const { deps } = fakeDeps();
+    const { call } = channel(deps);
+    const realNow = extensionNotifyClock.now;
+    extensionNotifyClock.now = () => 2_000_000;
+    try {
+      for (let i = 0; i < 40; i++) expect((await call({ ...base, projectName: "no-such-project" })).error.code).toBe("BAD_REQUEST");
+      for (let i = 0; i < 30; i++) expect((await call(base)).ok).toBe(true);
+    } finally {
+      extensionNotifyClock.now = realNow;
+    }
   });
 
   it("links to the extension's own command, with its args and project, through the deep link", async () => {

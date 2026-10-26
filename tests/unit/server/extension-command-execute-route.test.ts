@@ -124,9 +124,12 @@ describe("executeExtensionCommand", () => {
       isHostReady: () => true,
       activeCommands: () => [{ command: "midday.cli", extId: "ppm-midday" }],
       installedManifests: () => [
-        { id: "ppm-midday", manifest: manifest(["midday.cli"]) },
-        { id: "ppm-off", manifest: manifest(["off.cmd"]) },
+        { id: "ppm-midday", enabled: true, manifest: manifest(["midday.cli"]) },
+        { id: "ppm-off", enabled: false, manifest: manifest(["off.cmd"]) },
+        { id: "ppm-broken", enabled: true, manifest: manifest(["broken.cmd"]) },
+        { id: "ppm-starting", enabled: true, manifest: manifest(["starting.cmd"]) },
       ],
+      activationError: (id) => (id === "ppm-broken" ? "Entry point not found" : undefined),
       send: async () => ({ ok: true, result: "done" }),
       ...over,
     };
@@ -140,8 +143,16 @@ describe("executeExtensionCommand", () => {
   });
 
   it("NOT_ACTIVE when only a disabled or failed extension declares it", async () => {
-    const out = await executeExtensionCommand(deps(), "off.cmd", [], 1000);
-    expect(out).toMatchObject({ kind: "error", code: "NOT_ACTIVE", extensionId: "ppm-off" });
+    expect(await executeExtensionCommand(deps(), "off.cmd", [], 1000))
+      .toMatchObject({ kind: "error", code: "NOT_ACTIVE", extensionId: "ppm-off" });
+    const broken = await executeExtensionCommand(deps(), "broken.cmd", [], 1000);
+    expect(broken).toMatchObject({ kind: "error", code: "NOT_ACTIVE", extensionId: "ppm-broken" });
+    expect((broken as { message: string }).message).toContain("Entry point not found");
+  });
+
+  it("HOST_NOT_READY for an enabled extension whose activation has not run yet (PPM starting)", async () => {
+    expect(await executeExtensionCommand(deps(), "starting.cmd", [], 1000))
+      .toMatchObject({ kind: "error", code: "HOST_NOT_READY", extensionId: "ppm-starting" });
   });
 
   it("NOT_FOUND when nothing declares it", async () => {

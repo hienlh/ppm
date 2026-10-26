@@ -111,8 +111,15 @@ class ExtensionService {
     // (code 1), and `terminateWorker` is the one expected way out.
     worker.addEventListener("close", (event) => {
       const code = (event as Event & { code?: number }).code;
-      if (this.worker === worker) log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
-      else log.debug(`Extension host worker stopped code=${code}`);
+      if (this.worker === worker) {
+        log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
+        // Nothing will answer any more: fail calls in flight now rather than at their timeout,
+        // and let callers see a host that is not ready instead of one that never replies.
+        this.workerReady = false;
+        this.rpc?.dispose();
+      } else {
+        log.debug(`Extension host worker stopped code=${code}`);
+      }
     });
 
     return { worker: this.worker, rpc: this.rpc };
@@ -372,6 +379,7 @@ class ExtensionService {
       isHostReady: () => this.isHostReady(),
       activeCommands: () => contributionRegistry.getCommands(),
       installedManifests: () => this.list(),
+      activationError: (id) => this.activationErrors.get(id),
       send: (cmd, cmdArgs, ms) => {
         if (!this.rpc) return Promise.reject(new Error("The extension host stopped"));
         return this.rpc.sendRequestWithTimeout<WorkerCommandReply>("ext:command:execute", ms, [cmd, ...cmdArgs]);

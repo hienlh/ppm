@@ -127,13 +127,27 @@ export function lastTurnOutcome(rows: readonly TurnStopRow[]): TraceTurnOutcome 
   return { outcome: "unfinished", at: (newest ?? rows[0]!).ts };
 }
 
+/**
+ * The newest top-level row of one type, walking the trace backwards on its primary key and
+ * stopping at the first match, so a long turn (hundreds of rows past `ROWS_SQL`'s window) still
+ * answers exactly. `type` is tested before the payload is read, which keeps the large rows'
+ * overflow pages unread.
+ */
+const NEWEST_OF_TYPE_SQL = `
+  SELECT ts FROM session_events
+  WHERE trace_id = ? AND type = ? AND json_extract(payload_json, '$.parentToolUseId') IS NULL
+  ORDER BY seq DESC
+  LIMIT 1`;
+
 /** {@link lastTurnOutcome} plus the latest answer and user message, for one trace id. */
 export function readTurnStatusForTrace(traceId: string): TraceTurnStatus {
-  const rows = getTraceDb().query(ROWS_SQL).all(traceId) as TurnStopRow[];
+  const db = getTraceDb();
+  const rows = db.query(ROWS_SQL).all(traceId) as TurnStopRow[];
+  const newest = (type: string) => (db.query(NEWEST_OF_TYPE_SQL).get(traceId, type) as { ts: number } | null)?.ts ?? null;
   return {
     last: lastTurnOutcome(rows),
-    lastAnswerAt: rows.find((r) => r.type === "done")?.ts ?? null,
-    lastUserMessageAt: rows.find((r) => r.type === "user_message")?.ts ?? null,
+    lastAnswerAt: newest("done"),
+    lastUserMessageAt: newest("user_message"),
   };
 }
 

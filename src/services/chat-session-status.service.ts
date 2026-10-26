@@ -38,14 +38,26 @@ export interface ChatSessionStatusDeps {
   metadata(sessionIds: string[]): Map<string, SessionMetaRow>;
   registeredProjects(): Set<string>;
   liveState(): Map<string, LiveSessionState>;
+  /** Whether this process runs a turn of it now, whoever started it (`isTurnRunning`). */
+  isTurnRunning(id: string): boolean;
 }
+
+/**
+ * A turn whose rows stop mid-turn with nothing in this process running it is still called
+ * running for this long after its newest row: `ppm chat` and other processes write to the same
+ * trace, and their turns are invisible to this process otherwise.
+ */
+export const OTHER_PROCESS_GRACE_MS = 2 * 60_000;
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
-function lastTurnOf(status: TraceTurnStatus, phase: SessionPhase, updatedAt: number): ChatSessionLastTurn | null {
-  if (phase !== "idle") return { outcome: "running", at: iso(status.last?.at ?? updatedAt) };
+function lastTurnOf(status: TraceTurnStatus, running: boolean, now: number, updatedAt: number): ChatSessionLastTurn | null {
+  if (running) return { outcome: "running", at: iso(status.last?.at ?? updatedAt) };
   const last = status.last;
   if (!last) return null;
+  if (last.outcome === "unfinished" && now - updatedAt < OTHER_PROCESS_GRACE_MS) {
+    return { outcome: "running", at: iso(last.at) };
+  }
   switch (last.outcome) {
     case "done":
     case "cancelled":
@@ -54,7 +66,8 @@ function lastTurnOf(status: TraceTurnStatus, phase: SessionPhase, updatedAt: num
     case "max_turns":
       return { outcome: last.outcome, at: iso(last.at), message: last.message, ...(last.subtype ? { subtype: last.subtype } : {}) };
     case "unfinished":
-      // Rows stop mid-turn and nothing is running it: the run died without a closing row.
+      // Rows stop mid-turn, nothing here runs it and nothing has written for a while: the run
+      // died without a closing row (a crash, a killed process).
       return { outcome: "error", at: iso(last.at), message: "The turn ended without finishing" };
   }
 }
@@ -110,7 +123,12 @@ export function listChatSessionStatus(
       updatedAt: iso(updatedAt),
       phase,
       pending,
-      lastTurn: lastTurnOf(status, phase, updatedAt),
+      lastTurn: lastTurnOf(
+        status,
+        phase !== "idle" || deps.isTurnRunning(sessionId) || deps.isTurnRunning(traceId),
+        now,
+        updatedAt,
+      ),
       lastAnswerAt: status.lastAnswerAt === null ? null : iso(status.lastAnswerAt),
       lastUserMessageAt: status.lastUserMessageAt === null ? null : iso(status.lastUserMessageAt),
       // No answer in the rows read means there is nothing to have replied to.
