@@ -26,7 +26,7 @@ Browser (React)                    ← Zustand store + React components
 - **Worker Isolation:** Each activated extension runs in a Bun Worker (crash-safe, 10s activation timeout)
 - **Communication:** RPC (Worker↔Main) + WebSocket (Main↔Browser)
 - **API Shim:** `@ppm/vscode-compat` — VSCode-compatible API (commands, window, workspace)
-- **Subprocess Access:** RPC `process:spawn` handler for extensions needing CLI commands (git, docker, npm, python, etc.)
+- **Subprocess Access:** `vscode.process.spawn` (RPC `process:spawn`) for extensions needing a CLI: `git`, `gh`, `node`, `bun`, `npx`, `sqlite3` only
 - **State Storage:** globalState + workspaceState in SQLite via Memento
 - **UI Bridge:** StatusBar, TreeView, WebviewPanel, QuickPick, InputBox, Notifications
 - **Contributions:** Commands, views, configuration contributed via manifest
@@ -94,6 +94,8 @@ Extension metadata defined in `package.json` under `ppm` key:
 3. Parse manifest from `package.json`
 4. Store in SQLite `extensions` table (enabled=1)
 5. Discover contributions
+
+**Discovery on start** (`discoverManifests` in `src/services/extension-manifest.ts`): user extensions live in `<ppm dir>/extensions/node_modules`. The candidates are the keys of `<ppm dir>/extensions/package.json` `dependencies` (installed) plus the symlinks in `node_modules`, `@scope/name` included (dev-linked), and a candidate counts only when its manifest has a `ppm`, `contributes` or `engines.ppm` field, so a transitive npm dependency is never registered. `startup()` deletes the record and stored state of any extension discovery does not find, so this list is what keeps a user extension's `globalState` across restarts.
 
 **Activation** (`ppm ext enable @ppm/ext-database` or automatic):
 1. Load manifest + entry point from disk
@@ -168,11 +170,21 @@ Extension metadata defined in `package.json` under `ppm` key:
 - `workspace:fs:readDirectory(dirPath)` — List directory contents
 
 **Subprocess Execution (extensions needing CLI access):**
-- `process:spawn(command, args[], options)` — Execute external command
-  - **Allowed commands:** git, node, bun, npm, yarn, pnpm, docker, psql, sqlite3, python3, python
-  - **Options:** `{ cwd?: string, timeout?: number }` (default: 30s timeout, CWD must be within registered project paths, ~/.ppm/extensions/, or current process directory)
-  - **Returns:** `{ code: number, stdout: string, stderr: string, error?: string }`
-  - **Example:** See ext-git-graph for real-world usage (runs `git log --all` across any registered project via path-based CWD)
+- `process:spawn(command, args[], cwd, options?)`, called as `vscode.process.spawn(...)`
+  - **Allowed commands:** `git`, `gh`, `node`, `bun`, `npx`, `sqlite3`, matched by base name (`ALLOWED_SPAWN_COMMANDS` in `extension-rpc-handlers.ts`). Anything else throws.
+  - **cwd** (positional) must be inside a registered project, PPM's cwd or `<ppm dir>/extensions` (`assertSafePath`).
+  - **Options:** `{ timeout?: number; env?: Record<string, string> }`. `timeout` defaults to 30 s and is capped at 15 minutes (`spawnTimeoutMs`); `env` is merged over the host's, with `PATH`, `HOME` and the loader variables blocked.
+  - Run with `Bun.spawn([cmd, ...args])`, no shell. A binary that is not installed throws `process:spawn failed: …` instead of escaping as Bun's synchronous throw.
+  - **Returns:** `{ stdout: string, stderr: string, exitCode: number }`. A process killed at its timeout returns; it does not throw.
+  - The extension waits `min(timeout, 15 min) + 30 s` (`RpcClient.requestWithTimeout`), so the main thread's answer always arrives before the extension gives up.
+
+**Per-request timeouts:** `RpcChannel.sendRequest` waits 10 s; `sendRequestWithTimeout(method, timeoutMs, params)` waits as long as the caller says (the CLI execute route passes its `timeoutMs`, up to 10 minutes). A disposed channel refuses new requests and drops answers to old ones.
+
+**PPM additions (`api.ppm`, answered in `src/services/extension-api/`):**
+- `notify:send({ extensionId, title, body, projectName?, sessionId?, providerId?, path?, open? })` — `api.ppm.notify`. Sent under the `extension` notification event, 30 an hour per extension (sliding window), answered within about 2 s (`queued` while PPM's own delay is still deciding). `open` names a command or view the **calling** extension declares; it becomes an in-app path built by `src/shared/extension-deep-link.ts` (`/project/<p>?extCommand=…&extArgs=<base64url JSON>` or `extView=…`), so push, Telegram and ntfy share it.
+
+**Events main → worker:**
+- `client:timezone { timeZone, deviceId }` — a browser's IANA zone. The host keeps one `ClientTimeZoneState` for every extension: `vscode.env.clientTimeZone` and `onDidChangeClientTimeZone`, which fires only when the zone differs. Sent on each browser report and again to a rebuilt host on `worker:ready`.
 
 - Extension can define custom RPC methods via `rpc.onRequest(method, handler)`
 
@@ -210,7 +222,9 @@ Extensions interact with the browser UI via a dedicated WebSocket at `/ws/extens
 
 **Server → Client (ExtServerMsg):** `tree:update`, `tree:refresh`, `statusbar:update/remove`, `notification`, `quickpick:show`, `inputbox:show`, `webview:create/html/dispose/postMessage`, `contributions:update`
 
-**Client → Server (ExtClientMsg):** `ready`, `command:execute`, `tree:expand/click`, `webview:message`, `quickpick:resolve`, `inputbox:resolve`, `notification:action`
+**Client → Server (ExtClientMsg):** `ready`, `command:execute`, `tree:expand/click`, `webview:message`, `quickpick:resolve`, `inputbox:resolve`, `notification:action`, `client:timezone`
+
+**Client time zone:** on every connect, and again when the page comes back into view with a different zone (`src/web/lib/client-timezone-reporter.ts`), the browser sends `{ type: "client:timezone", timeZone, deviceId }` (`Intl.DateTimeFormat().resolvedOptions().timeZone`, and the device id the session trace uses). The server keeps the last report whose zone passes a `new Intl.DateTimeFormat(undefined, { timeZone })` probe, in memory only (`src/services/client-timezone.ts`), and forwards it to the host.
 
 **Message routing:**
 - Extension calls `vscode.window.showInformationMessage()` → RPC → `extension-rpc-handlers.ts` → `broadcastExtMsg()` → WS → `use-extension-ws` hook → toast notification
@@ -223,7 +237,8 @@ Extensions interact with the browser UI via a dedicated WebSocket at `/ws/extens
 
 Extension UI state lives in Zustand (`extension-store.ts`) and renders via React:
 - **StatusBar** — Fixed bottom bar with left/right aligned items
-- **TreeView** — Recursive tree with expand/collapse, renders in sidebar for `ext:*` tabs
+- **TreeView** — Recursive tree with expand/collapse, renders in sidebar for `ext:*` tabs. A row (`extension-tree-node.tsx`) is one line: chevron, `icon` (a name in `src/web/lib/extension-icons.ts`), colour dot, label, `description`, `badge`, then inline `actions` (on hover or keyboard focus with a mouse, always on touch). `tooltip` shows on hover with its line breaks. The row is an `adaptive-context-menu` trigger: right-click on a desktop, long press on a phone opens a sheet with the full label, description and tooltip (`ContextMenuLabel`), each action as a full-width item, and Open (`extension-tree-row-menu.tsx`). Rows are `select-none` with no touch callout; the press is the adaptive menu's, which disarms on `touchcancel`. A row with an http(s) `url` renders its label as `<a target="_blank" rel="noopener noreferrer">`, because a worker cannot open a tab; the scheme is checked by vscode-compat and again by the renderer.
+- **Deep links** — a notification's `extCommand`/`extView` link is read on boot (`app.tsx`, removed from the URL at once with `replaceState`) and on a service-worker click into an open window (`use-notification-clicks.ts`, which switches project first). `src/web/lib/extension-deep-link-runner.ts` waits up to 20 s for an active extension to list the command, then dispatches `ext:command:execute` locally, so the panel gets a tab on the device that was tapped (a view opens a tab with no panel, which the webview host's recovery dispatch fills). A command nothing declares is dropped with a warning.
 - **WebviewPanel** — Sandboxed iframe (`allow-scripts` only), `acquireVsCodeApi()` shim auto-injected
 - **QuickPick** — Filterable picker with keyboard nav, bottom-sheet on mobile
 - **InputBox** — Text input dialog with password mode support
@@ -240,8 +255,8 @@ Extension UI state lives in Zustand (`extension-store.ts`) and renders via React
 
 **Contribution Types:**
 1. **Commands** — Callable actions (e.g., `ppm.database.openConnection`)
-   - Registered: `registry.registerCommand(extId, command)`
-   - Invoked: `POST /api/extensions/{extId}/commands/{command}`
+   - Registered from the manifest on activation (`contributionRegistry.register`)
+   - Invoked from the browser over `/ws/extensions` (`command:execute`), or from the CLI with `POST /api/extensions/commands/execute`
 
 2. **Views** — Sidebar panels or tree views
    - Registered: `registry.registerView(extId, view)`
@@ -260,8 +275,19 @@ ppm ext remove @ppm/ext-database  # Uninstall
 ppm ext enable @ppm/ext-database  # Enable extension
 ppm ext disable @ppm/ext-database # Disable extension
 ppm ext dev /path/to/ext-src      # Symlink local extension for dev
-ppm ext config <ext-id> <key> <value> # Set config value
+ppm ext run [--json] [--timeout <ms>] <command> [args…]  # Run a declared command on the running server
+ppm <alias> [args…]               # An alias an enabled extension contributes (contributes.cli)
 ```
+
+**Talking to the running server** (`src/cli/utils/server-client.ts`): the port comes from `<ppm dir>/status.json` (written by the supervisor), else the `port` setting; the host is always `127.0.0.1`; `Authorization: Bearer <auth.token>` is sent when auth is on. A `/api/health` probe with a 3 s limit decides "not running" before the real call. `schedule run-now` and `projects add`/`remove` use it too: the server holds projects in memory, so the CLI goes through its API when it answers and writes the database only when nothing does.
+
+**`ppm ext run`**: tokens after the command are spread as arguments (`handler(...tokens)`); `--json` and `--timeout` belong to `ext run` wherever they appear (`--` passes them through).
+
+**Extension aliases** (`contributes.cli: [{ name, description?, command }]`): registered in `src/index.ts`'s CLI branch, outside `buildProgram()`, so the generated `ppm` skill never lists one user's extensions. They are read only when `argv[2]` is absent, `help`/`--help`/`-h`, or not a built-in name (`shouldLoadAliases`), from manifests on disk plus the `extensions` table's enabled flag, without starting a worker (`src/services/extension-cli-aliases.ts`). Refused: a name failing `^[a-z][a-z0-9-]{1,30}$`, one in `BUILTIN_CLI_COMMANDS` (`src/shared/cli-builtin-commands.ts`, kept equal to `buildProgram()` by a test) or `help`, a `command` the same manifest does not declare, and a duplicate (the id sorting first wins). `PPM_DEBUG=1` prints refusals. Each alias forwards every token after its name, `--json` and `--help` included, as one array: `handler(argv)`, timeout 60 s. Aliases need Commander's positional options, which are switched on only when an alias is registered.
+
+**Output and exit codes** (`src/cli/utils/run-extension-command.ts`): a string result prints as it is, another value as indented JSON, `null` as nothing; `ext run --json` prints one line of JSON. Machine-facing commands (`src/cli/utils/machine-facing-commands.ts`) print no `PPM vX` banner. Exit 0 success, 1 server down or token refused, 2 `BAD_REQUEST`/`ORIGIN_REFUSED`/`NOT_FOUND`/`NOT_ACTIVE`/`HOST_NOT_READY`, 3 `COMMAND_FAILED`/`TIMEOUT`. Errors go to stderr.
+
+**AI hint:** every Claude and Codex chat gets one server-built line naming the enabled aliases (`src/services/extension-cli-hint.ts`, cached, invalidated on install/remove/enable/disable/activate): Claude appends it to the system prompt after the design block, Codex joins it to `developerInstructions`. A warm Claude spare is spawned with the same line so the first turn can take it over.
 
 **Dev Mode** (`ppm ext dev /path/to/src`):
 - Symlinks local extension to `~/.ppm/extensions/node_modules/`
@@ -280,7 +306,8 @@ ppm ext config <ext-id> <key> <value> # Set config value
 | **DELETE** | `/api/extensions/:id` | Remove extension |
 | **PATCH** | `/api/extensions/:id` | Update extension (body: {enabled}) |
 | **GET** | `/api/extensions/contributions` | List all contributions (commands, views, config) |
-| **POST** | `/api/extensions/:id/commands/:cmd` | Invoke extension command |
+| **POST** | `/api/extensions/commands/execute` | Run a declared command for the CLI (below) |
+| **GET** | `/api/chat/sessions/status` | Every recent session's waiting/stopped/reply state, across projects (below) |
 
 **Example: Install Extension**
 ```bash
@@ -301,6 +328,22 @@ Content-Type: application/json
   }
 }
 ```
+
+**`POST /api/extensions/commands/execute`** (`src/server/routes/extension-command-execute-route.ts`, logic in `src/services/extension-command-executor.ts`): body `{ command, args?, timeoutMs? }`. `command` 1–200 characters and declared in an installed extension's `contributes.commands`; `args` a JSON array spread as `handler(...args)`; `timeoutMs` default 60,000, clamped to 1,000–600,000; body at most 256 KB, counted as it arrives. Behind the app's Bearer auth, plus a refusal of any request carrying an `Origin`: CORS is open app-wide, so without it a web page could drive commands on an instance with auth off; the CLI never sends one. Success: `{ ok: true, data: { command, extensionId, result, durationMs } }`, `undefined` as `null`. Errors: `{ ok: false, error, code }`.
+
+| HTTP | `code` | When |
+|---|---|---|
+| 400 | `BAD_REQUEST` | Not JSON, `command` missing or too long, `args` not an array, body too large |
+| 403 | `ORIGIN_REFUSED` | The request carried an `Origin` |
+| 403 | `NOT_ACTIVE` | Declared by an installed extension that is disabled or failed to activate |
+| 404 | `NOT_FOUND` | No installed extension declares it, or the worker has no handler (`code: "NOT_FOUND"` from `ext:command:execute`) |
+| 503 | `HOST_NOT_READY` | No worker yet, or no `worker:ready` |
+| 500 | `COMMAND_FAILED` | The handler threw, or returned a value structured clone cannot carry |
+| 504 | `TIMEOUT` | No answer within `timeoutMs`; the handler may still be running |
+
+One INFO line per call: `ext command=<id> ext=<extId> ms=<n> outcome=<ok|code>`, never the arguments or the result.
+
+**`GET /api/chat/sessions/status?sinceHours=336&project=<name>`** (`src/server/routes/chat-global.ts`, `src/services/chat-session-status.service.ts`): every session with trace activity in the window (1–2160 hours), in registered projects, newest first. Per session: `sessionId` (after migration), `providerId`, `projectName`, `title`, `updatedAt` (newest trace row), `phase` and `pending` (`{ kind: "question" | "approval", tool, requestId, since }`, from the chat socket's memory, so lost on restart), `lastTurn` (`running` while not idle, else `cancelled` for the user's Stop inside the turn, `max_turns`/`error` with the message, `done`), `lastAnswerAt`, `lastUserMessageAt`, `userRepliedSinceAnswer`, `unreadType`. Read from `session-trace.db` (`readTurnStatusForTrace` in `turn-stop-reader.ts`, which tells a `ws_cancel` abort inside a turn from PPM's own aborts and from a Stop after the turn's `done`), `ppm.db` `session_metadata`, and `listSessionLiveState()` in `ws/chat.ts`. Never reads a transcript, never marks anything read.
 
 ### Service Layer
 
