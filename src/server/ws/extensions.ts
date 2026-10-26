@@ -6,6 +6,7 @@ import { contributionRegistry } from "../../services/contribution-registry.ts";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { createLogger } from "../../services/logger.ts";
 import { recordClientTimeZone } from "../../services/client-timezone.ts";
+import { ExtensionUiReplay } from "./extension-ui-replay.ts";
 
 const log = createLogger("ExtWS");
 
@@ -22,8 +23,12 @@ const pendingRequests = new Map<string, (value: unknown) => void>();
 
 // --- Public API for extension service to push UI updates ---
 
+/** Tree roots and status-bar items, replayed to each browser that connects later. */
+const uiReplay = new ExtensionUiReplay();
+
 /** Broadcast a message to all connected extension WS clients */
 export function broadcastExtMsg(msg: ExtServerMsg): void {
+  uiReplay.record(msg);
   const data = JSON.stringify(msg);
   for (const ws of clients) {
     try { ws.send(data); } catch {}
@@ -90,6 +95,12 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
         ? { type: "contributions:update", contributions, activationErrors }
         : { type: "contributions:update", contributions };
       ws.send(JSON.stringify(readyMsg));
+      // Then what the active extensions last pushed, which this browser missed.
+      const replay = uiReplay.messagesFor({
+        isActive: (id) => extensionService.isActivated(id),
+        viewOwner: (viewId) => contributionRegistry.getViews().find((v) => v.id === viewId)?.extId,
+      });
+      for (const update of replay) ws.send(JSON.stringify(update));
       break;
     }
 
