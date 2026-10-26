@@ -23,6 +23,7 @@ export {
 export { type ExtensionContext, Memento } from "./context.ts";
 export { ProcessService, type SpawnResult, type SpawnOptions } from "./process.ts";
 export { type PpmNamespace } from "./ppm/index.ts";
+export { ClientTimeZoneState, type ClientTimeZoneChange, type ClientTimeZoneSource } from "./client-timezone.ts";
 export {
   PpmNotifyError, type PpmNotify, type PpmNotifyRequest, type PpmNotifyOutcome, type PpmNotifyErrorCode,
   type DeepLinkArg,
@@ -36,6 +37,7 @@ import { ProcessService } from "./process.ts";
 import { createExtensionContext, type ExtensionContext } from "./context.ts";
 import { createEnvNamespace } from "./env.ts";
 import { createPpmNamespace } from "./ppm/index.ts";
+import type { ClientTimeZoneSource } from "./client-timezone.ts";
 import { createNotSupported } from "./not-supported.ts";
 import { Uri } from "./uri.ts";
 import { Disposable } from "./disposable.ts";
@@ -53,6 +55,8 @@ export interface CreateVscodeCompatOptions {
   rpc: RpcClient;
   appName?: string;
   machineId?: string;
+  /** Shared by every extension in the host; without it `env.clientTimeZone` stays undefined. */
+  clientTimeZone?: ClientTimeZoneSource;
   storedState?: { global?: Record<string, string | null>; workspace?: Record<string, string | null> };
 }
 
@@ -71,7 +75,7 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
     window,
     workspace,
     process,
-    env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local"),
+    env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local", options.clientTimeZone),
     /** PPM's own additions beyond the VSCode API. */
     ppm: createPpmNamespace(rpc, extensionId),
 

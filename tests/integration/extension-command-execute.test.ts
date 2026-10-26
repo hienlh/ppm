@@ -18,8 +18,12 @@ const { configService } = await import("../../src/services/config.service.ts");
 configService.load();
 const { extensionService } = await import("../../src/services/extension.service.ts");
 const { extensionRoutes } = await import("../../src/server/routes/extensions.ts");
+const { extensionWebSocket } = await import("../../src/server/ws/extensions.ts");
+const { resetClientTimeZone } = await import("../../src/services/client-timezone.ts");
+resetClientTimeZone();
 
 const EXT_ID = "ppm-test-commands";
+const DEVICE = "0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b";
 
 function writeFixture(): string {
   const dir = resolve(home, "fixture-ext");
@@ -35,12 +39,16 @@ function writeFixture(): string {
         { command: "fixture.sleep", title: "Sleep" },
         { command: "fixture.nothing", title: "Returns nothing" },
         { command: "fixture.declaredOnly", title: "Declared, never registered" },
+        { command: "fixture.zone", title: "Client time zone" },
       ],
     },
   }));
   writeFileSync(resolve(dir, "index.js"), `
     exports.activate = function (context, vscode) {
+      const changes = [];
       context.subscriptions.push(
+        vscode.env.onDidChangeClientTimeZone((e) => changes.push(e.timeZone)),
+        vscode.commands.registerCommand("fixture.zone", () => ({ zone: vscode.env.clientTimeZone ?? null, changes })),
         vscode.commands.registerCommand("fixture.echo", (...args) => ({ args })),
         vscode.commands.registerCommand("fixture.throw", () => { throw new Error("handler blew up"); }),
         vscode.commands.registerCommand("fixture.sleep", () => new Promise((r) => setTimeout(() => r("late"), 2500))),
@@ -118,6 +126,33 @@ describe("POST /api/extensions/commands/execute with a real worker", () => {
     expect(status).toBe(403);
     expect(body.code).toBe("ORIGIN_REFUSED");
   });
+
+  it("hands the browser's time zone to extensions, firing only on a change", async () => {
+    const ws = { data: { type: "extensions" }, send: () => {} };
+    const report = (timeZone: string) => extensionWebSocket.message(ws, JSON.stringify({ type: "client:timezone", timeZone, deviceId: DEVICE }));
+    const zone = async () => (await execute({ command: "fixture.zone" })).body.data.result as { zone: string | null; changes: string[] };
+
+    expect(await zone()).toEqual({ zone: null, changes: [] });
+    await report("Europe/London");
+    await Bun.sleep(50);
+    expect(await zone()).toEqual({ zone: "Europe/London", changes: ["Europe/London"] });
+    await report("Europe/London");
+    await report("Not/AZone");
+    await Bun.sleep(50);
+    expect(await zone()).toEqual({ zone: "Europe/London", changes: ["Europe/London"] });
+    await report("Asia/Saigon");
+    await Bun.sleep(50);
+    expect(await zone()).toEqual({ zone: "Asia/Saigon", changes: ["Europe/London", "Asia/Saigon"] });
+  });
+
+  it("gives a rebuilt host the zone a browser already reported", async () => {
+    await extensionService.shutdown();
+    await extensionService.activate(EXT_ID);
+    const deadline = Date.now() + 10_000;
+    while (!extensionService.isHostReady() && Date.now() < deadline) await Bun.sleep(25);
+    await Bun.sleep(50);
+    expect((await execute({ command: "fixture.zone" })).body.data.result.zone).toBe("Asia/Saigon");
+  }, 20_000);
 
   it("403 NOT_ACTIVE once the extension is disabled", async () => {
     await extensionService.setEnabled(EXT_ID, false);

@@ -5,6 +5,7 @@
 import { contributionRegistry } from "../../services/contribution-registry.ts";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { createLogger } from "../../services/logger.ts";
+import { recordClientTimeZone } from "../../services/client-timezone.ts";
 
 const log = createLogger("ExtWS");
 
@@ -120,6 +121,18 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
           message: `Extension command error: ${e instanceof Error ? e.message : String(e)}`,
         });
       }
+      break;
+    }
+
+    case "client:timezone": {
+      // Untrusted: a zone Intl does not know, or a malformed device id, is dropped.
+      const report = recordClientTimeZone(msg.timeZone, msg.deviceId);
+      if (!report) {
+        log.debug("client:timezone dropped: invalid zone or device id");
+        break;
+      }
+      const { extensionService } = await import("../../services/extension.service.ts");
+      extensionService.notifyClientTimeZone(report);
       break;
     }
 

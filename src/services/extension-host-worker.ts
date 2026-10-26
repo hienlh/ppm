@@ -4,7 +4,7 @@
  * Communicates with the main process via typed RPC (postMessage).
  */
 import { RpcChannel } from "./extension-rpc.ts";
-import { createVscodeCompat } from "@ppm/vscode-compat";
+import { createVscodeCompat, ClientTimeZoneState } from "@ppm/vscode-compat";
 import type { WindowService } from "@ppm/vscode-compat/src/window.ts";
 import type { CommandService } from "@ppm/vscode-compat/src/commands.ts";
 import type { Disposable, RpcMessage } from "../types/extension.ts";
@@ -18,6 +18,14 @@ const activeExtensions = new Map<string, {
 }>();
 
 const rpc = new RpcChannel((msg) => postMessage(msg));
+
+/** The user's device zone as browsers report it; one for the whole host (`vscode.env.clientTimeZone`). */
+const clientTimeZone = new ClientTimeZoneState();
+rpc.onEvent("client:timezone", (data) => {
+  const { timeZone, deviceId } = (data ?? {}) as { timeZone?: unknown; deviceId?: unknown };
+  // Validated on the main thread already; this only guards the shape it crossed in.
+  if (typeof timeZone === "string" && typeof deviceId === "string") clientTimeZone.report({ timeZone, deviceId });
+});
 
 /**
  * This thread has a console of its own, which the main thread's routing into ppm.log never
@@ -83,6 +91,7 @@ rpc.onRequest("ext:activate", async (params) => {
     extensionPath,
     storagePath: `${extensionPath}/.storage`,
     rpc: rpcClient,
+    clientTimeZone,
     storedState: storedState as { global?: Record<string, string | null>; workspace?: Record<string, string | null> },
   });
 

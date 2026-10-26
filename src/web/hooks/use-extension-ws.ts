@@ -5,6 +5,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { getAuthToken } from "@/lib/api-client";
 import { openGitReview } from "@/lib/open-git-review";
+import { createTimeZoneReporter } from "@/lib/client-timezone-reporter";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
 
@@ -82,7 +83,9 @@ export function useExtensionWs(enabled = true) {
     // Pass auth token as query param for WS auth
     const token = getAuthToken();
     const wsUrl = token ? `/ws/extensions?token=${encodeURIComponent(token)}` : "/ws/extensions";
-    const client = new WsClient(wsUrl);
+    // The device's zone goes out on every connect, so a restarted server learns it again.
+    const timeZoneReporter = createTimeZoneReporter((json) => client.send(json));
+    const client = new WsClient(wsUrl, { onConnectionChange: (c) => timeZoneReporter.onConnectionChange(c) });
     clientRef.current = client;
 
     client.onMessage((event) => {
@@ -340,6 +343,7 @@ export function useExtensionWs(enabled = true) {
       window.removeEventListener("ext:tree:expand", treeExpandHandler);
       window.removeEventListener("ext:command:execute", commandHandler);
       window.removeEventListener("ext:webview:close", webviewCloseHandler);
+      timeZoneReporter.dispose();
       client.disconnect();
       clientRef.current = null;
     };

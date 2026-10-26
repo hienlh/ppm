@@ -72,4 +72,6 @@ export type ExtClientMsg =
   | { type: "webview:close"; panelId: string }
   | { type: "quickpick:resolve"; requestId: string; selected: QuickPickItemMsg[] | null }
   | { type: "inputbox:resolve"; requestId: string; value: string | null }
-  | { type: "notification:action"; id: string; action: string | null };
+  | { type: "notification:action"; id: string; action: string | null }
+  /** The device's IANA zone, on every connect and whenever it changes (`vscode.env.clientTimeZone`). */
+  | { type: "client:timezone"; timeZone: string; deviceId: string };

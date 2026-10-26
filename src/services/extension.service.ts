@@ -10,6 +10,7 @@ import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 import { executeExtensionCommand, type ExecuteOutcome, type WorkerCommandReply } from "./extension-command-executor.ts";
 import { registerExtensionNotifyHandlers } from "./extension-api/extension-notify-handlers.ts";
 import { invalidateExtensionCliHint } from "./extension-cli-hint.ts";
+import { lastClientTimeZone, type ClientTimeZoneReport } from "./client-timezone.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { createLogger } from "./logger.ts";
@@ -88,6 +89,9 @@ class ExtensionService {
     this.rpc.onEvent("worker:ready", () => {
       this.workerReady = true;
       log.debug("Extension host worker ready");
+      // A rebuilt host starts with no zone; give it the one a browser already reported.
+      const zone = lastClientTimeZone();
+      if (zone) this.notifyClientTimeZone(zone);
     });
 
     this.rpc.onEvent("log", (data) => {
@@ -349,6 +353,14 @@ class ExtensionService {
       try { await this.deactivate(id); } catch {}
     }
     await this.terminateWorker();
+  }
+
+  /**
+   * Tell the extension host which zone a browser reported (`vscode.env.clientTimeZone`). Sent as
+   * an event: the host fires `onDidChangeClientTimeZone` only when the zone actually changed.
+   */
+  notifyClientTimeZone(report: Pick<ClientTimeZoneReport, "timeZone" | "deviceId">): void {
+    this.rpc?.sendEvent("client:timezone", { timeZone: report.timeZone, deviceId: report.deviceId });
   }
 
   /** The worker exists and has said it is listening; before that nothing can be routed to it. */
