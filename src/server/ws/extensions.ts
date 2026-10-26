@@ -65,6 +65,23 @@ export function requestFromBrowser<T = unknown>(
   });
 }
 
+/**
+ * How long a command a browser dispatched (a click on a tree row, a button, the status bar) may
+ * take. A command can itself wait on a prompt (a quick pick waits up to
+ * `PROMPT_REPLY_WAIT_MS`, 35 s, on the extension side) or on slow work such as a refresh, and at
+ * the RPC default of 10 s every such click ended in a false error while the command still ran.
+ */
+export const BROWSER_COMMAND_TIMEOUT_MS = 35_000;
+
+/**
+ * A command's failure, shown only to the browser that asked for it: the other devices did not
+ * click anything, and an error toast there is noise.
+ */
+function notifyClicker(ws: ExtWsSocket, message: string): void {
+  const msg: ExtServerMsg = { type: "notification", id: `cmd-error-${Date.now()}`, level: "error", message };
+  try { ws.send(JSON.stringify(msg)); } catch { /* the socket closed meanwhile */ }
+}
+
 /** Get the number of connected extension WS clients */
 export function getExtClientCount(): number {
   return clients.size;
@@ -109,35 +126,20 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
         const { extensionService } = await import("../../services/extension.service.ts");
         if (extensionService["rpc"]) {
           log.debug(`command:execute "${msg.command}"`);
-          const result = await extensionService["rpc"].sendRequest<{ ok: boolean; error?: string }>(
-            "ext:command:execute", msg.command, ...(msg.args ?? []),
+          const result = await extensionService["rpc"].sendRequestWithTimeout<{ ok: boolean; error?: string }>(
+            "ext:command:execute", BROWSER_COMMAND_TIMEOUT_MS, [msg.command, ...(msg.args ?? [])],
           );
           if (!result?.ok) {
             log.error(`command:execute failed: ${result?.error ?? "unknown"}`);
-            broadcastExtMsg({
-              type: "notification",
-              id: `cmd-error-${Date.now()}`,
-              level: "error",
-              message: `Extension command failed: ${result?.error ?? "unknown error"}`,
-            });
+            notifyClicker(ws, `Extension command failed: ${result?.error ?? "unknown error"}`);
           }
         } else {
           log.error(`command:execute: extension host not ready`);
-          broadcastExtMsg({
-            type: "notification",
-            id: `cmd-error-${Date.now()}`,
-            level: "error",
-            message: `Extension host not ready. Try reloading the page.`,
-          });
+          notifyClicker(ws, "Extension host not ready. Try reloading the page.");
         }
       } catch (e) {
         log.error(`command:execute error:`, e);
-        broadcastExtMsg({
-          type: "notification",
-          id: `cmd-error-${Date.now()}`,
-          level: "error",
-          message: `Extension command error: ${e instanceof Error ? e.message : String(e)}`,
-        });
+        notifyClicker(ws, `Extension command error: ${e instanceof Error ? e.message : String(e)}`);
       }
       break;
     }
@@ -159,7 +161,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
         try {
           const { extensionService } = await import("../../services/extension.service.ts");
           if (extensionService["rpc"]) {
-            await extensionService["rpc"].sendRequest("ext:command:execute", msg.command);
+            await extensionService["rpc"].sendRequestWithTimeout("ext:command:execute", BROWSER_COMMAND_TIMEOUT_MS, [msg.command]);
           }
         } catch (e) {
           log.error(`tree:click command error:`, e);
