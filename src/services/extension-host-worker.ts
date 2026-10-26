@@ -149,6 +149,14 @@ rpc.onRequest("ext:command:execute", async (params) => {
       console.debug(`[ExtHost] routing "${command}" → ${extId}`);
       try {
         const result = await (ext.commands as any).executeCommand(command, ...args);
+        // The answer crosses to the main thread by structured clone. A value that cannot make
+        // the trip (a function, a class with methods) would fail inside postMessage, and the
+        // caller would only see a timeout; refuse it here with a message that says why.
+        try { structuredClone(result); } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`[ExtHost] command "${command}" in ${extId} returned a value that cannot be sent:`, msg);
+          return { ok: false, error: `${command} returned a value that cannot be sent back: ${msg}` };
+        }
         return { ok: true, result };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -158,7 +166,8 @@ rpc.onRequest("ext:command:execute", async (params) => {
     }
   }
   console.warn(`[ExtHost] command not found: "${command}"`);
-  return { ok: false, error: `Command not found: ${command}` };
+  // The code tells a missing handler apart from a handler that threw.
+  return { ok: false, error: `Command not found: ${command}`, code: "NOT_FOUND" };
 });
 
 // Browser closed a webview panel tab → fire onDidDispose in the extension

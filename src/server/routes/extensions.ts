@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { extensionService } from "../../services/extension.service.ts";
 import { contributionRegistry } from "../../services/contribution-registry.ts";
 import { ok, err } from "../../types/api.ts";
+import { createCommandExecuteHandler } from "./extension-command-execute-route.ts";
 
 export const extensionRoutes = new Hono();
 
@@ -15,6 +16,10 @@ extensionRoutes.get("/", (c) => {
 extensionRoutes.get("/contributions", (c) => {
   return c.json(ok(contributionRegistry.getAll()));
 });
+
+// POST /api/extensions/commands/execute — run a declared extension command (CLI). Declared
+// before the `/:id{.+}` routes so no id pattern can ever claim the path.
+extensionRoutes.post("/commands/execute", createCommandExecuteHandler(extensionService));
 
 // GET /api/extensions/:id — get single extension info
 extensionRoutes.get("/:id{.+}", (c) => {

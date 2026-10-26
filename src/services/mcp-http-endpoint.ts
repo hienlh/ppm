@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { createLogger } from "./logger.ts";
+import { readCappedBody } from "./read-capped-body.ts";
 
 /**
  * The smallest MCP server that speaks Streamable HTTP with plain JSON responses
@@ -16,29 +17,6 @@ export type Json = Record<string, unknown>;
 
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY_BYTES = 64 * 1024;
-
-/**
- * The body as text, or null when it is over {@link MAX_BODY_BYTES}. Counted in bytes as it
- * arrives, so a body sent without a `Content-Length` (chunked) is refused without being read to
- * its end.
- */
-async function readCappedBody(req: Request): Promise<string | null> {
-  if (!req.body) return "";
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
 
 const rpcResult = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
@@ -105,7 +83,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
     if (Number(c.req.header("content-length") ?? "0") > MAX_BODY_BYTES) return c.json(rpcError(null, -32600, "Request too large"), 413);
     let msg: unknown;
     try {
-      const raw = await readCappedBody(c.req.raw);
+      const raw = await readCappedBody(c.req.raw, MAX_BODY_BYTES);
       if (raw === null) return c.json(rpcError(null, -32600, "Request too large"), 413);
       msg = JSON.parse(raw);
     } catch {

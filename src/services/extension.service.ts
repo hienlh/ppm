@@ -7,6 +7,7 @@ import { RpcChannel } from "./extension-rpc.ts";
 import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
+import { executeExtensionCommand, type ExecuteOutcome, type WorkerCommandReply } from "./extension-command-executor.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { createLogger } from "./logger.ts";
@@ -351,6 +352,22 @@ class ExtensionService {
       try { await this.deactivate(id); } catch {}
     }
     await this.terminateWorker();
+  }
+
+  /** The worker exists and has said it is listening; before that nothing can be routed to it. */
+  isHostReady(): boolean { return this.rpc !== null && this.workerReady; }
+
+  /** Run a declared command for a caller outside the browser (CLI). Never throws. */
+  executeCommand(command: string, args: unknown[], timeoutMs: number): Promise<ExecuteOutcome> {
+    return executeExtensionCommand({
+      isHostReady: () => this.isHostReady(),
+      activeCommands: () => contributionRegistry.getCommands(),
+      installedManifests: () => this.list(),
+      send: (cmd, cmdArgs, ms) => {
+        if (!this.rpc) return Promise.reject(new Error("The extension host stopped"));
+        return this.rpc.sendRequestWithTimeout<WorkerCommandReply>("ext:command:execute", ms, [cmd, ...cmdArgs]);
+      },
+    }, command, args, timeoutMs);
   }
 
   isActivated(id: string): boolean { return this.activatedIds.has(id); }
