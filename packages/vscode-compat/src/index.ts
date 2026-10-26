@@ -22,6 +22,11 @@ export {
 } from "./types.ts";
 export { type ExtensionContext, Memento } from "./context.ts";
 export { ProcessService, type SpawnResult, type SpawnOptions } from "./process.ts";
+export { type PpmNamespace } from "./ppm/index.ts";
+export {
+  PpmNotifyError, type PpmNotify, type PpmNotifyRequest, type PpmNotifyOutcome, type PpmNotifyErrorCode,
+  type DeepLinkArg,
+} from "./ppm/ppm-notify.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";
@@ -30,6 +35,7 @@ import { WorkspaceService } from "./workspace.ts";
 import { ProcessService } from "./process.ts";
 import { createExtensionContext, type ExtensionContext } from "./context.ts";
 import { createEnvNamespace } from "./env.ts";
+import { createPpmNamespace } from "./ppm/index.ts";
 import { createNotSupported } from "./not-supported.ts";
 import { Uri } from "./uri.ts";
 import { Disposable } from "./disposable.ts";
@@ -66,6 +72,8 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
     workspace,
     process,
     env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local"),
+    /** PPM's own additions beyond the VSCode API. */
+    ppm: createPpmNamespace(rpc, extensionId),
 
     // Classes & utilities
     Uri,

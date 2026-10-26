@@ -8,6 +8,7 @@ import { parseManifest, discoverManifests, discoverBundledManifests } from "./ex
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 import { executeExtensionCommand, type ExecuteOutcome, type WorkerCommandReply } from "./extension-command-executor.ts";
+import { registerExtensionNotifyHandlers } from "./extension-api/extension-notify-handlers.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { createLogger } from "./logger.ts";
@@ -96,6 +97,8 @@ class ExtensionService {
 
     // Register vscode-compat API handlers (commands, window, workspace, fs)
     registerVscodeCompatHandlers(this.rpc);
+    // PPM's own additions (`api.ppm.notify`)
+    registerExtensionNotifyHandlers(this.rpc);
 
     this.rpc.onEvent("worker:ready", () => {
       this.workerReady = true;

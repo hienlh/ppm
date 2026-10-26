@@ -33,6 +33,7 @@ import { useUiPreload } from "@/hooks/use-ui-preload";
 import { useGlobalEvents } from "@/hooks/use-global-events";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { useNotificationClicks } from "@/hooks/use-notification-clicks";
+import { runExtensionDeepLink, takeDeepLinkFromLocation } from "@/lib/extension-deep-link-runner";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { ComparePicker } from "@/components/editor/compare-picker";
 import { DbLoginDialogHost } from "@/components/database/db-login/db-login-dialog";
@@ -107,6 +108,9 @@ export function App() {
 
   // Capture URL state on mount — before any effect can overwrite it
   const initialUrlRef = useRef(parseUrlState());
+  // A notification's link to an extension command or panel; run once, after the boot project.
+  const [bootDeepLink] = useState(takeDeepLinkFromLocation);
+  const bootDeepLinkRanRef = useRef(false);
 
   // Fetch server info on mount (before auth — shown on login screen) and
   // again once authenticated: the pre-auth call has no token on a fresh
@@ -257,8 +261,13 @@ export function App() {
         url.searchParams.delete("openChat");
         window.history.replaceState(null, "", url.pathname);
       }
+    }).finally(() => {
+      // After the project is restored, so a panel opens in that project's layout, not __global__.
+      if (!bootDeepLink || bootDeepLinkRanRef.current) return;
+      bootDeepLinkRanRef.current = true;
+      void runExtensionDeepLink(bootDeepLink);
     });
-  }, [authState, fetchProjects]);
+  }, [authState, fetchProjects, bootDeepLink]);
 
   // Switch project tabs when active project changes.
   // If this browser has no local copy of the project's layout (opened on
