@@ -387,14 +387,18 @@ if (typeof api.ppm?.notify === "function") {
 ```
 
 - **What a tap opens**: give at most one of `open`, `sessionId` (a chat) or `path` (an in-app
-  path starting with `/`). `open` is `{ view }` or `{ command, args? }`.
+  path starting with `/`). `open` is `{ view }` or `{ command, args? }`, and either one must be
+  listed in **`contributes.deepLinkCommands`** (each entry must also be in `contributes.commands`).
   - `{ view }` opens one of **your own** panels: a webview panel's viewType equals the command
-    that opens it, so `{ view: "midday.checkIn" }` opens that panel. It must be declared in
-    `contributes.commands`, and needs nothing else.
-  - `{ command, args? }` runs a command, and only one you list in **`contributes.deepLinkCommands`**
-    (each entry must also be in `contributes.commands`). A link to any other command is refused
-    when you call `notify` (`BAD_REQUEST`), and the browser refuses it again even from a URL
-    typed by hand. `args` holds at most 8 strings, numbers, booleans or nulls, 1 KB as JSON.
+    that opens it, so `{ view: "midday.checkIn" }` opens that panel. A view is no exception to
+    the list, because the tab it opens runs the command of that name.
+  - `{ command, args? }` runs the command. `args` holds at most 8 strings, numbers, booleans or
+    nulls, 1 KB as JSON.
+  - Anything not listed is refused when you call `notify` (`BAD_REQUEST`), and the browser refuses
+    it again, even from a URL typed by hand. A tab saved in the layout from such a link never runs
+    its command on a reload either: a tab only reopens its panel when the extension that owns the
+    command recorded itself on the tab (any panel you open yourself, or `window.openTab` from your
+    extension) or when the command is in `deepLinkCommands`.
   - The link is `/project/<projectName>?extCommand=<command>&extArgs=<base64url JSON>` (or
     `extView=`), so it works the same from push, Telegram and ntfy. The app runs it on the device
     that was tapped, once your extension is active (it waits up to 20 s), and removes it from the
@@ -410,7 +414,7 @@ if (typeof api.ppm?.notify === "function") {
       { "command": "midday.showItem", "title": "Midday: Show item" },
       { "command": "midday.done", "title": "Midday: Done" }
     ],
-    "deepLinkCommands": ["midday.showItem"]
+    "deepLinkCommands": ["midday.checkIn", "midday.showItem"]
   }
   ```
 - **Outcome**: the call answers within about 2 s. `queued` means PPM's notification delay

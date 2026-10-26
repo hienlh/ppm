@@ -62,17 +62,16 @@ const defaultDeps: DeepLinkRunnerDeps = {
 type Verdict = "run" | "refuse" | "wait";
 
 /**
- * Whether a link may run now. A view opens once an active extension declares it. A command runs
- * only when its extension listed it in `contributes.deepLinkCommands`: a URL can be hand-made,
- * so the browser never trusts that the server built it. A command that is declared but not
- * linkable is refused at once; one nothing declares yet may belong to an extension still
- * activating, so it waits.
+ * Whether a link may run now. A command, and a view alike, runs only when its extension listed
+ * it in `contributes.deepLinkCommands`: a URL can be hand-made, so the browser never trusts that
+ * the server built it, and a view is no exception because the tab it opens runs the command of
+ * that name. A target that is declared but not linkable is refused at once; one nothing declares
+ * yet may belong to an extension still activating, so it waits.
  */
 function verdict(link: ParsedExtensionDeepLink, deps: DeepLinkRunnerDeps): Verdict {
-  const declared = deps.commands();
-  if (link.kind === "view") return declared?.includes(link.view) ? "run" : "wait";
-  if (deps.deepLinkCommands().includes(link.command)) return "run";
-  return declared?.includes(link.command) ? "refuse" : "wait";
+  const target = link.kind === "view" ? link.view : link.command;
+  if (deps.deepLinkCommands().includes(target)) return "run";
+  return deps.commands()?.includes(target) ? "refuse" : "wait";
 }
 
 /**

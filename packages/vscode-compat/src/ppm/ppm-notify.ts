@@ -30,11 +30,11 @@ export interface PpmNotifyRequest {
   path?: string;
   /**
    * On tap, open one of this extension's own panels (`{ view }`: a panel's viewType equals the
-   * command that opens it, declared in `contributes.commands`), or run one of its commands listed
-   * in `contributes.deepLinkCommands` (`{ command }`), on the device that was tapped. Any other
-   * command is refused: a link can be opened by anyone who receives the notification, so only
-   * commands that open something may be listed. With `projectName`, that project opens first.
-   * At most one of `open`, `sessionId` or `path`.
+   * command that opens it) or run one of its commands (`{ command }`), on the device that was
+   * tapped. Either must be listed in `contributes.deepLinkCommands`; anything else is refused: a
+   * link can be opened by anyone who receives the notification, so only commands that open
+   * something may be listed. With `projectName`, that project opens first. At most one of
+   * `open`, `sessionId` or `path`.
    */
   open?: { command: string; args?: DeepLinkArg[] } | { view: string };
 }

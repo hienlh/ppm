@@ -90,10 +90,19 @@ describe("runExtensionDeepLink", () => {
     expect(h.dispatched).toHaveLength(0);
   });
 
-  it("opens a view by id without any deepLinkCommands entry, as a tab named after the command's title", async () => {
-    const h = harness(["midday.checkIn"], []);
+  it("opens a linkable view as a tab named after the command's title", async () => {
+    const h = harness(["midday.checkIn"], ["midday.checkIn"]);
     await runExtensionDeepLink({ kind: "view", view: "midday.checkIn", projectName: "ppm" }, h.deps);
     expect(h.opened).toEqual([{ view: "midday.checkIn", title: "Midday: Check-in", projectName: "ppm" }]);
     expect(h.dispatched).toHaveLength(0);
+  });
+
+  it("refuses a view link to an unlisted command, since the tab it opens would run that command", async () => {
+    // `/?extView=midday.done`, typed or sent by anyone.
+    const h = harness(["midday.checkIn", "midday.done"], ["midday.checkIn"]);
+    expect(await runExtensionDeepLink({ kind: "view", view: "midday.done" }, h.deps)).toBe(false);
+    expect(h.opened).toEqual([]);
+    expect(h.dispatched).toEqual([]);
+    expect(h.warnings[0]).toContain("deepLinkCommands");
   });
 });

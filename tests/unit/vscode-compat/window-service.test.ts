@@ -135,6 +135,17 @@ describe("WindowService", () => {
     });
   });
 
+  describe("openTab", () => {
+    it("records this extension on a panel tab it opens, whatever metadata it passed", async () => {
+      await window.openTab("extension", "Graph", null, { viewType: "git-graph", extensionId: "someone-else" });
+      await window.openTab("editor", "File", null, { filePath: "a.ts" });
+      expect(rpc.requests).toEqual([
+        { method: "window:openTab", params: ["extension", "Graph", null, { viewType: "git-graph", extensionId: "test-ext" }] },
+        { method: "window:openTab", params: ["editor", "File", null, { filePath: "a.ts" }] },
+      ]);
+    });
+  });
+
   describe("createStatusBarItem", () => {
     it("generates unique IDs with monotonic counter", () => {
       const item1 = window.createStatusBarItem();

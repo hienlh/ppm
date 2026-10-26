@@ -234,7 +234,10 @@ export class WindowService {
   // --- Open PPM Tab ---
 
   async openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>): Promise<void> {
-    await this.rpc.request("window:openTab", tabType, title, projectId, metadata);
+    // A panel tab records the extension that opened it, always this one, so the app may reopen
+    // that panel on a reload; a tab that records no owner may only reopen a linkable panel.
+    const tabMetadata = tabType === "extension" ? { ...metadata, extensionId: this.extId } : metadata;
+    await this.rpc.request("window:openTab", tabType, title, projectId, tabMetadata);
   }
 
   async switchProject(projectName: string): Promise<void> {

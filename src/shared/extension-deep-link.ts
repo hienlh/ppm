@@ -30,8 +30,8 @@ export const DEEP_LINK_PARAMS = ["extCommand", "extArgs", "extView"] as const;
  * The commands an extension lets a link run: its `contributes.deepLinkCommands`, keeping only
  * entries it also declares in `contributes.commands`. Anyone who receives a notification, or
  * hand-makes a URL, can open a link, so a link may only run what the extension marked as safe to
- * run that way (opening something), never an action such as marking an item done. Opening a
- * webview panel by its view type (`extView`) needs no entry here.
+ * run that way (opening something), never an action such as marking an item done. A view link
+ * (`extView`) obeys the same list: the tab it opens runs the command of that name.
  */
 export function deepLinkableCommands(contributes: {
   commands?: ReadonlyArray<{ command: string }>;

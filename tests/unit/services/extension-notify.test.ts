@@ -46,7 +46,7 @@ function fakeDeps(overrides: Partial<ExtensionNotifyDeps> = {}) {
     resolveSessionProvider: (sessionId) => (sessionId === "s1" ? { sessionId: "s1", providerId: "codex" } : null),
     projectExists: (name) => name === "ppm",
     linkTargetsOf: (id) => (id === "fg"
-      ? { commands: ["fg.checkIn", "fg.panel", "fg.done"], deepLinkCommands: ["fg.checkIn"] }
+      ? { commands: ["fg.checkIn", "fg.panel", "fg.done"], deepLinkCommands: ["fg.checkIn", "fg.panel"] }
       : { commands: [], deepLinkCommands: [] }),
     broadcast: async (type, payload, opts) => {
       broadcasts.push({ type, payload, opts });
@@ -144,9 +144,19 @@ describe("notify:send", () => {
     const answer = await call({ ...base, projectName: "ppm", open: { command: "fg.done", args: ["item-1"] } });
     expect(answer.error.code).toBe("BAD_REQUEST");
     expect(answer.error.message).toContain("deepLinkCommands");
-    // A panel is still opened by its view type, which needs no entry there.
+    // A linkable panel still opens by its view type.
     expect((await call({ ...base, open: { view: "fg.panel" } })).ok).toBe(true);
     expect(broadcasts.map((b) => b.payload.path)).toEqual(["/?extView=fg.panel"]);
+  });
+
+  it("refuses a view link to an unlisted command: the tab it opens would run that command", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    const answer = await call({ ...base, open: { view: "fg.done" } });
+    expect(answer.error.code).toBe("BAD_REQUEST");
+    expect(answer.error.message).toContain("open.view");
+    expect(answer.error.message).toContain("deepLinkCommands");
+    expect(broadcasts).toHaveLength(0);
   });
 
   it("refuses an open that names another extension's command, breaks the arg limits, or comes with sessionId or path", async () => {

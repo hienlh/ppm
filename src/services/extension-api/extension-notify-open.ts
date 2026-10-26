@@ -6,9 +6,10 @@ import type { ExtensionManifest } from "../../types/extension.ts";
 
 /** What an installed extension's manifest lets a notification link to. */
 export interface LinkableTargets {
-  /** Every command it declares: a panel's viewType equals the command that opens it. */
+  /** Every command it declares. */
   commands: string[];
-  /** The commands it marked as safe to run from a link (`contributes.deepLinkCommands`). */
+  /** The commands and panels (a panel's viewType equals its command) it marked as safe to open
+   *  from a link (`contributes.deepLinkCommands`). */
   deepLinkCommands: string[];
 }
 
@@ -27,11 +28,12 @@ export function linkableTargets(id: string): LinkableTargets {
 }
 
 /**
- * The `open` field of a `ppm.notify` request: which of the calling extension's own panels or
- * linkable commands the notification opens. A view must be one of its declared commands (a
- * panel's viewType equals the command that opens it). A command must also be in its
- * `contributes.deepLinkCommands`: anyone holding the link can open it, so a link may never run an
- * action such as marking an item done. Returns the checked target or a reason.
+ * The `open` field of a `ppm.notify` request: which of the calling extension's own linkable
+ * commands or panels the notification opens. Both must be in its `contributes.deepLinkCommands`.
+ * A view is no exception: a panel's viewType equals the command that opens it, and the tab a
+ * view link opens runs that command, so an unlisted view would let a link run an action such as
+ * marking an item done. Anyone holding the link can open it. Returns the checked target or a
+ * reason.
  */
 export function checkNotifyOpen(
   raw: unknown,
@@ -51,12 +53,12 @@ export function checkNotifyOpen(
   if (!targets.commands.includes(id)) {
     return { ok: false, message: `${field} "${id}" is not declared in this extension's contributes.commands` };
   }
+  if (!targets.deepLinkCommands.includes(id)) {
+    return { ok: false, message: `${field} "${id}" is not in this extension's contributes.deepLinkCommands` };
+  }
   if (hasView) {
     if (o.args !== undefined) return { ok: false, message: "open.args only goes with open.command" };
     return { ok: true, open: { view: id } };
-  }
-  if (!targets.deepLinkCommands.includes(id)) {
-    return { ok: false, message: `open.command "${id}" is not in this extension's contributes.deepLinkCommands` };
   }
   const args = o.args ?? [];
   const problem = deepLinkArgsProblem(args);
