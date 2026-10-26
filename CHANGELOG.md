@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.20] - 2026-10-26
+
+### Fixed
+
+- **On Windows the server no longer freezes for up to a minute and gets restarted**: PPM started from autostart now runs at normal memory and disk priority.
+- **Stall logs now say what the server was waiting on**, so the cause of a freeze is on record after a restart.
+
 ## [0.23.19] - 2026-10-26
 
 ### Fixed
