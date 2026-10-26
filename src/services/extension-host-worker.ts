@@ -66,6 +66,19 @@ self.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
   rpc.handleMessage(event.data);
 });
 
+// All extensions share this one worker. Without these guards a single forgotten `.catch()`
+// in any of them terminates the worker and takes every other extension down with it — log
+// and keep serving instead. These have to be the process-level handlers: Bun 1.3.13 ends the
+// worker after an uncaught exception even when the `error` event's `preventDefault()` is
+// called (and reports a rejection through that same event, never `unhandledrejection`), so
+// listeners on `self` log the crash without preventing it.
+process.on("uncaughtException", (error: unknown) => {
+  console.error("[ExtHost] uncaught error (swallowed to keep the host alive):", error);
+});
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[ExtHost] unhandled rejection (swallowed to keep the host alive):", reason);
+});
+
 // --- RPC handlers ---
 
 rpc.onRequest("ext:activate", async (params) => {

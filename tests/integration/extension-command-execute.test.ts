@@ -43,6 +43,7 @@ function writeFixture(): string {
         { command: "fixture.declaredOnly", title: "Declared, never registered" },
         { command: "fixture.zone", title: "Client time zone" },
         { command: "fixture.bigint", title: "Returns what JSON cannot carry" },
+        { command: "fixture.leak", title: "Leaves a rejection and a throw unhandled" },
       ],
     },
   }));
@@ -57,6 +58,11 @@ function writeFixture(): string {
         vscode.commands.registerCommand("fixture.sleep", () => new Promise((r) => setTimeout(() => r("late"), 2500))),
         vscode.commands.registerCommand("fixture.nothing", () => undefined),
         vscode.commands.registerCommand("fixture.bigint", () => ({ n: 10n })),
+        vscode.commands.registerCommand("fixture.leak", () => {
+          Promise.reject(new Error("a forgotten catch"));
+          setTimeout(() => { throw new Error("a throw nobody catches"); }, 0);
+          return "leaked";
+        }),
         vscode.commands.registerCommand("fixture.undeclared", () => "should never run"),
       );
     };
@@ -115,6 +121,16 @@ describe("POST /api/extensions/commands/execute with a real worker", () => {
     expect(status).toBe(500);
     expect(body.code).toBe("COMMAND_FAILED");
     expect(body.error).toContain("cannot be sent back");
+  });
+
+  it("keeps the shared host alive after an extension leaves a rejection and a throw unhandled", async () => {
+    expect((await execute({ command: "fixture.leak" })).body.data.result).toBe("leaked");
+    await Bun.sleep(200);
+    // Without the host's process-level guards, Bun ends the worker here and every extension with it.
+    expect(extensionService.isHostReady()).toBe(true);
+    const after = await execute({ command: "fixture.echo", args: ["still here"], timeoutMs: 3000 });
+    expect(after.status).toBe(200);
+    expect(after.body.data.result).toEqual({ args: ["still here"] });
   });
 
   it("504 TIMEOUT when the handler outlasts timeoutMs", async () => {
