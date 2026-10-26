@@ -31,6 +31,13 @@ export function broadcastExtMsg(msg: ExtServerMsg): void {
 }
 
 /**
+ * How long a prompt (a toast with buttons, a quick pick, an input box) waits for the person.
+ * `PROMPT_REPLY_WAIT_MS` in `packages/vscode-compat/src/window.ts` must stay above it, or the
+ * extension gives up while the prompt is still on screen and a slow click is lost.
+ */
+export const BROWSER_PROMPT_TIMEOUT_MS = 30_000;
+
+/**
  * Send a request to browser and wait for response (quickpick, inputbox, notification).
  * The `trackingId` is the key used to match the response.
  * Returns the resolved value or undefined on timeout.
@@ -38,7 +45,7 @@ export function broadcastExtMsg(msg: ExtServerMsg): void {
 export function requestFromBrowser<T = unknown>(
   msg: ExtServerMsg,
   trackingId: string,
-  timeoutMs = 30_000,
+  timeoutMs = BROWSER_PROMPT_TIMEOUT_MS,
 ): Promise<T | undefined> {
   broadcastExtMsg(msg);
   return new Promise<T | undefined>((resolve) => {
