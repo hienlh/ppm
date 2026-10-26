@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.21] - 2026-10-26
+
+### Fixed
+
+- **A pending AI question no longer takes focus back**: two chats waiting on questions side by side can each be answered, and the chat above a question can be scrolled up to read.
+
 ## [0.23.20] - 2026-10-26
 
 ### Fixed
