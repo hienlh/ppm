@@ -134,13 +134,19 @@ function useQuestionKeyboard(config: {
     if (el) {
       el.addEventListener("keydown", handleKeyDown);
       el.setAttribute("tabindex", "0");
-      // Same reason: asking the main document whether focus is already inside the card answers
-      // "no" for a card living in another document, and this effect re-runs on every render —
-      // which would yank focus out of the custom input after each keystroke.
-      if (config.autoFocus && !el.contains(el.ownerDocument.activeElement)) el.focus();
     }
     return () => { el?.removeEventListener("keydown", handleKeyDown); };
   }, [config, focusedOption]);
+
+  // Focus the card once, when it appears. Doing it on every render took focus back whenever the
+  // card re-rendered for any reason, so with two chats side by side each waiting on a question,
+  // the other card's chat updating pulled focus out of the card being answered. The owner
+  // document is asked rather than the global one, for a card rendered in a picture-in-picture window.
+  const autoFocusOnMount = useRef(config.autoFocus);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (autoFocusOnMount.current && el && !el.contains(el.ownerDocument.activeElement)) el.focus();
+  }, []);
 
   return { focusedOption, setFocusedOption, containerRef };
 }
