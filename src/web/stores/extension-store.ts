@@ -14,7 +14,8 @@ export interface StatusBarItemUI {
 }
 
 export interface TreeItemAction {
-  icon: "refresh" | "edit" | "trash" | "plus" | "search";
+  /** A name in `EXTENSION_ICONS`; anything else draws a refresh arrow. */
+  icon: string;
   tooltip: string;
   command: string;
   commandArgs?: unknown[];
@@ -27,13 +28,15 @@ export interface TreeItemUI {
   tooltip?: string;
   icon?: string;
   color?: string;
-  badge?: string;
+  badge?: string | number;
   actions?: TreeItemAction[];
   collapsibleState: "none" | "collapsed" | "expanded";
   command?: string;
   commandArgs?: unknown[];
   children?: TreeItemUI[];
   contextValue?: string;
+  /** An http(s) page the row's label opens in a new tab. */
+  url?: string;
 }
 
 export interface WebviewPanelUI {

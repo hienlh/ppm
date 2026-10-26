@@ -6,6 +6,21 @@ import type {
 } from "./types.ts";
 import { StatusBarAlignment as SBAlign } from "./types.ts";
 
+/**
+ * A tree row's link, kept only when it is http(s). A worker cannot open a browser tab, so the
+ * row itself becomes the link; anything else (`javascript:`, `file:`) would run or reach
+ * something on the device that taps it. The renderer checks again.
+ */
+export function httpUrlOrUndefined(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** VSCode-compatible window namespace — all UI ops go through RPC to main→browser */
 export class WindowService {
   private rpc: RpcClient;
@@ -86,6 +101,7 @@ export class WindowService {
         badge: treeItem.badge,
         actions: treeItem.actions,
         contextValue: treeItem.contextValue,
+        url: httpUrlOrUndefined(treeItem.url),
       });
     }
     return results;

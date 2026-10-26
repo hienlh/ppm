@@ -26,6 +26,12 @@ export interface TreeItemMsg {
   wrap?: boolean;
   collapsibleState: "none" | "collapsed" | "expanded";
   command?: string;
+  commandArgs?: unknown[];
+  color?: string;
+  badge?: string | number;
+  actions?: { icon: string; tooltip: string; command: string; commandArgs?: unknown[] }[];
+  /** http(s) only, checked by vscode-compat and again by the renderer. */
+  url?: string;
   children?: TreeItemMsg[];
   contextValue?: string;
 }

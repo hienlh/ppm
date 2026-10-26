@@ -215,6 +215,30 @@ function ContextMenuItem({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Label (a header above the items)                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Non-interactive text above the items: on a phone, the sheet's header, where a row whose name
+ * is cut off in the list can be read in full before choosing an action.
+ */
+function ContextMenuLabel({
+  children,
+  className,
+  ...props
+}: React.ComponentProps<typeof Radix.ContextMenuLabel>) {
+  const isMobile = React.useContext(IsMobileCtx);
+  if (!isMobile) {
+    return <Radix.ContextMenuLabel className={className} {...props}>{children}</Radix.ContextMenuLabel>;
+  }
+  return (
+    <div className={cn("mb-1 select-none border-b border-border px-3 pb-3 pt-1 text-sm", className)}>
+      {children}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Separator                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -328,6 +352,7 @@ export {
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuRadioGroup,
   ContextMenuRadioItem,

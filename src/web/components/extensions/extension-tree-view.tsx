@@ -1,26 +1,14 @@
-import { useCallback, useState, useRef, useMemo } from "react";
-import { ChevronRight, ChevronDown, RefreshCw } from "@/lib/icons";
-import { useExtensionStore, type TreeItemUI, type TreeItemAction } from "@/stores/extension-store";
+import { useMemo } from "react";
+import { RefreshCw } from "@/lib/icons";
+import { useExtensionStore } from "@/stores/extension-store";
 import { extensionIcon } from "@/lib/extension-icons";
 import { cn } from "@/lib/utils";
+import { ExtensionTreeNode } from "./extension-tree-node";
+import { executeExtensionCommand } from "./extension-tree-dispatch";
 
 interface ExtensionTreeViewProps {
   viewId: string;
   className?: string;
-}
-
-/** Dispatch a tree:expand request to fetch children from the server */
-function requestTreeExpand(viewId: string, itemId: string) {
-  window.dispatchEvent(new CustomEvent("ext:tree:expand", {
-    detail: { viewId, itemId },
-  }));
-}
-
-/** Dispatch a command:execute request via the WS bridge */
-function executeCommand(command: string, args?: unknown[]) {
-  window.dispatchEvent(new CustomEvent("ext:command:execute", {
-    detail: { command, args },
-  }));
 }
 
 /** Generic TreeView renderer for extension-contributed tree data */
@@ -72,7 +60,7 @@ export function ExtensionTreeView({ viewId, className }: ExtensionTreeViewProps)
             return (
               <button
                 key={action.command}
-                onClick={() => executeCommand(action.command)}
+                onClick={() => executeExtensionCommand(action.command)}
                 className="flex items-center justify-center size-5 rounded hover:bg-surface-elevated transition-colors text-text-subtle hover:text-foreground"
                 title={action.title}
               >
@@ -89,7 +77,7 @@ export function ExtensionTreeView({ viewId, className }: ExtensionTreeViewProps)
           <p className="px-4 py-6 text-xs text-text-subtle text-center">No items</p>
         ) : (
           items.map((item) => (
-            <TreeNode key={item.id} item={item} depth={0} viewId={viewId} />
+            <ExtensionTreeNode key={item.id} item={item} depth={0} viewId={viewId} />
           ))
         )}
       </div>
@@ -105,129 +93,4 @@ function inferIcon(command: string): string {
   if (command.includes("edit") || command.includes("update")) return "edit";
   if (command.includes("search") || command.includes("find")) return "search";
   return "refresh";
-}
-
-function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; viewId: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasChildren = item.collapsibleState !== "none";
-  const childrenLoaded = useRef(false);
-
-  // When children arrive from server, auto-expand once
-  if (item.children && item.children.length > 0 && !childrenLoaded.current) {
-    childrenLoaded.current = true;
-    if (!expanded) setExpanded(true);
-  }
-
-  const handleToggle = useCallback(() => {
-    if (!hasChildren) return;
-    const willExpand = !expanded;
-    setExpanded(willExpand);
-    if (willExpand && (!item.children || item.children.length === 0)) {
-      requestTreeExpand(viewId, item.id);
-    }
-  }, [hasChildren, expanded, item.id, item.children, viewId]);
-
-  const handleClick = useCallback(() => {
-    handleToggle();
-    if (item.command) {
-      executeCommand(item.command, item.commandArgs);
-    }
-  }, [handleToggle, item.command, item.commandArgs]);
-
-  const paddingLeft = 8 + depth * 16;
-
-  return (
-    <div role="treeitem" aria-expanded={hasChildren ? expanded : undefined}>
-      <div
-        className={cn("group/node flex items-center gap-1 py-1 hover:bg-surface-elevated transition-colors")}
-        style={{ paddingLeft, paddingRight: 8 }}
-      >
-        {/* Expand chevron */}
-        <button
-          onClick={handleToggle}
-          className="shrink-0 text-text-subtle hover:text-foreground transition-colors"
-        >
-          {hasChildren ? (
-            expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
-          ) : (
-            <span className="size-3" />
-          )}
-        </button>
-
-        {/* Color dot */}
-        {item.color && (
-          <span
-            className="shrink-0 size-2 rounded-full border border-border"
-            style={{ backgroundColor: item.color }}
-          />
-        )}
-
-        {/* Label — click to toggle or execute command */}
-        <button
-          className="flex-1 text-left text-xs truncate hover:text-primary transition-colors"
-          onClick={handleClick}
-        >
-          {item.label}
-        </button>
-
-        {/* Description (column type info) */}
-        {item.description && (
-          <span className="shrink-0 ml-1 text-text-subtle text-[10px]">{item.description}</span>
-        )}
-
-        {/* Badge (PG/DB) */}
-        {item.badge && (
-          <span className="shrink-0 text-[9px] text-text-subtle uppercase px-1 rounded bg-surface-elevated">
-            {item.badge}
-          </span>
-        )}
-
-        {/* Action buttons (visible on hover) */}
-        {item.actions && item.actions.length > 0 && (
-          <div className="flex can-hover:hidden can-hover:group-hover/node:flex items-center gap-0.5 shrink-0">
-            {item.actions.map((action) => (
-              <ActionButton key={action.command} action={action} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Children */}
-      {hasChildren && expanded && item.children && (
-        <div role="group">
-          {item.children.map((child) => (
-            <TreeNode key={child.id} item={child} depth={depth + 1} viewId={viewId} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ActionButton({ action }: { action: TreeItemAction }) {
-  const [spinning, setSpinning] = useState(false);
-  const Icon = extensionIcon(action.icon) ?? RefreshCw;
-  const isTrash = action.icon === "trash";
-
-  const handleClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (action.icon === "refresh") {
-      setSpinning(true);
-      setTimeout(() => setSpinning(false), 1000);
-    }
-    executeCommand(action.command, action.commandArgs);
-  }, [action]);
-
-  return (
-    <button
-      onClick={handleClick}
-      className={cn(
-        "p-0.5 text-text-subtle transition-colors",
-        isTrash ? "hover:text-error" : "hover:text-foreground",
-      )}
-      title={action.tooltip}
-    >
-      <Icon className={cn("size-3", spinning && "animate-spin")} />
-    </button>
-  );
 }

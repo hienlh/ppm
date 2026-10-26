@@ -46,6 +46,28 @@ export interface TreeItem {
   collapsibleState?: TreeItemCollapsibleState;
   command?: { command: string; title: string; arguments?: unknown[] };
   contextValue?: string;
+  /** PPM extras, not part of the VSCode API. Inline row buttons (keep to two or fewer). */
+  actions?: TreeItemAction[];
+  /** Small count or label at the row end. */
+  badge?: string | number;
+  /** A CSS colour for the dot before the label. */
+  color?: string;
+  /** Arguments passed on row click; wins over `command.arguments`. */
+  commandArgs?: unknown[];
+  /** An http(s) page the row opens in a new browser tab on the device that taps it. */
+  url?: string;
+}
+
+/**
+ * An inline button on a tree row. `icon` is a name the web UI knows (`check`, `clock`,
+ * `refresh`, `trash`, …: see `src/web/lib/extension-icons.ts`); an unknown name draws a
+ * refresh arrow, so stay within that list.
+ */
+export interface TreeItemAction {
+  icon: string;
+  tooltip: string;
+  command: string;
+  commandArgs?: unknown[];
 }
 
 export interface TreeDataProvider<T> {

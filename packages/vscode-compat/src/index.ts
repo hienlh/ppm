@@ -14,7 +14,7 @@ export { Uri } from "./uri.ts";
 export {
   TreeItemCollapsibleState, ViewColumn, StatusBarAlignment,
   ConfigurationTarget, DiagnosticSeverity, ThemeIcon,
-  type TreeItem, type TreeDataProvider, type WebviewPanel,
+  type TreeItem, type TreeItemAction, type TreeDataProvider, type WebviewPanel,
   type Webview, type WebviewOptions, type StatusBarItem,
   type QuickPickItem, type QuickPickOptions, type InputBoxOptions,
   type OutputChannel, type WorkspaceFolder, type WorkspaceConfiguration,
