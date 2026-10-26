@@ -66,6 +66,12 @@ describe("runExtensionCommand", () => {
     });
   }
 
+  it("exits 3, like a server-side timeout, when its own wait for the answer runs out", async () => {
+    const { err, sink } = io();
+    expect(await runExtensionCommand("a.b", [], { printMode: "auto", timeoutMs: 1000 }, failing(new HttpError(0, "PPM server did not answer in time")), sink)).toBe(3);
+    expect(err).toEqual(["PPM server did not answer in time"]);
+  });
+
   it("prints nothing for a null result in auto mode", async () => {
     const { out, sink } = io();
     expect(await runExtensionCommand("a.b", [], { printMode: "auto", timeoutMs: 1000 }, answering(null), sink)).toBe(0);

@@ -66,7 +66,9 @@ export async function runExtensionCommand(
       }
       io.stderr(e.message);
       if (isExecuteErrorCode(e.code)) return EXIT_CODE_FOR[e.code];
-      return e.status === 0 ? 1 : 2;
+      // Status 0: the server took the request and the CLI's own wait ran out, which is the
+      // command timing out (the server was there: the health check answered), not a server down.
+      return e.status === 0 ? EXIT_CODE_FOR.TIMEOUT : 2;
     }
     io.stderr(e instanceof Error ? e.message : String(e));
     return 1;

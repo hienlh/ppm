@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { Hono } from "hono";
-import { createCommandExecuteHandler, type CommandExecuteService } from "../../../src/server/routes/extension-command-execute-route.ts";
+import { createCommandExecuteHandler, loggableCommand, type CommandExecuteService } from "../../../src/server/routes/extension-command-execute-route.ts";
 import { executeExtensionCommand, type CommandExecutorDeps, type ExecuteOutcome } from "../../../src/services/extension-command-executor.ts";
 import {
   EXECUTE_DEFAULT_TIMEOUT_MS, EXECUTE_MAX_BODY_BYTES, EXECUTE_MAX_TIMEOUT_MS, EXECUTE_MIN_TIMEOUT_MS,
@@ -93,6 +93,26 @@ describe("POST /commands/execute", () => {
       expect(await res.json()).toEqual({ ok: false, error: `why ${code}`, code });
     });
   }
+});
+
+describe("loggableCommand", () => {
+  it("keeps a real command id as it is", () => {
+    expect(loggableCommand("midday.cli")).toBe("midday.cli");
+    expect(loggableCommand("git-graph.view")).toBe("git-graph.view");
+  });
+
+  it("cannot carry a forged log line: control characters and other text are replaced", () => {
+    const forged = "x\n2026-10-26 12:00:00 [ERROR] [auth] token leaked\r\u001b[31m";
+    const logged = loggableCommand(forged);
+    expect(logged).not.toMatch(/[\r\n\u001b ]/);
+    expect(logged.startsWith("x?2026-10-26?12")).toBe(true);
+  });
+
+  it("caps a long string", () => {
+    const logged = loggableCommand("a".repeat(200));
+    expect(logged.length).toBe(81);
+    expect(logged.endsWith("…")).toBe(true);
+  });
 });
 
 describe("execute codes", () => {

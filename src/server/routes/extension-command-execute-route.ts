@@ -18,6 +18,20 @@ export interface CommandExecuteService {
   executeCommand(command: string, args: unknown[], timeoutMs: number): Promise<ExecuteOutcome>;
 }
 
+/** How much of a command id a log line keeps; real ids are far shorter. */
+const LOGGED_COMMAND_MAX = 80;
+
+/**
+ * The caller's command string as it may appear in ppm.log. It is any 1–200 characters the caller
+ * sent, and the log is read by people, the Logs window and its AI, so a newline or other control
+ * character in it could forge a whole log line. Those are replaced, as is anything outside the
+ * characters a command id uses, and the result is capped.
+ */
+export function loggableCommand(command: string): string {
+  const safe = command.replace(/[^\w.:@/-]/g, "?");
+  return safe.length > LOGGED_COMMAND_MAX ? `${safe.slice(0, LOGGED_COMMAND_MAX)}…` : safe;
+}
+
 function errorResponse(c: Context, code: ExecuteErrorCode, error: string): Response {
   const body: ExecuteErrorBody = { ok: false, error, code };
   return c.json(body, HTTP_STATUS_FOR[code]);
@@ -64,8 +78,9 @@ export function createCommandExecuteHandler(service: CommandExecuteService) {
 
     const outcome = await service.executeCommand(command, args ?? [], clampExecuteTimeout(timeoutMs));
     const ext = outcome.extensionId ?? "-";
+    const logged = loggableCommand(command);
     if (outcome.kind === "ok") {
-      log.info(`ext command=${command} ext=${ext} ms=${outcome.durationMs} outcome=ok`);
+      log.info(`ext command=${logged} ext=${ext} ms=${outcome.durationMs} outcome=ok`);
       const data: ExecuteSuccess = {
         command,
         extensionId: outcome.extensionId,
@@ -74,7 +89,7 @@ export function createCommandExecuteHandler(service: CommandExecuteService) {
       };
       return c.json({ ok: true, data });
     }
-    log.info(`ext command=${command} ext=${ext} ms=${outcome.durationMs} outcome=${outcome.code}`);
+    log.info(`ext command=${logged} ext=${ext} ms=${outcome.durationMs} outcome=${outcome.code}`);
     return errorResponse(c, outcome.code, outcome.message);
   };
 }
