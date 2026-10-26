@@ -32,7 +32,7 @@ describe("UI updates nobody awaits", () => {
     item.show();
     item.hide();
     item.dispose();
-    const panel = window.createWebviewPanel("probe.panel", "Probe", 1 as never);
+    const panel = window.createWebviewPanel("probe.panel", "Probe", 1 as never) as { webview: { html: string }; dispose(): void };
     panel.webview.html = "<p>hi</p>";
     panel.dispose();
     const tree = window.createTreeView("probe.tree", { treeDataProvider: { getChildren: () => ["a"], getTreeItem: (a: string) => ({ label: a }) } });
