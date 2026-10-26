@@ -9,7 +9,14 @@ import { ExtensionTreeActionButton } from "./extension-tree-action-button";
 import { ExtensionTreeRowMenu } from "./extension-tree-row-menu";
 import { executeExtensionCommand, requestTreeExpand, safeRowUrl } from "./extension-tree-dispatch";
 
-const LABEL_CLASS = "min-w-0 flex-1 truncate text-left text-xs transition-colors hover:text-primary";
+/**
+ * The title and the description share what is left of the row, and the title wins: the
+ * description's shrink factor is a thousand times the title's, so it is cut to nothing before
+ * the title loses a character. Measured before this, the description (project · age) and the
+ * action icons left a pull request's title about six characters.
+ */
+const LABEL_CLASS = "min-w-0 flex-[0_1_auto] truncate text-left text-xs transition-colors hover:text-primary";
+const DESCRIPTION_CLASS = "min-w-0 flex-[0_1000_auto] truncate text-[10px] text-text-subtle";
 
 /**
  * One row of an extension tree, one line high. The full text a row cannot fit is reachable two
@@ -60,7 +67,8 @@ export function ExtensionTreeNode({ item, depth, viewId }: { item: TreeItemUI; d
 
   const row = (
     <div
-      className="group/node flex select-none items-center gap-1 py-1 transition-colors [-webkit-touch-callout:none] hover:bg-surface-elevated focus-within:bg-surface-elevated"
+      /* pointer-coarse:min-h-11: 44px tall on a touch screen, the smallest target a finger hits reliably. */
+      className="group/node flex select-none items-center gap-1 py-1 transition-colors [-webkit-touch-callout:none] pointer-coarse:min-h-11 hover:bg-surface-elevated focus-within:bg-surface-elevated"
       style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
     >
       <button type="button" onClick={handleToggle} className="shrink-0 text-text-subtle transition-colors hover:text-foreground" tabIndex={hasChildren ? 0 : -1}>
@@ -77,16 +85,17 @@ export function ExtensionTreeNode({ item, depth, viewId }: { item: TreeItemUI; d
         <span className="size-2 shrink-0 rounded-full border border-border" style={{ backgroundColor: item.color }} />
       )}
 
-      {item.tooltip ? (
-        <Tooltip>
-          <TooltipTrigger asChild>{label}</TooltipTrigger>
-          <TooltipContent side="right" align="start" className="max-w-xs whitespace-pre-line text-left">
-            {item.tooltip}
-          </TooltipContent>
-        </Tooltip>
-      ) : label}
-
-      {item.description && <span className="ml-1 shrink-0 text-[10px] text-text-subtle">{item.description}</span>}
+      <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        {item.tooltip ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{label}</TooltipTrigger>
+            <TooltipContent side="right" align="start" className="max-w-xs whitespace-pre-line text-left">
+              {item.tooltip}
+            </TooltipContent>
+          </Tooltip>
+        ) : label}
+        {item.description && <span className={DESCRIPTION_CLASS} data-slot="tree-row-description">{item.description}</span>}
+      </div>
 
       {item.badge !== undefined && item.badge !== "" && (
         <span className="shrink-0 rounded bg-surface-elevated px-1 text-[9px] uppercase text-text-subtle">{item.badge}</span>

@@ -26,7 +26,6 @@ import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
-import { WakeLockMobileBadge } from "@/components/layout/wake-lock-indicator";
 import { useTabPrefetch } from "@/hooks/use-tab-prefetch";
 import { useFileIndexInvalidation } from "@/hooks/use-file-index-invalidation";
 import { useUiPreload } from "@/hooks/use-ui-preload";
@@ -354,9 +353,6 @@ export function App() {
             {deviceName}
           </div>
         )}
-
-        {/* Screen-awake pill — mobile only; the desktop equivalent lives in the status bar */}
-        <WakeLockMobileBadge />
 
         {/* Main layout */}
         <div className="flex flex-1 overflow-hidden">

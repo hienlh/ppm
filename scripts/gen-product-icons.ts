@@ -211,6 +211,8 @@ const MAP: Record<string, string | null> = {
   GitBranch: "branch",
   GitCommitHorizontal: null, // no commit glyph in Fluent
   GitMerge: "merge",
+  // Fluent's pull-request glyph; a merge arrow read as "»" on a pull request row.
+  GitPullRequest: "branch-request",
   Archive: "archive", // a git stash
   CloudUpload: "cloud-arrow-up", // publish a branch
   Database: "database",

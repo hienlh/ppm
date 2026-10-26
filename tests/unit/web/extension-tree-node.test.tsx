@@ -72,6 +72,23 @@ describe("ExtensionTreeNode", () => {
     expect(tip[0]!.className).toContain("whitespace-pre-line");
   });
 
+  it("lets the title win the width: the description shrinks first, and the row is 44px on touch", async () => {
+    const root = await render({ ...ITEM, description: "nxsys-backend · 2d" });
+    const row = root.querySelector(".group\\/node")!;
+    expect(row.className).toContain("pointer-coarse:min-h-11");
+    const label = [...root.querySelectorAll("button")].find((b) => b.textContent === ITEM.label)!;
+    const description = root.querySelector('[data-slot="tree-row-description"]')!;
+    // Both truncate, but the description's shrink factor is far above the title's.
+    expect(label.className).toContain("flex-[0_1_auto]");
+    expect(label.className).toContain("truncate");
+    expect(description.className).toContain("flex-[0_1000_auto]");
+    expect(description.className).toContain("truncate");
+    expect(description.className).toContain("min-w-0");
+    // Title and description share one flexible box, ahead of the actions.
+    expect(label.parentElement).toBe(description.parentElement);
+    expect(label.parentElement!.className).toContain("flex-1");
+  });
+
   it("runs the row's command when its label is clicked, not when an action is", async () => {
     const root = await render(ITEM);
     const label = [...root.querySelectorAll("button")].find((b) => b.textContent === ITEM.label)!;
@@ -106,6 +123,19 @@ describe("ExtensionTreeNode", () => {
     expect(sheetButtons).toContain("Done");
     expect(sheetButtons).toContain("Snooze");
     expect(sheetButtons).toContain("Open");
+  });
+
+  it("does not repeat the title in the sheet when the tooltip opens with it", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+    const root = await render({ ...ITEM, tooltip: `${ITEM.label}\nYour PR · CI failing\nnxsys-backend · 8h` });
+    const row = root.querySelector(".group\\/node")!;
+    await act(async () => { row.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true })); });
+    await act(async () => { await Bun.sleep(450); });
+    const text = document.body.textContent ?? "";
+    // Once in the row, once in the sheet's header, and not a third time from the tooltip.
+    expect(text.split(ITEM.label).length - 1).toBe(2);
+    expect(text).toContain("Your PR · CI failing");
   });
 
   it("on a phone, a press cut short by a scroll (touchcancel) never opens the sheet", async () => {

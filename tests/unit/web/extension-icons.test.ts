@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { EXTENSION_ICONS, extensionIcon, viewTypeIcon } from "../../../src/web/lib/extension-icons.ts";
 import { getTabIcon } from "../../../src/web/lib/tab-type-icons.ts";
 import { useExtensionStore } from "../../../src/web/stores/extension-store.ts";
-import { Check, Clock, GitBranch, History, Puzzle, RefreshCw, Users } from "../../../src/web/lib/icons.ts";
+import { Check, Clock, GitBranch, GitMerge, GitPullRequest, History, Puzzle, RefreshCw, Users } from "../../../src/web/lib/icons.ts";
 import type { ExtensionContributes } from "../../../src/types/extension.ts";
 
 const PACKAGES = resolve(import.meta.dir, "../../../packages");
@@ -60,6 +60,9 @@ describe("extension icons: the names a manifest may use", () => {
     }
     expect(extensionIcon("check")).toBe(Check);
     expect(extensionIcon("clock")).toBe(Clock);
+    // A pull request draws the pull-request glyph, not the merge arrow it once borrowed.
+    expect(extensionIcon("git-pull-request")).toBe(GitPullRequest);
+    expect(extensionIcon("git-pull-request")).not.toBe(GitMerge);
   });
 
   it("names its entries the way a manifest writes them", () => {

@@ -14,7 +14,7 @@
  * default.
  */
 import {
-  Check, CircleHelp, Clock, Database, FileCode, FileDiff, GitBranch, GitCommitHorizontal, GitMerge, Globe,
+  Check, CircleHelp, Clock, Database, FileCode, FileDiff, GitBranch, GitCommitHorizontal, GitPullRequest, Globe,
   History, ListOrdered, MessageSquare, Pencil, Plus, RefreshCw, Search, Settings, ShieldAlert, Square, Sun,
   Tag, Terminal, Timer, Trash2, TriangleAlert, Users, XCircle,
 } from "@/lib/icons";
@@ -51,8 +51,7 @@ export const EXTENSION_ICONS: Record<string, ElementType> = {
   stop: Square,
   // Fluent has no hourglass; the timer reads as "waiting for a while" the same way.
   hourglass: Timer,
-  // Fluent has no pull-request glyph; a merge is what a pull request asks for.
-  "git-pull-request": GitMerge,
+  "git-pull-request": GitPullRequest,
   // Fluent has no ticket glyph; an issue key is a tag on the work.
   ticket: Tag,
   message: MessageSquare,
