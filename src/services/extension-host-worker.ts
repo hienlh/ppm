@@ -19,6 +19,14 @@ const activeExtensions = new Map<string, {
 
 const rpc = new RpcChannel((msg) => postMessage(msg));
 
+// PPM's auth token changed (Settings): later API calls by every extension use the new one, or
+// none when auth was turned off. Read on each call through `__PPM_AUTH_TOKEN__`.
+rpc.onEvent("host:auth-token", (data) => {
+  const token = (data as { token?: unknown } | null)?.token;
+  if (typeof token === "string" && token) (globalThis as any).__PPM_AUTH_TOKEN__ = token;
+  else delete (globalThis as any).__PPM_AUTH_TOKEN__;
+});
+
 /** The user's device zone as browsers report it; one for the whole host (`vscode.env.clientTimeZone`). */
 const clientTimeZone = new ClientTimeZoneState();
 rpc.onEvent("client:timezone", (data) => {

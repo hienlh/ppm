@@ -11,6 +11,7 @@ import { executeExtensionCommand, type ExecuteOutcome, type WorkerCommandReply }
 import { registerExtensionNotifyHandlers } from "./extension-api/extension-notify-handlers.ts";
 import { invalidateExtensionCliHint } from "./extension-cli-hint.ts";
 import { lastClientTimeZone, type ClientTimeZoneReport } from "./client-timezone.ts";
+import { configService } from "./config.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { createLogger } from "./logger.ts";
@@ -368,6 +369,22 @@ class ExtensionService {
    */
   notifyClientTimeZone(report: Pick<ClientTimeZoneReport, "timeZone" | "deviceId">): void {
     this.rpc?.sendEvent("client:timezone", { timeZone: report.timeZone, deviceId: report.deviceId });
+  }
+
+  /**
+   * Extensions call PPM's own API with the token they were handed at activation
+   * (`__PPM_AUTH_TOKEN__`). When the token changes (Settings), every such call would answer 401
+   * until a restart, so the new one (or none, with auth off) is pushed to the running host.
+   */
+  constructor() {
+    configService.onChange((key) => {
+      if (key === "auth") this.pushAuthToken();
+    });
+  }
+
+  private pushAuthToken(): void {
+    const auth = configService.get("auth");
+    this.rpc?.sendEvent("host:auth-token", { token: auth?.enabled && auth.token ? auth.token : null });
   }
 
   /** The worker exists and has said it is listening; before that nothing can be routed to it. */

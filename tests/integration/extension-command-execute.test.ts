@@ -19,6 +19,7 @@ _resetPpmDir();
 const { openTestDb, setDb } = await import("../../src/services/db.service.ts");
 setDb(openTestDb());
 const { extensionService } = await import("../../src/services/extension.service.ts");
+const { configService } = await import("../../src/services/config.service.ts");
 const { extensionRoutes } = await import("../../src/server/routes/extensions.ts");
 const { extensionWebSocket } = await import("../../src/server/ws/extensions.ts");
 const { resetClientTimeZone } = await import("../../src/services/client-timezone.ts");
@@ -43,6 +44,7 @@ function writeFixture(): string {
         { command: "fixture.declaredOnly", title: "Declared, never registered" },
         { command: "fixture.zone", title: "Client time zone" },
         { command: "fixture.bigint", title: "Returns what JSON cannot carry" },
+        { command: "fixture.token", title: "The PPM token the host holds" },
       ],
     },
   }));
@@ -57,6 +59,7 @@ function writeFixture(): string {
         vscode.commands.registerCommand("fixture.sleep", () => new Promise((r) => setTimeout(() => r("late"), 2500))),
         vscode.commands.registerCommand("fixture.nothing", () => undefined),
         vscode.commands.registerCommand("fixture.bigint", () => ({ n: 10n })),
+        vscode.commands.registerCommand("fixture.token", () => globalThis.__PPM_AUTH_TOKEN__ ?? null),
         vscode.commands.registerCommand("fixture.undeclared", () => "should never run"),
       );
     };
@@ -115,6 +118,24 @@ describe("POST /api/extensions/commands/execute with a real worker", () => {
     expect(status).toBe(500);
     expect(body.code).toBe("COMMAND_FAILED");
     expect(body.error).toContain("cannot be sent back");
+  });
+
+  it("hands a rotated auth token to the running host, and takes it away when auth is turned off", async () => {
+    const original = configService.get("auth");
+    const token = async () => (await execute({ command: "fixture.token" })).body.data.result;
+    try {
+      configService.set("auth", { enabled: true, token: "rotated-token-1" });
+      await Bun.sleep(50);
+      expect(await token()).toBe("rotated-token-1");
+      configService.set("auth", { enabled: true, token: "rotated-token-2" });
+      await Bun.sleep(50);
+      expect(await token()).toBe("rotated-token-2");
+      configService.set("auth", { enabled: false, token: "rotated-token-2" });
+      await Bun.sleep(50);
+      expect(await token()).toBeNull();
+    } finally {
+      configService.set("auth", original);
+    }
   });
 
   it("504 TIMEOUT when the handler outlasts timeoutMs", async () => {
