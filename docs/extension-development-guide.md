@@ -378,7 +378,7 @@ if (typeof api.ppm?.notify === "function") {
     title: "Midday check-in",                 // 1–120 characters, shown as "<displayName>: <title>"
     body: "3 things done this morning",       // at most 1,000 characters
     projectName: "ppm",                       // optional: a registered project, opened first
-    open: { command: "midday.checkIn" },      // optional: what a tap opens
+    open: { view: "midday.checkIn" },         // optional: what a tap opens (here, a panel)
   });
   // "sent" | "off" | "replaced" | "seen" | "queued"
 } else {
@@ -387,15 +387,32 @@ if (typeof api.ppm?.notify === "function") {
 ```
 
 - **What a tap opens**: give at most one of `open`, `sessionId` (a chat) or `path` (an in-app
-  path starting with `/`). `open` is `{ command, args? }` or `{ view }`, and it may only name a
-  command **your own** extension declares in `contributes.commands`; a webview panel's viewType
-  equals the command that opens it, so `{ view: "midday.checkIn" }` opens that panel. `args` holds
-  at most 8 strings, numbers, booleans or nulls, 1 KB as JSON. The link is
-  `/project/<projectName>?extCommand=<command>&extArgs=<base64url JSON>` (or `extView=`), so it
-  works the same from push, Telegram and ntfy. The app runs it on the device that was tapped, once
-  your extension is active (it waits up to 20 s), and removes it from the address bar.
-- **Deep-link commands must be safe to run from a link**: anyone who receives the notification
-  can open it, and opening it twice runs it twice. Make them open something, never change data.
+  path starting with `/`). `open` is `{ view }` or `{ command, args? }`.
+  - `{ view }` opens one of **your own** panels: a webview panel's viewType equals the command
+    that opens it, so `{ view: "midday.checkIn" }` opens that panel. It must be declared in
+    `contributes.commands`, and needs nothing else.
+  - `{ command, args? }` runs a command, and only one you list in **`contributes.deepLinkCommands`**
+    (each entry must also be in `contributes.commands`). A link to any other command is refused
+    when you call `notify` (`BAD_REQUEST`), and the browser refuses it again even from a URL
+    typed by hand. `args` holds at most 8 strings, numbers, booleans or nulls, 1 KB as JSON.
+  - The link is `/project/<projectName>?extCommand=<command>&extArgs=<base64url JSON>` (or
+    `extView=`), so it works the same from push, Telegram and ntfy. The app runs it on the device
+    that was tapped, once your extension is active (it waits up to 20 s), and removes it from the
+    address bar.
+- **List only commands that open something**: anyone who receives the notification, or types the
+  URL, can open it, and opening it twice runs it twice. Never list an action that changes data
+  (marking an item done, snoozing it): put that on a button inside the panel the link opens.
+
+  ```json
+  "contributes": {
+    "commands": [
+      { "command": "midday.checkIn", "title": "Midday: Check-in" },
+      { "command": "midday.showItem", "title": "Midday: Show item" },
+      { "command": "midday.done", "title": "Midday: Done" }
+    ],
+    "deepLinkCommands": ["midday.showItem"]
+  }
+  ```
 - **Outcome**: the call answers within about 2 s. `queued` means PPM's notification delay
   (Settings, 60 s by default) had not decided yet; the notification is still sent unless the
   person saw the thing meanwhile. `off` means the Extensions switch is off.

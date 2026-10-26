@@ -26,6 +26,12 @@ export interface ExtensionContributes {
   keybindings?: ContributedKeybinding[];
   /** `ppm <name> …` forwards to `command` on the running server (PPM extension, not VSCode). */
   cli?: ContributedCliAlias[];
+  /**
+   * Commands a notification's link may run (PPM extension, not VSCode). Each must also be in
+   * `commands`. A link to any other command is refused when the notification is sent and again
+   * by the browser; opening a webview panel by its view type needs no entry.
+   */
+  deepLinkCommands?: string[];
 }
 
 /** A top-level CLI command an extension adds: `ppm <name> [args…]` → `command(argv)`. */

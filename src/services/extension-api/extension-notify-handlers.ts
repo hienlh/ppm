@@ -17,7 +17,7 @@ import { chatService } from "../chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { getExtensionById, getProjects, getSessionProjectPath, getSessionProvider, resolveMigratedSession } from "../db.service.ts";
 import { isExtensionId, loggableExtensionId } from "./extension-id.ts";
-import { checkNotifyOpen, declaredCommands } from "./extension-notify-open.ts";
+import { checkNotifyOpen, linkableTargets, type LinkableTargets } from "./extension-notify-open.ts";
 import { createSlidingWindowLimiter } from "../sliding-window-limiter.ts";
 import { notificationService, type BroadcastOptions, type BroadcastOutcome, type NotificationPayload } from "../notification.service.ts";
 import { notificationPath } from "../notification-format.ts";
@@ -73,8 +73,8 @@ export interface ExtensionNotifyDeps {
   /** The session's own provider, resolved past any migration; null when it names nothing. */
   resolveSessionProvider(sessionId: string): { sessionId: string; providerId: string } | null;
   projectExists(name: string): boolean;
-  /** The command ids the extension declared in its own manifest. */
-  commandsOf(id: string): string[];
+  /** What the extension's own manifest lets a link open (`extension-notify-open.ts`). */
+  linkTargetsOf(id: string): LinkableTargets;
   broadcast(type: "extension", payload: NotificationPayload, opts: BroadcastOptions): Promise<BroadcastOutcome>;
 }
 
@@ -89,7 +89,7 @@ const defaultDeps: ExtensionNotifyDeps = {
     return { sessionId: resolved, providerId };
   },
   projectExists: (name) => getProjects().some((row) => row.name === name),
-  commandsOf: declaredCommands,
+  linkTargetsOf: linkableTargets,
   broadcast: (type, payload, opts) => notificationService.broadcast(type, payload, opts),
 };
 
@@ -172,7 +172,7 @@ export function registerExtensionNotifyHandlers(rpc: RpcChannel, deps: Extension
       }
 
       if (p.open !== undefined) {
-        const checked = checkNotifyOpen(p.open, deps.commandsOf(extensionId));
+        const checked = checkNotifyOpen(p.open, deps.linkTargetsOf(extensionId));
         if (!checked.ok) throw bad(checked.message);
         explicitPath = buildExtensionDeepLink({ projectName, open: checked.open });
       }

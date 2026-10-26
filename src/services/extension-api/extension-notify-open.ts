@@ -1,28 +1,41 @@
-import { deepLinkArgsProblem, isDeepLinkId, type DeepLinkArg, type ExtensionDeepLinkTarget } from "../../shared/extension-deep-link.ts";
+import {
+  deepLinkArgsProblem, deepLinkableCommands, isDeepLinkId, type DeepLinkArg, type ExtensionDeepLinkTarget,
+} from "../../shared/extension-deep-link.ts";
 import { getExtensionById } from "../db.service.ts";
 import type { ExtensionManifest } from "../../types/extension.ts";
 
-/** The command ids an installed extension declared in its own manifest. */
-export function declaredCommands(id: string): string[] {
+/** What an installed extension's manifest lets a notification link to. */
+export interface LinkableTargets {
+  /** Every command it declares: a panel's viewType equals the command that opens it. */
+  commands: string[];
+  /** The commands it marked as safe to run from a link (`contributes.deepLinkCommands`). */
+  deepLinkCommands: string[];
+}
+
+export function linkableTargets(id: string): LinkableTargets {
   const row = getExtensionById(id);
-  if (!row) return [];
+  if (!row) return { commands: [], deepLinkCommands: [] };
   try {
-    const manifest = JSON.parse(row.manifest) as ExtensionManifest;
-    return (manifest.contributes?.commands ?? []).map((c) => c.command).filter((c) => typeof c === "string");
+    const contributes = (JSON.parse(row.manifest) as ExtensionManifest).contributes;
+    return {
+      commands: (contributes?.commands ?? []).map((c) => c.command).filter((c) => typeof c === "string"),
+      deepLinkCommands: deepLinkableCommands(contributes),
+    };
   } catch {
-    return [];
+    return { commands: [], deepLinkCommands: [] };
   }
 }
 
 /**
- * The `open` field of a `ppm.notify` request: which of the calling extension's own commands or
- * panels the notification opens. Only what that extension declared in `contributes.commands`
- * may be named (a panel's viewType equals the command that opens it), so a link can never be
- * used to reach another extension's command. Returns the checked target or a reason.
+ * The `open` field of a `ppm.notify` request: which of the calling extension's own panels or
+ * linkable commands the notification opens. A view must be one of its declared commands (a
+ * panel's viewType equals the command that opens it). A command must also be in its
+ * `contributes.deepLinkCommands`: anyone holding the link can open it, so a link may never run an
+ * action such as marking an item done. Returns the checked target or a reason.
  */
 export function checkNotifyOpen(
   raw: unknown,
-  declaredCommands: readonly string[],
+  targets: LinkableTargets,
 ): { ok: true; open: ExtensionDeepLinkTarget } | { ok: false; message: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, message: "open must be { command, args? } or { view }" };
@@ -35,12 +48,15 @@ export function checkNotifyOpen(
   const id = hasCommand ? o.command : o.view;
   const field = hasCommand ? "open.command" : "open.view";
   if (!isDeepLinkId(id)) return { ok: false, message: `${field} must be 1 to 200 letters, digits, ".", "-" or "_"` };
-  if (!declaredCommands.includes(id)) {
+  if (!targets.commands.includes(id)) {
     return { ok: false, message: `${field} "${id}" is not declared in this extension's contributes.commands` };
   }
   if (hasView) {
     if (o.args !== undefined) return { ok: false, message: "open.args only goes with open.command" };
     return { ok: true, open: { view: id } };
+  }
+  if (!targets.deepLinkCommands.includes(id)) {
+    return { ok: false, message: `open.command "${id}" is not in this extension's contributes.deepLinkCommands` };
   }
   const args = o.args ?? [];
   const problem = deepLinkArgsProblem(args);

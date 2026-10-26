@@ -1,7 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import {
-  buildExtensionDeepLink, parseExtensionDeepLink, stripExtensionDeepLink, deepLinkArgsProblem,
+  buildExtensionDeepLink, parseExtensionDeepLink, stripExtensionDeepLink, deepLinkArgsProblem, deepLinkableCommands,
 } from "../../../src/shared/extension-deep-link.ts";
+import { contributionRegistry } from "../../../src/services/contribution-registry.ts";
 import { notificationPath } from "../../../src/services/notification-format.ts";
 
 /** base64url as the link carries it, so a bad case fails for the reason it names. */
@@ -64,6 +65,34 @@ describe("deepLinkArgsProblem", () => {
     expect(deepLinkArgsProblem([Number.NaN])).toContain("finite");
     expect(deepLinkArgsProblem(["x".repeat(1100)])).toContain("1024 bytes");
     expect(deepLinkArgsProblem("a")).toContain("array");
+  });
+});
+
+describe("deepLinkableCommands", () => {
+  const commands = [{ command: "midday.checkIn" }, { command: "midday.done" }];
+
+  it("keeps only entries the manifest also declares as commands", () => {
+    expect(deepLinkableCommands({ commands, deepLinkCommands: ["midday.checkIn", "midday.ghost", 7] })).toEqual(["midday.checkIn"]);
+  });
+
+  it("is empty without the field, or with one that is not an array", () => {
+    expect(deepLinkableCommands({ commands })).toEqual([]);
+    expect(deepLinkableCommands({ commands, deepLinkCommands: "midday.checkIn" })).toEqual([]);
+    expect(deepLinkableCommands(null)).toEqual([]);
+  });
+});
+
+describe("contribution registry", () => {
+  it("publishes each active extension's linkable commands, and forgets them when it deactivates", () => {
+    // A fresh instance of the same class, so the shared singleton is left alone.
+    const registry = new (contributionRegistry.constructor as unknown as new () => typeof contributionRegistry)();
+    registry.register("ppm-midday", {
+      commands: [{ command: "midday.checkIn", title: "Check-in" }, { command: "midday.done", title: "Done" }],
+      deepLinkCommands: ["midday.checkIn", "not.declared"],
+    });
+    expect(registry.getAll().deepLinkCommands).toEqual(["midday.checkIn"]);
+    registry.unregister("ppm-midday");
+    expect(registry.getAll().deepLinkCommands).toEqual([]);
   });
 });
 

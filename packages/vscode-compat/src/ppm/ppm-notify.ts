@@ -29,11 +29,12 @@ export interface PpmNotifyRequest {
   /** An in-app path instead of a project/session link, such as "/project/p/design/slug". */
   path?: string;
   /**
-   * On tap, run one of this extension's own commands, or open one of its panels (a panel's
-   * viewType equals the command that opens it), on the device that was tapped. It must be
-   * declared in this extension's `contributes.commands`. With `projectName`, that project opens
-   * first. At most one of `open`, `sessionId` or `path`. A link can be opened by anyone who
-   * receives the notification, so the command must be safe to run more than once.
+   * On tap, open one of this extension's own panels (`{ view }`: a panel's viewType equals the
+   * command that opens it, declared in `contributes.commands`), or run one of its commands listed
+   * in `contributes.deepLinkCommands` (`{ command }`), on the device that was tapped. Any other
+   * command is refused: a link can be opened by anyone who receives the notification, so only
+   * commands that open something may be listed. With `projectName`, that project opens first.
+   * At most one of `open`, `sessionId` or `path`.
    */
   open?: { command: string; args?: DeepLinkArg[] } | { view: string };
 }

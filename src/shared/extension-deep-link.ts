@@ -26,6 +26,23 @@ const ID_PATTERN = /^[\w.-]{1,200}$/;
 
 export const DEEP_LINK_PARAMS = ["extCommand", "extArgs", "extView"] as const;
 
+/**
+ * The commands an extension lets a link run: its `contributes.deepLinkCommands`, keeping only
+ * entries it also declares in `contributes.commands`. Anyone who receives a notification, or
+ * hand-makes a URL, can open a link, so a link may only run what the extension marked as safe to
+ * run that way (opening something), never an action such as marking an item done. Opening a
+ * webview panel by its view type (`extView`) needs no entry here.
+ */
+export function deepLinkableCommands(contributes: {
+  commands?: ReadonlyArray<{ command: string }>;
+  deepLinkCommands?: unknown;
+} | null | undefined): string[] {
+  const listed = contributes?.deepLinkCommands;
+  if (!Array.isArray(listed)) return [];
+  const declared = new Set((contributes?.commands ?? []).map((c) => c.command));
+  return listed.filter((c): c is string => typeof c === "string" && declared.has(c));
+}
+
 export function isDeepLinkId(value: unknown): value is string {
   return typeof value === "string" && ID_PATTERN.test(value);
 }
