@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { resolve } from "node:path";
 
 const C = {
   reset: "\x1b[0m",
@@ -40,6 +41,9 @@ export function registerProjectsCommands(program: Command): void {
       try {
         const { projectService } = await import("../../services/project.service.ts");
         const { gitService } = await import("../../services/git.service.ts");
+        const { configService } = await import("../../services/config.service.ts");
+        // list() reads the in-memory config, which is empty until loaded.
+        configService.load();
         const list = projectService.list();
 
         if (list.length === 0) {
@@ -75,10 +79,14 @@ export function registerProjectsCommands(program: Command): void {
     .option("-n, --name <name>", "Project name (defaults to folder name)")
     .action(async (projectPath: string, options: { name?: string }) => {
       try {
-        const { projectService } = await import("../../services/project.service.ts");
-        const { configService } = await import("../../services/config.service.ts");
-        configService.load();
-        const entry = projectService.add(projectPath, options.name);
+        const body = { path: resolve(projectPath), ...(options.name ? { name: options.name } : {}) };
+        const viaServer = await throughRunningServer<{ name: string; path: string }>("POST", "/api/projects", body);
+        const entry = viaServer ?? await (async () => {
+          const { projectService } = await import("../../services/project.service.ts");
+          const { configService } = await import("../../services/config.service.ts");
+          configService.load();
+          return projectService.add(projectPath, options.name);
+        })();
         console.log(`${C.green}Added project:${C.reset} ${entry.name} → ${entry.path}`);
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
@@ -91,14 +99,35 @@ export function registerProjectsCommands(program: Command): void {
     .description("Remove a project from the registry")
     .action(async (nameOrPath: string) => {
       try {
-        const { projectService } = await import("../../services/project.service.ts");
-        const { configService } = await import("../../services/config.service.ts");
-        configService.load();
-        projectService.remove(nameOrPath);
+        // A path is resolved here: the server would resolve it against its own working directory.
+        const target = /[\\/]/.test(nameOrPath) || nameOrPath === "." || nameOrPath === ".." ? resolve(nameOrPath) : nameOrPath;
+        const viaServer = await throughRunningServer("DELETE", `/api/projects/${encodeURIComponent(target)}`);
+        if (viaServer === null) {
+          const { projectService } = await import("../../services/project.service.ts");
+          const { configService } = await import("../../services/config.service.ts");
+          configService.load();
+          projectService.remove(nameOrPath);
+        }
         console.log(`${C.green}Removed project:${C.reset} ${nameOrPath}`);
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
         process.exit(1);
       }
     });
+}
+
+/**
+ * Change the project list through the running server when there is one: it keeps projects in
+ * memory, so a write straight to the database would stay invisible to it until a restart.
+ * Null when no server is running, so the caller writes the database itself. The server's own
+ * refusal (a duplicate, a missing path) is thrown with its message.
+ */
+async function throughRunningServer<T = unknown>(method: "POST" | "DELETE", path: string, body?: unknown): Promise<T | null> {
+  const { callServer, ServerDownError } = await import("../utils/server-client.ts");
+  try {
+    return await callServer<T>(method, path, body);
+  } catch (e) {
+    if (e instanceof ServerDownError) return null;
+    throw e;
+  }
 }
