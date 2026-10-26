@@ -163,5 +163,11 @@ export class ThemeIcon {
 
 export interface RpcClient {
   request<T = unknown>(method: string, ...params: unknown[]): Promise<T>;
+  /**
+   * Same as `request`, but with an explicit timeout instead of the RPC channel's default.
+   * Required (not optional) — an optional member here would let a caller silently fall back
+   * to the 10s default and cut off anything that legitimately runs longer.
+   */
+  requestWithTimeout<T = unknown>(method: string, timeoutMs: number, ...params: unknown[]): Promise<T>;
   notify(event: string, data: unknown): void;
 }

@@ -9,6 +9,10 @@ function createMockRpc(): RpcClient & { requests: { method: string; params: unkn
       mock.requests.push({ method, params });
       return undefined as T;
     },
+    async requestWithTimeout<T = unknown>(method: string, _timeoutMs: number, ...params: unknown[]): Promise<T> {
+      mock.requests.push({ method, params });
+      return undefined as T;
+    },
     notify(_event: string, _data: unknown): void {},
   };
   return mock;
