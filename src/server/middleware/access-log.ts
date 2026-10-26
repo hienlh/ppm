@@ -13,6 +13,7 @@
  */
 import type { MiddlewareHandler } from "hono";
 import { createLogger, type LogLevel } from "../../services/logger.ts";
+import { requestTracker } from "../../services/memory-diagnostics-requests.ts";
 
 const log = createLogger("http");
 
@@ -119,6 +120,8 @@ export const accessLog: MiddlewareHandler = async (c, next) => {
   const ms = Math.round(performance.now() - started);
   const url = new URL(c.req.url);
   const status = c.res.status;
+  // Before the level check: the memory monitor counts every request, logged or not.
+  requestTracker.record(c.req.method, url.pathname, c.res.headers.get("content-length"));
   const level = accessLogLevel(c.req.method, url.pathname, status, ms);
   if (!log.isEnabled(level)) return;
   const line = `${c.req.method} ${describeRequestTarget(url)} ${status} ${ms}ms${ms >= SLOW_REQUEST_MS ? " (slow)" : ""}`;

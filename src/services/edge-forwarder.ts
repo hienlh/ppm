@@ -21,6 +21,7 @@
 import net from "node:net";
 import { resolveTargetPort, _resetTargetCache } from "./edge-target-resolver.ts";
 import { createLogger, installFileLogSink } from "./logger.ts";
+import { registerMemoryGauge, startMemoryDiagnostics } from "./memory-diagnostics.ts";
 
 const log = createLogger("edge");
 
@@ -41,6 +42,12 @@ const CONNECT_RETRY_MS = 250;
 const CONNECT_WINDOW_MS = 5000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Client connections open right now, and ever: the memory watchdog's view of the edge's load. */
+let openConnections = 0;
+let totalConnections = 0;
+registerMemoryGauge("edge.openConnections", () => openConnections);
+registerMemoryGauge("edge.totalConnections", () => totalConnections);
 
 /** At most one warning a minute about connections dropped for want of a server. */
 const DROP_WARN_INTERVAL_MS = 60_000;
@@ -201,6 +208,9 @@ export function startEdgeForwarder(
     // allowHalfOpen keeps the other direction alive when one side sends FIN —
     // long-lived chat WS and SSE streams depend on it.
     const server = net.createServer({ allowHalfOpen: true }, (client) => {
+      openConnections++;
+      totalConnections++;
+      client.once("close", () => { openConnections--; });
       void handleConnection(client, connectWindowMs);
     });
     server.once("error", reject);
@@ -218,6 +228,8 @@ if (process.argv.includes("__edge__")) {
   // Lines go to ppm.log with a timestamp and level like every other process's. The
   // supervisor hands the log over as stderr, so the stderr echo is skipped (see logger.ts).
   installFileLogSink({ echo: "stderr" });
+  // Reads memory through the OS only: it spawns nothing, so the invariant above holds.
+  startMemoryDiagnostics({ role: "edge" });
   const idx = process.argv.indexOf("__edge__");
   const publicPort = parseInt(process.argv[idx + 1] ?? "", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";

@@ -4,6 +4,7 @@
  *
  *   bun scripts/mem-diag-report.ts                     # <ppm dir>/mem-diag.log, last 3 runs
  *   bun scripts/mem-diag-report.ts --supervisor        # mem-diag-supervisor.log
+ *   bun scripts/mem-diag-report.ts --edge              # mem-diag-edge.log
  *   bun scripts/mem-diag-report.ts path/to/log --runs 5
  *
  * Read-only: it opens the log file and nothing else (no database).
@@ -18,7 +19,8 @@ const runsAt = args.indexOf("--runs");
 const runs = runsAt >= 0 ? Math.max(1, Number(args[runsAt + 1]) || 3) : 3;
 const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--runs");
 const file = positional[0]
-  ?? join(getPpmDir(), args.includes("--supervisor") ? "mem-diag-supervisor.log" : "mem-diag.log");
+  ?? join(getPpmDir(), args.includes("--supervisor") ? "mem-diag-supervisor.log"
+    : args.includes("--edge") ? "mem-diag-edge.log" : "mem-diag.log");
 
 if (!existsSync(file)) {
   console.error(`No log at ${file}. The monitor writes it only while PPM_MEM_DIAG=1 is set.`);

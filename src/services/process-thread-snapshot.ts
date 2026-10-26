@@ -109,7 +109,12 @@ const STATUS_INFO_LENGTH_MISMATCH = 0xc0000004 | 0;
 /** Grows on a length mismatch; a busy machine needs ~1-2 MB. */
 let bufferSize = 2 * 1024 * 1024;
 
-async function readWindows(pid: number): Promise<ThreadSnapshot | null> {
+/**
+ * One `SystemProcessInformation` reading of every process on the machine, or null when it
+ * cannot be taken. `base` is the buffer's address: the image names inside it are pointers
+ * into the same buffer, so `pointer - base` is their offset in `view`.
+ */
+export async function querySystemProcessInformation(): Promise<{ view: DataView; base: bigint } | null> {
   if (ntdll === undefined) {
     try {
       const { dlopen, FFIType } = await import("bun:ffi");
@@ -131,9 +136,14 @@ async function readWindows(pid: number): Promise<ThreadSnapshot | null> {
       continue;
     }
     if (status !== 0) return null;
-    return parseWindowsProcessInformation(new DataView(buf.buffer), pid);
+    return { view: new DataView(buf.buffer), base: BigInt(ptr(buf)) };
   }
   return null;
+}
+
+async function readWindows(pid: number): Promise<ThreadSnapshot | null> {
+  const info = await querySystemProcessInformation();
+  return info ? parseWindowsProcessInformation(info.view, pid) : null;
 }
 
 const LINUX_STATES: Record<string, string> = {

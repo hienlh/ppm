@@ -4,14 +4,21 @@ import { heapStats } from "bun:jsc";
 import { getPpmDir } from "./ppm-dir.ts";
 import { readNativeMemory } from "./memory-diagnostics-native.ts";
 import { spawnTracker } from "./memory-diagnostics-spawns.ts";
+import { diffRequestCounts, requestTracker } from "./memory-diagnostics-requests.ts";
+import { startMemoryWatchdog, summarizeDescendants } from "./memory-watchdog.ts";
 
 /**
- * Opt-in memory monitor for chasing server growth (`PPM_MEM_DIAG=1`).
+ * Memory monitoring for each long-lived PPM process (server, supervisor, edge forwarder).
+ *
+ * Always on: `memory-watchdog.ts`, a summary line in `ppm.log` every 30 minutes plus a WARN
+ * at each private-bytes threshold. Opt-in (`PPM_MEM_DIAG=1`): the detailed monitor below.
  *
  * Every interval it appends one JSON line to `<ppm dir>/mem-diag.log` (the supervisor
  * writes `mem-diag-supervisor.log`): RSS, the JS heap, **private bytes** (the commit charge
  * that actually runs a machine out of memory — RSS alone hid a 32 GB leak), kernel handles,
- * the child processes started since the previous line and those still alive, the object
+ * the child processes started since the previous line and those still alive, the memory of
+ * every process below this one (by program, and by direct child with the chat session it
+ * serves), the HTTP routes served since the previous line, the object
  * types that grew most, a few absolute counts of objects that own native resources, and
  * any gauges registered by long-lived state (session maps, buffered events).
  *
@@ -34,6 +41,14 @@ export function registerMemoryGauge(name: string, read: () => number): void {
   gauges.set(name, read);
 }
 
+function readGauges(): Record<string, number | string> {
+  const values: Record<string, number | string> = {};
+  for (const [name, read] of gauges) {
+    try { values[name] = read(); } catch (e) { values[name] = `err: ${(e as Error).message}`; }
+  }
+  return values;
+}
+
 const MB = 1024 * 1024;
 const SNAPSHOT_THRESHOLDS_MB = [1024, 2048, 4096, 8192];
 const PRIVATE_ALERT_THRESHOLDS_MB = [2048, 4096, 8192, 16384, 24576, 32768];
@@ -44,12 +59,18 @@ const MAX_LOG_BYTES = 50 * MB;
 
 export interface MemoryDiagnosticsOptions {
   /** Which process this is; anything but `server` gets its own log file. */
-  role?: "server" | "supervisor";
+  role?: "server" | "supervisor" | "edge";
 }
 
+let started = false;
+
 export function startMemoryDiagnostics(opts: MemoryDiagnosticsOptions = {}): void {
-  if (process.env.PPM_MEM_DIAG !== "1") return;
+  if (started) return;
+  started = true;
   const role = opts.role ?? "server";
+  spawnTracker.install();
+  startMemoryWatchdog(role, readGauges);
+  if (process.env.PPM_MEM_DIAG !== "1") return;
   const intervalMs = Math.max(5_000, Number(process.env.PPM_MEM_DIAG_INTERVAL_MS) || 30_000);
   const dir = getPpmDir();
   const logPath = join(dir, role === "server" ? "mem-diag.log" : `mem-diag-${role}.log`);
@@ -59,22 +80,13 @@ export function startMemoryDiagnostics(opts: MemoryDiagnosticsOptions = {}): voi
   let lastCounts: Record<string, number> = {};
   let lastPrivateMB: number | undefined;
   const startedAt = Date.now();
-
-  spawnTracker.install();
+  let lastRequests = requestTracker.read();
 
   const write = (obj: unknown) => {
     try {
       if (statSync(logPath).size > MAX_LOG_BYTES) renameSync(logPath, `${logPath}.1`);
     } catch { /* no file yet */ }
     appendFileSync(logPath, JSON.stringify(obj) + "\n");
-  };
-
-  const readGauges = () => {
-    const values: Record<string, number | string> = {};
-    for (const [name, read] of gauges) {
-      try { values[name] = read(); } catch (e) { values[name] = `err: ${(e as Error).message}`; }
-    }
-    return values;
   };
 
   const sample = async () => {
@@ -95,6 +107,10 @@ export function startMemoryDiagnostics(opts: MemoryDiagnosticsOptions = {}): voi
 
       const spawns = spawnTracker.snapshot();
       const gaugeValues = readGauges();
+      const children = await summarizeDescendants(process.pid, 10);
+      const requestsNow = requestTracker.read();
+      const requests = diffRequestCounts(lastRequests, requestsNow, 10);
+      lastRequests = requestsNow;
       const privateDeltaMB = native.privateMB !== undefined && lastPrivateMB !== undefined
         ? native.privateMB - lastPrivateMB
         : undefined;
@@ -119,6 +135,8 @@ export function startMemoryDiagnostics(opts: MemoryDiagnosticsOptions = {}): voi
         liveChildren: spawns.liveTotal,
         liveByCommand: spawns.live,
         spawnTotal: spawns.total,
+        children,
+        requests,
         nativeOwners,
         grew: Object.fromEntries(grew),
         gauges: gaugeValues,
@@ -140,6 +158,7 @@ export function startMemoryDiagnostics(opts: MemoryDiagnosticsOptions = {}): voi
             handles: native.handles,
             spawnTotals: spawnTracker.topTotals(40),
             oldestLiveChildren: spawnTracker.oldestLive(40),
+            children,
             gauges: gaugeValues,
           });
         }

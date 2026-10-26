@@ -645,9 +645,22 @@ rest out); new child processes then die at start, Claude CLI with exit code 9. O
 System event log says which process it was: provider `Microsoft-Windows-Resource-Exhaustion-Detector`
 names the pid and its bytes.
 
+Without any setting, `ppm.log` already answers "who is using the memory" (scope `[mem]`, also in
+the Logs window). The server, the supervisor and the edge forwarder each write a `summary` line a
+minute after start and every 30 minutes after: their own private bytes, JS heap and handles, every
+process below them — totalled by program and by direct child, a Claude/Codex child named by the chat
+session it serves — the busiest HTTP routes since the last summary, and the gauges. The line is a
+WARN when private bytes grew by 1 GB or more since the previous one, and a separate WARN marks the
+first crossing of 2, 4, 8, 16 and 32 GB (for the server, also its children's total crossing 8, 16, 24
+and 32 GB). A Claude or Codex subprocess starting or exiting is logged with its pid and session, and
+on exit with what it last held. Read it as: private far above heap is native memory inside that
+process; a large `children` total is the chats themselves (~650 MB per open Claude session).
+
 To find the cause, run PPM with `PPM_MEM_DIAG=1` (optionally `PPM_MEM_DIAG_INTERVAL_MS`, default
-30000). Every interval the server appends a line to `~/.ppm/mem-diag.log` and the supervisor to
-`~/.ppm/mem-diag-supervisor.log` (rotated at 50 MB to `.1`): RSS, private bytes and their change,
+30000). Every interval the server appends a line to `~/.ppm/mem-diag.log`, the supervisor to
+`~/.ppm/mem-diag-supervisor.log` and the edge forwarder to `~/.ppm/mem-diag-edge.log` (rotated at
+50 MB to `.1`): RSS, private bytes and their change, the memory of every child process (`children`),
+the HTTP routes served with the bytes each sent (`requests`),
 kernel handles (open fds on Linux), the JS heap, the child processes started since the previous
 line by command (`git status`, `claude`, `powershell get-ciminstance` — never their arguments),
 the children still alive, counts of objects that own native memory, and gauges for long-lived
@@ -658,6 +671,7 @@ all-time spawn totals. Then:
 ```bash
 bun scripts/mem-diag-report.ts                # growth rate per run, MB per spawn by command, gauges
 bun scripts/mem-diag-report.ts --supervisor   # the supervisor's log
+bun scripts/mem-diag-report.ts --edge         # the edge forwarder's log
 ```
 
 The report's slope is a correlation, not proof: two commands that always run together get the

@@ -18,7 +18,44 @@
  * `$` or quotes — is left out, because an argument can be a path, a prompt or a token.
  */
 
-interface LiveChild { pid: number; label: string; startedAt: number }
+interface LiveChild {
+  pid: number;
+  label: string;
+  startedAt: number;
+  /** The chat session a Claude/Codex subprocess serves, from its own `--resume`/`--session-id`. */
+  session?: string;
+  /** Private bytes the last time the tree was read, so an exit can say what the child held. */
+  lastPrivateMB?: number;
+}
+
+/** What a long-lived child's start and exit look like to whoever logs them. */
+export interface ChildLifecycleEvent {
+  event: "start" | "exit";
+  pid: number;
+  label: string;
+  session?: string;
+  ageMin?: number;
+  lastPrivateMB?: number;
+}
+
+/** Labels whose start and exit are worth a log line: few, long-lived, and each one is a chat. */
+const LIFECYCLE_LABEL = /^(claude|codex)\b/;
+/** Session ids are UUIDs; anything else after the flag is not taken. */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SESSION_FLAGS = ["--resume", "--session-id"];
+
+/** The session a command line resumes or names, when it carries one. Exported for tests. */
+export function sessionOf(argv: readonly unknown[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a !== "string") continue;
+    for (const flag of SESSION_FLAGS) {
+      const value = a === flag ? argv[i + 1] : a.startsWith(`${flag}=`) ? a.slice(flag.length + 1) : undefined;
+      if (typeof value === "string" && SESSION_ID.test(value)) return value;
+    }
+  }
+  return undefined;
+}
 
 export interface SpawnSnapshot {
   /** Spawns since the previous snapshot, by label (sync ones included). */
@@ -119,21 +156,42 @@ export class SpawnTracker {
   private readonly totals = new Map<string, number>();
   private total = 0;
   private installed = false;
+  /** Set by the memory watchdog to log long-lived children coming and going. */
+  onLifecycle?: (e: ChildLifecycleEvent) => void;
 
   constructor(private readonly now: () => number = Date.now) {}
 
   /** Record one spawn. Exported for tests; `install()` calls it for real spawns. */
-  record(label: string, child?: { pid?: number; exited?: Promise<unknown> }): void {
+  record(label: string, child?: { pid?: number; exited?: Promise<unknown> }, session?: string): void {
     this.total++;
     this.interval.set(label, (this.interval.get(label) ?? 0) + 1);
     this.totals.set(label, (this.totals.get(label) ?? 0) + 1);
     const pid = child?.pid;
     if (!child || typeof pid !== "number" || !child.exited) return;
-    this.live.set(child, { pid, label, startedAt: this.now() });
-    child.exited.then(
-      () => { this.live.delete(child); },
-      () => { this.live.delete(child); },
-    );
+    const entry: LiveChild = { pid, label, startedAt: this.now(), session };
+    this.live.set(child, entry);
+    const logged = LIFECYCLE_LABEL.test(label);
+    if (logged) this.emit({ event: "start", pid, label, session });
+    const done = () => {
+      this.live.delete(child);
+      if (!logged) return;
+      this.emit({
+        event: "exit", pid, label, session,
+        ageMin: Math.round((this.now() - entry.startedAt) / 60_000),
+        lastPrivateMB: entry.lastPrivateMB,
+      });
+    };
+    child.exited.then(done, done);
+  }
+
+  private emit(e: ChildLifecycleEvent): void {
+    try { this.onLifecycle?.(e); } catch { /* a log line must never break a spawn */ }
+  }
+
+  /** What the tracker knows about a live direct child, by pid. */
+  describe(pid: number): LiveChild | undefined {
+    for (const c of this.live.values()) if (c.pid === pid) return c;
+    return undefined;
   }
 
   /** Wrap the two globals. Safe to call twice. */
@@ -145,7 +203,10 @@ export class SpawnTracker {
     const spawnSync = bun.spawnSync;
     bun.spawn = (...args: unknown[]) => {
       const child = spawn.apply(Bun, args) as { pid?: number; exited?: Promise<unknown> };
-      try { this.record(spawnLabel(argvOf(args)), child); } catch { /* counting must never break a spawn */ }
+      try {
+        const argv = argvOf(args);
+        this.record(spawnLabel(argv), child, sessionOf(argv));
+      } catch { /* counting must never break a spawn */ }
       return child;
     };
     bun.spawnSync = (...args: unknown[]) => {

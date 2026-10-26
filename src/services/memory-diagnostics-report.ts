@@ -24,6 +24,8 @@ export interface DiagLine {
   handles?: number;
   spawned?: Record<string, number>;
   liveChildren?: number;
+  children?: { count: number; privateMB: number; byName?: Record<string, { n: number; mb: number }> };
+  requests?: { total: number; top: Record<string, { n: number; mb: number }> };
   nativeOwners?: Record<string, number>;
   gauges?: Record<string, number | string>;
   alert?: string;
@@ -134,6 +136,28 @@ export function buildReport(text: string, lastRuns = 3): string[] {
       if (privateGrowth > 0) out.push(`   JS heap explains ${fmt(Math.max(0, heapGrowth))} MB of that ${fmt(privateGrowth)} MB; the rest is native`);
     }
     out.push(`   rss ${fmt(a.rssMB)} → ${fmt(z.rssMB)} MB   heap ${fmt(a.heapMB)} → ${fmt(z.heapMB)} MB   handles ${fmt(a.handles)} → ${fmt(z.handles)}   live children ${fmt(a.liveChildren)} → ${fmt(z.liveChildren)}`);
+
+    if (a.children || z.children) {
+      const names = Object.entries(z.children?.byName ?? {}).sort((p, q) => q[1].mb - p[1].mb).slice(0, 5)
+        .map(([k, v]) => `${k}×${v.n} ${fmt(v.mb)} MB`).join(", ");
+      out.push(`   children private ${fmt(a.children?.privateMB)} → ${fmt(z.children?.privateMB)} MB (${fmt(z.children?.count)} processes${names ? `: ${names}` : ""})`);
+    }
+
+    const routes = new Map<string, { n: number; mb: number }>();
+    for (const l of run) {
+      for (const [k, v] of Object.entries(l.requests?.top ?? {})) {
+        const r = routes.get(k) ?? { n: 0, mb: 0 };
+        r.n += v.n;
+        r.mb += v.mb;
+        routes.set(k, r);
+      }
+    }
+    if (routes.size) {
+      out.push("   Busiest routes over the run (each sample keeps its top 10):");
+      for (const [k, v] of [...routes].sort((p, q) => q[1].n - p[1].n).slice(0, 8)) {
+        out.push(`     ${k.padEnd(44)} ${String(v.n).padStart(7)} requests  ${v.mb.toFixed(1).padStart(8)} MB sent`);
+      }
+    }
 
     const attribution = attributeGrowth(run);
     if (attribution.length) {
