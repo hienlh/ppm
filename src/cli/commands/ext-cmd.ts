@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { markMachineFacing } from "../utils/machine-facing-commands.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -106,6 +107,31 @@ export function registerExtCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // Every token but --json and --timeout reaches the handler as its own argument:
+  // `handler(...args)`. Put them after `--` to pass those two through as well.
+  const run = ext
+    .command("run")
+    .description("Run a command an extension declared, on the running server")
+    .argument("<command>", "command id, as in the extension's contributes.commands")
+    .argument("[args...]", "passed to the command as separate arguments")
+    .option("--json", "print the result as one line of JSON")
+    .option("--timeout <ms>", "how long to wait for the command, in ms (1000 to 600000)")
+    .allowUnknownOption()
+    .action(async (command: string, args: string[] | undefined, opts: { json?: boolean; timeout?: string }) => {
+      const { clampExecuteTimeout, EXECUTE_DEFAULT_TIMEOUT_MS } = await import("../../shared/extension-command-execute.ts");
+      let timeoutMs = EXECUTE_DEFAULT_TIMEOUT_MS;
+      if (opts.timeout !== undefined) {
+        if (!/^\d+$/.test(opts.timeout)) {
+          process.stderr.write(`--timeout must be a whole number of milliseconds, not "${opts.timeout}"\n`);
+          process.exit(2);
+        }
+        timeoutMs = clampExecuteTimeout(Number(opts.timeout));
+      }
+      const { runExtensionCommand } = await import("../utils/run-extension-command.ts");
+      process.exit(await runExtensionCommand(command, args ?? [], { printMode: opts.json ? "json" : "auto", timeoutMs }));
+    });
+  markMachineFacing(run);
 
   ext
     .command("dev <path>")

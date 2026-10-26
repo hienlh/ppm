@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import type { ExtensionManifest } from "../types/extension.ts";
@@ -117,6 +117,26 @@ export async function discoverManifests(extensionsDir: string): Promise<Extensio
     }
   }
   return manifests;
+}
+
+/**
+ * Where the bundled `packages/ext-*` extensions live on disk.
+ *
+ * They are loaded as source by the extension host, so they ship *beside* the install rather
+ * than inside it. Walking up from `import.meta.dir` finds them when PPM runs from source, but
+ * a compiled binary reports `/$bunfs/root` — its embedded filesystem — and the same walk lands
+ * on `/packages`, an absolute path at the filesystem root that cannot exist. Every bundled
+ * extension then vanished with no error and no log line: the panel simply said none were
+ * installed. Fall back to the directory holding the executable (`<install>/dist/ppm` →
+ * `<install>/packages`).
+ */
+export function bundledExtensionsDir(
+  moduleDir: string = import.meta.dir,
+  execPath: string = process.execPath,
+): string {
+  const fromSource = resolve(moduleDir, "../../packages");
+  if (existsSync(fromSource)) return fromSource;
+  return resolve(dirname(execPath), "../packages");
 }
 
 export type BundledManifest = ExtensionManifest & { _dir: string };

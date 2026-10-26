@@ -24,6 +24,17 @@ export interface ExtensionContributes {
   configuration?: { properties?: Record<string, ConfigProperty> };
   menus?: Record<string, ContributedMenu[]>;
   keybindings?: ContributedKeybinding[];
+  /** `ppm <name> …` forwards to `command` on the running server (PPM extension, not VSCode). */
+  cli?: ContributedCliAlias[];
+}
+
+/** A top-level CLI command an extension adds: `ppm <name> [args…]` → `command(argv)`. */
+export interface ContributedCliAlias {
+  /** `/^[a-z][a-z0-9-]{1,30}$/`, and never a built-in command name. */
+  name: string;
+  description?: string;
+  /** Must also be declared in the same manifest's `contributes.commands`. */
+  command: string;
 }
 
 export interface ContributedCommand {

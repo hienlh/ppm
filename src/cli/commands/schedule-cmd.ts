@@ -120,25 +120,17 @@ export function registerScheduleCommands(program: Command): void {
     .command("run-now <id>")
     .description("Fire a schedule immediately (requires running PPM server)")
     .action(async (id: string) => {
-      const { configService } = await loadDeps();
-      const port = configService.get("port");
-      const auth = configService.get("auth");
+      const { callServer, ServerDownError } = await import("../utils/server-client.ts");
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/schedules/${id}/run-now`, {
-          method: "POST",
-          headers: auth.enabled ? { Authorization: `Bearer ${auth.token}` } : {},
-          signal: AbortSignal.timeout(5000),
-        });
-        const body = await res.json() as { ok: boolean; data?: { runId: number; wasRunning: boolean }; error?: string };
-        if (!body.ok) fail(body.error ?? `HTTP ${res.status}`);
-        console.log(`${C.green}✓${C.reset} Run ${C.bold}#${body.data!.runId}${C.reset} started`);
-        if (body.data!.wasRunning) {
+        const data = await callServer<{ runId: number; wasRunning: boolean }>(
+          "POST", `/api/schedules/${encodeURIComponent(id)}/run-now`, undefined, { timeoutMs: 5000 },
+        );
+        console.log(`${C.green}✓${C.reset} Run ${C.bold}#${data.runId}${C.reset} started`);
+        if (data.wasRunning) {
           console.log(`${C.yellow}⚠${C.reset} A previous run was still active — both now run concurrently`);
         }
       } catch (e) {
-        if (e instanceof Error && (e.name === "TimeoutError" || e.message.includes("fetch"))) {
-          fail("PPM server not running — start with 'ppm start'");
-        }
+        if (e instanceof ServerDownError) fail("PPM server not running — start with 'ppm start'");
         fail(e instanceof Error ? e.message : String(e));
       }
     });

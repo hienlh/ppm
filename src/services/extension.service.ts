@@ -1,10 +1,10 @@
-import { resolve, dirname } from "node:path";
+import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/extension.ts";
 import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import { RpcChannel } from "./extension-rpc.ts";
-import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
+import { parseManifest, discoverManifests, discoverBundledManifests, bundledExtensionsDir } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 import { executeExtensionCommand, type ExecuteOutcome, type WorkerCommandReply } from "./extension-command-executor.ts";
@@ -18,25 +18,9 @@ const log = createLogger("ExtService");
  *  forwarded from that thread's console (see extension-host-worker.ts). */
 const extLog = createLogger("ext");
 
-/**
- * Where the bundled `packages/ext-*` extensions live on disk.
- *
- * They are loaded as source by the extension host, so they ship *beside* the install rather
- * than inside it. Walking up from `import.meta.dir` finds them when PPM runs from source, but
- * a compiled binary reports `/$bunfs/root` — its embedded filesystem — and the same walk lands
- * on `/packages`, an absolute path at the filesystem root that cannot exist. Every bundled
- * extension then vanished with no error and no log line: the panel simply said none were
- * installed. Fall back to the directory holding the executable (`<install>/dist/ppm` →
- * `<install>/packages`).
- */
-export function bundledExtensionsDir(
-  moduleDir: string = import.meta.dir,
-  execPath: string = process.execPath,
-): string {
-  const fromSource = resolve(moduleDir, "../../packages");
-  if (existsSync(fromSource)) return fromSource;
-  return resolve(dirname(execPath), "../packages");
-}
+// Lives with the manifest readers so the CLI can find bundled extensions without loading this
+// service and everything its RPC handlers reach.
+export { bundledExtensionsDir };
 
 /**
  * How to name the extension host worker so Bun will actually load it.

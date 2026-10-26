@@ -2,6 +2,7 @@
 // PPM CLI entry point — Bun runtime, Hono backend, React frontend, Claude Agent SDK for AI chat
 import { Command } from "commander";
 import { VERSION } from "./version.ts";
+import { isMachineFacing } from "./cli/utils/machine-facing-commands.ts";
 
 /**
  * Assemble the CLI program without parsing argv. Exported so build-time tools
@@ -16,7 +17,9 @@ export async function buildProgram(): Promise<Command> {
     .name("ppm")
     .description("Personal Project Manager — mobile-first web IDE")
     .version(VERSION)
-    .hook("preAction", () => {
+    .hook("preAction", (_program, actionCommand) => {
+      // A machine-facing command's stdout is data (`--json`): no banner in it.
+      if (isMachineFacing(actionCommand)) return;
       console.log(`  PPM v${VERSION}\n`);
     });
 
@@ -208,6 +211,9 @@ if (import.meta.main) {
       const { sendConsoleLogsToStderr } = await import("./services/logger.ts");
       sendConsoleLogsToStderr();
       const program = await buildProgram();
+      // Extension-contributed `ppm <name>` commands; skipped for every built-in command.
+      const { shouldLoadAliases, registerExtensionCliAliases } = await import("./cli/commands/extension-cli-alias-cmd.ts");
+      if (shouldLoadAliases(process.argv)) await registerExtensionCliAliases(program);
       program.parse();
     }
   }
