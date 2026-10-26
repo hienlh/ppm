@@ -31,6 +31,7 @@ import { anyPpmToolOn, TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
+import { extensionCliHint } from "./extension-cli-hint.ts";
 import { createLogger } from "./logger.ts";
 
 const log = createLogger("chat");
@@ -317,7 +318,8 @@ class ChatService {
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
     // Like the design fields, the tab and database tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, extensionCliHint: _hint, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    const cliHint = extensionCliHint();
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those.
     const ai = configService.get("ai");
@@ -343,7 +345,13 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}), sharedContext };
+    return {
+      ...design,
+      ...(tabToolsMcp ? { tabToolsMcp } : {}),
+      ...(dbToolsMcp ? { dbToolsMcp } : {}),
+      ...(cliHint ? { extensionCliHint: cliHint } : {}),
+      sharedContext,
+    };
   }
 
   /**

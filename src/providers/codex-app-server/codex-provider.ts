@@ -38,7 +38,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, joinDeveloperInstructions, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
@@ -921,7 +921,7 @@ export class CodexAppServerProvider implements AIProvider {
     const channel = createEventChannel();
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
-      developerInstructions: opts?.designInstructions,
+      developerInstructions: joinDeveloperInstructions(opts?.designInstructions, opts?.extensionCliHint),
       designMcp: opts?.designSession ? opts.designMcp : undefined,
       tabToolsMcp: opts?.designSession ? undefined : opts?.tabToolsMcp,
       dbToolsMcp: opts?.designSession ? undefined : opts?.dbToolsMcp,

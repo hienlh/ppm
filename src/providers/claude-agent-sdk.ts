@@ -12,6 +12,7 @@ import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
 import { aiConnections } from "../services/db-ai-tools/db-ai-connections.ts";
+import { extensionCliHint } from "../services/extension-cli-hint.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { OPEN_PREVIEW_TOOL } from "../shared/tab-open-protocol.ts";
 import { anyPpmToolOn, ppmToolOn, TAB_TOOLS } from "../shared/ppm-tools.ts";
@@ -1053,7 +1054,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const dbTools = dbBase ? { url: `${dbBase}${DB_TOOLS_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
-      systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
+      // The same hint the session's first turn will carry (`prepareSendOptions`): a prompt that
+      // differed would make the turn refuse this spare and boot a cold process instead.
+      systemPrompt: buildSystemPromptOption(providerConfig.system_prompt, undefined, extensionCliHint()),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
       mcpServers: { ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools), ...dbToolsMcpServers(dbTools) },
@@ -1163,7 +1166,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const providerConfig = this.getProviderConfig();
     const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
-    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
+    const systemPromptOpt = buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions, opts?.extensionCliHint);
     // A design session in acceptEdits auto-approves file tools only while they target the
     // project, and asks for everything else. Any other mode the user picks for a design
     // session behaves exactly as that mode does in an ordinary chat.

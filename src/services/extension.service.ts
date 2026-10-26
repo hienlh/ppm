@@ -9,6 +9,7 @@ import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDi
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 import { executeExtensionCommand, type ExecuteOutcome, type WorkerCommandReply } from "./extension-command-executor.ts";
 import { registerExtensionNotifyHandlers } from "./extension-api/extension-notify-handlers.ts";
+import { invalidateExtensionCliHint } from "./extension-cli-hint.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { createLogger } from "./logger.ts";
@@ -166,6 +167,7 @@ class ExtensionService {
       return await installExtension(name, resolve(getPpmDir(), "extensions"));
     } finally {
       this.installing.delete(name);
+      invalidateExtensionCliHint();
     }
   }
 
@@ -176,6 +178,7 @@ class ExtensionService {
     if (this.activatedIds.has(id)) await this.deactivate(id);
     await removeExtension(id, resolve(getPpmDir(), "extensions"));
     contributionRegistry.unregister(id);
+    invalidateExtensionCliHint();
   }
 
   async activate(id: string): Promise<void> {
@@ -220,6 +223,7 @@ class ExtensionService {
     this.activationErrors.delete(id);
     this.activatedIds.add(id);
     if (manifest.contributes) contributionRegistry.register(id, manifest.contributes);
+    invalidateExtensionCliHint();
     this.broadcastContributions();
     log.info(`activated ${id} successfully`);
   }
@@ -238,6 +242,7 @@ class ExtensionService {
     }
     this.activatedIds.delete(id);
     contributionRegistry.unregister(id);
+    invalidateExtensionCliHint();
     this.broadcastContributions();
     log.info(`Deactivated ${id}`);
   }
@@ -274,6 +279,7 @@ class ExtensionService {
     const row = getExtensionById(id);
     if (!row) throw new Error(`Extension ${id} not found`);
     updateExtension(id, { enabled: enabled ? 1 : 0 });
+    invalidateExtensionCliHint();
     log.info(`${enabled ? "Enabled" : "Disabled"} ${id}`);
     if (enabled && !this.activatedIds.has(id)) await this.activate(id);
     else if (!enabled && this.activatedIds.has(id)) await this.deactivate(id);
@@ -281,6 +287,8 @@ class ExtensionService {
 
   async devLink(localPath: string): Promise<ExtensionManifest> {
     const manifest = devLinkExtension(localPath, resolve(getPpmDir(), "extensions"));
+    // A re-link of an active extension may change its manifest without a new activation.
+    invalidateExtensionCliHint();
     // Auto-activate after dev-link (DB record is created with enabled=1)
     if (!this.activatedIds.has(manifest.id)) {
       try { await this.activate(manifest.id); } catch (e) {
@@ -330,6 +338,8 @@ class ExtensionService {
         log.error(`Failed to activate ${row.id} on startup:`, e);
       }
     }
+    // Manifests were synced from disk above, disabled ones included.
+    invalidateExtensionCliHint();
     const bundled = manifests.filter((m) => this.bundledIds.has(m.id)).length;
     log.info(`startup: bundled=${bundled} user=${manifests.length - bundled} activated=${this.activatedIds.size} failed=${failed}`);
   }
