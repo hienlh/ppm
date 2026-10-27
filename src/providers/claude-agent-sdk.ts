@@ -1584,6 +1584,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
+      /** The API response those tool_use blocks came in: only a later one means the tools ran. */
+      let pendingToolsMessageId: string | undefined;
       /** A transcript that cannot be read fails every flush: WARNed once, DEBUG after. */
       let toolResultFlushWarned = false;
 
@@ -1784,10 +1786,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
-        // When top-level tools were pending and a new TOP-LEVEL message arrives,
+        // When top-level tools were pending and a new TOP-LEVEL response starts,
         // the SDK has finished executing tools. Fetch tool_results from session history.
         // Skip this for child messages (parentId set) — subagent internals don't mean parent tools finished.
-        if (pendingToolCount > 0 && !parentId && (msg.type === "assistant" || (msg as any).type === "partial" || (msg as any).type === "stream_event")) {
+        // A new response, not any frame: the tool_use's own response still streams its block stop,
+        // message_delta and message_stop before the tool runs, and treating those as "the tools
+        // ran" read the whole transcript back on every tool call (1.4GB a call on one long
+        // session, the server's RAM swinging by GBs) and yielded each result twice.
+        const startsResponse = (msg as any).type === "stream_event"
+          ? (msg as any).event?.type === "message_start"
+          : (msg.type === "assistant" || (msg as any).type === "partial") && (msg as any).message?.id !== pendingToolsMessageId;
+        if (pendingToolCount > 0 && !parentId && startsResponse) {
           try {
             const sessionMsgs = await getSessionMessages(sessionId);
             // Find the last user message — it contains tool_result blocks
@@ -2123,6 +2132,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 // stream as child messages and don't need the pendingToolCount flush mechanism.
                 if (!parentId) {
                   pendingToolCount++;
+                  pendingToolsMessageId = (msg as any).message?.id;
                 }
                 yield {
                   type: "tool_use",

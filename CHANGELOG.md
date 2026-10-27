@@ -24,6 +24,8 @@
 
 - **Brave was listed as Chrome among the devices that get push.** Brave's user agent is Chrome's, so "This device" and the saved device both said "Chrome on macOS", and a Mac with push on in both browsers showed two identical rows. The name now says Brave. A device turned on before this keeps its old name until push is turned off and on again in it.
 
+- **A long chat made the PPM server read the chat's whole transcript back on every tool call.** To catch a tool result the stream might not carry, PPM looks it up in the transcript once the tools have run, and it took the rest of the very response that asked for the tool as that sign: so on every tool call it read the transcript before the tool had even started, and passed each result on twice. On a 7-day chat with a 1.47 GB transcript that was a full read about every 8 seconds; the server's memory swung between 4.9 and 12.8 GB and requests to PPM timed out while it read. It now waits for Claude's next response, and reads the transcript only when the stream never carried the result. Over three tool calls on a 401 MB transcript, the server's peak memory went from 1,466 MB to 203 MB.
+
 ## [0.23.21] - 2026-10-26
 
 ### Fixed
