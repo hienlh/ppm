@@ -32,6 +32,7 @@ import { anyPpmToolOn, TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
+import { stopChatSessionProcesses } from "./chat-session-processes/session-processes.service.ts";
 import { createLogger } from "./logger.ts";
 
 const log = createLogger("chat");
@@ -93,8 +94,24 @@ function endsDesignWork(event: ChatEvent): boolean {
 class ChatService {
   // Delivery hints only: a restart/eviction safely sends a fresh snapshot.
   private sharedSnapshots = new Map<string, string>();
-  /** Runs in flight, by every id they answer to — read only by the turn log lines. */
+  /** Runs in flight, by every id they answer to — read by the turn log lines and `turnActivity`. */
   private turnLogs = new Map<string, TurnLog>();
+  /** When each session's last turn ended, in this process. Capped like `sharedSnapshots`. */
+  private turnEnds = new Map<string, number>();
+
+  private noteTurnEnded(sessionId: string): void {
+    this.turnEnds.delete(sessionId);
+    this.turnEnds.set(sessionId, Date.now());
+    if (this.turnEnds.size > 2048) this.turnEnds.delete(this.turnEnds.keys().next().value!);
+  }
+
+  /**
+   * Whether a turn of the session is running now, through any door, and when its last one ended.
+   * What decides that the processes a chat left running have been idle long enough to stop.
+   */
+  turnActivity(sessionId: string): { running: boolean; lastEndedAt?: number } {
+    return { running: (this.turnLogs.get(sessionId)?.startedAt ?? null) !== null, lastEndedAt: this.turnEnds.get(sessionId) };
+  }
 
   private rememberSharedContext(providerId: string, sessionId: string, context?: string): void {
     if (!context) return;
@@ -176,6 +193,8 @@ class ChatService {
     tabOpenBroker.forget(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
+    this.turnEnds.delete(sessionId);
+    stopChatSessionProcesses(sessionId);
     return provider.deleteSession(sessionId);
   }
 
@@ -233,6 +252,7 @@ class ChatService {
     if (event.type !== "done") return;
     const sub = event.resultSubtype;
     logTurnEnd(turn, turn.abortReason ? "aborted" : sub && sub !== "success" ? sub : turn.firstError ? "error" : "success", event);
+    this.noteTurnEnded(turn.sessionId);
     turn.startedAt = null;
     turn.abortReason = undefined;
     turn.firstError = undefined;
@@ -241,6 +261,7 @@ class ChatService {
   /** The run is over: forget it, and close a turn it left open — one that never got its `done`. */
   private endTurnLog(turn: TurnLog, outcome: "completed" | "consumer_closed" | "failed"): void {
     for (const [id, t] of this.turnLogs) if (t === turn) this.turnLogs.delete(id);
+    if (turn.startedAt !== null) this.noteTurnEnded(turn.sessionId);
     // A failed run said how it ended in "run failed".
     if (turn.startedAt === null || outcome === "failed") return;
     // no_done: the provider returned mid-turn without saying how the turn went.

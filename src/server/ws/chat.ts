@@ -35,6 +35,7 @@ import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
 import { dropStaleIdle, registerTokenRotation, type TokenRotationDeps } from "./chat-token-rotation.ts";
+import { registerLeftoverSweeper } from "../../services/chat-session-processes/session-processes.service.ts";
 import type { SubprocessCredential } from "../../providers/claude-agent-sdk.ts";
 
 const log = createLogger("chat");
@@ -461,6 +462,20 @@ const tokenRotationDeps: TokenRotationDeps = {
   ),
 };
 registerTokenRotation(tokenRotationDeps);
+
+// What a chat left running is stopped once the chat has been idle long enough. Busy is a turn
+// running through any door, an approval waiting, or background work still in the subprocess.
+registerLeftoverSweeper({
+  activity: (sessionId) => {
+    const run = chatService.turnActivity(sessionId);
+    const entry = activeSessions.get(sessionId);
+    const busy = run.running
+      || (!!entry && (entry.phase !== "idle" || !!entry.pendingApprovalEvent || hasBackgroundWork(sessionId)));
+    const last = Math.max(run.lastEndedAt ?? 0, entry?.lastTurnEndedAt ?? 0);
+    return { busy, lastActiveAt: last || undefined };
+  },
+  onStopped: (sessionId, summary) => logSessionEvent(sessionId, "INFO", `PPM ${summary}`),
+});
 
 /**
  * Sessions with a turn in flight, optionally narrowed to one project.

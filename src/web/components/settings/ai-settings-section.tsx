@@ -18,6 +18,7 @@ import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
 import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
 import type { ModelOption } from "../../../types/chat";
+import { leftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../../shared/leftover-processes";
 import type { ProviderProbeStatus } from "../../../providers/provider-probe";
 
 const EFFORT_OPTIONS = [
@@ -208,6 +209,30 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
           disabled={saving}
           onCheckedChange={(checked) => handleSettingsSave({ share_provider_context: checked })}
         />
+      </div>
+
+      <div className={fieldGap}>
+        <Label htmlFor="ai-leftover-idle" className={compact ? labelSize : undefined}>
+          Stop leftover processes after (idle minutes, 0 = never)
+        </Label>
+        <Input
+          key={`leftover-${revision}`}
+          id="ai-leftover-idle"
+          type="number"
+          min={0}
+          max={MAX_LEFTOVER_IDLE_MINUTES}
+          defaultValue={leftoverIdleMinutes(settings)}
+          aria-describedby="ai-leftover-idle-description"
+          className={compact ? "h-7 text-[11px]" : undefined}
+          onBlur={(e) => {
+            const val = parseInt(e.target.value);
+            if (!isNaN(val)) handleSettingsSave({ leftover_processes_idle_minutes: val });
+          }}
+        />
+        <p id="ai-leftover-idle-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+          Servers, emulators and other processes a chat&apos;s commands started and left running are stopped once
+          the chat has been idle this long, and at once when the chat is deleted. Linux with systemd only.
+        </p>
       </div>
 
       {/* Provider tabs */}

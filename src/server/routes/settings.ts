@@ -16,6 +16,7 @@ import { ok, err } from "../../types/api.ts";
 import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
 import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
 import { isPpmTool, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
+import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
 import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
@@ -194,6 +195,7 @@ settingsRoutes.put("/ai", async (c) => {
       share_provider_context?: boolean;
       tab_tools?: boolean;
       ppm_tools?: PpmToolSwitches;
+      leftover_processes_idle_minutes?: number;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
@@ -211,6 +213,9 @@ settingsRoutes.put("/ai", async (c) => {
     }
     if ("tab_tools" in body && typeof body.tab_tools !== "boolean") {
       return c.json(err("tab_tools must be a boolean"), 400);
+    }
+    if ("leftover_processes_idle_minutes" in body && !isValidLeftoverIdleMinutes(body.leftover_processes_idle_minutes)) {
+      return c.json(err(`leftover_processes_idle_minutes must be a whole number from 0 to ${MAX_LEFTOVER_IDLE_MINUTES}, 0 for never`), 400);
     }
     if ("ppm_tools" in body) {
       const tools = body.ppm_tools as unknown;
@@ -243,6 +248,7 @@ settingsRoutes.put("/ai", async (c) => {
       new_chat_provider_mode: body.new_chat_provider_mode ?? currentAi.new_chat_provider_mode ?? "default",
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
+      ...(body.leftover_processes_idle_minutes !== undefined && { leftover_processes_idle_minutes: body.leftover_processes_idle_minutes }),
       // One switch at a time: the tools the body does not name keep theirs.
       ...(body.ppm_tools && { ppm_tools: { ...currentAi.ppm_tools, ...body.ppm_tools } }),
       ...(body.default_provider && { default_provider: body.default_provider }),

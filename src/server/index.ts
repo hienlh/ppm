@@ -36,6 +36,7 @@ import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
 import { lspWebSocket } from "./ws/lsp.ts";
 import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
+import { stopCommandScopesSync } from "../services/chat-session-processes/session-processes.service.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
 import { isAndroidEmulatorEnabled } from "../services/android/android-flag.ts";
 import { ok, err } from "../types/api.ts";
@@ -926,6 +927,16 @@ if (process.argv.includes("__serve__")) {
     console.warn("[serve] provider bootstrap failed:", (e as Error).message);
   }
 
+  // Each chat's commands run in a systemd slice of the chat's own, so what a chat leaves running
+  // can be stopped once it is idle. Not awaited: the probe takes ~10 ms, and a CLI spawned before
+  // it settles merely goes untracked.
+  void (async () => {
+    const { initChatSessionProcesses } = await import("../services/chat-session-processes/session-processes.service.ts");
+    const { getDbPath } = await import("../services/db.service.ts");
+    const { leftoverIdleMinutes } = await import("../shared/leftover-processes.ts");
+    await initChatSessionProcesses({ dbPath: getDbPath(), idleMinutes: () => leftoverIdleMinutes(configService.get("ai")) });
+  })().catch((e) => serveLog.warn(`chat process tracking did not start: ${(e as Error).message}`));
+
   // Sync externally-started tunnel URL + PID into tunnelService
   // so GET /api/tunnel reflects the correct state and Share button doesn't start a duplicate.
   // Also write server version to status.json so supervisor heartbeat reports the actual running version.
@@ -1315,6 +1326,9 @@ if (process.argv.includes("__serve__")) {
     try { lspManager.killAllSync(); } catch {}
     // An MCP sign-in holds a Claude subprocess until it settles.
     try { mcpOAuthFlows.disposeAll(); } catch {}
+    // Chats' commands and MCP servers run in scopes outside PPM's cgroup, so stopping PPM's unit
+    // no longer takes them along.
+    try { stopCommandScopesSync(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

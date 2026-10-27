@@ -225,6 +225,7 @@ export interface AISettings {
   share_provider_context?: boolean;
   tab_tools?: boolean;
   ppm_tools?: PpmToolSwitches;
+  leftover_processes_idle_minutes?: number;
   providers: Record<string, AIProviderSettings>;
 }
 

@@ -2,6 +2,7 @@ import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 import type { PpmToolSwitches } from "../shared/ppm-tools.ts";
+import { isValidLeftoverIdleMinutes } from "../shared/leftover-processes.ts";
 
 export interface TelegramConfig {
   bot_token: string;
@@ -158,6 +159,12 @@ export interface AIConfig {
   tab_tools?: boolean;
   /** PPM's own AI tools, on or off one by one (`src/shared/ppm-tools.ts` has the defaults). */
   ppm_tools?: PpmToolSwitches;
+  /**
+   * Idle minutes after which PPM stops what a chat left running — servers, emulators and daemons
+   * its commands started. Unset means 30, 0 never stops them. Linux with systemd only
+   * (`src/services/chat-session-processes/`).
+   */
+  leftover_processes_idle_minutes?: number;
   providers: Record<string, AIProviderConfig>;
 }
 
@@ -396,6 +403,11 @@ export function sanitizeConfig(config: PpmConfig): boolean {
 
   if (typeof config.ai.share_provider_context !== "boolean") {
     config.ai.share_provider_context = true;
+    dirty = true;
+  }
+
+  if ("leftover_processes_idle_minutes" in config.ai && !isValidLeftoverIdleMinutes(config.ai.leftover_processes_idle_minutes)) {
+    delete config.ai.leftover_processes_idle_minutes;
     dirty = true;
   }
 
