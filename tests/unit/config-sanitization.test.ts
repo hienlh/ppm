@@ -27,6 +27,21 @@ describe("sanitizeConfig — multi-provider", () => {
     }
   });
 
+  it("drops an unusable leftover-process idle limit so the 30-minute default applies, and keeps a usable one", () => {
+    for (const value of [-5, 1441, 2.5, "30", null]) {
+      const config = makeConfig();
+      (config.ai as unknown as Record<string, unknown>).leftover_processes_idle_minutes = value;
+      expect(sanitizeConfig(config)).toBe(true);
+      expect("leftover_processes_idle_minutes" in config.ai).toBe(false);
+    }
+    for (const value of [0, 30, 1440]) {
+      const config = makeConfig();
+      config.ai.leftover_processes_idle_minutes = value;
+      expect(sanitizeConfig(config)).toBe(false);
+      expect(config.ai.leftover_processes_idle_minutes).toBe(value);
+    }
+  });
+
   it("fixes invalid default_provider to claude", () => {
     const config = makeConfig();
     config.ai.default_provider = "nonexistent";

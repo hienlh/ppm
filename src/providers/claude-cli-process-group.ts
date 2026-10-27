@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { query as sdkQuery, type SpawnedProcess, type SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
+import { chatSessionCliEnv } from "../services/chat-session-processes/session-processes.service.ts";
+import { chatSessionIdOf } from "../services/chat-session-processes/session-slice.ts";
 import { createLogger } from "../services/logger.ts";
 
 /**
@@ -18,8 +20,9 @@ import { createLogger } from "../services/logger.ts";
  * `GROUP_KILL_GRACE_MS` later.
  *
  * The Bash tool's commands are not in that group: the CLI starts each in a session of its own, so
- * a server or an emulator a command left running is not touched. Windows has no process groups;
- * there the SDK spawns the CLI itself, as before.
+ * a server or an emulator a command left running is not touched here. Those are found by the
+ * chat session's systemd slice instead (`src/services/chat-session-processes/`). Windows has no
+ * process groups; there the SDK spawns the CLI itself, as before.
  */
 
 /** Longer than Playwright MCP's own 15 s limit on closing its browsers. */
@@ -142,12 +145,18 @@ export function spawnCliInOwnGroup(
   } as SpawnedProcess;
 }
 
-/** The SDK's `query()`, with every CLI it starts spawned by `spawnCliInOwnGroup`. */
+/**
+ * The SDK's `query()`, with every CLI it starts spawned by `spawnCliInOwnGroup` — and, where the
+ * host supports it, with its commands routed into the chat session's slice
+ * (`src/services/chat-session-processes/`). Added here, after the warm-spare fingerprint was
+ * taken from the options, so a spare and the turn that adopts it still compare equal.
+ */
 export const query: typeof sdkQuery = (params) => {
   if (process.platform === "win32" || params.options?.spawnClaudeCodeProcess) return sdkQuery(params);
   const stderr = params.options?.stderr;
+  const env = chatSessionCliEnv(chatSessionIdOf(params.options), params.options?.env ?? process.env);
   return sdkQuery({
     ...params,
-    options: { ...params.options, spawnClaudeCodeProcess: (o) => spawnCliInOwnGroup(o, stderr) },
+    options: { ...params.options, env, spawnClaudeCodeProcess: (o) => spawnCliInOwnGroup(o, stderr) },
   });
 };
