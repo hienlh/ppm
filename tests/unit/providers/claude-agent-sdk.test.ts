@@ -282,6 +282,62 @@ describe("ClaudeAgentSdkProvider", () => {
       expect((toolUse as any).tool).toBe("Read");
     });
 
+    describe("tool results", () => {
+      // One tool call in the order the CLI streams it (captured from CLI 2.1.296): the assistant
+      // frame carrying the tool_use comes before its own block's stop and the response's end,
+      // and the tool runs only after those.
+      const toolCall = (id: string, messageId: string) => [
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: messageId } } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id, name: "Bash", input: {} } } },
+        { type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "tool_use", id, name: "Bash", input: { command: "echo" } }] } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_delta", delta: { stop_reason: "tool_use" } } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_stop" } },
+      ];
+      const resultOf = (id: string) => ({ type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: `out ${id}` }] } });
+      const finalAnswer = [
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: "msg_end" } } },
+        { type: "assistant", parent_tool_use_id: null, message: { id: "msg_end", content: [{ type: "text", text: "done" }] } },
+        { type: "result", subtype: "success" },
+      ];
+      let history: ReturnType<typeof mock>;
+
+      beforeEach(async () => {
+        history = (await import("@anthropic-ai/claude-agent-sdk")).getSessionMessages as unknown as ReturnType<typeof mock>;
+        history.mockClear();
+      });
+      afterEach(() => history.mockImplementation(() => Promise.resolve([])));
+
+      async function run(items: unknown[]): Promise<string[]> {
+        mockQueryFn.mockReturnValue(createMockQueryIterator(items as any, 1));
+        const session = await provider.createSession({});
+        const results: string[] = [];
+        for await (const event of provider.sendMessage(session.id, "run it")) {
+          if (event.type === "tool_result") results.push((event as any).toolUseId);
+        }
+        return results;
+      }
+
+      it("takes each result from the stream once, and never reads the transcript for it", async () => {
+        // Reading history answers with what is on disk, which is how a result came out twice.
+        history.mockImplementation(() => Promise.resolve([resultOf("toolu_2")]));
+        const results = await run([
+          ...toolCall("toolu_1", "msg_1"), resultOf("toolu_1"),
+          ...toolCall("toolu_2", "msg_2"), resultOf("toolu_2"),
+          ...finalAnswer,
+        ]);
+        expect(history).not.toHaveBeenCalled();
+        expect(results).toEqual(["toolu_1", "toolu_2"]);
+      });
+
+      it("still reads a result back from history when the stream never carried it", async () => {
+        history.mockImplementation(() => Promise.resolve([resultOf("toolu_1")]));
+        const results = await run([...toolCall("toolu_1", "msg_1"), ...finalAnswer]);
+        expect(history).toHaveBeenCalledTimes(1);
+        expect(results).toEqual(["toolu_1"]);
+      });
+    });
+
     it("always yields done event even on empty response", async () => {
       const iter = createMockQueryIterator([{ type: "result" }]);
       mockQueryFn.mockReturnValue(iter);
