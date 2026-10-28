@@ -13,6 +13,7 @@ import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
+import type { EffortStatus } from "../../shared/effort-status";
 import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { prefixTokens } from "../../shared/turn-usage";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools";
@@ -131,6 +132,11 @@ interface UseChatReturn {
   effort: string | null;
   /** Switch the per-session effort (low|medium|high|xhigh|max) */
   setEffort: (effort: string) => void;
+  /**
+   * What overrides the effort pick outside PPM, as the server last said: undefined until it
+   * has, null when nothing can for this session's provider.
+   */
+  effortStatus: EffortStatus | null | undefined;
   /** Whether per-session thinking is on */
   thinking: boolean;
   /** Toggle per-session thinking on/off */
@@ -251,6 +257,7 @@ export function useChat(
   const pendingModelRef = useRef<string | null>(null);
   const [effort, setEffortState] = useState<string | null>(null);
   const effortRef = useRef<string | null>(null);
+  const [effortStatus, setEffortStatus] = useState<EffortStatus | null | undefined>(undefined);
   // Optimistic until session_state lands; the SDK default is adaptive thinking, so ON
   // is the honest starting guess.
   const [thinking, setThinkingState] = useState<boolean>(true);
@@ -1021,6 +1028,11 @@ export function useChat(
       return;
     }
 
+    if ((data as any).type === "effort_status") {
+      setEffortStatus(((data as any).status as EffortStatus | undefined) ?? null);
+      return;
+    }
+
     // Handle compact status events
     if ((data as any).type === "compact_status") {
       const status = (data as any).status;
@@ -1096,6 +1108,8 @@ export function useChat(
         setEffortState(state.effort);
         effortRef.current = state.effort;
       }
+      // Only the greetings that carry the effort carry this; the others leave it as it was.
+      if ("effortStatus" in state) setEffortStatus((state.effortStatus as EffortStatus | null) ?? null);
       // Display only. Writing this back into the ref would promote a server-derived
       // default into an explicit user choice that rides along on every message and
       // pins the session — the path that silently disabled thinking.
@@ -1289,6 +1303,7 @@ export function useChat(
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
     setTurnStop(null);
+    setEffortStatus(undefined);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
     // Drop the previous session's version groups. Keeping them would let the
@@ -1819,6 +1834,7 @@ export function useChat(
     setModel,
     effort,
     setEffort,
+    effortStatus,
     thinking,
     setThinking,
     turnSettings,

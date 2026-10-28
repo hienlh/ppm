@@ -27,6 +27,7 @@ import { ReplyCard } from "./reply-card";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import { PromptCacheChip } from "./prompt-cache-chip";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
+import type { EffortStatus } from "../../../shared/effort-status";
 
 /**
  * Base64 payload for an image file, or undefined when it cannot be read.
@@ -144,6 +145,8 @@ interface MessageInputProps {
   onModelChange?: (model: string) => void;
   /** Current per-session effort (null = provider default) */
   effort?: string | null;
+  /** What overrides the effort pick outside PPM (CLAUDE_CODE_EFFORT_LEVEL, a settings cap, the model) */
+  effortStatus?: EffortStatus | null;
   /** Effort change handler */
   onEffortChange?: (effort: string) => void;
   /** Current per-session thinking on/off */
@@ -191,6 +194,7 @@ export const MessageInput = memo(function MessageInput({
   model,
   onModelChange,
   effort,
+  effortStatus,
   onEffortChange,
   thinking,
   onThinkingChange,
@@ -1048,6 +1052,7 @@ export const MessageInput = memo(function MessageInput({
             <ModelThinkingSelector
               model={model ?? null}
               effort={effort ?? null}
+              effortStatus={effortStatus}
               thinking={thinking ?? false}
               onModelChange={onModelChange}
               onEffortChange={onEffortChange ?? (() => {})}
@@ -1152,6 +1157,7 @@ export const MessageInput = memo(function MessageInput({
               <ModelThinkingSelector
                 model={model ?? null}
                 effort={effort ?? null}
+                effortStatus={effortStatus}
                 thinking={thinking ?? false}
                 onModelChange={onModelChange}
                 onEffortChange={onEffortChange ?? (() => {})}

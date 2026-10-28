@@ -17,6 +17,9 @@ import { ProviderBadge } from "@/components/chat/provider-selector";
 import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
 import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
+import { effortNotice, noticeText, shownEffort } from "@/components/chat/model-thinking-selector-helpers";
+import { modelDisplayName } from "@/lib/model-display-name";
+import type { EffortStatus } from "../../../shared/effort-status";
 import type { ModelOption } from "../../../types/chat";
 import type { ProviderProbeStatus } from "../../../providers/provider-probe";
 
@@ -88,6 +91,21 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       .finally(() => setModelsLoading(false));
   }, [activeTab, activeRegistered]);
 
+  // `CLAUDE_CODE_EFFORT_LEVEL` or a cap in the user's Claude Code settings makes the default
+  // below inert for every project, which the select alone would not show.
+  const [effortStatus, setEffortStatus] = useState<EffortStatus | null>(null);
+  const defaultModel = settings?.providers[activeTab]?.model;
+  useEffect(() => {
+    setEffortStatus(null);
+    if (!activeTab) return;
+    let active = true;
+    const query = defaultModel ? `?model=${encodeURIComponent(defaultModel)}` : "";
+    api.get<{ status: EffortStatus | null }>(`/api/settings/ai/providers/${activeTab}/effort-status${query}`)
+      .then(({ status }) => { if (active) setEffortStatus(status); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [activeTab, defaultModel]);
+
   const retryProbe = async () => {
     setProbing(true);
     try {
@@ -108,6 +126,11 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
 
   const config = settings?.providers[activeTab];
   const isSdkProvider = config?.type === "agent-sdk" || (!config?.type && activeTab === "claude");
+  const effortOverride = effortNotice(
+    shownEffort(config?.effort, effortStatus),
+    effortStatus,
+    config?.model ? modelDisplayName(config.model) : "the model",
+  );
 
   const handleSettingsSave = async (patch: Partial<AISettings>) => {
     if (!settings) return false;
@@ -359,6 +382,15 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                   ))}
                 </SelectContent>
               </Select>
+              {effortOverride && (
+                <div role="note" className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2">
+                  <AlertTriangle className="size-3.5 text-warning shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className={`${labelSize} text-text-secondary`}>{effortOverride.title}</p>
+                    <p className="text-[11px] text-muted-foreground break-words">{noticeText(effortOverride.detail)}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className={fieldGap}>

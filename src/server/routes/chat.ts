@@ -166,6 +166,23 @@ chatRoutes.get("/providers/:providerId/models", async (c) => {
   }
 });
 
+/**
+ * GET /chat/providers/:providerId/effort-status?model= — what overrides the effort picked for a
+ * new chat in this project (`CLAUDE_CODE_EFFORT_LEVEL`, a `maxEffortLevel` cap), from the settings
+ * files; a session's own socket carries the CLI's answer once a turn has run. `status` is null
+ * for a provider nothing overrides.
+ */
+chatRoutes.get("/providers/:providerId/effort-status", (c) => {
+  const provider = providerRegistry.get(c.req.param("providerId"));
+  if (!provider) return c.json(err(`Provider "${c.req.param("providerId")}" not found`), 404);
+  try {
+    const status = provider.estimateEffortStatus?.(c.get("projectPath"), c.req.query("model") || undefined) ?? null;
+    return c.json(ok({ status }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /chat/sessions — list chat sessions filtered by project from context */
 chatRoutes.get("/sessions", async (c) => {
   try {

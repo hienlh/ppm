@@ -20,6 +20,9 @@ import { observeFile } from "../services/session-file-baselines/session-file-his
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
+import { EFFORT_ENV_VAR, effortStatusFromCli, estimateEffortStatus, userSettingsFile, type EffortSettingsQuery } from "./claude-effort-status.ts";
+import type { EffortStatus } from "../shared/effort-status.ts";
+import { withTimeout } from "../services/mcp-oauth/mcp-control-query.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
@@ -63,6 +66,8 @@ const usageLog = createLogger("usage");
 const mcpControlLog = createLogger("mcp-control");
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
+/** A running CLI answers `get_settings` in a few ms; this only bounds one that never does. */
+const EFFORT_READ_TIMEOUT_MS = 5_000;
 
 /**
  * Resolve the Claude CLI the SDK should spawn.
@@ -284,6 +289,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * and this is the only place that knows what made it do so.
    */
   private teardownReasons = new Map<string, string>();
+  /** The `--effort` each session's CLI was started with, to set beside what it reports sending. */
+  private startedEffort = new Map<string, string | null>();
   /** The API's last rate-limit status per account and limit, so only a change is logged. */
   private rateLimitStatus = new Map<string, string>();
   /** CLIs started for chats that do not exist yet — see `prewarm`. */
@@ -739,6 +746,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
     }
     this.forkSources.delete(sessionId);
+    this.startedEffort.delete(sessionId);
 
     // Best-effort: delete JSONL from ~/.claude/projects/
     try {
@@ -1456,6 +1464,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         providerConfig,
         stderr: stderrCallback,
       });
+      // Every retry below restarts the CLI with these same options.
+      this.startedEffort.set(sessionId, (queryOptions.effort as string | undefined) ?? null);
 
       // Crash retry: if subprocess exits with non-zero code before producing events,
       // clean up and retry once with a fresh query before surfacing the error.
@@ -2573,6 +2583,39 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The effort this session's CLI sends and what overrides the pick, asked of the CLI itself:
+   * `CLAUDE_CODE_EFFORT_LEVEL`, a settings cap, an organization limit and the model's own levels
+   * all count there, while the `--effort` PPM passed is only one input to it. Null when the
+   * session has no live subprocess or the CLI does not answer.
+   */
+  async readEffortStatus(sessionId: string): Promise<EffortStatus | null> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return null;
+    const cli = ss.query as unknown as EffortSettingsQuery;
+    try {
+      const [answer, init] = await Promise.all([
+        withTimeout(cli.getSettings(), EFFORT_READ_TIMEOUT_MS, "Claude did not report its settings"),
+        withTimeout(cli.initializationResult(), EFFORT_READ_TIMEOUT_MS, "Claude did not report its models").catch(() => undefined),
+      ]);
+      return effortStatusFromCli({
+        answer,
+        models: init?.models,
+        requested: this.startedEffort.get(sessionId),
+        processEnv: process.env[EFFORT_ENV_VAR],
+        userFile: userSettingsFile(process.env).shown,
+      });
+    } catch (e) {
+      log.debug(`session=${sessionId} effort status unavailable: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** What the settings files say about effort for a chat in `projectPath` no CLI has answered for yet. */
+  estimateEffortStatus(projectPath: string | undefined, model?: string): EffortStatus {
+    return estimateEffortStatus({ projectPath, model, env: process.env });
   }
 
   /** Abort and fully teardown the streaming session — user must resume to continue */

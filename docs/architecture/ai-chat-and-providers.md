@@ -416,6 +416,35 @@ Returns full updated config. Validates ranges/enums before writing.
    - Immediately on next query (config read fresh each time)
    - No active queries affected (config mid-flight not re-evaluated)
 
+### The effort that actually runs
+
+The effort PPM sends (the chat picker's pick, else `ai.providers.claude.effort`) reaches Claude Code
+as `--effort`, which is only one input to the level the CLI sends. In the CLI's order:
+
+1. `CLAUDE_CODE_EFFORT_LEVEL` wins over `--effort`, from the environment or from the `env` block of
+   any settings file, and a settings file wins over the environment. `auto`/`unset` sends no effort,
+   a number is a thinking budget, an unknown value is ignored.
+2. A `maxEffortLevel` in any settings file clamps what is left (the lowest wins;
+   `modelSettings.<model>.maxEffortLevel` replaces a file's own, and `max` caps nothing), and so
+   does an organization's per-model limit.
+3. A model without Extra or Max runs them as High; a model without effort (Haiku) gets none.
+
+The only complete answer is the CLI's own: `Query.getSettings()` (not in `sdk.d.ts`) reports
+`applied.effort` beside the settings `sources`, low to high priority. `ws/chat.ts` asks the
+session's subprocess at every turn's `system/init` (`chat-effort-status.ts` →
+`provider.readEffortStatus`), keeps the answer on the session entry, sends it in `session_state`
+and as `effort_status`, and logs a turn whose effort is not the one picked. Before a session has
+run a turn — a new chat, or after a restart — `estimateEffortStatus` reads the same user, project
+and local settings files (`claude-effort-status.ts`); managed settings and organization limits only
+show once the CLI answers. The shared `effortInEffect` (`src/shared/effort-status.ts`) turns the
+pick and that status into the level shown, so a pick made since the last answer is still checked
+against the variable, the cap and the model's levels. The chat's model chip shows the level in
+effect with a warning mark, its picker says what overrides the pick and where
+(`effortNotice` in `model-thinking-selector-helpers.ts`), and Settings → AI Provider shows the same
+under the default Effort (`GET /api/settings/ai/providers/:id/effort-status`; per project,
+`GET /api/project/:name/chat/providers/:id/effort-status`). `applied.effort` is the session's level:
+a per-request clamp — some models (Opus 5) hold effort at High while thinking is off — is not in it.
+
 ---
 
 ## Chat Streaming Flow (Persistent AsyncGenerator Sessions)

@@ -6,6 +6,12 @@
 // for the SDK value "xhigh"; the literal "extra" would crash the CLI subprocess,
 // so it must NEVER appear as a value here.
 
+import {
+  effortEnvMeaning, effortInEffect, effortSettingPlace, isEffortLevel,
+  type EffortInEffect, type EffortLevel, type EffortStatus,
+} from "../../../shared/effort-status";
+import { modelDisplayName } from "@/lib/model-display-name";
+
 export interface EffortOption {
   label: string;
   value: "low" | "medium" | "high" | "xhigh" | "max";
@@ -30,4 +36,68 @@ export function effortLabel(value: string | null | undefined): string {
 export function chipLabel(modelDisplay: string, effortValue: string | null | undefined): string {
   const eff = effortLabel(effortValue);
   return eff ? `${modelDisplay} · ${eff}` : modelDisplay;
+}
+
+export const DEFAULT_EFFORT = EFFORT_OPTIONS.find((o) => o.default)!.value;
+
+/** The picked effort beside the one the turns run at, and what overrides the pick if anything does. */
+export function shownEffort(
+  effort: string | null | undefined,
+  status: EffortStatus | null | undefined,
+): EffortInEffect & { pick: EffortLevel } {
+  const pick = isEffortLevel(effort) ? effort : DEFAULT_EFFORT;
+  return { pick, ...effortInEffect(pick, status) };
+}
+
+/** Notice text; the names a user would type or search for (a variable, a file) are marked as code. */
+export type NoticePart = string | { code: string };
+
+export interface EffortNotice {
+  title: string;
+  detail: NoticePart[];
+}
+
+export function noticeText(parts: NoticePart[]): string {
+  return parts.map((part) => (typeof part === "string" ? part : part.code)).join("");
+}
+
+const USE_PPM_PICK = "Remove it there to use the effort picked in PPM.";
+
+/**
+ * Why the effort the turns run at is not the one picked, naming the setting and where it is, so
+ * the user can change it. Null when the pick is what runs.
+ */
+export function effortNotice(
+  shown: EffortInEffect & { pick: EffortLevel },
+  status: EffortStatus | null | undefined,
+  modelDisplay: string,
+): EffortNotice | null {
+  if (!shown.reason || !status) return null;
+  const observedModel = status.observed?.model;
+  const model = observedModel ? modelDisplayName(observedModel.replace(/\[[^\]]*\]$/, "")) : modelDisplay;
+  const level = shown.level ? effortLabel(shown.level) : null;
+
+  const meaning = effortEnvMeaning(status.env?.value);
+  if (shown.reason === "env" && status.env && meaning) {
+    const setting: NoticePart[] = [{ code: `CLAUDE_CODE_EFFORT_LEVEL=${status.env.value}` }, " in ", { code: effortSettingPlace(status.env) }];
+    if (meaning.kind === "auto") {
+      // With a cap in place the CLI sends the model's default, clamped, rather than nothing.
+      const what = level ? `Claude Code sends ${model}'s default, ${level}.` : `no effort is sent, so ${model}'s default applies.`;
+      return { title: "Effort is left to the model", detail: [...setting, ` overrides the effort picked here: ${what} `, USE_PPM_PICK] };
+    }
+    if (meaning.kind === "budget") {
+      return { title: "A thinking budget replaces the effort", detail: [...setting, " sets a thinking budget instead of an effort level, so the effort picked here is not sent. ", USE_PPM_PICK] };
+    }
+    const runs = shown.level === meaning.level ? "" : level ? ` ${model} runs it as ${level}.` : ` ${model} takes no effort level, so none is sent.`;
+    return { title: `Effort is set to ${effortLabel(meaning.level)} outside PPM`, detail: [...setting, ` overrides the effort picked here.${runs} `, USE_PPM_PICK] };
+  }
+  if (shown.reason === "cap" && status.cap) {
+    const runs = shown.level === status.cap.value || !level ? "" : ` ${model} runs it as ${level}.`;
+    return {
+      title: `Effort is capped at ${effortLabel(status.cap.value)}`,
+      detail: [{ code: `maxEffortLevel: "${status.cap.value}"` }, " in ", { code: effortSettingPlace(status.cap) }, ` lowers any effort picked above it.${runs}`],
+    };
+  }
+  if (!level) return { title: `${model} takes no effort level`, detail: [`Claude Code sends no effort with ${model}, so the effort picked here has no effect.`] };
+  return { title: `Runs at ${level}`, detail: [`${effortLabel(shown.pick)} isn't available for ${model}, so Claude Code runs it at ${level}.`] };
 }
