@@ -25,7 +25,8 @@ export type ClaudeSettingSource = "user" | "project" | "local";
 /**
  * The settings files a chat's CLI loads. `local` stays out: a project's
  * `.claude/settings.local.json` can deny tools and set `env` (an `ANTHROPIC_API_KEY` there moves
- * the chat onto another account), and the empty `settings` PPM passes cancels neither.
+ * the chat onto another account), and the empty `settings` PPM passes cancels neither. The
+ * project's own `.claude/settings.json` is loaded and can do the same; only the local file is out.
  */
 export const CLAUDE_SETTING_SOURCES: readonly ClaudeSettingSource[] = ["user", "project"];
 

@@ -57,13 +57,13 @@ env: {
 
 ### Project-local Claude settings restrict tools
 
-**Problem**: Projects may have `.claude/settings.local.json` with restrictive `permissions.allow` lists (e.g., only `Bash(python:*)`, `Bash(ls:*)`). Even with `permissionMode: "bypassPermissions"`, the SDK CLI still reads these and restricts available tools.
+**Problem**: A project's `.claude/settings.local.json` changes what a chat may do once the CLI loads it. Measured in PR #60's review: a `deny: ["Bash"]` there hid Bash from the model even with `permissionMode: "bypassPermissions"`, and an `env` with `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` ran the chat on that key instead of the PPM account. A restrictive `permissions.allow` list, the case first written up here, restricts nothing under bypass: with `allow: ["Read"]`, Bash still ran.
 
 **Fix**: Leave the local file out of the sources a chat loads, `CLAUDE_SETTING_SOURCES` in `claude-agent-sdk-query-options.ts`:
 ```ts
 settingSources: ["user", "project"],
 ```
-The empty `settings: { permissions: { allow: [], deny: [] } }` PPM also passes does not cancel what the file holds: measured in PR #60's review, a `deny: ["Bash"]` there hid Bash from the model, and an `env` with `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` ran the chat on that key. The source list is the guard.
+The empty `settings: { permissions: { allow: [], deny: [] } }` PPM also passes cancels neither of those, so the source list is the guard — for the local file only. The project's own `.claude/settings.json`, which `project` loads, can deny tools and set `env` the same way (measured in the same review).
 
 ---
 
