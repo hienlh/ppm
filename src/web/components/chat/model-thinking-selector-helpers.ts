@@ -82,10 +82,18 @@ export function effortNotice(
     const setting: NoticePart[] = [{ code: `CLAUDE_CODE_EFFORT_LEVEL=${status.env.value}` }, " in ", { code: effortSettingPlace(status.env) }];
     if (meaning.kind === "auto") {
       // With a cap in place the CLI sends the model's default, clamped, rather than nothing.
-      const what = level ? `Claude Code sends ${model}'s default, ${level}.` : `no effort is sent, so ${model}'s default applies.`;
+      const what = !level
+        ? `no effort is sent, so ${model}'s default applies.`
+        : status.cap
+          ? `Claude Code sends ${model}'s default effort, capped at ${effortLabel(status.cap.value)}.`
+          : `Claude Code sends ${model}'s default, ${level}.`;
       return { title: "Effort is left to the model", detail: [...setting, ` overrides the effort picked here: ${what} `, USE_PPM_PICK] };
     }
     if (meaning.kind === "budget") {
+      // Under a cap the CLI reads the number as High, clamped, instead of as a thinking budget.
+      if (level) {
+        return { title: `Effort is set to ${level} outside PPM`, detail: [...setting, ` overrides the effort picked here; with a maxEffortLevel set, Claude Code runs it as ${level}. `, USE_PPM_PICK] };
+      }
       return { title: "A thinking budget replaces the effort", detail: [...setting, " sets a thinking budget instead of an effort level, so the effort picked here is not sent. ", USE_PPM_PICK] };
     }
     const runs = shown.level === meaning.level ? "" : level ? ` ${model} runs it as ${level}.` : ` ${model} takes no effort level, so none is sent.`;

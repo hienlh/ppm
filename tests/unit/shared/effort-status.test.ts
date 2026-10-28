@@ -47,6 +47,17 @@ describe("effortInEffect", () => {
     expect(effortInEffect("high", { env: { value: "32000", source: "userSettings" } })).toEqual({ level: null, reason: "env" });
   });
 
+  it("reads auto and a number under a cap the way the CLI does", () => {
+    // Measured on the CLI: auto under a "low" cap sends low. A number under a cap is read as High
+    // (the CLI's own code), then clamped.
+    expect(effortInEffect("high", { env: { value: "auto", source: "userSettings" }, cap: { value: "low", source: "userSettings" } }))
+      .toEqual({ level: "low", reason: "env" });
+    expect(effortInEffect("low", { env: { value: "32000", source: "environment" }, cap: { value: "medium", source: "userSettings" } }))
+      .toEqual({ level: "medium", reason: "env" });
+    expect(effortInEffect("low", { env: { value: "32000", source: "environment" }, cap: { value: "xhigh", source: "userSettings" } }))
+      .toEqual({ level: "high", reason: "env" });
+  });
+
   it("clamps to a settings cap, for a pick made before or after the CLI answered", () => {
     const cap: EffortStatus["cap"] = { value: "high", source: "userSettings" };
     expect(effortInEffect("max", { cap, observed: { requested: "max", applied: "high" } })).toEqual({ level: "high", reason: "cap" });

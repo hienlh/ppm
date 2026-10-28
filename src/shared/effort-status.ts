@@ -83,13 +83,24 @@ export function effortInEffect(pick: EffortLevel, status: EffortStatus | null | 
   if (env) {
     // The variable outranks every pick, so the CLI's answer stays true whatever is picked since.
     if (observed) return { level: observed.applied, reason: "env" };
-    return { level: env.kind === "level" ? withinLimits(env.level, status) : null, reason: "env" };
+    return { level: envLevel(env, status), reason: "env" };
   }
   // A pick made after the CLI last answered is checked against the limits it reported.
   const level = observed && observed.requested === pick ? observed.applied : withinLimits(pick, status);
   if (level === pick) return { level, reason: null };
   const capped = !!status.cap && effortRank(pick) > effortRank(status.cap.value);
   return { level, reason: capped ? "cap" : "model" };
+}
+
+/**
+ * What the CLI makes of the variable before it has said so itself. A settings cap changes it:
+ * `auto` then sends the model's default and a number is read as High, each clamped to the cap,
+ * where without one neither sends an effort. The model's default is taken as High, the CLI's own
+ * fallback, until the CLI answers.
+ */
+function envLevel(env: EffortEnvMeaning, status: EffortStatus): EffortLevel | null {
+  if (env.kind === "level") return withinLimits(env.level, status);
+  return status.cap ? withinLimits("high", status) : null;
 }
 
 function withinLimits(level: EffortLevel, status: EffortStatus): EffortLevel | null {

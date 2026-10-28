@@ -80,6 +80,16 @@ describe("effort notice", () => {
     expect(noticeText(effortNotice(shownEffort("high", capped), capped, "Opus 5.5")!.detail)).toContain("Claude Code sends Opus 5.5's default, High.");
   });
 
+  it("does not say nothing is sent for auto or a number under a cap", () => {
+    const cap = { value: "low" as const, source: "userSettings" as const };
+    const auto = { env: { value: "auto", source: "userSettings" as const }, cap };
+    expect(noticeText(effortNotice(shownEffort("high", auto), auto, "Opus 5.5")!.detail)).toContain("Claude Code sends Opus 5.5's default effort, capped at Low.");
+    const budget = { env: { value: "32000", source: "environment" as const }, cap: { value: "medium" as const, source: "userSettings" as const } };
+    const notice = effortNotice(shownEffort("high", budget), budget, "Opus 5.5")!;
+    expect(notice.title).toBe("Effort is set to Medium outside PPM");
+    expect(noticeText(notice.detail)).toContain("with a maxEffortLevel set, Claude Code runs it as Medium.");
+  });
+
   it("explains a cap and a model limit, and stays quiet when the pick is what runs", () => {
     const cap = { cap: { value: "high" as const, source: "projectSettings" as const, file: ".claude/settings.json" } };
     const capped = effortNotice(shownEffort("max", cap), cap, "Opus 5.5")!;
