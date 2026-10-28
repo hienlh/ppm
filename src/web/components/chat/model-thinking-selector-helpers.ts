@@ -81,12 +81,13 @@ export function effortNotice(
   if (shown.reason === "env" && status.env && meaning) {
     const setting: NoticePart[] = [{ code: `CLAUDE_CODE_EFFORT_LEVEL=${status.env.value}` }, " in ", { code: effortSettingPlace(status.env) }];
     if (meaning.kind === "auto") {
-      // With a cap in place the CLI sends the model's default, clamped, rather than nothing.
-      const what = !level
-        ? `no effort is sent, so ${model}'s default applies.`
-        : status.cap
-          ? `Claude Code sends ${model}'s default effort, capped at ${effortLabel(status.cap.value)}.`
-          : `Claude Code sends ${model}'s default, ${level}.`;
+      // With a cap in place the CLI sends the model's default, clamped, rather than nothing, and
+      // until it answers that default is not known here, so the sentence names only the cap.
+      const what = status.cap
+        ? `Claude Code sends ${model}'s default effort, capped at ${effortLabel(status.cap.value)}.`
+        : level
+          ? `Claude Code sends ${model}'s default, ${level}.`
+          : `no effort is sent, so ${model}'s default applies.`;
       return { title: "Effort is left to the model", detail: [...setting, ` overrides the effort picked here: ${what} `, USE_PPM_PICK] };
     }
     if (meaning.kind === "budget") {

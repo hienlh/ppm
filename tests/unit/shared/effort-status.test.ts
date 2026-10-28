@@ -48,10 +48,18 @@ describe("effortInEffect", () => {
   });
 
   it("reads auto and a number under a cap the way the CLI does", () => {
-    // Measured on the CLI: auto under a "low" cap sends low. A number under a cap is read as High
-    // (the CLI's own code), then clamped.
+    // Measured on the CLI: auto under a "low" cap sends low, and a number under a cap is read as
+    // High (1000 to 64000 under an xhigh cap all gave high), then clamped.
     expect(effortInEffect("high", { env: { value: "auto", source: "userSettings" }, cap: { value: "low", source: "userSettings" } }))
       .toEqual({ level: "low", reason: "env" });
+    // Over any higher cap, auto gives the model's own default (Medium on Opus 5.5, High on
+    // Opus 4.5): not a level to guess before the CLI answers.
+    expect(effortInEffect("high", { env: { value: "auto", source: "userSettings" }, cap: { value: "xhigh", source: "userSettings" } }))
+      .toEqual({ level: null, reason: "env" });
+    expect(effortInEffect("high", {
+      env: { value: "auto", source: "userSettings" }, cap: { value: "xhigh", source: "userSettings" },
+      observed: { requested: "high", applied: "medium", model: "claude-opus-5-5" },
+    })).toEqual({ level: "medium", reason: "env" });
     expect(effortInEffect("low", { env: { value: "32000", source: "environment" }, cap: { value: "medium", source: "userSettings" } }))
       .toEqual({ level: "medium", reason: "env" });
     expect(effortInEffect("low", { env: { value: "32000", source: "environment" }, cap: { value: "xhigh", source: "userSettings" } }))

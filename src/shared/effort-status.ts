@@ -69,7 +69,7 @@ export function effortEnvMeaning(raw: string | null | undefined): EffortEnvMeani
 }
 
 export interface EffortInEffect {
-  /** The level each request carries; null when none is sent. */
+  /** The level each request carries; null when none is sent, or when only the CLI can tell which. */
   level: EffortLevel | null;
   /** What decided it when that is not simply the pick. */
   reason: "env" | "cap" | "model" | null;
@@ -94,13 +94,16 @@ export function effortInEffect(pick: EffortLevel, status: EffortStatus | null | 
 
 /**
  * What the CLI makes of the variable before it has said so itself. A settings cap changes it:
- * `auto` then sends the model's default and a number is read as High, each clamped to the cap,
- * where without one neither sends an effort. The model's default is taken as High, the CLI's own
- * fallback, until the CLI answers.
+ * a number is then read as High and `auto` sends the model's own default, each clamped to the cap,
+ * where without one neither sends an effort. That default differs by model (measured: Medium on
+ * Opus 5.5, High on Opus 4.5, 4.6 and Sonnet 4.6), so under any cap but Low, which leaves nothing
+ * lower, only the CLI's answer can say which level `auto` gives.
  */
 function envLevel(env: EffortEnvMeaning, status: EffortStatus): EffortLevel | null {
   if (env.kind === "level") return withinLimits(env.level, status);
-  return status.cap ? withinLimits("high", status) : null;
+  if (!status.cap) return null;
+  if (env.kind === "budget") return withinLimits("high", status);
+  return status.cap.value === "low" ? withinLimits("low", status) : null;
 }
 
 function withinLimits(level: EffortLevel, status: EffortStatus): EffortLevel | null {

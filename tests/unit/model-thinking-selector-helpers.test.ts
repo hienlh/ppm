@@ -84,6 +84,12 @@ describe("effort notice", () => {
     const cap = { value: "low" as const, source: "userSettings" as const };
     const auto = { env: { value: "auto", source: "userSettings" as const }, cap };
     expect(noticeText(effortNotice(shownEffort("high", auto), auto, "Opus 5.5")!.detail)).toContain("Claude Code sends Opus 5.5's default effort, capped at Low.");
+    // Over a higher cap the level is the CLI's to say, and the sentence still names the cap.
+    const autoXhigh = { ...auto, cap: { value: "xhigh" as const, source: "userSettings" as const } };
+    const unknown = shownEffort("high", autoXhigh);
+    expect(unknown.level).toBeNull();
+    expect(chipLabel("Opus 5.5", unknown.level)).toBe("Opus 5.5");
+    expect(noticeText(effortNotice(unknown, autoXhigh, "Opus 5.5")!.detail)).toContain("Claude Code sends Opus 5.5's default effort, capped at Extra.");
     const budget = { env: { value: "32000", source: "environment" as const }, cap: { value: "medium" as const, source: "userSettings" as const } };
     const notice = effortNotice(shownEffort("high", budget), budget, "Opus 5.5")!;
     expect(notice.title).toBe("Effort is set to Medium outside PPM");
