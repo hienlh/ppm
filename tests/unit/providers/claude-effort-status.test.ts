@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, win32 } from "node:path";
+import { join, posix, win32 } from "node:path";
 import {
   effortOverrides, effortStatusFromCli, estimateEffortStatus, readSettingsFiles, supportedLevels, userSettingsFile,
   type CliSettingsSource,
@@ -167,8 +167,10 @@ describe("estimateEffortStatus", () => {
   it("shows the home folder as ~ on Windows too", () => {
     expect(userSettingsFile({}, "C:\\Users\\x", win32)).toEqual({ path: "C:\\Users\\x\\.claude\\settings.json", shown: "~/.claude/settings.json" });
     expect(userSettingsFile({ CLAUDE_CONFIG_DIR: "D:\\claude" }, "C:\\Users\\x", win32).shown).toBe("D:\\claude\\settings.json");
-    // A sibling folder that only shares the home folder's name is not inside it.
-    expect(userSettingsFile({ CLAUDE_CONFIG_DIR: "/home/xy/.claude" }, "/home/x").shown).toBe("/home/xy/.claude/settings.json");
+    // A sibling folder that only shares the home folder's name is not inside it. Each spelling
+    // runs with its own path module, so the result is the same on every host.
+    expect(userSettingsFile({ CLAUDE_CONFIG_DIR: "C:\\Users\\xy\\.claude" }, "C:\\Users\\x", win32).shown).toBe("C:\\Users\\xy\\.claude\\settings.json");
+    expect(userSettingsFile({ CLAUDE_CONFIG_DIR: "/home/xy/.claude" }, "/home/x", posix).shown).toBe("/home/xy/.claude/settings.json");
   });
 });
 
