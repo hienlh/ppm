@@ -90,6 +90,9 @@ it("keeps the CLI's answer across an effort pick, and drops it with the model it
   // The variable outranks any pick, so the answer still says what runs.
   await chatWebSocket.message(live.socket as any, JSON.stringify({ type: "set_effort", effort: "low" }));
   expect(greeting(live.messages)).toMatchObject({ effort: "low", effortStatus: FROM_CLI });
+  // The thinking toggle's greeting carries it too, or the chip would fall back to the pick.
+  await chatWebSocket.message(live.socket as any, JSON.stringify({ type: "set_thinking", enabled: false }));
+  expect(greeting(live.messages)).toMatchObject({ thinking: false, effortStatus: FROM_CLI });
 
   await chatWebSocket.message(live.socket as any, JSON.stringify({ type: "set_model", model: "claude-haiku-4-5" }));
   expect(greeting(live.messages).effortStatus).toEqual(FROM_FILES);

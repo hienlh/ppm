@@ -900,6 +900,52 @@ describe("ClaudeAgentSdkProvider", () => {
     });
   });
 
+  describe("readEffortStatus", () => {
+    /** A CLI whose settings put the effort at Max whatever `--effort` it was started with. */
+    function cliAtMax() {
+      return Object.assign(createMockQueryIterator([
+        { type: "system", subtype: "init", session_id: "sdk-1" },
+        { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } },
+        { type: "result", subtype: "success" },
+      ]), {
+        getSettings: async () => ({
+          sources: [{ source: "userSettings", settings: { env: { CLAUDE_CODE_EFFORT_LEVEL: "max" } } }],
+          applied: { model: "claude-opus-5-5", effort: "max" },
+        }),
+        initializationResult: async () => ({
+          models: [{ value: "default", resolvedModel: "claude-opus-5-5", supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] }],
+        }),
+      });
+    }
+
+    it("asks the running CLI, and sets its answer beside the effort the CLI was started with", async () => {
+      mockQueryFn.mockReturnValue(cliAtMax());
+      const session = await provider.createSession({});
+      let status: unknown;
+      for await (const event of provider.sendMessage(session.id, "hi", { effort: "high" })) {
+        if (event.type === "system" && (event as any).subtype === "init") status = await provider.readEffortStatus(session.id);
+      }
+      expect(mockQueryFn.mock.calls[0]![0].options.effort).toBe("high");
+      expect(status).toMatchObject({
+        env: { value: "max", source: "userSettings" },
+        observed: { requested: "high", applied: "max", model: "claude-opus-5-5" },
+        supported: ["low", "medium", "high", "xhigh", "max"],
+      });
+    });
+
+    it("answers null with no subprocess to ask, or one that cannot say", async () => {
+      expect(await provider.readEffortStatus("no-such-session")).toBeNull();
+      const silent = Object.assign(cliAtMax(), { getSettings: async () => { throw new Error("unknown control request"); } });
+      mockQueryFn.mockReturnValue(silent);
+      const session = await provider.createSession({});
+      let status: unknown = "not asked";
+      for await (const event of provider.sendMessage(session.id, "hi")) {
+        if (event.type === "system" && (event as any).subtype === "init") status = await provider.readEffortStatus(session.id);
+      }
+      expect(status).toBeNull();
+    });
+  });
+
   describe("approval timeout", () => {
     it("auto-denies AskUserQuestion after timeout", async () => {
       let canUseToolFn: any;
