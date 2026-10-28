@@ -7,6 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import * as nodePath from "node:path";
 import { join } from "node:path";
 import {
   effortEnvMeaning, effortRank, isEffortLevel,
@@ -45,11 +46,21 @@ export interface EffortSettingsQuery {
   initializationResult(): Promise<{ models?: CliModelInfo[] }>;
 }
 
-/** Where the CLI keeps its user settings; `~` stands in for the home folder in what is shown. */
-export function userSettingsFile(env: Record<string, string | undefined>, home = homedir()): { path: string; shown: string } {
-  const dir = env.CLAUDE_CONFIG_DIR || join(home, ".claude");
-  const path = join(dir, "settings.json");
-  return { path, shown: path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path };
+type PathApi = Pick<typeof nodePath, "join" | "relative" | "isAbsolute" | "sep">;
+
+/**
+ * Where the CLI keeps its user settings; `~/` stands in for the home folder in what is shown.
+ * Decided with `relative` rather than a `${home}/` prefix, which never matches a Windows path.
+ */
+export function userSettingsFile(
+  env: Record<string, string | undefined>,
+  home = homedir(),
+  path: PathApi = nodePath,
+): { path: string; shown: string } {
+  const file = path.join(env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"), "settings.json");
+  const rel = path.relative(home, file);
+  const inHome = rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+  return { path: file, shown: inHome ? `~/${rel.split(path.sep).join("/")}` : file };
 }
 
 const FILE_OF: Partial<Record<EffortSettingSource, string>> = {
