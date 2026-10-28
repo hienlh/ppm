@@ -373,6 +373,16 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(opts.settingSources).toEqual(["user", "project"]);
     });
 
+    it("starts the MCP control query on the same settings files as a chat", () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([]));
+      const control = provider.openMcpControlQuery("/tmp/my-project");
+      try {
+        expect(mockQueryFn.mock.calls[0]![0].options.settingSources).toEqual(["user", "project"]);
+      } finally {
+        control.close();
+      }
+    });
+
     it("includes Agent, Skill, TodoWrite, ToolSearch in allowedTools", async () => {
       mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
       const session = await provider.createSession({});
