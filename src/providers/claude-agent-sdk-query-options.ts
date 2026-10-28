@@ -20,6 +20,15 @@ import { EFFORT_LEVELS, type EffortLevel } from "../shared/effort-status.ts";
 export const VALID_EFFORT_VALUES = EFFORT_LEVELS;
 export type EffortValue = EffortLevel;
 
+export type ClaudeSettingSource = "user" | "project" | "local";
+
+/**
+ * The settings files a chat's CLI loads. `local` stays out: a project's
+ * `.claude/settings.local.json` can deny tools and set `env` (an `ANTHROPIC_API_KEY` there moves
+ * the chat onto another account), and the empty `settings` PPM passes cancels neither.
+ */
+export const CLAUDE_SETTING_SOURCES: readonly ClaudeSettingSource[] = ["user", "project"];
+
 /**
  * Thinking is a tri-state carried as a nullable integer through config, the DB and
  * the WS protocol:

@@ -12,6 +12,7 @@ import {
   effortEnvMeaning, effortRank, isEffortLevel,
   type EffortLevel, type EffortSetting, type EffortSettingSource, type EffortStatus,
 } from "../shared/effort-status.ts";
+import { CLAUDE_SETTING_SOURCES, type ClaudeSettingSource } from "./claude-agent-sdk-query-options.ts";
 
 export const EFFORT_ENV_VAR = "CLAUDE_CODE_EFFORT_LEVEL";
 
@@ -153,15 +154,22 @@ export function effortStatusFromCli(p: {
   };
 }
 
-/** The settings files a chat in `projectPath` reads, lowest priority first; a file that does not parse is skipped, as the CLI skips it. */
-export function readSettingsFiles(projectPath: string | undefined, userPath: string): CliSettingsSource[] {
-  const files: Array<[EffortSettingSource, string]> = [["userSettings", userPath]];
-  if (projectPath) {
-    files.push(
-      ["projectSettings", join(projectPath, ".claude", "settings.json")],
-      ["localSettings", join(projectPath, ".claude", "settings.local.json")],
-    );
-  }
+/**
+ * The settings files a chat in `projectPath` reads, lowest priority first: those of the sources
+ * its CLI is started with, so the estimate never counts a file the chat does not load. A file
+ * that does not parse is skipped, as the CLI skips it.
+ */
+export function readSettingsFiles(
+  projectPath: string | undefined,
+  userPath: string,
+  sources: readonly ClaudeSettingSource[] = CLAUDE_SETTING_SOURCES,
+): CliSettingsSource[] {
+  const fileOf: Record<ClaudeSettingSource, [EffortSettingSource, string] | null> = {
+    user: ["userSettings", userPath],
+    project: projectPath ? ["projectSettings", join(projectPath, ".claude", "settings.json")] : null,
+    local: projectPath ? ["localSettings", join(projectPath, ".claude", "settings.local.json")] : null,
+  };
+  const files = sources.map((source) => fileOf[source]).filter((f): f is [EffortSettingSource, string] => !!f);
   const out: CliSettingsSource[] = [];
   for (const [source, file] of files) {
     let settings: unknown;

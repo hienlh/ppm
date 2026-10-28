@@ -7,7 +7,7 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
@@ -942,7 +942,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ...(p.forkSession && { forkSession: true }),
       cwd: p.cwd,
       systemPrompt: p.systemPrompt,
-      settingSources: ["user", "project"],
+      settingSources: [...CLAUDE_SETTING_SOURCES],
       env: p.env,
       settings: { permissions: { allow: [], deny: [] } },
       allowedTools: p.allowedTools,
@@ -2540,7 +2540,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),
         ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
         cwd,
-        settingSources: ["user", "project"],
+        settingSources: [...CLAUDE_SETTING_SOURCES],
         // No account: MCP OAuth tokens belong to the CLI's own credential store, the same
         // one an interactive `claude` writes, and no model call is ever made here.
         env: this.buildQueryEnv(cwd, null),

@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  effortOverrides, effortStatusFromCli, estimateEffortStatus, supportedLevels, userSettingsFile,
+  effortOverrides, effortStatusFromCli, estimateEffortStatus, readSettingsFiles, supportedLevels, userSettingsFile,
   type CliSettingsSource,
 } from "../../../src/providers/claude-effort-status.ts";
+import { CLAUDE_SETTING_SOURCES } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import { effortInEffect } from "../../../src/shared/effort-status.ts";
 
 const USER_FILE = "~/.claude/settings.json";
@@ -124,8 +125,26 @@ describe("estimateEffortStatus", () => {
       env: { value: "max", source: "userSettings", file: "~/.claude/settings.json" },
       cap: { value: "xhigh", source: "userSettings", file: "~/.claude/settings.json" },
     });
-    writeFileSync(join(project, ".claude", "settings.local.json"), JSON.stringify({ env: { CLAUDE_CODE_EFFORT_LEVEL: "low" } }));
-    expect(estimateEffortStatus({ projectPath: project, env: {}, home }).env).toEqual({ value: "low", source: "localSettings", file: ".claude/settings.local.json" });
+    writeFileSync(join(project, ".claude", "settings.json"), JSON.stringify({ env: { CLAUDE_CODE_EFFORT_LEVEL: "medium" } }));
+    expect(estimateEffortStatus({ projectPath: project, env: {}, home }).env).toEqual({ value: "medium", source: "projectSettings", file: ".claude/settings.json" });
+  });
+
+  it("leaves out .claude/settings.local.json, which a chat's CLI does not load", () => {
+    const { home, project } = fixture();
+    writeFileSync(join(project, ".claude", "settings.local.json"), JSON.stringify({ env: { CLAUDE_CODE_EFFORT_LEVEL: "low" }, maxEffortLevel: "low" }));
+    expect(estimateEffortStatus({ projectPath: project, env: {}, home })).toEqual({});
+  });
+
+  it("reads exactly the files of the sources a chat is started with", () => {
+    const { home, project } = fixture();
+    const user = join(home, ".claude", "settings.json");
+    for (const [file, value] of [[user, "max"], [join(project, ".claude", "settings.json"), "high"], [join(project, ".claude", "settings.local.json"), "low"]] as const) {
+      writeFileSync(file, JSON.stringify({ env: { CLAUDE_CODE_EFFORT_LEVEL: value } }));
+    }
+    const named = { user: "userSettings", project: "projectSettings", local: "localSettings" } as const;
+    expect(readSettingsFiles(project, user).map((s) => s.source)).toEqual(CLAUDE_SETTING_SOURCES.map((s) => named[s]));
+    // The mapping itself covers local, so adding it to the chat's sources would carry over here.
+    expect(readSettingsFiles(project, user, ["user", "project", "local"]).map((s) => s.source)).toEqual(["userSettings", "projectSettings", "localSettings"]);
   });
 
   it("skips a file that does not parse, as the CLI skips it", () => {
@@ -144,6 +163,7 @@ describe("estimateEffortStatus", () => {
     expect(status.env).toEqual({ value: "high", source: "userSettings", file: join(configDir, "settings.json") });
     expect(userSettingsFile({}, home)).toEqual({ path: join(home, ".claude", "settings.json"), shown: "~/.claude/settings.json" });
   });
+
 });
 
 describe("SDK surface", () => {

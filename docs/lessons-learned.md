@@ -59,11 +59,11 @@ env: {
 
 **Problem**: Projects may have `.claude/settings.local.json` with restrictive `permissions.allow` lists (e.g., only `Bash(python:*)`, `Bash(ls:*)`). Even with `permissionMode: "bypassPermissions"`, the SDK CLI still reads these and restricts available tools.
 
-**Fix**: Override with explicit empty settings and no setting sources:
+**Fix**: Leave the local file out of the sources a chat loads, `CLAUDE_SETTING_SOURCES` in `claude-agent-sdk-query-options.ts`:
 ```ts
-settings: { permissions: { allow: [], deny: [] } },
-settingSources: [],
+settingSources: ["user", "project"],
 ```
+The empty `settings: { permissions: { allow: [], deny: [] } }` PPM also passes does not cancel what the file holds: measured in PR #60's review, a `deny: ["Bash"]` there hid Bash from the model, and an `env` with `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` ran the chat on that key. The source list is the guard.
 
 ---
 

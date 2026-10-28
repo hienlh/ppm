@@ -434,9 +434,9 @@ The only complete answer is the CLI's own: `Query.getSettings()` (not in `sdk.d.
 session's subprocess at every turn's `system/init` (`chat-effort-status.ts` →
 `provider.readEffortStatus`), keeps the answer on the session entry, sends it in `session_state`
 and as `effort_status`, and logs a turn whose effort is not the one picked. Before a session has
-run a turn — a new chat, or after a restart — `estimateEffortStatus` reads the same user, project
-and local settings files (`claude-effort-status.ts`); managed settings and organization limits only
-show once the CLI answers. The shared `effortInEffect` (`src/shared/effort-status.ts`) turns the
+run a turn — a new chat, or after a restart — `estimateEffortStatus` reads the settings files the
+chat loads, those of `CLAUDE_SETTING_SOURCES` (`claude-effort-status.ts`); managed settings and
+organization limits only show once the CLI answers. The shared `effortInEffect` (`src/shared/effort-status.ts`) turns the
 pick and that status into the level shown, so a pick made since the last answer is still checked
 against the variable, the cap and the model's levels. The chat's model chip shows the level in
 effect with a warning mark, its picker says what overrides the pick and where
